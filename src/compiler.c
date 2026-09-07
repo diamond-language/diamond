@@ -946,15 +946,22 @@ static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
      * recursive self-reference remains a known Callable, but conservatively
      * omits structural signature facts until its declaration is complete. */
     if(target==compiler->function)return;
+    /* target->arity counts an implicit self slot for some owner_class
+     * shapes (diamond_function_self_offset's own comment, src/vm.h) --
+     * a Callable *value*'s type only ever describes its real, self-less
+     * arguments (parameter_type_sets is already indexed that way), so
+     * that offset must come out of the published arity here too. */
+    const uint8_t self_offset=diamond_function_self_offset(target);
+    const uint8_t declared_arity=(uint8_t)(target->arity-self_offset);
     DiamondTypeMember callable={.id=DIAMOND_TYPE_CALLABLE,
         .argument_set=DIAMOND_NO_TYPE_SET,
         .second_argument_set=DIAMOND_NO_TYPE_SET,
-        .callable_arity=target->arity,
+        .callable_arity=declared_arity,
         .callable_return_set=DIAMOND_NO_TYPE_SET,
         .callable_parameters_typed=true};
     for(size_t parameter=0;parameter<16;parameter++)
         callable.callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
-    for(size_t parameter=0;parameter<target->arity;parameter++) {
+    for(size_t parameter=0;parameter<declared_arity;parameter++) {
         if(target->parameter_type_sets[parameter]==DIAMOND_NO_TYPE_SET) {
             callable.callable_parameters_typed=false;break;
         }

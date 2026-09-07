@@ -7834,9 +7834,18 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         if(closure->foreign_chunk!=nullptr)return false;
         if(closure->function_index>=chunk->function_count)return false;
         const DiamondFunction *function=chunk->functions[closure->function_index];
+        /* function->arity/required_arity count an implicit self slot for
+         * some owner_class shapes (see diamond_function_self_offset's own
+         * comment, src/vm.h) -- a *value* satisfying Callable[N] only ever
+         * supplies N real, self-less arguments, so that offset must come
+         * out here before comparing against member.callable_arity. */
+        const uint8_t self_offset=diamond_function_self_offset(function);
+        const uint8_t declared_arity=(uint8_t)(function->arity-self_offset);
+        const uint8_t declared_required_arity=
+            (uint8_t)(function->required_arity-self_offset);
         if(member.callable_arity!=UINT8_MAX&&
-           (member.callable_arity<function->required_arity||
-            (member.callable_arity>function->arity&&!function->has_variadic)))
+           (member.callable_arity<declared_required_arity||
+            (member.callable_arity>declared_arity&&!function->has_variadic)))
             return false;
         if(member.callable_parameters_typed)
             for(size_t parameter=0;parameter<member.callable_arity;parameter++) {

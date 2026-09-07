@@ -853,6 +853,35 @@ typedef struct DiamondFunction {
     size_t scope_type_fact_count;
 } DiamondFunction;
 
+/* arity/required_arity above count an implicit self slot for a genuine
+ * class/module method -- compile_definition (src/compiler.c) reserves
+ * register 0 for self and folds it into both counts for any owner_class
+ * that is a real class index or the UINT8_MAX-1 module-method sentinel
+ * (search that function for "direct_class_member" and "nested_in_
+ * singleton_method"); the caller-visible parameter_type_sets/parameter_
+ * names arrays are still indexed from the first *declared* parameter, 0,
+ * with no such offset (their own comment: "Hidden self slots are
+ * deliberately excluded"). A `closure` (captures_self, owner_class==
+ * UINT8_MAX-2) also reserves register 0 for self but does NOT fold it
+ * into arity -- self arrives via capture, not an implicit call-time
+ * argument, so its arity already means exactly what a caller sees. An
+ * ordinary function/nested def with no self at all (owner_class==
+ * UINT8_MAX) has nothing to subtract either. Any code that treats
+ * arity/required_arity as "how many arguments does a generic Callable
+ * *value* holding this function actually take" -- as opposed to code
+ * that already knows it's dispatching a real method and supplies self
+ * separately -- must subtract this offset first, or it double-counts
+ * self as a real parameter. Found the hard way: a nested `def` written
+ * directly inside a `def self.x` singleton method (the nested_in_
+ * singleton_method patch-factory shape above) got owner_class set to
+ * the enclosing class specifically so redefine_method's own exact-match
+ * check keeps working, but every *other* consumer of such a closure --
+ * passing it to Array#find, storing it and calling it as a Callable
+ * value -- only ever supplies its own real, self-less arguments. */
+static inline uint8_t diamond_function_self_offset(const DiamondFunction *fn) {
+    return (fn->owner_class!=UINT8_MAX&&fn->owner_class!=(uint8_t)(UINT8_MAX-2))?1:0;
+}
+
 struct DiamondChunk {
     const char *name;
     const uint8_t *code;

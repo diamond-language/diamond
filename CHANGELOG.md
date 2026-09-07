@@ -14,6 +14,18 @@ authoritative fine-grained record.
   the block's own first argument) rather than the enclosing method's
   receiver -- a silent correctness bug, not a compile-time error. See
   docs/callables.md.
+- Fixed a real Callable-arity bug found while auditing packages/http
+  and friends for newer collection idioms: a plain nested `def`
+  written directly inside a `def self.x` singleton method (the shape
+  `redefine_method`'s own patch-factory idiom relies on) miscounted
+  its own arity by one wherever it was used as an ordinary Callable
+  value -- passed to `Array#find`, stored in a variable and called,
+  etc. -- because the implicit self slot that shape's owner_class
+  folds into the underlying function's arity was never subtracted
+  back out before comparing against or publishing a `Callable[N]`
+  contract. `items.find(matches)` from inside such a method now works
+  the same way it already did from a plain function or an ordinary
+  instance method.
 
 ### Tooling
 
