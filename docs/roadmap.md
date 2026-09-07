@@ -9,6 +9,58 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### Real semver dependency resolution for `facet`
+
+`facet` currently pins every dependency to an exact git ref (tag/branch/
+commit) and treats any two requesters wanting a different ref for the
+same cut as a hard, unresolvable error (docs/packages.md) -- even when
+both refs are semver-compatible. 0.3's headline ecosystem work is a real
+resolver, still with no hosted registry (cut identity stays a git URL;
+"resolving is fetching" stays true) since a git-tag-based resolver needs
+none of that operational cost:
+
+- **Semver type**: MAJOR.MINOR.PATCH[-prerelease][+build] parsing and
+  ordering, plus range/constraint syntax (`^1.2.3`, `~1.2.3`, `>=1.0.0
+  <2.0.0`, an exact `1.2.3`) -- a standalone piece with no dependency on
+  `facet` itself, since it's also generally useful on its own (a
+  package's own `diamond.cut` `version` field finally means something).
+- **Version discovery without a registry**: a dependency's available
+  versions come from `git ls-remote --tags` against its own repo,
+  filtered to tags that parse as semver (with or without a leading `v`).
+  No index, no service, no caching layer beyond what git itself
+  already does.
+- **Manifest format**: a `dependencies` entry gains a `version` key as
+  an alternative to `tag`/`branch`/`commit` (mutually exclusive with
+  those, the same way today's own ref keys are mutually exclusive with
+  each other) -- `{"git": "...", "version": "^1.2.0"}`.
+- **The resolver**: collect every requester's own constraint for a given
+  cut name. If every constraint is an exact ref (today's model,
+  unchanged), they must all match exactly -- same hard-error-on-mismatch
+  behavior as today. If constraints are semver ranges, intersect them
+  and pick the *highest* available tag satisfying the intersection --
+  deterministic, no real backtracking needed for a first version. An
+  empty intersection is a hard error naming every requester and its own
+  range (a real improvement over today's bare "different ref" message).
+  Mixing an exact-ref constraint with a semver-range constraint for the
+  same cut is also a hard error -- there's no principled way to compare
+  an arbitrary commit against a range's intent.
+- **Lockfile**: `facet.lock` keeps pinning to one exact resolved commit
+  regardless of whether the manifest asked for an exact ref or a range
+  (reproducibility doesn't change); a range-resolved entry also records
+  which tag/version it resolved to, so `facet update` has something to
+  compare the *next* resolution against.
+- **Still explicitly out of scope**: a hosted registry/index (install by
+  bare name, search) and multi-version coexistence -- both previously
+  deferred for good reason (docs/packages.md's own "architecturally
+  constrained" note: two versions of one cut could never coexist in
+  Diamond's single flat compiled namespace anyway) and neither changes
+  with this work.
+
+0.3 overall is a bugfix-and-ecosystem release: this packaging work is
+the headline addition, alongside whatever bugs turn up along the way
+(see "Harden the end-user runtime surface" below for the audit already
+in progress) rather than new language surface.
+
 ### Improve receiver-aware tooling
 
 The Language Server understands many statically visible receiver types,
@@ -172,12 +224,6 @@ frontend.
 Keep the self-hosted implementation at practical parity where it protects the
 language, but do not duplicate every native optimization unless it advances a
 specific bootstrap or language-design goal.
-
-### Package distribution
-
-`facet` installs git-pinned packages and writes a lockfile. A hosted registry,
-semantic-version solver, signing model, and multi-version dependency graph are
-deferred until real package distribution needs justify their operational cost.
 
 ### Portability
 
