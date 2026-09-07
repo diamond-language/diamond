@@ -1,12 +1,14 @@
 # Diamond
 
-Diamond is a personal research programming language with Ruby-like syntax,
-gradual typing, and a custom register-bytecode virtual machine written in C23.
+Diamond is a Ruby-inspired programming language with gradual typing and a
+custom register-bytecode virtual machine written in C23.
 
 It is a coherent, executable language rather than a compatibility project:
 Ruby supplies familiar syntax and object-model ideas, but matching Ruby's edge
-cases, standard library, or ecosystem is explicitly not a goal. Diamond
-currently targets Linux on the development machine with GCC 16.
+cases, standard library, or ecosystem is explicitly not a goal. CI validates
+Linux across two libcs (Fedora and Ubuntu on glibc, Alpine on musl) and both
+GCC and Clang -- see [docs/portability.md](docs/portability.md) for the full
+matrix and known limitations.
 
 ```ruby
 class Counter
@@ -85,7 +87,7 @@ See [CHANGELOG.md](CHANGELOG.md) for completed capability milestones and
 
 Required system dependencies:
 
-- GCC 16 (or Clang, see below) with C23 support;
+- GCC 15+ or Clang 19+ (see below) with C23 support;
 - OpenSSL development headers and libraries;
 - SQLite3, PostgreSQL (`libpq`), and MariaDB/MySQL client development
   headers and libraries;

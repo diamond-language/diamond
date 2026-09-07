@@ -6,6 +6,19 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- The Language Server now resolves call-chain receivers through
+  unannotated single-expression functions/methods (`def make_branch() =
+  Branch.new()` used as `make_branch().leaf()`), not just explicitly
+  `-> Type`-annotated ones -- inferred the same way an unannotated
+  block's own return type already was, kept in a separate compiler field
+  from real type-checking so this is a pure, zero-risk tooling
+  improvement. See docs/lsp.md and docs/roadmap.md.
+- Fixed the self-hosted lexer/parser's `>>` (shift right) support --
+  never implemented at all, silently lexing as two `greater` tokens;
+  found by the differential test suite, not by auditing.
+
 ## 0.2.0 development milestones
 
 ### Language
