@@ -11,14 +11,21 @@ module Dials
     end
 
     def get(pattern: String, handler: Callable[3], filters: Array = [], name = nil)
-      @routes << {"verb": "GET", "segments": pattern.split("/"), "handler": handler, "filters": filters, "name": name}
-      self
+      self.register("GET", pattern, handler, filters, name)
     end
 
     def post(pattern: String, handler: Callable[3], filters: Array = [], name = nil)
-      @routes << {"verb": "POST", "segments": pattern.split("/"), "handler": handler, "filters": filters, "name": name}
+      self.register("POST", pattern, handler, filters, name)
+    end
+
+    private
+
+    def register(verb: String, pattern: String, handler: Callable[3], filters: Array, name)
+      @routes << {"verb": verb, "segments": pattern.split("/"), "handler": handler, "filters": filters, "name": name}
       self
     end
+
+    public
 
     # Every registered route, in registration order -- lets an external
     # tool (Dials::PathHelpers' own generator script, in whichever app
@@ -56,26 +63,16 @@ module Dials
       path_segments = path_only.split("/")
       method = request["method"]
 
-      matched_handler = nil
-      matched_captures = nil
-      matched_filters = nil
-      index = 0
-      while index < @routes.length() && matched_handler == nil
-        route = @routes[index]
-        if route["verb"] == method
-          captures = self.match_segments(route["segments"], path_segments)
-          if captures != nil
-            matched_handler = route["handler"]
-            matched_captures = captures
-            matched_filters = route["filters"]
-          end
-        end
-        index += 1
+      matched_route = @routes.find() do |route|
+        route["verb"] == method && self.match_segments(route["segments"], path_segments) != nil
       end
 
-      if matched_handler == nil
+      if matched_route == nil
         return Response.not_found(path_only)
       end
+      matched_handler = matched_route["handler"]
+      matched_captures = self.match_segments(matched_route["segments"], path_segments)
+      matched_filters = matched_route["filters"]
 
       # Path params win over a same-named query/body one -- applied after,
       # onto the same Hash Params.parse already built.

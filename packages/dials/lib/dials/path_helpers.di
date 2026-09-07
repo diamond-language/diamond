@@ -32,9 +32,7 @@ module Dials
       segments = route["segments"]
       params = []
       template_parts = []
-      index = 0
-      while index < segments.length()
-        segment = segments[index]
+      segments.each() do |segment|
         if segment.length() > 0 && segment[0] == ":"
           param_name = segment.slice(1, segment.length() - 1)
           params.push(param_name)
@@ -42,7 +40,6 @@ module Dials
         else
           template_parts.push(segment)
         end
-        index += 1
       end
       path_template = template_parts.join("/")
       if path_template == ""
@@ -61,15 +58,12 @@ module Dials
     def self.generate_source(routes: Array)
       seen = {}
       lines = ["# GENERATED FILE -- do not hand-edit; regenerate via", "# generate_route_helpers.di (see compile_routes.sh).", ""]
-      index = 0
-      while index < routes.length()
-        route = routes[index]
+      routes.each() do |route|
         name = route["name"]
         if name != nil && seen[name] == nil
           seen[name] = true
           lines.push(PathHelpers.function_source(route))
         end
-        index += 1
       end
       lines.join("\n") + "\n"
     end

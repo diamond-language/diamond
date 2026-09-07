@@ -17,7 +17,7 @@
 # already did before this moved here from its own lib/helpers/url.di.
 def url_encode(text)
   hex_digits = "0123456789ABCDEF"
-  result = ""
+  result = StringBuilder.new()
   index = 0
   while index < text.length()
     ch = text.slice(index, 1)
@@ -25,15 +25,15 @@ def url_encode(text)
     is_unreserved = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ||
       (code >= 48 && code <= 57) || ch == "-" || ch == "_" || ch == "." || ch == "~"
     if is_unreserved
-      result = "#{result}#{ch}"
+      result.append(ch)
     elsif ch == " "
-      result = "#{result}+"
+      result.append("+")
     else
       high = code / 16
       low = code % 16
-      result = "#{result}%#{hex_digits.slice(high, 1)}#{hex_digits.slice(low, 1)}"
+      result.append("%").append(hex_digits.slice(high, 1)).append(hex_digits.slice(low, 1))
     end
     index += 1
   end
-  result
+  result.to_s()
 end
