@@ -302,18 +302,12 @@ module Arel
       params = []
       sql = self.render_ctes(query, params)
       @query = query
-      projections = []
-      index = 0
-      while index < query.projections().length()
-        projections.push(visitor.render_expression(query.projections()[index], params))
-        index += 1
+      projections = query.projections().map() do |projection|
+        visitor.render_expression(projection, params)
       end
       table_sql = self.render_source(query, params)
-      index = 0
-      while index < query.joins().length()
-        join = query.joins()[index]
+      query.joins().each() do |join|
         table_sql += " " + visitor.render_join(join, params)
-        index += 1
       end
       sql = sql + "SELECT "
       if query.distinct_value()
@@ -321,41 +315,29 @@ module Arel
       end
       sql = sql + projections.join(", ") + " FROM #{table_sql}"
 
-      predicates = []
-      index = 0
-      while index < query.predicates().length()
-        predicates.push(visitor.render_expression(query.predicates()[index], params))
-        index += 1
+      predicates = query.predicates().map() do |predicate|
+        visitor.render_expression(predicate, params)
       end
       if predicates.length() > 0
         sql = sql + " WHERE " + predicates.join(" AND ")
       end
 
-      groups = []
-      index = 0
-      while index < query.groups().length()
-        groups.push(visitor.render_expression(query.groups()[index], params))
-        index += 1
+      groups = query.groups().map() do |group|
+        visitor.render_expression(group, params)
       end
       if groups.length() > 0
         sql = sql + " GROUP BY " + groups.join(", ")
       end
 
-      havings = []
-      index = 0
-      while index < query.havings().length()
-        havings.push(visitor.render_expression(query.havings()[index], params))
-        index += 1
+      havings = query.havings().map() do |having|
+        visitor.render_expression(having, params)
       end
       if havings.length() > 0
         sql = sql + " HAVING " + havings.join(" AND ")
       end
 
-      orderings = []
-      index = 0
-      while index < query.orderings().length()
-        orderings.push(visitor.render_expression(query.orderings()[index], params))
-        index += 1
+      orderings = query.orderings().map() do |ordering|
+        visitor.render_expression(ordering, params)
       end
       if orderings.length() > 0
         sql = sql + " ORDER BY " + orderings.join(", ")
@@ -381,11 +363,13 @@ module Arel
       if expressions.length() > 0
         self.require_extension("returning clauses")
       end
-      rendered = []
-      index = 0
-      while index < expressions.length()
-        rendered.push(self.render_expression(expressions[index], params))
-        index += 1
+      # `self` inside a `do...end` block doesn't resolve to this method's
+      # own receiver (see `render`'s own `visitor = self` above, the
+      # established workaround throughout this file) -- captured into a
+      # local first.
+      visitor = self
+      rendered = expressions.map() do |expression|
+        visitor.render_expression(expression, params)
       end
       if rendered.length() == 0
         ""

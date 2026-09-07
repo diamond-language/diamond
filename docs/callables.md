@@ -49,6 +49,18 @@ all for a zero-arity block. A block captures every local visible at the
 point it's written, the same eager, unconditional capture nested `def`s
 use — not just the ones its body actually references.
 
+**`self` is not one of those captured locals.** Inside a `do ... end`
+block written in an instance method, `self` does not refer to that
+method's own receiver — unlike a named nested `closure` (see "Classes
+and modules"'s own `closure` section), which does capture `self`
+correctly even when passed elsewhere as a Callable. `[1].each() do |x|
+self.foo() end` inside an instance method is a bug, not a shorter
+`closure`: capture `self` into an ordinary local first (`instance =
+self` before the block, `instance.foo()` inside it — a real,
+established pattern, not a workaround invented for this) or use a
+named `closure` instead of an anonymous block when the body needs
+`self`.
+
 A function or method can bind its optional trailing block with `&block`.
 Inside that lexical body, `yield(args...)` invokes the bound Callable and
 `block_given?()` reports whether a block was supplied. `yield` accepts zero or
