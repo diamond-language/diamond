@@ -238,6 +238,14 @@ authoritative fine-grained record.
   field being the main case) to one call. See `packages/div/README.md`'s
   "Runtime helpers".
 
+### Documentation
+
+- Split `docs/` into public reference docs and a new `docs/internal/`
+  (design/VM/GC rationale, fuzzing, a historical refactor audit) --
+  implementation background for maintainers, not needed to write or run
+  Diamond programs. README's own doc index no longer interleaves the
+  two; every cross-reference repo-wide updated to match.
+
 ## 0.2.0 development milestones
 
 ### Language
