@@ -10,9 +10,20 @@ authoritative fine-grained record.
 
 - Added a standalone semver library (`tools/semver.c`/`tools/semver.h`):
   parsing, precedence ordering, `^`/`~`/comparator range syntax,
-  satisfaction checks, and range intersection -- the first slice of
-  0.3's real dependency resolution for `facet` (see docs/roadmap.md).
-  Not yet wired into `facet` itself.
+  satisfaction checks, and range intersection.
+- `facet` dependencies now support a `version` constraint (`^1.2.3`,
+  `~1.2.3`, `>=1.0.0 <2.0.0`, an exact `1.2.3`) as an alternative to a
+  pinned `tag`/`branch`/`commit`, resolved against a repository's own
+  git tags (still no hosted registry). Two requesters constraining the
+  same cut intersect instead of hard-conflicting, as long as some
+  version satisfies both; `facet.lock` records the resolved tag for
+  transparency. See docs/roadmap.md and docs/packages.md.
+- Fixed two real, previously-undiscovered bugs in `facet` found while
+  building it under a sanitizer for the first time: a crash on the very
+  first manifest read (uninitialized memory passed to the compiler,
+  pre-existing, unrelated to the version-resolution work above) and a
+  memory leak on every manifest/lockfile read (harmless in practice --
+  `facet` is short-lived -- but real).
 
 ## 0.2.1
 

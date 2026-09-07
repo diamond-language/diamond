@@ -258,4 +258,134 @@ fi
 grep -q "usage: facet" "$error_file"
 rm -f "$error_file"
 
-echo "23 facet tests passed"
+# --- version constraint: resolves to the highest tag satisfying the
+# constraint, not just the newest commit or the first tag found ---
+
+mkdir semver_repo
+echo 'def semver_value() = 1' > semver_repo/semver.di
+echo '{"name": "semver"}' > semver_repo/diamond.cut
+commit_repo semver_repo
+(cd semver_repo && git tag v1.0.0)
+echo 'def semver_value() = 2' > semver_repo/semver.di
+(cd semver_repo && git add -A && git commit -q -m "1.2.0" && git tag v1.2.0)
+echo 'def semver_value() = 3' > semver_repo/semver.di
+(cd semver_repo && git add -A && git commit -q -m "2.0.0" && git tag v2.0.0)
+
+mkdir project9
+cat > project9/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^1.0.0"}}}
+EOF
+(cd project9 && "$facet" install >/dev/null)
+actual="$(cd project9 && "$diamond" -e 'require_cut "semver"
+semver_value()')"
+[[ "$actual" == "2" ]]
+grep -q '"version": "v1.2.0"' project9/facet.lock
+
+# --- compatible version constraints from two different requesters
+# intersect instead of hard-conflicting ---
+
+mkdir uses_semver_a_repo
+printf 'require_cut "semver"\ndef a_value() = semver_value()\n' > uses_semver_a_repo/uses_semver_a.di
+cat > uses_semver_a_repo/diamond.cut <<EOF
+{"name": "uses_semver_a", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <2.0.0"}}}
+EOF
+commit_repo uses_semver_a_repo
+(cd uses_semver_a_repo && git tag v1.0.0)
+
+mkdir project10
+cat > project10/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "version": "^1.2.0"}}}
+EOF
+(cd project10 && "$facet" install >/dev/null)
+actual="$(cd project10 && "$diamond" -e 'require_cut "uses_semver_a"
+a_value()')"
+[[ "$actual" == "2" ]]
+
+# --- incompatible version constraints hard-error, naming both requesters
+# and both ranges, without ever cloning a version ---
+
+mkdir uses_semver_b_repo
+printf 'require_cut "semver"\n' > uses_semver_b_repo/uses_semver_b.di
+cat > uses_semver_b_repo/diamond.cut <<EOF
+{"name": "uses_semver_b", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^2.0.0"}}}
+EOF
+commit_repo uses_semver_b_repo
+(cd uses_semver_b_repo && git tag v1.0.0)
+
+mkdir project11
+cat > project11/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"uses_semver_b": {"git": "$work/uses_semver_b_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "version": "^1.0.0"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project11 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly succeeded on incompatible version constraints" >&2
+    exit 1
+fi
+grep -q "conflicting dependency 'semver'" "$error_file"
+grep -q "no version can satisfy both" "$error_file"
+rm -f "$error_file"
+
+# --- mixing an exact ref and a version constraint for the same
+# dependency is a hard error, in both discovery orders ---
+
+mkdir project12
+cat > project12/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "tag": "v1.0.0"}, "uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project12 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly succeeded mixing an exact ref and a version constraint" >&2
+    exit 1
+fi
+grep -q "mixing an exact ref and a version constraint" "$error_file"
+rm -f "$error_file"
+
+mkdir project13
+cat > project13/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"uses_semver_a": {"git": "$work/uses_semver_a_repo", "tag": "v1.0.0"}, "semver": {"git": "$work/semver_repo", "tag": "v1.0.0"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project13 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly succeeded mixing a version constraint and an exact ref" >&2
+    exit 1
+fi
+grep -q "mixing an exact ref and a version constraint" "$error_file"
+rm -f "$error_file"
+
+# --- a malformed version constraint is rejected at manifest-parse time,
+# before any cloning happens ---
+
+mkdir project14
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "version": "not-a-constraint"}}}' > project14/diamond.cut
+error_file="$(mktemp)"
+if (cd project14 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly accepted an invalid version constraint" >&2
+    exit 1
+fi
+grep -q "invalid 'version' constraint" "$error_file"
+rm -f "$error_file"
+
+echo '{"name": "myapp", "dependencies": {"x": {"git": "url", "tag": "a", "version": "^1.0.0"}}}' > project14/diamond.cut
+error_file="$(mktemp)"
+if (cd project14 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly accepted both a tag and a version key" >&2
+    exit 1
+fi
+grep -q "must specify exactly one of tag/branch/commit/version" "$error_file"
+rm -f "$error_file"
+
+# --- no tag satisfies the constraint at all ---
+
+mkdir project15
+cat > project15/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^9.0.0"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project15 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly succeeded with no tag satisfying the constraint" >&2
+    exit 1
+fi
+grep -q "no tag on '$work/semver_repo' satisfies" "$error_file"
+rm -f "$error_file"
+
+echo "33 facet tests passed"

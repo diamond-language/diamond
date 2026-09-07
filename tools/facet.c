@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include "compiler.h"
+#include "semver.h"
 #include "vm.h"
 
 #include <errno.h>
@@ -23,8 +24,13 @@ enum {
 typedef struct FacetDependency {
     char name[FACET_MAX_NAME];
     char git[FACET_MAX_URL];
+    /* Exactly one of (ref, ref_is_commit) or (uses_version, version_text)
+     * is meaningful, set at manifest-parse time by parse_dependencies --
+     * see docs/roadmap.md's "Real semver dependency resolution". */
     char ref[FACET_MAX_REF];
     bool ref_is_commit;
+    bool uses_version;
+    char version_text[FACET_MAX_REF];
 } FacetDependency;
 
 typedef struct FacetManifest {
@@ -38,8 +44,18 @@ typedef struct FacetManifest {
 typedef struct FacetResolved {
     char name[FACET_MAX_NAME];
     char git[FACET_MAX_URL];
+    /* The literal tag/branch/commit an exact-ref dependency asked for,
+     * or the tag a version-constrained one resolved to (same as
+     * `version` below in that case) -- "" only ever for a lockfile-
+     * driven install, which never repopulates this (see parse_lockfile). */
     char ref[FACET_MAX_REF];
     char commit[FACET_MAX_COMMIT];
+    /* "" unless this was resolved via a `version` constraint (as
+     * opposed to an exact tag/branch/commit) -- the resolved tag text,
+     * kept separate from `ref` so a later conflict check can tell "this
+     * came from a range" apart from "this came from an exact ref" at a
+     * glance, and so the lockfile can record it for transparency. */
+    char version[FACET_MAX_REF];
     char required_by[FACET_MAX_NAME];
 } FacetResolved;
 
@@ -47,6 +63,38 @@ typedef struct FacetResolution {
     FacetResolved packages[FACET_MAX_DEPENDENCIES];
     size_t count;
 } FacetResolution;
+
+/* A cut name seen with a `version` constraint from at least one
+ * requester, not yet resolved to one concrete tag -- see
+ * resolve_full_graph's own comment for why this can't just resolve
+ * immediately the way an exact-ref dependency does. */
+typedef struct FacetPendingSemver {
+    char name[FACET_MAX_NAME];
+    char git[FACET_MAX_URL];
+    SemverConstraint constraint;
+    /* The requester whose constraint is currently reflected in
+     * `constraint` -- if several requesters have contributed via
+     * intersection, this is just the most recent one, kept for error
+     * messages rather than tracking the full history. */
+    char first_requester[FACET_MAX_NAME];
+} FacetPendingSemver;
+
+typedef struct FacetPendingTable {
+    FacetPendingSemver entries[FACET_MAX_DEPENDENCIES];
+    size_t count;
+} FacetPendingTable;
+
+/* A cloned dependency's own diamond.cut, still needing its own
+ * dependencies walked -- see resolve_full_graph's own comment. */
+typedef struct FacetWorkItem {
+    char path[FACET_MAX_PATH];
+    char cut_name[FACET_MAX_NAME];
+} FacetWorkItem;
+
+typedef struct FacetWorkQueue {
+    FacetWorkItem items[FACET_MAX_DEPENDENCIES];
+    size_t count;
+} FacetWorkQueue;
 
 /* DiamondProgram/DiamondVm are heap-allocated everywhere below, never
  * stack-declared: sizeof(DiamondProgram) is over 3MB (see the same note
@@ -61,8 +109,8 @@ typedef struct FacetProgram {
 static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
-    const char *required_by, FacetResolution *resolution,
-    const char *scratch_root, char *error, size_t error_size);
+    const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
+    FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size);
 
 static bool file_exists(const char *path) {
     struct stat info;
@@ -258,6 +306,82 @@ static bool git_rev_parse_head(const char *repository, char *out, size_t out_siz
                            out_size, error, error_size);
 }
 
+/* Lists every tag on `url`'s remote whose name parses as a semver
+ * version (with or without a leading v/V -- see tools/semver.h),
+ * writing each matching tag's own original name (not normalized) into
+ * tags[0..*out_count). This is the *entire* "version database" a
+ * version-constrained dependency ever consults -- there is no registry
+ * (docs/roadmap.md), so a repository's own tags are the only source of
+ * "what versions exist." `--refs` excludes the `^{}` peeled-commit
+ * duplicate entry an annotated tag would otherwise also produce. */
+static bool git_list_semver_tags(const char *url, char tags[][FACET_MAX_REF],
+        size_t capacity, size_t *out_count, char *error, size_t error_size) {
+    char *const argv[] = {(char *)"git", (char *)"ls-remote", (char *)"--tags",
+        (char *)"--refs", (char *)"--", (char *)url, nullptr};
+    /* Heap, not stack -- generous enough that a real repository's tag
+     * list (even a large one) fits comfortably; ls-remote lines are
+     * short and fixed-width-ish, so this is not a tight bound. */
+    const size_t output_capacity = 1u << 21;
+    char *output = malloc(output_capacity);
+    if (output == nullptr) {
+        (void)snprintf(error, error_size, "out of memory listing tags for '%s'", url);
+        return false;
+    }
+    char context[FACET_MAX_PATH];
+    (void)snprintf(context, sizeof context, "listing tags for '%s'", url);
+    if (!run_git_capture(argv, context, output, output_capacity, error, error_size)) {
+        free(output);
+        return false;
+    }
+    *out_count = 0;
+    static const char prefix[] = "refs/tags/";
+    char *line_cursor = output;
+    while (*line_cursor != '\0') {
+        char *line_end = strchr(line_cursor, '\n');
+        if (line_end != nullptr) *line_end = '\0';
+        char *tab = strchr(line_cursor, '\t');
+        if (tab != nullptr) {
+            const char *ref_name = tab + 1;
+            if (strncmp(ref_name, prefix, sizeof prefix - 1) == 0) {
+                const char *tag_name = ref_name + (sizeof prefix - 1);
+                Semver probe;
+                if (semver_parse(tag_name, &probe) && *out_count < capacity) {
+                    (void)snprintf(tags[*out_count], FACET_MAX_REF, "%s", tag_name);
+                    (*out_count)++;
+                }
+            }
+        }
+        if (line_end == nullptr) break;
+        line_cursor = line_end + 1;
+    }
+    free(output);
+    return true;
+}
+
+/* Picks the highest tag in tags[0..tag_count) that satisfies
+ * `constraint` -- deterministic, no backtracking (docs/roadmap.md's
+ * own "no real backtracking needed for a first version"). Returns
+ * false if none satisfy it. */
+static bool pick_best_matching_tag(char tags[][FACET_MAX_REF], size_t tag_count,
+        const SemverConstraint *constraint, char *out_tag, size_t out_tag_size) {
+    bool found = false;
+    Semver best_version = {0};
+    size_t best_index = 0;
+    for (size_t index = 0; index < tag_count; index++) {
+        Semver candidate;
+        if (!semver_parse(tags[index], &candidate)) continue;
+        if (!semver_satisfies(&candidate, constraint)) continue;
+        if (!found || semver_compare(&candidate, &best_version) > 0) {
+            found = true;
+            best_version = candidate;
+            best_index = index;
+        }
+    }
+    if (!found) return false;
+    (void)snprintf(out_tag, out_tag_size, "%s", tags[best_index]);
+    return true;
+}
+
 /* --- manifest/lockfile reading: both are just Diamond Hash literals,
  * compiled and run standalone exactly the way src/loader.c's
  * validate_cut_manifest already evaluates a cut's own diamond.cut -
@@ -297,7 +421,26 @@ static bool hash_find_string(const DiamondHash *hash, const char *key, char *out
 static bool facet_run_hash(const char *path, FacetProgram *owner,
                            const DiamondHash **out_hash, char *error,
                            size_t error_size) {
-    owner->program = malloc(sizeof *owner->program);
+    /* calloc, not malloc: diamond_compile_impl's own first act is
+     * diamond_program_free(program) (src/compiler.c), so it can be
+     * called again to recompile an already-populated program -- that's
+     * only safe when `program` starts out already valid (compiler.h's
+     * own diamond_program_init doc comment: "Zeroes *program..."), not
+     * freshly malloc'd garbage. Every other real caller gets this for
+     * free (a `static`/global DiamondProgram is zero-initialized by C
+     * itself, or it's already been through a prior diamond_program_
+     * init/diamond_compile call) -- this is the one heap-allocated,
+     * first-use case, so it has to ask for the zero-fill explicitly.
+     * Found via a from-scratch ASan/UBSan build of facet (never done
+     * before this file existed) crashing (SEGV freeing garbage
+     * pointers, UBSan flagging a garbage `bool`) on the very first
+     * diamond_compile call, reproduced identically on facet.c before
+     * this commit's own changes -- pre-existing, unrelated to this
+     * commit's actual feature work. diamond_vm_init has no equivalent
+     * issue: it unconditionally overwrites every field via a struct-
+     * literal assignment rather than reading anything first, so `vm`
+     * staying a plain malloc is fine. */
+    owner->program = calloc(1, sizeof *owner->program);
     owner->vm = malloc(sizeof *owner->vm);
     owner->vm_initialized = false;
     if (owner->program == nullptr || owner->vm == nullptr) {
@@ -337,6 +480,17 @@ static bool facet_run_hash(const char *path, FacetProgram *owner,
 
 static void facet_program_free(FacetProgram *owner) {
     if (owner->vm_initialized) diamond_vm_free(owner->vm);
+    /* diamond_program_free releases the program's own internal dynamic
+     * arrays (bytecode, constants, strings, type sets, and every
+     * compiled function's own copies of those) -- a second pre-existing
+     * bug found by the same from-scratch ASan/UBSan build that caught
+     * the calloc issue above: this only ever freed the outer
+     * `*owner->program` block itself, leaking everything diamond_compile
+     * allocated inside it on every single manifest/lockfile read.
+     * Harmless in practice (facet is a short-lived CLI process; the OS
+     * reclaims everything at exit either way), but a real, fixable leak
+     * caught by the same investigation, not a new risk introduced by it. */
+    diamond_program_free(owner->program);
     free(owner->program);
     free(owner->vm);
 }
@@ -401,13 +555,33 @@ static bool parse_dependencies(const DiamondHash *dependencies,
             ref_keys++;
             ref_is_commit = true;
         }
-        if (ref_keys != 1 || !is_safe_field(dependency->ref)) {
+        const bool has_version = hash_find_string(spec, "version", dependency->version_text,
+            sizeof dependency->version_text);
+        if (has_version) {
+            ref_keys++;
+            if (!is_safe_field(dependency->version_text)) {
+                (void)snprintf(error, error_size,
+                    "dependency '%s' has an invalid 'version' constraint",
+                    dependency->name);
+                return false;
+            }
+            SemverConstraint probe;
+            if (!semver_constraint_parse(dependency->version_text, &probe)) {
+                (void)snprintf(error, error_size,
+                    "dependency '%s' has an invalid 'version' constraint '%s'",
+                    dependency->name, dependency->version_text);
+                return false;
+            }
+        }
+        if (ref_keys != 1 || (!has_version && !is_safe_field(dependency->ref))) {
             (void)snprintf(error, error_size,
-                "dependency '%s' must specify exactly one of tag/branch/commit",
+                "dependency '%s' must specify exactly one of tag/branch/commit/version",
                 dependency->name);
             return false;
         }
-        dependency->ref_is_commit = ref_is_commit;
+        dependency->uses_version = has_version;
+        dependency->ref_is_commit = !has_version && ref_is_commit;
+        if (has_version) dependency->ref[0] = '\0';
         manifest->dependency_count++;
     }
     return true;
@@ -493,6 +667,12 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
         }
         resolved->ref[0] = '\0';
         resolved->required_by[0] = '\0';
+        /* Purely informational if present -- `facet install` from a
+         * lockfile never re-resolves, so nothing here reads it back;
+         * `facet update` always re-resolves from diamond.cut instead of
+         * consulting the old lockfile at all (see run_install_or_update). */
+        resolved->version[0] = '\0';
+        (void)hash_find_string(entry, "version", resolved->version, sizeof resolved->version);
         resolution->count++;
     }
     facet_program_free(&owner);
@@ -515,8 +695,13 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
     fputs("{", file);
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
-        fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\"}, ",
-                resolved->name, resolved->git, resolved->commit);
+        if (resolved->version[0] != '\0') {
+            fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}, ",
+                    resolved->name, resolved->git, resolved->commit, resolved->version);
+        } else {
+            fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\"}, ",
+                    resolved->name, resolved->git, resolved->commit);
+        }
     }
     fputs("}\n", file);
     const bool ok = fclose(file) == 0;
@@ -527,23 +712,92 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
     return ok;
 }
 
-/* --- dependency resolution: one recursive walk, since there's no
- * registry to consult metadata from - discovering a dependency's own
- * dependencies requires a clone of it first. A name seen twice with the
- * same (git, ref) is idempotent (also what makes a genuine cycle
- * terminate safely, with no separate cycle-detection code: the second
- * time a cycle reaches an already-resolved name, it just stops). A name
- * seen twice with different (git, ref) is a hard conflict - the
- * language's flat single-namespace compilation model (see
- * docs/packages.md) means there is no such thing as "both versions,"
- * so this can never be silently resolved. --- */
+/* --- dependency resolution ---
+ *
+ * An exact-ref dependency (tag/branch/commit) resolves exactly as
+ * before: clone it immediately, and if it has its own diamond.cut,
+ * queue that manifest's own dependencies for the same treatment. A
+ * name seen twice with the same (git, ref) is idempotent (also what
+ * makes a genuine cycle terminate safely, with no separate cycle-
+ * detection code: the second time a cycle reaches an already-resolved
+ * name, it just stops). A name seen twice with different (git, ref) is
+ * a hard conflict -- the language's flat single-namespace compilation
+ * model (see docs/packages.md) means there is no such thing as "both
+ * versions," so this can never be silently resolved.
+ *
+ * A `version`-constrained dependency can't resolve immediately the
+ * same way: there is no registry, so the only way to discover a cut's
+ * *own* dependencies is to clone some concrete tag of it first -- but
+ * which tag to clone depends on every requester's constraint, and
+ * other requesters may not be discovered until *later* in the walk
+ * (including from manifests this same resolution hasn't cloned yet).
+ * So a version-constrained name is instead parked in a "pending" table,
+ * accumulating the intersection of every constraint seen for it, and
+ * only actually resolved (tags listed, best match picked, cloned) once
+ * the exact-ref-reachable part of the graph runs out of new work --
+ * at which point resolving one pending name can itself discover more
+ * exact-ref work (queued) or tighten/conflict with other still-pending
+ * names, so resolve_full_graph alternates between draining the queue
+ * and resolving one pending name until both are empty. Mixing an
+ * exact ref and a version constraint for the same name is a hard
+ * error in both directions (see handle_exact_dependency/
+ * handle_version_dependency) -- "no principled way to compare an
+ * arbitrary commit against a range's intent" (docs/roadmap.md) --
+ * except when the side resolved first happens to already satisfy the
+ * other's own constraint, in which case there is nothing to reconcile. */
 
-static bool resolve_dependency(const FacetDependency *dependency,
-    const char *required_by, FacetResolution *resolution,
-    const char *scratch_root, char *error, size_t error_size) {
+static bool find_resolved(FacetResolution *resolution, const char *name,
+        FacetResolved **out) {
     for (size_t index = 0; index < resolution->count; index++) {
-        FacetResolved *existing = &resolution->packages[index];
-        if (strcmp(existing->name, dependency->name) != 0) continue;
+        if (strcmp(resolution->packages[index].name, name) == 0) {
+            *out = &resolution->packages[index];
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool find_pending(FacetPendingTable *pending, const char *name,
+        FacetPendingSemver **out) {
+    for (size_t index = 0; index < pending->count; index++) {
+        if (strcmp(pending->entries[index].name, name) == 0) {
+            *out = &pending->entries[index];
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool work_queue_push(FacetWorkQueue *queue, const char *path,
+        const char *cut_name, char *error, size_t error_size) {
+    if (queue->count == FACET_MAX_DEPENDENCIES) {
+        (void)snprintf(error, error_size, "too many pending manifests (max %d)",
+                       FACET_MAX_DEPENDENCIES);
+        return false;
+    }
+    (void)snprintf(queue->items[queue->count].path, sizeof queue->items[queue->count].path,
+                   "%s", path);
+    (void)snprintf(queue->items[queue->count].cut_name,
+                   sizeof queue->items[queue->count].cut_name, "%s", cut_name);
+    queue->count++;
+    return true;
+}
+
+static bool handle_exact_dependency(const FacetDependency *dependency,
+        const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
+        FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
+    FacetResolved *existing;
+    if (find_resolved(resolution, dependency->name, &existing)) {
+        if (existing->version[0] != '\0') {
+            (void)snprintf(error, error_size,
+                "conflicting dependency '%s': '%s' wants an exact %s@%s, but it "
+                "was already resolved to version %s via a semver constraint "
+                "from '%s' -- mixing an exact ref and a version constraint for "
+                "the same dependency is not supported",
+                dependency->name, required_by, dependency->git, dependency->ref,
+                existing->version, existing->required_by);
+            return false;
+        }
         if (strcmp(existing->git, dependency->git) == 0 &&
             strcmp(existing->ref, dependency->ref) == 0) {
             return true;
@@ -552,6 +806,19 @@ static bool resolve_dependency(const FacetDependency *dependency,
             "conflicting dependency '%s': '%s' wants %s@%s, but '%s' wants %s@%s",
             dependency->name, required_by, dependency->git, dependency->ref,
             existing->required_by, existing->git, existing->ref);
+        return false;
+    }
+    FacetPendingSemver *pending_existing;
+    if (find_pending(pending, dependency->name, &pending_existing)) {
+        char range_text[128];
+        (void)semver_constraint_format(&pending_existing->constraint, range_text,
+                                       sizeof range_text);
+        (void)snprintf(error, error_size,
+            "conflicting dependency '%s': '%s' wants an exact %s@%s, but '%s' "
+            "already constrained it to version %s -- mixing an exact ref and a "
+            "version constraint for the same dependency is not supported",
+            dependency->name, required_by, dependency->git, dependency->ref,
+            pending_existing->first_requester, range_text);
         return false;
     }
     if (resolution->count == FACET_MAX_DEPENDENCIES) {
@@ -583,6 +850,7 @@ static bool resolve_dependency(const FacetDependency *dependency,
     (void)snprintf(resolved->git, sizeof resolved->git, "%s", dependency->git);
     (void)snprintf(resolved->ref, sizeof resolved->ref, "%s", dependency->ref);
     (void)snprintf(resolved->commit, sizeof resolved->commit, "%s", commit);
+    resolved->version[0] = '\0';
     (void)snprintf(resolved->required_by, sizeof resolved->required_by, "%s",
                    required_by);
 
@@ -595,30 +863,222 @@ static bool resolve_dependency(const FacetDependency *dependency,
         return false;
     }
     if (file_exists(nested_manifest_path)) {
-        FacetManifest nested;
-        if (!parse_manifest(nested_manifest_path, &nested, error, error_size)) {
-            return false;
-        }
-        if (strcmp(nested.name, dependency->name) != 0) {
+        return work_queue_push(queue, nested_manifest_path, dependency->name, error, error_size);
+    }
+    return true;
+}
+
+static bool handle_version_dependency(const FacetDependency *dependency,
+        const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
+        char *error, size_t error_size) {
+    SemverConstraint constraint;
+    if (!semver_constraint_parse(dependency->version_text, &constraint)) {
+        /* Already validated at manifest-parse time (parse_dependencies) --
+         * unreachable in practice, but fail clearly rather than silently
+         * misbehaving if that ever drifts. */
+        (void)snprintf(error, error_size,
+            "dependency '%s' has an invalid version constraint '%s'",
+            dependency->name, dependency->version_text);
+        return false;
+    }
+    FacetResolved *existing;
+    if (find_resolved(resolution, dependency->name, &existing)) {
+        if (existing->version[0] == '\0') {
             (void)snprintf(error, error_size,
-                           "'%s' declares name '%s', expected '%s'",
-                           nested_manifest_path, nested.name, dependency->name);
+                "conflicting dependency '%s': '%s' wants version %s, but it was "
+                "already resolved to an exact %s@%s (required by '%s') -- "
+                "mixing an exact ref and a version constraint for the same "
+                "dependency is not supported",
+                dependency->name, required_by, dependency->version_text,
+                existing->git, existing->ref, existing->required_by);
             return false;
         }
-        if (!resolve_manifest_dependencies(&nested, dependency->name, resolution,
-                                           scratch_root, error, error_size)) {
+        Semver resolved_version;
+        if (semver_parse(existing->version, &resolved_version) &&
+            semver_satisfies(&resolved_version, &constraint)) {
+            return true; /* already-resolved version also satisfies this one */
+        }
+        (void)snprintf(error, error_size,
+            "conflicting dependency '%s': '%s' wants version %s, but it was "
+            "already resolved to version %s (required by '%s') before this "
+            "constraint was seen -- re-resolving an already-cloned dependency "
+            "is not supported yet",
+            dependency->name, required_by, dependency->version_text,
+            existing->version, existing->required_by);
+        return false;
+    }
+    FacetPendingSemver *pending_existing;
+    if (find_pending(pending, dependency->name, &pending_existing)) {
+        if (strcmp(pending_existing->git, dependency->git) != 0) {
+            (void)snprintf(error, error_size,
+                "conflicting dependency '%s': '%s' and '%s' point at different "
+                "git repositories ('%s' vs '%s')",
+                dependency->name, required_by, pending_existing->first_requester,
+                dependency->git, pending_existing->git);
+            return false;
+        }
+        SemverConstraint intersected;
+        if (!semver_constraint_intersect(&pending_existing->constraint, &constraint,
+                                         &intersected)) {
+            char existing_text[128], new_text[128];
+            (void)semver_constraint_format(&pending_existing->constraint, existing_text,
+                                           sizeof existing_text);
+            (void)semver_constraint_format(&constraint, new_text, sizeof new_text);
+            (void)snprintf(error, error_size,
+                "conflicting dependency '%s': '%s' wants %s, but '%s' wants %s "
+                "-- no version can satisfy both",
+                dependency->name, pending_existing->first_requester, existing_text,
+                required_by, new_text);
+            return false;
+        }
+        pending_existing->constraint = intersected;
+        (void)snprintf(pending_existing->first_requester, sizeof pending_existing->first_requester,
+                       "%s", required_by);
+        return true;
+    }
+    if (pending->count == FACET_MAX_DEPENDENCIES) {
+        (void)snprintf(error, error_size,
+                       "too many pending dependencies (max %d)", FACET_MAX_DEPENDENCIES);
+        return false;
+    }
+    FacetPendingSemver *new_entry = &pending->entries[pending->count++];
+    (void)snprintf(new_entry->name, sizeof new_entry->name, "%s", dependency->name);
+    (void)snprintf(new_entry->git, sizeof new_entry->git, "%s", dependency->git);
+    new_entry->constraint = constraint;
+    (void)snprintf(new_entry->first_requester, sizeof new_entry->first_requester, "%s", required_by);
+    return true;
+}
+
+static bool resolve_manifest_dependencies(const FacetManifest *manifest,
+    const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
+    FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
+    for (size_t index = 0; index < manifest->dependency_count; index++) {
+        const FacetDependency *dependency = &manifest->dependencies[index];
+        if (dependency->uses_version) {
+            if (!handle_version_dependency(dependency, required_by, resolution, pending,
+                                           error, error_size)) {
+                return false;
+            }
+        } else if (!handle_exact_dependency(dependency, required_by, resolution, pending,
+                                            queue, scratch_root, error, error_size)) {
             return false;
         }
     }
     return true;
 }
 
-static bool resolve_manifest_dependencies(const FacetManifest *manifest,
-    const char *required_by, FacetResolution *resolution,
-    const char *scratch_root, char *error, size_t error_size) {
-    for (size_t index = 0; index < manifest->dependency_count; index++) {
-        if (!resolve_dependency(&manifest->dependencies[index], required_by,
-                                resolution, scratch_root, error, error_size)) {
+static bool process_work_queue(FacetWorkQueue *queue, FacetResolution *resolution,
+        FacetPendingTable *pending, const char *scratch_root, char *error, size_t error_size) {
+    while (queue->count > 0) {
+        FacetWorkItem item = queue->items[0];
+        memmove(&queue->items[0], &queue->items[1],
+               (queue->count - 1) * sizeof queue->items[0]);
+        queue->count--;
+        FacetManifest nested;
+        if (!parse_manifest(item.path, &nested, error, error_size)) return false;
+        if (strcmp(nested.name, item.cut_name) != 0) {
+            (void)snprintf(error, error_size, "'%s' declares name '%s', expected '%s'",
+                           item.path, nested.name, item.cut_name);
+            return false;
+        }
+        if (!resolve_manifest_dependencies(&nested, item.cut_name, resolution, pending,
+                                           queue, scratch_root, error, error_size)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Resolves the single pending name at the front of the table: lists
+ * its repository's own semver tags, picks the highest one satisfying
+ * the (already fully intersected, as far as the graph explored so far
+ * shows) accumulated constraint, clones it, and queues its own
+ * diamond.cut if it has one. MAX_TAGS is a soft cap (a repository with
+ * more published semver tags than that has its oldest-discovered ones
+ * silently dropped from consideration) -- generous enough that this is
+ * not a realistic concern for any real package. */
+static bool resolve_one_pending(FacetPendingTable *pending, FacetResolution *resolution,
+        FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
+    FacetPendingSemver entry = pending->entries[0];
+    memmove(&pending->entries[0], &pending->entries[1],
+           (pending->count - 1) * sizeof pending->entries[0]);
+    pending->count--;
+
+    enum { MAX_TAGS = 4096 };
+    char (*tags)[FACET_MAX_REF] = malloc((size_t)MAX_TAGS * sizeof *tags);
+    if (tags == nullptr) {
+        (void)snprintf(error, error_size, "out of memory listing tags for '%s'", entry.name);
+        return false;
+    }
+    size_t tag_count = 0;
+    bool ok = git_list_semver_tags(entry.git, tags, MAX_TAGS, &tag_count, error, error_size);
+    char best_tag[FACET_MAX_REF] = {0};
+    if (ok) {
+        if (!pick_best_matching_tag(tags, tag_count, &entry.constraint, best_tag,
+                                    sizeof best_tag)) {
+            char range_text[128];
+            (void)semver_constraint_format(&entry.constraint, range_text, sizeof range_text);
+            (void)snprintf(error, error_size,
+                "no tag on '%s' satisfies %s (required by '%s') for dependency '%s'",
+                entry.git, range_text, entry.first_requester, entry.name);
+            ok = false;
+        }
+    }
+    free(tags);
+    if (!ok) return false;
+
+    if (resolution->count == FACET_MAX_DEPENDENCIES) {
+        (void)snprintf(error, error_size,
+                       "too many resolved dependencies (max %d)", FACET_MAX_DEPENDENCIES);
+        return false;
+    }
+    char scratch_path[FACET_MAX_PATH];
+    int written = snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root, entry.name);
+    if (written < 0 || (size_t)written >= sizeof scratch_path) {
+        (void)snprintf(error, error_size, "path too long while resolving '%s'", entry.name);
+        return false;
+    }
+    if (!git_clone(entry.git, best_tag, scratch_path, error, error_size)) return false;
+    char commit[FACET_MAX_COMMIT];
+    if (!git_rev_parse_head(scratch_path, commit, sizeof commit, error, error_size)) return false;
+
+    FacetResolved *resolved = &resolution->packages[resolution->count++];
+    (void)snprintf(resolved->name, sizeof resolved->name, "%s", entry.name);
+    (void)snprintf(resolved->git, sizeof resolved->git, "%s", entry.git);
+    (void)snprintf(resolved->ref, sizeof resolved->ref, "%s", best_tag);
+    (void)snprintf(resolved->commit, sizeof resolved->commit, "%s", commit);
+    (void)snprintf(resolved->version, sizeof resolved->version, "%s", best_tag);
+    (void)snprintf(resolved->required_by, sizeof resolved->required_by, "%s", entry.first_requester);
+
+    char nested_manifest_path[FACET_MAX_PATH];
+    written = snprintf(nested_manifest_path, sizeof nested_manifest_path,
+                       "%s/diamond.cut", scratch_path);
+    if (written < 0 || (size_t)written >= sizeof nested_manifest_path) {
+        (void)snprintf(error, error_size, "path too long while resolving '%s'", entry.name);
+        return false;
+    }
+    if (file_exists(nested_manifest_path)) {
+        return work_queue_push(queue, nested_manifest_path, entry.name, error, error_size);
+    }
+    return true;
+}
+
+static bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,
+        const char *scratch_root, char *error, size_t error_size) {
+    FacetPendingTable pending = {0};
+    FacetWorkQueue queue = {0};
+    if (!resolve_manifest_dependencies(manifest, manifest->name, resolution, &pending,
+                                       &queue, scratch_root, error, error_size)) {
+        return false;
+    }
+    if (!process_work_queue(&queue, resolution, &pending, scratch_root, error, error_size)) {
+        return false;
+    }
+    while (pending.count > 0) {
+        if (!resolve_one_pending(&pending, resolution, &queue, scratch_root, error, error_size)) {
+            return false;
+        }
+        if (!process_work_queue(&queue, resolution, &pending, scratch_root, error, error_size)) {
             return false;
         }
     }
@@ -693,8 +1153,7 @@ static int run_install_or_update(bool force_resolve) {
     } else {
         FacetManifest manifest;
         ok = parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
-             resolve_manifest_dependencies(&manifest, manifest.name, &resolution,
-                                           scratch_root, error, sizeof error) &&
+             resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);
     }
     if (ok) ok = install_resolution(&resolution, scratch_root, error, sizeof error);

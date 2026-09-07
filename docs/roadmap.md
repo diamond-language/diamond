@@ -9,61 +9,81 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
-### Real semver dependency resolution for `facet`
+### Real semver dependency resolution for `facet` (done)
 
-`facet` currently pins every dependency to an exact git ref (tag/branch/
-commit) and treats any two requesters wanting a different ref for the
-same cut as a hard, unresolvable error (docs/packages.md) -- even when
-both refs are semver-compatible. 0.3's headline ecosystem work is a real
-resolver, still with no hosted registry (cut identity stays a git URL;
-"resolving is fetching" stays true) since a git-tag-based resolver needs
-none of that operational cost:
+`facet` used to pin every dependency to an exact git ref (tag/branch/
+commit) and treat any two requesters wanting a different ref for the
+same cut as a hard, unresolvable error -- even when both refs were
+semver-compatible. 0.3's headline ecosystem work replaced that with a
+real resolver, still with no hosted registry (cut identity stays a git
+URL; "resolving is fetching" stays true) since a git-tag-based resolver
+needs none of that operational cost:
 
-- **Semver type (done)**: `tools/semver.c`/`tools/semver.h` --
+- **Semver type**: `tools/semver.c`/`tools/semver.h` --
   MAJOR.MINOR.PATCH[-prerelease][+build] parsing (strict semver.org
   grammar, no leading zeros, an optional leading `v`/`V` for real-world
   git tags) and precedence ordering, plus range/constraint syntax
-  (`^1.2.3`, `~1.2.3`, `>=1.0.0 <2.0.0`, an exact `1.2.3`),
-  satisfaction checks, and range intersection (for the resolver, next).
-  Standalone -- no dependency on `facet` itself or the Diamond compiler/
-  VM, since it's also generally useful on its own (a package's own
-  `diamond.cut` `version` field finally means something). Not yet wired
-  into `facet` itself -- see the manifest/resolver/lockfile bullets
-  below, all still open. `make test-semver` (80 cases) covers parsing,
-  ordering, ranges, satisfaction, and intersection.
-- **Version discovery without a registry**: a dependency's available
-  versions come from `git ls-remote --tags` against its own repo,
-  filtered to tags that parse as semver (with or without a leading `v`).
-  No index, no service, no caching layer beyond what git itself
-  already does.
-- **Manifest format**: a `dependencies` entry gains a `version` key as
-  an alternative to `tag`/`branch`/`commit` (mutually exclusive with
-  those, the same way today's own ref keys are mutually exclusive with
-  each other) -- `{"git": "...", "version": "^1.2.0"}`.
-- **The resolver**: collect every requester's own constraint for a given
-  cut name. If every constraint is an exact ref (today's model,
-  unchanged), they must all match exactly -- same hard-error-on-mismatch
-  behavior as today. If constraints are semver ranges, intersect them
-  and pick the *highest* available tag satisfying the intersection --
-  deterministic, no real backtracking needed for a first version. An
-  empty intersection is a hard error naming every requester and its own
-  range (a real improvement over today's bare "different ref" message).
-  Mixing an exact-ref constraint with a semver-range constraint for the
-  same cut is also a hard error -- there's no principled way to compare
-  an arbitrary commit against a range's intent.
-- **Lockfile**: `facet.lock` keeps pinning to one exact resolved commit
-  regardless of whether the manifest asked for an exact ref or a range
-  (reproducibility doesn't change); a range-resolved entry also records
-  which tag/version it resolved to, so `facet update` has something to
-  compare the *next* resolution against.
+  (`^1.2.3`, `~1.2.3`, `>=1.0.0 <2.0.0`, an exact `1.2.3`), satisfaction
+  checks, and range intersection. Standalone -- no dependency on `facet`
+  itself or the Diamond compiler/VM, since it's also generally useful on
+  its own (a package's own `diamond.cut` `version` field finally means
+  something). `make test-semver` (80 cases) covers parsing, ordering,
+  ranges, satisfaction, and intersection.
+- **Version discovery without a registry**: `git ls-remote --tags --refs`
+  against a dependency's own repository, filtered to tags that parse as
+  semver (with or without a leading `v`) -- the entire "version
+  database" this ever consults. No index, no service, no caching layer
+  beyond what git itself already does.
+- **Manifest format**: a `dependencies` entry can now carry a `version`
+  key as an alternative to `tag`/`branch`/`commit` (mutually exclusive
+  with those, the same way the existing ref keys are mutually exclusive
+  with each other) -- `{"git": "...", "version": "^1.2.0"}`.
+- **The resolver**: a version-constrained dependency can't resolve the
+  moment it's seen the way an exact-ref one does -- with no registry,
+  discovering a cut's own transitive dependencies needs a clone of some
+  concrete version of it, but *which* version depends on every
+  requester's constraint, and some requesters aren't discovered until
+  later in the walk. So `tools/facet.c` now keeps exact-ref dependencies
+  on the original clone-immediately-and-recurse path, but parks a
+  version-constrained name in a pending table instead, intersecting in
+  each new requester's own constraint as it's found; a queue-plus-
+  pending-table fixpoint (`resolve_full_graph`) alternates draining
+  newly-discovered exact-ref work and resolving one pending name (tags
+  listed, highest match picked, cloned, its own dependencies queued)
+  until both are empty. Picking the highest match is deterministic, no
+  real backtracking -- an empty intersection is a hard error naming
+  every requester and its own range; mixing an exact ref and a version
+  constraint for the same cut is also a hard error, except when whichever
+  side resolved first happens to already satisfy the other's constraint
+  too, in which case there's nothing to reconcile.
+- **Lockfile**: `facet.lock` still pins to one exact resolved commit
+  regardless of whether the manifest asked for an exact ref or a range;
+  a range-resolved entry also records which tag it resolved to, for
+  transparency (`facet update` always re-resolves from `diamond.cut`
+  fresh either way, never consulting the old lockfile's own pinned
+  version).
+- Two real, previously-undiscovered bugs found and fixed along the way,
+  by finally building `facet` under ASan/UBSan/LeakSanitizer for the
+  first time in this file's history: `facet_run_hash` passed freshly
+  `malloc`'d (not zeroed) memory to `diamond_compile`, which requires an
+  already-valid `DiamondProgram` since its own first act is freeing
+  whatever was there before recompiling -- crashed on the very first
+  manifest read, reproduced identically on facet.c from before this
+  work. `facet_program_free` never called `diamond_program_free` on the
+  compiled program's own internal arrays before freeing the outer
+  struct, leaking them on every manifest/lockfile read (harmless in
+  practice -- `facet` is a short-lived CLI process -- but a real,
+  fixable leak).
 - **Still explicitly out of scope**: a hosted registry/index (install by
-  bare name, search) and multi-version coexistence -- both previously
-  deferred for good reason (docs/packages.md's own "architecturally
-  constrained" note: two versions of one cut could never coexist in
-  Diamond's single flat compiled namespace anyway) and neither changes
-  with this work.
+  bare name, search) and multi-version coexistence -- both deferred for
+  good reason (docs/packages.md's own "architecturally constrained"
+  note: two versions of one cut could never coexist in Diamond's single
+  flat compiled namespace anyway) and neither changes with this work.
+  Also not attempted: re-resolving an already-cloned version-constrained
+  dependency when a later-discovered constraint it doesn't satisfy shows
+  up (a real backtracking problem, hard-errors instead of guessing).
 
-0.3 overall is a bugfix-and-ecosystem release: this packaging work is
+0.3 overall is a bugfix-and-ecosystem release: this packaging work was
 the headline addition, alongside whatever bugs turn up along the way
 (see "Harden the end-user runtime surface" below for the audit already
 in progress) rather than new language surface.
