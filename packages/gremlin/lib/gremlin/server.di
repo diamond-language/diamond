@@ -315,10 +315,8 @@ def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, 
   # own last line runs gremlin_worker inline, forever), so `spawned`
   # stays a live GC root for the server's entire lifetime.
   spawned = []
-  i = 1
-  while i < threads
+  (threads - 1).times() do |i|
     spawned.push(Thread.new(gremlin_worker, port, handler, tick_interval, on_tick))
-    i += 1
   end
   gremlin_worker(port, handler, tick_interval, on_tick)
 end

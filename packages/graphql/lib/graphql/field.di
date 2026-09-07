@@ -22,15 +22,9 @@ module GraphQL
 
     # nil if this field has no argument by that name.
     def argument(arg_name)
-      index = 0
-      found = nil
-      while index < @arguments.length() && found == nil
-        if @arguments[index].name() == arg_name
-          found = @arguments[index]
-        end
-        index += 1
+      @arguments.find() do |candidate|
+        candidate.name() == arg_name
       end
-      found
     end
   end
 

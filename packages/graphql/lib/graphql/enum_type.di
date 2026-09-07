@@ -21,15 +21,9 @@ module GraphQL
     def values() = @values
 
     def value_named?(value_name)
-      index = 0
-      found = false
-      while index < @values.length() && !found
-        if @values[index]["name"] == value_name
-          found = true
-        end
-        index += 1
-      end
-      found
+      @values.find() do |value|
+        value["name"] == value_name
+      end != nil
     end
   end
 

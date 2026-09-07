@@ -87,12 +87,10 @@ module GraphSQL
       end.reject() do |column|
         column == nil
       end.force()
-      index = 0
-      while index < required.length()
-        unless repository.has_column?(required[index])
-          raise UnknownColumnError.for_required_column(required[index], repository.table().name())
+      required.each() do |column|
+        unless repository.has_column?(column)
+          raise UnknownColumnError.for_required_column(column, repository.table().name())
         end
-        index += 1
       end
 
       selected = self.selected_associations(mapping, lookahead)
@@ -145,9 +143,7 @@ module GraphSQL
     end
 
     def preload_nested(records, nested)
-      index = 0
-      while index < nested.length()
-        association = nested[index]
+      nested.each() do |association|
         required = if association.reflection().belongs_to?()
           []
         else
@@ -160,20 +156,17 @@ module GraphSQL
           records, association.mapping().name(), scope).call(@db)
 
         children = []
-        record_index = 0
-        while record_index < records.length()
-          value = records[record_index].preloaded_association(association.mapping().name())
+        records.each() do |record|
+          value = record.preloaded_association(association.mapping().name())
           if value is Array
             children = children.concat(value)
           elsif value != nil
             children.push(value)
           end
-          record_index += 1
         end
         child_nested = self.nested_associations(
           association.target_mapping(), association.lookahead())
         self.preload_nested(children, child_nested)
-        index += 1
       end
     end
 

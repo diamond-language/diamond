@@ -21,15 +21,9 @@ module GraphQL
     def arguments() = @arguments
 
     def argument_named(arg_name)
-      index = 0
-      found = nil
-      while index < @arguments.length() && found == nil
-        if @arguments[index].name() == arg_name
-          found = @arguments[index]
-        end
-        index += 1
+      @arguments.find() do |argument|
+        argument.name() == arg_name
       end
-      found
     end
   end
 

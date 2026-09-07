@@ -56,15 +56,9 @@ module GraphQL
     def type_resolver() = @type_resolver
 
     def field_named(field_name)
-      index = 0
-      found = nil
-      while index < @fields.length() && found == nil
-        if @fields[index].name() == field_name
-          found = @fields[index]
-        end
-        index += 1
+      @fields.find() do |field|
+        field.name() == field_name
       end
-      found
     end
   end
 
