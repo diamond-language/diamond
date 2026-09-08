@@ -52,21 +52,14 @@ module GraphSQL
     end
 
     def validate_no_aliased_duplicates(mapping, nested)
-      index = 0
-      while index < nested.length()
-        fields = [nested[index].mapping().field_name()]
-        other_index = index + 1
-        while other_index < nested.length()
-          if nested[other_index].reflection().name() == nested[index].reflection().name()
-            fields.push(nested[other_index].mapping().field_name())
-          end
-          other_index += 1
-        end
-        if fields.length() > 1
+      grouped = nested.group_by() do |association| association.reflection().name() end
+      grouped.keys().each() do |reflection_name|
+        group = grouped[reflection_name]
+        if group.length() > 1
+          fields = group.map() do |association| association.mapping().field_name() end
           raise AliasedAssociationError.for_duplicate(
-            mapping.type_name(), nested[index].reflection().name(), fields)
+            mapping.type_name(), reflection_name, fields)
         end
-        index += 1
       end
     end
 
