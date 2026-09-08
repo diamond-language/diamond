@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.3.0
+
 ### Language
 
 - Anonymous `do ... end` blocks now capture `self` inside an instance or
