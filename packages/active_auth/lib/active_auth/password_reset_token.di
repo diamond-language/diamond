@@ -6,7 +6,6 @@ module ActiveAuth
   class PasswordResetToken < ActiveRecord::Model
     attr_accessor account_id, token: String, expires_at, used_at
 
-    def self.token_prefix() = "sha256:"
     def self.duration_seconds() = 3600 # 1 hour
 
     def initialize(attributes: Hash = {})
@@ -24,8 +23,6 @@ module ActiveAuth
       @@repository = repository
     end
 
-    def self.fingerprint(raw: String) -> String = "#{PasswordResetToken.token_prefix()}#{Digest.sha256(raw)}"
-
     def used?() -> Bool = @used_at != nil
 
     def account(db) = self.belongs_to(Account.repository()).get(db, @account_id)
@@ -33,7 +30,7 @@ module ActiveAuth
     def self.issue(db, account_id)
       raw = SecureRandom.hex(32)
       token = PasswordResetToken.new({"account_id": account_id,
-        "token": PasswordResetToken.fingerprint(raw),
+        "token": TokenSupport.fingerprint(raw),
         "expires_at": Time.now().to_i() + PasswordResetToken.duration_seconds()})
       token.save(db)
       [token, raw]
@@ -44,11 +41,11 @@ module ActiveAuth
     # `used_at IS NULL` in the same query, not a separate check after
     # the fact.
     def self.from_token(db, raw)
-      if raw == nil || raw == "" || raw.length() >= 7 && raw.slice(0, 7) == PasswordResetToken.token_prefix()
+      if TokenSupport.rejected_lookup?(raw)
         return nil
       end
       table = Arel.table("password_reset_tokens")
-      predicate = table.column("token").in_list([PasswordResetToken.fingerprint(raw), raw]).and_also(
+      predicate = table.column("token").in_list([TokenSupport.fingerprint(raw), raw]).and_also(
         table.column("expires_at").gt(Time.now().to_i())).and_also(
         table.column("used_at").eq(nil))
       rows = Arel.from(table).where(predicate).take(1).to_a(db)
