@@ -53,8 +53,9 @@ jobs:
           bash -c 'echo "PATH-resolved bash EPOCHREALTIME=${EPOCHREALTIME:-UNSET}"'
           echo "=== homebrew prefix ==="
           brew --prefix 2>&1 || echo "NO BREW"
-          echo "=== ucontext probe ==="
+          echo "=== ucontext probe (with the _XOPEN_SOURCE fix just landed) ==="
           cat > /tmp/ctx_probe.c <<'EOF'
+          #define _XOPEN_SOURCE 700
           #include <ucontext.h>
           #include <stdio.h>
           static ucontext_t a, b;
