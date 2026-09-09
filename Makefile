@@ -127,11 +127,21 @@ LDLIBS_EXTRA :=
 LDLIBS_DL := -ldl
 LDLIBS_CRYPT := -lcrypt
 # LDFLAGS_EXTRA: same _EXTRA pattern as CPPFLAGS_EXTRA above, for the
-# matching -L search path macOS's keg-only Homebrew OpenSSL/libpq/MariaDB
-# Connector need alongside CPPFLAGS_EXTRA's -I one.
+# matching -L search path macOS's keg-only Homebrew and FreeBSD's ports
+# OpenSSL/libpq/MariaDB Connector both need alongside CPPFLAGS_EXTRA's -I
+# one (confirmed necessary on FreeBSD directly: linking failed with
+# "unable to find library -lsqlite3/-lpq/-lmariadb", all three ports-
+# installed under /usr/local/lib, not a default linker search path).
+# Prepended into LDLIBS itself, not left as a separate $(LDFLAGS) most
+# recipes below don't even reference -- only the final `diamond` binary
+# and the API test binaries link with $(LDFLAGS); every tool/test target
+# (gen_compiled_prelude and everything past it) links with $(LDLIBS)
+# alone, so that's the one variable guaranteed to reach all of them.
+# -L flags ahead of the -l flags that need them is all linker ordering
+# requires; where they physically appear in $(LDLIBS) doesn't matter.
 LDFLAGS_EXTRA :=
 LDFLAGS := $(LDFLAGS_EXTRA)
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
+LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
