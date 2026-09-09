@@ -67,7 +67,7 @@ jobs:
             #include <unistd.h>
             #include <stdio.h>
             int main(void) {
-            char *hash = crypt("password", "$2b$04$usesomesillystringfor");
+            char *hash = crypt("password", "$2b$04$N9qo8uLOickgx2ZMRZoMye");
             printf("crypt result: %s\n", hash ? hash : "(null)");
             return 0;
             }
@@ -129,7 +129,7 @@ jobs:
             #include <unistd.h>
             #include <stdio.h>
             int main(void) {
-            char *hash = crypt("password", "$2b$04$usesomesillystringfor");
+            char *hash = crypt("password", "$2b$04$N9qo8uLOickgx2ZMRZoMye");
             printf("crypt result: %s\n", hash ? hash : "(null)");
             return 0;
             }
