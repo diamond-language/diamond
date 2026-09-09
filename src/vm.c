@@ -11,7 +11,18 @@
 #include "loader.h"
 #include "prelude.h"
 
+/* <crypt.h> exists on glibc (libxcrypt) and musl (see BCrypt.hash's own
+ * comment below for what musl's version lacks), declaring crypt_r/
+ * struct crypt_data/CRYPT_GENSALT_* -- but not on FreeBSD, which declares
+ * plain crypt()/crypt_r() directly in <unistd.h> (already included below)
+ * instead, with no separate header at all. __has_include, not an
+ * __APPLE__/__FreeBSD__-style OS check (see docs/portability.md's own
+ * "What hasn't been found" on why this codebase avoids those): this is a
+ * feature test, and the same reasoning applies wherever else a libc omits
+ * this header. */
+#if __has_include(<crypt.h>)
 #include <crypt.h>
+#endif
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
