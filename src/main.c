@@ -1,5 +1,4 @@
 #define _DEFAULT_SOURCE
-#define _XOPEN_SOURCE 700
 
 #include "repl.h"
 #include "run_source.h"

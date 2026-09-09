@@ -1,6 +1,5 @@
 /* See lsp/completion.c's own identical comment. */
 #define _DEFAULT_SOURCE
-#define _XOPEN_SOURCE 700
 #include "document_symbol.h"
 
 #include "compile_buffer.h"

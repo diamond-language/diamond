@@ -3,7 +3,6 @@
  * Must precede value.h itself, not just vm.h below -- value.h's own
  * <stdint.h> is this file's first libc header either way. */
 #define _DEFAULT_SOURCE
-#define _XOPEN_SOURCE 700
 #include "value.h"
 
 #include "vm.h"
