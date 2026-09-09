@@ -1402,7 +1402,12 @@ response = c.gets()
 c.close()
 response' "$socket_port")"
 client_out="$(mktemp)"
-timeout 10 "$diamond" -e "$client_src" >"$client_out" 2>&1
+if ! timeout 10 "$diamond" -e "$client_src" >"$client_out" 2>&1; then
+    ec=$?
+    echo "DIAGNOSTIC: TCP client timeout/diamond exited $ec, output:" >&2
+    cat "$client_out" >&2
+    exit "$ec"
+fi
 wait "$socket_server_pid"
 [[ "$(tail -n1 "$server_out")" == "0" ]]
 [[ "$(cat "$client_out")" == "echo: hello" ]]
