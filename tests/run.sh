@@ -2889,7 +2889,12 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 # nproc/cgroup quota when it's available, since it's the signal that
 # actually determines whether two CPU-bound threads have independent
 # execution resources to run concurrently on.
-cpu_budget="$(nproc)"
+# getconf _NPROCESSORS_ONLN, not nproc: POSIX-portable, confirmed
+# working identically on every platform this suite has actually been
+# run on (Linux glibc/musl, FreeBSD, macOS) -- nproc itself is a GNU
+# coreutils command, absent from macOS's base install entirely (present
+# on FreeBSD's, so this was invisible until macOS was checked).
+cpu_budget="$(getconf _NPROCESSORS_ONLN)"
 if [[ -r /sys/fs/cgroup/cpu.max ]]; then
     read -r cfs_quota cfs_period < /sys/fs/cgroup/cpu.max
     if [[ "$cfs_quota" != "max" ]]; then
@@ -2917,7 +2922,7 @@ fi
 if [[ "$physical_cores" -gt 0 ]]; then
     cpu_budget="$physical_cores"
 fi
-echo "DIAG: nproc=$(nproc) physical_cores=$physical_cores cpu_budget=$cpu_budget" >&2
+echo "DIAG: nproc=$(getconf _NPROCESSORS_ONLN) physical_cores=$physical_cores cpu_budget=$cpu_budget" >&2
 
 # Real-parallelism proof for Thread: two threads each doing genuine
 # CPU-bound work (not sleep -- sleep would pass even under the old
