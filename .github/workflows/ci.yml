@@ -130,3 +130,41 @@ jobs:
           make CC=gcc LDLIBS_EXTRA=-lucontext test-fiber-run
           make CC=gcc LDLIBS_EXTRA=-lucontext test-lsp
           make CC=gcc LDLIBS_EXTRA=-lucontext test-repl
+
+  # A fourth genuinely different target -- a real BSD kernel/libc, not a
+  # Linux one at all. Confirmed viable first via a one-off diagnostic VM
+  # boot before writing this (docs/portability.md's "FreeBSD/OpenBSD"
+  # section): ucontext/makecontext/swapcontext, crypt(3) bcrypt, and -ldl
+  # all work natively here, and the base install already ships
+  # nproc/timeout/bc (OpenBSD, checked the same way, is not attempted --
+  # it has no <ucontext.h> at all, a Fiber-implementation gap, not a CI
+  # one). CC=clang, not gcc: FreeBSD's base `cc` already is Clang 19, so
+  # this avoids an extra ports build just to get gcc. Narrower target set
+  # than test-all, same reasoning as test-musl's own comment above: this
+  # validation hasn't touched sanitizer/tsan builds or the package-
+  # specific suites (database, HTTP, GraphQL, ...) against FreeBSD, so
+  # claiming that coverage here would be dishonest.
+  test-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: FreeBSD build and test
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y bash ripgrep postgresql16-client mariadb-connector-c
+          run: |
+            set -e
+            MAKE_FLAGS="CC=clang CPPFLAGS_EXTRA=-I/usr/local/include LDFLAGS_EXTRA=-L/usr/local/lib"
+            make $MAKE_FLAGS test
+            make $MAKE_FLAGS test-api
+            make $MAKE_FLAGS test-incremental-compile
+            make $MAKE_FLAGS test-compiled-prelude
+            make $MAKE_FLAGS test-fibers
+            make $MAKE_FLAGS test-fiber-run
+            make $MAKE_FLAGS test-lsp
+            make $MAKE_FLAGS test-repl
