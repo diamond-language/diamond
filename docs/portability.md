@@ -307,6 +307,25 @@ build-level one would be honest right now.
     the system `strftime(3)` (`substitute_fixed_offset_z`), so the
     directive no longer depends on the platform honoring it, on Darwin
     or anywhere else. See docs/time.md and the changelog.
+  - `tests/fiber_run.c`'s own stack-unmap probe: after a fiber's stack is
+    freed (`free_fiber_stack`, `munmap`), the test calls `mincore()` on
+    the freed range and expects `ENOMEM` -- confirming the memory is
+    genuinely gone, not just leaked-but-untouched. Reliable on Linux;
+    confirmed NOT reliable the same way on Darwin (this same CI run:
+    every earlier fiber check passed, then this exact one failed). Most
+    likely explanation: some other allocation already reclaimed the same
+    virtual address range during the malloc/free traffic
+    `diamond_vm_collect`/`diamond_vm_free` themselves generate, before
+    the probe runs -- not `munmap` failing to unmap it, which isn't
+    platform-conditional. No portable feature test predicts
+    mincore-after-munmap timing, so this is the same class of gap
+    `__APPLE__` is already the deliberate, narrow exception for
+    elsewhere in this codebase (`bcrypt_verify_helper`, above) -- the
+    check is now skipped on Darwin (`#ifndef __APPLE__`) rather than
+    guessed at further without a real macOS box to verify against.
+    (Separately, `mincore`'s `vec` parameter is declared `unsigned char
+    *` on Linux and `char *` on Darwin -- an unrelated `-Wpointer-sign`
+    warning, fixed with a `(void *)` cast at both call sites.)
   - Homebrew package names for a future CI job's own dependencies,
     confirmed present on the runner image already: `openssl@3`, `sqlite`.
     `postgresql@16` and `mariadb-connector-c` install cleanly via `brew
