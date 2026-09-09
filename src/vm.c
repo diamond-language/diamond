@@ -1,4 +1,7 @@
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 /* _GNU_SOURCE (a superset of _DEFAULT_SOURCE): only for pthread_getattr_np,
  * used to learn a thread's own native stack bounds for the ASan
  * fiber-switch annotations below. */
@@ -6714,6 +6717,20 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
     }
     const DiamondString *password=(const DiamondString *)password_value.as.object;
     const DiamondString *digest=(const DiamondString *)digest_value.as.object;
+    /* struct crypt_data/crypt_r have no portable feature test the way
+     * <crypt.h>'s own __has_include above does -- confirmed directly,
+     * a real compile failure on macOS ("incomplete type 'struct
+     * crypt_data'"): unlike FreeBSD (which declares both in <unistd.h>
+     * with no <crypt.h> at all) and glibc/musl (both via <crypt.h>),
+     * macOS's libc provides neither the reentrant crypt_r nor
+     * struct crypt_data in any header. __APPLE__ here, not a header
+     * probe, is the one deliberate exception to this codebase's own
+     * "no OS-name branching" convention (docs/portability.md) -- every
+     * other platform gap so far had a real feature-test proxy; this one
+     * doesn't. Degrades the same documented way an unsupported
+     * algorithm already does on musl: BCrypt.verify never raises, an
+     * unrecognized digest is just reported as no match. */
+#if !defined(__APPLE__)
     struct crypt_data *data=calloc(1,sizeof *data);
     if(data==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     const char *computed=crypt_r(password->chars,digest->chars,data);
@@ -6724,6 +6741,10 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
             matches=CRYPTO_memcmp(computed,digest->chars,computed_length)==0;
     }
     free(data);
+#else
+    (void)password;(void)digest;
+    const bool matches=false;
+#endif
     *out_result=DIAMOND_BOOL(matches);
     return DIAMOND_VM_OK;
 }

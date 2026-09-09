@@ -38,10 +38,13 @@ enough POSIX-adjacent surface area to matter here.
   has not been checked (CC=clang here, FreeBSD's own base compiler, to
   avoid an extra ports build).
 
-Not yet validated: a non-x86_64 architecture, macOS/Darwin, and OpenBSD
-(blocked on a real gap, not just an unwritten CI job -- see below).
-Portability claims should not extend past what's
-actually been checked -- see docs/roadmap.md's "Explicitly deferred". See
+Not yet validated: a non-x86_64 architecture, and OpenBSD (blocked on a
+real gap, not just an unwritten CI job -- see below). macOS/Darwin's
+build now compiles clean on real hardware, but has no CI job yet -- the
+test harness's own coreutils dependencies aren't fixed (see below), so a
+real `test-macos` job would need those first. Portability claims should
+not extend past what's actually been checked -- see docs/roadmap.md's
+"Explicitly deferred". See
 "macOS/Darwin" and "FreeBSD/OpenBSD" below for what's been found so far.
 
 ## Toolchain assumptions
@@ -173,49 +176,125 @@ the feature-test-macro gap above:
    equivalent minimal reaper) is a real prerequisite for that specific
    test, unrelated to musl itself.
 
-## macOS/Darwin: prerequisites found, not yet validated
+## macOS/Darwin: build-level prerequisites confirmed, test harness still open
 
-Unlike musl above, none of this has been checked against real hardware --
-no Darwin CI job exists yet (see docs/roadmap.md's "Portability"). Found by
-reading the build system and test harness against known Darwin/Homebrew
-behavior, not by building there; every item below needs confirming on a
-real run before being trusted the way the musl section above can be.
+The build itself is now confirmed against a real GitHub-hosted
+`macos-latest` runner (arm64, Apple Silicon, Xcode 26.6, Darwin 25) --
+`src/vm.c` compiles cleanly with the real project headers. The test
+harness's own GNU-coreutils dependencies (below) are not yet
+addressed, so there's still no real `test-macos` CI job -- only a
+build-level one would be honest right now.
 
-- **Two `Makefile` fixes already made**, independent of whether a Darwin CI
-  job ever lands: `CFLAGS_RELEASE`'s `-march=x86-64` is an x86-only flag
-  gcc/clang reject outright on arm64 -- what every current GitHub-hosted
-  `macos-*` runner is (Apple Silicon) -- now guarded by `uname -m` rather
-  than assumed (this also matters on an arm64 Linux box, not just macOS).
-  `LDLIBS`'s `-ldl`/`-lcrypt` -- macOS's libSystem provides both `dlopen`
-  and `crypt()` directly with no matching `.dylib` to link against, so
-  these fail the link with "library not found" -- are now their own
-  overridable `LDLIBS_DL`/`LDLIBS_CRYPT` variables instead of baked into
-  the fixed list, alongside new `CPPFLAGS_EXTRA`/`LDFLAGS_EXTRA` override
-  points for Homebrew's keg-only OpenSSL/libpq/MariaDB Connector paths
-  (which differ by CPU architecture: `/opt/homebrew` vs `/usr/local`).
+- **Two `Makefile` fixes**, independent of whether a Darwin CI job ever
+  lands: `CFLAGS_RELEASE`'s `-march=x86-64` is an x86-only flag gcc/clang
+  reject outright on arm64 -- what every current GitHub-hosted `macos-*`
+  runner is -- now guarded by `uname -m` rather than assumed (this also
+  matters on an arm64 Linux box, not just macOS). `LDLIBS`'s `-lcrypt`
+  fails to link on macOS (`crypt()` lives in libSystem directly, no
+  matching `.dylib`) -- confirmed directly; **`-ldl` was wrongly assumed
+  to fail the same way and doesn't** (it links fine on this real runner --
+  an earlier version of this doc asserted otherwise from general
+  knowledge, not a real check, and was wrong). Both are their own
+  overridable `LDLIBS_DL`/`LDLIBS_CRYPT` variables regardless, alongside
+  `CPPFLAGS_EXTRA`/`LDFLAGS_EXTRA` override points for Homebrew's
+  keg-only OpenSSL/libpq/MariaDB Connector paths (`/opt/homebrew` on
+  Apple Silicon).
+- **`<ucontext.h>` is not actually absent** (unlike OpenBSD) -- Apple's
+  own SDK header gates `getcontext`/`makecontext`/`swapcontext`/
+  `ucontext_t` behind an explicit `#error` unless `_XOPEN_SOURCE` is
+  defined ("The deprecated ucontext routines require _XOPEN_SOURCE to be
+  defined"), confirmed directly. Fixed the same way this codebase already
+  handles `_DEFAULT_SOURCE`/`_GNU_SOURCE` (`Feature-test macros` above):
+  added to the same 22 files. Still compiles with deprecation warnings
+  (not fatal, no `-Werror` covering them) -- Apple discourages these
+  routines but hasn't removed them.
+- **Defining `_XOPEN_SOURCE` alone breaks FreeBSD**, confirmed the hard
+  way: it landed on `main` once, broke `test-freebsd` immediately
+  (`MAP_ANONYMOUS`/`SO_REUSEPORT`/`_SC_NPROCESSORS_ONLN`/`crypt_r`/
+  `struct crypt_data` all became undeclared -- FreeBSD's `<sys/cdefs.h>`
+  disables `__BSD_VISIBLE` by default once `_XOPEN_SOURCE` is defined),
+  and was reverted the same day. `__BSD_VISIBLE=1` restores it on
+  FreeBSD; it means nothing to Apple's headers, which needed their own
+  equivalent, `_DARWIN_C_SOURCE`, to restore the identical set of hidden
+  declarations there (plus `timegm`/`NI_MAXHOST`/`NI_MAXSERV`). All three
+  macros -- `_XOPEN_SOURCE 700`, `__BSD_VISIBLE 1`, `_DARWIN_C_SOURCE` --
+  now sit alongside `_DEFAULT_SOURCE` in the same 22 files; each is a
+  no-op where its own libc doesn't recognize the name (glibc/musl ignore
+  the BSD/Darwin ones the same way FreeBSD/macOS ignore `_DEFAULT_SOURCE`
+  itself).
+- **`struct crypt_data`/`crypt_r` don't exist on macOS at all** -- neither
+  declared in any header, confirmed directly ("incomplete type 'struct
+  crypt_data'"). No portable feature test predicts this the way
+  `__has_include(<crypt.h>)` did for the top-of-file include: FreeBSD
+  also lacks `<crypt.h>` but *does* declare both (in `<unistd.h>`), so
+  that same check would have wrongly disabled this on FreeBSD too.
+  `bcrypt_verify_helper`'s use of them is now gated on `__APPLE__`
+  specifically -- the one deliberate exception in this codebase to the
+  "no OS-name branching" pattern documented below, because no feature
+  test exists for this particular gap. Degrades the same already-
+  documented way an unsupported algorithm does on musl: `BCrypt.verify`
+  never raises, so an unresolvable digest is just reported as no match.
+  (`BCrypt.hash` was already correctly excluded from ever reaching this
+  code on macOS -- no `<crypt.h>` there either means
+  `CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY` is never defined, same as
+  FreeBSD/musl.)
+- **Plain `crypt()` on macOS silently mishandles an unrecognized bcrypt
+  salt** rather than returning `NULL` the honest way FreeBSD/OpenBSD/musl
+  all do -- confirmed directly: `crypt("password", "$2b$04$...")`
+  returned a 13-character traditional-DES-style string instead of an
+  error. Harmless here (the length mismatch against a real 60-character
+  bcrypt digest already makes `bcrypt_verify_helper`'s own comparison
+  fail safely), but worth knowing if anything ever calls raw `crypt()` on
+  macOS expecting a clean failure signal instead of a wrong-algorithm
+  result.
 - **The test harness (mostly `tests/run.sh`) leans on GNU-coreutils
-  behavior far more than the build does** -- found by `grep`, not yet
-  confirmed against a real Mac:
+  behavior far more than the build does** -- not yet addressed, still
+  what's blocking a real `test-macos` job:
   - `timeout` -- 28 call sites across process/signal/socket tests, several
     relying specifically on GNU/uutils relay-then-child-status semantics
     (see the comment above the `signal_pid` wait in the Signal.trap test).
-    macOS ships no `timeout` at all in its base install.
-  - `nproc` (6 uses) and `/proc/cpuinfo` (physical-core counting, in the
-    Thread real-parallelism CPU-budget check) -- neither exists on macOS;
-    the equivalent is `sysctl -n hw.ncpu`/`hw.physicalcpu`.
-  - `$EPOCHREALTIME` (that same Thread real-parallelism test's own timing)
-    -- bash 5+ only. macOS's stock `/bin/bash` is the pre-GPLv3 3.2 Apple
-    still ships; this only works if a newer bash (Homebrew's) resolves
-    first on `PATH` when a script is invoked as `bash tests/run.sh` rather
-    than via its own shebang.
-  - `bc` (6 uses) -- presence on current macOS is unconfirmed either way.
+    Confirmed directly: macOS ships no `timeout` at all in its base
+    install, and no `gtimeout` either unless `coreutils` is installed via
+    Homebrew (also not preinstalled on the runner image checked).
+  - `nproc` (6 uses) -- confirmed absent from macOS's base install.
+    `sysctl -n hw.ncpu` works, but so does `getconf _NPROCESSORS_ONLN` --
+    POSIX-portable, confirmed working identically on this macOS runner
+    *and* every Linux/BSD already checked in this document, so it's a
+    better replacement than per-OS `sysctl`/`nproc` branching would be.
+  - `/proc/cpuinfo` (physical-core counting, same Thread real-parallelism
+    check already guarded for FreeBSD/BSD above) -- no `/proc` on macOS
+    either, same fix already applies.
+  - `$EPOCHREALTIME` (that same test's own timing) -- bash 5+ only.
+    Confirmed directly: macOS's `/bin/bash` is the pre-GPLv3 3.2 Apple
+    still ships, **and it's what `which bash` resolves too** -- no
+    Homebrew bash is preinstalled or put ahead on `PATH` by the runner
+    image, unlike FreeBSD/OpenBSD where installing one via `pkg`/`pkg_add`
+    was enough on its own. A real fix here needs the same explicit
+    symlink-into-a-prepended-`PATH`-directory technique already used for
+    FreeBSD's `gsed`, not just a `brew install bash`.
+  - `bc` -- confirmed present (`/usr/bin/bc`) and functional; the earlier
+    version of this doc's uncertainty here was unfounded.
+  - `sed` -- confirmed BSD sed (rejects `--version`), same GNU-extension
+    risk already documented for FreeBSD/musl; not yet checked against
+    `tests/collection_relay_contracts.sh`'s specific `:label`/`n`/`p`/`b`
+    loop the way FreeBSD's failure was, but likely the identical issue.
+    No `gsed` preinstalled either.
+  - Homebrew package names for a future CI job's own dependencies,
+    confirmed present on the runner image already: `openssl@3`, `sqlite`.
+    `postgresql@16` and `mariadb-connector-c` install cleanly via `brew
+    install` (used to verify the `vm.c` compile above) -- their headers
+    land under `$(brew --prefix postgresql@16)/include` and both
+    `$(brew --prefix mariadb-connector-c)/include` and that same prefix's
+    `include/mariadb` subdirectory (the mysql.h split already familiar
+    from FreeBSD's own port).
 
   Unlike the musl job's own narrow carve-out (two BCrypt test cases,
   `test-musl`'s own comment), excluding everything `timeout` touches here
   would gut most of the process/signal/socket coverage -- there's no small
-  subset of `make test` that dodges this cleanly. A `test-macos` CI job
-  would need the coreutils gaps above addressed first, not just Homebrew
-  packages installed, to be worth more than a build-only smoke check.
+  subset of `make test` that dodges this cleanly. A real `test-macos` job
+  needs the coreutils gaps above fixed in `tests/run.sh` first, not just
+  Homebrew packages installed, to be worth more than the build-only
+  compile check already confirmed.
 
 ## FreeBSD/OpenBSD: confirmed against real VMs
 
