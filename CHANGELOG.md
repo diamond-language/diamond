@@ -6,6 +6,17 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Packages
+
+- Added `packages/jobs`: a durable, database-backed background/
+  scheduled job queue and worker (`Jobs.enqueue`/`enqueue_in`/
+  `enqueue_at`, `Jobs::Worker.run_once`/`run_forever` with retry/
+  backoff, and fixed-interval recurring jobs via
+  `Jobs.schedule_recurring`). Driven by a concrete need (skindicate.dia's
+  ingest scripts and moderation-point allocator); creates no tables of
+  its own, matching `ActiveRecord::Migrator`'s own schema-free
+  convention. See `packages/jobs/README.md`.
+
 ## 0.3.0
 
 ### Language
