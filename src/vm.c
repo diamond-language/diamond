@@ -51,6 +51,7 @@
 #include <libpq-fe.h>
 #include <mysql.h>
 #include <zlib.h>
+#include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -2285,6 +2286,15 @@ static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
             const int candidate_fd=socket(candidate->ai_family,candidate->ai_socktype,
                                  candidate->ai_protocol);
             if(candidate_fd<0) {last_errno=errno;continue;}
+            /* Same IPV6_V6ONLY fix as tcp_listen_helper above, same reason:
+             * an IPv6-wildcard UDP bind needs this to also reach an IPv4
+             * .send() on FreeBSD/OpenBSD (net.inet6.ip6.v6only=1 by
+             * default there, unlike Linux). */
+            if(candidate->ai_family==AF_INET6) {
+                const int v6only_off=0;
+                (void)setsockopt(candidate_fd,IPPROTO_IPV6,IPV6_V6ONLY,
+                                  &v6only_off,sizeof v6only_off);
+            }
             if(bind(candidate_fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
                 fd=candidate_fd;break;
             }
@@ -2688,6 +2698,30 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
         const int yes=1;
         (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
         if(reuse_port)(void)setsockopt(fd,SOL_SOCKET,SO_REUSEPORT,&yes,sizeof yes);
+        /* No explicit address was requested (AI_PASSIVE with a nullptr
+         * host above) -- the caller means "every interface", including an
+         * IPv4 client connecting to 127.0.0.1, and getaddrinfo's own
+         * candidate ordering commonly hands back the IPv6 wildcard (::)
+         * first. Linux's default net.ipv6.bindv6only=0 makes that already
+         * dual-stack (an IPv4 connection transparently reaches it) with no
+         * code needed here -- which is exactly why this was invisible until
+         * checked on a real BSD: FreeBSD (and OpenBSD) default
+         * net.inet6.ip6.v6only to 1, so the identical bind only accepts
+         * IPv6 there, and an IPv4 loopback connect gets ECONNREFUSED with
+         * nothing about the failure pointing at IPv6 at all (confirmed
+         * directly: tests/run.sh's TCP echo test, unchanged code, passes
+         * on Linux/musl and fails this way on FreeBSD 15.1). Disabling
+         * IPV6_V6ONLY unconditionally on the v6 candidate makes the
+         * explicit behavior match Linux's default everywhere, rather than
+         * leaving it to silently depend on a sysctl this code never
+         * chose. Best-effort: a kernel without IPv6/dual-stack support at
+         * all would fail this setsockopt, in which case bind() below is
+         * left to fail or succeed exactly as it would have anyway. */
+        if(candidate->ai_family==AF_INET6) {
+            const int v6only_off=0;
+            (void)setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY,
+                              &v6only_off,sizeof v6only_off);
+        }
         if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
             listening_fd=fd;break;
         }
