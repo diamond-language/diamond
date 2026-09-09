@@ -156,7 +156,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y gmake bash ripgrep postgresql16-client mariadb-connector-c
+            pkg install -y gmake bash ripgrep sqlite3 openssl postgresql16-client mariadb-connector-c
           # FreeBSD's base `make` is BSD make (pmake), not GNU Make -- this
           # Makefile uses GNU-only syntax throughout (ifeq, $(wildcard ...),
           # $(shell ...)), so it needs invoking as `gmake` specifically, the
