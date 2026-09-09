@@ -13,6 +13,33 @@ on:
   workflow_dispatch:
 
 jobs:
+  probe-macos-vm-compile:
+    # Targeted verification for the _XOPEN_SOURCE/__BSD_VISIBLE fix
+    # (macos-ucontext-fix branch): compile src/vm.c alone (-c, no link) --
+    # every symbol that fix touches or could regress (ucontext.h,
+    # MAP_ANONYMOUS, SO_REUSEPORT, crypt_r/struct crypt_data) lives there,
+    # so this is sufficient to confirm the fix without needing a full
+    # link (which would need postgres/mariadb-connector-c brew packages
+    # not yet worked out for macOS). Delete this job once the fix is
+    # confirmed and merged.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Homebrew)
+        run: brew install postgresql@16 mariadb-connector-c
+      - name: Compile src/vm.c with the real project headers
+        run: |
+          cc -std=c23 -Isrc -Ilsp -Ireginold \
+            -I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include \
+            -I$(brew --prefix postgresql@16)/include \
+            -I$(brew --prefix mariadb-connector-c)/include \
+            -I$(brew --prefix mariadb-connector-c)/include/mariadb \
+            -c src/vm.c -o /tmp/vm.o 2>&1
+          echo "=== vm.c compiled cleanly ==="
+
   probe-macos:
     runs-on: macos-latest
     timeout-minutes: 15
