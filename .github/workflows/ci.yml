@@ -156,7 +156,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y gmake bash ripgrep sqlite3 openssl postgresql16-client mariadb-connector-c
+            pkg install -y gmake bash ripgrep gsed sqlite3 openssl postgresql16-client mariadb-connector-c
           # FreeBSD's base `make` is BSD make (pmake), not GNU Make -- this
           # Makefile uses GNU-only syntax throughout (ifeq, $(wildcard ...),
           # $(shell ...)), so it needs invoking as `gmake` specifically, the
@@ -177,8 +177,21 @@ jobs:
           # words, one of which (a bare -I.../mariadb or -L.../mariadb has
           # no `=`) make would misparse as its own flag rather than part of
           # the variable.
+          # tests/collection_relay_contracts.sh (run by tests/run.sh) uses a
+          # GNU sed extension (a :label/n/p/b loop) FreeBSD's base BSD sed
+          # rejects outright ("unexpected EOF (pending }'s)") -- confirmed
+          # directly, same category as musl/Alpine's own documented BusyBox
+          # sed finding (docs/portability.md). FreeBSD's own GNU sed port
+          # installs as `gsed`, not a `sed` override, and /usr/local/bin
+          # sits *after* /usr/bin in FreeBSD's default PATH -- so a plain
+          # package install wouldn't shadow the base sed the way Alpine's
+          # apk package does. Prepending an explicit symlink directory is
+          # deterministic either way, not dependent on that PATH ordering.
           run: |
             set -e
+            mkdir -p /tmp/gnubin
+            ln -sf "$(which gsed)" /tmp/gnubin/sed
+            export PATH="/tmp/gnubin:$PATH"
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-api
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-incremental-compile
