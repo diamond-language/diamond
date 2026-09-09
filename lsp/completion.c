@@ -4,6 +4,8 @@
  * first #include -- document.h (pulled in by completion.h) may reach a
  * libc header before compiler.h otherwise. */
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
 #include "completion.h"
 
 #include "compile_buffer.h"

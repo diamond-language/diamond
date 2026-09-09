@@ -22,6 +22,8 @@
  * (zero subprocess cost) in place of spawning `diamond` per case. */
 
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
 
 #include "prelude.h"
 #include "run_source.h"

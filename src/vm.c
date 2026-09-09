@@ -1,4 +1,6 @@
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
 /* _GNU_SOURCE (a superset of _DEFAULT_SOURCE): only for pthread_getattr_np,
  * used to learn a thread's own native stack bounds for the ASan
  * fiber-switch annotations below. */
