@@ -23,6 +23,18 @@ authoritative fine-grained record.
   implicit path. SQLite's and libpq's own first-connection paths were
   checked too: both document their own init routines as safe under
   concurrent first use, so neither needed the same treatment.
+- Fixed `Time#strftime`'s `%z` (and `#to_s`'s own use of it) silently
+  printing the wrong UTC offset for a fixed-offset Time on macOS -- found
+  by `test-macos-ci`'s own trial CI run. `%z` there had relied on the
+  platform's `strftime(3)` honoring a `tm_gmtoff` Diamond hand-patches
+  into a `gmtime_r`-produced `struct tm`; glibc trusts that field,
+  Darwin's libc doesn't, so every fixed-offset Time printed "+0000"
+  regardless of its real offset there. Diamond now substitutes `%z`
+  itself before the format string reaches the system implementation for
+  a fixed-offset Time, rather than depending on the platform to honor
+  it -- fixes the behavior on every platform, not just Darwin. Every
+  other directive still delegates straight through to `strftime(3)`; UTC
+  and Local Time needed no equivalent change (see docs/time.md).
 
 ### Packages
 

@@ -8878,6 +8878,51 @@ static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
     return true;
 }
 
+/* strftime's %z conversion for a FIXED_OFFSET Time depends on the
+ * platform's libc trusting the tm_gmtoff time_struct_tm just hand-
+ * patched into a gmtime_r-produced struct, above. glibc does; Darwin's
+ * libc doesn't -- confirmed directly on test-macos-ci's own CI run: a
+ * +05:30 and a -08:00 fixed offset both came back "+0000", the same
+ * value gmtime_r's own untouched tm_gmtoff would give, meaning Darwin's
+ * %z isn't reading the field back at all. Substituting the directive
+ * ourselves before the format string ever reaches the real strftime
+ * sidesteps the platform discrepancy instead of depending on it -- every
+ * other directive (including %Z, not exercised by any current caller)
+ * still goes through libc unchanged. UTC and Local modes need no
+ * equivalent: UTC's real offset is genuinely zero, so gmtime_r's own
+ * untouched tm_gmtoff already happens to be correct everywhere, and
+ * Local's tm_gmtoff comes from the OS's own localtime_r rather than a
+ * hand-patched struct, so whatever the platform's strftime does with it
+ * is by definition correct for that platform. */
+static char *substitute_fixed_offset_z(const char *format,int64_t offset) {
+    char zone[8];
+    const int64_t absolute=offset<0?-offset:offset;
+    const int written=snprintf(zone,sizeof zone,"%c%02" PRId64 "%02" PRId64,
+        offset<0?'-':'+',absolute/3600,(absolute%3600)/60);
+    if(written<0||(size_t)written>=sizeof zone)return nullptr;
+    const size_t zone_length=(size_t)written;
+    size_t out_length=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%'){out_length+=2;index+=2;continue;}
+        if(format[index]=='%'&&format[index+1]=='z'){out_length+=zone_length;index+=2;continue;}
+        out_length++;index++;
+    }
+    char *result=malloc(out_length+1);
+    if(result==nullptr)return nullptr;
+    size_t out=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%') {
+            result[out++]='%';result[out++]='%';index+=2;continue;
+        }
+        if(format[index]=='%'&&format[index+1]=='z') {
+            memcpy(result+out,zone,zone_length);out+=zone_length;index+=2;continue;
+        }
+        result[out++]=format[index++];
+    }
+    result[out]='\0';
+    return result;
+}
+
 /* Parses the deliberately narrow fixed-offset spelling accepted by
  * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM[:SS]". Named zones and
  * process-global TZ mutation remain out of scope. */
@@ -9201,7 +9246,14 @@ static bool format_time_default(const DiamondTime *target,StringBuilder *builder
     char buffer[64];
     const char *format=target->zone_mode==DIAMOND_TIME_UTC?
         "%Y-%m-%d %H:%M:%S UTC":"%Y-%m-%d %H:%M:%S %z";
+    char *substituted=nullptr;
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+        substituted=substitute_fixed_offset_z(format,target->utc_offset);
+        if(substituted==nullptr)return false;
+        format=substituted;
+    }
     const size_t length=strftime(buffer,sizeof buffer,format,&parts);
+    free(substituted);
     if(length==0)return false;
     return builder_append(builder,buffer,length);
 }
@@ -12148,18 +12200,26 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
             snprintf(vm->error,sizeof vm->error,"Time value out of range");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        const char *format_chars=format->chars;
+        char *substituted=nullptr;
+        if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+            substituted=substitute_fixed_offset_z(format_chars,target->utc_offset);
+            if(substituted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            format_chars=substituted;
+        }
         char stack_buffer[256];
-        size_t length=strftime(stack_buffer,sizeof stack_buffer,format->chars,&parts);
+        size_t length=strftime(stack_buffer,sizeof stack_buffer,format_chars,&parts);
         const char *result_chars=stack_buffer;
         char *heap_buffer=nullptr;
         if(length==0) {
             heap_buffer=malloc(4096);
-            if(heap_buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            length=strftime(heap_buffer,4096,format->chars,&parts);
+            if(heap_buffer==nullptr){free(substituted);return DIAMOND_VM_OUT_OF_MEMORY;}
+            length=strftime(heap_buffer,4096,format_chars,&parts);
             result_chars=heap_buffer;
         }
         DiamondString *string=allocate_string(vm,result_chars,length);
         free(heap_buffer);
+        free(substituted);
         if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(string);
         return DIAMOND_VM_OK;

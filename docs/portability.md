@@ -295,6 +295,18 @@ build-level one would be honest right now.
     (confirmed against the image's own Included Software manifest) and
     wasn't in this job's Homebrew list either -- added there now,
     alongside `coreutils`/`gnu-sed`/`bash`.
+  - A real runtime (not just test-harness) gap, found the same way: a
+    fixed-offset Time's `%z` printed "+0000" regardless of its real
+    offset. `time_struct_tm` (`src/vm.c`) hand-patches `tm_gmtoff` into a
+    `gmtime_r`-produced `struct tm` for a fixed-offset Time; `strftime`'s
+    own `%z` conversion trusts that field on glibc but not on Darwin's
+    libc, confirmed directly by this same CI run (`tests/cases/
+    time_calendar_constructors.di`, `east`/`west`'s own `%z` cases).
+    Fixed at the source rather than excluded: Diamond now substitutes
+    `%z` itself before a fixed-offset Time's format string ever reaches
+    the system `strftime(3)` (`substitute_fixed_offset_z`), so the
+    directive no longer depends on the platform honoring it, on Darwin
+    or anywhere else. See docs/time.md and the changelog.
   - Homebrew package names for a future CI job's own dependencies,
     confirmed present on the runner image already: `openssl@3`, `sqlite`.
     `postgresql@16` and `mariadb-connector-c` install cleanly via `brew
