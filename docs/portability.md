@@ -24,10 +24,23 @@ enough POSIX-adjacent surface area to matter here.
   musl either -- see the `test-musl` job's own comment for why extending
   its scope to match `test-all` isn't done casually. See "musl-specific
   findings" below for exactly what building there required.
+- **FreeBSD 15.1, Clang, x86_64** -- CI runs `make test` plus the same
+  curated focused-target set as musl (`test-freebsd` job, same workflow),
+  via a real QEMU-booted VM (`vmactions/freebsd-vm`), on every push. Four
+  known failures excluded the same way musl's two are: `bcrypt.di`/
+  `active_record_secure_password.di` (BCrypt.hash needs libxcrypt's
+  `crypt_gensalt_rn`, unavailable with no `<crypt.h>` at all on FreeBSD --
+  see "FreeBSD/OpenBSD" below) and `math_exp_log(_tanh).di` (exp/log
+  differ from glibc's own libm in the last representable bit -- expected
+  cross-library variance, not a bug). Narrower than `test-all` for the
+  same reason musl's own job is: no sanitizer/tsan builds or
+  package-specific tests validated against FreeBSD either. GCC-on-FreeBSD
+  has not been checked (CC=clang here, FreeBSD's own base compiler, to
+  avoid an extra ports build).
 
 Not yet validated: a non-x86_64 architecture, macOS/Darwin, and OpenBSD
-(FreeBSD's build-level prerequisites are now confirmed real, see below, but
-no CI job exists yet). Portability claims should not extend past what's
+(blocked on a real gap, not just an unwritten CI job -- see below).
+Portability claims should not extend past what's
 actually been checked -- see docs/roadmap.md's "Explicitly deferred". See
 "macOS/Darwin" and "FreeBSD/OpenBSD" below for what's been found so far.
 
@@ -209,8 +222,86 @@ real run before being trusted the way the musl section above can be.
 Unlike the macOS section above, this was checked against real, current
 kernels -- FreeBSD 15.1-RELEASE and OpenBSD 7.9, both amd64, each booted
 for real via `vmactions/freebsd-vm`/`vmactions/openbsd-vm` (QEMU, not
-emulation of the userland alone) in a one-off `workflow_dispatch` probe.
-Confirmed directly, not assumed:
+emulation of the userland alone). FreeBSD now has a real, passing CI job
+(`test-freebsd`, see "Validated platforms" above); OpenBSD does not, for
+the real reason below, not lack of effort.
+
+What it took to get FreeBSD's job from a first real build attempt to
+fully green, beyond the prerequisite findings below (each its own commit
+on the way there, `git log -- .github/workflows/ci.yml src/vm.c
+tests/run.sh`):
+
+- `gmake`, not `make`: FreeBSD's base `make` is BSD make (pmake), which
+  doesn't understand this Makefile's GNU-only syntax (`ifeq`,
+  `$(wildcard ...)`, `$(shell ...)`) at all.
+- `mysql.h`/`libmariadb.so` both live under FreeBSD's mariadb-connector-c
+  port's own `mariadb/` subdirectory (`/usr/local/include/mariadb/`,
+  `/usr/local/lib/mariadb/`), on top of the plain `/usr/local` prefix
+  everything else needs -- the same split Debian/Ubuntu's `libmariadb-dev`
+  needs on Linux (`Makefile`'s own `CPPFLAGS` comment), just a different
+  extra path.
+- `CPPFLAGS_EXTRA`/`LDFLAGS_EXTRA` (added for macOS, see above) needed one
+  real `Makefile` fix to actually work everywhere: most link recipes
+  (`gen_compiled_prelude` on) use `$(LDLIBS)` alone, never `$(LDFLAGS)` --
+  only the final `diamond` binary and the API test binaries link with
+  `$(LDFLAGS)`. `LDFLAGS_EXTRA`'s `-L` paths are now prepended into
+  `LDLIBS` itself instead, reaching every recipe uniformly.
+- `tests/collection_relay_contracts.sh` uses a GNU sed extension (a
+  `:label`/`n`/`p`/`b` loop) FreeBSD's base BSD sed rejects outright --
+  same category as musl/Alpine's own BusyBox sed finding above. FreeBSD's
+  GNU sed port installs as `gsed`, not a `sed` override, and
+  `/usr/local/bin` sits *after* `/usr/bin` in FreeBSD's default `PATH`,
+  so (unlike Alpine's `apk` package) installing it doesn't shadow the
+  base `sed` on its own; the CI job symlinks it into a directory it
+  prepends to `PATH` explicitly instead.
+- **Two real runtime bugs, not tooling gaps, found this way** (both fixed
+  in `src/vm.c`, both were invisible on Linux/musl):
+  1. `tcp_listen_helper`/`udp_socket_helper`'s wildcard bind
+     (`getaddrinfo(nullptr, port, {AF_UNSPEC, AI_PASSIVE})`) never set
+     `IPV6_V6ONLY`. Linux's default `net.ipv6.bindv6only=0` makes an
+     IPv6-wildcard bind already dual-stack, so an IPv4 client connecting
+     to `127.0.0.1` reaches it with no code needed. FreeBSD (and OpenBSD)
+     default `net.inet6.ip6.v6only` to `1` -- the identical bind only
+     accepted IPv6 there, so an IPv4 loopback connect got plain
+     `ECONNREFUSED`, nothing about the failure pointing at IPv6 at all.
+     Fixed by disabling `IPV6_V6ONLY` explicitly on the v6 candidate,
+     matching Linux's default rather than silently depending on it.
+  2. `UDPSocket#receive(0)`: FreeBSD's `recvfrom` leaves the sender
+     address entirely unpopulated (`ss_family` stays `AF_UNSPEC`) on a
+     genuinely zero-length request, later failing `getnameinfo` with
+     `EAI_FAMILY` ("Address family not recognized"). Linux populates it
+     regardless of the requested length. Fixed by always requesting at
+     least 1 byte from the kernel (satisfies FreeBSD's requirement to
+     resolve the address) while still reporting zero bytes of data
+     whenever the caller's own request was `receive(0)` -- `recvfrom`
+     always consumes/discards the full datagram regardless of buffer
+     size, so this doesn't change `receive(0)`'s documented "consumes
+     without copying" contract.
+- **Two real, expected (not fixed) platform differences**, excluded from
+  the CI run the same way musl's own two BCrypt cases are (`test-freebsd`
+  job's own comment):
+  - `bcrypt.di`/`active_record_secure_password.di`: `BCrypt.hash` needs
+    libxcrypt's `crypt_gensalt_rn`/`CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY`
+    to generate a fresh salt, both declared only in libxcrypt's own
+    `<crypt.h>` -- which doesn't exist on FreeBSD at all (see the
+    `__has_include` guard below), so `bcrypt_hash_helper` always takes
+    its "not supported on this platform" branch there. A different
+    missing piece than musl's own gap (musl has `<crypt.h>` but not
+    bcrypt algorithm support in `crypt_r` itself), same observable
+    result. `BCrypt.verify` is unaffected -- no salt generation, just
+    `crypt_r` against an existing digest, confirmed genuinely correct on
+    FreeBSD (see below).
+  - `math_exp_log(_tanh).di`: `exp(1.0)`/`exp(log(5.0))` differ from
+    glibc's own libm in the last representable bit
+    (`2.7182818284590455` vs `2.718281828459045`, `5.0` vs
+    `4.999999999999999`). Not a bug in either library -- IEEE 754 only
+    mandates correctly-rounded results for `+`/`-`/`*`/`/`/`sqrt`, not
+    transcendental functions, so two conforming libm implementations
+    disagreeing in the last ULP is expected.
+
+The rest of this section is the original diagnostic probe's own
+findings -- confirmed directly, not assumed, before any of the above was
+attempted, and the prerequisites everything above sits on top of.
 
 - **`ucontext_t`/`getcontext`/`makecontext`/`swapcontext`** (Fiber support,
   same dependency as the musl section above): work natively on FreeBSD, no
@@ -236,11 +327,14 @@ Confirmed directly, not assumed:
 - **`timeout`**: present in *both* base installs (unlike macOS, which has
   none). FreeBSD's accepts GNU-style long options
   (`--foreground`/`--kill-after`/`--preserve-status`/`--signal`, though not
-  `--version`) -- promising but not yet checked against `tests/run.sh`'s
-  actual call sites for exact relay/exit-status semantics (see the same
-  GNU-vs-uutils distinction docs/portability.md's macOS section flags).
-  OpenBSD's is a minimal native dialect (`-fp`/`-k time`/`-s signal`, no
-  long options at all) -- meaningfully different, not just missing.
+  `--version`) -- and its actual relay/exit-status semantics against every
+  real call site in `tests/run.sh` are now confirmed correct outright: the
+  `test-freebsd` job runs all of them successfully (see the same
+  GNU-vs-uutils distinction docs/portability.md's macOS section flags, for
+  what to check if this ever needs revisiting). OpenBSD's is a minimal
+  native dialect (`-fp`/`-k time`/`-s signal`, no long options at all) --
+  meaningfully different, not just missing, and untested against real call
+  sites given OpenBSD's own blocker above.
 - **`nproc`**: present in FreeBSD's base (`/bin/nproc`) -- no fix needed
   there. Absent on OpenBSD, same as macOS; `sysctl -n hw.ncpu` works on
   both as the portable fallback.
@@ -259,11 +353,13 @@ Confirmed directly, not assumed:
   were not checked (grep only searched already-installed packages, not
   the full repository).
 
-**Net assessment**: FreeBSD looks genuinely tractable for a real
-`test-freebsd` CI job -- every hard blocker checked out clean. OpenBSD is
-blocked on the missing `ucontext.h`, a language-runtime gap, not a
-portability/tooling one; revisit only alongside (or after) a non-`ucontext`
-Fiber implementation, not as a CI task on its own.
+**Net assessment**: FreeBSD's `test-freebsd` job is real and green (see
+"Validated platforms" above) -- every prerequisite checked out clean, and
+the handful of real gaps it surfaced (two runtime bugs, two expected
+platform differences) are now fixed or excluded, same as musl's own job.
+OpenBSD is blocked on the missing `ucontext.h`, a language-runtime gap,
+not a portability/tooling one; revisit only alongside (or after) a
+non-`ucontext` Fiber implementation, not as a CI task on its own.
 
 ## Known limitations (not fixed, by design)
 

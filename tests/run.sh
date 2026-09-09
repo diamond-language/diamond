@@ -2902,7 +2902,18 @@ elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_
         cpu_budget="$(echo "$cfs_quota / $cfs_period" | bc -l)"
     fi
 fi
-physical_cores="$(awk -F: '/physical id/{p=$2} /^core id/{print p","$2}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
+# -r /proc/cpuinfo, not just 2>/dev/null on the awk call: awk exits
+# nonzero (2 on FreeBSD's own awk, confirmed directly) when a filename
+# argument -- not stdin -- doesn't exist at all, which pipefail (this
+# script's own preamble) turns into the whole pipeline failing, not
+# empty output the `-gt 0` check below could absorb gracefully. No
+# /proc filesystem exists on FreeBSD (or any BSD) by default at all, so
+# this physical-core refinement is Linux-only by construction; skipping
+# it there just leaves cpu_budget at its nproc/cgroup value from above.
+physical_cores=0
+if [[ -r /proc/cpuinfo ]]; then
+    physical_cores="$(awk -F: '/physical id/{p=$2} /^core id/{print p","$2}' /proc/cpuinfo | sort -u | wc -l)"
+fi
 if [[ "$physical_cores" -gt 0 ]]; then
     cpu_budget="$physical_cores"
 fi

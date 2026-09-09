@@ -130,3 +130,106 @@ jobs:
           make CC=gcc LDLIBS_EXTRA=-lucontext test-fiber-run
           make CC=gcc LDLIBS_EXTRA=-lucontext test-lsp
           make CC=gcc LDLIBS_EXTRA=-lucontext test-repl
+
+  # A fourth genuinely different target -- a real BSD kernel/libc, not a
+  # Linux one at all. Confirmed viable first via a one-off diagnostic VM
+  # boot before writing this (docs/portability.md's "FreeBSD/OpenBSD"
+  # section): ucontext/makecontext/swapcontext, crypt(3) bcrypt, and -ldl
+  # all work natively here, and the base install already ships
+  # nproc/timeout/bc (OpenBSD, checked the same way, is not attempted --
+  # it has no <ucontext.h> at all, a Fiber-implementation gap, not a CI
+  # one). CC=clang, not gcc: FreeBSD's base `cc` already is Clang 19, so
+  # this avoids an extra ports build just to get gcc. Narrower target set
+  # than test-all, same reasoning as test-musl's own comment above: this
+  # validation hasn't touched sanitizer/tsan builds or the package-
+  # specific suites (database, HTTP, GraphQL, ...) against FreeBSD, so
+  # claiming that coverage here would be dishonest.
+  test-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: FreeBSD build and test
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y gmake bash ripgrep gsed sqlite3 openssl postgresql16-client mariadb-connector-c
+          # FreeBSD's base `make` is BSD make (pmake), not GNU Make -- this
+          # Makefile uses GNU-only syntax throughout (ifeq, $(wildcard ...),
+          # $(shell ...)), so it needs invoking as `gmake` specifically, the
+          # standard FreeBSD convention (`make` itself stays bound to the
+          # base BSD one). Confirmed directly: the first real run here
+          # failed immediately with pmake's own "Invalid character" parse
+          # errors on every GNU Make construct in the file.
+          # CPPFLAGS_EXTRA/LDFLAGS_EXTRA are each one quoted argument per
+          # invocation below, not a $VAR-expanded, word-split string: both
+          # carry two paths -- mariadb-connector-c's FreeBSD port namespaces
+          # its own mysql.h under /usr/local/include/mariadb/ and
+          # libmariadb.so under /usr/local/lib/mariadb/, on top of the
+          # plain /usr/local prefix everything else (sqlite3, libpq) needs
+          # (confirmed directly via a diagnostic `find` in an earlier
+          # iteration -- same split Debian/Ubuntu's libmariadb-dev needs on
+          # Linux, see Makefile's own CPPFLAGS comment). An unquoted
+          # multi-word value here would fall apart into separate shell
+          # words, one of which (a bare -I.../mariadb or -L.../mariadb has
+          # no `=`) make would misparse as its own flag rather than part of
+          # the variable.
+          # tests/collection_relay_contracts.sh (run by tests/run.sh) uses a
+          # GNU sed extension (a :label/n/p/b loop) FreeBSD's base BSD sed
+          # rejects outright ("unexpected EOF (pending }'s)") -- confirmed
+          # directly, same category as musl/Alpine's own documented BusyBox
+          # sed finding (docs/portability.md). FreeBSD's own GNU sed port
+          # installs as `gsed`, not a `sed` override, and /usr/local/bin
+          # sits *after* /usr/bin in FreeBSD's default PATH -- so a plain
+          # package install wouldn't shadow the base sed the way Alpine's
+          # apk package does. Prepending an explicit symlink directory is
+          # deterministic either way, not dependent on that PATH ordering.
+          # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
+          # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY (src/vm.c) to generate a
+          # fresh salt -- both declared only in libxcrypt's own <crypt.h>,
+          # which doesn't exist on FreeBSD at all (see the __has_include
+          # guard added for FreeBSD earlier), so bcrypt_hash_helper always
+          # takes its #else "not supported on this platform" branch here,
+          # exactly like musl (a different missing piece -- musl has
+          # <crypt.h> but not bcrypt algorithm support in crypt_r itself --
+          # same observable gap). BCrypt.verify is unaffected (no salt
+          # generation involved, just crypt_r against an existing digest --
+          # confirmed genuinely native and correct on FreeBSD via the
+          # earlier diagnostic probe). Same two cases test-musl's own job
+          # already excludes, same reason category, confirmed directly by
+          # a real failing run here: "expected exit code 0, got: 70".
+          # math_exp_log(_tanh).di: exp(1.0)/exp(log(5.0)) differ from
+          # glibc's own libm in the last representable bit on FreeBSD's
+          # libm (2.7182818284590455 vs 2.718281828459045, 5.0 vs
+          # 4.999999999999999) -- confirmed directly by a real failing
+          # run here. Not a bug in either library: IEEE 754 only mandates
+          # correctly-rounded results for +-*/sqrt, not transcendental
+          # functions like exp/log, so two conforming libm
+          # implementations legitimately disagreeing in the last ULP is
+          # expected, not a portability gap to fix.
+          run: |
+            set -e
+            mkdir -p /tmp/excluded-cases
+            mv tests/cases/active_record_secure_password.di \
+               tests/cases/active_record_secure_password.expected \
+               tests/cases/bcrypt.di \
+               tests/cases/bcrypt.expected \
+               tests/cases/math_exp_log.di \
+               tests/cases/math_exp_log.expected \
+               tests/cases/math_exp_log_tanh.di \
+               tests/cases/math_exp_log_tanh.expected \
+               /tmp/excluded-cases/
+            mkdir -p /tmp/gnubin
+            ln -sf "$(which gsed)" /tmp/gnubin/sed
+            export PATH="/tmp/gnubin:$PATH"
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-api
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-incremental-compile
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-compiled-prelude
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fibers
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fiber-run
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-lsp
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-repl
