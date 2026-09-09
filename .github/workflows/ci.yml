@@ -177,6 +177,8 @@ jobs:
           # variable.
           run: |
             set -e
+            echo "=== mariadb-connector-c lib files ==="
+            find /usr/local/lib -iname '*maria*' -o -iname '*mysql*'
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-api
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-incremental-compile
