@@ -1800,14 +1800,15 @@ result["data"]' "$udp_zero_port")"
 udp_zero_client_out="$(mktemp)"
 udp_zero_client_ec=0
 timeout 10 "$diamond" -e "$udp_zero_client_src" >"$udp_zero_client_out" 2>&1 || udp_zero_client_ec=$?
-wait "$udp_zero_server_pid"
-if [[ "$udp_zero_client_ec" -ne 0 ]]; then
-    echo "DIAGNOSTIC: UDP zero-receive client exited $udp_zero_client_ec" >&2
+udp_zero_server_ec=0
+wait "$udp_zero_server_pid" || udp_zero_server_ec=$?
+if [[ "$udp_zero_client_ec" -ne 0 || "$udp_zero_server_ec" -ne 0 ]]; then
+    echo "DIAGNOSTIC: UDP zero-receive client exited $udp_zero_client_ec, server exited $udp_zero_server_ec" >&2
     echo "DIAGNOSTIC: server output:" >&2
     cat "$udp_zero_server_out" >&2
     echo "DIAGNOSTIC: client output:" >&2
     cat "$udp_zero_client_out" >&2
-    exit "$udp_zero_client_ec"
+    exit 1
 fi
 [[ "$(tail -n1 "$udp_zero_server_out")" == "0" ]]
 [[ "$(cat "$udp_zero_client_out")" == "got: 0" ]]
