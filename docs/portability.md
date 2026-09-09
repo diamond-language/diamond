@@ -25,10 +25,11 @@ enough POSIX-adjacent surface area to matter here.
   its scope to match `test-all` isn't done casually. See "musl-specific
   findings" below for exactly what building there required.
 
-Not yet validated: a non-x86_64 architecture, and any BSD or Darwin libc.
-Portability claims should not extend past what's actually been checked --
-see docs/roadmap.md's "Explicitly deferred". See "macOS/Darwin" below for
-what a first, code-only look (no real hardware yet) found.
+Not yet validated: a non-x86_64 architecture, macOS/Darwin, and OpenBSD
+(FreeBSD's build-level prerequisites are now confirmed real, see below, but
+no CI job exists yet). Portability claims should not extend past what's
+actually been checked -- see docs/roadmap.md's "Explicitly deferred". See
+"macOS/Darwin" and "FreeBSD/OpenBSD" below for what's been found so far.
 
 ## Toolchain assumptions
 
@@ -202,6 +203,67 @@ real run before being trusted the way the musl section above can be.
   subset of `make test` that dodges this cleanly. A `test-macos` CI job
   would need the coreutils gaps above addressed first, not just Homebrew
   packages installed, to be worth more than a build-only smoke check.
+
+## FreeBSD/OpenBSD: confirmed against real VMs
+
+Unlike the macOS section above, this was checked against real, current
+kernels -- FreeBSD 15.1-RELEASE and OpenBSD 7.9, both amd64, each booted
+for real via `vmactions/freebsd-vm`/`vmactions/openbsd-vm` (QEMU, not
+emulation of the userland alone) in a one-off `workflow_dispatch` probe.
+Confirmed directly, not assumed:
+
+- **`ucontext_t`/`getcontext`/`makecontext`/`swapcontext`** (Fiber support,
+  same dependency as the musl section above): work natively on FreeBSD, no
+  compatibility library needed. **`<ucontext.h>` does not exist at all on
+  OpenBSD** -- `fatal error: 'ucontext.h' file not found`, not merely an
+  unimplemented symbol the way musl's case was. This is a real gap in
+  Diamond's own Fiber implementation (`src/vm.c` depends on POSIX
+  `ucontext` unconditionally), not a build/CI-tooling problem: "Known
+  limitations" below already notes there's no fallback fiber
+  implementation (e.g. hand-rolled `setjmp`/`longjmp` + manual stack
+  switch) planned. OpenBSD Fiber/Thread support is out of reach without
+  that separate engineering effort -- a CI job alone can't close this gap.
+- **`crypt(3)` bcrypt support**: native and correct on both -- confirmed by
+  hashing the same password with the same salt on each and getting the
+  identical, valid `$2b$` hash back. (The probe's first run produced a
+  false NULL on both platforms from a malformed 21-character test salt,
+  not a real platform gap -- bcrypt salts are fixed at 22; re-run with a
+  known-valid one confirmed this cleanly.)
+- **`-ldl`**: links fine on FreeBSD. **Fails on OpenBSD** ("unable to find
+  library -ldl") -- same category as macOS's finding above (`dlopen` lives
+  in libc directly, no separate `.dylib`/`.so` to link against); the same
+  `LDLIBS_DL=` override already added for macOS covers this.
+- **`timeout`**: present in *both* base installs (unlike macOS, which has
+  none). FreeBSD's accepts GNU-style long options
+  (`--foreground`/`--kill-after`/`--preserve-status`/`--signal`, though not
+  `--version`) -- promising but not yet checked against `tests/run.sh`'s
+  actual call sites for exact relay/exit-status semantics (see the same
+  GNU-vs-uutils distinction docs/portability.md's macOS section flags).
+  OpenBSD's is a minimal native dialect (`-fp`/`-k time`/`-s signal`, no
+  long options at all) -- meaningfully different, not just missing.
+- **`nproc`**: present in FreeBSD's base (`/bin/nproc`) -- no fix needed
+  there. Absent on OpenBSD, same as macOS; `sysctl -n hw.ncpu` works on
+  both as the portable fallback.
+- **`bc`**: present and functional on both.
+- **`bash` 5+** (for `$EPOCHREALTIME`): not in either base install, but
+  installs cleanly via `pkg`/`pkg_add` and resolves first on `PATH` ahead
+  of any system shell once installed -- confirmed directly by `which
+  bash` after install on both, unlike macOS's still-unconfirmed PATH
+  ordering.
+- **Toolchain**: both ship Clang as the base `cc` (FreeBSD 19.1.7, OpenBSD
+  19.1.7); GCC is available on both via the package manager (FreeBSD ports
+  as plain `gcc`, OpenBSD as `egcc` -- `gcc` there is reserved for an
+  ancient bundled version). FreeBSD 15's package-managed base system
+  (`pkgbase`) already has OpenSSL and SQLite dev packages installed by
+  default in the image used; PostgreSQL/MariaDB Connector package names
+  were not checked (grep only searched already-installed packages, not
+  the full repository).
+
+**Net assessment**: FreeBSD looks genuinely tractable for a real
+`test-freebsd` CI job -- every hard blocker checked out clean. OpenBSD is
+blocked on the missing `ucontext.h`, a language-runtime gap, not a
+portability/tooling one; revisit only alongside (or after) a non-`ucontext`
+Fiber implementation, not as a CI task on its own.
 
 ## Known limitations (not fixed, by design)
 
