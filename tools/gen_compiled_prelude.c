@@ -15,6 +15,7 @@
  * vm.h's <ucontext.h> use (via compiler.h), only under musl
  * (docs/roadmap.md's "Portability"). */
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 #include "compiled_prelude.h"
 #include "compiler.h"
 #include "prelude.h"

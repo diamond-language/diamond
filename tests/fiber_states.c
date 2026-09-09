@@ -1,6 +1,7 @@
 /* See src/bignum.c's own identical comment: needed for vm.h's own
  * <ucontext.h> use, only under musl (docs/roadmap.md's "Portability"). */
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 #include "vm.h"
 
 #include <stdio.h>

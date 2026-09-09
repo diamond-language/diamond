@@ -2,6 +2,7 @@
  * -std=c23, same reason hover.c requests _POSIX_C_SOURCE for
  * open_memstream (see its own comment). */
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 
 #include "workspace_symbol.h"
 

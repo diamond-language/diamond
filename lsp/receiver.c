@@ -1,5 +1,6 @@
 /* See lsp/completion.c's own identical comment. */
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 #include "receiver.h"
 
 #include "lexer.h"
