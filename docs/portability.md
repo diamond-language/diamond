@@ -307,6 +307,24 @@ build-level one would be honest right now.
     the system `strftime(3)` (`substitute_fixed_offset_z`), so the
     directive no longer depends on the platform honoring it, on Darwin
     or anywhere else. See docs/time.md and the changelog.
+  - `tests/lsp_test.sh`'s require-resolution case compared a published
+    diagnostic's `uri` against an expected string built from `mktemp
+    -d`'s own raw return value. Found via a `bash -x` trace after a
+    plain run failed with no visible output at all (nothing prints
+    between a failing `[[ ... ]]` and the script's own `trap`-driven
+    cleanup, under `set -e`) -- confirmed directly rather than guessed:
+    the trace showed every earlier assertion in the file passing, then
+    this exact comparison failing on a `/private/var/...` vs `/var/...`
+    mismatch. `require`d files (unlike a document's own uri, echoed
+    straight back from what the script itself sent) are resolved by the
+    compiler's loader, which canonicalizes the path -- and on macOS,
+    where `/var` is itself a symlink to `/private/var`, that resolves
+    to something `mktemp -d`'s own raw output never does. Fixed by
+    `realpath`-ing `$work` once, immediately after `mktemp -d`, the same
+    way `diamond_lsp` right above it already is -- makes every
+    downstream string comparison agree with whatever canonical form the
+    loader produces, on any platform, rather than assuming `mktemp`'s
+    own return value already is one.
   - `tests/fiber_run.c`'s own stack-unmap probe: after a fiber's stack is
     freed (`free_fiber_stack`, `munmap`), the test calls `mincore()` on
     the freed range and expects `ENOMEM` -- confirming the memory is

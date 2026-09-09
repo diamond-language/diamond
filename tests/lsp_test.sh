@@ -15,8 +15,13 @@ count=0
 # A real on-disk directory for the require-resolution cases below --
 # `require` only resolves against an actual directory, so unlike every
 # other case in this script (which use a uri that was never a real path
-# at all), these need one.
-work="$(mktemp -d)"
+# at all), these need one. realpath'd the same way diamond_lsp already is
+# above: a `require`d file's own path (unlike main.di's own uri, echoed
+# straight back from what this script sent) is resolved by the compiler's
+# loader, which canonicalizes it -- on a system where the raw mktemp
+# path is itself a symlink (macOS's /var -> /private/var), comparing
+# against the un-resolved path here would silently never match.
+work="$(realpath "$(mktemp -d)")"
 trap 'rm -rf "$work"' EXIT
 cat > "$work/helper.di" <<'EOF'
 def greet(name)
