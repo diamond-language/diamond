@@ -164,26 +164,26 @@ jobs:
           # base BSD one). Confirmed directly: the first real run here
           # failed immediately with pmake's own "Invalid character" parse
           # errors on every GNU Make construct in the file.
-          # CPPFLAGS_EXTRA is one quoted argument per invocation below, not a
-          # $VAR-expanded, word-split string: it has to carry two -I paths
-          # (plain /usr/local/include, plus mariadb-connector-c's own
-          # mysql.h, which the FreeBSD port namespaces under
-          # /usr/local/include/mariadb/ the same way Debian/Ubuntu's
-          # libmariadb-dev does -- see Makefile's own CPPFLAGS comment for
-          # that same split on Linux), and an unquoted multi-word value
-          # here would fall apart into separate shell words, one of which
-          # (a bare -I/usr/local/include/mariadb/mysql.h has no `=`) make
-          # would misparse as its own -I flag rather than part of the
-          # variable.
+          # CPPFLAGS_EXTRA/LDFLAGS_EXTRA are each one quoted argument per
+          # invocation below, not a $VAR-expanded, word-split string: both
+          # carry two paths -- mariadb-connector-c's FreeBSD port namespaces
+          # its own mysql.h under /usr/local/include/mariadb/ and
+          # libmariadb.so under /usr/local/lib/mariadb/, on top of the
+          # plain /usr/local prefix everything else (sqlite3, libpq) needs
+          # (confirmed directly via a diagnostic `find` in an earlier
+          # iteration -- same split Debian/Ubuntu's libmariadb-dev needs on
+          # Linux, see Makefile's own CPPFLAGS comment). An unquoted
+          # multi-word value here would fall apart into separate shell
+          # words, one of which (a bare -I.../mariadb or -L.../mariadb has
+          # no `=`) make would misparse as its own flag rather than part of
+          # the variable.
           run: |
             set -e
-            echo "=== mariadb-connector-c lib files ==="
-            find /usr/local/lib -iname '*maria*' -o -iname '*mysql*'
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-api
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-incremental-compile
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-compiled-prelude
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-fibers
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-fiber-run
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-lsp
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA=-L/usr/local/lib test-repl
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-api
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-incremental-compile
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-compiled-prelude
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fibers
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fiber-run
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-lsp
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-repl
