@@ -19,8 +19,17 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # Tab-completion (see REPL_COMPLETION_SOURCES below) -- global rather
 # than scoped to just that one file's own compile step, since no
 # src/*.h/lsp/*.h basename collision exists to make that a risk.
+# CPPFLAGS_EXTRA: empty by default, appended below -- same pattern as
+# LDLIBS_EXTRA's own comment further down. Its one real use today: macOS's
+# Homebrew keeps OpenSSL/libpq/MariaDB Connector keg-only (not symlinked
+# into a default search path the way Fedora/Ubuntu's package managers
+# install headers), so those need their Homebrew prefixes passed in
+# explicitly rather than hardcoded here alongside the Linux-distro paths
+# below -- Homebrew's own prefix differs by CPU architecture (/opt/homebrew
+# on Apple Silicon, /usr/local on Intel), so it can't be a fixed path either.
+CPPFLAGS_EXTRA :=
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
-	-I/usr/include/mariadb -I/usr/include/postgresql
+	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA)
 # -fPIE: explicit, not left to the compiler's own default. Fedora/Ubuntu's
 # gcc default to a consistent compile/link PIE pairing either way, so this
 # was invisible there, but Alpine's musl-targeting gcc defaults to `-pie`
@@ -60,7 +69,17 @@ endif
 # machine; it costs some missed vectorization on newer CPUs, but this
 # is a bytecode VM (src/vm.c's run_chunk), not numerically-hot code
 # that leans on AVX/FMA, so that cost is small.
+# -march=x86-64 is itself an x86-only flag -- both gcc and clang reject it
+# outright targeting arm64 ("unsupported argument"), which every current
+# GitHub-hosted `macos-*` runner is by default (Apple Silicon). Guarded by
+# UNAME_M rather than assumed, so this stays correct on an arm64 Linux box
+# too, not just macOS.
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
 CFLAGS_RELEASE := -O3 -DNDEBUG -march=x86-64
+else
+CFLAGS_RELEASE := -O3 -DNDEBUG
+endif
 # -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line
 # function whose giant opcode switch declares its own locals (registers,
 # per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
@@ -98,7 +117,21 @@ LDFLAGS_TSAN := -fsanitize=thread
 # glibc (Fedora/Ubuntu), which implements them natively -- see
 # docs/portability.md.
 LDLIBS_EXTRA :=
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz $(LDLIBS_EXTRA)
+# LDLIBS_DL/LDLIBS_CRYPT: default to Linux's real separate libraries, but
+# each is its own overridable variable (not folded into the fixed list
+# below) because macOS's libSystem provides both dlopen/dlsym and crypt()
+# directly with no matching libdl.dylib/libcrypt.dylib to link against --
+# `-ldl`/`-lcrypt` fail there with "library not found", unlike a merely
+# redundant -I path, so these need to be droppable (`make LDLIBS_DL=
+# LDLIBS_CRYPT=`), not just appended to.
+LDLIBS_DL := -ldl
+LDLIBS_CRYPT := -lcrypt
+# LDFLAGS_EXTRA: same _EXTRA pattern as CPPFLAGS_EXTRA above, for the
+# matching -L search path macOS's keg-only Homebrew OpenSSL/libpq/MariaDB
+# Connector need alongside CPPFLAGS_EXTRA's -I one.
+LDFLAGS_EXTRA :=
+LDFLAGS := $(LDFLAGS_EXTRA)
+LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile

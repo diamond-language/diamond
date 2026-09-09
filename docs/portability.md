@@ -27,7 +27,8 @@ enough POSIX-adjacent surface area to matter here.
 
 Not yet validated: a non-x86_64 architecture, and any BSD or Darwin libc.
 Portability claims should not extend past what's actually been checked --
-see docs/roadmap.md's "Explicitly deferred".
+see docs/roadmap.md's "Explicitly deferred". See "macOS/Darwin" below for
+what a first, code-only look (no real hardware yet) found.
 
 ## Toolchain assumptions
 
@@ -157,6 +158,50 @@ the feature-test-macro gap above:
    cleanly. `docker run --init` / `podman run --init` (or an
    equivalent minimal reaper) is a real prerequisite for that specific
    test, unrelated to musl itself.
+
+## macOS/Darwin: prerequisites found, not yet validated
+
+Unlike musl above, none of this has been checked against real hardware --
+no Darwin CI job exists yet (see docs/roadmap.md's "Portability"). Found by
+reading the build system and test harness against known Darwin/Homebrew
+behavior, not by building there; every item below needs confirming on a
+real run before being trusted the way the musl section above can be.
+
+- **Two `Makefile` fixes already made**, independent of whether a Darwin CI
+  job ever lands: `CFLAGS_RELEASE`'s `-march=x86-64` is an x86-only flag
+  gcc/clang reject outright on arm64 -- what every current GitHub-hosted
+  `macos-*` runner is (Apple Silicon) -- now guarded by `uname -m` rather
+  than assumed (this also matters on an arm64 Linux box, not just macOS).
+  `LDLIBS`'s `-ldl`/`-lcrypt` -- macOS's libSystem provides both `dlopen`
+  and `crypt()` directly with no matching `.dylib` to link against, so
+  these fail the link with "library not found" -- are now their own
+  overridable `LDLIBS_DL`/`LDLIBS_CRYPT` variables instead of baked into
+  the fixed list, alongside new `CPPFLAGS_EXTRA`/`LDFLAGS_EXTRA` override
+  points for Homebrew's keg-only OpenSSL/libpq/MariaDB Connector paths
+  (which differ by CPU architecture: `/opt/homebrew` vs `/usr/local`).
+- **The test harness (mostly `tests/run.sh`) leans on GNU-coreutils
+  behavior far more than the build does** -- found by `grep`, not yet
+  confirmed against a real Mac:
+  - `timeout` -- 28 call sites across process/signal/socket tests, several
+    relying specifically on GNU/uutils relay-then-child-status semantics
+    (see the comment above the `signal_pid` wait in the Signal.trap test).
+    macOS ships no `timeout` at all in its base install.
+  - `nproc` (6 uses) and `/proc/cpuinfo` (physical-core counting, in the
+    Thread real-parallelism CPU-budget check) -- neither exists on macOS;
+    the equivalent is `sysctl -n hw.ncpu`/`hw.physicalcpu`.
+  - `$EPOCHREALTIME` (that same Thread real-parallelism test's own timing)
+    -- bash 5+ only. macOS's stock `/bin/bash` is the pre-GPLv3 3.2 Apple
+    still ships; this only works if a newer bash (Homebrew's) resolves
+    first on `PATH` when a script is invoked as `bash tests/run.sh` rather
+    than via its own shebang.
+  - `bc` (6 uses) -- presence on current macOS is unconfirmed either way.
+
+  Unlike the musl job's own narrow carve-out (two BCrypt test cases,
+  `test-musl`'s own comment), excluding everything `timeout` touches here
+  would gut most of the process/signal/socket coverage -- there's no small
+  subset of `make test` that dodges this cleanly. A `test-macos` CI job
+  would need the coreutils gaps above addressed first, not just Homebrew
+  packages installed, to be worth more than a build-only smoke check.
 
 ## Known limitations (not fixed, by design)
 
