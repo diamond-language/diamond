@@ -1783,6 +1783,7 @@ udp_zero_server_out="$(mktemp)"
 "$diamond" -e "$(printf 'socket = UDPSocket.bind(%d)
 puts("ready")
 result = socket.receive(0)
+puts("DIAG host=#{result["host"]} port=#{result["port"]}")
 socket.send("got: #{result["data"].length()}", result["host"], result["port"])
 socket.close()
 0' "$udp_zero_port")" >"$udp_zero_server_out" 2>&1 &
@@ -1798,7 +1799,16 @@ client.close()
 result["data"]' "$udp_zero_port")"
 udp_zero_client_out="$(mktemp)"
 timeout 10 "$diamond" -e "$udp_zero_client_src" >"$udp_zero_client_out" 2>&1
+udp_zero_client_ec=$?
 wait "$udp_zero_server_pid"
+if [[ "$udp_zero_client_ec" -ne 0 ]]; then
+    echo "DIAGNOSTIC: UDP zero-receive client exited $udp_zero_client_ec" >&2
+    echo "DIAGNOSTIC: server output:" >&2
+    cat "$udp_zero_server_out" >&2
+    echo "DIAGNOSTIC: client output:" >&2
+    cat "$udp_zero_client_out" >&2
+    exit "$udp_zero_client_ec"
+fi
 [[ "$(tail -n1 "$udp_zero_server_out")" == "0" ]]
 [[ "$(cat "$udp_zero_client_out")" == "got: 0" ]]
 rm -f "$udp_zero_server_out" "$udp_zero_client_out"
