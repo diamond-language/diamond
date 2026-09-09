@@ -17246,12 +17246,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * any of it), so this fix aligns the *validation* with
                      * the read family without changing send/receive
                      * semantics. */
-                    char *buffer=malloc(want==0?1:want);
+                    /* recv_len (never 0) is what's actually requested from
+                     * recvfrom -- FreeBSD leaves source_addr untouched
+                     * (ss_family stays the {0} initializer's AF_UNSPEC) on
+                     * a genuinely zero-length recvfrom, later failing
+                     * getnameinfo below with EAI_FAMILY ("Address family
+                     * not recognized"); confirmed directly, a real
+                     * receive(0) call on a real FreeBSD 15.1 box. Linux has
+                     * no such requirement (a zero-length recvfrom there
+                     * still populates the source address correctly), which
+                     * is why this was invisible before. `want` itself
+                     * (0 for a genuine receive(0) call) stays the source of
+                     * truth for how many bytes of the datagram to actually
+                     * surface as `data` below -- recvfrom always consumes/
+                     * discards the whole queued datagram regardless of how
+                     * much of it fits in the buffer, so asking for 1 byte
+                     * here changes nothing about receive(0)'s own
+                     * documented "consumes without copying" contract; it
+                     * only obtains the source address FreeBSD would
+                     * otherwise skip. */
+                    const size_t recv_len=want==0?1:want;
+                    char *buffer=malloc(recv_len);
                     if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     struct sockaddr_storage source_addr={0};
                     socklen_t source_addr_len=sizeof source_addr;
                     errno=0;
-                    ssize_t received=recvfrom(udp_handle->fd,buffer,want,0,
+                    ssize_t received=recvfrom(udp_handle->fd,buffer,recv_len,0,
                         (struct sockaddr *)&source_addr,&source_addr_len);
                     /* Same reasoning as blocking accept()/IO.poll above:
                      * a UDP server loop's own .receive() can block
@@ -17314,7 +17334,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),DIAMOND_NIL)) {
                         free(buffer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     }
-                    DiamondString *data_string=allocate_string(vm,buffer,(size_t)received);
+                    /* want, not recv_len/received: a genuine receive(0)
+                     * reports zero bytes of data regardless of the 1 byte
+                     * recv_len above may have actually copied into buffer
+                     * to get FreeBSD to populate source_addr -- see that
+                     * comment. */
+                    const size_t reported_length=want==0?0:(size_t)received;
+                    DiamondString *data_string=allocate_string(vm,buffer,reported_length);
                     free(buffer);
                     if(data_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),
