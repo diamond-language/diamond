@@ -10,6 +10,7 @@
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 #include "bignum.h"
 
 #include <math.h>
