@@ -156,15 +156,22 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y bash ripgrep postgresql16-client mariadb-connector-c
+            pkg install -y gmake bash ripgrep postgresql16-client mariadb-connector-c
+          # FreeBSD's base `make` is BSD make (pmake), not GNU Make -- this
+          # Makefile uses GNU-only syntax throughout (ifeq, $(wildcard ...),
+          # $(shell ...)), so it needs invoking as `gmake` specifically, the
+          # standard FreeBSD convention (`make` itself stays bound to the
+          # base BSD one). Confirmed directly: the first real run here
+          # failed immediately with pmake's own "Invalid character" parse
+          # errors on every GNU Make construct in the file.
           run: |
             set -e
             MAKE_FLAGS="CC=clang CPPFLAGS_EXTRA=-I/usr/local/include LDFLAGS_EXTRA=-L/usr/local/lib"
-            make $MAKE_FLAGS test
-            make $MAKE_FLAGS test-api
-            make $MAKE_FLAGS test-incremental-compile
-            make $MAKE_FLAGS test-compiled-prelude
-            make $MAKE_FLAGS test-fibers
-            make $MAKE_FLAGS test-fiber-run
-            make $MAKE_FLAGS test-lsp
-            make $MAKE_FLAGS test-repl
+            gmake $MAKE_FLAGS test
+            gmake $MAKE_FLAGS test-api
+            gmake $MAKE_FLAGS test-incremental-compile
+            gmake $MAKE_FLAGS test-compiled-prelude
+            gmake $MAKE_FLAGS test-fibers
+            gmake $MAKE_FLAGS test-fiber-run
+            gmake $MAKE_FLAGS test-lsp
+            gmake $MAKE_FLAGS test-repl
