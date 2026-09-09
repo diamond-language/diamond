@@ -1,0 +1,144 @@
+name: bsd-probe
+
+# Manually-triggered only (workflow_dispatch), not part of the push/PR
+# matrix in ci.yml. This is a diagnostic pass, not a test job: before
+# writing a real test-freebsd/test-openbsd job (the way test-musl was
+# added), find out what's actually true on each -- ucontext.h/crypt(3)
+# bcrypt support, GNU-coreutils-only tooling (timeout/nproc/bc/bash
+# version) tests/run.sh leans on -- rather than assuming from docs or
+# general knowledge the way the musl and macOS passes explicitly did not
+# (see docs/portability.md). Same reasoning as ci.yml's own "Diagnostic
+# environment facts" step in test-all, one level earlier: gather real
+# facts before writing code or CI against them. Delete this workflow once
+# its findings are written up in docs/portability.md and either acted on
+# or explicitly deferred.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: FreeBSD probe
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y gcc git bash coreutils
+          run: |
+            set -x
+            echo "=== uname -a ==="; uname -a
+            echo "=== uname -m ==="; uname -m
+            echo "=== cc --version ==="; cc --version || true
+            echo "=== clang --version ==="; clang --version || true
+            echo "=== gcc --version ==="; gcc --version || true
+            echo "=== pkg info (relevant) ==="; pkg info | grep -iE "openssl|sqlite|postgres|mariadb|mysql" || true
+            echo "=== timeout ==="; which timeout || echo "NO TIMEOUT"; timeout --version 2>&1 | head -3 || true
+            echo "=== nproc ==="; which nproc || echo "NO NPROC (base)"; sysctl -n hw.ncpu
+            echo "=== bc ==="; which bc || echo "NO BC"; echo "1+1" | bc || true
+            echo "=== bash ==="; which bash || echo "NO BASH"; bash --version 2>&1 | head -1 || true
+            echo "=== /bin/bash --version (base, if present) ==="; /bin/bash --version 2>&1 | head -1 || echo "no /bin/bash"
+            echo "=== ucontext probe ==="
+            cat > /tmp/ctx_probe.c <<'EOF'
+            #include <ucontext.h>
+            #include <stdio.h>
+            static ucontext_t a, b;
+            static void f(void) { printf("ucontext OK\n"); }
+            int main(void) {
+            char stack[65536];
+            getcontext(&a);
+            a.uc_stack.ss_sp = stack;
+            a.uc_stack.ss_size = sizeof(stack);
+            a.uc_link = &b;
+            makecontext(&a, f, 0);
+            swapcontext(&b, &a);
+            return 0;
+            }
+            EOF
+            cc /tmp/ctx_probe.c -o /tmp/ctx_probe 2>&1 && /tmp/ctx_probe || echo "UCONTEXT PROBE FAILED"
+            echo "=== crypt(3) bcrypt probe ==="
+            cat > /tmp/crypt_probe.c <<'EOF'
+            #define _GNU_SOURCE
+            #include <unistd.h>
+            #include <stdio.h>
+            int main(void) {
+            char *hash = crypt("password", "$2b$04$usesomesillystringfor");
+            printf("crypt result: %s\n", hash ? hash : "(null)");
+            return 0;
+            }
+            EOF
+            cc /tmp/crypt_probe.c -o /tmp/crypt_probe -lcrypt 2>&1 && /tmp/crypt_probe || echo "CRYPT PROBE FAILED (link or run)"
+            echo "=== -ldl probe ==="
+            cat > /tmp/dl_probe.c <<'EOF'
+            #include <dlfcn.h>
+            int main(void) { dlopen("nonexistent.so", RTLD_LAZY); return 0; }
+            EOF
+            cc /tmp/dl_probe.c -o /tmp/dl_probe -ldl 2>&1 && echo "LDL LINKS OK" || echo "LDL LINK FAILED"
+            echo "=== done ==="
+
+  probe-openbsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: OpenBSD probe
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg_add gcc bash coreutils
+          run: |
+            set -x
+            echo "=== uname -a ==="; uname -a
+            echo "=== uname -m ==="; uname -m
+            echo "=== cc --version ==="; cc --version || true
+            echo "=== clang --version ==="; clang --version || true
+            echo "=== egcc/gcc --version ==="; egcc --version || gcc --version || true
+            echo "=== pkg_info (relevant) ==="; pkg_info | grep -iE "openssl|sqlite|postgres|mariadb|mysql" || true
+            echo "=== timeout ==="; which timeout || echo "NO TIMEOUT"; timeout --version 2>&1 | head -3 || true
+            echo "=== nproc ==="; which nproc || echo "NO NPROC (base)"; sysctl -n hw.ncpu
+            echo "=== bc ==="; which bc || echo "NO BC"; echo "1+1" | bc || true
+            echo "=== bash ==="; which bash || echo "NO BASH"; bash --version 2>&1 | head -1 || true
+            echo "=== ucontext probe ==="
+            cat > /tmp/ctx_probe.c <<'EOF'
+            #include <ucontext.h>
+            #include <stdio.h>
+            static ucontext_t a, b;
+            static void f(void) { printf("ucontext OK\n"); }
+            int main(void) {
+            char stack[65536];
+            getcontext(&a);
+            a.uc_stack.ss_sp = stack;
+            a.uc_stack.ss_size = sizeof(stack);
+            a.uc_link = &b;
+            makecontext(&a, f, 0);
+            swapcontext(&b, &a);
+            return 0;
+            }
+            EOF
+            cc /tmp/ctx_probe.c -o /tmp/ctx_probe 2>&1 && /tmp/ctx_probe || echo "UCONTEXT PROBE FAILED"
+            echo "=== crypt(3) bcrypt probe ==="
+            cat > /tmp/crypt_probe.c <<'EOF'
+            #include <unistd.h>
+            #include <stdio.h>
+            int main(void) {
+            char *hash = crypt("password", "$2b$04$usesomesillystringfor");
+            printf("crypt result: %s\n", hash ? hash : "(null)");
+            return 0;
+            }
+            EOF
+            cc /tmp/crypt_probe.c -o /tmp/crypt_probe 2>&1 && /tmp/crypt_probe || echo "CRYPT PROBE FAILED (link or run)"
+            echo "=== -ldl probe ==="
+            cat > /tmp/dl_probe.c <<'EOF'
+            #include <dlfcn.h>
+            int main(void) { dlopen("nonexistent.so", RTLD_LAZY); return 0; }
+            EOF
+            cc /tmp/dl_probe.c -o /tmp/dl_probe -ldl 2>&1 && echo "LDL LINKS OK" || echo "LDL LINK FAILED"
+            echo "=== done ==="
