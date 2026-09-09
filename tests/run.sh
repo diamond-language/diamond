@@ -1798,8 +1798,8 @@ result = client.receive(1024)
 client.close()
 result["data"]' "$udp_zero_port")"
 udp_zero_client_out="$(mktemp)"
-timeout 10 "$diamond" -e "$udp_zero_client_src" >"$udp_zero_client_out" 2>&1
-udp_zero_client_ec=$?
+udp_zero_client_ec=0
+timeout 10 "$diamond" -e "$udp_zero_client_src" >"$udp_zero_client_out" 2>&1 || udp_zero_client_ec=$?
 wait "$udp_zero_server_pid"
 if [[ "$udp_zero_client_ec" -ne 0 ]]; then
     echo "DIAGNOSTIC: UDP zero-receive client exited $udp_zero_client_ec" >&2
