@@ -258,7 +258,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install dependencies (Homebrew)
-        run: brew install coreutils gnu-sed bash openssl@3 sqlite postgresql@16 mariadb-connector-c
+        run: brew install coreutils gnu-sed bash ripgrep openssl@3 sqlite postgresql@16 mariadb-connector-c
       # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
       # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY, unavailable with no
       # <crypt.h> at all on macOS (same as FreeBSD, confirmed directly) --

@@ -275,10 +275,26 @@ build-level one would be honest right now.
   - `bc` -- confirmed present (`/usr/bin/bc`) and functional; the earlier
     version of this doc's uncertainty here was unfounded.
   - `sed` -- confirmed BSD sed (rejects `--version`), same GNU-extension
-    risk already documented for FreeBSD/musl; not yet checked against
-    `tests/collection_relay_contracts.sh`'s specific `:label`/`n`/`p`/`b`
-    loop the way FreeBSD's failure was, but likely the identical issue.
-    No `gsed` preinstalled either.
+    risk already documented for FreeBSD/musl. No `gsed` preinstalled
+    either. Once shadowed by Homebrew's `gnu-sed` (see `test-macos-ci`),
+    `tests/collection_relay_contracts.sh`'s `:label`/`n`/`p`/`b` loop runs
+    fine -- the predicted risk here didn't land, because `sed` is one of
+    the tools this job explicitly shadows onto `PATH`. `grep` is not
+    shadowed, though, and that same script's `grep -oE '\{"..."'` (an
+    escaped literal brace under `-E`) is exactly the GNU-extension trap
+    predicted above, just on the un-shadowed tool instead: GNU `grep -E`
+    accepts `\{` as a literal brace outside a valid interval, which is
+    undefined by POSIX and not something Apple's own regex engine
+    grants -- the pipeline silently produced zero matches (masked by the
+    trailing `|| true`) rather than erroring, so the audit's own
+    empty-table guard is what actually surfaced it. Fixed by using a
+    bracket expression (`[{]`) instead, unambiguous as a literal brace in
+    both BRE and ERE, on every implementation. The same script's
+    `rg`-based dispatch-contract check is a second, independent gap:
+    ripgrep isn't part of this runner image's own preinstalled tools
+    (confirmed against the image's own Included Software manifest) and
+    wasn't in this job's Homebrew list either -- added there now,
+    alongside `coreutils`/`gnu-sed`/`bash`.
   - Homebrew package names for a future CI job's own dependencies,
     confirmed present on the runner image already: `openssl@3`, `sqlite`.
     `postgresql@16` and `mariadb-connector-c` install cleanly via `brew
