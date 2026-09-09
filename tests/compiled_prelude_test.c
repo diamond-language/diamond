@@ -14,6 +14,9 @@
  * strict -std=c23 with no feature-test macro set (same fix
  * fuzz/execute_fuzzer.c already needed). */
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 
 #include "compiled_prelude.h"
 #include "compiler.h"
