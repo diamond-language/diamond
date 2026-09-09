@@ -187,8 +187,28 @@ jobs:
           # package install wouldn't shadow the base sed the way Alpine's
           # apk package does. Prepending an explicit symlink directory is
           # deterministic either way, not dependent on that PATH ordering.
+          # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
+          # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY (src/vm.c) to generate a
+          # fresh salt -- both declared only in libxcrypt's own <crypt.h>,
+          # which doesn't exist on FreeBSD at all (see the __has_include
+          # guard added for FreeBSD earlier), so bcrypt_hash_helper always
+          # takes its #else "not supported on this platform" branch here,
+          # exactly like musl (a different missing piece -- musl has
+          # <crypt.h> but not bcrypt algorithm support in crypt_r itself --
+          # same observable gap). BCrypt.verify is unaffected (no salt
+          # generation involved, just crypt_r against an existing digest --
+          # confirmed genuinely native and correct on FreeBSD via the
+          # earlier diagnostic probe). Same two cases test-musl's own job
+          # already excludes, same reason category, confirmed directly by
+          # a real failing run here: "expected exit code 0, got: 70".
           run: |
             set -e
+            mkdir -p /tmp/excluded-cases
+            mv tests/cases/active_record_secure_password.di \
+               tests/cases/active_record_secure_password.expected \
+               tests/cases/bcrypt.di \
+               tests/cases/bcrypt.expected \
+               /tmp/excluded-cases/
             mkdir -p /tmp/gnubin
             ln -sf "$(which gsed)" /tmp/gnubin/sed
             export PATH="/tmp/gnubin:$PATH"
