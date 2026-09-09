@@ -6,6 +6,24 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### I/O, networking, databases, and processes
+
+- Fixed a real thread-safety gap found while auditing native surfaces for
+  process-global mutation (docs/roadmap.md's "harden the end-user runtime
+  surface" priority): `MySQL.open` relied on `mysql_init`'s own implicit,
+  undocumented-as-safe `mysql_library_init` call the first time any thread
+  in the process opened a MySQL connection. Diamond threads are independent
+  OS threads with isolated heaps (docs/threads.md) that can each reach
+  `MySQL.open` before any other thread has, so two threads racing their
+  first connection at once could corrupt the client library's own one-time
+  setup. `diamond_vm_init` now runs an explicit, `pthread_once`-guarded
+  `mysql_library_init` call up front -- once per process, from every VM's
+  own init, the same "once per VM, idempotent" shape already used there for
+  ignoring `SIGPIPE` -- removing the race instead of relying on the
+  implicit path. SQLite's and libpq's own first-connection paths were
+  checked too: both document their own init routines as safe under
+  concurrent first use, so neither needed the same treatment.
+
 ### Packages
 
 - Added `packages/jobs`: a durable, database-backed background/

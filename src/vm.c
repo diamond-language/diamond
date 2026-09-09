@@ -941,11 +941,26 @@ void maybe_collect(DiamondVm *vm) {
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
 }
 
+/* mysql_init() -- called per-connection from MySQL.open's dispatch --
+ * implicitly runs mysql_library_init() the first time it's ever called
+ * in the process if nothing already called it explicitly. That implicit
+ * path is documented by the MySQL/MariaDB client library as unsafe under
+ * concurrent first use: two threads racing their first MySQL.open at once
+ * can corrupt the client library's own one-time setup. Diamond threads are
+ * independent OS threads with isolated heaps (see docs/threads.md) that can
+ * each reach MySQL.open before any other thread has, so an explicit,
+ * pthread_once-guarded call here -- once per process, from every VM's own
+ * init, the same "once per VM, idempotent" shape as the SIGPIPE handling
+ * below -- removes the race instead of relying on the implicit path. */
+static pthread_once_t mysql_library_init_once = PTHREAD_ONCE_INIT;
+static void mysql_library_init_once_fn(void) { mysql_library_init(0,nullptr,nullptr); }
+
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
         .minor_gc_threshold_bytes = 1048576};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
+    pthread_once(&mysql_library_init_once,mysql_library_init_once_fn);
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
      * (not just cleanly closed) raises SIGPIPE, whose default disposition
      * is to kill the whole process outright -- surfaced by TLS in
