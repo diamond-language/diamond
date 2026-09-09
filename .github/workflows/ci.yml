@@ -233,3 +233,87 @@ jobs:
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fiber-run
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-lsp
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-repl
+
+  # A fifth genuinely different target -- macOS/Darwin, not a Linux or
+  # BSD kernel/libc at all. Confirmed viable first via real hardware
+  # (docs/portability.md's "macOS/Darwin" section): src/vm.c already
+  # compiles clean there (the _XOPEN_SOURCE/__BSD_VISIBLE/
+  # _DARWIN_C_SOURCE fixes), and the test harness's own GNU-coreutils
+  # dependencies (timeout, nproc, $EPOCHREALTIME needing bash 5+, GNU
+  # sed) are addressed here the same way FreeBSD's gsed already is:
+  # install the real GNU tools via Homebrew and shadow them onto PATH
+  # under their normal names, rather than rewriting every call site.
+  # nproc itself no longer matters (tests/run.sh now uses the POSIX-
+  # portable getconf _NPROCESSORS_ONLN instead). CC=clang: macOS has no
+  # system gcc at all (the `gcc` binary there is just a symlink to
+  # clang). Narrower target set than test-all, same reasoning as
+  # test-musl/test-freebsd's own comments: this hasn't validated
+  # sanitizer/tsan builds or package-specific suites against macOS
+  # either.
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Homebrew)
+        run: brew install coreutils gnu-sed bash openssl@3 sqlite postgresql@16 mariadb-connector-c
+      # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
+      # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY, unavailable with no
+      # <crypt.h> at all on macOS (same as FreeBSD, confirmed directly) --
+      # bcrypt_hash_helper's #else "not supported" branch is the only one
+      # macOS can take. Same two cases test-freebsd/test-musl already
+      # exclude.
+      - name: Exclude the known BCrypt limitation
+        run: |
+          mkdir -p /tmp/excluded-cases
+          mv tests/cases/active_record_secure_password.di \
+             tests/cases/active_record_secure_password.expected \
+             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.expected \
+             /tmp/excluded-cases/
+      # Homebrew's coreutils/gnu-sed formulae ship their GNU tools under
+      # g-prefixed names (gtimeout, gsed, ...) precisely so they don't
+      # silently shadow the BSD ones system-wide -- each also ships a
+      # `libexec/gnubin` directory of unprefixed symlinks for exactly
+      # this "opt in for this one job" case (Homebrew's own documented
+      # convention). bash needs its own real bin dir prepended too:
+      # unlike FreeBSD/OpenBSD's pkg/pkg_add (confirmed installing a
+      # newer bash there is enough on its own), this macOS runner image
+      # doesn't put Homebrew's bin dir ahead of the system one by
+      # default, so $EPOCHREALTIME (bash 5+ only) would still resolve to
+      # macOS's stock pre-GPLv3 bash 3.2 otherwise.
+      - name: Prepend GNU coreutils/sed and a real bash onto PATH
+        run: |
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix gnu-sed)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+      # CPPFLAGS_EXTRA/LDFLAGS_EXTRA carry each keg-only Homebrew
+      # package's own include/lib path (OpenSSL/sqlite/libpq directly,
+      # MariaDB Connector's mysql.h/libmariadb.dylib both further
+      # namespaced under its own include/mariadb the same way FreeBSD's
+      # port is) -- see Makefile's own CPPFLAGS comment for the Linux
+      # distro version of this same split. LDLIBS_CRYPT= (empty): macOS's
+      # libSystem provides crypt() directly with no matching libcrypt
+      # .dylib to link against, confirmed directly ("library 'crypt' not
+      # found") -- LDLIBS_DL stays default, -ldl links fine on macOS
+      # despite an earlier version of this comment (and
+      # docs/portability.md) wrongly assuming otherwise from general
+      # knowledge rather than a real check.
+      - name: make test (macOS)
+        run: |
+          CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
+          LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
+      - name: Focused test targets (macOS)
+        run: |
+          CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
+          LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-api
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-incremental-compile
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-compiled-prelude
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-fibers
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-fiber-run
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-lsp
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-repl
