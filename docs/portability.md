@@ -275,10 +275,75 @@ build-level one would be honest right now.
   - `bc` -- confirmed present (`/usr/bin/bc`) and functional; the earlier
     version of this doc's uncertainty here was unfounded.
   - `sed` -- confirmed BSD sed (rejects `--version`), same GNU-extension
-    risk already documented for FreeBSD/musl; not yet checked against
-    `tests/collection_relay_contracts.sh`'s specific `:label`/`n`/`p`/`b`
-    loop the way FreeBSD's failure was, but likely the identical issue.
-    No `gsed` preinstalled either.
+    risk already documented for FreeBSD/musl. No `gsed` preinstalled
+    either. Once shadowed by Homebrew's `gnu-sed` (see `test-macos-ci`),
+    `tests/collection_relay_contracts.sh`'s `:label`/`n`/`p`/`b` loop runs
+    fine -- the predicted risk here didn't land, because `sed` is one of
+    the tools this job explicitly shadows onto `PATH`. `grep` is not
+    shadowed, though, and that same script's `grep -oE '\{"..."'` (an
+    escaped literal brace under `-E`) is exactly the GNU-extension trap
+    predicted above, just on the un-shadowed tool instead: GNU `grep -E`
+    accepts `\{` as a literal brace outside a valid interval, which is
+    undefined by POSIX and not something Apple's own regex engine
+    grants -- the pipeline silently produced zero matches (masked by the
+    trailing `|| true`) rather than erroring, so the audit's own
+    empty-table guard is what actually surfaced it. Fixed by using a
+    bracket expression (`[{]`) instead, unambiguous as a literal brace in
+    both BRE and ERE, on every implementation. The same script's
+    `rg`-based dispatch-contract check is a second, independent gap:
+    ripgrep isn't part of this runner image's own preinstalled tools
+    (confirmed against the image's own Included Software manifest) and
+    wasn't in this job's Homebrew list either -- added there now,
+    alongside `coreutils`/`gnu-sed`/`bash`.
+  - A real runtime (not just test-harness) gap, found the same way: a
+    fixed-offset Time's `%z` printed "+0000" regardless of its real
+    offset. `time_struct_tm` (`src/vm.c`) hand-patches `tm_gmtoff` into a
+    `gmtime_r`-produced `struct tm` for a fixed-offset Time; `strftime`'s
+    own `%z` conversion trusts that field on glibc but not on Darwin's
+    libc, confirmed directly by this same CI run (`tests/cases/
+    time_calendar_constructors.di`, `east`/`west`'s own `%z` cases).
+    Fixed at the source rather than excluded: Diamond now substitutes
+    `%z` itself before a fixed-offset Time's format string ever reaches
+    the system `strftime(3)` (`substitute_fixed_offset_z`), so the
+    directive no longer depends on the platform honoring it, on Darwin
+    or anywhere else. See docs/time.md and the changelog.
+  - `tests/lsp_test.sh`'s require-resolution case compared a published
+    diagnostic's `uri` against an expected string built from `mktemp
+    -d`'s own raw return value. Found via a `bash -x` trace after a
+    plain run failed with no visible output at all (nothing prints
+    between a failing `[[ ... ]]` and the script's own `trap`-driven
+    cleanup, under `set -e`) -- confirmed directly rather than guessed:
+    the trace showed every earlier assertion in the file passing, then
+    this exact comparison failing on a `/private/var/...` vs `/var/...`
+    mismatch. `require`d files (unlike a document's own uri, echoed
+    straight back from what the script itself sent) are resolved by the
+    compiler's loader, which canonicalizes the path -- and on macOS,
+    where `/var` is itself a symlink to `/private/var`, that resolves
+    to something `mktemp -d`'s own raw output never does. Fixed by
+    `realpath`-ing `$work` once, immediately after `mktemp -d`, the same
+    way `diamond_lsp` right above it already is -- makes every
+    downstream string comparison agree with whatever canonical form the
+    loader produces, on any platform, rather than assuming `mktemp`'s
+    own return value already is one.
+  - `tests/fiber_run.c`'s own stack-unmap probe: after a fiber's stack is
+    freed (`free_fiber_stack`, `munmap`), the test calls `mincore()` on
+    the freed range and expects `ENOMEM` -- confirming the memory is
+    genuinely gone, not just leaked-but-untouched. Reliable on Linux;
+    confirmed NOT reliable the same way on Darwin (this same CI run:
+    every earlier fiber check passed, then this exact one failed). Most
+    likely explanation: some other allocation already reclaimed the same
+    virtual address range during the malloc/free traffic
+    `diamond_vm_collect`/`diamond_vm_free` themselves generate, before
+    the probe runs -- not `munmap` failing to unmap it, which isn't
+    platform-conditional. No portable feature test predicts
+    mincore-after-munmap timing, so this is the same class of gap
+    `__APPLE__` is already the deliberate, narrow exception for
+    elsewhere in this codebase (`bcrypt_verify_helper`, above) -- the
+    check is now skipped on Darwin (`#ifndef __APPLE__`) rather than
+    guessed at further without a real macOS box to verify against.
+    (Separately, `mincore`'s `vec` parameter is declared `unsigned char
+    *` on Linux and `char *` on Darwin -- an unrelated `-Wpointer-sign`
+    warning, fixed with a `(void *)` cast at both call sites.)
   - Homebrew package names for a future CI job's own dependencies,
     confirmed present on the runner image already: `openssl@3`, `sqlite`.
     `postgresql@16` and `mariadb-connector-c` install cleanly via `brew

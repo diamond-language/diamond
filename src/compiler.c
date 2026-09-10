@@ -1,4 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 #include "compiler.h"
 
 #include <assert.h>
@@ -15059,27 +15062,33 @@ bool diamond_function_copy(DiamondFunction *destination,
         destination->columns=(uint32_t *)(void *)(block+columns_offset);
         memcpy(destination->code,source->code,
             source->code_count*sizeof *destination->code);
-        memcpy(destination->lines,source->lines,
+        /* source->lines/columns/constants/strings/type_sets may be
+         * misaligned views into a raw serialized buffer (see
+         * compiled_prelude.c's read_function) -- cast to void* so
+         * memcpy's copy doesn't get treated as a typed, alignment-
+         * requiring access by -fsanitize=alignment. memcpy itself never
+         * needs the alignment; only the C pointer *type* does. */
+        memcpy((void *)destination->lines,(const void *)source->lines,
             source->code_count*sizeof *destination->lines);
-        memcpy(destination->columns,source->columns,
+        memcpy((void *)destination->columns,(const void *)source->columns,
             source->code_count*sizeof *destination->columns);
         destination->code_capacity=source->code_count;
     }
     if(source->constant_count>0) {
         destination->constants=(DiamondValue *)(void *)(block+constants_offset);
-        memcpy(destination->constants,source->constants,
+        memcpy((void *)destination->constants,(const void *)source->constants,
             source->constant_count*sizeof *destination->constants);
         destination->constant_capacity=source->constant_count;
     }
     if(source->string_count>0) {
         destination->strings=(DiamondStringConstant *)(void *)(block+strings_offset);
-        memcpy(destination->strings,source->strings,
+        memcpy((void *)destination->strings,(const void *)source->strings,
             source->string_count*sizeof *destination->strings);
         destination->string_capacity=source->string_count;
     }
     if(source->type_set_count>0) {
         destination->type_sets=(DiamondTypeSet *)(void *)(block+type_sets_offset);
-        memcpy(destination->type_sets,source->type_sets,
+        memcpy((void *)destination->type_sets,(const void *)source->type_sets,
             source->type_set_count*sizeof *destination->type_sets);
         destination->type_set_capacity=source->type_set_count;
     }

@@ -6,7 +6,7 @@ vm_source="src/vm.c"
 
 mapfile -t relay_entries < <(
   sed -n '/static const CollectionRelayContract contracts\[\]/{:a;n;/^    };/q;p;ba}' "$compiler_source" |
-    grep -oE '\{"[^"]+",COLLECTION_RELAY_[A-Z_]+' || true
+    grep -oE '[{]"[^"]+",COLLECTION_RELAY_[A-Z_]+' || true
 )
 
 if ((${#relay_entries[@]} == 0)); then
@@ -16,7 +16,7 @@ fi
 
 mapfile -t relay_names < <(
   printf '%s\n' "${relay_entries[@]}" |
-    sed -E 's/^\{"([^"]+)",.*/\1/' |
+    sed -E 's/^[{]"([^"]+)",.*/\1/' |
     sort
 )
 if [[ "$(printf '%s\n' "${relay_names[@]}" | uniq | wc -l)" -ne "${#relay_names[@]}" ]]; then

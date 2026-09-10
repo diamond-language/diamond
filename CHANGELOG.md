@@ -6,6 +6,36 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### I/O, networking, databases, and processes
+
+- Fixed a real thread-safety gap found while auditing native surfaces for
+  process-global mutation (docs/roadmap.md's "harden the end-user runtime
+  surface" priority): `MySQL.open` relied on `mysql_init`'s own implicit,
+  undocumented-as-safe `mysql_library_init` call the first time any thread
+  in the process opened a MySQL connection. Diamond threads are independent
+  OS threads with isolated heaps (docs/threads.md) that can each reach
+  `MySQL.open` before any other thread has, so two threads racing their
+  first connection at once could corrupt the client library's own one-time
+  setup. `diamond_vm_init` now runs an explicit, `pthread_once`-guarded
+  `mysql_library_init` call up front -- once per process, from every VM's
+  own init, the same "once per VM, idempotent" shape already used there for
+  ignoring `SIGPIPE` -- removing the race instead of relying on the
+  implicit path. SQLite's and libpq's own first-connection paths were
+  checked too: both document their own init routines as safe under
+  concurrent first use, so neither needed the same treatment.
+- Fixed `Time#strftime`'s `%z` (and `#to_s`'s own use of it) silently
+  printing the wrong UTC offset for a fixed-offset Time on macOS -- found
+  by `test-macos-ci`'s own trial CI run. `%z` there had relied on the
+  platform's `strftime(3)` honoring a `tm_gmtoff` Diamond hand-patches
+  into a `gmtime_r`-produced `struct tm`; glibc trusts that field,
+  Darwin's libc doesn't, so every fixed-offset Time printed "+0000"
+  regardless of its real offset there. Diamond now substitutes `%z`
+  itself before the format string reaches the system implementation for
+  a fixed-offset Time, rather than depending on the platform to honor
+  it -- fixes the behavior on every platform, not just Darwin. Every
+  other directive still delegates straight through to `strftime(3)`; UTC
+  and Local Time needed no equivalent change (see docs/time.md).
+
 ### Packages
 
 - Added `packages/jobs`: a durable, database-backed background/
