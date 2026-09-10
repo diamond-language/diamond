@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.4.0
+
 ### I/O, networking, databases, and processes
 
 - Fixed a real thread-safety gap found while auditing native surfaces for

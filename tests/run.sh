@@ -17,12 +17,12 @@ diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"
 
 actual="$($diamond --version)"
-[[ "$actual" == "diamond 0.3.0" ]] || {
+[[ "$actual" == "diamond 0.4.0" ]] || {
     echo "unexpected version output: $actual" >&2
     exit 1
 }
 
-[[ "$($diamond -v)" == "diamond 0.3.0" ]] || {
+[[ "$($diamond -v)" == "diamond 0.4.0" ]] || {
     echo "unexpected short version output" >&2
     exit 1
 }
