@@ -119,6 +119,93 @@ whose last reference is about to disappear. Any values still queued at that
 point are reclaimed automatically along with the private VM itself -- no
 separate walk of `queue[]` is needed.
 
+## Supervisors
+
+`DiamondSupervisor` collects up to `DIAMOND_MAX_SUPERVISOR_CHILDREN` (32)
+worker slots (`DiamondSupervisorChild`), each backed by exactly **one**
+`pthread_create` call for its entire supervised lifetime -- unlike `Thread`
+(one OS thread per spawn), a supervised child's own OS thread loops
+internally across every restart rather than being torn down and recreated
+per attempt. Like `DiamondChannel`, a `DiamondSupervisor` is refcounted
+(`DiamondSupervisorHandle`), but it is deliberately *not* one of
+`copy_value_into_vm`'s handled kinds -- it can never cross a `Thread.new`/
+`Channel` boundary at all, so in practice at most one real OS thread (the
+one that created it) ever calls its own methods; the mutex below exists to
+protect against that `Supervisor`'s *own* child retry-loop threads, not
+against concurrent callers.
+
+**Where a restarted attempt's arguments live.** `add_child`'s arguments
+need to survive arbitrarily many restarts, each with its own fresh,
+isolated heap -- so each child gets a private `args_vm`, the identical
+"private `DiamondVm` used purely as GC-managed storage, rooted via
+`extra_roots`" trick `Channel`'s own `private_vm` already established,
+just write-once rather than a growing/shrinking queue. `program_template`
+(a `clone_program_from_chunk` clone, the same call `Thread.new`/`Channel.new`
+already make) is cloned exactly **once**, at `add_child` time, and reused
+unmodified across every restart -- a program's own function/class/interface
+tables never change once compiled, so there is no need to re-clone per
+attempt the way `Thread.new` clones fresh per spawn.
+
+**The retry loop.** `supervisor_child_entry_trampoline` is `thread_entry_
+trampoline`'s shape (build a synthetic `DiamondChunk`, call `run_chunk`
+directly rather than through `diamond_vm_run`) wrapped in a `for(;;)`: each
+iteration allocates a fresh `DiamondVm`, re-copies the child's stored
+arguments into it from `args_vm` (`copy_value_into_vm` using
+`program_template`'s own classes on both sides -- `args_vm` and every
+attempt's run `DiamondVm` are structurally identical clones of the same
+template, so this is always a same-layout rebase, never a cross-program
+adopt), runs it, and frees it -- whether that attempt crashed or not, so
+nothing survives from one attempt to the next except `args_vm`'s own
+untouched originals. A clean `DIAMOND_VM_OK` return ends the loop for good
+(v1 restarts on crash only); anything else records the reason as plain
+text (`format_uncaught_exception_message` for an uncaught exception,
+`run_vm->error`/`diamond_vm_status_name` otherwise -- deliberately a
+`char[]`, not a rehydrated exception value, since nothing needs to survive
+a restart boundary as a live `DiamondValue` and a plain string sidesteps
+having to give crash records their own GC-rooted storage) into
+`last_error`, bumps `restart_count`, and loops again after a fixed 20ms
+`nanosleep` unless `stop_requested` -- a safety valve bounding CPU use from
+a child that crashes immediately every time, not a configurable backoff
+policy.
+
+**A `(DiamondSupervisor){}`/`(DiamondSupervisorChild){}` compound literal
+must never appear inside `run_chunk`.** `DIAMOND_OP_SUPERVISOR_NEW`
+allocates via `calloc`, never a compound literal, and every child-slot
+cleanup path uses `memset` instead of `*new_child=(DiamondSupervisorChild)
+{}` -- this was a real, shipped-and-caught regression during development,
+not a hypothetical: `children[DIAMOND_MAX_SUPERVISOR_CHILDREN]` embeds
+`DIAMOND_MAX_ARGUMENTS`-sized argument arrays per child, making
+`DiamondSupervisor` itself well over 100KB. An unoptimized (`-O0`) build
+gives a compound literal automatic storage duration inside whichever
+function lexically contains it, unconditionally, regardless of which
+`case` branch actually runs at that call -- so a literal of that size
+anywhere inside `run_chunk`'s own `switch` inflated *every* recursive
+`run_chunk` call's stack frame by 100KB+, blowing the C stack at a
+call depth far below `DIAMOND_MAX_CALL_DEPTH`'s own guard (95) and
+segfaulting instead of cleanly raising `SystemStackError`. `calloc`/
+`memset` write directly into already-allocated heap memory and need no
+such temporary -- the same reason `DiamondProgram` (a ~14MB struct) is
+always `calloc`'d and never zero-initialized via a compound literal
+anywhere in this codebase.
+
+**Stopping and joining.** `supervisor_join_all_children` is shared by
+`Supervisor#stop`, `Supervisor#join`, and `free_supervisor_reference` --
+all three "join every child" call sites, any combination of which may run
+against the same `Supervisor` over its lifetime. Each child's own `joined`
+flag (checked and set under `lock` immediately before the real, unlocked
+`pthread_join` call) makes that `pthread_join` idempotent regardless of
+how many times or in which combination the three callers reach a given
+child -- `pthread_join` on an already-joined thread is undefined behavior
+per POSIX, the identical hazard `DiamondThread.joined`/`join_lock` already
+guards against for a plain `Thread`. `stop()` additionally sets
+`stop_requested` (checked, lock-free, once per retry-loop iteration --
+mirroring `DiamondThread.finished`'s own lock-free hot-path read for
+`alive?()`) and `stopped` (guarded by `lock`, blocking further
+`add_child`) before joining; `join()` touches neither, so it only unblocks
+once every child has finished on its own. Neither ever cancels a child
+mid-attempt -- there is no cancellation anywhere in Diamond's concurrency
+model, the same limitation `Thread` already has.
+
 ## Focused verification
 
 ```sh

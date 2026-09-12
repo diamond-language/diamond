@@ -19,14 +19,40 @@ opens up, none attempted yet, none committed:
   whichever of several channels has something ready first. Needs a real
   design for waiting on more than one channel's own condition variable at
   once, not just a bigger API surface;
-- **supervision trees / structured concurrency** (Erlang/Elixir-style
-  restart-on-crash, cancel-on-timeout, fail-together groups) -- a natural
-  fit once threads can talk to each other mid-run instead of only at
-  `join()`, but genuinely new mechanism on top, not a small extension;
 - **unbounded/rendezvous channels** -- `Channel.new(0)`-style synchronous
   handoff, or no capacity limit at all. Deliberately out of v1's own scope
   (a bound keeps memory use predictable and gives `send` real backpressure)
   and not clearly needed without a concrete use case asking for it.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
+### `Supervisor`: what's next, if anything
+
+`Supervisor` (docs/threads.md, landed this cycle) is a flat, `one_for_one`-
+only restart-on-crash primitive -- `add_child`/`stop`/`join`/`restart_count`/
+`last_error`/`alive?`. Genuine supervision *trees* need no new mechanism (a
+supervised child is just a closure free to create and manage its own nested
+`Supervisor`, see docs/threads.md's own example), but real possibilities
+remain, none attempted yet, none committed:
+
+- **`one_for_all`/`rest_for_one` restart strategies** (Erlang's other two)
+  -- restarting every sibling, or every sibling started after the crashed
+  one, instead of just the one child. Needs the retry loop to reach across
+  sibling children, not just its own slot;
+- **configurable restart intensity/backoff** -- v1's fixed 20ms delay
+  between a crash and the next restart, with no cap, is a safety valve, not
+  a policy; a real "give up after N crashes in M seconds" (Erlang's own
+  default) needs an actual policy object, not just a bigger fixed constant;
+- **cancel-on-timeout** -- there is no cancellation anywhere in Diamond's
+  concurrency model yet (`Thread` doesn't have it either), so this needs
+  that more fundamental gap closed first, not something `Supervisor` can
+  add on its own;
+- **cross-thread-transferable supervisor handles** -- `Supervisor` cannot
+  currently cross a `Thread.new`/`Channel` boundary at all (see docs/
+  threads.md). Not clearly needed without a concrete use case, since a
+  supervised child already can't reference its own parent `Supervisor`
+  by design.
 
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.

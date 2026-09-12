@@ -3,8 +3,12 @@
 # (tests/cases/channel_*.di -- including the two real two-Thread producer/
 # consumer cases, the actual reason this feature needs TSan coverage at
 # all: a brand-new mutex+condvar primitive, see docs/internal/concurrency-
-# internals.md), plus a couple of representative Fiber cases (the shared
-# machinery the thread_local fix in diamond_fiber_entering touches)
+# internals.md), Supervisor's own (tests/cases/supervisor_*.di -- a pthread
+# per child mutating shared restart_count/last_error/done fields under a
+# mutex plus one lock-free atomic, the same class of risk Channel's own
+# mutex+condvar work already needed this suite for), plus a couple of
+# representative Fiber cases (the shared machinery the thread_local fix in
+# diamond_fiber_entering touches)
 # through the current build under ThreadSanitizer -- see docs/threads.md
 # and the "make tsan" Makefile target. Deliberately narrower than the full
 # tests/cases corpus: TSan's overhead makes re-running the entire (largely
@@ -31,6 +35,7 @@ fi
 case_dir="$(mktemp -d)"
 
 for pattern in "tests/cases/thread_*" "tests/cases/channel_*" \
+        "tests/cases/supervisor_*" \
         "tests/cases/legacy_0318.*" "tests/cases/legacy_0321.*"; do
     for f in $pattern; do
         [[ -e "$f" ]] || continue

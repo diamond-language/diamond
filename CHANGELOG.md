@@ -20,6 +20,18 @@ authoritative fine-grained record.
   own private `DiamondVm` existing purely as GC-managed storage for values
   in transit. See docs/threads.md's Channels section and
   docs/internal/concurrency-internals.md for the full design.
+- Added `Supervisor`, restart-on-crash structured concurrency:
+  `Supervisor.new()`, `add_child(callable, *args)`, `stop`/`join`,
+  `restart_count`/`last_error`/`alive?`. An uncaught exception or internal
+  VM failure in a supervised worker restarts only that worker
+  (`one_for_one`, matching Erlang's own default) with a fresh isolated
+  heap per attempt, rather than ending it the way a plain `Thread` would;
+  a clean return still ends it for good. Genuine supervision trees need no
+  extra mechanism -- a supervised child is just a closure free to create
+  and manage its own nested `Supervisor`. One real OS thread per child for
+  its whole supervised lifetime, looping internally across restarts rather
+  than being recreated per attempt. See docs/threads.md's Supervisors
+  section and docs/internal/concurrency-internals.md for the full design.
 
 ### Tooling
 

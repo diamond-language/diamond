@@ -75,6 +75,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROCESS_STREAM,
     DIAMOND_OBJECT_TENSOR,
     DIAMOND_OBJECT_CHANNEL,
+    DIAMOND_OBJECT_SUPERVISOR,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -369,6 +370,22 @@ typedef struct DiamondChannelHandle {
     DiamondObject object;
     DiamondChannel *channel;
 } DiamondChannelHandle;
+
+/* Same thin-handle/heavy-struct split, refcounted like DiamondChannelHandle/
+ * DiamondChannel just above (a DiamondSupervisor owns real OS threads and
+ * pthread synchronization state that must outlive any single handle's own
+ * GC lifetime bookkeeping) -- but see docs/threads.md's Supervisors section
+ * for why a Supervisor never actually ends up with more than one live
+ * handle in practice: it is deliberately not one of copy_value_into_vm's
+ * handled kinds, so it can never cross a Thread.new/Channel boundary the
+ * way a Channel itself can. DiamondSupervisor is defined in src/vm.c,
+ * alongside DiamondThread/DiamondChannel. */
+typedef struct DiamondSupervisor DiamondSupervisor;
+
+typedef struct DiamondSupervisorHandle {
+    DiamondObject object;
+    DiamondSupervisor *supervisor;
+} DiamondSupervisorHandle;
 
 typedef struct DiamondFileHandle {
     DiamondObject object;

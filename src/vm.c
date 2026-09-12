@@ -315,6 +315,106 @@ typedef struct DiamondChannel {
 
 static void free_channel_reference(DiamondChannel *channel);
 
+/* A fixed cap on children per Supervisor, matching DIAMOND_MAX_THREADS/
+ * DIAMOND_MAX_ARGUMENTS's own fixed-array style rather than dynamic
+ * growth -- see docs/threads.md's Supervisors section. Each child still
+ * separately counts against the process-wide DIAMOND_MAX_THREADS budget
+ * (one real OS thread per child, for its entire supervised lifetime), so
+ * this cap exists to bound one DiamondSupervisor's own fixed-size
+ * children[] array, not as an independent resource budget. */
+enum { DIAMOND_MAX_SUPERVISOR_CHILDREN = 32 };
+
+typedef struct DiamondSupervisor DiamondSupervisor;
+
+/* One supervised worker slot. `program_template` is cloned exactly once,
+ * at add_child time (clone_program_from_chunk -- the same call Thread.new
+ * and Channel.new already make), and reused unmodified across every
+ * restart of this child: a program's functions/classes/interfaces tables
+ * never change once compiled, only the heap data a run against them
+ * produces, so there is no need to reclone on every crash the way
+ * Thread.new reclones per spawn (a supervised child, unlike a plain
+ * Thread, may be spawned/restarted arbitrarily many times over its
+ * lifetime -- cloning once amortizes that cost across all of them).
+ *
+ * `args_vm` exists purely as GC-managed storage for `args[]`, exactly
+ * Channel's own private_vm-for-storage trick (src/vm.c's DiamondChannel
+ * comment above) -- but write-once, never mutated again after add_child,
+ * since supervised args don't change across restarts. `args_vm->
+ * extra_roots` is pointed at `args` so args_vm's own occasional GC cycle
+ * (triggered only by add_child's own initial copy_value_into_vm calls)
+ * keeps them alive. Every restart re-copies from args_vm into that
+ * attempt's own fresh run_vm using program_template's classes on both
+ * sides -- args_vm and every run_vm are structurally identical clones of
+ * the same template, so this is always a same-layout rebase, never a
+ * cross-program adopt.
+ *
+ * `last_error`/`restart_count`/`done` are guarded by the
+ * owning DiamondSupervisor's own `lock` (not a per-child lock -- these
+ * fields are read rarely, from the one calling thread's own restart_
+ * count()/last_error()/alive?() calls, never on any hot path), and
+ * written from exactly one place: this child's own dedicated retry-loop
+ * OS thread (supervisor_child_entry_trampoline). */
+typedef struct DiamondSupervisorChild {
+    DiamondProgram *program_template;
+    uint16_t function_index;
+    DiamondVm *args_vm;
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS];
+    uint8_t arg_count;
+    pthread_t handle;
+    DiamondSupervisor *supervisor;
+    size_t restart_count;
+    /* Same size as DiamondVm.error (src/vm.h) -- last_error is always
+     * populated by copying either run_vm->error or format_uncaught_
+     * exception_message's own output into it verbatim (supervisor_child_
+     * entry_trampoline), so matching that buffer's own size exactly
+     * avoids ever truncating it. */
+    char last_error[1024];
+    /* True once this child's retry loop has permanently stopped running
+     * -- either a clean, non-raising return (v1 never restarts on a
+     * normal return) or a crash noticed after stop() was called
+     * (supervisor_child_entry_trampoline checks stop_requested right
+     * after recording a crash, before the next attempt). alive?() is
+     * exactly !done. */
+    bool done;
+    /* Guards against a double pthread_join on this child's own `handle`
+     * (undefined behavior per POSIX) -- stop()/join()/free_supervisor_
+     * reference are three independent call sites that each join every
+     * child, and any combination of them may run against the same
+     * Supervisor over its lifetime (stop() then join(), join() called
+     * twice, ...). Set under `supervisor->lock` immediately before the
+     * actual (unlocked) pthread_join call, mirroring DiamondThread's own
+     * `joined` flag/join_lock pairing for the identical reason. */
+    bool joined;
+} DiamondSupervisorChild;
+
+/* Native backing struct for DiamondSupervisorHandle (object.h) -- see
+ * docs/threads.md's Supervisors section and docs/internal/concurrency-
+ * internals.md for the full design. Unlike DiamondThread (owned one-to-
+ * one) but like DiamondChannel (genuinely shared, refcounted), a
+ * Supervisor is refcounted for free-safety consistency even though --
+ * see docs/threads.md -- a Supervisor is deliberately not one of
+ * copy_value_into_vm's handled kinds, so in practice no second real OS
+ * thread can ever obtain a handle to the same Supervisor: `refcount`
+ * only ever reaches more than 1 via an ordinary same-heap copy (e.g.
+ * storing the same handle in two Array slots), never a cross-thread one.
+ *
+ * `lock` guards every mutable field below plus each child's own
+ * restart_count/last_error/done (DiamondSupervisorChild's
+ * own comment). `stop_requested` is a separate lock-free atomic,
+ * deliberately not behind `lock`, since every child's retry loop checks
+ * it on every single iteration (mirrors DiamondThread's own atomic
+ * `finished` -- a hot, lock-free poll is the whole point). */
+typedef struct DiamondSupervisor {
+    pthread_mutex_t lock;
+    atomic_bool stop_requested;
+    DiamondSupervisorChild children[DIAMOND_MAX_SUPERVISOR_CHILDREN];
+    size_t child_count;
+    bool stopped;
+    atomic_size_t refcount;
+} DiamondSupervisor;
+
+static void free_supervisor_reference(DiamondSupervisor *supervisor);
+
 static void mark_value(DiamondValue value, bool minor);
 static void mark_object(DiamondObject *object, bool minor);
 static void mark_frame_chain(void *frames, bool minor);
@@ -333,6 +433,13 @@ static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
 static void format_value_type(char *buffer, size_t capacity, DiamondValue value);
+static void format_uncaught_exception_message(DiamondVm *vm, DiamondValue exception);
+static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+                               DiamondProgram *source_program,
+                               const DiamondClass *rebase_source_classes,
+                               const DiamondClass *rebase_dest_classes,
+                               const DiamondChunk **adopted_owner,
+                               DiamondValue *out);
 static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
         DiamondValue right_value,const char *op_name);
 
@@ -688,6 +795,10 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_CHANNEL) {
             size=sizeof(DiamondChannelHandle);
             free_channel_reference(((DiamondChannelHandle *)unreached)->channel);
+        } else if(unreached->kind==DIAMOND_OBJECT_SUPERVISOR) {
+            size=sizeof(DiamondSupervisorHandle);
+            free_supervisor_reference(
+                ((DiamondSupervisorHandle *)unreached)->supervisor);
         } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3) {
             size=sizeof(DiamondSqlite3Handle);
             sqlite3 *db=((DiamondSqlite3Handle *)unreached)->db;
@@ -1105,6 +1216,9 @@ static void free_object_list(DiamondObject *object) {
             free_thread(((DiamondThreadHandle *)object)->thread);
         } else if(object->kind==DIAMOND_OBJECT_CHANNEL) {
             free_channel_reference(((DiamondChannelHandle *)object)->channel);
+        } else if(object->kind==DIAMOND_OBJECT_SUPERVISOR) {
+            free_supervisor_reference(
+                ((DiamondSupervisorHandle *)object)->supervisor);
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
             /* _v2 -- see the matching branch in diamond_vm_collect_impl
@@ -2206,6 +2320,186 @@ static void free_channel_reference(DiamondChannel *channel) {
     free(channel->private_program);
     free(channel->queue);
     free(channel);
+}
+
+/* pthread_create's entry point for one supervised child -- unlike
+ * thread_entry_trampoline (a single run, one OS thread per Thread.new
+ * call), this loops for the child's *entire* supervised lifetime: a
+ * fresh DiamondVm/heap per attempt, freed at the end of every attempt
+ * whether it crashed or not, exactly the isolated-heap-per-run guarantee
+ * an ordinary Thread already gives a single spawn. A clean, non-raising
+ * return ends the loop for good (v1 restarts on crash only, never on a
+ * normal return -- see docs/threads.md); an uncaught exception or
+ * internal VM failure records the reason, bumps restart_count, and
+ * loops again after a fixed 20ms delay (a safety valve bounding CPU use
+ * from a child that crashes immediately every time, not a configurable
+ * backoff policy -- see docs/roadmap.md's "what's next" note) unless
+ * stop_requested has been set meanwhile. Builds its own synthetic
+ * DiamondChunk once, up front, exactly the shape thread_entry_
+ * trampoline's own local `child_chunk` already uses -- program_template
+ * never changes across restarts, so this doesn't need rebuilding per
+ * iteration the way thread_entry_trampoline's per-spawn one does. */
+static void *supervisor_child_entry_trampoline(void *argument) {
+    DiamondSupervisorChild *child=(DiamondSupervisorChild *)argument;
+    DiamondSupervisor *supervisor=child->supervisor;
+    const DiamondFunction *target_fn=
+        child->program_template->functions[child->function_index];
+    const DiamondChunk child_chunk={
+        .name=target_fn->name,.code=target_fn->code,
+        .lines=target_fn->lines,.columns=target_fn->columns,
+        .code_count=target_fn->code_count,
+        .constants=target_fn->constants,.constant_count=target_fn->constant_count,
+        .strings=target_fn->strings,.string_count=target_fn->string_count,
+        .type_sets=target_fn->type_sets,.type_set_count=target_fn->type_set_count,
+        .functions=child->program_template->functions,
+        .function_count=child->program_template->function_count,
+        .classes=child->program_template->classes,
+        .class_count=child->program_template->class_count,
+        .interfaces=child->program_template->interfaces,
+        .interface_count=child->program_template->interface_count,
+        .parameter_type_sets=target_fn->parameter_type_sets,
+        .type_variable_count=target_fn->type_variable_count,
+        .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+        .register_count=target_fn->register_count,
+        .has_variadic=target_fn->has_variadic,
+        .range_class_index=child->program_template->range_class_index};
+    for(;;) {
+        DiamondVm *run_vm=malloc(sizeof *run_vm);
+        if(run_vm==nullptr) {
+            /* System-level OOM allocating this attempt's own VM -- give up
+             * for good rather than spinning trying the same allocation
+             * again; still needs to flip alive?() to false and explain
+             * why, exactly like any other terminal outcome below. */
+            pthread_mutex_lock(&supervisor->lock);
+            snprintf(child->last_error,sizeof child->last_error,
+                "out of memory allocating supervised run state");
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            break;
+        }
+        diamond_vm_init(run_vm);
+        run_vm->range_class_index=child->program_template->range_class_index;
+        run_vm->root_chunk=&child_chunk;
+        /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
+         * NEW's own argument copy loop uses, for the identical reason: a
+         * later argument's copy_value_into_vm call can itself trigger a
+         * collection on run_vm before anything roots an earlier argument
+         * already copied into it this iteration. */
+        DiamondValue run_args[DIAMOND_MAX_ARGUMENTS]={};
+        bool copy_failed=false;
+        const size_t args_mark=run_vm->gc_protected_count;
+        for(uint8_t index=0;index<child->arg_count;index++) {
+            if(!copy_value_into_vm(run_vm,child->args[index],nullptr,
+                    child->program_template->classes,
+                    child->program_template->classes,nullptr,
+                    &run_args[index])||
+               !gc_protect(run_vm,run_args[index])) {
+                copy_failed=true;break;
+            }
+        }
+        gc_unprotect(run_vm,args_mark);
+        DiamondValue run_result=DIAMOND_NIL;
+        const DiamondVmStatus status=copy_failed?DIAMOND_VM_OUT_OF_MEMORY:
+            run_chunk(&child_chunk,run_vm,run_args,child->arg_count,0,
+                      nullptr,&run_result);
+        pthread_mutex_lock(&supervisor->lock);
+        if(status==DIAMOND_VM_OK) {
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            diamond_vm_free(run_vm);free(run_vm);
+            break;
+        }
+        child->restart_count++;
+        if(status==DIAMOND_VM_EXCEPTION) {
+            format_uncaught_exception_message(run_vm,run_vm->exception);
+            snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
+        } else {
+            const char *message=run_vm->error[0]!='\0'?run_vm->error:
+                diamond_vm_status_name(status);
+            snprintf(child->last_error,sizeof child->last_error,"%s",message);
+        }
+        pthread_mutex_unlock(&supervisor->lock);
+        diamond_vm_free(run_vm);free(run_vm);
+        if(atomic_load(&supervisor->stop_requested)) {
+            /* stop() (or free_supervisor_reference) already blocks
+             * joining this very thread once it returns, but alive?()
+             * must also flip to false right away -- otherwise a caller
+             * that checks alive?() right after stop() returns would
+             * still see a stale "true" for a child that stopped here
+             * rather than via a clean return. */
+            pthread_mutex_lock(&supervisor->lock);
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            break;
+        }
+        struct timespec delay={.tv_nsec=20*1000*1000};
+        nanosleep(&delay,nullptr);
+    }
+    atomic_fetch_sub(&diamond_active_thread_count,1);
+    return nullptr;
+}
+
+static DiamondSupervisorHandle *allocate_supervisor_handle(DiamondVm *vm,
+        DiamondSupervisor *supervisor) {
+    maybe_collect(vm);
+    DiamondSupervisorHandle *handle=malloc(sizeof(DiamondSupervisorHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondSupervisorHandle){
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SUPERVISOR},
+        .supervisor=supervisor};
+    vm->young_objects=&handle->object;
+    vm->bytes_allocated+=sizeof(DiamondSupervisorHandle);
+    return handle;
+}
+
+/* Shared by Supervisor#stop, Supervisor#join, and free_supervisor_
+ * reference -- all three "join every child" call sites, any combination
+ * of which may run against the same Supervisor over its lifetime.
+ * pthread_join on an already-joined thread is undefined behavior (POSIX),
+ * so each child's own `joined` flag (checked and set under `lock`) makes
+ * the real pthread_join call idempotent regardless of how many times or
+ * which of the three callers reach a given child first. Deliberately
+ * does not touch stop_requested/stopped -- callers that need to actually
+ * stop future restarts (Supervisor#stop, free_supervisor_reference) set
+ * those themselves before calling this; Supervisor#join does not, so it
+ * blocks only on children that finish on their own. */
+static void supervisor_join_all_children(DiamondSupervisor *supervisor) {
+    for(size_t index=0;index<supervisor->child_count;index++) {
+        DiamondSupervisorChild *child=&supervisor->children[index];
+        pthread_mutex_lock(&supervisor->lock);
+        const bool already_joined=child->joined;
+        child->joined=true;
+        pthread_mutex_unlock(&supervisor->lock);
+        if(!already_joined)pthread_join(child->handle,nullptr);
+    }
+}
+
+/* Shared teardown for a DiamondSupervisor -- mirrors free_channel_
+ * reference's own role/refcount discipline (only the last referencing
+ * handle's sweep actually tears anything down), but additionally has to
+ * *stop* every child first: sets stop_requested (same flag Supervisor#
+ * stop sets) and blocks joining every child's OS thread (supervisor_
+ * join_all_children above, exactly what stop() itself does) before
+ * reclaiming any child's program_template/args_vm. A child mid-crash-
+ * loop still finishes its *current* attempt before noticing the flag --
+ * there is no cancellation anywhere in Diamond's concurrency model, same
+ * as free_thread's own block-join reasoning for an abandoned Thread. */
+static void free_supervisor_reference(DiamondSupervisor *supervisor) {
+    if(supervisor==nullptr)return;
+    if(atomic_fetch_sub(&supervisor->refcount,1)!=1)return;
+    atomic_store(&supervisor->stop_requested,true);
+    supervisor_join_all_children(supervisor);
+    for(size_t index=0;index<supervisor->child_count;index++) {
+        DiamondSupervisorChild *child=&supervisor->children[index];
+        if(child->args_vm!=nullptr) {
+            diamond_vm_free(child->args_vm);
+            free(child->args_vm);
+        }
+        diamond_program_free(child->program_template);
+        free(child->program_template);
+    }
+    pthread_mutex_destroy(&supervisor->lock);
+    free(supervisor);
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
@@ -8307,6 +8601,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_MYSQL_ERROR: return DIAMOND_CLASS_MYSQL_ERROR;
         case DIAMOND_VM_NO_METHOD_ERROR: return DIAMOND_CLASS_NO_METHOD_ERROR;
         case DIAMOND_VM_JSON_ERROR: return DIAMOND_CLASS_JSON_ERROR;
+        case DIAMOND_VM_SUPERVISOR_ERROR: return DIAMOND_CLASS_SUPERVISOR_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -8494,6 +8789,7 @@ static void format_value_type(char *buffer, size_t capacity,
         case DIAMOND_OBJECT_PROCESS_STREAM: name="ProcessStream"; break;
         case DIAMOND_OBJECT_TENSOR: name="Tensor"; break;
         case DIAMOND_OBJECT_CHANNEL: name="Channel"; break;
+        case DIAMOND_OBJECT_SUPERVISOR: name="Supervisor"; break;
         case DIAMOND_OBJECT_INSTANCE: {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
             name=instance->class->name;
@@ -17395,6 +17691,214 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     pthread_mutex_unlock(&target_channel->lock);
                     registers[dest]=copied;break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_SUPERVISOR) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondSupervisor *target_supervisor=
+                        ((DiamondSupervisorHandle *)registers[recv].as.object)->supervisor;
+                    const bool add_child_method=method_name->length==9&&
+                        memcmp(method_name->chars,"add_child",9)==0;
+                    const bool stop_method=method_name->length==4&&
+                        memcmp(method_name->chars,"stop",4)==0;
+                    const bool join_method=method_name->length==4&&
+                        memcmp(method_name->chars,"join",4)==0;
+                    const bool child_count_method=method_name->length==11&&
+                        memcmp(method_name->chars,"child_count",11)==0;
+                    const bool restart_count_method=method_name->length==13&&
+                        memcmp(method_name->chars,"restart_count",13)==0;
+                    const bool last_error_method=method_name->length==10&&
+                        memcmp(method_name->chars,"last_error",10)==0;
+                    const bool alive_method=method_name->length==6&&
+                        memcmp(method_name->chars,"alive?",6)==0;
+                    if(!add_child_method&&!stop_method&&!join_method&&
+                       !child_count_method&&!restart_count_method&&
+                       !last_error_method&&!alive_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Supervisor");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(child_count_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_supervisor->lock);
+                        const size_t current_count=target_supervisor->child_count;
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        registers[dest]=DIAMOND_INT((int64_t)current_count);break;
+                    }
+                    if(restart_count_method||last_error_method||alive_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "Supervisor child index must be an Int");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const int64_t requested_index=registers[base].as.integer;
+                        pthread_mutex_lock(&target_supervisor->lock);
+                        if(requested_index<0||
+                           (size_t)requested_index>=target_supervisor->child_count) {
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "Supervisor child index %" PRId64 " out of range",
+                                requested_index);
+                            VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                        }
+                        DiamondSupervisorChild *target_child=
+                            &target_supervisor->children[(size_t)requested_index];
+                        if(restart_count_method) {
+                            const size_t current_restarts=target_child->restart_count;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            registers[dest]=DIAMOND_INT((int64_t)current_restarts);break;
+                        }
+                        if(alive_method) {
+                            const bool still_alive=!target_child->done;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            registers[dest]=DIAMOND_BOOL(still_alive);break;
+                        }
+                        /* last_error_method: nil until the first crash. Copy
+                         * the message out before unlocking rather than
+                         * allocating (a potential GC on `vm`, unrelated to
+                         * target_supervisor) while still holding the lock. */
+                        char last_error_copy[sizeof target_child->last_error];
+                        const bool has_error=target_child->last_error[0]!='\0';
+                        if(has_error)
+                            snprintf(last_error_copy,sizeof last_error_copy,
+                                "%s",target_child->last_error);
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        if(!has_error) {registers[dest]=DIAMOND_NIL;break;}
+                        DiamondString *message=allocate_string(vm,last_error_copy,
+                            strlen(last_error_copy));
+                        if(message==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(message);break;
+                    }
+                    if(stop_method||join_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(stop_method) {
+                            pthread_mutex_lock(&target_supervisor->lock);
+                            target_supervisor->stopped=true;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            atomic_store(&target_supervisor->stop_requested,true);
+                        }
+                        /* No cancellation anywhere in Diamond's concurrency
+                         * model (same as Thread) -- a child mid-crash-loop
+                         * still finishes its *current* attempt before
+                         * noticing stop_requested. join() blocks the same
+                         * way but without ever setting stop_requested, so
+                         * it only returns once every child finishes on its
+                         * own (see docs/threads.md). */
+                        supervisor_join_all_children(target_supervisor);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* add_child_method, per the exhaustive unknown-method
+                     * check above. Mirrors DIAMOND_OP_THREAD_NEW's own body
+                     * almost exactly (see its own comments) -- the real
+                     * differences are storing into a fixed children[] slot
+                     * instead of a fresh handle, cloning program_template
+                     * once for the child's entire restart lifetime rather
+                     * than per spawn, and copying args into args_vm (GC
+                     * storage only, mirrors Channel's private_vm) instead of
+                     * directly into a to-be-run child_vm. */
+                    if(argc<1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    pthread_mutex_lock(&target_supervisor->lock);
+                    if(target_supervisor->stopped) {
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor#add_child called after stop()");
+                        VM_RETURN(DIAMOND_VM_SUPERVISOR_ERROR);
+                    }
+                    if(target_supervisor->child_count>=DIAMOND_MAX_SUPERVISOR_CHILDREN) {
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor has reached its maximum of %d children",
+                            DIAMOND_MAX_SUPERVISOR_CHILDREN);
+                        VM_RETURN(DIAMOND_VM_SUPERVISOR_ERROR);
+                    }
+                    const size_t new_index=target_supervisor->child_count;
+                    pthread_mutex_unlock(&target_supervisor->lock);
+                    if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "too many concurrently active threads");
+                        VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                    }
+                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child's first argument must be a Callable value");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    const DiamondClosure *callable=
+                        (const DiamondClosure *)registers[base].as.object;
+                    if(callable->capture_count!=0) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child's callable must not capture any local state");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(callable->foreign_chunk!=nullptr) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "a compile_method callable can only be passed to define_method");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if((size_t)callable->function_index>=chunk->function_count)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    const DiamondFunction *target_fn=
+                        chunk->functions[callable->function_index];
+                    const uint8_t forwarded_argc=(uint8_t)(argc-1);
+                    if(forwarded_argc<target_fn->required_arity||
+                       (forwarded_argc>target_fn->arity&&!target_fn->has_variadic))
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondProgram *program_template=clone_program_from_chunk(chunk);
+                    if(program_template==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondVm *args_vm=malloc(sizeof *args_vm);
+                    if(args_vm==nullptr) {
+                        diamond_program_free(program_template);free(program_template);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    diamond_vm_init(args_vm);
+                    DiamondSupervisorChild *new_child=
+                        &target_supervisor->children[new_index];
+                    new_child->supervisor=target_supervisor;
+                    new_child->program_template=program_template;
+                    new_child->args_vm=args_vm;
+                    new_child->function_index=callable->function_index;
+                    new_child->arg_count=forwarded_argc;
+                    bool copy_failed=false;
+                    const size_t args_mark=args_vm->gc_protected_count;
+                    for(uint8_t index=0;index<forwarded_argc;index++) {
+                        if(!copy_value_into_vm(args_vm,
+                                registers[(size_t)base+1+index],nullptr,
+                                chunk->classes,program_template->classes,
+                                nullptr,&new_child->args[index])||
+                           !gc_protect(args_vm,new_child->args[index])) {
+                            copy_failed=true;break;
+                        }
+                    }
+                    gc_unprotect(args_vm,args_mark);
+                    if(copy_failed) {
+                        diamond_vm_free(args_vm);free(args_vm);
+                        diamond_program_free(program_template);free(program_template);
+                        /* memset, not a `(DiamondSupervisorChild){}`
+                         * compound literal -- see DIAMOND_OP_SUPERVISOR_
+                         * NEW's own comment on why that matters even for
+                         * a single child-sized (not full Supervisor-sized)
+                         * temporary inside this same recursive run_chunk. */
+                        memset(new_child,0,sizeof *new_child);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child argument does not support this type");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    args_vm->extra_roots=new_child->args;
+                    args_vm->extra_root_count=forwarded_argc;
+                    if(pthread_create(&new_child->handle,nullptr,
+                            supervisor_child_entry_trampoline,new_child)!=0) {
+                        diamond_vm_free(args_vm);free(args_vm);
+                        diamond_program_free(program_template);free(program_template);
+                        memset(new_child,0,sizeof *new_child);
+                        snprintf(vm->error,sizeof vm->error,"failed to create thread");
+                        VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                    }
+                    atomic_fetch_add(&diamond_active_thread_count,1);
+                    pthread_mutex_lock(&target_supervisor->lock);
+                    target_supervisor->child_count=new_index+1;
+                    pthread_mutex_unlock(&target_supervisor->lock);
+                    registers[dest]=DIAMOND_INT((int64_t)new_index);break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondFileHandle *target_file=
@@ -20239,6 +20743,41 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)new_handle};
                 break;
             }
+            case DIAMOND_OP_SUPERVISOR_NEW: {
+                /* Zero-arg constructor, same shape as DIAMOND_OP_PROGRAM_
+                 * BUILDER_NEW above -- v1 has no configurable policy
+                 * (restart delay/child cap are fixed constants, see
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment), so
+                 * there's nothing for Supervisor.new() to take yet. */
+                uint16_t dest=0;
+                READ_SHORT(dest);
+                /* calloc, never a `(DiamondSupervisor){}` compound literal --
+                 * see DiamondSupervisor's own comment: with children[]'s
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN*DIAMOND_MAX_ARGUMENTS-sized
+                 * footprint, a compound literal here would be a large
+                 * automatic-storage temporary that an unoptimized build
+                 * allocates unconditionally on run_chunk's OWN stack frame
+                 * (regardless of which opcode case actually runs), inflating
+                 * every recursive run_chunk call enough to blow the C stack
+                 * long before DIAMOND_MAX_CALL_DEPTH's own counter check
+                 * could catch it -- exactly the DiamondProgram calloc
+                 * convention this codebase already uses for its own large
+                 * fixed structs, for the identical reason. */
+                DiamondSupervisor *new_supervisor=calloc(1,sizeof *new_supervisor);
+                if(new_supervisor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                atomic_init(&new_supervisor->refcount,1);
+                atomic_init(&new_supervisor->stop_requested,false);
+                pthread_mutex_init(&new_supervisor->lock,nullptr);
+                DiamondSupervisorHandle *new_handle=
+                    allocate_supervisor_handle(vm,new_supervisor);
+                if(new_handle==nullptr) {
+                    free_supervisor_reference(new_supervisor);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)new_handle};
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT: {
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
@@ -20958,6 +21497,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "undefined method";
         case DIAMOND_VM_JSON_ERROR:
             return "json error";
+        case DIAMOND_VM_SUPERVISOR_ERROR:
+            return "supervisor error";
     }
     return "unknown VM status";
 }

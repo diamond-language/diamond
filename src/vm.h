@@ -463,6 +463,10 @@ typedef enum DiamondOpCode : uint8_t {
      * for the same stable-numbering reason this enum's own comment
      * gives for DIAMOND_OP_GET_CVAR onward. */
     DIAMOND_OP_CHANNEL_NEW,
+    /* Supervisor.new() -- see docs/threads.md's Supervisors section.
+     * Appended here for the same stable-numbering reason as DIAMOND_OP_
+     * CHANNEL_NEW just above. */
+    DIAMOND_OP_SUPERVISOR_NEW,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -543,6 +547,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_MYSQL_ERROR,
     DIAMOND_CLASS_NO_METHOD_ERROR,
     DIAMOND_CLASS_JSON_ERROR,
+    DIAMOND_CLASS_SUPERVISOR_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -1008,6 +1013,12 @@ typedef enum DiamondVmStatus : uint8_t {
      * can raise it the same generic way every other native error class
      * here already does. */
     DIAMOND_VM_JSON_ERROR,
+    /* Supervisor#add_child failures that aren't a supervised child's own
+     * crash (that's handled entirely inside the child's own retry loop,
+     * never surfaced as a status code at all -- see docs/threads.md's
+     * Supervisors section): the DIAMOND_MAX_SUPERVISOR_CHILDREN cap, or
+     * add_child called after stop(). */
+    DIAMOND_VM_SUPERVISOR_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

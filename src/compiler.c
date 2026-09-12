@@ -4115,6 +4115,38 @@ static uint16_t parse_channel_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* Supervisor.new() -- see docs/threads.md's Supervisors section. Zero
+ * arguments, same shape as parse_program_builder_new_call just below
+ * (v1 has no configurable policy -- restart delay/child cap are fixed
+ * constants, see DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment in
+ * src/vm.c), just recognized by the literal 'new' method name the same
+ * way Thread.new/Channel.new/Fiber.new are rather than a bare
+ * `Supervisor(...)` form. */
+static uint16_t parse_supervisor_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Supervisor'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Supervisor.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Supervisor.new arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SUPERVISOR_NEW);
+    emit_register(compiler,dest);
+    return dest;
+}
+
 static uint16_t parse_file_open_arguments(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'File.open'");
@@ -6105,6 +6137,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Channel",name,false))
         return parse_channel_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Supervisor",name,false))
+        return parse_supervisor_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
@@ -15404,6 +15440,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         [DIAMOND_CLASS_MYSQL_ERROR]={"MySQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_NO_METHOD_ERROR]={"NoMethodError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_JSON_ERROR]={"JSONError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_SUPERVISOR_ERROR]={"SupervisorError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->range_class_index=UINT8_MAX;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
