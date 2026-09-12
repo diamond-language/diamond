@@ -52,6 +52,15 @@ fixed scalar (`pop`, `key_at`, `value_at`, `String#index_of`) can still
 satisfy an interface method with no return annotation, just never one
 that requires a specific return type.
 
+Satisfying a `-> Type` interface method needs the implementing method's
+own explicit `-> Type` return annotation (an endless `def name() -> String
+= "Ada"` works; a bare `def name() = "Ada"` does not, even though its
+return type is otherwise correctly inferred as `String`) — interface
+conformance is checked against `return_type_set`, which only an explicit
+annotation populates, not the separate, tooling-only return-type inference
+compile_definition also computes for every function (see docs/roadmap.md's
+"Improve receiver-aware tooling").
+
 `x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
 the whole condition is true (and `unless ... || ...`'s branch narrows
 both operands where the whole condition is false) — composed the same

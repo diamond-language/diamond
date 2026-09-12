@@ -250,7 +250,10 @@ class Point
 end
 ```
 
-Modules provide reusable behavior, while interfaces are structural:
+Modules provide reusable behavior, while interfaces are structural: there is
+no `implements` declaration, so any class that happens to define a matching
+method satisfies the interface, and using the interface as a type is what
+actually gets checked, at compile time, against whatever value flows there:
 
 ```ruby
 interface Named
@@ -265,8 +268,15 @@ end
 
 class User
   include Printable
-  def name() = "Ada"
+  def name() -> String = "Ada"
 end
+
+def greet(entity: Named)
+  puts("Hello, " + entity.name())
+end
+
+greet(User.new())
+# => Hello, Ada
 ```
 
 Annotations are optional. Dynamic code and checked code share one object model:
