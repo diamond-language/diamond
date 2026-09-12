@@ -115,15 +115,28 @@ same way `compile_block` already did for blocks, into a new
 conformance, generics -- depend on) so this stays a pure, zero-risk
 tooling improvement. See docs/lsp.md's receiver-chain paragraph.
 
+Control-flow joins across function boundaries are now covered too: a
+function whose body branches into more than one class with no shared
+annotation had no single inferable body-result type before, even where
+the equivalent local-variable case (an `if`/ternary assigned to a local)
+already synthesized a union. A bare trailing `if`/`case` expression
+already got this for free (merge_flow_types, the same control-flow-join
+primitive an `if`/`case`'s own per-branch merge already uses, writes the
+merged set straight onto that expression's own destination register
+unconditionally) -- the real remaining gap was a function using explicit
+`return` statements across separate branches instead, which body_result
+alone can never see. `compile_return` (src/compiler.c) now accumulates
+every explicit `return value`'s own type into a new `return_flow_seen`/
+`return_flow_type`/`return_flow_set` running union (the same incremental-
+accumulate shape `merge_loop_exit` already uses for a loop's own `break`
+values, minus the locals/alias-identity bookkeeping a `return` doesn't
+need), saved/restored around a nested function body the same way every
+other per-function compiler field already is; `compile_definition` unions
+that into the trailing-expression inference above rather than replacing
+it, so a function mixing both styles infers correctly either way.
+
 Next steps:
 
-- control-flow joins across function boundaries: a function whose body
-  branches into more than one class with no shared annotation (an
-  unannotated `if`/`case` returning different classes per arm) still has
-  no single inferable body-result type and stays unresolved -- the local-
-  variable version of this (an `if`/ternary assigned to a local) already
-  synthesizes a union; doing the same for a whole function's own inferred
-  return type is the natural next slice, not yet attempted;
 - improve receiver facts across imported files further where they still
   lose precision (dynamic-flow boundaries this pass didn't touch);
 - explore incremental compilation only after the compiler has a reusable unit

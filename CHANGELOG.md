@@ -8,6 +8,18 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Extended receiver-aware call-chain resolution (`textDocument/hover`/
+  `definition`/`completion`) to functions whose body uses `return`
+  across separate branches with no shared annotation: `compile_return`
+  now accumulates every explicit `return value`'s own type into a
+  running union, merged into `compile_definition`'s existing inference
+  alongside its trailing-expression case rather than replacing it. A
+  bare trailing `if`/`case` expression already resolved this way
+  (`merge_flow_types` already wrote the union straight onto that
+  expression's own destination register); `return`-based branches were
+  the real remaining gap, since `body_result` alone can never see a
+  value that exited through an earlier `return`. See docs/roadmap.md's
+  "Improve receiver-aware tooling".
 - Added a v1 step debugger: `diamond-dap` (`dap/`), a real Debug Adapter
   Protocol server giving an editor's own gutter breakpoints the exact
   pause `debugger()`/`breakpoint()` already had, without editing source

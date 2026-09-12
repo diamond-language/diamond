@@ -600,7 +600,7 @@ read_message >/dev/null
 # non-class arm in an explicit union remains conservative. ---
 
 chained_uri="file:///chained_receiver.di"
-chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend'
+chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend\ndef choose_with_returns(flag)\n  if flag\n    return Branch.new()\n  end\n  return AlternateBranch.new()\nend\ndef inspect2()\n  choose_with_returns(true).leaf().ping()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$chained_uri"'","text":"'"$chained_source"'"}}}'
 read_message >/dev/null
 
@@ -662,6 +662,23 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":138,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":39,"character":21}}}'
 response="$(read_message)"
 [[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+# No source annotation, and the body uses `return` across two separate
+# branches instead of a bare trailing expression -- compile_return's own
+# return_flow accumulation (src/compiler.c) unions every explicit `return
+# value`'s own type into inferred_return_type_set, closing the real gap
+# a bare-trailing-if/case expression didn't have (that already got a
+# union for free via merge_flow_types writing straight onto its own
+# destination register -- see request id 137's own comment above).
+send '{"jsonrpc":"2.0","id":150,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":51,"character":28}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":151,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":51,"character":35}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$chained_uri"'"}}}'

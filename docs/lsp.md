@@ -139,10 +139,18 @@ search over a real (if scoped) lexical symbol table:
     tooling improvement with zero behavior-changing risk. `Class.new()` is
     the one intrinsic return rule. Every arm of a union receiver must
     define a link with a usable (explicit or inferred) class return, so
-    one uncertain arm makes the rest of the chain unresolved -- a body
-    whose control flow branches into more than one class (an `if`/`case`
-    with no shared annotation) has no single body-result type to infer
-    from and stays unresolved the same as before. Any other receiver this
+    one uncertain arm makes the rest of the chain unresolved. A body whose
+    control flow branches into more than one class with no shared
+    annotation (an `if`/`case`) resolves as a union either way it's
+    expressed: a bare trailing `if`/`case` expression gets it from the
+    exact same per-branch merge (`merge_flow_types`) an assigned-to-a-
+    local `if`/ternary already synthesizes, since that merge writes
+    straight onto the expression's own destination register regardless of
+    what uses it afterward; a function using explicit `return` statements
+    across separate branches instead -- `body_result` alone can never see
+    those -- gets it from `compile_return`'s own accumulated union of
+    every `return value` it saw, merged in alongside the trailing-
+    expression case rather than replacing it. Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty

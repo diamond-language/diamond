@@ -175,6 +175,24 @@ typedef struct Compiler {
     uint16_t positional_spread_fixed[DIAMOND_MAX_DECLARED_PARAMETERS];
     int current_return_type;
     DiamondSpan current_return_type_span;
+    /* Accumulates the union of every explicit `return value`'s own known
+     * type/type-set seen so far within the *current* function body being
+     * compiled -- purely advisory input to compile_definition's own
+     * inferred_return_type_set inference (lsp/receiver.c's call-chain
+     * resolution), never return_type_set itself (see that field's own
+     * comment, src/vm.h, for why the two stay separate). Exactly the
+     * incremental-accumulate shape merge_loop_exit already uses for a
+     * loop's own `break` values, minus everything about locals/alias-
+     * identity a `return` doesn't need (it exits the function outright,
+     * not just one control-flow region within it) -- see compile_return's
+     * own use. Saved/restored around a nested function body the same way
+     * every other per-function field here already is (compile_definition/
+     * compile_block's own outer_* dance), and reset to "not seen" at the
+     * start of each one, so an inner def's own returns never leak into an
+     * outer one's inference or vice versa. */
+    bool return_flow_seen;
+    uint8_t return_flow_type;
+    int32_t return_flow_set;
     LoopContext *current_loop;
     int current_exception;
     size_t current_retry_target;
@@ -10618,6 +10636,19 @@ static uint16_t compile_return(Compiler *compiler) {
     if(compiler->current_return_type>=0)
         emit_type_check(compiler,value,(uint8_t)compiler->current_return_type,
                         compiler->current_return_type_span);
+    /* See return_flow_seen's own comment (the Compiler struct) --
+     * compile_definition's inference reads this back once the whole body
+     * finishes compiling; harmless to keep accumulating even when an
+     * explicit `-> Type` annotation already makes that inference moot. */
+    if(!compiler->return_flow_seen) {
+        compiler->return_flow_type=compiler->known_types[value];
+        compiler->return_flow_set=compiler->known_type_sets[value];
+        compiler->return_flow_seen=true;
+    } else {
+        merge_flow_types(compiler,compiler->return_flow_type,compiler->return_flow_set,
+            compiler->known_types[value],compiler->known_type_sets[value],
+            &compiler->return_flow_type,&compiler->return_flow_set);
+    }
     emit_instruction(compiler,DIAMOND_OP_RETURN,value,0,0,1);
     return value;
 }
@@ -11061,6 +11092,16 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    /* See return_flow_seen's own comment (the Compiler struct): a
+     * `return` inside this block's own body belongs to the block, not
+     * whatever function is being compiled around it -- reset before
+     * compiling the block's body, restore the outer function's own
+     * accumulated state after, the same save/reset/restore every other
+     * per-function field on this list already gets. */
+    const bool outer_return_flow_seen=compiler->return_flow_seen;
+    const uint8_t outer_return_flow_type=compiler->return_flow_type;
+    const int32_t outer_return_flow_set=compiler->return_flow_set;
+    compiler->return_flow_seen=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
@@ -11356,6 +11397,9 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
+    compiler->return_flow_seen=outer_return_flow_seen;
+    compiler->return_flow_type=outer_return_flow_type;
+    compiler->return_flow_set=outer_return_flow_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
@@ -11685,6 +11729,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    /* See return_flow_seen's own comment (the Compiler struct): reset
+     * before compiling this def's own body, restore the outer function's
+     * (if any -- a top-level def has none live) accumulated state after,
+     * so a nested def's own returns never leak into an enclosing one's
+     * inference or vice versa. */
+    const bool outer_return_flow_seen=compiler->return_flow_seen;
+    const uint8_t outer_return_flow_type=compiler->return_flow_type;
+    const int32_t outer_return_flow_set=compiler->return_flow_set;
+    compiler->return_flow_seen=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
@@ -12238,35 +12291,73 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         if (return_type >= 0 && !body_diverges) {
             emit_type_check(compiler,body_result,(uint8_t)return_type,
                             return_type_span);
-        } else if(return_type<0&&!body_diverges) {
+        } else if(return_type<0) {
             /* No explicit `-> Type`: best-effort inference for lsp/
              * receiver.c's call-chain resolution only (inferred_return_
              * type_set, not return_type_set itself -- see that field's
              * own comment in vm.h for why they're kept separate).
              * Mirrors compile_block's own identical fallback for a
-             * block with no explicit return annotation. !body_diverges
-             * guards against inferring from a body_result register a
-             * body that always raises/returns early never actually
-             * produces. */
-            if(compiler->known_type_sets[body_result]>=0) {
-                function->inferred_return_type_set=
-                    (uint16_t)compiler->known_type_sets[body_result];
-            } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
-                      reserve_type_sets(compiler,1)) {
-                const size_t return_set=function->type_set_count++;
-                DiamondTypeSet *set=&function->type_sets[return_set];
-                set->count=1;set->inferred=true;
-                set->members[0]=(DiamondTypeMember){
-                    .id=compiler->known_types[body_result],
-                    .argument_set=DIAMOND_NO_TYPE_SET,
-                    .second_argument_set=DIAMOND_NO_TYPE_SET,
-                    .callable_arity=UINT8_MAX,
-                    .callable_return_set=DIAMOND_NO_TYPE_SET,
-                    .callable_parameters_typed=false};
-                for(size_t parameter=0;parameter<16;parameter++)
-                    set->members[0].callable_parameter_sets[parameter]=
-                        DIAMOND_NO_TYPE_SET;
-                function->inferred_return_type_set=(uint16_t)return_set;
+             * block with no explicit return annotation. Combines two
+             * independent sources of "what this function can actually
+             * return": the body's own trailing value (skipped when it
+             * always raises/returns early -- body_diverges means
+             * body_result never actually produced anything real) and
+             * every explicit `return value` compile_return has
+             * accumulated along the way (return_flow_seen -- a function
+             * using return statements across more than one branch had no
+             * single inferable type before this, even though each
+             * individual return's own value has a perfectly well-known
+             * type at compile time; see return_flow_seen's own comment,
+             * the Compiler struct). Either source alone is used as-is;
+             * both together get unioned via merge_flow_types, the same
+             * control-flow-join primitive an if/case expression's own
+             * per-branch merge already uses (e.g. an unannotated
+             * function with a bare `if`/`case` as its own last statement
+             * already got this for free -- merge_flow_types already
+             * writes the merged set onto that expression's own
+             * destination register unconditionally, so body_result
+             * already carries it by the time this reads it; the real
+             * gap this closes is a function using return statements
+             * across separate branches instead, which body_result alone
+             * can never see). */
+            uint8_t inferred_type=TYPE_UNKNOWN;int32_t inferred_set=-1;
+            bool have_inference=false;
+            if(!body_diverges) {
+                inferred_type=compiler->known_types[body_result];
+                inferred_set=compiler->known_type_sets[body_result];
+                have_inference=inferred_set>=0||inferred_type!=TYPE_UNKNOWN;
+            }
+            if(compiler->return_flow_seen) {
+                if(have_inference)
+                    merge_flow_types(compiler,inferred_type,inferred_set,
+                        compiler->return_flow_type,compiler->return_flow_set,
+                        &inferred_type,&inferred_set);
+                else {
+                    inferred_type=compiler->return_flow_type;
+                    inferred_set=compiler->return_flow_set;
+                }
+                have_inference=true;
+            }
+            if(have_inference) {
+                if(inferred_set>=0) {
+                    function->inferred_return_type_set=(uint16_t)inferred_set;
+                } else if(inferred_type!=TYPE_UNKNOWN&&
+                          reserve_type_sets(compiler,1)) {
+                    const size_t return_set=function->type_set_count++;
+                    DiamondTypeSet *set=&function->type_sets[return_set];
+                    set->count=1;set->inferred=true;
+                    set->members[0]=(DiamondTypeMember){
+                        .id=inferred_type,
+                        .argument_set=DIAMOND_NO_TYPE_SET,
+                        .second_argument_set=DIAMOND_NO_TYPE_SET,
+                        .callable_arity=UINT8_MAX,
+                        .callable_return_set=DIAMOND_NO_TYPE_SET,
+                        .callable_parameters_typed=false};
+                    for(size_t parameter=0;parameter<16;parameter++)
+                        set->members[0].callable_parameter_sets[parameter]=
+                            DIAMOND_NO_TYPE_SET;
+                    function->inferred_return_type_set=(uint16_t)return_set;
+                }
             }
         }
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
@@ -12311,6 +12402,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
+    compiler->return_flow_seen=outer_return_flow_seen;
+    compiler->return_flow_type=outer_return_flow_type;
+    compiler->return_flow_set=outer_return_flow_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
