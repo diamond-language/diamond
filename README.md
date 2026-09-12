@@ -59,7 +59,8 @@ The implementation includes:
   collection contracts, and structural interface checks;
 - rescuable runtime failures, typed rescue clauses, `ensure`, `else`, `retry`,
   causal exception chains, and captured backtraces;
-- cooperative fibers and real OS threads with isolated heaps;
+- cooperative fibers and real OS threads with isolated heaps, plus a
+  bounded thread-safe `Channel` mailbox for ongoing inter-thread messaging;
 - a Diamond-written core library with Enumerable, Comparable, JSON, formatting,
   collection helpers, and a small Minitest-style test library;
 - files, blocking and nonblocking TCP, UDP, TLS, signals, SQLite3, calendar time,

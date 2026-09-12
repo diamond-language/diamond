@@ -458,6 +458,11 @@ typedef enum DiamondOpCode : uint8_t {
      * millions of elements) was the actual measured bottleneck in
      * examples/transformer, not #matmul itself. */
     DIAMOND_OP_TENSOR_RANDOM,
+    /* Channel.new(capacity) -- see docs/threads.md's Channels section.
+     * Appended here, not grouped next to DIAMOND_OP_THREAD_NEW above,
+     * for the same stable-numbering reason this enum's own comment
+     * gives for DIAMOND_OP_GET_CVAR onward. */
+    DIAMOND_OP_CHANNEL_NEW,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -1319,6 +1324,21 @@ struct DiamondVm {
      * debugger_helper instead writes a Content-Length-framed JSON pause
      * payload to and blocks reading one framed command back from. */
     int debug_fd;
+    /* Extra GC roots beyond every field mark_roots (src/vm.c) already
+     * walks -- null/0 (its zero-init default) for every ordinary VM.
+     * The one user is a Channel's own private DiamondVm (see docs/
+     * threads.md's Channels section, DiamondChannel in src/vm.c): that
+     * VM never runs bytecode of its own (no frames, no running_fiber),
+     * it exists purely as GC-managed storage for values queued between
+     * send and receive, so its own queue array (not a field of DiamondVm
+     * itself) is the only root set it has. Set to point at the
+     * channel's own flat DiamondValue queue buffer, with
+     * extra_root_count updated to the current queued-item count
+     * immediately before any allocation that could trigger a collection
+     * (send/receive already hold the channel's own mutex at that point,
+     * so this is never read concurrently with a write). */
+    DiamondValue *extra_roots;
+    size_t extra_root_count;
 };
 
 void diamond_vm_init(DiamondVm *vm);

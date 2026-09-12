@@ -6,6 +6,21 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Concurrency
+
+- Added `Channel`, a bounded, thread-safe mailbox: `Channel.new(capacity)`,
+  `send`/`receive` (blocking), `try_send`/`try_receive` (raise
+  `WouldBlockError` instead of waiting), `close`/`closed?`/`size`. Unlike
+  `Thread#join`'s own one-shot result handoff, a channel lets threads
+  exchange values throughout their whole lifetime. Every payload is still
+  deep-copied across the heap boundary exactly the way `Thread.new`
+  arguments and `Thread#join` results always have been (`Threads do not
+  share mutable objects`, docs/threads.md) -- the channel itself is the one
+  new exception, a genuinely shared, refcounted native resource with its
+  own private `DiamondVm` existing purely as GC-managed storage for values
+  in transit. See docs/threads.md's Channels section and
+  docs/internal/concurrency-internals.md for the full design.
+
 ### Tooling
 
 - Extended receiver-aware call-chain resolution (`textDocument/hover`/

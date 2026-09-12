@@ -262,6 +262,59 @@ typedef struct DiamondThread {
     pthread_mutex_t join_lock;
 } DiamondThread;
 
+/* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
+ * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
+ * by exactly one DiamondThreadHandle), a DiamondChannel is genuinely
+ * shared: `refcount` counts every live DiamondChannelHandle referencing
+ * it, possibly across several independent VM heaps at once (a Channel
+ * passed as a Thread.new argument, sent through another Channel, or
+ * copied inside an Array/Hash/Instance all bump this via copy_value_
+ * into_vm's own DIAMOND_OBJECT_CHANNEL case) -- freed only once the last
+ * one is swept (free_channel_reference).
+ *
+ * `private_vm`/`private_program` exist purely as GC-managed storage for
+ * queued values, never to run bytecode: nothing ever calls run_chunk
+ * against private_vm. private_program is a clone_program_from_chunk
+ * clone of whatever program was ambient at Channel.new time (identical
+ * shape to how Thread.new clones one for a spawned thread's own use) --
+ * send() rebases an incoming value from the sender's own ambient classes
+ * into private_program's classes (via copy_value_into_vm, exactly like
+ * Thread.new's own argument copy); receive() rebases the other direction
+ * (exactly like Thread#join's own result copy). Every value queued is
+ * therefore always a value private_vm itself owns -- queue[] doubles as
+ * private_vm->extra_roots (see that field's own comment, src/vm.h) so
+ * private_vm's own collections can find them.
+ *
+ * `queue` is a flat, non-ring `malloc`'d DiamondValue[capacity] buffer:
+ * receive() takes queue[0] and memmoves the remainder down rather than
+ * tracking a separate head index -- simpler than ring-buffer index math,
+ * and keeps the extra_roots hook a trivial flat pointer+count. Expected
+ * capacities (tens to low thousands) make the memmove cost a non-issue.
+ *
+ * `lock` serializes every access to this struct, including every
+ * allocation on private_vm -- since private_vm is never touched by more
+ * than one OS thread at a time (always under this same lock), this
+ * satisfies the real invariant GC safety needs (see diamond_vm_collect's
+ * own contract) without needing private_vm to be pinned to one thread
+ * for its whole lifetime the way a spawned Thread's own child_vm is.
+ * `not_empty`/`not_full` are this codebase's first condition variables
+ * -- see send/receive's own dispatch comments (DIAMOND_OP_INVOKE) for
+ * the exact wait/signal protocol. */
+typedef struct DiamondChannel {
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty;
+    pthread_cond_t not_full;
+    DiamondVm *private_vm;
+    DiamondProgram *private_program;
+    DiamondValue *queue;
+    size_t capacity;
+    size_t count;
+    bool closed;
+    atomic_size_t refcount;
+} DiamondChannel;
+
+static void free_channel_reference(DiamondChannel *channel);
+
 static void mark_value(DiamondValue value, bool minor);
 static void mark_object(DiamondObject *object, bool minor);
 static void mark_frame_chain(void *frames, bool minor);
@@ -519,6 +572,8 @@ static void mark_roots(DiamondVm *vm, bool minor) {
     if (vm->root_queue != nullptr)
         for (size_t index = 0; index < diamond_fiber_queue_count(vm->root_queue); index++)
             mark_fiber(diamond_fiber_queue_at(vm->root_queue, index),minor);
+    for(size_t index=0;index<vm->extra_root_count;index++)
+        mark_value(vm->extra_roots[index],minor);
     if (minor) mark_remembered_set(vm);
 }
 
@@ -630,6 +685,9 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_THREAD) {
             size=sizeof(DiamondThreadHandle);
             free_thread(((DiamondThreadHandle *)unreached)->thread);
+        } else if(unreached->kind==DIAMOND_OBJECT_CHANNEL) {
+            size=sizeof(DiamondChannelHandle);
+            free_channel_reference(((DiamondChannelHandle *)unreached)->channel);
         } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3) {
             size=sizeof(DiamondSqlite3Handle);
             sqlite3 *db=((DiamondSqlite3Handle *)unreached)->db;
@@ -1045,6 +1103,8 @@ static void free_object_list(DiamondObject *object) {
             free(builder->program);
         } else if(object->kind==DIAMOND_OBJECT_THREAD) {
             free_thread(((DiamondThreadHandle *)object)->thread);
+        } else if(object->kind==DIAMOND_OBJECT_CHANNEL) {
+            free_channel_reference(((DiamondChannelHandle *)object)->channel);
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
             /* _v2 -- see the matching branch in diamond_vm_collect_impl
@@ -2109,6 +2169,43 @@ static void free_thread(DiamondThread *thread) {
     pthread_mutex_destroy(&thread->join_lock);
     free(thread);
     atomic_fetch_sub(&diamond_active_thread_count,1);
+}
+
+static DiamondChannelHandle *allocate_channel_handle(DiamondVm *vm,DiamondChannel *channel) {
+    maybe_collect(vm);
+    DiamondChannelHandle *handle=malloc(sizeof(DiamondChannelHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondChannelHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CHANNEL},
+        .channel=channel};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondChannelHandle);
+    return handle;
+}
+
+/* Mirrors free_thread's own role, called from the same two sweep paths
+ * (diamond_vm_collect's cycle-based sweep, diamond_vm_free's whole-VM
+ * teardown) for a DIAMOND_OBJECT_CHANNEL handle -- except a DiamondChannel
+ * is refcounted (see its own comment) rather than owned one-to-one by a
+ * single handle, so this only actually tears anything down once the
+ * *last* referencing handle, across however many VM heaps ever held one,
+ * is swept. Safe by construction at that point: reachability is exactly
+ * what the GC just proved false for every one of those handles, so no
+ * thread can be mid-call (send/receive/close/...) against a channel whose
+ * last reference is about to disappear. `channel` may be nullptr (mirrors
+ * free_thread's own tolerance) so callers don't need their own guard. */
+static void free_channel_reference(DiamondChannel *channel) {
+    if(channel==nullptr)return;
+    if(atomic_fetch_sub(&channel->refcount,1)!=1)return;
+    pthread_mutex_destroy(&channel->lock);
+    pthread_cond_destroy(&channel->not_empty);
+    pthread_cond_destroy(&channel->not_full);
+    if(channel->private_vm!=nullptr) {
+        diamond_vm_free(channel->private_vm);
+        free(channel->private_vm);
+    }
+    diamond_program_free(channel->private_program);
+    free(channel->private_program);
+    free(channel->queue);
+    free(channel);
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
@@ -4104,6 +4201,25 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                 allocate_closure(dest_vm,source->function_index,nullptr,0);
             if(copy==nullptr)return false;
             copy->is_block=source->is_block;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        /* A Channel needs neither rebasing nor adoption -- unlike Instance,
+         * nothing about it points into source_program's own tables, so
+         * this is the one kind both of copy_value_into_vm's modes accept
+         * identically (rebase mode: Thread.new/#join and Channel's own
+         * send/receive; adopt mode: ProgramBuilder#run). The channel
+         * itself is a genuinely shared, refcounted resource (see
+         * DiamondChannel's own comment) -- this bumps that refcount and
+         * hands dest_vm a fresh handle pointing at the *same* underlying
+         * channel, never a copy of its contents. */
+        case DIAMOND_OBJECT_CHANNEL: {
+            DiamondChannel *channel=((DiamondChannelHandle *)value.as.object)->channel;
+            atomic_fetch_add(&channel->refcount,1);
+            DiamondChannelHandle *copy=allocate_channel_handle(dest_vm,channel);
+            if(copy==nullptr) {
+                atomic_fetch_sub(&channel->refcount,1);
+                return false;
+            }
             *out=DIAMOND_OBJECT(copy);return true;
         }
         default: return false;
@@ -8377,6 +8493,7 @@ static void format_value_type(char *buffer, size_t capacity,
         case DIAMOND_OBJECT_PROCESS_HANDLE: name="ProcessHandle"; break;
         case DIAMOND_OBJECT_PROCESS_STREAM: name="ProcessStream"; break;
         case DIAMOND_OBJECT_TENSOR: name="Tensor"; break;
+        case DIAMOND_OBJECT_CHANNEL: name="Channel"; break;
         case DIAMOND_OBJECT_INSTANCE: {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
             name=instance->class->name;
@@ -17125,6 +17242,159 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     registers[dest]=target_thread->result;break;
                 }
+                if(receiver_kind==DIAMOND_OBJECT_CHANNEL) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondChannel *target_channel=
+                        ((DiamondChannelHandle *)registers[recv].as.object)->channel;
+                    const bool send_method=method_name->length==4&&
+                        memcmp(method_name->chars,"send",4)==0;
+                    const bool receive_method=method_name->length==7&&
+                        memcmp(method_name->chars,"receive",7)==0;
+                    const bool try_send_method=method_name->length==8&&
+                        memcmp(method_name->chars,"try_send",8)==0;
+                    const bool try_receive_method=method_name->length==11&&
+                        memcmp(method_name->chars,"try_receive",11)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    const bool closed_method=method_name->length==7&&
+                        memcmp(method_name->chars,"closed?",7)==0;
+                    const bool size_method=method_name->length==4&&
+                        memcmp(method_name->chars,"size",4)==0;
+                    if(!send_method&&!receive_method&&!try_send_method&&
+                       !try_receive_method&&!close_method&&!closed_method&&!size_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Channel");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        /* Idempotent (docs/threads.md), matching Ruby's own
+                         * Thread::Queue#close -- a second close() is a no-op,
+                         * not an error. */
+                        if(!target_channel->closed) {
+                            target_channel->closed=true;
+                            pthread_cond_broadcast(&target_channel->not_empty);
+                            pthread_cond_broadcast(&target_channel->not_full);
+                        }
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(closed_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        const bool is_closed=target_channel->closed;
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_BOOL(is_closed);break;
+                    }
+                    if(size_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        const size_t current_size=target_channel->count;
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_INT((int64_t)current_size);break;
+                    }
+                    if(send_method||try_send_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondValue value_to_send=registers[base];
+                        pthread_mutex_lock(&target_channel->lock);
+                        while(target_channel->count==target_channel->capacity&&
+                              !target_channel->closed) {
+                            if(try_send_method) {
+                                pthread_mutex_unlock(&target_channel->lock);
+                                snprintf(vm->error,sizeof vm->error,
+                                    "channel send would block");
+                                VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                            }
+                            pthread_cond_wait(&target_channel->not_full,
+                                &target_channel->lock);
+                        }
+                        if(target_channel->closed) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,"channel is closed");
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        /* Rebase from this sender's own ambient classes into
+                         * the channel's own private (permanent, never-run)
+                         * program -- identical call shape to DIAMOND_OP_
+                         * THREAD_NEW's own argument copy above, just into a
+                         * standing home instead of a freshly spawned child.
+                         * extra_root_count kept current across the mutation
+                         * below so a collection triggered by this very copy
+                         * (on private_vm, still holding `lock`) can find
+                         * every already-queued value. */
+                        DiamondValue copied=DIAMOND_NIL;
+                        target_channel->private_vm->extra_root_count=
+                            target_channel->count;
+                        const bool copy_ok=copy_value_into_vm(
+                            target_channel->private_vm,value_to_send,nullptr,
+                            chunk->classes,target_channel->private_program->classes,
+                            nullptr,&copied);
+                        if(!copy_ok) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "Channel#send argument does not support this type");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        target_channel->queue[target_channel->count++]=copied;
+                        target_channel->private_vm->extra_root_count=
+                            target_channel->count;
+                        pthread_cond_signal(&target_channel->not_empty);
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* Only receive_method/try_receive_method left, per the
+                     * exhaustive unknown-method check above -- same "fall
+                     * through to whichever's left" shape Socket#read/#write
+                     * already uses just below. */
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    pthread_mutex_lock(&target_channel->lock);
+                    while(target_channel->count==0&&!target_channel->closed) {
+                        if(try_receive_method) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "channel receive would block");
+                            VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                        }
+                        pthread_cond_wait(&target_channel->not_empty,
+                            &target_channel->lock);
+                    }
+                    if(target_channel->count==0) {
+                        /* Closed and drained: nil means "nothing ever
+                         * again," distinct from WouldBlockError's "nothing
+                         * right now" above -- the identical EOF-as-nil-vs-
+                         * WouldBlockError distinction File#read/Socket#read
+                         * already draw (see their own comments). */
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* Rebase the other direction: out of the channel's own
+                     * private program, into this receiver's own ambient
+                     * classes -- identical call shape to Thread#join's own
+                     * result copy above. Allocates on `vm` (this receiver's
+                     * own real VM), never on private_vm, so private_vm's
+                     * own extra_root_count needs no update for this call --
+                     * only for the queue-mutation just below. */
+                    DiamondValue copied=DIAMOND_NIL;
+                    const bool copy_ok=copy_value_into_vm(vm,
+                        target_channel->queue[0],nullptr,
+                        target_channel->private_program->classes,chunk->classes,
+                        nullptr,&copied);
+                    if(!copy_ok) {
+                        pthread_mutex_unlock(&target_channel->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Channel#receive result does not support this type");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    memmove(target_channel->queue,target_channel->queue+1,
+                        (target_channel->count-1)*sizeof *target_channel->queue);
+                    target_channel->count--;
+                    target_channel->private_vm->extra_root_count=
+                        target_channel->count;
+                    pthread_cond_signal(&target_channel->not_full);
+                    pthread_mutex_unlock(&target_channel->lock);
+                    registers[dest]=copied;break;
+                }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondFileHandle *target_file=
@@ -19906,6 +20176,67 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)thread_handle};
+                break;
+            }
+            case DIAMOND_OP_CHANNEL_NEW: {
+                uint16_t dest=0,capacity_reg=0;
+                READ_SHORT(dest);READ_SHORT(capacity_reg);
+                if(registers[capacity_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[capacity_reg].as.integer<1||
+                   registers[capacity_reg].as.integer>1000000) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.new's argument must be an Int capacity between "
+                        "1 and 1,000,000");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const size_t capacity=(size_t)registers[capacity_reg].as.integer;
+                /* Same clone_program_from_chunk call DIAMOND_OP_THREAD_NEW
+                 * above already uses -- see DiamondChannel's own comment for
+                 * why the channel needs its own permanent copy of these
+                 * tables rather than borrowing the ambient chunk's. */
+                DiamondProgram *private_program=clone_program_from_chunk(chunk);
+                if(private_program==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondVm *private_vm=malloc(sizeof *private_vm);
+                if(private_vm==nullptr) {
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                diamond_vm_init(private_vm);
+                DiamondValue *queue=calloc(capacity,sizeof *queue);
+                if(queue==nullptr) {
+                    diamond_vm_free(private_vm);free(private_vm);
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                DiamondChannel *new_channel=malloc(sizeof *new_channel);
+                if(new_channel==nullptr) {
+                    free(queue);
+                    diamond_vm_free(private_vm);free(private_vm);
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                *new_channel=(DiamondChannel){.private_vm=private_vm,
+                    .private_program=private_program,.queue=queue,
+                    .capacity=capacity};
+                atomic_init(&new_channel->refcount,1);
+                pthread_mutex_init(&new_channel->lock,nullptr);
+                pthread_cond_init(&new_channel->not_empty,nullptr);
+                pthread_cond_init(&new_channel->not_full,nullptr);
+                /* See DiamondVm.extra_roots' own comment: private_vm never
+                 * runs bytecode of its own, so its only root set is
+                 * whatever's actually queued -- extra_root_count starts at
+                 * 0 (nothing queued yet) and is kept current by send/
+                 * receive, both of which already hold `lock` before
+                 * touching private_vm at all. */
+                private_vm->extra_roots=queue;
+                DiamondChannelHandle *new_handle=
+                    allocate_channel_handle(vm,new_channel);
+                if(new_handle==nullptr) {
+                    free_channel_reference(new_channel);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)new_handle};
                 break;
             }
             case DIAMOND_OP_TCP_CONNECT: {

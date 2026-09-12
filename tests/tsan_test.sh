@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Runs Thread's own test cases (tests/cases/thread_*.di) plus a couple of
-# representative Fiber cases (the shared machinery the thread_local fix in
-# diamond_fiber_entering touches) through the current build under
-# ThreadSanitizer -- see docs/threads.md and the "make tsan" Makefile
-# target. Deliberately narrower than the full tests/cases corpus: TSan's
-# overhead makes re-running the entire (largely single-threaded, already
-# covered by test-sanitize's ASan/UBSan pass) suite under it needlessly
-# slow for a target whose only job is proving the new concurrency-specific
-# code paths are race-free.
+# Runs Thread's own test cases (tests/cases/thread_*.di), Channel's own
+# (tests/cases/channel_*.di -- including the two real two-Thread producer/
+# consumer cases, the actual reason this feature needs TSan coverage at
+# all: a brand-new mutex+condvar primitive, see docs/internal/concurrency-
+# internals.md), plus a couple of representative Fiber cases (the shared
+# machinery the thread_local fix in diamond_fiber_entering touches)
+# through the current build under ThreadSanitizer -- see docs/threads.md
+# and the "make tsan" Makefile target. Deliberately narrower than the full
+# tests/cases corpus: TSan's overhead makes re-running the entire (largely
+# single-threaded, already covered by test-sanitize's ASan/UBSan pass)
+# suite under it needlessly slow for a target whose only job is proving
+# the new concurrency-specific code paths are race-free.
 #
 # Reuses build/run_cases (the same shared-process batch runner
 # test/test-sanitize use) against a temporary directory populated with
@@ -27,7 +30,8 @@ fi
 
 case_dir="$(mktemp -d)"
 
-for pattern in "tests/cases/thread_*" "tests/cases/legacy_0318.*" "tests/cases/legacy_0321.*"; do
+for pattern in "tests/cases/thread_*" "tests/cases/channel_*" \
+        "tests/cases/legacy_0318.*" "tests/cases/legacy_0321.*"; do
     for f in $pattern; do
         [[ -e "$f" ]] || continue
         ln -s "$(pwd)/$f" "$case_dir/$(basename "$f")"

@@ -74,6 +74,7 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROCESS_HANDLE,
     DIAMOND_OBJECT_PROCESS_STREAM,
     DIAMOND_OBJECT_TENSOR,
+    DIAMOND_OBJECT_CHANNEL,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -350,6 +351,24 @@ typedef struct DiamondThreadHandle {
     DiamondObject object;
     DiamondThread *thread;
 } DiamondThreadHandle;
+
+/* Same thin-handle/heavy-struct split as DiamondThreadHandle/DiamondThread
+ * just above, for the same reason (pthread mutex/condvar fields, defined
+ * in src/vm.c where pthread.h is already reachable) -- but unlike every
+ * other native handle in this file, a Channel's underlying DiamondChannel
+ * is genuinely *shared*: one live per referencing DiamondChannelHandle,
+ * possibly across several independent VM heaps at once (passed as a
+ * Thread.new argument, sent through another Channel, stored in a
+ * copied-by-value Array/Hash/Instance), refcounted rather than owned
+ * one-to-one the way a DiamondThread/DiamondSocketHandle/etc. always is.
+ * See docs/threads.md's own Channels section and
+ * docs/internal/concurrency-internals.md for the full design. */
+typedef struct DiamondChannel DiamondChannel;
+
+typedef struct DiamondChannelHandle {
+    DiamondObject object;
+    DiamondChannel *channel;
+} DiamondChannelHandle;
 
 typedef struct DiamondFileHandle {
     DiamondObject object;

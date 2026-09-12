@@ -9,6 +9,28 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### Channel: what's next, if anything
+
+`Channel` (docs/threads.md, landed this cycle) is a bounded mailbox --
+`send`/`receive`/`try_send`/`try_receive`/`close`. Real possibilities this
+opens up, none attempted yet, none committed:
+
+- **select-across-multiple-channels** (Go's own `select`) -- receive from
+  whichever of several channels has something ready first. Needs a real
+  design for waiting on more than one channel's own condition variable at
+  once, not just a bigger API surface;
+- **supervision trees / structured concurrency** (Erlang/Elixir-style
+  restart-on-crash, cancel-on-timeout, fail-together groups) -- a natural
+  fit once threads can talk to each other mid-run instead of only at
+  `join()`, but genuinely new mechanism on top, not a small extension;
+- **unbounded/rendezvous channels** -- `Channel.new(0)`-style synchronous
+  handoff, or no capacity limit at all. Deliberately out of v1's own scope
+  (a bound keeps memory use predictable and gives `send` real backpressure)
+  and not clearly needed without a concrete use case asking for it.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Real semver dependency resolution for `facet` (done)
 
 `facet` used to pin every dependency to an exact git ref (tag/branch/

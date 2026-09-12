@@ -4079,6 +4079,42 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* Channel.new(capacity) -- see docs/threads.md's Channels section. A
+ * single required Int argument, unlike Thread.new's own variadic
+ * callable+args shape just above -- closer to parse_time_at_call's own
+ * single-argument construction pattern, just with the same "expect the
+ * literal keyword 'new'" check parse_thread_new_call already needs
+ * (Channel.new, like Thread.new/Fiber.new, is recognized by the literal
+ * 'new' method name, not a dedicated bare `Channel(...)` form the way
+ * File.open/SQLite3.open use their own distinct names). */
+static uint16_t parse_channel_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Channel'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Channel.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t capacity_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Channel.new argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CHANNEL_NEW);
+    emit_register(compiler,dest);
+    emit_register(compiler,capacity_register);
+    return dest;
+}
+
 static uint16_t parse_file_open_arguments(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'File.open'");
@@ -6065,6 +6101,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Thread",name,false))
         return parse_thread_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Channel",name,false))
+        return parse_channel_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
