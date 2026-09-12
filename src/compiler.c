@@ -15350,6 +15350,36 @@ void diamond_program_free(DiamondProgram *program) {
  * DiamondProgram across 1285+ calls) -- only diamond_program_init
  * itself is safe there, since its memset is what actually wipes stale
  * content in that case, not redundant waste. */
+/* Recomputes every class's own shapes[] (DiamondClass, src/vm.h) --
+ * self-referential (`shape->class` points back at the owning class)
+ * entries a fresh compile always gets for free from run_compile_pass's
+ * own tail, so anything that populates program->classes[] *without*
+ * running a real compile pass afterward needs to call this explicitly
+ * or every shape lookup reads stale/dangling `class` pointers instead.
+ * Two callers: diamond_program_init_fresh below (bootstrapping the
+ * built-in exception classes with no compile pass involved at all) and
+ * diamond_program_read_compiled (src/compiled_prelude.c) -- a
+ * deserialized program's own classes[] array lives at a different
+ * memory address than whatever program it was originally serialized
+ * from, so the raw shapes[] bytes the dump carries over point at the
+ * *wrong* classes[] array entirely; nothing else ever calls a compile
+ * pass over an already-fully-compiled deserialized program to fix that
+ * up implicitly the way diamond_compile_incremental against a template
+ * already does for the prelude's own template-seeded classes. Confirmed
+ * directly, not assumed: a user-defined class's own instance-variable
+ * reads returned Nil after an uncorrected write_compiled/read_compiled
+ * round-trip, since field access resolves through a shape whose
+ * `class` pointer no longer matched the class actually being read. */
+void diamond_program_recompute_shapes(DiamondProgram *program) {
+    for(size_t class_index=0;class_index<program->class_count;class_index++) {
+        DiamondClass *class=&program->classes[class_index];
+        for(size_t field_count=0;field_count<=class->field_count;field_count++) {
+            class->shapes[field_count]=(DiamondShape){
+                .class=class,.field_count=(uint8_t)field_count};
+        }
+    }
+}
+
 void diamond_program_init_fresh(DiamondProgram *program) {
     static const struct {
         const char *name;
@@ -15414,18 +15444,15 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
         (void)snprintf(class->fields[2],DIAMOND_MAX_FUNCTION_NAME,"backtrace");
-        /* diamond_compile only computes shapes for every class (built-in
-         * and user-declared) once compilation finishes -- done here too,
-         * scoped to just these built-ins, so a program that never gets
-         * that far (e.g. a ProgramBuilder that only ever calls this
-         * function, never diamond_compile) still has instantiable
-         * built-in exception classes from construction on, the same
-         * guarantee diamond_compile itself provides. */
-        for(size_t field_count=0;field_count<=class->field_count;field_count++) {
-            class->shapes[field_count]=(DiamondShape){
-                .class=class,.field_count=(uint8_t)field_count};
-        }
     }
+    /* diamond_compile only computes shapes for every class (built-in and
+     * user-declared) once compilation finishes -- done here too, so a
+     * program that never gets that far (e.g. a ProgramBuilder that only
+     * ever calls this function, never diamond_compile) still has
+     * instantiable built-in exception classes from construction on, the
+     * same guarantee diamond_compile itself provides. See diamond_
+     * program_recompute_shapes' own comment just above. */
+    diamond_program_recompute_shapes(program);
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
 }
 
@@ -15612,12 +15639,9 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         record_scope_locals(&compiler,0,compiler.local_count,strlen(source));
         program->entry.body_end=strlen(source);
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
+        diamond_program_recompute_shapes(program);
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
             DiamondClass *class=&program->classes[class_index];
-            for(size_t field_count=0;field_count<=class->field_count;field_count++) {
-                class->shapes[field_count]=(DiamondShape){
-                    .class=class,.field_count=(uint8_t)field_count};
-            }
             /* Resolved by name, once, here -- never hardcoded, since a
              * conservative prelude that skips optional modules can shift
              * which index a *later*-defined class lands at (confirmed

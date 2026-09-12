@@ -35,14 +35,18 @@
  * method installed at runtime via ClassName.compile_method/
  * .define_method, which the prelude's own source never does to itself
  * -- checked directly below (assert_methods_are_plain), not assumed.
- * DiamondClass.shapes[].class (a self-referential pointer) needs no
- * handling at all: run_compile_pass's own tail (src/compiler.c)
- * unconditionally recomputes shapes for *every* class in
- * `program->classes[0..class_count)` at the end of every single
- * diamond_compile/diamond_compile_incremental call, template-seeded
- * classes included, so whatever garbage this write/read round-trip
- * leaves in a deserialized class's own shapes[] is always overwritten
- * before anything ever reads it. */
+ * DiamondClass.shapes[].class (a self-referential pointer) is never
+ * written -- the raw bytes a write/read round-trip would carry over
+ * point at the *original* program's own classes[] array, not `out`'s;
+ * diamond_program_read_compiled's own tail calls diamond_program_
+ * recompute_shapes (src/compiler.h) explicitly instead of relying on a
+ * later compile pass to fix it up the way an ordinary diamond_compile(_
+ * incremental) call's own run_compile_pass tail already does for a
+ * freshly-compiled program (template-seeded classes included) -- a
+ * caller that only ever deserializes an already-fully-compiled program,
+ * never compiling anything further against it, has no such later pass
+ * to rely on. Confirmed directly, not assumed: a user-defined class's
+ * own instance-variable reads returned Nil without this. */
 
 /* See bignum.c's own identical comment: needed transitively for vm.h's
  * <ucontext.h> use (via compiler.h), only under musl (docs/roadmap.md's
@@ -414,15 +418,25 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
             (size_t)namespace_constant_count * sizeof out->namespace_constants[0])) return false;
     if (!read_bytes(&cursor, end, &out->range_class_index, sizeof out->range_class_index)) return false;
 
-    /* See this file's own top comment: safe to leave every class's own
-     * shapes[] exactly as the raw classes[] dump above left it (garbage
-     * self-pointers included) -- run_compile_pass's own tail
-     * unconditionally recomputes it for every class before anything
-     * ever reads it. interfaces[].type_sets is the one field that *is*
-     * read before any compile pass runs again (a lookup could reference
-     * an interface by name without redeclaring it) -- fixed up here the
-     * same way diamond_compile's own tail already does after an ordinary
-     * compile. */
+    /* Every class's own shapes[] (self-referential `shape->class`
+     * back-pointers) must be recomputed here, not left as whatever the
+     * raw classes[] dump carried over: those pointers were computed
+     * against the *original* program's own classes[] array, at a
+     * different memory address than `out`'s -- confirmed directly, not
+     * assumed (a user-defined class's own instance-variable reads
+     * returned Nil without this, since field access resolves through a
+     * shape whose `class` pointer no longer matched the class actually
+     * being read). run_compile_pass's own tail (src/compiler.c) recomputes
+     * this for free after an ordinary compile, but nothing runs a compile
+     * pass over an already-fully-compiled deserialized program the way
+     * diamond_compile_incremental against a template does for the
+     * prelude's own template-seeded classes -- see diamond_program_
+     * recompute_shapes' own comment (src/compiler.h). interfaces[].
+     * type_sets is fixed up the same way diamond_compile's own tail
+     * already does after an ordinary compile, for the same reason: it's
+     * read before any compile pass could otherwise fix it up (a lookup
+     * could reference an interface by name without redeclaring it). */
+    diamond_program_recompute_shapes(out);
     for (size_t index = 0; index < out->interface_count; index++)
         out->interfaces[index].type_sets = out->entry.type_sets;
 

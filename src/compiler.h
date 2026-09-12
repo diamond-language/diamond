@@ -64,6 +64,17 @@ void diamond_program_init(DiamondProgram *program);
  * paid for nothing when the memory was already zero. */
 void diamond_program_init_fresh(DiamondProgram *program);
 void diamond_program_free(DiamondProgram *program);
+/* Recomputes every class's own shapes[] (self-referential `shape->class`
+ * back-pointers) in `program`. A fresh compile always gets this for free
+ * from run_compile_pass's own tail (src/compiler.c); anything that
+ * populates program->classes[] without running a real compile pass
+ * afterward -- diamond_program_init_fresh's own built-in exception
+ * classes, or diamond_program_read_compiled (src/compiled_prelude.c)
+ * deserializing an already-fully-compiled program into a fresh
+ * DiamondProgram at a different memory address -- must call this
+ * explicitly or every shape lookup reads stale/dangling `class`
+ * pointers instead. */
+void diamond_program_recompute_shapes(DiamondProgram *program);
 /* Appends one zeroed, independently allocated function record, growing the
  * stable pointer table geometrically without moving existing records. */
 DiamondFunction *diamond_program_add_function(DiamondProgram *program);
