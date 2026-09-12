@@ -548,6 +548,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_NO_METHOD_ERROR,
     DIAMOND_CLASS_JSON_ERROR,
     DIAMOND_CLASS_SUPERVISOR_ERROR,
+    DIAMOND_CLASS_SANDBOX_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -1019,6 +1020,12 @@ typedef enum DiamondVmStatus : uint8_t {
      * Supervisors section): the DIAMOND_MAX_SUPERVISOR_CHILDREN cap, or
      * add_child called after stop(). */
     DIAMOND_VM_SUPERVISOR_ERROR,
+    /* A native opcode that opens a real filesystem/network/subprocess
+     * resource was reached with DIAMOND_SANDBOX set -- see docs/sandbox.md.
+     * VM_SANDBOX_GUARD (src/vm.c) is the single macro every gated opcode
+     * uses to raise this; vm->error already carries "sandbox denies X"
+     * by the time this is returned. */
+    DIAMOND_VM_SANDBOX_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

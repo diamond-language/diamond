@@ -71,7 +71,10 @@ The implementation includes:
   runtime object shapes, and opt-in opcode quickening;
 - `diamond build`, producing a standalone native executable with no separate
   interpreter, source file, or recompilation step at run time (see
-  [docs/deployment.md](docs/deployment.md)).
+  [docs/deployment.md](docs/deployment.md));
+- a sandbox mode (`diamond --sandbox`/`DIAMOND_SANDBOX=1`) that denies filesystem,
+  network, and subprocess access for running untrusted code (see
+  [docs/sandbox.md](docs/sandbox.md)).
 
 The repository also contains:
 

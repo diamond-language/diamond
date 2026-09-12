@@ -81,6 +81,33 @@ up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
+### Sandbox mode: what's next, if anything
+
+Sandbox mode (docs/sandbox.md, landed this cycle) is a coarse, all-or-nothing switch --
+`DIAMOND_SANDBOX`/`diamond --sandbox` deny every native call that opens a real
+filesystem/network/subprocess resource, checked directly at each opcode rather than
+via a per-VM field, so it applies identically to the top-level program and anything
+it spawns (`Thread`, `Supervisor`, `ProgramBuilder#run`) with nothing to propagate.
+Real possibilities this opens up, none attempted yet, none committed:
+
+- **per-capability granularity** -- allow network but not filesystem, or allow-list
+  specific paths/hosts, instead of one blanket switch. Needs an actual policy format,
+  not just more env vars;
+- **resource limits** -- a CPU/wall-clock/memory budget per run. This is the other half
+  of what docs/internal/fuzzing.md's own execution-fuzzing note asks for ("denying or
+  faking out the I/O bridges" is now done; "at least a wall-clock/instruction budget per
+  run" is not) -- a real prerequisite for ever attempting execution fuzzing, not
+  something sandbox mode itself needs for its own stated purpose;
+- **restricting `Thread.new`/`Supervisor.add_child`** -- bounding how many OS threads a
+  sandboxed program can spawn (today: the existing process-wide 64-thread cap, same as
+  any other program) is a resource-exhaustion concern, not clearly in scope for "deny
+  access to the outside world" without a concrete abuse case;
+- **restricting `Signal.trap`** -- a process-wide side effect adjacent to, but distinct
+  from, resource-opening.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Real semver dependency resolution for `facet` (done)
 
 `facet` used to pin every dependency to an exact git ref (tag/branch/

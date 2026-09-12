@@ -74,6 +74,22 @@ authoritative fine-grained record.
   linking, must build from a repo checkout), and docs/roadmap.md's
   "`diamond build`: what's next, if anything" for what's deferred.
 
+### Security
+
+- Added sandbox mode (`diamond --sandbox`/`DIAMOND_SANDBOX=1`): denies every native
+  call that opens a real filesystem, network, or subprocess resource --
+  `File.open`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`,
+  `TCPSocket.connect`, `TCPServer.listen`, `UDPSocket.bind`/`.open`,
+  `TLSSocket.connect`, `TLSServer.listen`, `SQLite3.open`, `PostgreSQL.open`,
+  `MySQL.open`, `Process.run`/`.spawn` -- raising a rescuable `SandboxError`
+  instead. Checked directly against the real process environment at each gated
+  opcode rather than through a per-`DiamondVm` field, so it applies identically to
+  the top-level program and anything it spawns (`Thread`, `Supervisor`,
+  `ProgramBuilder#run`) with no propagation code to write or forget. Ordinary
+  computation and `puts`/`print` output are unaffected. See docs/sandbox.md for
+  the full deny list and what's explicitly not covered yet (per-capability
+  granularity, resource limits, `Thread`/`Signal.trap` restriction).
+
 ## 0.4.0
 
 ### I/O, networking, databases, and processes

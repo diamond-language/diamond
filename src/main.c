@@ -316,6 +316,8 @@ static void print_usage(FILE *stream) {
           "Options:\n"
           "  -e CODE             evaluate CODE\n"
           "  --dump-bytecode     print bytecode before running\n"
+          "  --sandbox           deny filesystem/network/subprocess access --\n"
+          "                      see docs/sandbox.md\n"
           "  -h, --help          display this help and exit\n"
           "  -v, --version       display version information and exit\n"
           "\n"
@@ -328,6 +330,18 @@ static void print_usage(FILE *stream) {
 }
 
 int main(int argc, char **argv) {
+    /* A thin convenience over DIAMOND_SANDBOX=1 (see docs/sandbox.md) --
+     * shifts argv[2..] down into argv[1..] (argv[0], the program name,
+     * stays put) so every branch below sees exactly the shape it already
+     * expects, with `--sandbox` itself gone. Deliberately only recognized
+     * as the very first argument -- simplest to reason about, and every
+     * existing form (`-e`, `--dump-bytecode`, `build`, a plain file) can
+     * still follow it unmodified. */
+    if (argc >= 2 && strcmp(argv[1], "--sandbox") == 0) {
+        setenv("DIAMOND_SANDBOX", "1", 1);
+        for (int index = 1; index < argc - 1; index++) argv[index] = argv[index + 1];
+        argc--;
+    }
     if (argc == 2 && (strcmp(argv[1], "-v") == 0 ||
                       strcmp(argv[1], "--version") == 0)) {
         printf("diamond %s\n", DIAMOND_VERSION);
