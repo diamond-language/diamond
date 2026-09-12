@@ -37,15 +37,22 @@ enough POSIX-adjacent surface area to matter here.
   package-specific tests validated against FreeBSD either. GCC-on-FreeBSD
   has not been checked (CC=clang here, FreeBSD's own base compiler, to
   avoid an extra ports build).
+- **macOS/Darwin, Clang, arm64 (Apple Silicon)** -- CI runs `make test` on
+  a real `macos-latest` GitHub-hosted runner (`test-macos` job, same
+  workflow) on every push, with GNU coreutils/sed and a real bash 5+
+  installed via Homebrew and shadowed onto `PATH` (see "macOS/Darwin"
+  below for why the test harness needs those specifically). Same one
+  known BCrypt failure excluded the same way musl/FreeBSD's own are.
+  Narrower than `test-all` for the same reason musl/FreeBSD's own jobs
+  are: Clang only (no system GCC on macOS at all -- the `gcc` binary
+  there is a symlink to clang), no sanitizer/tsan builds, no package-
+  specific tests validated against macOS either.
 
 Not yet validated: a non-x86_64 architecture, and OpenBSD (blocked on a
-real gap, not just an unwritten CI job -- see below). macOS/Darwin's
-build now compiles clean on real hardware, but has no CI job yet -- the
-test harness's own coreutils dependencies aren't fixed (see below), so a
-real `test-macos` job would need those first. Portability claims should
-not extend past what's actually been checked -- see docs/roadmap.md's
-"Explicitly deferred". See
-"macOS/Darwin" and "FreeBSD/OpenBSD" below for what's been found so far.
+real gap, not just an unwritten CI job -- see below). Portability claims
+should not extend past what's actually been checked -- see
+docs/roadmap.md's "Explicitly deferred". See "macOS/Darwin" and
+"FreeBSD/OpenBSD" below for what each platform's own job required.
 
 ## Toolchain assumptions
 
@@ -176,14 +183,16 @@ the feature-test-macro gap above:
    equivalent minimal reaper) is a real prerequisite for that specific
    test, unrelated to musl itself.
 
-## macOS/Darwin: build-level prerequisites confirmed, test harness still open
+## macOS/Darwin: a real, green CI job
 
-The build itself is now confirmed against a real GitHub-hosted
-`macos-latest` runner (arm64, Apple Silicon, Xcode 26.6, Darwin 25) --
-`src/vm.c` compiles cleanly with the real project headers. The test
-harness's own GNU-coreutils dependencies (below) are not yet
-addressed, so there's still no real `test-macos` CI job -- only a
-build-level one would be honest right now.
+Confirmed against a real GitHub-hosted `macos-latest` runner (arm64, Apple
+Silicon, Xcode 26.6, Darwin 25). `src/vm.c` compiles cleanly with the real
+project headers, and the test harness's own GNU-coreutils dependencies
+(below) are addressed the same way FreeBSD's `gsed` already is: install
+the real GNU tools (plus a real bash 5+) via Homebrew and shadow them onto
+`PATH` under their normal names, rather than rewriting every call site --
+see the `test-macos` job (`.github/workflows/ci.yml`), now real and green,
+not just a build-level check.
 
 - **Two `Makefile` fixes**, independent of whether a Darwin CI job ever
   lands: `CFLAGS_RELEASE`'s `-march=x86-64` is an x86-only flag gcc/clang
@@ -355,11 +364,12 @@ build-level one would be honest right now.
 
   Unlike the musl job's own narrow carve-out (two BCrypt test cases,
   `test-musl`'s own comment), excluding everything `timeout` touches here
-  would gut most of the process/signal/socket coverage -- there's no small
-  subset of `make test` that dodges this cleanly. A real `test-macos` job
-  needs the coreutils gaps above fixed in `tests/run.sh` first, not just
-  Homebrew packages installed, to be worth more than the build-only
-  compile check already confirmed.
+  would have gutted most of the process/signal/socket coverage -- there
+  was no small subset of `make test` that dodged this cleanly. Resolved
+  by installing Homebrew's `coreutils`/`gnu-sed`/`bash` and prepending
+  their real-GNU-tool directories onto `PATH` (`test-macos` job) rather
+  than rewriting `tests/run.sh`'s own call sites -- the job now runs
+  `make test` for real, not a build-only compile check.
 
 ## FreeBSD/OpenBSD: confirmed against real VMs
 

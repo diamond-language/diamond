@@ -6,9 +6,13 @@ custom register-bytecode virtual machine written in C23.
 It is a coherent, executable language rather than a compatibility project:
 Ruby supplies familiar syntax and object-model ideas, but matching Ruby's edge
 cases, standard library, or ecosystem is explicitly not a goal. CI validates
-Linux across two libcs (Fedora and Ubuntu on glibc, Alpine on musl) and both
-GCC and Clang -- see [docs/portability.md](docs/portability.md) for the full
-matrix and known limitations.
+Fedora and Ubuntu 26.04 (glibc) across GCC and Clang, plus Alpine (musl),
+FreeBSD, and macOS/Darwin each on one compiler -- three libcs and three
+kernels, not just five distros. Debian itself is not separately tested;
+Ubuntu tracks ahead of it, so Debian compatibility is assumed, not
+confirmed. OpenBSD and non-x86_64 architectures remain unvalidated -- see
+[docs/portability.md](docs/portability.md) for the full matrix and known
+limitations.
 
 ```ruby
 class Counter
@@ -101,17 +105,45 @@ sudo dnf install gcc openssl-devel sqlite-devel libpq-devel \
   mariadb-connector-c-devel libxcrypt-devel zlib-devel
 ```
 
-On Debian/Ubuntu (confirmed against a real Ubuntu 26.04 install):
+On Ubuntu (confirmed against a real Ubuntu 26.04 install; Debian itself is
+assumed compatible from the same package names, but not separately tested --
+Ubuntu runs ahead of Debian, and nothing here has been checked against a
+real Debian install):
 
 ```sh
 sudo apt install gcc libssl-dev libsqlite3-dev libpq-dev libmariadb-dev \
   libcrypt-dev zlib1g-dev
 ```
 
-Clang works as a drop-in `$(CC)` substitute on both (`make CC=clang debug`,
-tested end-to-end on Fedora and Ubuntu 26.04 alongside GCC) and is required
-separately for the fuzz targets (`make fuzz`), which always build with Clang
-regardless of `$(CC)` (`-fsanitize=fuzzer` is Clang/LLVM-only).
+On Alpine (musl; also needs `libucontext` for Fiber support -- see
+[docs/portability.md](docs/portability.md) for what else differs on musl):
+
+```sh
+apk add gcc musl-dev openssl-dev sqlite-dev libpq-dev mariadb-connector-c-dev \
+  zlib-dev libucontext libucontext-dev
+```
+
+On FreeBSD (Clang is the base `cc`; GNU Make is `gmake`, not `make`):
+
+```sh
+pkg install gmake sqlite3 openssl postgresql16-client mariadb-connector-c
+```
+
+On macOS (Clang only -- there is no system GCC):
+
+```sh
+brew install openssl@3 sqlite postgresql@16 mariadb-connector-c
+```
+
+Clang works as a drop-in `$(CC)` substitute on Fedora and Ubuntu
+(`make CC=clang debug`, tested end-to-end on both alongside GCC) and is
+required separately for the fuzz targets (`make fuzz`), which always build
+with Clang regardless of `$(CC)` (`-fsanitize=fuzzer` is Clang/LLVM-only).
+Alpine has only been validated with GCC; FreeBSD and macOS have only been
+validated with Clang -- see docs/portability.md for exactly what's been
+checked on each platform, including per-platform `CPPFLAGS_EXTRA`/
+`LDFLAGS_EXTRA`/`LDLIBS_DL`/`LDLIBS_CRYPT` overrides FreeBSD/macOS need for
+non-default header/library locations.
 
 Build and run:
 
@@ -440,7 +472,10 @@ run Diamond programs, but useful background if you're contributing.
   name through an arbitrary receiver type.
 - `facet` has no hosted registry, version solver, or multi-version dependency
   model.
-- Portability beyond the current Linux/GCC target is deferred.
+- OpenBSD is blocked on a real gap (no `<ucontext.h>` at all, a Fiber-
+  implementation limitation, not a CI-tooling one); non-x86_64 architectures
+  are unvalidated; Debian is assumed, not separately tested, compatible with
+  the Ubuntu package names above.
 - Calendar time supports UTC, the process-local zone, and fixed offsets, but
   not named IANA timezone selection.
 
