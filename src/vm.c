@@ -957,9 +957,18 @@ static void mysql_library_init_once_fn(void) { mysql_library_init(0,nullptr,null
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
-        .minor_gc_threshold_bytes = 1048576};
+        .minor_gc_threshold_bytes = 1048576,.debug_fd=-1};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
+    /* See DiamondVm.debug_fd's own comment (src/vm.h): read once here,
+     * not per-pause. An unparseable or negative value is treated the
+     * same as unset -- debugger_helper's ordinary stdout/stdin path --
+     * rather than failing VM init over a malformed env var. */
+    const char *debug_fd_env=getenv("DIAMOND_DEBUG_FD");
+    if(debug_fd_env!=nullptr) {
+        const long parsed=strtol(debug_fd_env,nullptr,10);
+        if(parsed>=0&&parsed<=INT_MAX)vm->debug_fd=(int)parsed;
+    }
     pthread_once(&mysql_library_init_once,mysql_library_init_once_fn);
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
      * (not just cleanly closed) raises SIGPIPE, whose default disposition
@@ -12925,11 +12934,211 @@ static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
     return DIAMOND_VM_TYPE_ERROR;
 }
 
+/* Writes `length` bytes of `data` to `fd`, retrying on a short write and
+ * on EINTR. Returns false on any other write error or on a peer that's
+ * gone (write returning 0 forever isn't a real possibility for a pipe,
+ * but is treated as failure rather than looping if it ever happened). */
+static bool debug_pipe_write_all(int fd,const char *data,size_t length) {
+    size_t written=0;
+    while(written<length) {
+        const ssize_t result=write(fd,data+written,length-written);
+        if(result<0) { if(errno==EINTR)continue; return false; }
+        if(result==0)return false;
+        written+=(size_t)result;
+    }
+    return true;
+}
+
+static bool debug_pipe_read_exact(int fd,char *data,size_t length) {
+    size_t total=0;
+    while(total<length) {
+        const ssize_t result=read(fd,data+total,length-total);
+        if(result<0) { if(errno==EINTR)continue; return false; }
+        if(result==0)return false; /* EOF: the DAP client/dap process is gone. */
+        total+=(size_t)result;
+    }
+    return true;
+}
+
+/* Reads one \r\n-terminated header line (without the terminator) off
+ * `fd`, one byte at a time -- mirrors lsp/rpc.c's read_header_line, but
+ * over a raw fd instead of a FILE*, and without linking lsp/rpc.c/json.c
+ * into the core VM (see debugger_structured_helper's own comment on
+ * why). Returns false on EOF, a read error, or a line too long for
+ * `capacity`. */
+static bool debug_pipe_read_header_line(int fd,char *buffer,size_t capacity) {
+    size_t length=0;
+    while(true) {
+        char next=0;
+        if(!debug_pipe_read_exact(fd,&next,1))return false;
+        if(next=='\n') {
+            if(length>0&&buffer[length-1]=='\r')length--;
+            buffer[length]='\0';
+            return true;
+        }
+        if(length+1>=capacity)return false;
+        buffer[length++]=next;
+    }
+}
+
+/* Blocks reading one Content-Length-framed command off `fd` and discards
+ * its body: v1 has exactly one command (`{"command":"continue"}`), so
+ * there's nothing to branch on yet and no reason to parse JSON in the
+ * core VM to find out -- draining the exact framed byte count is enough
+ * to know a real command arrived (not a truncated write) and to leave
+ * the pipe positioned at the next frame for the *next* pause. Returns
+ * false on any framing/read problem; the caller treats that the same as
+ * an ordinary "continue" (see its own comment). */
+static bool debug_pipe_read_command(int fd) {
+    long content_length=-1;
+    char line[256];
+    while(true) {
+        if(!debug_pipe_read_header_line(fd,line,sizeof line))return false;
+        if(line[0]=='\0')break;
+        static constexpr char prefix[]="Content-Length:";
+        static constexpr size_t prefix_length=sizeof(prefix)-1;
+        if(strncmp(line,prefix,prefix_length)==0) {
+            const char *value=line+prefix_length;
+            while(*value==' ')value++;
+            content_length=strtol(value,nullptr,10);
+        }
+    }
+    if(content_length<0)return false;
+    char discard[256];
+    size_t remaining=(size_t)content_length;
+    while(remaining>0) {
+        const size_t next=remaining<sizeof discard?remaining:sizeof discard;
+        if(!debug_pipe_read_exact(fd,discard,next))return false;
+        remaining-=next;
+    }
+    return true;
+}
+
+/* Appends `chars`/`length` to `buffer` as one double-quoted, escaped JSON
+ * string literal -- same escaping rules (and the same six named escapes
+ * plus \u00XX for every other control character) as lsp/json.c's own
+ * writer_append_string_literal, reimplemented independently here rather
+ * than shared: see debugger_structured_helper's own comment for why the
+ * core VM doesn't link lsp/json.c at all. */
+static bool debug_json_append_escaped_string(GrowBuffer *buffer,
+        const char *chars,size_t length) {
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\""))return false;
+    for(size_t index=0;index<length;index++) {
+        const unsigned char c=(unsigned char)chars[index];
+        switch(c) {
+            case '"':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\""))return false;break;
+            case '\\':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\\"))return false;break;
+            case '\b':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\b"))return false;break;
+            case '\f':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\f"))return false;break;
+            case '\n':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\n"))return false;break;
+            case '\r':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\r"))return false;break;
+            case '\t':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\t"))return false;break;
+            default:
+                if(c<0x20) {
+                    char escape[8];
+                    const int written=snprintf(escape,sizeof escape,"\\u%04x",c);
+                    if(written<0||!grow_buffer_append(buffer,escape,(size_t)written))
+                        return false;
+                } else if(!grow_buffer_append(buffer,(const char *)&chars[index],1)) {
+                    return false;
+                }
+        }
+    }
+    return GROW_BUFFER_APPEND_LITERAL(buffer,"\"");
+}
+
+/* DIAMOND_OP_DEBUGGER's structured, DAP-facing pause path -- see
+ * DiamondVm.debug_fd's own comment (src/vm.h) for when debugger_helper
+ * takes this branch instead of its ordinary print-to-stdout/getchar()
+ * path. Hand-formats a JSON "paused" payload (`{"event":"paused",
+ * "stack":[{"name","line","column"},...],"locals":[{"name","value"},...]}`)
+ * with snprintf/GrowBuffer rather than linking lsp/json.c into the core
+ * VM/`diamond` binary -- dap/main.c (which already links lsp/json.c and
+ * lsp/rpc.c for its own DAP-client-facing transport) is the one side of
+ * this pipe that ever needs a real JSON parser; the VM only ever
+ * produces this one payload shape and only ever reads back one command
+ * shape (see debug_pipe_read_command), so it never needs to parse JSON
+ * at all. Content-Length-frames the payload onto vm->debug_fd the same
+ * way lsp/rpc.c's rpc_write_message frames a message onto a FILE*, then
+ * blocks reading one framed command back before returning -- exactly
+ * where the ordinary path calls getchar(). vm->frames (walked the same
+ * way raise_capture_backtrace_helper already does) gives the full call
+ * stack with zero new state; only the innermost, paused frame gets
+ * locals attached (see the plan's own "outer frames have no locals in
+ * v1" note -- no per-chunk local-debug table exists for any frame but
+ * the exact call site's own baked-in operand list this opcode already
+ * carries). A write or read failure here (the DAP client vanished, the
+ * pipe broke) is treated the same as a clean "continue": best-effort,
+ * not a reason to fail the debuggee's own execution over a detached
+ * debugger. */
+static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,size_t depth,size_t instruction_offset,
+        DiamondValue *registers,const uint16_t *name_indices,
+        const uint16_t *local_registers,uint8_t local_count) {
+    (void)instruction_offset;
+    GrowBuffer body={};
+    bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"stack\":[");
+    size_t frame_index=0;
+    for(const DiamondFrame *frame=vm->frames;ok&&frame!=nullptr;
+            frame=frame->previous,frame_index++) {
+        if(frame_index>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+        if(frame->chunk==nullptr||frame->instruction_offset==nullptr)continue;
+        const char *frame_name=frame->chunk->name!=nullptr?frame->chunk->name:"<chunk>";
+        const size_t offset=*frame->instruction_offset;
+        const bool in_bounds=offset<frame->chunk->code_count;
+        const uint32_t frame_line=in_bounds&&frame->chunk->lines!=nullptr?
+            frame->chunk->lines[offset]:0;
+        const uint32_t frame_column=in_bounds&&frame->chunk->columns!=nullptr?
+            frame->chunk->columns[offset]:0;
+        ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,frame_name,strlen(frame_name));
+        char numbers[64];
+        const int written=snprintf(numbers,sizeof numbers,
+            ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
+        if(ok&&written>0)ok=grow_buffer_append(&body,numbers,(size_t)written);
+        else if(written<0)ok=false;
+    }
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"locals\":[");
+    size_t locals_emitted=0;
+    for(size_t index=0;ok&&index<local_count;index++) {
+        if((size_t)name_indices[index]>=chunk->string_count)continue;
+        if(locals_emitted>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+        const DiamondStringConstant *name=&chunk->strings[name_indices[index]];
+        DiamondValue value=registers[local_registers[index]];
+        if(value.kind==DIAMOND_VALUE_OBJECT&&
+           value.as.object->kind==DIAMOND_OBJECT_CELL)
+            value=((DiamondCell *)value.as.object)->value;
+        DiamondValue stringified=DIAMOND_NIL;
+        const DiamondVmStatus status=stringify_value(vm,chunk,depth,value,&stringified);
+        if(status!=DIAMOND_VM_OK) { free(body.data);return status; }
+        const DiamondString *text=(const DiamondString *)stringified.as.object;
+        ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,name->chars,name->length);
+        if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,",\"value\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,text->chars,text->length);
+        if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"}");
+        locals_emitted++;
+    }
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"]}");
+    if(!ok) { free(body.data);return DIAMOND_VM_OUT_OF_MEMORY; }
+    char header[64];
+    const int header_length=snprintf(header,sizeof header,
+        "Content-Length: %zu\r\n\r\n",body.length);
+    if(header_length>0&&debug_pipe_write_all(vm->debug_fd,header,(size_t)header_length))
+        debug_pipe_write_all(vm->debug_fd,body.data,body.length);
+    free(body.data);
+    debug_pipe_read_command(vm->debug_fd);
+    return DIAMOND_VM_OK;
+}
+
 /* debugger()/breakpoint()'s runtime half -- see parse_debugger_call's own
  * comment in compiler.c for the compile-time half (name, register) pairs
- * come from. Prints "chunk:line:column" matching the exact format
- * RECORD_ERROR/raise_capture_backtrace_helper already use elsewhere in
- * this file, then each local's name and stringified value (unwrapping a
+ * come from. Under DIAMOND_DEBUG_FD (see DiamondVm.debug_fd's own
+ * comment, src/vm.h), delegates to debugger_structured_helper's DAP-
+ * facing pause instead of this ordinary path. Otherwise prints
+ * "chunk:line:column" matching the exact format RECORD_ERROR/
+ * raise_capture_backtrace_helper already use elsewhere in this file,
+ * then each local's name and stringified value (unwrapping a
  * captured local's Cell box first -- BOX_LOCAL replaces a captured
  * local's own register contents with a DiamondCell wrapper in place, so
  * this checks the *runtime* value kind rather than trusting any
@@ -12942,6 +13151,9 @@ static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
 static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,size_t instruction_offset,DiamondValue *registers,
         const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
+    if(vm->debug_fd>=0)
+        return debugger_structured_helper(vm,chunk,depth,instruction_offset,
+            registers,name_indices,local_registers,local_count);
     const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
     const bool in_bounds=instruction_offset<chunk->code_count;
     const uint32_t line=in_bounds&&chunk->lines!=nullptr?

@@ -1309,6 +1309,16 @@ struct DiamondVm {
     DiamondValue *gc_protected;
     size_t gc_protected_count;
     size_t gc_protected_capacity;
+    /* DIAMOND_DEBUG_FD (see docs/debugging.md), read once here by
+     * diamond_vm_init rather than re-reading getenv on every
+     * DIAMOND_OP_DEBUGGER pause -- -1 (the ordinary case: no DAP client
+     * attached) means debugger_helper (src/vm.c) takes its original
+     * print-to-stdout/getchar() path unchanged; a value >=0 is an
+     * already-open fd (a dedicated pipe end wired up by whatever spawned
+     * this process, e.g. dap/main.c's launch handling) that
+     * debugger_helper instead writes a Content-Length-framed JSON pause
+     * payload to and blocks reading one framed command back from. */
+    int debug_fd;
 };
 
 void diamond_vm_init(DiamondVm *vm);

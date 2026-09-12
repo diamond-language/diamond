@@ -176,7 +176,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -461,6 +461,24 @@ lsp: $(BUILD_DIR)/diamond-lsp
 test-lsp: $(BUILD_DIR)/diamond-lsp
 	bash tests/lsp_test.sh
 
+DAP_SOURCES := $(wildcard dap/*.c)
+# Only json.c/rpc.c, not the rest of $(LSP_SOURCES): diamond-dap needs the
+# same Content-Length-framed JSON transport diamond-lsp uses (both for its
+# DAP-client-facing stdio and for the VM control-channel socket, see
+# dap/main.c's own top comment), but none of the LSP-specific document/
+# completion/hover/etc. handlers, and definitely not lsp/main.c's own
+# main() (which would collide with this binary's own).
+DAP_JSON_SOURCES := lsp/json.c lsp/rpc.c
+
+$(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(DAP_JSON_SOURCES) $(DAP_SOURCES) $(LDLIBS) -o $@
+
+dap: $(BUILD_DIR)/diamond-dap
+
+test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/dap_test.sh
+
 test-repl: debug
 	bash tests/repl_test.sh
 
@@ -545,6 +563,7 @@ test-all:
 	$(MAKE) test-jobs-package
 	$(MAKE) test-pheint-application
 	$(MAKE) test-lsp
+	$(MAKE) test-dap
 	$(MAKE) test-repl
 	$(MAKE) test-repl-completion
 	$(MAKE) test-exit

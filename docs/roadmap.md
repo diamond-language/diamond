@@ -242,6 +242,31 @@ A first stability pass should cover:
 
 ## Tooling and distribution
 
+### Step debugger v2: live breakpoints and real stepping
+
+v1 (`dap/`, docs/debugging.md) ships editor gutter breakpoints, a real
+call stack, and locals at the paused frame -- entirely by compiling a
+`DIAMOND_OP_DEBUGGER` pause in at each breakpoint's own line before the
+debuggee starts, reusing `debugger()`/`breakpoint()`'s existing pause
+machinery untouched. Two limitations were taken on deliberately to keep
+that scope low-risk (no new bytecode, no changes to `run_chunk`'s own
+dispatch loop):
+
+- no step-over/into/out -- `continue` is the only resume command;
+- changing a breakpoint means restarting the whole debuggee -- there is
+  no way to add or remove one against an already-running process.
+
+Both need real new mechanism, not a bigger v1: a per-instruction
+breakpoint-check hook inside `run_chunk`'s hot dispatch loop (the most
+performance-audited code in the project) for live, no-restart
+breakpoints, and a new bytecode debug-info format plus deoptimization-
+style bookkeeping for stepping. Revisit only with a concrete need driving
+the added dispatch-loop risk -- not attempted speculatively. See
+docs/debugging.md's own "known gap" section too: breakpoints in more than
+one `require`d file can currently collide on line number, a v1 limitation
+of the flat `DIAMOND_DEBUG_BREAKPOINTS` set having no file discriminator,
+separate from either limitation above.
+
 ### Self-hosted frontend
 
 The Diamond-written lexer and compiler are useful differential oracles and can

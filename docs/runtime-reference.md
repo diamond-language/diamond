@@ -125,6 +125,12 @@ a user-defined function named `debugger`/`breakpoint` shadows it —
 `def debugger(); ...; end` makes `debugger()` call that instead, never
 the built-in.
 
+An editor's own gutter breakpoints reuse this exact same pause, inserted
+at compile time rather than written into the source — see
+[Debugging](debugging.md) for the DAP integration (`dap/`,
+`editors/vscode`'s "Debugging" section), its limitations, and the
+`DIAMOND_DEBUG_FD`/`DIAMOND_DEBUG_BREAKPOINTS` env-var contract behind it.
+
 ## Regexp
 
 ```ruby

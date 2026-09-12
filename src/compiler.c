@@ -213,6 +213,16 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
+    /* Non-null/nonzero only for the real (discovery_pass=false) pass of
+     * a diamond_compile_with_breakpoints call -- compile_sequence checks
+     * every statement's starting line against this set and calls
+     * emit_debugger_pause for a match. Combined-buffer line numbers,
+     * borrowed from the caller (diamond_compile_with_breakpoints doesn't
+     * outlive its own call, so no copy is needed). Never set for the
+     * discovery pass: its bytecode is discarded, so pausing there would
+     * be wasted work, not incorrect. */
+    const size_t *breakpoint_lines;
+    size_t breakpoint_line_count;
     /* Real-pass cursor through discovery's pre-reserved function slots. */
     size_t next_function_claim;
     /* Pending call-site patches for a module_function/`def self.x` method
@@ -5048,13 +5058,20 @@ static uint16_t parse_exit_call(Compiler *compiler) {
     return dest;
 }
 
-/* debugger()/breakpoint() -- pauses execution, prints the current call
- * site and every currently-live local (name + value, read-only; no
- * expression evaluation against them, see docs/syntax.md for the scope
- * this was deliberately kept to), then blocks on a single line of stdin
- * (EOF -- e.g. stdin redirected from /dev/null, the normal case under a
- * non-interactive test/CI run -- continues immediately rather than
- * hanging) before resuming normally.
+/* Emits one DIAMOND_OP_DEBUGGER pause at the current compile point:
+ * pauses execution, prints the current call site and every currently-
+ * live local (name + value, read-only; no expression evaluation against
+ * them, see docs/syntax.md for the scope this was deliberately kept to),
+ * then blocks on a single line of stdin (EOF -- e.g. stdin redirected
+ * from /dev/null, the normal case under a non-interactive test/CI run --
+ * continues immediately rather than hanging) before resuming normally --
+ * or, under DIAMOND_DEBUG_FD, the structured DAP pause path instead (see
+ * debugger_helper, src/vm.c). Shared by the explicit debugger()/
+ * breakpoint() source calls (parse_debugger_call below) and the compile-
+ * time editor-breakpoint hook (compile_sequence's own use, further down
+ * this file) -- the exact same opcode either way, since the VM has no
+ * way to tell "the user wrote debugger() here" apart from "an editor set
+ * a gutter breakpoint on this line" and doesn't need to.
  *
  * compiler->locals' (name, register) pairs *at this exact point in
  * compilation* get baked into the opcode's own operand data, the same
@@ -5065,13 +5082,7 @@ static uint16_t parse_exit_call(Compiler *compiler) {
  * compiler->local_count is always <= DIAMOND_MAX_LOCALS (enforced by
  * allocate_local), so no separate bounds check is needed before the
  * uint8_t cast below. */
-static uint16_t parse_debugger_call(Compiler *compiler) {
-    advance_token(compiler); /* consume '(' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after arguments");
-        return 0;
-    }
-    advance_token(compiler);
+static uint16_t emit_debugger_pause(Compiler *compiler) {
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_DEBUGGER);
     emit_register(compiler,dest);
@@ -5082,6 +5093,19 @@ static uint16_t parse_debugger_call(Compiler *compiler) {
         emit_register(compiler,compiler->locals[index].reg);
     }
     return dest;
+}
+
+/* debugger()/breakpoint() -- see emit_debugger_pause's own comment for
+ * what the pause itself does; this just parses the call syntax (no
+ * arguments) around it. */
+static uint16_t parse_debugger_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    return emit_debugger_pause(compiler);
 }
 
 /* Time.monotonic()/Time.now()/Time.utc_now() -- each zero-argument,
@@ -14794,6 +14818,20 @@ static bool expression_finishes_block(const Compiler *compiler) {
     }
 }
 
+/* True when `line` (a combined-buffer line number) is one compile_sequence
+ * should pause on. Linear scan: editor breakpoint sets are small (single
+ * digits to low hundreds), and this runs once per compiled statement, so
+ * there's no case worth a sorted/binary-search variant over. Every
+ * combined-buffer line is visited as a statement start at most once
+ * during the one real (non-discovery) compile pass that ever populates
+ * compiler->breakpoint_lines, so compile_sequence needs no "already
+ * emitted" bookkeeping to avoid a duplicate pause on the same line. */
+static bool line_has_breakpoint(const Compiler *compiler,size_t line) {
+    for(size_t index=0;index<compiler->breakpoint_line_count;index++)
+        if(compiler->breakpoint_lines[index]==line)return true;
+    return false;
+}
+
 static uint16_t compile_sequence(Compiler *compiler) {
     skip_newlines(compiler);
     uint16_t result = allocate_register(compiler);
@@ -14805,6 +14843,28 @@ static uint16_t compile_sequence(Compiler *compiler) {
     bool last_statement_diverges = false;
 
     while (!compiler->failed && !at_block_end(compiler)) {
+        if(compiler->breakpoint_line_count>0&&
+           line_has_breakpoint(compiler,compiler->current.span.line)) {
+            /* emit_opcode (called by emit_debugger_pause, by way of
+             * emit_instruction) always tags a freshly emitted instruction
+             * with compiler->previous.span -- the *last consumed* token,
+             * which at this exact point is still whatever ended the
+             * *previous* statement, not the breakpoint's own target line.
+             * Every other emit_debugger_pause caller (parse_debugger_call)
+             * doesn't have this problem: it always runs after consuming
+             * its own call's tokens, so compiler->previous is already the
+             * right line. Patch the just-emitted opcode's own line/column
+             * table entry to the breakpoint's real position afterward,
+             * rather than threading an explicit span through emit_opcode
+             * for every other caller just for this one. */
+            const DiamondSpan breakpoint_span=compiler->current.span;
+            const size_t pause_offset=compiler->function->code_count;
+            emit_debugger_pause(compiler);
+            if(pause_offset<compiler->function->code_count) {
+                compiler->function->lines[pause_offset]=(uint32_t)breakpoint_span.line;
+                compiler->function->columns[pause_offset]=(uint32_t)breakpoint_span.column;
+            }
+        }
         bool statement_is_raise = false;
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
@@ -15337,6 +15397,38 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
     return SIZE_MAX;
 }
 
+size_t diamond_combined_buffer_line(const char *combined,size_t offset) {
+    /* Not a flat newline count: diamond_lexer_next (src/lexer.c) resets
+     * its own line counter to 0 (so the *next* newline brings it to 1)
+     * whenever it scans exactly "#line 1" followed by a newline or EOF --
+     * the literal marker the loader (src/loader.c's own expand, "\n#line
+     * 1\n") writes immediately before every segment, including the
+     * top-level user source right after the prelude, not only before a
+     * `require`d file's own inlined text. Line numbers the compiler
+     * actually assigns (DiamondSpan.line, chunk->lines[]) are therefore
+     * per-*segment*, not a monotonic count across the whole combined
+     * buffer -- this walk has to recognize the identical marker the same
+     * way, or it disagrees with what compile_sequence's own breakpoint
+     * check (line_has_breakpoint) will actually see for this exact byte
+     * position. Matches the lexer's own detection exactly: the marker
+     * fires regardless of what precedes it (the lexer's check runs
+     * unconditionally on every '#' reached while skipping whitespace/
+     * comments, not only right after a newline) -- true in practice here
+     * too, since "#line 1" never occurs except where the loader placed
+     * it. */
+    static constexpr char marker[]="#line 1";
+    static constexpr size_t marker_length=sizeof(marker)-1;
+    size_t line=1;
+    for(size_t index=0;index<offset&&combined[index]!='\0';index++) {
+        if(combined[index]=='#'&&
+           strncmp(combined+index,marker,marker_length)==0&&
+           (combined[index+marker_length]=='\n'||combined[index+marker_length]=='\0'))
+            line=0;
+        if(combined[index]=='\n')line++;
+    }
+    return line;
+}
+
 /* The actual compile, run twice by diamond_compile below -- once
  * (discovery_pass=true) into a throwaway DiamondProgram purely to
  * register every class/module/interface's name/fields/methods and every
@@ -15349,7 +15441,9 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
  * program, so it stays there rather than duplicated in here. */
 static bool run_compile_pass(const char *source, DiamondProgram *program,
                              DiamondDiagnostic *diagnostic, bool discovery_pass,
-                             size_t function_claim_start) {
+                             size_t function_claim_start,
+                             const size_t *breakpoint_lines,
+                             size_t breakpoint_line_count) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -15365,6 +15459,10 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .diagnostic = diagnostic,
         .discovery_pass = discovery_pass,
         .next_function_claim = function_claim_start,
+        /* Never populated for the discovery pass -- see the field's own
+         * comment in the Compiler struct. */
+        .breakpoint_lines = discovery_pass?nullptr:breakpoint_lines,
+        .breakpoint_line_count = discovery_pass?0:breakpoint_line_count,
     };
     diamond_lexer_init(&compiler.lexer, source);
     compiler.current = diamond_lexer_next(&compiler.lexer);
@@ -15478,6 +15576,8 @@ static bool seed_program_from_template(DiamondProgram *destination,
  * public wrapper's own comment for what `template` buys and costs. */
 static bool diamond_compile_impl(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
+                                 const size_t *breakpoint_lines,
+                                 size_t breakpoint_line_count,
                                  DiamondDiagnostic *diagnostic) {
     /* Temporary: docs/roadmap.md's "make programs start faster" first
      * step ("measure startup and compile-time cost"). DIAMOND_TRACE_
@@ -15509,7 +15609,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     DiamondDiagnostic discovery_diagnostic = {0};
     const bool discovered = run_compile_pass(
         source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
-        function_claim_start);
+        function_claim_start, nullptr, 0);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
@@ -15617,7 +15717,8 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     free(discovery);
 
     const bool compiled=run_compile_pass(
-        source,program,diagnostic,/*discovery_pass=*/false,function_claim_start);
+        source,program,diagnostic,/*discovery_pass=*/false,function_claim_start,
+        breakpoint_lines,breakpoint_line_count);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
@@ -15639,7 +15740,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
 
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
-    return diamond_compile_impl(source,program,nullptr,diagnostic);
+    return diamond_compile_impl(source,program,nullptr,nullptr,0,diagnostic);
 }
 
 /* Compiles `source` against a `template` program (itself the result of
@@ -15670,7 +15771,15 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 bool diamond_compile_incremental(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
                                  DiamondDiagnostic *diagnostic) {
-    return diamond_compile_impl(source,program,template,diagnostic);
+    return diamond_compile_impl(source,program,template,nullptr,0,diagnostic);
+}
+
+bool diamond_compile_with_breakpoints(const char *source, DiamondProgram *program,
+                                      const size_t *breakpoint_lines,
+                                      size_t breakpoint_line_count,
+                                      DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,nullptr,
+        breakpoint_lines,breakpoint_line_count,diagnostic);
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

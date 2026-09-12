@@ -382,6 +382,24 @@ function stopServer() {
         }));
 }
 
+/* diamond-dap already speaks real DAP over its own stdio (Content-
+ * Length-framed JSON, see dap/main.c) -- unlike the hand-rolled LSP
+ * client above, nothing here needs to parse that protocol itself: VS
+ * Code's own `vscode.debug` machinery does, the moment it's told which
+ * executable to spawn. Same `diamond.<name>Path`-configuration-setting
+ * convention as `languageServerPath` (startServer above), for the same
+ * reason: a built-but-not-installed binary, or one under a name PATH
+ * doesn't already resolve. */
+function registerDebugAdapter(context) {
+    context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('diamond', {
+        createDebugAdapterDescriptor() {
+            const adapterPath = vscode.workspace.getConfiguration('diamond')
+                .get('debugAdapterPath', 'diamond-dap');
+            return new vscode.DebugAdapterExecutable(adapterPath, []);
+        },
+    }));
+}
+
 function activate(context) {
     outputChannel = vscode.window.createOutputChannel('Diamond Language Server');
     diagnosticCollection = vscode.languages.createDiagnosticCollection('diamond');
@@ -399,6 +417,7 @@ function activate(context) {
         await stopServer();
         startServer();
     }));
+    registerDebugAdapter(context);
 
     startServer();
 }

@@ -6,6 +6,20 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Added a v1 step debugger: `diamond-dap` (`dap/`), a real Debug Adapter
+  Protocol server giving an editor's own gutter breakpoints the exact
+  pause `debugger()`/`breakpoint()` already had, without editing source
+  -- a real call stack and locals at the paused frame, via a new
+  compile-time breakpoint mechanism (`diamond_compile_with_breakpoints`,
+  `DIAMOND_DEBUG_BREAKPOINTS`/`DIAMOND_DEBUG_FD`) that makes zero changes
+  to `run_chunk`'s own dispatch loop or the bytecode format. No step-over/
+  into/out yet, and changing a breakpoint means restarting the debuggee --
+  see docs/debugging.md for the full contract and limitations, and
+  docs/roadmap.md's "Step debugger v2" for what's next. `editors/vscode`
+  wires this up as a VS Code debugger via `diamond.debugAdapterPath`.
+
 ## 0.4.0
 
 ### I/O, networking, databases, and processes

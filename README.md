@@ -73,7 +73,12 @@ The repository also contains:
 - `facet`, a git-based package manager;
 - a Language Server with diagnostics, completion, hover, definitions, document
   symbols, and workspace symbols;
-- a VS Code extension with syntax highlighting and an LSP client;
+- a Debug Adapter Protocol server (`dap/`) for compile-time-breakpoint
+  step debugging -- editor gutter breakpoints, real stack traces, and
+  locals at the paused frame, with no stepping yet (see
+  [docs/debugging.md](docs/debugging.md));
+- a VS Code extension with syntax highlighting, an LSP client, and a DAP
+  debugger integration;
 - a Diamond implementation of the lexer and compiler that differentially
   matches the native compiler and passes self-compile/self-run bootstrap checks;
 - HTTP, Rack-style middleware, Gremlin server, and Arel-style SQL-builder
@@ -456,6 +461,7 @@ Language and runtime guides:
   [databases](docs/databases.md), [processes](docs/processes.md))
 - [Packages](docs/packages.md)
 - [Language Server](docs/lsp.md)
+- [Debugging](docs/debugging.md)
 - [Portability](docs/portability.md)
 - [Roadmap](docs/roadmap.md)
 
