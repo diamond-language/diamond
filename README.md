@@ -67,7 +67,10 @@ The implementation includes:
   subprocesses, and stdin/stdout primitives;
 - a generational, stop-the-world mark/sweep collector with stress-GC modes;
 - source-mapped diagnostics, stack traces, bytecode disassembly, inline caches,
-  runtime object shapes, and opt-in opcode quickening.
+  runtime object shapes, and opt-in opcode quickening;
+- `diamond build`, producing a standalone native executable with no separate
+  interpreter, source file, or recompilation step at run time (see
+  [docs/deployment.md](docs/deployment.md)).
 
 The repository also contains:
 
@@ -158,6 +161,14 @@ make
 ./build/diamond -e '20 + 22'
 ./build/diamond program.di
 ./build/diamond              # interactive REPL when stdin is a terminal
+```
+
+Build a standalone binary (from the repo root; see
+[docs/deployment.md](docs/deployment.md) for what it does and doesn't do):
+
+```sh
+./build/diamond build app.di -o app
+./app
 ```
 
 Useful build and test targets:

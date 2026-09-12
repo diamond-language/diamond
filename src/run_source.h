@@ -57,4 +57,15 @@ int diamond_run_source_with_template(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
     int script_argc, char *const *script_argv);
 
+/* Compiles (but does not run) `source` exactly the way diamond_run_source's
+ * own auto-dispatch does -- for a caller that wants the finished
+ * DiamondProgram itself (`diamond build`, see src/main.c) rather than a
+ * running result. `program` is compiled into in place, same in/out
+ * contract as diamond_run_source_with_program's own `program` parameter.
+ * On a load or compile failure, prints the same diagnostic diamond_
+ * run_source itself would and returns false -- the caller needs no
+ * diagnostic-formatting path of its own. */
+bool diamond_compile_source(const char *name, const char *source,
+    DiamondProgram *program);
+
 #endif

@@ -176,7 +176,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz clean
 
 all: debug
 
@@ -478,6 +478,26 @@ dap: $(BUILD_DIR)/diamond-dap
 
 test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/dap_test.sh
+
+# `diamond build` (src/main.c's own "build" subcommand) invokes this to
+# link a user's already-compiled program into a standalone executable --
+# AOT_EMBED is a generated .c file (following src/compiled_prelude_
+# data.c's own #embed-plus-accessor-function shape, see tools/aot_
+# runtime_main.c's own top comment) that diamond build writes to a temp
+# path per invocation, never checked in. $(API_SOURCES) from raw source
+# (not precompiled .o), same as diamond-lsp/diamond-dap just above --
+# already the proven pattern for "link a standalone binary against the
+# same sources diamond itself uses, minus main.c/repl.c" in this
+# Makefile, not something new here. -O2/-g0: this is a release artifact
+# someone else runs, not a debug build of Diamond itself.
+AOT_EMBED ?=
+AOT_OUTPUT ?= $(BUILD_DIR)/a.out
+
+.PHONY: aot-build
+aot-build:
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) -O2 -g0 \
+	    $(AOT_EMBED) tools/aot_runtime_main.c $(API_SOURCES) \
+	    $(REGINOLD_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
 
 test-repl: debug
 	bash tests/repl_test.sh

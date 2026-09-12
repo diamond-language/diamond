@@ -46,6 +46,21 @@ authoritative fine-grained record.
   see docs/debugging.md for the full contract and limitations, and
   docs/roadmap.md's "Step debugger v2" for what's next. `editors/vscode`
   wires this up as a VS Code debugger via `diamond.debugAdapterPath`.
+- Added `diamond build SOURCE [-o OUTPUT]`, producing a standalone native
+  executable with no separate interpreter, `.di` source file, or
+  recompilation step at run time -- reusing the same compiled-program
+  serialize/deserialize mechanism the embedded prelude template already
+  relied on (`diamond_program_write_compiled`/`_read_compiled`). Fixed a
+  latent bug this surfaced in that same mechanism: a deserialized
+  program's `DiamondClass.shapes[]` self-referential pointers still
+  pointed at the *original* program's `classes[]` array, silently
+  corrupting every field access on a user-defined class once that
+  original program was gone. `diamond_program_recompute_shapes` now
+  fixes those pointers up wherever `classes[]` is populated without a
+  following real compile pass. See docs/deployment.md for the CLI
+  contract and what it doesn't do (no cross-compilation, no static
+  linking, must build from a repo checkout), and docs/roadmap.md's
+  "`diamond build`: what's next, if anything" for what's deferred.
 
 ## 0.4.0
 

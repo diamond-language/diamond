@@ -31,6 +31,30 @@ opens up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
+### `diamond build`: what's next, if anything
+
+`diamond build` (docs/deployment.md, landed this cycle) produces a
+standalone native executable via the same serialize/deserialize mechanism
+the embedded prelude template already used. Real possibilities this opens
+up, none attempted yet, none committed:
+
+- **cross-compilation** -- building for a target other than the machine
+  `diamond build` runs on. Needs a real story for cross-linking against
+  OpenSSL/SQLite3/`libpq`/MariaDB for the target, not just a compiler flag;
+- **a real install step** -- removing the "must run from the repo
+  checkout" build-time constraint (`diamond build` invokes `make
+  aot-build` directly today, the same assumption `make dap`/`make lsp`
+  already make about their own targets) would need Diamond's own headers/
+  sources installed somewhere `aot-build` could find without a checkout;
+- **static linking** -- a fully hermetic binary with no dynamic dependency
+  on OpenSSL/SQLite3/`libpq`/MariaDB/zlib/`libcrypt` at all. Not attempted
+  because `diamond` itself doesn't link statically either; doing this for
+  `diamond build` alone without doing it for `diamond` would be new,
+  unproven build-system work, not a small extension.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Real semver dependency resolution for `facet` (done)
 
 `facet` used to pin every dependency to an exact git ref (tag/branch/

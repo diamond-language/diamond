@@ -422,3 +422,63 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
     free(program);
     return status;
 }
+
+/* Compiles `source` the same way diamond_run_source's own auto-dispatch
+ * does (the embedded-prelude-template fast path when the require-
+ * expanded source doesn't need JSON, the ordinary live prelude+source
+ * compile otherwise) -- for a caller (diamond build, src/main.c) that
+ * wants the finished DiamondProgram itself, not a running result. A
+ * deliberately separate function rather than a refactor of
+ * diamond_run_source into a shared "compile" half: that function's own
+ * run_compiled_chunk call needs `combined`/`bundle`/the prelude-vs-user
+ * byte breakdown for DIAMOND_TRACE_STARTUP's own reporting, none of
+ * which a caller that never runs anything needs -- reusing the same
+ * underlying helpers (diamond_load_program, build_embedded_prelude_
+ * template, diamond_prelude_needs_json/length/write, diamond_compile(_
+ * incremental)) keeps the two paths behaviorally identical without
+ * risking diamond_run_source's own already-proven shape. Prints its own
+ * diagnostic on a load/compile failure (print_diagnostic, the same
+ * function run_source_from_bundle_program/_template already call
+ * internally) and returns false -- the caller doesn't need its own
+ * diagnostic-formatting path at all. No debug-breakpoint support (see
+ * diamond_compile_with_breakpoints): a standalone AOT binary has no
+ * DAP client to pause for. */
+bool diamond_compile_source(const char *name, const char *source, DiamondProgram *program) {
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);
+        return false;
+    }
+    DiamondProgram *template=nullptr;
+    if(!diamond_prelude_needs_json(bundle.source))
+        template=build_embedded_prelude_template();
+
+    bool ok;
+    diamond_program_free(program);
+    if(template!=nullptr) {
+        DiamondDiagnostic diagnostic;
+        ok=diamond_compile_incremental(bundle.source,program,template,&diagnostic);
+        if(!ok)print_diagnostic(name,bundle.source,diagnostic,&bundle,0);
+        diamond_program_free(template);free(template);
+    } else {
+        const bool include_json=diamond_prelude_needs_json(bundle.source);
+        const size_t prelude_length=diamond_prelude_length(include_json);
+        const size_t source_length=strlen(bundle.source);
+        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+        char *combined=malloc(prelude_length+reset_length+source_length+1);
+        if(combined==nullptr) {
+            fprintf(stderr,"diamond: out of memory building expanded source\n");
+            diamond_source_bundle_free(&bundle);
+            return false;
+        }
+        size_t offset=diamond_prelude_write(combined,include_json);
+        memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+        memcpy(combined+offset,bundle.source,source_length+1);
+        DiamondDiagnostic diagnostic;
+        ok=diamond_compile(combined,program,&diagnostic);
+        if(!ok)print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
+        free(combined);
+    }
+    diamond_source_bundle_free(&bundle);
+    return ok;
+}
