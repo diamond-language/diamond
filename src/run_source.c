@@ -14,12 +14,49 @@
 #include "value.h"
 #include "vm.h"
 
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
+
+/* Sibling-file bytecode cache (see docs/caching.md): SHA-256 of the fully
+ * require-expanded bundle.source, and a ".dic" path derived from `name`.
+ * `-e` (name is always the literal string "-e" regardless of what code
+ * was actually passed, per main.c's own dispatch) and any path with no
+ * stable on-disk identity get no cache path at all -- diamond_run_source
+ * checks for exactly this nullptr before ever trying to read or write
+ * one. */
+static void diamond_hash_source(const char *source, uint8_t out[32]) {
+    unsigned int digest_length = 0;
+    EVP_Digest(source, strlen(source), out, &digest_length, EVP_sha256(), nullptr);
+}
+
+/* `app.di` -> `app.dic` (matches Python's own classic foo.py -> foo.pyc
+ * sibling-cache convention -- append, don't replace, so the source's own
+ * extension stays legible in the cache file's name); anything not ending
+ * in ".di" just gets ".dic" appended wholesale. Returns nullptr for `-e`
+ * (no real file to sit a cache file next to) or on allocation failure --
+ * both are treated identically by every caller: no cache path means no
+ * caching for this run, silently. */
+static char *diamond_cache_path_for(const char *name) {
+    if (strcmp(name, "-e") == 0) return nullptr;
+    const size_t name_length = strlen(name);
+    const bool has_di_extension = name_length >= 3 &&
+        strcmp(name + name_length - 3, ".di") == 0;
+    char *path = malloc(name_length + 5);
+    if (path == nullptr) return nullptr;
+    memcpy(path, name, name_length);
+    if (has_di_extension) {
+        path[name_length] = 'c';
+        path[name_length + 1] = '\0';
+    } else {
+        memcpy(path + name_length, ".dic", 5);
+    }
+    return path;
+}
 
 /* DIAMOND_DEBUG_BREAKPOINTS: a comma-separated list of combined-buffer
  * line numbers (see diamond_compile_with_breakpoints's own doc comment,
@@ -227,7 +264,8 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
         bool dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
-        const size_t *breakpoint_lines, size_t breakpoint_line_count) {
+        const size_t *breakpoint_lines, size_t breakpoint_line_count,
+        const char *cache_path, const uint8_t *source_hash) {
     const bool include_json=diamond_prelude_needs_json(bundle->source);
     const size_t prelude_length=diamond_prelude_length(include_json);
     const size_t source_length=strlen(bundle->source);
@@ -256,6 +294,11 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
         return 65;
     }
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    if (cache_path != nullptr) {
+        diamond_program_write_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: wrote %s\n", cache_path);
+    }
 
     return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
         script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
@@ -274,7 +317,8 @@ int diamond_run_source_with_program(const char *name, const char *source,
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
-        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,0);
+        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,0,
+        nullptr,nullptr);
 }
 
 /* See run_source_from_bundle_program's own comment -- the same split,
@@ -282,7 +326,8 @@ int diamond_run_source_with_program(const char *name, const char *source,
 static int run_source_from_bundle_template(const char *name, DiamondSourceBundle *bundle,
         bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
         int script_argc, char *const *script_argv,
-        bool trace_startup, double start_time, double loaded_time) {
+        bool trace_startup, double start_time, double loaded_time,
+        const char *cache_path, const uint8_t *source_hash) {
     const size_t source_length=strlen(bundle->source);
     DiamondDiagnostic diagnostic;
     diamond_program_free(program);
@@ -292,6 +337,11 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
         return 65;
     }
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    if (cache_path != nullptr) {
+        diamond_program_write_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: wrote %s\n", cache_path);
+    }
 
     return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
         script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
@@ -310,7 +360,7 @@ int diamond_run_source_with_template(const char *name, const char *source,
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
-        script_argc,script_argv,trace_startup,start_time,loaded_time);
+        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,nullptr);
 }
 
 /* Builds a fresh, independently-owned DiamondProgram from the build-time
@@ -403,21 +453,52 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
      * DIAMOND_DEBUG_BREAKPOINTS set, so the two sides must keep agreeing
      * on which path runs -- forcing it here, unconditionally, is what
      * keeps that true regardless of diamond_prelude_needs_json. */
-    DiamondProgram *template=nullptr;
-    if (breakpoint_line_count==0&&!diamond_prelude_needs_json(bundle.source))
-        template=build_embedded_prelude_template();
+    /* Bytecode cache (docs/caching.md): only for this auto-dispatch entry
+     * point, never diamond_run_source_with_program/_with_template (those
+     * two are for a caller -- tests/run_cases.c -- running many programs
+     * against one already-loaded template in one process, where a
+     * per-run disk cache buys nothing and risks masking the very
+     * regressions that harness exists to catch). Skipped entirely for
+     * `-e` (diamond_cache_path_for's own nullptr return), a debug
+     * session (must not interfere with dap/main.c's own combined-buffer
+     * assumptions, same reason the embedded-template fast path above is
+     * already skipped for one), and whenever DIAMOND_NO_CACHE is set. */
+    char *cache_path = (breakpoint_line_count==0 && getenv("DIAMOND_NO_CACHE")==nullptr) ?
+        diamond_cache_path_for(name) : nullptr;
+    uint8_t source_hash[32];
+    bool used_cache = false;
+    if (cache_path != nullptr) {
+        diamond_hash_source(bundle.source, source_hash);
+        used_cache = diamond_program_read_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: %s %s\n", used_cache ? "hit" : "miss", cache_path);
+    }
 
     int status;
-    if (template != nullptr) {
-        status=run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
-            script_argc,script_argv,trace_startup,start_time,loaded_time);
-        diamond_program_free(template);
-        free(template);
+    if (used_cache) {
+        const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+        const size_t user_bytes=strlen(bundle.source);
+        status=run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+            script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+            user_bytes, 0, user_bytes, nullptr, &bundle);
     } else {
-        status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
-            script_argc,script_argv,trace_startup,start_time,loaded_time,
-            breakpoint_lines,breakpoint_line_count);
+        DiamondProgram *template=nullptr;
+        if (breakpoint_line_count==0&&!diamond_prelude_needs_json(bundle.source))
+            template=build_embedded_prelude_template();
+
+        if (template != nullptr) {
+            status=run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
+                script_argc,script_argv,trace_startup,start_time,loaded_time,
+                cache_path,source_hash);
+            diamond_program_free(template);
+            free(template);
+        } else {
+            status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
+                script_argc,script_argv,trace_startup,start_time,loaded_time,
+                breakpoint_lines,breakpoint_line_count,cache_path,source_hash);
+        }
     }
+    free(cache_path);
     diamond_program_free(program);
     free(program);
     return status;

@@ -58,7 +58,9 @@
 #include "compiled_prelude.h"
 
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static bool write_all(FILE *file, const void *data, size_t size) {
     return size == 0 || fwrite(data, 1, size, file) == size;
@@ -441,4 +443,140 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
         out->interfaces[index].type_sets = out->entry.type_sets;
 
     return true;
+}
+
+/* Deliberately not char[8] (no room for a null terminator, only every
+ * on-disk-magic-length reference below actually needs) -- newer GCC's
+ * -Wunterminated-string-initialization flags that even though it's
+ * valid ISO C, so this stays a plain, ordinarily-terminated string
+ * constant and DIAMOND_CACHE_MAGIC_LENGTH is the one place the "how many
+ * bytes actually go on disk" fact lives. */
+static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
+enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 1 };
+
+DiamondCacheFingerprint diamond_cache_fingerprint(void) {
+    return (DiamondCacheFingerprint){
+        .format_version=DIAMOND_CACHE_FORMAT_VERSION,
+        .function_size=(uint32_t)sizeof(DiamondFunction),
+        .class_size=(uint32_t)sizeof(DiamondClass),
+        .interface_size=(uint32_t)sizeof(DiamondInterface),
+        .module_size=(uint32_t)sizeof(DiamondModule),
+        .opcode_count=(uint32_t)DIAMOND_OP_COUNT,
+        .builtin_class_count=(uint32_t)DIAMOND_BUILTIN_CLASS_COUNT,
+        .max_classes=(uint32_t)DIAMOND_MAX_CLASSES,
+        .max_methods=(uint32_t)DIAMOND_MAX_METHODS,
+    };
+}
+
+/* Field-by-field, not a raw struct write -- same reason write_class/
+ * write_module/write_interface above already avoid that (no padding-
+ * layout ambiguity to worry about, but consistent with this file's own
+ * established style throughout). */
+static bool write_cache_fingerprint(FILE *file, const DiamondCacheFingerprint *fingerprint) {
+    if (!write_all(file, &fingerprint->format_version, sizeof fingerprint->format_version)) return false;
+    if (!write_all(file, &fingerprint->function_size, sizeof fingerprint->function_size)) return false;
+    if (!write_all(file, &fingerprint->class_size, sizeof fingerprint->class_size)) return false;
+    if (!write_all(file, &fingerprint->interface_size, sizeof fingerprint->interface_size)) return false;
+    if (!write_all(file, &fingerprint->module_size, sizeof fingerprint->module_size)) return false;
+    if (!write_all(file, &fingerprint->opcode_count, sizeof fingerprint->opcode_count)) return false;
+    if (!write_all(file, &fingerprint->builtin_class_count, sizeof fingerprint->builtin_class_count)) return false;
+    if (!write_all(file, &fingerprint->max_classes, sizeof fingerprint->max_classes)) return false;
+    if (!write_all(file, &fingerprint->max_methods, sizeof fingerprint->max_methods)) return false;
+    return true;
+}
+
+static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
+        DiamondCacheFingerprint *out) {
+    if (!read_bytes(cursor, end, &out->format_version, sizeof out->format_version)) return false;
+    if (!read_bytes(cursor, end, &out->function_size, sizeof out->function_size)) return false;
+    if (!read_bytes(cursor, end, &out->class_size, sizeof out->class_size)) return false;
+    if (!read_bytes(cursor, end, &out->interface_size, sizeof out->interface_size)) return false;
+    if (!read_bytes(cursor, end, &out->module_size, sizeof out->module_size)) return false;
+    if (!read_bytes(cursor, end, &out->opcode_count, sizeof out->opcode_count)) return false;
+    if (!read_bytes(cursor, end, &out->builtin_class_count, sizeof out->builtin_class_count)) return false;
+    if (!read_bytes(cursor, end, &out->max_classes, sizeof out->max_classes)) return false;
+    if (!read_bytes(cursor, end, &out->max_methods, sizeof out->max_methods)) return false;
+    return true;
+}
+
+bool diamond_program_read_cache_file(const char *path,
+        const uint8_t source_hash[32], DiamondProgram *program) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return false; }
+    const long file_size = ftell(file);
+    if (file_size < 0) { fclose(file); return false; }
+    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return false; }
+    uint8_t *buffer = malloc((size_t)file_size);
+    if (buffer == nullptr) { fclose(file); return false; }
+    const size_t read_count = fread(buffer, 1, (size_t)file_size, file);
+    fclose(file);
+    if (read_count != (size_t)file_size) { free(buffer); return false; }
+
+    const uint8_t *cursor = buffer;
+    const uint8_t *end = buffer + (size_t)file_size;
+    const uint8_t *magic = take(&cursor, end, DIAMOND_CACHE_MAGIC_LENGTH);
+    if (magic == nullptr || memcmp(magic, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) != 0) {
+        free(buffer);
+        return false;
+    }
+    DiamondCacheFingerprint stored_fingerprint;
+    if (!read_cache_fingerprint(&cursor, end, &stored_fingerprint)) {
+        free(buffer);
+        return false;
+    }
+    const DiamondCacheFingerprint current_fingerprint = diamond_cache_fingerprint();
+    if (memcmp(&stored_fingerprint, &current_fingerprint, sizeof stored_fingerprint) != 0) {
+        free(buffer);
+        return false;
+    }
+    const uint8_t *stored_hash = take(&cursor, end, 32);
+    if (stored_hash == nullptr || memcmp(stored_hash, source_hash, 32) != 0) {
+        free(buffer);
+        return false;
+    }
+    const bool ok = diamond_program_read_compiled(cursor, (size_t)(end - cursor), program);
+    free(buffer);
+    return ok;
+}
+
+void diamond_program_write_cache_file(const char *path,
+        const uint8_t source_hash[32], const DiamondProgram *program) {
+    const size_t path_length = strlen(path);
+    /* mkstemp needs its own writable buffer ending in a literal
+     * "XXXXXX" (it overwrites those six characters in place), in the
+     * same directory as `path` -- rename() is only atomic within one
+     * directory/filesystem. Mirrors src/main.c's own write_compiled_
+     * program_to_temp (diamond build) doing the identical "unique temp
+     * file next to the real destination" thing for the identical
+     * concurrent-writer-safety reason. */
+    char *temp_path = malloc(path_length + 8);
+    if (temp_path == nullptr) return;
+    memcpy(temp_path, path, path_length);
+    memcpy(temp_path + path_length, ".XXXXXX", 8);
+    const int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        free(temp_path);
+        return;
+    }
+    FILE *file = fdopen(fd, "wb");
+    if (file == nullptr) {
+        close(fd);
+        unlink(temp_path);
+        free(temp_path);
+        return;
+    }
+    const DiamondCacheFingerprint fingerprint = diamond_cache_fingerprint();
+    bool ok = write_all(file, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) &&
+        write_cache_fingerprint(file, &fingerprint) &&
+        write_all(file, source_hash, 32) &&
+        diamond_program_write_compiled(program, file);
+    if (fclose(file) != 0) ok = false;
+    if (ok) {
+        if (rename(temp_path, path) != 0) unlink(temp_path);
+    } else {
+        unlink(temp_path);
+    }
+    free(temp_path);
 }

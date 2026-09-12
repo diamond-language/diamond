@@ -74,7 +74,10 @@ The implementation includes:
   [docs/deployment.md](docs/deployment.md));
 - a sandbox mode (`diamond --sandbox`/`DIAMOND_SANDBOX=1`) that denies filesystem,
   network, and subprocess access for running untrusted code (see
-  [docs/sandbox.md](docs/sandbox.md)).
+  [docs/sandbox.md](docs/sandbox.md));
+- transparent bytecode caching -- `diamond script.di` caches the compiled program in a
+  sibling `.dic` file, so an unchanged second run skips compilation entirely (see
+  [docs/caching.md](docs/caching.md)).
 
 The repository also contains:
 

@@ -12,6 +12,18 @@ trap 'echo "DIAGNOSTIC: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 bash tests/collection_relay_contracts.sh
 
+# Every bespoke check below invokes the real `diamond` binary directly
+# (unlike the generic tests/cases/*.di corpus loop further down, which
+# runs through build/run_cases -- diamond_run_source_with_template,
+# structurally never touching the bytecode cache at all, see src/
+# run_source.h). diamond_run_source's own auto-dispatch *does* cache by
+# default, and a .dic file left behind in tests/cases/ from one of these
+# direct invocations could silently mask a real compiler regression on a
+# later run (see docs/caching.md) -- this is exactly the test suite's own
+# job to catch, so every invocation in this file must always compile
+# fresh.
+export DIAMOND_NO_CACHE=1
+
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"

@@ -33,7 +33,17 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
  * being malloc'd and freed internally. diamond_compile always calls
  * diamond_program_init to reset it from scratch before compiling, so
  * one zero-initialized DiamondProgram can safely be reused across many calls;
- * each call releases and rebuilds its dynamically sized function storage. */
+ * each call releases and rebuilds its dynamically sized function storage.
+ *
+ * Never touches the sibling-.dic bytecode cache (docs/caching.md) --
+ * that only exists inside diamond_run_source's own auto-dispatch, keyed
+ * by one real on-disk script path per process. A caller here (tests/
+ * run_cases.c) runs many programs per process against no single stable
+ * path/lifetime a cache file could mean anything for, and (for that same
+ * harness specifically) must never risk a stale-but-fingerprint-
+ * compatible cache silently masking a real compiler regression it exists
+ * to catch -- this is a property of which function gets called, not an
+ * env var a caller could accidentally leave set. */
 int diamond_run_source_with_program(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program,
     int script_argc, char *const *script_argv);
@@ -52,7 +62,9 @@ int diamond_run_source_with_program(const char *name, const char *source,
  * amortize a compile against. `source` must not redeclare any name
  * `template` already declares (see diamond_compile_incremental's own
  * comment); an ordinary Diamond program never has reason to name a
- * prelude function/class, so this is not a real practical constraint. */
+ * prelude function/class, so this is not a real practical constraint.
+ * Never touches the bytecode cache either -- see diamond_run_source_
+ * with_program's own note on this just above; applies identically here. */
 int diamond_run_source_with_template(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
     int script_argc, char *const *script_argv);

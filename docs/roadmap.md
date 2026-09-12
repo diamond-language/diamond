@@ -108,6 +108,30 @@ Real possibilities this opens up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
+### Bytecode caching: what's next, if anything
+
+Bytecode caching (docs/caching.md, landed this cycle) caches a compiled program in a
+`.dic` sibling file next to the source, keyed on a SHA-256 hash of the fully
+`require`-expanded program and validated against a build fingerprint so a rebuilt/
+upgraded `diamond` binary never trusts a stale-format cache. Real possibilities this
+opens up, none attempted yet, none committed:
+
+- **a `diamond cache clear`-style command** -- today the only way to force-discard a
+  `.dic` file is deleting it by hand or editing the source; not clearly needed without
+  someone actually hitting that friction;
+- **moving the cache out from next to the source** -- a read-only deployment (a
+  container image, a package installed system-wide) can't write a sibling `.dic` file
+  at all, silently falling back to "never caches" today rather than failing loudly.
+  Something like `XDG_CACHE_HOME`-based storage would fix this but is real, separate
+  design work (a different cache key shape, since two different scripts named `app.di`
+  in two different directories could no longer be told apart by path alone);
+- **caching `diamond -e`** -- excluded in v1 for having no stable on-disk identity to
+  cache against; a content-addressed cache in a dedicated directory could cover it, but
+  that's the same design work as the point just above, not a small extension.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Real semver dependency resolution for `facet` (done)
 
 `facet` used to pin every dependency to an exact git ref (tag/branch/

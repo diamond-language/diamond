@@ -1,3 +1,18 @@
+# diamond_run_source's own auto-dispatch (src/run_source.c) caches
+# compiled bytecode next to a script's real on-disk path by default (see
+# docs/caching.md) -- every test-* target here eventually runs the real
+# `diamond` binary against tests/cases/*.di (directly from a shell
+# script, not just through build/run_cases's own diamond_run_source_
+# with_template, which never touches the cache at all regardless). A
+# .dic file left behind in tests/cases/ from one test run could silently
+# serve stale bytecode to a *later* run whose compiler changed in some
+# way the cache's own build fingerprint doesn't happen to catch --
+# exactly the kind of regression this whole test suite exists to catch,
+# so every recipe below always compiles fresh. Harmless for non-test
+# targets (build/link steps never execute the resulting `diamond` binary
+# at all).
+export DIAMOND_NO_CACHE := 1
+
 CC := gcc
 REGINOLD_DIR := reginold
 REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
@@ -176,7 +191,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -505,6 +520,16 @@ test-repl: debug
 test-exit: debug
 	bash tests/exit_test.sh
 
+test-cache: debug
+	# The Makefile-wide DIAMOND_NO_CACHE=1 export above exists specifically
+	# to protect every *other* test target from this feature -- this one
+	# is the exception, since it exercises the caching itself and needs it
+	# genuinely enabled. env -u, not DIAMOND_NO_CACHE= : an empty value is
+	# still a "set" env var as far as getenv() is concerned (see src/run_
+	# source.c's own presence-only check), so only actually unsetting it
+	# turns caching back on for this one recipe.
+	env -u DIAMOND_NO_CACHE bash tests/cache_test.sh
+
 $(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
@@ -587,6 +612,7 @@ test-all:
 	$(MAKE) test-repl
 	$(MAKE) test-repl-completion
 	$(MAKE) test-exit
+	$(MAKE) test-cache
 	$(MAKE) test-fuzz
 	$(MAKE) test-self-host-smoke
 

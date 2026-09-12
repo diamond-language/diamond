@@ -90,6 +90,23 @@ authoritative fine-grained record.
   the full deny list and what's explicitly not covered yet (per-capability
   granularity, resource limits, `Thread`/`Signal.trap` restriction).
 
+### Performance
+
+- Added transparent bytecode caching: `diamond script.di` now caches the compiled
+  program in a sibling `<script>.dic` file, so an unchanged second run skips
+  compilation entirely (a real ~13x startup win measured against skindicate.dia's own
+  substantial multi-file `app.di`). Keyed on a SHA-256 hash of the fully `require`-
+  expanded source (so editing a required library file invalidates the cache even
+  when the entry file itself is untouched) and validated against a build fingerprint
+  covering exactly what the underlying serialization format depends on
+  (`sizeof(DiamondFunction)`/`DiamondClass`/etc., `DIAMOND_OP_COUNT`, ...) -- a stale,
+  incompatible, or hand-corrupted cache file is always just a cache miss, never a
+  crash. On by default for the ordinary CLI; `DIAMOND_NO_CACHE=1` opts out,
+  `DIAMOND_TRACE_CACHE=1` reports hit/miss/write. `-e`, the REPL, a step-debugger
+  session, `diamond build`, and the test suite's own batch corpus runner never use it
+  -- see docs/caching.md for the full contract and docs/roadmap.md's "Bytecode
+  caching: what's next, if anything" for what's deferred.
+
 ## 0.4.0
 
 ### I/O, networking, databases, and processes
