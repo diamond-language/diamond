@@ -75,23 +75,38 @@ CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG
 else
 CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
 endif
-# -march=x86-64, not -native: at least one real deploy target for this
-# runtime is a single-core low-clock cloud droplet, where compiling at
-# all is the expensive part -- -native would tie the resulting binary
-# to that exact CPU's feature set, which is also what stops building
-# release elsewhere (a faster local machine, CI) and just copying the
-# binary over instead. The generic x86-64 baseline runs on any x86_64
-# machine; it costs some missed vectorization on newer CPUs, but this
-# is a bytecode VM (src/vm.c's run_chunk), not numerically-hot code
-# that leans on AVX/FMA, so that cost is small.
-# -march=x86-64 is itself an x86-only flag -- both gcc and clang reject it
+# -march=native: with no distro packaging story yet, whoever builds
+# this builds it for themselves, on the machine that's going to run
+# it -- so there's no "built on a faster machine, copied to a
+# different one" case to protect by default. That distinction matters
+# because -native is not just "some missed vectorization on newer
+# CPUs" the way a bytecode VM's non-numeric hot path might suggest --
+# measured directly (bench/int_arithmetic.di, this repo's own
+# bignum.c, which -march=x86-64's baseline denies BMI2/ADX): ~3.9s/iter
+# generic vs ~0.5s/iter native, a ~7x difference, not a rounding error.
+# Multi-precision arithmetic leans on BMI2 (mulx)/ADX (adcx/adox) far
+# more than "AVX/FMA" alone suggests.
+# Anything that deliberately builds on one machine to run the binary
+# on a *different* one -- applications/skindicate.dia's own
+# build_ubuntu.sh cross-build script is the current real example --
+# must override CFLAGS_RELEASE itself rather than rely on this
+# default, e.g. `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
+# release`: x86-64-v3 is a named, standardized ISA tier (AVX2/BMI2/
+# FMA/LZCNT/MOVBE), not one specific CPU's exact feature set --
+# supported by any real x86_64 deploy target from roughly 2013
+# (Intel Haswell) or 2015 (AMD Excavator) onward, recovers the same
+# ~7x win as native for this workload (confirmed directly), without
+# native's "tied to whichever machine happened to compile it" risk of
+# an illegal-instruction crash on a different CPU.
+# -march=native is itself an x86-only flag -- both gcc and clang reject it
 # outright targeting arm64 ("unsupported argument"), which every current
 # GitHub-hosted `macos-*` runner is by default (Apple Silicon). Guarded by
 # UNAME_M rather than assumed, so this stays correct on an arm64 Linux box
-# too, not just macOS.
+# too, not just macOS. (aarch64's own equivalent, -mcpu=native, is a
+# separate, unmeasured decision -- not made here.)
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),x86_64)
-CFLAGS_RELEASE := -O3 -DNDEBUG -march=x86-64
+CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 else
 CFLAGS_RELEASE := -O3 -DNDEBUG
 endif

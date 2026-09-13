@@ -108,6 +108,26 @@ the container build described above and leaves the result at
 `skindicate.dia/dist/app`; the latter ships that binary to a real deploy
 target and restarts the service running it.
 
+**One more thing a cross-build must override:** the Makefile's own `release`
+target defaults `CFLAGS_RELEASE` to `-march=native` (right for the common
+case -- no distro packaging exists yet, so whoever builds Diamond is
+building it for the machine they're going to run it on). A container only
+isolates the OS/libraries, not the CPU, so building inside one still runs on
+the *host's* actual CPU -- inheriting that default would bake the build
+machine's exact CPU features into a binary meant for a different one.
+`build_ubuntu.sh` passes `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
+release` instead: `x86-64-v3` is a named, standardized ISA tier (AVX2/BMI2/
+FMA/LZCNT/MOVBE), not one CPU's exact feature set -- supported by any real
+x86_64 machine from roughly 2013 (Intel Haswell) or 2015 (AMD Excavator)
+onward, recovering the same speedup `-march=native` would give a local
+build (confirmed directly: `bench/int_arithmetic.di`, ~3.9s/iter at the
+portable `x86-64` baseline vs ~0.5s/iter at both `native` and `x86-64-v3` --
+multi-precision arithmetic leans heavily on BMI2/ADX) without tying the
+binary to whichever machine happened to compile it. Any cross-build script
+needs the same explicit override -- verify the actual deploy target's CPU
+flags first (`ssh target grep flags /proc/cpuinfo`, checking for `avx2
+bmi2 fma`), don't just assume.
+
 **Caveat:** matching the target's distro and major version is "very likely
 works," not a guaranteed identical package snapshot -- the container image's
 installed library versions are whatever that base image shipped with at
