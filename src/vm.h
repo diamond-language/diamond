@@ -1240,6 +1240,14 @@ struct DiamondVm {
     size_t jit_threshold;
     size_t jit_compiled_functions;
     size_t jit_bailouts;
+    /* Phase 2d: a compiled function's own SUPER call (or any later opcode
+     * once one has run) failed with a real, already-happened
+     * DiamondVmStatus that was propagated directly rather than retried --
+     * see jit_call_or_interpret's own 3-way dispatch and jit.c's
+     * jc->has_called. Distinct from jit_bailouts, which always implies a
+     * full, safe-to-repeat re-run via run_chunk follows; a hard
+     * propagation never falls back to run_chunk at all. */
+    size_t jit_hard_propagations;
     /* Copied from the top-level DiamondChunk's own field once, at
      * diamond_vm_run's own entry -- NOT re-read from whatever
      * DiamondChunk happens to be ambient at a given opcode, since a

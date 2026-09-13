@@ -115,6 +115,73 @@ pre-scan only checks for `STRING`), and skindicate's *real*
 `ActiveRecord::Model#initialize` -- a call this JIT still can't compile
 through. Whether that's worth a follow-on phase is not yet decided.
 
+**Status (2026-09-13): Phase 2d adds SUPER call support and closes that
+exact gap** -- `HASH` (needed for a `= {}` default argument) and
+`DIAMOND_OP_SUPER` itself, plus a fix removing `EQUAL`/`NOT_EQUAL`'s own
+bailout entirely (see below). skindicate's real `User#initialize`
+(`skindicate.dia/lib/models/user.di`) now compiles, verified directly
+against the real file (not just the `bench/object_hydration.di` mirror).
+
+This phase looked structurally different from every one before it: SUPER
+is the first opcode that can run arbitrary interpreted code with real
+side effects, including raising a genuine exception -- breaking the
+invariant every prior phase relied on ("any bailout is safe to handle by
+discarding the whole attempt and re-running the function from scratch").
+If SUPER succeeds and a *later* opcode then bails, restarting the whole
+function would invoke the super() call a second time. Resolved without
+full on-stack replacement: `DiamondJitFn`'s return convention became
+3-way (`DIAMOND_VM_OK` / `DIAMOND_JIT_RETRY` / any other value is a real
+`DiamondVmStatus` to propagate directly, never retried) with two shared
+bailout stubs instead of one, selected by a compiler-tracked
+`jc->has_called` flag; arithmetic opcodes (whose own bailouts have no
+real status to propagate -- they need the interpreter's own bignum/raise
+logic) are rejected outright at compile time once a call has already run,
+since retrying is the only thing they can do and it's no longer safe.
+`EQUAL`/`NOT_EQUAL`'s own bailout was eliminated (not just gated) by
+adding a trampoline for `values_equal` (pure, always succeeds) --
+required, not cosmetic, since `User#initialize`'s own `role`/`is_seed`
+fields use `==` *after* the SUPER call. `DiamondJitFn` also gained a 6th
+parameter/persistent register (`depth`, `JIT_DEPTH = REG_RBP`) so a
+compiled function's own SUPER call still respects
+`DIAMOND_MAX_CALL_DEPTH` -- this also fixed a latent gap in
+`jit_call_or_interpret` itself, which previously dispatched straight to
+compiled code with no depth check at all (harmless before Phase 2d, since
+no compiled function could make a further call; a real gap the moment one
+could).
+
+Verified via three dedicated regression cases exercising exactly the
+hazard this phase exists to prevent, not just "doesn't crash":
+`jit_super_raise_propagates` (a superclass constructor that raises;
+confirms the exception propagates and the raising call runs exactly
+once, checked via a Hash-mutation counter -- a bug here would show 2, not
+1), `jit_super_then_bail_propagates` (SUPER succeeds, then a *later*
+`INDEX_GET` on a non-Hash bails; confirms the same "ran exactly once"
+property when the failure is a different opcode entirely), and
+`jit_super_chain` (6 levels of SUPER, all independently JIT-compiled,
+confirming `depth` threads correctly across multiple compiled hops).
+
+**Honest end-to-end result, and why it's smaller than object_hydration's
+own ~2-3%**: `User#initialize` itself compiles and is proven correct, but
+its own `super(attributes)` call reaches `ActiveRecord::Model#initialize`
+(`packages/active_record/lib/active_record/model.di:36-49`), which
+remains fully interpreted -- its own body loops over `attributes.keys()`
+calling ordinary methods (`.keys()`, `.length()`) and uses `INDEX_GET` on
+an *Array* (unsupported -- this JIT's `INDEX_GET` trampoline is Hash-only)
+and `INDEX_SET` (not in the whitelist at all). Confirmed via
+`DIAMOND_TRACE_JIT=1` against a real end-to-end `User.new` benchmark:
+exactly 1 compiled function (`User#initialize`), not 2 -- `Model#
+initialize` never compiles, and dominates the real per-call cost. Full
+`User.new` end-to-end measured within noise of the interpreted baseline
+(~1-3%, not the larger win `User#initialize`'s own compiled body would
+suggest in isolation) -- see `bench/RESULTS.md`'s "Phase 2d" section.
+**Deploying this build to skindicate today still would not show a
+meaningful `/` improvement**, for a new and now well-understood reason
+(previously "0 compiled functions"; now "the dominant cost is a still-
+interpreted superclass method"). Making `Model#initialize` itself
+JIT-eligible would need ordinary method-call/`INVOKE` support plus
+Array `INDEX_GET`/`INDEX_SET` -- a materially larger feature than
+anything built so far, not scoped or decided.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

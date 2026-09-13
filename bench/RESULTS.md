@@ -391,3 +391,74 @@ through (no call support). Deploying this build would now compile
 `HydratedUser`-shaped `initialize` methods, but skindicate's own model
 classes won't be JIT-eligible until a follow-on phase addresses `super`
 call compilation -- not yet scoped or decided.
+
+## Phase 2d: SUPER call support -- the real User#initialize compiles (2026-09-13)
+
+Added `DIAMOND_OP_SUPER` and `DIAMOND_OP_HASH` (for a `= {}` default
+argument), plus a fix eliminating `EQUAL`/`NOT_EQUAL`'s own bailout
+entirely (a `values_equal` trampoline -- pure, always succeeds). Full
+design rationale (the 3-way `DiamondJitFn` return convention, the
+`jc->has_called`-gated dual bailout stub, why arithmetic-after-a-call is
+rejected outright at compile time) is in `docs/internal/jit-design.md`'s
+own Phase 2d status note.
+
+**The actual target now compiles.** Verified directly against
+`skindicate.dia/lib/models/user.di`'s real `User#initialize` (not just
+the `object_hydration.di` mirror) via `DIAMOND_TRACE_JIT=1`: 1 compiled
+function, 0 bailouts, correct output identical to the interpreted
+baseline across representative attribute Hashes (including the `= {}`
+default-argument path).
+
+**Three dedicated regression cases prove the actual hazard this phase
+exists to prevent is prevented, not just "doesn't crash"**:
+`tests/cases/jit_super_raise_propagates.di` (a superclass constructor
+that raises -- confirms it runs exactly once, not twice, via a Hash-
+mutation counter a double-invocation would double), `jit_super_then_
+bail_propagates.di` (SUPER succeeds, then a *later*, unrelated opcode
+bails -- same "ran exactly once" proof for a different failure site), and
+`jit_super_chain.di` (6 levels of SUPER, all independently compiled,
+proving `depth` threads correctly across multiple compiled hops without
+a false-positive stack-overflow or crash). All three pass identically
+under interpreted, `DIAMOND_JIT=1`, and `DIAMOND_JIT=1
+DIAMOND_STRESS_GC=1`.
+
+**No regression on Phase 2/2b/2c's existing benchmarks** from the 6th
+persistent register (`depth`) and its alignment pad, or the new
+`jc->has_called` dispatch: `int_arithmetic.di` still ~2.9-3x (release,
+`DIAMOND_JIT_THRESHOLD=1`, 5 rounds, JIT side steady at ~2.70-2.73s per
+round vs Phase 2c's own ~2.65-2.69s), `hash_ivar_construct.di` still
+~4-6% faster, `object_hydration.di` still ~2-8% faster (both within the
+same range previously measured).
+
+**Honest end-to-end result -- smaller than object_hydration's own ~2-3%,
+and worth understanding why**: measured a real `User.new(row)` loop
+(100,000 iterations, same skindicate checkout, `boot.di` required
+directly) interpreted vs `DIAMOND_JIT=1`:
+
+| | wall time (100,000 `User.new` calls) |
+|---|---:|
+| Interpreted | ~7.4-7.8s (5 rounds) |
+| JIT | ~7.3-7.6s (5 rounds) |
+
+**Within noise -- not a real win yet.** `DIAMOND_TRACE_JIT=1` on this
+exact benchmark shows exactly **1** compiled function, not 2:
+`User#initialize` compiles, but its own `super(attributes)` call reaches
+`ActiveRecord::Model#initialize`
+(`packages/active_record/lib/active_record/model.di:36-49`), which
+never does -- its body loops over `attributes.keys()` calling ordinary
+methods (`.keys()`, `.length()`) and uses `INDEX_GET` on an *Array*
+(this JIT's own `INDEX_GET` trampoline is Hash-only) plus `INDEX_SET`
+(not in the whitelist at all), so it falls back to full interpretation on
+every single call. That interpreted `Model#initialize` call dominates the
+real per-call cost, swamping whatever `User#initialize`'s own now-
+compiled body saves. **Deploying this build to skindicate today still
+would not show a meaningful `/` improvement** -- a different, now
+precisely understood reason than Phase 2/2b's "0 compiled functions":
+the compile succeeds, but the dominant cost lives one level up the call
+chain, in a superclass method this phase deliberately doesn't reach.
+
+**Not yet scoped or decided**: making `Model#initialize` itself
+JIT-eligible would need ordinary method-call (`INVOKE`) support plus
+Array `INDEX_GET`/`INDEX_SET` -- each individually a materially larger
+feature than anything built across Phases 2-2d, not a narrow extension
+of the existing trampoline pattern.

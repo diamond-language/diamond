@@ -48,6 +48,15 @@ enum {
     JIT_RESULT_PTR = REG_R13,
     JIT_ARGUMENT_COUNT = REG_R14,
     JIT_CHUNK = REG_R15,
+    /* Phase 2d: this call's own logical depth, threaded through so a
+     * compiled function's own SUPER call can pass it on unchanged (see
+     * DiamondJitFn's own comment in jit.h). RBP was free -- this JIT never
+     * uses a traditional frame pointer, so repurposing it as a plain
+     * 6th persistent GPR is safe, matching the "fully general encoding,
+     * no register off-limits" approach already established since Phase
+     * 2b. 6 persistent registers is an even count, unlike the prior odd
+     * 5 -- see the prologue's own comment for the alignment consequence. */
+    JIT_DEPTH = REG_RBP,
 };
 
 typedef struct JitBuffer {
@@ -98,6 +107,18 @@ typedef struct JitCompiler {
      * the body correctly aligned -- set once, right before emitting the
      * real prologue, from diamond_jit_frame_size(). */
     size_t frame_reserve_bytes;
+    /* Phase 2d: set the moment SUPER is compiled, in both the dry-run and
+     * real passes alike (mirroring needs_frame). Once true: (a) every
+     * later status-bearing bail site (a trampoline call's own non-OK
+     * check) targets the "propagate" stub instead of "retry" -- see
+     * bailout_target() -- since a real call with real side effects has
+     * already run and re-running the whole function from scratch is no
+     * longer safe; (b) ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/
+     * LESS_INT are rejected outright at compile time (jc->bailed = true),
+     * since their own overflow/div-by-zero/kind-mismatch bails have no
+     * DiamondVmStatus to propagate and genuinely need the interpreter's
+     * own bignum/raise logic, not just a status to hand back. */
+    bool has_called;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -370,18 +391,29 @@ static void emit_mov_al_imm8(JitBuffer *buf, uint8_t imm) {
     emit_u8(buf, imm);
 }
 
+/* Restores all 6 persistent registers in reverse push order, undoing the
+ * prologue's own alignment pad first. 6 is an even count (unlike Phase
+ * 2c's 5), so unlike before this JIT needs one, unconditionally -- see the
+ * prologue's own comment in diamond_jit_try_compile. Shared by every exit
+ * stub (success, retry, and Phase 2d's propagate). */
+static void emit_pop_persistent_registers(JitBuffer *buf) {
+    emit_add_rsp_imm32(buf, 8);
+    emit_pop(buf, JIT_DEPTH);
+    emit_pop(buf, JIT_CHUNK);
+    emit_pop(buf, JIT_ARGUMENT_COUNT);
+    emit_pop(buf, JIT_RESULT_PTR);
+    emit_pop(buf, JIT_VM);
+    emit_pop(buf, JIT_REGISTERS_BASE);
+}
+
 /* If the function needed a DiamondFrame (Phase 2c), pops and unlinks it
  * and releases its stack space FIRST -- symmetric with the prologue's own
  * push-then-reserve order, and must happen before the persistent-register
  * pops below since it still needs JIT_VM live and still owns the stack
- * space directly above those registers' own saved values. Then restores
- * the 5 persistent registers in reverse push order -- an odd count needs
- * no alignment padding (see the prologue emission in
- * diamond_jit_try_compile: entry RSP%16==8, each push flips it, 5 pushes
- * lands back on 0, correctly aligned for every trampoline call this
- * function's body makes, frame teardown included). Every exit path (the
- * success RETURN and the shared bailout stub) calls this immediately
- * before `ret`, after its own AL has already been set. */
+ * space directly above those registers' own saved values. Every exit path
+ * that isn't Phase 2d's propagate stub (the success RETURN and the retry
+ * bailout stub) calls this immediately before `ret`, after its own AL has
+ * already been set. */
 static void emit_epilogue(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     if (jc->needs_frame) {
@@ -389,11 +421,29 @@ static void emit_epilogue(JitCompiler *jc) {
         emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
         emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     }
-    emit_pop(buf, JIT_CHUNK);
-    emit_pop(buf, JIT_ARGUMENT_COUNT);
-    emit_pop(buf, JIT_RESULT_PTR);
-    emit_pop(buf, JIT_VM);
-    emit_pop(buf, JIT_REGISTERS_BASE);
+    emit_pop_persistent_registers(buf);
+}
+
+/* Phase 2d: shared tail for the "propagate" bailout stub -- like
+ * emit_epilogue, but preserves AL (the trampoline's own real
+ * DiamondVmStatus, which the caller must see unchanged) across the
+ * frame_pop call, which -- being an ordinary C function -- clobbers
+ * caller-saved registers, AL included. Stashes it in JIT_RESULT_PTR
+ * temporarily: none of the 6 persistent registers' *current* meanings are
+ * needed again on this exit path except JIT_VM (for the call itself), and
+ * emit_pop_persistent_registers' own pops restore each register's real
+ * (caller's) value from the stack regardless of what's briefly stored in
+ * it here. Only ever reached when jc->has_called is true, which is only
+ * ever set alongside jc->needs_frame (SUPER sets both), so a frame is
+ * always present here to pop. */
+static void emit_epilogue_propagate(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
+    emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
+    emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    emit_pop_persistent_registers(buf);
 }
 
 /* Near conditional jump to a not-yet-known local offset: emits `0F 8x
@@ -447,14 +497,33 @@ static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t byt
     jc->patch_count++;
 }
 
-/* Bailout stub: a single shared tail (epilogue + `mov al,0` + `ret`) every
- * exceptional path jumps to. Its native offset is recorded once, all
- * bailout jumps are deferred patches resolved against it like any other
- * jump target -- but since it isn't a real bytecode offset, it's resolved
- * directly rather than through bytecode_to_native (see compile function
- * below). */
+/* Two shared bailout stubs, not one (Phase 2d) -- a single tail (epilogue
+ * + `mov al,<sentinel>` + `ret`) is no longer enough once a compiled
+ * function can make a real call (SUPER): "retry" is the original Phase
+ * 2/2b/2c behavior (discard this attempt, fall back to run_chunk), safe
+ * only before the first call has run; "propagate" hands back the
+ * trampoline's own already-real DiamondVmStatus unchanged instead (see
+ * emit_epilogue_propagate's own comment) -- required from the first call
+ * onward, since retrying would risk invoking it a second time. Both
+ * native offsets are recorded once and resolved via the same deferred-
+ * patch mechanism as any other jump target, just not through
+ * bytecode_to_native (see compile function below) since neither is a
+ * real bytecode offset. */
 
-#define BAILOUT_SENTINEL SIZE_MAX
+#define BAILOUT_RETRY_SENTINEL SIZE_MAX
+#define BAILOUT_PROPAGATE_SENTINEL (SIZE_MAX - 1)
+
+/* Which stub a status-bearing bail site (one that already holds a real
+ * DiamondVmStatus in AL, from a trampoline's own return value) should
+ * target: "retry" before any call has run this attempt, "propagate" from
+ * the first call onward. Never used by a bail site that has no real
+ * status to hand back (arithmetic overflow/div-by-zero/kind-mismatch) --
+ * those always use BAILOUT_RETRY_SENTINEL directly and are rejected
+ * outright at compile time once jc->has_called is true (see compile_
+ * body's ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/LESS_INT case). */
+static size_t bailout_target(const JitCompiler *jc) {
+    return jc->has_called ? BAILOUT_PROPAGATE_SENTINEL : BAILOUT_RETRY_SENTINEL;
+}
 
 static int32_t reg_disp(size_t index, int32_t field_offset) {
     return (int32_t)(index * sizeof(DiamondValue)) + field_offset;
@@ -470,20 +539,20 @@ static void emit_check_kind_int_or_bail(JitCompiler *jc, uint16_t reg_index, int
     emit_u8(&jc->buf, JCC_NE);
     size_t field = jc->buf.length;
     emit_u32_le(&jc->buf, 0);
-    record_global_patch(jc, field, BAILOUT_SENTINEL);
+    record_global_patch(jc, field, BAILOUT_RETRY_SENTINEL);
 }
 
-/* Jumps to the shared bailout stub the moment AL (a just-returned
- * DiamondVmStatus, zero-extended by the SysV ABI's own small-return-type
- * convention) is nonzero -- i.e. anything but DIAMOND_VM_OK. Used after
- * every trampoline call. */
+/* Jumps to the appropriate shared bailout stub (see bailout_target) the
+ * moment AL (a just-returned DiamondVmStatus, zero-extended by the SysV
+ * ABI's own small-return-type convention) is nonzero -- i.e. anything but
+ * DIAMOND_VM_OK. Used after every trampoline call. */
 static void emit_bail_if_al_nonzero(JitCompiler *jc) {
     emit_test_r8(&jc->buf, REG_RAX);
     emit_u8(&jc->buf, 0x0F);
     emit_u8(&jc->buf, JCC_NE);
     size_t field = jc->buf.length;
     emit_u32_le(&jc->buf, 0);
-    record_global_patch(jc, field, BAILOUT_SENTINEL);
+    record_global_patch(jc, field, bailout_target(jc));
 }
 
 static bool decode_u8(const DiamondFunction *fn, size_t *pc, uint8_t *out) {
@@ -511,7 +580,7 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
         emit_u8(buf, JCC_E);
         size_t jz_field = jc->buf.length;
         emit_u32_le(buf, 0);
-        record_global_patch(jc, jz_field, BAILOUT_SENTINEL);
+        record_global_patch(jc, jz_field, BAILOUT_RETRY_SENTINEL);
         /* left==INT64_MIN && right==-1 -> bail (bignum negate territory) */
         emit_cmp_imm8(buf, REG_RCX, -1);
         size_t skip = emit_jcc_placeholder(buf, JCC_NE);
@@ -521,7 +590,7 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
         emit_u8(buf, 0xE9);
         size_t bail_field = jc->buf.length;
         emit_u32_le(buf, 0);
-        record_global_patch(jc, bail_field, BAILOUT_SENTINEL);
+        record_global_patch(jc, bail_field, BAILOUT_RETRY_SENTINEL);
         patch_rel32_to_here(buf, jne_ok);
         patch_rel32_to_here(buf, skip);
         emit_cqo(buf);
@@ -550,25 +619,28 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
     emit_u8(buf, 0x80); /* JO */
     size_t jo_field = jc->buf.length;
     emit_u32_le(buf, 0);
-    record_global_patch(jc, jo_field, BAILOUT_SENTINEL);
+    record_global_patch(jc, jo_field, BAILOUT_RETRY_SENTINEL);
     emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
     emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
 }
 
-/* EQUAL/NOT_EQUAL, restricted to the safe subset: both operands NIL, BOOL,
- * or INT (never FLOAT/OBJECT -- the latter includes bignums, which
- * value_is_bignum confirms can never present as kind==INT, so this check
- * alone rules bignums out too) with *matching* kinds. Anything else bails
- * -- mismatched primitive kinds are simply "not equal" in the real
- * values_equal, but bailing there too keeps this stencil's cases few and
- * each one obviously correct, at the cost of a few needless bailouts. */
+/* EQUAL/NOT_EQUAL. A fast CPU-comparison path handles both operands NIL,
+ * BOOL, or INT with *matching* kinds; everything else (mismatched kinds,
+ * or matching FLOAT/OBJECT kinds) calls diamond_jit_values_equal instead
+ * of bailing (Phase 2d) -- values_equal is pure and always succeeds, so
+ * this opcode never needs a bailout check at all, unlike every other
+ * opcode in this file. This isn't just an optimization: User#initialize's
+ * own role/is_seed fields use `==` *after* a SUPER call, and this JIT
+ * cannot safely bail-and-retry once a call has already run (see
+ * jc->has_called), so a bail here would otherwise force rejecting the
+ * whole function outright. */
 static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
                               uint16_t right, bool negate) {
     JitBuffer *buf = &jc->buf;
     emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, KIND_OFF));
     emit_load_byte_zx(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, KIND_OFF));
     emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
-    size_t kinds_differ = emit_jcc_placeholder(buf, JCC_NE); /* differ -> bail */
+    size_t kinds_differ = emit_jcc_placeholder(buf, JCC_NE); /* differ -> general case */
     emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
     size_t not_nil = emit_jcc_placeholder(buf, JCC_NE);
     /* both NIL: always equal */
@@ -595,15 +667,19 @@ static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
     emit_movzx_r64_al(buf, REG_RAX);
     size_t int_done = emit_jmp_placeholder(buf);
     patch_rel32_to_here(buf, not_int);
-    /* FLOAT or OBJECT on both sides (kinds matched but neither NIL/BOOL/INT) -> bail */
-    size_t float_or_object_bail = emit_jmp_placeholder(buf);
-    record_global_patch(jc, float_or_object_bail, BAILOUT_SENTINEL);
+    /* General case: mismatched kinds (kinds_differ also lands here), or
+     * matching FLOAT/OBJECT kinds. */
+    patch_rel32_to_here(buf, kinds_differ);
+    emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(left, 0));
+    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_values_equal);
+    if (negate) emit_xor_al_1(buf);
+    emit_movzx_r64_al(buf, REG_RAX);
     patch_rel32_to_here(buf, nil_done);
     patch_rel32_to_here(buf, bool_done);
     patch_rel32_to_here(buf, int_done);
     emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
     emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-    record_global_patch(jc, kinds_differ, BAILOUT_SENTINEL);
 }
 
 /* SET_IVAR: field-cache/shape-transition bookkeeping and the GC write
@@ -660,6 +736,75 @@ static void compile_new_string(JitCompiler *jc, uint16_t dest, uint16_t string_i
     emit_mov_imm64(buf, REG_RDX, string_index);
     emit_lea(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_string);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* HASH (Phase 2d) -- also allocates (allocate_hash calls maybe_collect
+ * unconditionally, same as allocate_string), so this sets jc->needs_frame
+ * too. `base`/`count` are passed straight through as immediates/the
+ * registers-base pointer; the whole key/value-pair loop lives in
+ * diamond_jit_new_hash itself (see jit.h), not generated code. Calls
+ * diamond_jit_new_hash(vm, registers, base, count, &registers[dest]). */
+static void compile_new_hash(JitCompiler *jc, uint16_t dest, uint16_t base, uint16_t count) {
+    jc->needs_frame = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RDX, base);
+    emit_mov_imm64(buf, REG_RCX, count);
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_hash);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* SUPER (Phase 2d) -- the first opcode that can run arbitrary interpreted
+ * code with real side effects; sets both jc->needs_frame (invoke_
+ * resolved_method_helper can allocate/trigger GC arbitrarily deep inside
+ * whatever it calls) and jc->has_called (from this point on, every later
+ * status-bearing bail site in this same compile -- including this call's
+ * own -- targets the "propagate" stub, not "retry": see bailout_target
+ * and DiamondJitFn's own comment in jit.h for why). `owner_index`/`name`
+ * are compile-time-known immediates (the same operands DIAMOND_OP_SUPER's
+ * own interpreter case decodes); `base`/`argc` likewise. Calls
+ * diamond_jit_super_call(vm, chunk, owner_index, name, registers, base,
+ * argc, depth, &registers[dest]) -- `depth` is this compiled function's
+ * own incoming depth (JIT_DEPTH), passed on unchanged, exactly mirroring
+ * the interpreter's own `depth` (not `depth+1`) argument to invoke_
+ * resolved_method_helper. */
+static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_index,
+                                uint16_t name, uint16_t base, uint8_t argc) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    /* diamond_jit_super_call takes 9 arguments -- SysV passes the first 6
+     * (vm, chunk, owner_index, name, registers, base) in RDI/RSI/RDX/RCX/
+     * R8/R9, and the remaining 3 (argc, depth, out) on the stack, in that
+     * order, at [rsp+0]/[rsp+8]/[rsp+16] at the moment of the call. Pushed
+     * here in the reverse order (a dummy pad, then out, then depth, then
+     * argc last) so the last-pushed value (argc) ends up at the lowest
+     * address, [rsp+0], matching the ABI's own layout -- each push lands
+     * at a strictly lower address than the one before it. The caller
+     * (this generated code, not the callee) is responsible for reclaiming
+     * this stack space after the call returns, per SysV's own caller-
+     * cleanup convention for stack arguments. 4 pushes (32 bytes, the pad
+     * included purely to keep the count a multiple of 2 -- 3 alone would
+     * misalign the following call by 8 bytes) preserves this function's
+     * own 16-byte call-alignment invariant. */
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);                 /* alignment pad, unused */
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);                 /* out -> [rsp+16] after the next 2 pushes */
+    emit_push(buf, JIT_DEPTH);               /* depth -> [rsp+8] after the next push */
+    emit_mov_imm64(buf, REG_RAX, argc);
+    emit_push(buf, REG_RAX);                 /* argc -> [rsp+0] */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_imm64(buf, REG_RDX, owner_index);
+    emit_mov_imm64(buf, REG_RCX, name);
+    emit_mov_rr(buf, REG_R8, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_R9, base);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_super_call);
+    emit_add_rsp_imm32(buf, 32); /* reclaim the 4 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -722,6 +867,19 @@ static void compile_body(JitCompiler *jc) {
             case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT:
             case DIAMOND_OP_LESS_INT: {
+                /* Phase 2d: these opcodes' own bailout paths (overflow,
+                 * division by zero, INT64_MIN/-1, non-INT operand) have no
+                 * real DiamondVmStatus to hand back -- they need the
+                 * interpreter's own bignum-promotion/raise logic, not just
+                 * a status to propagate. Once a call has already run
+                 * (jc->has_called), bailing here can only mean "discard
+                 * and retry," which is no longer safe (see jc->has_called's
+                 * own comment) -- so a function containing one of these
+                 * opcodes after a call is rejected outright at compile
+                 * time, the same structural treatment as any unsupported
+                 * opcode. Confirmed harmless for skindicate's real
+                 * User#initialize: it contains no arithmetic at all. */
+                if (jc->has_called) { jc->bailed = true; return; }
                 uint16_t dest = 0, left = 0, right = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
                     !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
@@ -776,6 +934,22 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
                 compile_index_get(jc, dest, recv, index);
+                break;
+            }
+            case DIAMOND_OP_HASH: {
+                uint16_t dest = 0, base = 0, count = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u16(fn, &pc, &count)) { jc->bailed = true; return; }
+                compile_new_hash(jc, dest, base, count);
+                break;
+            }
+            case DIAMOND_OP_SUPER: {
+                uint16_t dest = 0, name = 0, base = 0;
+                uint8_t owner_index = 0, argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &owner_index) ||
+                    !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
+                compile_super_call(jc, dest, owner_index, name, base, argc);
                 break;
             }
             case DIAMOND_OP_JUMP: {
@@ -848,7 +1022,7 @@ static void compile_body(JitCompiler *jc) {
                 emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
                 emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
                 emit_epilogue(jc);
-                emit_mov_al_imm8(buf, 1);
+                emit_mov_al_imm8(buf, DIAMOND_VM_OK);
                 emit_ret(buf);
                 break;
             }
@@ -893,7 +1067,17 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
      * jc.bailed and jc.bytecode_to_native (rewritten with dry-run-only
      * placeholder offsets) need resetting before the real pass; jc.
      * needs_frame is left as-is, since the real pass can only ever
-     * (redundantly, consistently) set it again, never clear it. */
+     * (redundantly, consistently) set it again, never clear it. jc.
+     * has_called (Phase 2d) is left as-is for the same reason -- and even
+     * though this means a bail site *before* the real pass's own SUPER
+     * opcode could see has_called already true (from the dry run) and
+     * choose the "propagate" stub where "retry" would otherwise apply,
+     * that's still correct, not just harmless: every status-bearing bail
+     * this JIT compiles is a deterministic function of state the
+     * interpreter would see identically on a retry, so "propagate the
+     * status directly" and "retry, which independently reaches the exact
+     * same status" are observably identical outcomes -- propagating is
+     * just strictly cheaper (skips a redundant full re-interpretation). */
     jc.bailed = false;
     jc.buf.dry_run = false;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
@@ -901,24 +1085,27 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
         jc.frame_reserve_bytes = (diamond_jit_frame_size() + 15) & ~(size_t)15;
     }
 
-    /* Prologue: save the 5 persistent registers, then load them from the
-     * incoming (vm, registers, result, argument_count, chunk) arguments
-     * (RDI, RSI, RDX, RCX, R8 per SysV). An odd number of pushes (5)
-     * flips RSP's mod-16 parity an odd number of times from entry
-     * (RSP%16==8), landing on 0 -- correctly aligned for the ABI's
-     * pre-call requirement every trampoline call needs, no padding (the
-     * frame reservation just below is itself rounded up to a multiple of
-     * 16, so it doesn't disturb this either). */
+    /* Prologue: save the 6 persistent registers, then load them from the
+     * incoming (vm, registers, result, argument_count, chunk, depth)
+     * arguments (RDI, RSI, RDX, RCX, R8, R9 per SysV). Unlike Phase 2c's
+     * 5 registers (odd, self-aligning), 6 is even, so an explicit 8-byte
+     * pad is needed to land back on RSP%16==0 -- correctly aligned for
+     * the ABI's pre-call requirement every trampoline call needs (the
+     * frame reservation further below is itself rounded up to a multiple
+     * of 16, so it doesn't disturb this once established). */
     emit_push(&jc.buf, JIT_REGISTERS_BASE);
     emit_push(&jc.buf, JIT_VM);
     emit_push(&jc.buf, JIT_RESULT_PTR);
     emit_push(&jc.buf, JIT_ARGUMENT_COUNT);
     emit_push(&jc.buf, JIT_CHUNK);
+    emit_push(&jc.buf, JIT_DEPTH);
+    emit_sub_rsp_imm32(&jc.buf, 8);
     emit_mov_rr(&jc.buf, JIT_VM, REG_RDI);
     emit_mov_rr(&jc.buf, JIT_REGISTERS_BASE, REG_RSI);
     emit_mov_rr(&jc.buf, JIT_RESULT_PTR, REG_RDX);
     emit_mov_rr(&jc.buf, JIT_ARGUMENT_COUNT, REG_RCX);
     emit_mov_rr(&jc.buf, JIT_CHUNK, REG_R8);
+    emit_mov_rr(&jc.buf, JIT_DEPTH, REG_R9);
 
     if (jc.needs_frame) {
         emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
@@ -936,14 +1123,28 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
 
     void *result = nullptr;
     if (!jc.bailed && !jc.buf.failed) {
-        size_t bailout_offset = jc.buf.length;
+        size_t retry_offset = jc.buf.length;
         emit_epilogue(&jc);
-        emit_mov_al_imm8(&jc.buf, 0);
+        emit_mov_al_imm8(&jc.buf, DIAMOND_JIT_RETRY);
+        emit_ret(&jc.buf);
+        /* Phase 2d: the "propagate" stub only exists (and is only ever a
+         * patch target) for a function that actually contains a call --
+         * jc.has_called implies jc.needs_frame (see compile_super_call),
+         * so emit_epilogue_propagate's own frame-pop is always valid here
+         * when reached. Emitted unconditionally rather than gated on
+         * jc.has_called purely because a handful of always-dead bytes in
+         * every OTHER compiled function's own buffer costs nothing
+         * functionally and keeps this code simpler than conditionally
+         * tracking whether the sentinel was ever actually used. */
+        size_t propagate_offset = jc.buf.length;
+        emit_epilogue_propagate(&jc);
         emit_ret(&jc.buf);
 
         for (size_t i = 0; i < jc.patch_count && !jc.buf.failed; i++) {
-            size_t target_native = jc.patches[i].bytecode_target == BAILOUT_SENTINEL
-                ? bailout_offset
+            size_t target_native = jc.patches[i].bytecode_target == BAILOUT_RETRY_SENTINEL
+                ? retry_offset
+                : jc.patches[i].bytecode_target == BAILOUT_PROPAGATE_SENTINEL
+                    ? propagate_offset
                 : jc.patches[i].bytecode_target < function->code_count
                     ? jc.bytecode_to_native[jc.patches[i].bytecode_target]
                     : SIZE_MAX;

@@ -39,6 +39,19 @@
  * function compiled under Phase 2/2b (arithmetic, Hash-read/ivar-write
  * with a non-literal key, ...) keeps paying nothing for a mechanism it
  * doesn't need -- see jit.c's own diamond_jit_try_compile for exactly how.
+ *
+ * Phase 2d adds the first opcode that can run arbitrary interpreted
+ * Diamond code with real, externally-visible side effects: SUPER (plus
+ * HASH, needed for a `= {}` default argument, and a fix to EQUAL/NOT_EQUAL
+ * so they never need to bail at all -- see jit.c's own compile_equal_op
+ * comment). This breaks the invariant every prior phase relied on --
+ * "any bailout is safe to handle by discarding the whole attempt and
+ * re-running the entire function from scratch" -- since SUPER's callee can
+ * raise a genuine exception, and if SUPER already succeeded before a
+ * *later* opcode bails, restarting the whole function would invoke it a
+ * second time. See DiamondJitFn's own updated comment below for how this
+ * is resolved (a 3-way return convention) without needing full on-stack
+ * replacement.
  */
 
 /* Duplicates vm.c's own file-local DIAMOND_INLINE_REGISTER_COUNT (not
@@ -51,34 +64,71 @@
  * broadly than it needs to be. */
 enum { DIAMOND_JIT_MAX_REGISTERS = 256 };
 
-/* bool(DiamondVm *vm, DiamondValue *registers, DiamondValue *result,
- * size_t argument_count, const DiamondChunk *chunk) -- `registers` is a
- * zeroed, argument-populated array exactly like run_chunk's own callee
- * registers (see run_chunk's own entry setup in vm.c for the shape this
- * mirrors); `vm` and `chunk` are threaded through purely so generated code
- * can pass them to a trampoline call (SET_IVAR/INDEX_GET/CHECK_TYPE),
- * never dereferenced by generated code itself -- `chunk` specifically is
- * the same DiamondChunk view the interpreter itself would have built for
- * this exact call (see both jit_call_or_interpret call sites in vm.c),
- * needed because a type set index is only meaningful relative to it.
- * `argument_count` is the caller's own raw count (registers[] alone can't
- * answer DIAMOND_OP_ARGUMENT_PROVIDED's "was this parameter actually
- * supplied" question -- a defaulted-and-unsupplied parameter and an
- * explicitly-nil one are indistinguishable in registers[] alone). Known,
- * accepted gap: this doesn't account for DIAMOND_VALUE_UNDEFINED sparse-
- * keyword-call gaps (registers[] never receives an UNDEFINED slot at all,
- * only the interpreter's own `arguments[]` would show one) -- fine for
- * every call site this JIT is wired into today (DIAMOND_OP_CALL, plain
+/* Phase 2d: the sentinel DiamondJitFn returns to mean "discard this
+ * attempt, fall back to run_chunk" -- every value that isn't this AND
+ * isn't DIAMOND_VM_OK is a real DiamondVmStatus to propagate directly
+ * (see DiamondJitFn's own comment below). 0xFF, guarded by the
+ * static_assert immediately below against DiamondVmStatus's own last
+ * member so it can never collide with a genuine status as the enum
+ * grows. */
+enum { DIAMOND_JIT_RETRY = 0xFF };
+static_assert((unsigned)DIAMOND_VM_SANDBOX_ERROR < (unsigned)DIAMOND_JIT_RETRY,
+        "DiamondVmStatus has grown into DIAMOND_JIT_RETRY's reserved sentinel value");
+
+/* uint8_t(DiamondVm *vm, DiamondValue *registers, DiamondValue *result,
+ * size_t argument_count, const DiamondChunk *chunk, size_t depth) --
+ * `registers` is a zeroed, argument-populated array exactly like
+ * run_chunk's own callee registers (see run_chunk's own entry setup in
+ * vm.c for the shape this mirrors); `vm` and `chunk` are threaded through
+ * purely so generated code can pass them to a trampoline call (SET_IVAR/
+ * INDEX_GET/CHECK_TYPE/STRING/HASH/SUPER), never dereferenced by
+ * generated code itself -- `chunk` specifically is the same DiamondChunk
+ * view the interpreter itself would have built for this exact call (see
+ * both jit_call_or_interpret call sites in vm.c), needed because a type
+ * set index (or, since Phase 2d, a SUPER call's own owner-class/method-
+ * name indices) is only meaningful relative to it. `argument_count` is
+ * the caller's own raw count (registers[] alone can't answer DIAMOND_OP_
+ * ARGUMENT_PROVIDED's "was this parameter actually supplied" question --
+ * a defaulted-and-unsupplied parameter and an explicitly-nil one are
+ * indistinguishable in registers[] alone). `depth` (Phase 2d) is this
+ * call's own logical depth, exactly the value that would have been passed
+ * to run_chunk had this call not been compiled -- needed so a SUPER call
+ * made from *inside* generated code can pass it on to invoke_resolved_
+ * method_helper unchanged, keeping DIAMOND_MAX_CALL_DEPTH enforced
+ * end-to-end even across a chain of calls that happen to all be compiled
+ * (see jit_call_or_interpret's own depth check in vm.c, which is where
+ * the actual limit is enforced -- generated code never checks it itself).
+ * Known, accepted gap: this doesn't account for DIAMOND_VALUE_UNDEFINED
+ * sparse-keyword-call gaps (registers[] never receives an UNDEFINED slot
+ * at all, only the interpreter's own `arguments[]` would show one) -- fine
+ * for every call site this JIT is wired into today (DIAMOND_OP_CALL, plain
  * positional NEW/SUPER/INVOKE_TYPED dispatch via invoke_resolved_method_
  * helper), none of which are keyword calls; would need revisiting before
- * ever wiring a keyword-call site to this dispatch path. Returns true and
- * writes *result on a normal RETURN reached with no exceptional
- * condition; returns false (leaving *result untouched) the moment any
- * bailout condition above is hit -- the caller must then fall back to
- * run_chunk for a fully correct interpreted execution of the same
- * function. */
-typedef bool (*DiamondJitFn)(DiamondVm *vm, DiamondValue *registers,
-        DiamondValue *result, size_t argument_count, const DiamondChunk *chunk);
+ * ever wiring a keyword-call site to this dispatch path.
+ *
+ * Returns one of three things (Phase 2d changed this from a plain bool):
+ *   DIAMOND_VM_OK (0)   -- success, *result holds the real return value.
+ *   DIAMOND_JIT_RETRY   -- discard this attempt; the caller must fall
+ *                          back to run_chunk for a fully correct
+ *                          interpreted execution of the same function
+ *                          from scratch. Safe exactly when nothing with
+ *                          an externally-visible side effect has already
+ *                          run on this attempt -- true for every bailout
+ *                          in Phases 2/2b/2c, and for any bailout in a
+ *                          Phase 2d function *before* its first SUPER call
+ *                          (see jit.c's own jc->has_called).
+ *   anything else        -- a real DiamondVmStatus (most notably
+ *                          DIAMOND_VM_EXCEPTION) to return to the caller
+ *                          of jit_call_or_interpret exactly as-is; *result
+ *                          is NOT written and must not be read. This
+ *                          happens once a SUPER call has already run in
+ *                          this same attempt -- re-running the whole
+ *                          function via run_chunk would invoke it again,
+ *                          so every bail site from that point onward
+ *                          propagates directly instead. */
+typedef uint8_t (*DiamondJitFn)(DiamondVm *vm, DiamondValue *registers,
+        DiamondValue *result, size_t argument_count, const DiamondChunk *chunk,
+        size_t depth);
 
 /* Attempts to compile `function` to native code. Returns a callable
  * DiamondJitFn on success (and writes the mmap'd region's size to
@@ -161,5 +211,37 @@ void diamond_jit_frame_pop(DiamondVm *vm);
  * via the pair above before calling it. */
 DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
         uint16_t string_index, DiamondValue *out);
+
+/* Phase 2d. JIT trampoline for DIAMOND_OP_HASH -- also allocates
+ * (allocate_hash also calls maybe_collect unconditionally), needed for a
+ * `= {}` default argument's own construction. `base`/`count` are the same
+ * compile-time-known bytecode operands DIAMOND_OP_HASH's own interpreter
+ * case reads; the whole key/value-pair loop lives in this trampoline
+ * rather than generated code. */
+DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out);
+
+/* Phase 2d. JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case
+ * (mismatched primitive kinds, or FLOAT/OBJECT operands) -- values_equal
+ * is pure and always succeeds (no DiamondVmStatus, no `vm` needed), so
+ * unlike every other trampoline here this one never needs a bailout check
+ * at its call site. */
+bool diamond_jit_values_equal(const DiamondValue *left, const DiamondValue *right);
+
+/* Phase 2d. JIT trampoline for DIAMOND_OP_SUPER -- extracted from that
+ * opcode's own interpreter case (src/vm.c) so the two share one
+ * implementation. Unlike every trampoline above, this one's own failure
+ * can be a genuine, already-happened outcome (most notably
+ * DIAMOND_VM_EXCEPTION, an uncaught exception raised somewhere inside the
+ * superclass method this invokes) rather than an internal condition safe
+ * to retry -- see DiamondJitFn's own comment above for how the compiled
+ * caller must treat that. `registers`/`base`/`argc` mirror
+ * DIAMOND_OP_SUPER's own operands exactly (self is always registers[0]);
+ * `depth` is threaded through so the arbitrarily-deep call chain this can
+ * start still respects DIAMOND_MAX_CALL_DEPTH (enforced in jit_call_or_
+ * interpret, not here). */
+DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
+        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out);
 
 #endif

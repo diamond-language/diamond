@@ -212,8 +212,8 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
                 vm.inline_cache_hits,vm.inline_cache_misses);
     }
     if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
-        fprintf(stderr,"jit: %zu compiled function(s), %zu bailout(s)\n",
-                vm.jit_compiled_functions,vm.jit_bailouts);
+        fprintf(stderr,"jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
+                vm.jit_compiled_functions,vm.jit_bailouts,vm.jit_hard_propagations);
     }
     if (getenv("DIAMOND_TRACE_IC_SITES") != nullptr) {
         for (size_t index=0;index<DIAMOND_INLINE_CACHE_COUNT;index++) {
