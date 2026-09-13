@@ -549,6 +549,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_JSON_ERROR,
     DIAMOND_CLASS_SUPERVISOR_ERROR,
     DIAMOND_CLASS_SANDBOX_ERROR,
+    DIAMOND_CLASS_RESOURCE_LIMIT_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -1026,6 +1027,18 @@ typedef enum DiamondVmStatus : uint8_t {
      * uses to raise this; vm->error already carries "sandbox denies X"
      * by the time this is returned. */
     DIAMOND_VM_SANDBOX_ERROR,
+    /* A configured DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS
+     * budget was exceeded -- see docs/sandbox.md's own "Resource limits"
+     * section. Checked in run_chunk's own dispatch loop, gated behind
+     * vm->resource_limits_active so there's no cost when neither is
+     * configured. A configured DIAMOND_MAX_MEMORY_BYTES budget is instead
+     * reported as DIAMOND_VM_OUT_OF_MEMORY -- but see exception_class_
+     * for_status's own comment (src/vm.c): unlike a genuine allocator
+     * failure (deliberately uncatchable), that specific case is also
+     * matched to this same DIAMOND_CLASS_RESOURCE_LIMIT_ERROR when vm->
+     * memory_limit_tripped is set, so all three budget kinds end up
+     * uniformly catchable as ResourceLimitError from Diamond code. */
+    DIAMOND_VM_RESOURCE_LIMIT_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -1342,6 +1355,52 @@ struct DiamondVm {
      * debugger_helper instead writes a Content-Length-framed JSON pause
      * payload to and blocks reading one framed command back from. */
     int debug_fd;
+    /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
+     * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS/DIAMOND_MAX_
+     * MEMORY_BYTES, read once here by diamond_vm_init exactly like debug_fd
+     * just above, for the same reason: every VM (top-level, a spawned
+     * Thread's own child_vm, a Supervisor child's per-attempt run_vm,
+     * ProgramBuilder#run's own run_vm) independently reads the same real
+     * process environment at its own init, so a configured budget applies
+     * uniformly with nothing to propagate -- but each VM's own counters
+     * below are its own, not shared, so a program that spawns many threads
+     * gets one independent budget *per thread*, not one shared total (a
+     * real, documented limitation, not a bug -- see docs/sandbox.md).
+     * 0 means unlimited for all three, matching this codebase's own
+     * "0/absent means off" convention elsewhere (quickening_threshold,
+     * minor_gc_threshold_bytes, etc. all use a real, deliberately-nonzero
+     * default instead specifically where 0 would be a valid budget). */
+    size_t max_instructions;
+    int64_t max_wall_nanoseconds;
+    size_t max_memory_bytes;
+    /* Runtime state for the two above -- instructions_executed increments
+     * once per opcode dispatch in run_chunk's own loop (only when
+     * resource_limits_active), start_time_ns is set once in diamond_vm_
+     * init (only when max_wall_nanoseconds != 0) via a monotonic clock, so
+     * the wall-clock check has a fixed baseline for this VM's own
+     * lifetime. resource_limits_active is precomputed once (max_
+     * instructions != 0 || max_wall_nanoseconds != 0) so the per-opcode
+     * check is a single cheap boolean read when neither is configured --
+     * max_memory_bytes doesn't need a flag of its own, since maybe_collect
+     * (already called before every allocation) checks it directly. */
+    size_t instructions_executed;
+    int64_t start_time_ns;
+    bool resource_limits_active;
+    /* Set once, by maybe_collect (src/vm.c), the first time a configured
+     * DIAMOND_MAX_MEMORY_BYTES budget is actually exceeded -- lets
+     * exception_class_for_status tell "the OOM this program is seeing was
+     * my own configured budget" apart from a genuine host allocator
+     * failure, so only the former becomes catchable as ResourceLimitError
+     * (see that function's own comment for why genuine DIAMOND_VM_OUT_OF_
+     * MEMORY deliberately stays uncatchable -- this flag doesn't change
+     * that at all, it only ever adds a match for this specific, narrower
+     * case). Sticky for the rest of this VM's lifetime once set -- there's
+     * no scenario where a later, unrelated genuine OOM on the same VM
+     * should stop being attributable to "the budget was already exceeded
+     * once," since maybe_collect's own budget check (now permanently
+     * disabled once tripped, see its own comment) can never be the reason
+     * for a later failure anyway. */
+    bool memory_limit_tripped;
     /* Extra GC roots beyond every field mark_roots (src/vm.c) already
      * walks -- null/0 (its zero-init default) for every ordinary VM.
      * The one user is a Channel's own private DiamondVm (see docs/
@@ -1367,8 +1426,10 @@ void diamond_vm_collect_minor(DiamondVm *vm);
  * actually allocating (src/vm.c) -- declared here, not static, so
  * src/bignum.c's own bignum_alloc (a separate translation unit) can
  * share it too, instead of keeping a second copy of the same check out
- * of sync. */
-void maybe_collect(DiamondVm *vm);
+ * of sync. Returns false once a configured DIAMOND_MAX_MEMORY_BYTES
+ * budget is still exceeded after collecting -- every caller must check
+ * this and bail out (its own OOM path) rather than allocate anyway. */
+bool maybe_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue);
 void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv);

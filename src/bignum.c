@@ -196,7 +196,7 @@ static bool magnitude_to_int64(const uint32_t *limbs, size_t count,
 
 static DiamondBignum *bignum_alloc(DiamondVm *vm, bool negative,
                                    const uint32_t *limbs, size_t limb_count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondBignum *bignum =
         malloc(sizeof(DiamondBignum) + limb_count * sizeof(uint32_t));
     if (bignum == nullptr) return nullptr;

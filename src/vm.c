@@ -168,6 +168,17 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
 enum { DIAMOND_MAX_CALL_DEPTH = 95 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
+/* How often run_chunk's own dispatch loop actually calls clock_gettime to
+ * check a configured DIAMOND_MAX_WALL_MILLISECONDS budget (docs/sandbox.md's
+ * own "Resource limits" section) -- masked against vm->instructions_executed
+ * rather than checked every dispatch, since the clock read itself (unlike
+ * the instruction-count comparison right next to it) is real, non-trivial
+ * cost. Bounds the worst-case overshoot past the configured budget to
+ * "however long this many opcodes take," negligible next to any
+ * millisecond-scale budget someone would actually configure. Must be a
+ * power of two minus one for the `&` mask below to work. */
+enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
+
 /* Card size for the generational GC's Array/Hash write barrier -- see
  * mark_card_dirty's own comment (below, near gc_write_barrier) for why
  * only these two kinds need index-granularity remembering. Declared
@@ -1102,12 +1113,42 @@ void diamond_vm_collect_minor(DiamondVm *vm) {
  * of needing to touch all 23 call sites again -- and now that place.
  * Minor checked first (cheaper, fires far more often); major checked
  * unconditionally after, in case a lot of the nursery just got promoted
- * and total live bytes are already past next_gc too. */
-void maybe_collect(DiamondVm *vm) {
+ * and total live bytes are already past next_gc too.
+ *
+ * Also the one place a configured DIAMOND_MAX_MEMORY_BYTES budget
+ * (docs/sandbox.md's own "Resource limits" section) is enforced -- exactly
+ * this comment's own "exactly one place to be added" reasoning, extended
+ * to a second kind of limit. Returns false (checked after both collection
+ * passes above already ran, giving them a real chance to free memory
+ * first) once live bytes are still over budget; every one of this
+ * function's own callers already has a `return nullptr`/`return false`
+ * OOM path one line below its own `malloc`/`calloc` check, and reuses that
+ * exact path here rather than a new error shape -- see this status's own
+ * comment in vm.h for why this deliberately reuses DIAMOND_VM_OUT_OF_
+ * MEMORY rather than a new status.
+ *
+ * Clears max_memory_bytes (disabling this check for the rest of the VM's
+ * lifetime) the *first* time it actually fires, for the same reason
+ * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS clear themselves
+ * in run_chunk's own dispatch loop: catch_runtime_error's own path to
+ * report this failure as a real, rescuable OutOfMemoryError itself calls
+ * allocate_instance/allocate_string, which would call straight back into
+ * this same function -- if bytes_allocated is still (deliberately) over
+ * budget, leaving the check armed would make it return false again there
+ * too, making the exception impossible to ever construct, let alone
+ * rescue. Once the budget has genuinely been exceeded once, further
+ * allocation needed just to report and unwind that fact is let through. */
+bool maybe_collect(DiamondVm *vm) {
     if(vm->stress_minor_gc||
        vm->bytes_allocated-vm->bytes_allocated_at_last_minor_gc>=vm->minor_gc_threshold_bytes)
         diamond_vm_collect_minor(vm);
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes) {
+        vm->max_memory_bytes=0;
+        vm->memory_limit_tripped=true;
+        return false;
+    }
+    return true;
 }
 
 /* mysql_init() -- called per-connection from MySQL.open's dispatch --
@@ -1137,6 +1178,43 @@ void diamond_vm_init(DiamondVm *vm) {
     if(debug_fd_env!=nullptr) {
         const long parsed=strtol(debug_fd_env,nullptr,10);
         if(parsed>=0&&parsed<=INT_MAX)vm->debug_fd=(int)parsed;
+    }
+    /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
+     * DiamondVm.max_instructions/max_wall_nanoseconds/max_memory_bytes's
+     * own comment (src/vm.h) explains why this is read once per VM here
+     * rather than a process-wide cache: every VM (this one, a spawned
+     * Thread's child_vm, a Supervisor child's run_vm, ProgramBuilder#run's
+     * own run_vm) independently reads the same real process environment
+     * at its own init, matching DIAMOND_SANDBOX's own propagation-free
+     * design. An unparseable, zero, or negative value is treated the same
+     * as unset (no limit), matching debug_fd's own convention just above. */
+    const char *max_instructions_env=getenv("DIAMOND_MAX_INSTRUCTIONS");
+    if(max_instructions_env!=nullptr&&max_instructions_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_instructions_env,&end,10);
+        if(end!=max_instructions_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->max_instructions=(size_t)parsed;
+    }
+    const char *max_wall_env=getenv("DIAMOND_MAX_WALL_MILLISECONDS");
+    if(max_wall_env!=nullptr&&max_wall_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_wall_env,&end,10);
+        if(end!=max_wall_env&&*end=='\0'&&parsed>0&&
+           parsed<=(unsigned long long)INT64_MAX/1000000ULL)
+            vm->max_wall_nanoseconds=(int64_t)parsed*1000000LL;
+    }
+    const char *max_memory_env=getenv("DIAMOND_MAX_MEMORY_BYTES");
+    if(max_memory_env!=nullptr&&max_memory_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_memory_env,&end,10);
+        if(end!=max_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->max_memory_bytes=(size_t)parsed;
+    }
+    vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0;
+    if(vm->max_wall_nanoseconds!=0) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC,&now);
+        vm->start_time_ns=(int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
     }
     pthread_once(&mysql_library_init_once,mysql_library_init_once_fn);
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
@@ -1575,7 +1653,7 @@ DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue) {
 
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondString *string = malloc(sizeof(DiamondString) + length + 1);
     if (string == nullptr) return nullptr;
     string->object = (DiamondObject){
@@ -1592,7 +1670,7 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
 
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSymbol *symbol = malloc(sizeof(DiamondSymbol) + length + 1);
     if (symbol == nullptr) return nullptr;
     symbol->object = (DiamondObject){
@@ -1609,7 +1687,7 @@ static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
 
 static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
                                           const DiamondChunk *chunk) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_INSTANCE};
@@ -1621,7 +1699,7 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
 
 static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
                                     size_t count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
     DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
@@ -1643,7 +1721,7 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
  * overflow either multiplication on a real -- if rare -- input rather
  * than just producing a huge-but-correct allocation request. */
 static DiamondTensor *allocate_tensor(DiamondVm *vm,size_t rows,size_t cols) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     if(rows!=0&&cols>SIZE_MAX/rows)return nullptr;
     const size_t element_count=rows*cols;
     if(element_count!=0&&sizeof(double)>SIZE_MAX/element_count)return nullptr;
@@ -2033,7 +2111,7 @@ static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tenso
 }
 
 static DiamondHash *allocate_hash(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_HASH}};
     vm->young_objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
@@ -2101,7 +2179,7 @@ void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv) {
 
 static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
     *closure=(DiamondClosure){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CLOSURE},
       .function_index=function_index,.capture_count=(uint8_t)count};
@@ -2110,14 +2188,14 @@ static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
 }
 
 static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
     *cell=(DiamondCell){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
     vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
 static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
@@ -2248,7 +2326,7 @@ static void *thread_entry_trampoline(void *argument) {
 }
 
 static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondThreadHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
@@ -2286,7 +2364,7 @@ static void free_thread(DiamondThread *thread) {
 }
 
 static DiamondChannelHandle *allocate_channel_handle(DiamondVm *vm,DiamondChannel *channel) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondChannelHandle *handle=malloc(sizeof(DiamondChannelHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondChannelHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CHANNEL},
@@ -2441,7 +2519,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
 
 static DiamondSupervisorHandle *allocate_supervisor_handle(DiamondVm *vm,
         DiamondSupervisor *supervisor) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSupervisorHandle *handle=malloc(sizeof(DiamondSupervisorHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSupervisorHandle){
@@ -2503,7 +2581,7 @@ static void free_supervisor_reference(DiamondSupervisor *supervisor) {
 }
 
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondFileHandle *handle=malloc(sizeof(DiamondFileHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFileHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
@@ -2511,7 +2589,7 @@ static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
 
 static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
         bool nonblocking) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondListenerHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_LISTENER},
@@ -2520,7 +2598,7 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
 }
 
 static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSocketHandle *handle=malloc(sizeof(DiamondSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSocketHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
@@ -2528,7 +2606,7 @@ static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
 }
 
 static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondUdpSocketHandle *handle=malloc(sizeof(DiamondUdpSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondUdpSocketHandle){
@@ -2537,7 +2615,7 @@ static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) 
 }
 
 static DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondTlsSocketHandle *handle=malloc(sizeof(DiamondTlsSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondTlsSocketHandle){
@@ -3352,7 +3430,7 @@ static bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
 }
 
 static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
     if(regexp==nullptr)return nullptr;
     *regexp=(DiamondRegexp){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_REGEXP},
@@ -3361,7 +3439,7 @@ static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compi
 }
 
 static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSqlite3Handle *handle=malloc(sizeof(DiamondSqlite3Handle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3Handle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SQLITE3},
@@ -3371,7 +3449,7 @@ static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) 
 
 static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
         DiamondVm *vm,sqlite3_stmt *stmt) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSqlite3StatementHandle *handle=malloc(sizeof(DiamondSqlite3StatementHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3StatementHandle){
@@ -3382,7 +3460,7 @@ static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
 }
 
 static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondPostgresHandle *handle=malloc(sizeof(DiamondPostgresHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondPostgresHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_POSTGRES},
@@ -3391,7 +3469,7 @@ static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *con
 }
 
 static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondMysqlHandle *handle=malloc(sizeof(DiamondMysqlHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondMysqlHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_MYSQL},
@@ -3403,7 +3481,7 @@ enum { DIAMOND_TIME_LOCAL,DIAMOND_TIME_UTC,DIAMOND_TIME_FIXED_OFFSET };
 
 static DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode,
         int32_t utc_offset) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondTime *time=malloc(sizeof(DiamondTime));
     if(time==nullptr)return nullptr;
     *time=(DiamondTime){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_TIME},
@@ -3418,7 +3496,7 @@ static DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode,
  * draining a child process means several further allocations (the two
  * captured-output Strings) that can each trigger a GC. */
 static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessResult *result=malloc(sizeof(DiamondProcessResult));
     if(result==nullptr)return nullptr;
     *result=(DiamondProcessResult){
@@ -3430,7 +3508,7 @@ static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
 }
 
 static DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessStream *stream=malloc(sizeof(DiamondProcessStream));
     if(stream==nullptr)return nullptr;
     *stream=(DiamondProcessStream){
@@ -3449,7 +3527,7 @@ static DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd) {
  * allocated, for the same reason process_run_helper's stdout_value/
  * stderr_value writes need them. */
 static DiamondProcessHandle *allocate_process_handle(DiamondVm *vm,pid_t pid) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessHandle *handle=malloc(sizeof(DiamondProcessHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondProcessHandle){
@@ -3775,7 +3853,7 @@ static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *t
 /* Account for the program container here; dynamically added function records
  * are accounted for by ProgramBuilder#declare_function. */
 static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
     /* _fresh, not diamond_program_init: `built` is freshly calloc'd right
@@ -4463,7 +4541,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         case DIAMOND_OBJECT_BIGNUM: {
             const DiamondBignum *source=(const DiamondBignum *)value.as.object;
-            maybe_collect(dest_vm);
+            if (!maybe_collect(dest_vm)) return false;
             const size_t size=
                 sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
             DiamondBignum *copy=malloc(size);
@@ -8581,7 +8659,24 @@ static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
     return false;
 }
 
-static uint8_t exception_class_for_status(DiamondVmStatus status) {
+/* DIAMOND_VM_OUT_OF_MEMORY deliberately has no case below (falls to
+ * `default: return UINT8_MAX`, meaning it can never match any rescue
+ * clause) -- a genuine host allocator failure is treated as unrecoverable
+ * by design: the collector has already tried and failed to free anything,
+ * and running more Diamond code to handle it (which itself needs to
+ * allocate, starting with the exception instance this function's own
+ * caller constructs) risks cascading rather than actually recovering.
+ * The one exception (so to speak): vm->memory_limit_tripped is set only
+ * by maybe_collect's own configured-budget check (src/vm.c, "Resource
+ * limits" section), never by a real malloc/calloc/realloc failure --
+ * when it's set, THIS specific OOM is known to be an artificial, self-
+ * imposed cap with plenty of real host memory still available, not a
+ * genuine crisis, so it's surfaced as the same catchable ResourceLimitError
+ * instruction-count/wall-clock budgets already use, rather than silently
+ * reusing the uncatchable path a real OOM deliberately takes. */
+static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus status) {
+    if(status==DIAMOND_VM_OUT_OF_MEMORY)
+        return vm->memory_limit_tripped?DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:UINT8_MAX;
     switch(status) {
         case DIAMOND_VM_TYPE_ERROR: return DIAMOND_CLASS_TYPE_ERROR;
         case DIAMOND_VM_INTEGER_OVERFLOW: return DIAMOND_CLASS_RANGE_ERROR;
@@ -8603,6 +8698,7 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_JSON_ERROR: return DIAMOND_CLASS_JSON_ERROR;
         case DIAMOND_VM_SUPERVISOR_ERROR: return DIAMOND_CLASS_SUPERVISOR_ERROR;
         case DIAMOND_VM_SANDBOX_ERROR: return DIAMOND_CLASS_SANDBOX_ERROR;
+        case DIAMOND_VM_RESOURCE_LIMIT_ERROR: return DIAMOND_CLASS_RESOURCE_LIMIT_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -8611,7 +8707,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
                                 DiamondVmStatus status,UnwindHandler *handlers,
                                 size_t *handler_count,PendingUnwind *pending,
                                 DiamondValue *registers,size_t *ip) {
-    const uint8_t class_index=exception_class_for_status(status);
+    const uint8_t class_index=exception_class_for_status(vm,status);
     if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
     char message[sizeof vm->error];
     (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
@@ -14062,6 +14158,54 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         READ_BYTE(instruction);
         if (instruction < DIAMOND_OP_COUNT)
             vm->opcode_counts[instruction]++;
+        /* Cheap steady-state cost (one boolean read, false unless either
+         * DIAMOND_MAX_INSTRUCTIONS or DIAMOND_MAX_WALL_MILLISECONDS is
+         * configured) for docs/sandbox.md's own "Resource limits" --
+         * same shape as diamond_any_signal_pending's own check just above.
+         * The instruction-count comparison itself is cheap enough to run
+         * every dispatch when active; the wall-clock check is additionally
+         * masked (see DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK's own
+         * comment) since clock_gettime is the genuinely non-trivial part.
+         *
+         * Both branches clear resource_limits_active (and the two budgets
+         * themselves) *before* VM_RETURN -- unlike DIAMOND_MAX_CALL_DEPTH,
+         * whose own `depth` parameter naturally shrinks as the call stack
+         * unwinds (so a rescue clause in a shallower, already-returned-to
+         * frame never re-trips it), instructions_executed only ever grows
+         * and elapsed wall-clock time only ever increases: leaving either
+         * budget "armed" after it first fires would re-trip this exact
+         * check on the *very next* instruction dispatched -- including
+         * every instruction needed to run a matching `rescue`/`ensure`
+         * clause's own body -- so a program that correctly catches
+         * ResourceLimitError could still never finish handling it. Once
+         * either budget has genuinely been exceeded once, the VM has
+         * already committed to reporting that outcome; letting the
+         * program's own exception handling run to a normal conclusion
+         * afterward (with no further limit interference) is the whole
+         * point of it being a catchable exception rather than an abrupt
+         * kill. */
+        if (vm->resource_limits_active) {
+            vm->instructions_executed++;
+            if (vm->max_instructions != 0 &&
+                vm->instructions_executed > vm->max_instructions) {
+                vm->max_instructions = 0;
+                vm->max_wall_nanoseconds = 0;
+                vm->resource_limits_active = false;
+                VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+            }
+            if (vm->max_wall_nanoseconds != 0 &&
+                (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                const int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
+                if (now_ns - vm->start_time_ns > vm->max_wall_nanoseconds) {
+                    vm->max_instructions = 0;
+                    vm->max_wall_nanoseconds = 0;
+                    vm->resource_limits_active = false;
+                    VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+                }
+            }
+        }
 
         switch ((DiamondOpCode)instruction) {
             case DIAMOND_OP_CONSTANT: {
@@ -21538,6 +21682,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "supervisor error";
         case DIAMOND_VM_SANDBOX_ERROR:
             return "sandbox error";
+        case DIAMOND_VM_RESOURCE_LIMIT_ERROR:
+            return "resource limit exceeded";
     }
     return "unknown VM status";
 }
