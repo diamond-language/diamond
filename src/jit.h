@@ -4,40 +4,41 @@
 #include "value.h"
 #include "vm.h"
 
-/* A minimal, narrowly-scoped baseline JIT -- Phases 2 and 2b of the plan
- * recorded in docs/internal/jit-design.md. Compiles functions built
+/* A minimal, narrowly-scoped baseline JIT -- Phases 2, 2b, and 2c of the
+ * plan recorded in docs/internal/jit-design.md. Compiles functions built
  * entirely from a small whitelist of arithmetic/control-flow/Hash-read/
- * ivar-write opcodes (see jit.c's diamond_jit_try_compile for the exact
- * list) straight to x86-64 machine code -- non-generic, non-variadic,
- * any arity (including instance methods, `self` just being register 0
- * like any other argument). Any function containing anything outside
- * that whitelist is never compiled at all -- there is no partial/mixed-
- * mode execution and no deopt needed for *unsupported opcodes*, only for
- * the runtime-exceptional cases within the supported ones (integer
- * overflow promoting to bignum, division by zero, INT64_MIN/-1, a
- * trampoline reporting anything but DIAMOND_VM_OK) that this JIT
- * deliberately doesn't handle inline: on any of those, the compiled
- * function returns false and the caller must fall back to the ordinary
- * run_chunk interpreter path, which remains fully correct and unmodified.
- * This is safe specifically BECAUSE the whitelist excludes anything with
- * an *uncontrolled* observable side effect (no arbitrary method calls, no
- * object construction, no raises) -- the only side effects possible
- * (an ivar write via the diamond_jit_set_ivar trampoline) happen through
- * a real, correct C function call, not hand-rolled machine code, and
+ * ivar-write/string-construction opcodes (see jit.c's diamond_jit_try_
+ * compile for the exact list) straight to x86-64 machine code --
+ * non-generic, non-variadic, any arity (including instance methods,
+ * `self` just being register 0 like any other argument). Any function
+ * containing anything outside that whitelist is never compiled at all --
+ * there is no partial/mixed-mode execution and no deopt needed for
+ * *unsupported opcodes*, only for the runtime-exceptional cases within the
+ * supported ones (integer overflow promoting to bignum, division by zero,
+ * INT64_MIN/-1, a trampoline reporting anything but DIAMOND_VM_OK) that
+ * this JIT deliberately doesn't handle inline: on any of those, the
+ * compiled function returns false and the caller must fall back to the
+ * ordinary run_chunk interpreter path, which remains fully correct and
+ * unmodified. This is safe specifically BECAUSE the whitelist excludes
+ * anything with an *uncontrolled* observable side effect (no arbitrary
+ * method calls, no object construction, no raises) -- every side effect
+ * that is possible (an ivar write, a string allocation) happens through a
+ * real, correct C function call, not hand-rolled machine code, and
  * re-running the whole function via the interpreter after a bailout is
  * indistinguishable from having never attempted the JIT at all.
  *
- * Because the whitelist still excludes every *allocating* opcode (NEW,
- * Hash/Array construction, arbitrary method calls that could themselves
- * allocate), a compiled function can never trigger a GC collection while
- * running -- there is no safepoint inside it at all (see jit.h's own
- * trampoline comments below for why SET_IVAR/INDEX_GET specifically don't
- * count). It therefore does not need to push a DiamondFrame or publish
- * live registers to the collector the way docs/internal/jit-design.md's
- * general frame contract requires; that contract becomes necessary
- * starting with whatever phase compiles NEW/arbitrary INVOKE, not this
- * one. Documented here explicitly so it reads as a deliberate, scoped
- * simplification, not an oversight.
+ * Phase 2c adds the first *allocating* opcode (STRING) and, with it, the
+ * real DiamondFrame/GC-root contract docs/internal/jit-design.md
+ * describes: a function that can allocate reserves stack space for an
+ * opaque DiamondFrame (see the diamond_jit_frame_* trampolines below) at
+ * entry and publishes it before doing anything that could trigger a
+ * collection, so mark_frame_chain can still find every live register the
+ * same way it already finds an interpreted frame's. This is decided per-
+ * function at compile time (a cheap pre-scan for any allocating opcode
+ * before the real compile pass) specifically so every allocation-free
+ * function compiled under Phase 2/2b (arithmetic, Hash-read/ivar-write
+ * with a non-literal key, ...) keeps paying nothing for a mechanism it
+ * doesn't need -- see jit.c's own diamond_jit_try_compile for exactly how.
  */
 
 /* Duplicates vm.c's own file-local DIAMOND_INLINE_REGISTER_COUNT (not
@@ -122,5 +123,43 @@ DiamondVmStatus diamond_jit_hash_get(const DiamondValue *receiver,
         const DiamondValue *key, DiamondValue *out);
 DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index);
+
+/* Phase 2c: opaque DiamondFrame management -- DiamondFrame's own layout is
+ * private to vm.c (not declared in vm.h), so a JIT'd function can never
+ * construct or link one directly; it only ever reserves
+ * diamond_jit_frame_size() bytes on its own native stack (queried once per
+ * *compile*, not per generated call, so this self-syncs against the
+ * struct's real layout instead of duplicating a hardcoded constant) and
+ * calls these two to manage it:
+ *
+ *   diamond_jit_frame_push(storage, vm, registers, register_count, chunk)
+ *     placement-constructs a frame into `storage` and links it onto
+ *     vm->frames, exactly like run_chunk's own entry setup -- called once,
+ *     in a compiled function's own prologue, before anything that can
+ *     allocate.
+ *   diamond_jit_frame_pop(vm)
+ *     unlinks it (vm->frames = vm->frames->previous) -- called once, on
+ *     every exit path (the success RETURN and the shared bailout stub),
+ *     mirroring run_chunk's own single pop on every return path.
+ *
+ * A JIT'd frame's `pending` is always nullptr (mark_frame_chain already
+ * treats that as "nothing to mark here," and this JIT compiles no begin/
+ * rescue, so nothing could ever populate it) and its `instruction_offset`
+ * points at a synthetic size_t (zero-initialized, reserved as part of the
+ * same storage block) rather than a real, advancing bytecode position --
+ * a backtrace captured through a JIT'd frame is therefore approximate,
+ * not exact, which is fine today since nothing this JIT calls through
+ * these trampolines can itself raise. */
+size_t diamond_jit_frame_size(void);
+void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk);
+void diamond_jit_frame_pop(DiamondVm *vm);
+
+/* JIT trampoline for DIAMOND_OP_STRING -- the first trampoline that CAN
+ * allocate (allocate_string calls maybe_collect unconditionally), so any
+ * function compiling this opcode must have already pushed a DiamondFrame
+ * via the pair above before calling it. */
+DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
+        uint16_t string_index, DiamondValue *out);
 
 #endif

@@ -55,6 +55,15 @@ typedef struct JitBuffer {
     size_t length;
     size_t capacity;
     bool failed; /* set on allocation failure; checked once at the end */
+    /* Phase 2c: when set, every emit_* call becomes a no-op (checked once,
+     * at the top of emit_u8, which everything else bottoms out through) --
+     * used for a cheap first pass that walks the exact same decode logic
+     * as a real compile purely to learn whether the function needs a
+     * DiamondFrame (see JitCompiler.needs_frame) before the real pass
+     * emits its own prologue, without a second, separately-maintained
+     * bytecode-width table that could drift out of sync with the real
+     * one. */
+    bool dry_run;
 } JitBuffer;
 
 /* Deferred fixups for jumps to a *bytecode* target -- the native offset for
@@ -79,6 +88,16 @@ typedef struct JitCompiler {
     size_t patch_count;
     size_t patch_capacity;
     bool bailed; /* unsupported construct found; stop compiling immediately */
+    /* Phase 2c: set the moment an allocating opcode (STRING) is decoded,
+     * in both the dry-run and real passes alike -- read back after the
+     * dry run to decide whether the real pass's own prologue needs to
+     * reserve a DiamondFrame at all. */
+    bool needs_frame;
+    /* Byte count reserved on the stack for the frame (0 if !needs_frame),
+     * rounded up to a multiple of 16 to keep every trampoline call inside
+     * the body correctly aligned -- set once, right before emitting the
+     * real prologue, from diamond_jit_frame_size(). */
+    size_t frame_reserve_bytes;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -96,6 +115,7 @@ static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
 }
 
 static void emit_u8(JitBuffer *buf, uint8_t byte) {
+    if (buf->dry_run) return;
     jit_buf_ensure(buf, 1);
     if (buf->failed) return;
     buf->code[buf->length++] = byte;
@@ -310,11 +330,35 @@ static void emit_pop(JitBuffer *buf, int reg) {
     emit_u8(buf, (uint8_t)(0x58 + (reg & 7)));
 }
 
+/* sub rsp, imm32 / add rsp, imm32 -- reserving/releasing stack space for a
+ * DiamondFrame (Phase 2c). /0 = ADD, /5 = SUB, per the Intel SDM's opcode
+ * 81 extension table. */
+static void emit_add_rsp_imm32(JitBuffer *buf, uint32_t imm) {
+    emit_u8(buf, 0x48);
+    emit_u8(buf, 0x81);
+    emit_u8(buf, (uint8_t)(0xC0 | (0 << 3) | REG_RSP));
+    emit_u32_le(buf, imm);
+}
+static void emit_sub_rsp_imm32(JitBuffer *buf, uint32_t imm) {
+    emit_u8(buf, 0x48);
+    emit_u8(buf, 0x81);
+    emit_u8(buf, (uint8_t)(0xC0 | (5 << 3) | REG_RSP));
+    emit_u32_le(buf, imm);
+}
+
 /* call reg64 */
 static void emit_call_reg(JitBuffer *buf, int reg) {
     if (reg >= 8) emit_u8(buf, 0x41);
     emit_u8(buf, 0xFF);
     emit_u8(buf, (uint8_t)(0xC0 | (2 << 3) | (reg & 7))); /* /2 = CALL r/m64 */
+}
+
+/* mov rdi, <imm64 function address>; call rdi -- the shared "call a C
+ * trampoline" stencil. Arguments must already be loaded into
+ * RDI/RSI/RDX/RCX/R8/R9 by the caller (SysV order) before this runs. */
+static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
+    emit_mov_imm64(buf, REG_R11, (uint64_t)(uintptr_t)function_address);
+    emit_call_reg(buf, REG_R11);
 }
 
 /* ret */
@@ -326,14 +370,25 @@ static void emit_mov_al_imm8(JitBuffer *buf, uint8_t imm) {
     emit_u8(buf, imm);
 }
 
-/* Restores the 5 persistent registers in reverse push order -- an odd
- * count needs no alignment padding (see the prologue emission in
+/* If the function needed a DiamondFrame (Phase 2c), pops and unlinks it
+ * and releases its stack space FIRST -- symmetric with the prologue's own
+ * push-then-reserve order, and must happen before the persistent-register
+ * pops below since it still needs JIT_VM live and still owns the stack
+ * space directly above those registers' own saved values. Then restores
+ * the 5 persistent registers in reverse push order -- an odd count needs
+ * no alignment padding (see the prologue emission in
  * diamond_jit_try_compile: entry RSP%16==8, each push flips it, 5 pushes
  * lands back on 0, correctly aligned for every trampoline call this
- * function's body makes). Every exit path (the success RETURN and the
- * shared bailout stub) calls this immediately before `ret`, after its own
- * AL has already been set. */
-static void emit_epilogue(JitBuffer *buf) {
+ * function's body makes, frame teardown included). Every exit path (the
+ * success RETURN and the shared bailout stub) calls this immediately
+ * before `ret`, after its own AL has already been set. */
+static void emit_epilogue(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    if (jc->needs_frame) {
+        emit_mov_rr(buf, REG_RDI, JIT_VM);
+        emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
+        emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    }
     emit_pop(buf, JIT_CHUNK);
     emit_pop(buf, JIT_ARGUMENT_COUNT);
     emit_pop(buf, JIT_RESULT_PTR);
@@ -367,7 +422,7 @@ static size_t emit_jmp_placeholder(JitBuffer *buf) {
  * the current end of the buffer -- valid only when that target is already
  * known, i.e. always for a local, same-stencil fallthrough. */
 static void patch_rel32_to_here(JitBuffer *buf, size_t field_offset) {
-    if (buf->failed) return;
+    if (buf->dry_run || buf->failed) return;
     int32_t rel = (int32_t)(buf->length - (field_offset + 4));
     buf->code[field_offset] = (uint8_t)(rel & 0xFF);
     buf->code[field_offset + 1] = (uint8_t)((rel >> 8) & 0xFF);
@@ -376,6 +431,7 @@ static void patch_rel32_to_here(JitBuffer *buf, size_t field_offset) {
 }
 
 static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t bytecode_target) {
+    if (jc->buf.dry_run) return;
     if (jc->patch_count >= jc->patch_capacity) {
         size_t new_capacity = jc->patch_capacity == 0 ? 16 : jc->patch_capacity * 2;
         JitPatch *grown = realloc(jc->patches, new_capacity * sizeof(JitPatch));
@@ -550,14 +606,6 @@ static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
     record_global_patch(jc, kinds_differ, BAILOUT_SENTINEL);
 }
 
-/* mov rdi, <imm64 function address>; call rdi -- the shared "call a C
- * trampoline" stencil. Arguments must already be loaded into
- * RDI/RSI/RDX/RCX/R8/R9 by the caller (SysV order) before this runs. */
-static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
-    emit_mov_imm64(buf, REG_R11, (uint64_t)(uintptr_t)function_address);
-    emit_call_reg(buf, REG_R11);
-}
-
 /* SET_IVAR: field-cache/shape-transition bookkeeping and the GC write
  * barrier are too risky to hand-roll (see jit.h) -- calls
  * diamond_jit_set_ivar(vm, site, &registers[recv], field, &registers[source]).
@@ -596,6 +644,22 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
     emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
     emit_mov_imm64(buf, REG_RDX, set_index);
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_check_type);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* STRING -- the first allocating opcode this JIT supports; sets
+ * jc->needs_frame (both in the dry-run scan and the real pass alike, so
+ * the real pass's own prologue already knows to reserve one by the time
+ * it's emitted -- see diamond_jit_try_compile). Calls
+ * diamond_jit_new_string(vm, chunk, string_index, &registers[dest]). */
+static void compile_new_string(JitCompiler *jc, uint16_t dest, uint16_t string_index) {
+    jc->needs_frame = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_imm64(buf, REG_RDX, string_index);
+    emit_lea(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_string);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -701,6 +765,12 @@ static void compile_body(JitCompiler *jc) {
                 compile_check_type(jc, source, set_index);
                 break;
             }
+            case DIAMOND_OP_STRING: {
+                uint16_t dest = 0, string_index = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return; }
+                compile_new_string(jc, dest, string_index);
+                break;
+            }
             case DIAMOND_OP_INDEX_GET: {
                 uint16_t dest = 0, recv = 0, index = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
@@ -777,7 +847,7 @@ static void compile_body(JitCompiler *jc) {
                 emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(source, 8));
                 emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
                 emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
-                emit_epilogue(buf);
+                emit_epilogue(jc);
                 emit_mov_al_imm8(buf, 1);
                 emit_ret(buf);
                 break;
@@ -804,12 +874,41 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
     if (jc.bytecode_to_native == nullptr) return nullptr;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
 
+    /* Dry-run pass: walks the exact same decode logic as the real compile
+     * below, with every emit_* call suppressed (JitBuffer.dry_run), purely
+     * to learn (a) whether this function is compilable at all and (b)
+     * whether it needs a DiamondFrame (jc.needs_frame, set by
+     * compile_new_string) -- knowable only after seeing the whole body,
+     * but needed *before* the real pass's own prologue is emitted. Reuses
+     * compile_body itself rather than a second, separately-maintained
+     * bytecode-width table that could silently drift out of sync with it. */
+    jc.buf.dry_run = true;
+    compile_body(&jc);
+    if (jc.bailed) {
+        free(jc.bytecode_to_native);
+        return nullptr;
+    }
+    /* The dry run never touched jc.buf.code/length/capacity/failed --
+     * emit_u8's own dry_run check is unconditional and first -- so only
+     * jc.bailed and jc.bytecode_to_native (rewritten with dry-run-only
+     * placeholder offsets) need resetting before the real pass; jc.
+     * needs_frame is left as-is, since the real pass can only ever
+     * (redundantly, consistently) set it again, never clear it. */
+    jc.bailed = false;
+    jc.buf.dry_run = false;
+    for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
+    if (jc.needs_frame) {
+        jc.frame_reserve_bytes = (diamond_jit_frame_size() + 15) & ~(size_t)15;
+    }
+
     /* Prologue: save the 5 persistent registers, then load them from the
      * incoming (vm, registers, result, argument_count, chunk) arguments
      * (RDI, RSI, RDX, RCX, R8 per SysV). An odd number of pushes (5)
      * flips RSP's mod-16 parity an odd number of times from entry
      * (RSP%16==8), landing on 0 -- correctly aligned for the ABI's
-     * pre-call requirement every trampoline call needs, no padding. */
+     * pre-call requirement every trampoline call needs, no padding (the
+     * frame reservation just below is itself rounded up to a multiple of
+     * 16, so it doesn't disturb this either). */
     emit_push(&jc.buf, JIT_REGISTERS_BASE);
     emit_push(&jc.buf, JIT_VM);
     emit_push(&jc.buf, JIT_RESULT_PTR);
@@ -821,12 +920,24 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
     emit_mov_rr(&jc.buf, JIT_ARGUMENT_COUNT, REG_RCX);
     emit_mov_rr(&jc.buf, JIT_CHUNK, REG_R8);
 
+    if (jc.needs_frame) {
+        emit_sub_rsp_imm32(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
+        const size_t live_register_count = function->register_count == 0
+            ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+        emit_mov_rr(&jc.buf, REG_RDI, REG_RSP);
+        emit_mov_rr(&jc.buf, REG_RSI, JIT_VM);
+        emit_mov_rr(&jc.buf, REG_RDX, JIT_REGISTERS_BASE);
+        emit_mov_imm64(&jc.buf, REG_RCX, live_register_count);
+        emit_mov_rr(&jc.buf, REG_R8, JIT_CHUNK);
+        emit_call_trampoline(&jc.buf, (void *)(uintptr_t)diamond_jit_frame_push);
+    }
+
     compile_body(&jc);
 
     void *result = nullptr;
     if (!jc.bailed && !jc.buf.failed) {
         size_t bailout_offset = jc.buf.length;
-        emit_epilogue(&jc.buf);
+        emit_epilogue(&jc);
         emit_mov_al_imm8(&jc.buf, 0);
         emit_ret(&jc.buf);
 

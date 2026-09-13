@@ -64,6 +64,57 @@ construction, plus actually building the `DiamondFrame`-publishing
 contract this document describes -- is the concrete next gate, not
 optional polish.
 
+**Status (2026-09-12, same day): Phase 2c closed the gap above** -- the
+real frame/GC-root contract described below is now built, not just
+designed, and gated behind a per-function pre-scan so it costs nothing for
+functions that don't need it. New trampolines in `vm.c` (declared in
+`src/jit.h`): `diamond_jit_frame_size()` (a `sizeof`-based accessor, called
+once per *compile*, so the byte count a compiled function reserves on its
+own native stack self-syncs against `DiamondFrame`'s real layout rather
+than duplicating a hardcoded constant), `diamond_jit_frame_push`/
+`diamond_jit_frame_pop` (placement-construct/unlink a `DiamondFrame` into
+caller-reserved stack space, mirroring `run_chunk`'s own one-frame-per-
+activation model), and `diamond_jit_new_string` (wraps `allocate_string`,
+the first trampoline that can actually trigger a collection). Whether a
+given function needs any of this is decided by a **dry-run compile pass**:
+`compile_body` runs once with a `dry_run` flag (checked in `emit_u8`,
+which every other emitter bottoms out through, so it's a true no-op) purely
+to learn whether the body contains `STRING` before the real pass emits its
+prologue -- reusing the exact same decode/dispatch logic as the real
+compile rather than a second, separately-maintained opcode-width table
+that could drift out of sync with it.
+
+Reached the actual target: `bench/object_hydration.di`'s `HydratedUser#
+initialize` now compiles (previously always `jit_ineligible`), verified
+against three configurations agreeing on output (`59000`/the dedicated
+`tests/cases/jit_string_construct*` cases' `2800`): plain interpreted,
+`DIAMOND_JIT=1`, and `DIAMOND_JIT=1` with `DIAMOND_STRESS_GC=1` (forces a
+collection on *every* allocation) -- the last one is the sharpest available
+proof that a register held live across a `STRING`-triggered allocation
+(`self`, the Hash argument, and intermediate temporaries) actually survives
+via the published frame, not by good luck. Measured honestly, this closes
+the compile-eligibility gap but the speedup on this specific shape is
+modest (~2-3% on `object_hydration.di`, see `bench/RESULTS.md`'s "Phase 2c"
+section) because most of the per-call cost is inside the trampolines
+themselves (Hash lookup, ivar write, type check, string allocation) doing
+the same work the interpreter would -- the JIT only removes bytecode
+dispatch overhead on top, not the underlying work, same pattern already
+observed with Phase 2b's `hash_ivar_construct.di`. Full suite (1331 cases)
+verified green under both debug and ASan/UBSan sanitizer builds, with
+`DIAMOND_JIT` unset (default, zero behavior change) and with
+`DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1` (compiles every
+eligible function immediately, forces a collection on every allocation) --
+no missed GC root surfaced. Confirmed no regression on Phase 2/2b's
+existing allocation-free benchmarks from adding the pre-scan mechanism:
+`int_arithmetic.di` still measures ~2.9x (previously ~2.95x, within noise),
+`hash_ivar_construct.di`'s `Box` still measures ~6-7% (previously 4-7%).
+
+Still out of scope, deliberately: `HASH`/`ARRAY`/`NEW` construction (the
+pre-scan only checks for `STRING`), and skindicate's *real*
+`User#initialize`, which additionally calls `super(attributes)` into
+`ActiveRecord::Model#initialize` -- a call this JIT still can't compile
+through. Whether that's worth a follow-on phase is not yet decided.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

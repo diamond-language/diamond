@@ -216,6 +216,49 @@ typedef struct DiamondFrame {
     const size_t *instruction_offset;
 } DiamondFrame;
 
+/* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
+ * is private to this file, so jit.c can never construct or link one
+ * directly; it only ever reserves opaque bytes on its own native stack and
+ * calls these to manage them, the same "risky logic stays in real C, not
+ * hand-rolled machine code" pattern already used for SET_IVAR/INDEX_GET/
+ * CHECK_TYPE. diamond_jit_frame_size is called once per *compile* (not per
+ * generated call) so jit.c learns the exact byte count to reserve without
+ * a hardcoded constant that could silently drift out of sync with this
+ * struct's own layout -- unlike DIAMOND_JIT_MAX_REGISTERS (a bare enum,
+ * nothing to query), sizeof() on a real struct is exactly this available
+ * here. The extra trailing size_t past the frame itself is instruction_
+ * offset's own backing storage: that field is a *pointer* to a live value
+ * for the frame's whole lifetime (see its own struct comment above), not
+ * a copy, and a JIT'd function has no `ip`-like local of its own to point
+ * at -- this reserves one, initialized to 0 (a synthetic placeholder;
+ * this JIT compiles no begin/rescue and nothing it calls through these
+ * trampolines can itself raise, so no code path today ever reads it back
+ * for a real backtrace, but a future one might). */
+size_t diamond_jit_frame_size(void) {
+    return sizeof(DiamondFrame) + sizeof(size_t);
+}
+
+void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk) {
+    DiamondFrame *frame = (DiamondFrame *)frame_storage;
+    size_t *offset_storage = (size_t *)(frame + 1);
+    *offset_storage = 0;
+    *frame = (DiamondFrame){
+        .previous = vm->frames,
+        .registers = registers,
+        .pending = nullptr,
+        .register_count = register_count,
+        .chunk = chunk,
+        .instruction_offset = offset_storage,
+    };
+    vm->frames = frame;
+}
+
+void diamond_jit_frame_pop(DiamondVm *vm) {
+    DiamondFrame *frame = (DiamondFrame *)vm->frames;
+    vm->frames = frame->previous;
+}
+
 /* Native backing struct for DiamondThreadHandle (object.h) -- see
  * docs/threads.md. `child_vm`/`child_program` are this thread's own,
  * fully independent heap/GC and a byte-for-byte memcpy clone of whatever
@@ -1596,6 +1639,22 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
     vm->young_objects = &string->object;
     vm->bytes_allocated += sizeof(DiamondString) + length + 1;
     return string;
+}
+
+/* JIT trampoline for DIAMOND_OP_STRING -- see jit.h's own comment. Mirrors
+ * that opcode's own interpreter case exactly (src/vm.c's dispatch loop):
+ * resolve the string constant, allocate via allocate_string (which calls
+ * maybe_collect unconditionally -- the actual reason this whole trampoline
+ * needs the caller to have already published a DiamondFrame, unlike
+ * SET_IVAR/INDEX_GET/CHECK_TYPE). */
+DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
+        uint16_t string_index, DiamondValue *out) {
+    if (string_index >= chunk->string_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondStringConstant *constant = &chunk->strings[string_index];
+    DiamondString *string = allocate_string(vm, constant->chars, constant->length);
+    if (string == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(string);
+    return DIAMOND_VM_OK;
 }
 
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,

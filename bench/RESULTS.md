@@ -327,3 +327,67 @@ cases, `jit_hash_ivar_construct`/`jit_hash_ivar_construct_stress_gc` --
 the latter run under `DIAMOND_STRESS_GC=1`, forcing a collection on every
 allocation, specifically to stress-test the "no GC frame needed" claim
 above) passes unchanged under both debug and ASan/UBSan sanitizer builds.
+
+## Phase 2c: allocation-capable trampoline + real frame/GC-root contract (2026-09-12)
+
+Closed the gap Phase 2b identified: added `STRING` opcode support via a
+real `DiamondFrame`-publishing prologue/epilogue (built, not just
+designed -- see `docs/internal/jit-design.md`'s own Phase 2c status note
+for the trampolines and the dry-run-compile-pass mechanism that decides,
+per function, whether it's needed at all). `bench/object_hydration.di`'s
+own `HydratedUser#initialize` -- the actual motivating target since
+Phase 0 -- now compiles for the first time.
+
+Same environment as above (`make release`, `-march=native`, one binary,
+`DIAMOND_JIT` toggled via env var). 5 alternating rounds, `DIAMOND_REPEAT`
+matching `bench/run.sh`'s own table:
+
+| benchmark | repeat | interpreted (per round) | JIT (per round) |
+|---|---:|---:|---:|
+| `object_hydration.di` | 120 | ~2.34-2.41s | ~2.28-2.33s |
+| `hash_ivar_construct.di` | 250 | ~2.70-2.78s | ~2.59-2.61s |
+| `int_arithmetic.di` (regression check) | 15 | ~7.6-8.1s | ~2.65-2.69s |
+
+**`object_hydration.di`: ~2-3% faster end to end.** Modest, and consistent
+with Phase 2b's own finding: `initialize`'s compiled body still calls the
+same C trampolines (`diamond_jit_hash_get`/`diamond_jit_set_ivar`/
+`diamond_jit_check_type`/`diamond_jit_new_string`) the interpreter's own
+opcode handlers would call, plus the new frame push/pop itself is not
+free -- the JIT removes bytecode dispatch overhead, not the underlying
+allocation/lookup/write work. Verified correct against the interpreted
+baseline's own output (`59000`) in every configuration tested.
+
+**No regression on Phase 2/2b's allocation-free benchmarks** from adding
+the pre-scan/dry-run mechanism, which was the explicit condition for
+landing this: `int_arithmetic.di` still measures **~2.9x**
+(`DIAMOND_JIT_THRESHOLD=1`, within noise of Phase 2's own ~2.95x),
+`hash_ivar_construct.di`'s `Box` still measures **~6-7%** faster
+(within Phase 2b's own measured 4-7% range) -- neither function triggers
+the pre-scan's `needs_frame` path (no `STRING` in either body), so neither
+pays anything for the mechanism existing.
+
+**Dedicated GC-root stress test** (`tests/cases/jit_string_construct.di`/
+`jit_string_construct_stress_gc.di`, new): a class whose `initialize`
+does three sequential `STRING`+`INDEX_GET`+`SET_IVAR` sequences from
+literal Hash keys, run under `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1` with
+and without `DIAMOND_STRESS_GC=1` (forces a collection on *every*
+allocation, so three collections happen mid-function, mid-compiled-code).
+All three configurations (interpreted, JIT, JIT+stress-GC) agree on output
+(`2800`) -- the sharpest available proof that `self`, the Hash argument,
+and intermediate temporaries held live across a `STRING`-triggered
+allocation actually survive via the published frame, not by good luck.
+
+Full test suite (1331 cases: the existing 1329 plus these 2 new cases)
+passes unchanged under both debug and ASan/UBSan sanitizer builds, with
+`DIAMOND_JIT` unset (default) and with
+`DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1` (compiles
+every eligible function immediately, forces a collection on every
+allocation) -- no missed GC root surfaced under sanitizer instrumentation.
+
+**Still not skindicate's real bottleneck end-to-end**: skindicate's actual
+`User#initialize` additionally calls `super(attributes)` into
+`ActiveRecord::Model#initialize`, which this JIT still can't compile
+through (no call support). Deploying this build would now compile
+`HydratedUser`-shaped `initialize` methods, but skindicate's own model
+classes won't be JIT-eligible until a follow-on phase addresses `super`
+call compilation -- not yet scoped or decided.
