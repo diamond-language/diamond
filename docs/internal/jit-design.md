@@ -27,6 +27,43 @@ tier-up trigger, and deopt design below remain the target for whatever
 comes after this slice -- most concretely, compiling `INVOKE_MONO`-guarded
 calls, which is the first thing that would actually need them.
 
+**Status (2026-09-12, same day): Phase 2b extended the whitelist without
+needing the general contract yet either** -- arguments/`self` (any arity,
+methods included, not just zero-arg top-level functions), `EQUAL`/
+`NOT_EQUAL` on primitives, and two new operations that read like "calls"
+but aren't full method dispatch: `SET_IVAR` and `INDEX_GET` (Hash only),
+each via a narrow C trampoline (`diamond_jit_set_ivar`/`diamond_jit_hash_
+get` in `vm.c`) rather than hand-rolled machine code, plus `CHECK_TYPE`
+via `diamond_jit_check_type` the same way. All three trampolines were
+individually confirmed allocation-free by reading their call chains, so
+this extension *still* needs no `DiamondFrame`/GC-root publishing -- see
+`src/jit.h`'s own updated comment. The dispatch check is now wired into
+two call sites, not one: `DIAMOND_OP_CALL` (top-level functions) and
+`invoke_resolved_method_helper` (which `NEW`/`SUPER`/`INVOKE_TYPED`'s
+ordinary instance dispatch all route through, plain `INVOKE`/`INVOKE_MONO`
+still not among them) -- both now go through one shared `jit_call_or_
+interpret` helper in `vm.c`.
+
+**What this did *not* reach, found the hard way**: the actual motivating
+target, skindicate's own `User#initialize`-shaped row hydration
+(`bench/object_hydration.di`'s `HydratedUser#initialize`), still isn't
+JIT-eligible. `attributes["email"]`-style Hash access compiles a fresh
+`DIAMOND_OP_STRING` construction for the literal key on *every* call --
+this is not a benchmark-specific quirk, string-literal Hash keys are
+pervasive in ordinary Diamond code -- and string construction is a real
+allocation, landing squarely back in "needs the general frame/GC-root
+contract" territory this whole extension had been sidestepping. Confirmed
+end-to-end on a smaller case built specifically to isolate this (`tests/
+cases/jit_hash_ivar_construct.di`: same `SET_IVAR`/`INDEX_GET`/
+`CHECK_TYPE`/self/argument machinery, Hash key passed as a parameter
+instead of a literal) -- that one compiles and measures correctly,
+confirming the extension itself works; `object_hydration.di`'s own
+`initialize` does not, purely because of the string-literal keys. A real
+"Phase 2c" -- an allocation-capable trampoline for string/Hash/Array
+construction, plus actually building the `DiamondFrame`-publishing
+contract this document describes -- is the concrete next gate, not
+optional polish.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

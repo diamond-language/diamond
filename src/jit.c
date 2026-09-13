@@ -1,17 +1,31 @@
 /* Minimal x86-64 baseline JIT -- see jit.h for the full scope statement.
- * Compiles a narrow whitelist of register-arithmetic/control-flow opcodes
- * for zero-argument, non-generic, non-method top-level functions straight
- * to machine code. Anything outside the whitelist (including any
- * exceptional runtime condition within a supported opcode -- overflow,
- * division by zero, INT64_MIN/-1) is a bailout, not a partial compile: the
- * caller falls back to the ordinary, fully-correct run_chunk interpreter.
+ * Phase 2 (register moves/constants/_INT arithmetic/comparisons/jumps/
+ * return, zero-argument functions only) plus Phase 2b's extension: Hash
+ * reads and typed-field writes via C trampolines (jit.h/vm.c), and
+ * arguments/`self` (non-generic, non-variadic methods and functions).
+ * Anything outside this whitelist (including any exceptional runtime
+ * condition within a supported opcode -- overflow, division by zero,
+ * INT64_MIN/-1, a trampoline reporting anything but DIAMOND_VM_OK) is a
+ * bailout, not a partial compile: the caller falls back to the ordinary,
+ * fully-correct run_chunk interpreter.
+ *
+ * Register plan, persistent for a whole compiled function's execution
+ * (pushed in the prologue, popped before every `ret`):
+ *   RBX  - the registers array base pointer (2nd incoming argument)
+ *   R12  - the DiamondVm pointer (1st incoming argument), only ever moved
+ *          into RDI before a trampoline call, never used as a memory base
+ *          itself (sidesteps the SIB-byte encoding RSP/R12's shared low-3-
+ *          bits-100 rm encoding would otherwise force)
+ *   R13  - the *result output pointer (3rd incoming argument), used as a
+ *          memory base only at RETURN
+ * Scratch (caller-saved, freely clobbered by any trampoline call, so never
+ * relied on to survive one): RAX, RCX, RDX.
  *
  * Encoding notes (all instructions below were hand-verified against the
- * Intel SDM, not assumed): every scratch register used is RAX/RCX/RDX/RBX
- * (encodings 0-3) specifically so no REX.R/X/B extension bit is ever
- * needed -- every 64-bit operation's REX prefix is the fixed byte 0x48
- * (REX.W only). RDI (the registers-array base pointer) and RSI (the result
- * out-pointer) are never clobbered by anything below.
+ * Intel SDM, not assumed): every register reference goes through emit_rex,
+ * which computes REX.W/R/B generically for any of the 16 GPRs -- Phase 2's
+ * "never touch r8-r15" simplification no longer holds now that RBX/R12/R13
+ * are persistent roles, so encoding is fully general instead.
  */
 
 #include "jit.h"
@@ -22,12 +36,18 @@
 #include <unistd.h>
 
 enum {
-    JIT_REG_RAX = 0,
-    JIT_REG_RCX = 1,
-    JIT_REG_RDX = 2,
-    JIT_REG_RBX = 3,
-    JIT_REG_RSI = 6,
-    JIT_REG_RDI = 7,
+    REG_RAX = 0, REG_RCX = 1, REG_RDX = 2, REG_RBX = 3,
+    REG_RSP = 4, REG_RBP = 5, REG_RSI = 6, REG_RDI = 7,
+    REG_R8 = 8, REG_R9 = 9, REG_R10 = 10, REG_R11 = 11,
+    REG_R12 = 12, REG_R13 = 13, REG_R14 = 14, REG_R15 = 15,
+};
+
+enum {
+    JIT_REGISTERS_BASE = REG_RBX,
+    JIT_VM = REG_R12,
+    JIT_RESULT_PTR = REG_R13,
+    JIT_ARGUMENT_COUNT = REG_R14,
+    JIT_CHUNK = REG_R15,
 };
 
 typedef struct JitBuffer {
@@ -93,94 +113,142 @@ static void emit_u64_le(JitBuffer *buf, uint64_t value) {
     emit_u32_le(buf, (uint32_t)(value >> 32));
 }
 
-/* mov reg64, [JIT_REG_RDI + disp32] */
-static void emit_load_r64(JitBuffer *buf, int reg, int32_t disp) {
-    emit_u8(buf, 0x48);
+/* REX prefix, generic over any of the 16 GPRs: W selects 64-bit operand
+ * size; reg_field/rm_field are the ModRM "reg" and "rm" (or SIB base 3-bit
+ * field, when used for a memory operand's base register) values *before*
+ * masking to 3 bits -- this function reads their high bit to decide
+ * REX.R/REX.B. Every memory base register this file actually uses (RBX=3,
+ * R13=13) and every scratch register (RAX/RCX/RDX=0-2) has low-3-bits != 100,
+ * so none of them ever needs a SIB byte -- ModRM mod=10 (disp32) + rm alone
+ * always means plain [reg+disp32] addressing here, never RSP/R12-relative
+ * or RIP-relative (those are the only two rm=100/rm=101-with-mod=00
+ * special cases in the ModRM encoding, and neither applies to mod=10). */
+static uint8_t emit_rex(bool w, int reg_field, int rm_field) {
+    return (uint8_t)(0x40 | (w ? 0x08 : 0) | (reg_field >= 8 ? 0x04 : 0) | (rm_field >= 8 ? 0x01 : 0));
+}
+
+/* mov reg64, [base + disp32] */
+static void emit_load_r64(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(true, reg, base));
     emit_u8(buf, 0x8B);
-    emit_u8(buf, (uint8_t)(0x80 | (reg << 3) | JIT_REG_RDI));
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
 }
 
-/* mov [JIT_REG_RDI + disp32], reg64 */
-static void emit_store_r64(JitBuffer *buf, int32_t disp, int reg) {
-    emit_u8(buf, 0x48);
+/* mov [base + disp32], reg64 */
+static void emit_store_r64(JitBuffer *buf, int base, int32_t disp, int reg) {
+    emit_u8(buf, emit_rex(true, reg, base));
     emit_u8(buf, 0x89);
-    emit_u8(buf, (uint8_t)(0x80 | (reg << 3) | JIT_REG_RDI));
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
 }
 
-/* movzx reg32, byte [JIT_REG_RDI + disp32] -- zero-extends into full reg64 */
-static void emit_load_byte_zx(JitBuffer *buf, int reg, int32_t disp) {
+/* lea reg64, [base + disp32] */
+static void emit_lea(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(true, reg, base));
+    emit_u8(buf, 0x8D);
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
+    emit_u32_le(buf, (uint32_t)disp);
+}
+
+/* movzx reg32, byte [base + disp32] -- zero-extends into full reg64.
+ * Only ever called with reg/base in {RAX,RCX,RDX,RBX,R13} in this file, all
+ * of which read as their "new," REX-independent low byte (AL/CL/DL/BL) or
+ * need REX only for the >=8 extension, never the legacy AH/CH/DH/BH
+ * ambiguity (that's specific to encodings 4-7 *without* REX, none of which
+ * this function is ever asked to target as the 8-bit destination here --
+ * this reads a byte from memory into a full register, so only `base`'s
+ * addressing matters, not a competing 8-bit register-file selection). */
+static void emit_load_byte_zx(JitBuffer *buf, int reg, int base, int32_t disp) {
+    emit_u8(buf, emit_rex(false, reg, base));
     emit_u8(buf, 0x0F);
     emit_u8(buf, 0xB6);
-    emit_u8(buf, (uint8_t)(0x80 | (reg << 3) | JIT_REG_RDI));
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
 }
 
-/* mov byte [JIT_REG_RDI + disp32], imm8 */
-static void emit_store_kind_imm(JitBuffer *buf, int32_t disp, uint8_t kind) {
+/* mov byte [base + disp32], imm8 */
+static void emit_store_kind_imm(JitBuffer *buf, int base, int32_t disp, uint8_t kind) {
+    emit_u8(buf, emit_rex(false, 0, base));
     emit_u8(buf, 0xC6);
-    emit_u8(buf, (uint8_t)(0x80 | JIT_REG_RDI));
+    emit_u8(buf, (uint8_t)(0x80 | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
     emit_u8(buf, kind);
 }
 
-/* mov byte [JIT_REG_RDI + disp32], reg8 (reg must be RAX/RCX/RDX/RBX: AL/CL/DL/BL) */
-static void emit_store_byte_reg(JitBuffer *buf, int32_t disp, int reg) {
+/* mov byte [base + disp32], reg8 -- reg must be RAX/RCX/RDX/RBX (AL/CL/DL/BL),
+ * the only 8-bit sources this file ever stores from. */
+static void emit_store_byte_reg(JitBuffer *buf, int base, int32_t disp, int reg) {
     emit_u8(buf, 0x88);
-    emit_u8(buf, (uint8_t)(0x80 | (reg << 3) | JIT_REG_RDI));
+    emit_u8(buf, (uint8_t)(0x80 | ((reg & 7) << 3) | (base & 7)));
     emit_u32_le(buf, (uint32_t)disp);
 }
 
 /* mov reg64, imm64 */
 static void emit_mov_imm64(JitBuffer *buf, int reg, uint64_t imm) {
-    emit_u8(buf, 0x48);
-    emit_u8(buf, (uint8_t)(0xB8 + reg));
+    emit_u8(buf, emit_rex(true, 0, reg));
+    emit_u8(buf, (uint8_t)(0xB8 + (reg & 7)));
     emit_u64_le(buf, imm);
+}
+
+/* mov dst64, src64 (register-register) */
+static void emit_mov_rr(JitBuffer *buf, int dst, int src) {
+    emit_u8(buf, emit_rex(true, src, dst));
+    emit_u8(buf, 0x89);
+    emit_u8(buf, (uint8_t)(0xC0 | ((src & 7) << 3) | (dst & 7)));
 }
 
 /* cmp reg64, imm8 (sign-extended) */
 static void emit_cmp_imm8(JitBuffer *buf, int reg, int8_t imm) {
-    emit_u8(buf, 0x48);
+    emit_u8(buf, emit_rex(true, 0, reg));
     emit_u8(buf, 0x83);
-    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | reg)); /* /7 = CMP */
+    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7))); /* /7 = CMP */
     emit_u8(buf, (uint8_t)imm);
 }
 
 /* cmp reg32, imm32 -- used only for the small kind-tag comparisons (0-6) */
 static void emit_cmp_imm32_32(JitBuffer *buf, int reg, uint32_t imm) {
     emit_u8(buf, 0x81);
-    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | reg));
+    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7)));
+    emit_u32_le(buf, imm);
+}
+
+/* cmp reg64, imm32 (sign-extended) -- for comparing a full 64-bit value
+ * (JIT_ARGUMENT_COUNT) against a small non-negative constant. */
+static void emit_cmp_imm32_64(JitBuffer *buf, int reg, uint32_t imm) {
+    emit_u8(buf, emit_rex(true, 0, reg));
+    emit_u8(buf, 0x81);
+    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7)));
     emit_u32_le(buf, imm);
 }
 
 /* test reg64, reg64 */
 static void emit_test_r64(JitBuffer *buf, int a, int b) {
-    emit_u8(buf, 0x48);
+    emit_u8(buf, emit_rex(true, b, a));
     emit_u8(buf, 0x85);
-    emit_u8(buf, (uint8_t)(0xC0 | (b << 3) | a));
+    emit_u8(buf, (uint8_t)(0xC0 | ((b & 7) << 3) | (a & 7)));
 }
 
 /* test al/cl/dl/bl, same reg (8-bit) */
 static void emit_test_r8(JitBuffer *buf, int reg) {
     emit_u8(buf, 0x84);
-    emit_u8(buf, (uint8_t)(0xC0 | (reg << 3) | reg));
+    emit_u8(buf, (uint8_t)(0xC0 | ((reg & 7) << 3) | (reg & 7)));
 }
 
-/* add/sub/cmp/mov dst64, src64 (register-register) */
+/* add/sub/cmp dst64, src64 (register-register) */
 static void emit_alu_rr(JitBuffer *buf, uint8_t opcode, int dst, int src) {
-    emit_u8(buf, 0x48);
+    emit_u8(buf, emit_rex(true, src, dst));
     emit_u8(buf, opcode);
-    emit_u8(buf, (uint8_t)(0xC0 | (src << 3) | dst));
+    emit_u8(buf, (uint8_t)(0xC0 | ((src & 7) << 3) | (dst & 7)));
 }
-enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_CMP = 0x39, ALU_MOV = 0x89 };
+enum { ALU_ADD = 0x01, ALU_SUB = 0x29, ALU_CMP = 0x39 };
 
 /* imul dst64, src64 (two-operand form; sets OF/CF on signed 64-bit overflow) */
 static void emit_imul_rr(JitBuffer *buf, int dst, int src) {
-    emit_u8(buf, 0x48);
+    emit_u8(buf, emit_rex(true, dst, src));
     emit_u8(buf, 0x0F);
     emit_u8(buf, 0xAF);
-    emit_u8(buf, (uint8_t)(0xC0 | (dst << 3) | src));
+    emit_u8(buf, (uint8_t)(0xC0 | ((dst & 7) << 3) | (src & 7)));
 }
 
 /* cqo: sign-extend RAX into RDX:RAX */
@@ -191,9 +259,9 @@ static void emit_cqo(JitBuffer *buf) {
 
 /* idiv reg64: RDX:RAX / reg -> quotient in RAX, remainder in RDX */
 static void emit_idiv(JitBuffer *buf, int reg) {
-    emit_u8(buf, 0x48);
+    emit_u8(buf, emit_rex(true, 0, reg));
     emit_u8(buf, 0xF7);
-    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | reg)); /* /7 = IDIV */
+    emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7))); /* /7 = IDIV */
 }
 
 /* setl al */
@@ -203,13 +271,74 @@ static void emit_setl_al(JitBuffer *buf) {
     emit_u8(buf, 0xC0);
 }
 
+/* sete al */
+static void emit_sete_al(JitBuffer *buf) {
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0x94);
+    emit_u8(buf, 0xC0);
+}
+
+/* seta al -- unsigned "above" (CF=0 and ZF=0) */
+static void emit_seta_al(JitBuffer *buf) {
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0x97);
+    emit_u8(buf, 0xC0);
+}
+
+/* xor al, 1 -- flips a 0/1 boolean-in-AL in place */
+static void emit_xor_al_1(JitBuffer *buf) {
+    emit_u8(buf, 0x34);
+    emit_u8(buf, 0x01);
+}
+
+/* movzx reg64, al -- zero-extends AL into a full 64-bit register */
+static void emit_movzx_r64_al(JitBuffer *buf, int reg) {
+    emit_u8(buf, emit_rex(true, reg, 0));
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0xB6);
+    emit_u8(buf, (uint8_t)(0xC0 | ((reg & 7) << 3)));
+}
+
+/* push/pop reg64 (no REX.W needed -- push/pop default to 64-bit in long
+ * mode; REX.B is still needed for r8-r15). */
+static void emit_push(JitBuffer *buf, int reg) {
+    if (reg >= 8) emit_u8(buf, 0x41);
+    emit_u8(buf, (uint8_t)(0x50 + (reg & 7)));
+}
+static void emit_pop(JitBuffer *buf, int reg) {
+    if (reg >= 8) emit_u8(buf, 0x41);
+    emit_u8(buf, (uint8_t)(0x58 + (reg & 7)));
+}
+
+/* call reg64 */
+static void emit_call_reg(JitBuffer *buf, int reg) {
+    if (reg >= 8) emit_u8(buf, 0x41);
+    emit_u8(buf, 0xFF);
+    emit_u8(buf, (uint8_t)(0xC0 | (2 << 3) | (reg & 7))); /* /2 = CALL r/m64 */
+}
+
 /* ret */
 static void emit_ret(JitBuffer *buf) { emit_u8(buf, 0xC3); }
 
-/* mov al, imm8 -- used only for the two bool return-value stencils */
+/* mov al, imm8 -- the two bool/status return-value stencils */
 static void emit_mov_al_imm8(JitBuffer *buf, uint8_t imm) {
     emit_u8(buf, 0xB0);
     emit_u8(buf, imm);
+}
+
+/* Restores the 5 persistent registers in reverse push order -- an odd
+ * count needs no alignment padding (see the prologue emission in
+ * diamond_jit_try_compile: entry RSP%16==8, each push flips it, 5 pushes
+ * lands back on 0, correctly aligned for every trampoline call this
+ * function's body makes). Every exit path (the success RETURN and the
+ * shared bailout stub) calls this immediately before `ret`, after its own
+ * AL has already been set. */
+static void emit_epilogue(JitBuffer *buf) {
+    emit_pop(buf, JIT_CHUNK);
+    emit_pop(buf, JIT_ARGUMENT_COUNT);
+    emit_pop(buf, JIT_RESULT_PTR);
+    emit_pop(buf, JIT_VM);
+    emit_pop(buf, JIT_REGISTERS_BASE);
 }
 
 /* Near conditional jump to a not-yet-known local offset: emits `0F 8x
@@ -262,11 +391,12 @@ static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t byt
     jc->patch_count++;
 }
 
-/* Bailout stub: a single shared tail (`mov al, 0; ret`) every exceptional
- * path jumps to. Its native offset is recorded once, all bailout jumps are
- * deferred patches resolved against it like any other jump target -- but
- * since it isn't a real bytecode offset, it's resolved directly rather
- * than through bytecode_to_native (see compile function below). */
+/* Bailout stub: a single shared tail (epilogue + `mov al,0` + `ret`) every
+ * exceptional path jumps to. Its native offset is recorded once, all
+ * bailout jumps are deferred patches resolved against it like any other
+ * jump target -- but since it isn't a real bytecode offset, it's resolved
+ * directly rather than through bytecode_to_native (see compile function
+ * below). */
 
 #define BAILOUT_SENTINEL SIZE_MAX
 
@@ -278,8 +408,21 @@ static const int32_t KIND_OFF = offsetof(DiamondValue, kind);
 static const int32_t AS_OFF = offsetof(DiamondValue, as);
 
 static void emit_check_kind_int_or_bail(JitCompiler *jc, uint16_t reg_index, int scratch) {
-    emit_load_byte_zx(&jc->buf, scratch, reg_disp(reg_index, KIND_OFF));
+    emit_load_byte_zx(&jc->buf, scratch, JIT_REGISTERS_BASE, reg_disp(reg_index, KIND_OFF));
     emit_cmp_imm32_32(&jc->buf, scratch, DIAMOND_VALUE_INT);
+    emit_u8(&jc->buf, 0x0F);
+    emit_u8(&jc->buf, JCC_NE);
+    size_t field = jc->buf.length;
+    emit_u32_le(&jc->buf, 0);
+    record_global_patch(jc, field, BAILOUT_SENTINEL);
+}
+
+/* Jumps to the shared bailout stub the moment AL (a just-returned
+ * DiamondVmStatus, zero-extended by the SysV ABI's own small-return-type
+ * convention) is nonzero -- i.e. anything but DIAMOND_VM_OK. Used after
+ * every trampoline call. */
+static void emit_bail_if_al_nonzero(JitCompiler *jc) {
+    emit_test_r8(&jc->buf, REG_RAX);
     emit_u8(&jc->buf, 0x0F);
     emit_u8(&jc->buf, JCC_NE);
     size_t field = jc->buf.length;
@@ -302,22 +445,22 @@ static bool decode_u16(const DiamondFunction *fn, size_t *pc, uint16_t *out) {
 static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
                                    uint16_t right, DiamondOpCode op) {
     JitBuffer *buf = &jc->buf;
-    emit_check_kind_int_or_bail(jc, left, JIT_REG_RAX);
-    emit_check_kind_int_or_bail(jc, right, JIT_REG_RAX);
+    emit_check_kind_int_or_bail(jc, left, REG_RAX);
+    emit_check_kind_int_or_bail(jc, right, REG_RAX);
     if (op == DIAMOND_OP_DIVIDE_INT) {
-        emit_load_r64(buf, JIT_REG_RAX, reg_disp(left, AS_OFF));
-        emit_load_r64(buf, JIT_REG_RCX, reg_disp(right, AS_OFF));
-        emit_test_r64(buf, JIT_REG_RCX, JIT_REG_RCX);
+        emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+        emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+        emit_test_r64(buf, REG_RCX, REG_RCX);
         emit_u8(buf, 0x0F);
         emit_u8(buf, JCC_E);
         size_t jz_field = jc->buf.length;
         emit_u32_le(buf, 0);
         record_global_patch(jc, jz_field, BAILOUT_SENTINEL);
         /* left==INT64_MIN && right==-1 -> bail (bignum negate territory) */
-        emit_cmp_imm8(buf, JIT_REG_RCX, -1);
+        emit_cmp_imm8(buf, REG_RCX, -1);
         size_t skip = emit_jcc_placeholder(buf, JCC_NE);
-        emit_mov_imm64(buf, JIT_REG_RBX, (uint64_t)INT64_MIN);
-        emit_alu_rr(buf, ALU_CMP, JIT_REG_RAX, JIT_REG_RBX);
+        emit_mov_imm64(buf, REG_RDX, (uint64_t)INT64_MIN);
+        emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RDX);
         size_t jne_ok = emit_jcc_placeholder(buf, JCC_NE);
         emit_u8(buf, 0xE9);
         size_t bail_field = jc->buf.length;
@@ -326,34 +469,134 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
         patch_rel32_to_here(buf, jne_ok);
         patch_rel32_to_here(buf, skip);
         emit_cqo(buf);
-        emit_idiv(buf, JIT_REG_RCX);
-        emit_store_kind_imm(buf, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
-        emit_store_r64(buf, reg_disp(dest, AS_OFF), JIT_REG_RAX);
+        emit_idiv(buf, REG_RCX);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+        emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         return;
     }
-    emit_load_r64(buf, JIT_REG_RAX, reg_disp(left, AS_OFF));
-    emit_load_r64(buf, JIT_REG_RCX, reg_disp(right, AS_OFF));
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+    emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
     if (op == DIAMOND_OP_LESS_INT) {
-        emit_alu_rr(buf, ALU_CMP, JIT_REG_RAX, JIT_REG_RCX);
+        emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
         emit_setl_al(buf);
-        emit_store_kind_imm(buf, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
-        emit_store_byte_reg(buf, reg_disp(dest, AS_OFF), JIT_REG_RAX);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+        emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         return;
     }
     if (op == DIAMOND_OP_ADD_INT) {
-        emit_alu_rr(buf, ALU_ADD, JIT_REG_RAX, JIT_REG_RCX);
+        emit_alu_rr(buf, ALU_ADD, REG_RAX, REG_RCX);
     } else if (op == DIAMOND_OP_SUBTRACT_INT) {
-        emit_alu_rr(buf, ALU_SUB, JIT_REG_RAX, JIT_REG_RCX);
+        emit_alu_rr(buf, ALU_SUB, REG_RAX, REG_RCX);
     } else {
-        emit_imul_rr(buf, JIT_REG_RAX, JIT_REG_RCX);
+        emit_imul_rr(buf, REG_RAX, REG_RCX);
     }
     emit_u8(buf, 0x0F);
     emit_u8(buf, 0x80); /* JO */
     size_t jo_field = jc->buf.length;
     emit_u32_le(buf, 0);
     record_global_patch(jc, jo_field, BAILOUT_SENTINEL);
-    emit_store_kind_imm(buf, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
-    emit_store_r64(buf, reg_disp(dest, AS_OFF), JIT_REG_RAX);
+    emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+    emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+}
+
+/* EQUAL/NOT_EQUAL, restricted to the safe subset: both operands NIL, BOOL,
+ * or INT (never FLOAT/OBJECT -- the latter includes bignums, which
+ * value_is_bignum confirms can never present as kind==INT, so this check
+ * alone rules bignums out too) with *matching* kinds. Anything else bails
+ * -- mismatched primitive kinds are simply "not equal" in the real
+ * values_equal, but bailing there too keeps this stencil's cases few and
+ * each one obviously correct, at the cost of a few needless bailouts. */
+static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
+                              uint16_t right, bool negate) {
+    JitBuffer *buf = &jc->buf;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, KIND_OFF));
+    emit_load_byte_zx(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, KIND_OFF));
+    emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+    size_t kinds_differ = emit_jcc_placeholder(buf, JCC_NE); /* differ -> bail */
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+    size_t not_nil = emit_jcc_placeholder(buf, JCC_NE);
+    /* both NIL: always equal */
+    emit_mov_imm64(buf, REG_RAX, negate ? 0 : 1);
+    size_t nil_done = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, not_nil);
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
+    size_t not_bool = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+    emit_load_byte_zx(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+    emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+    emit_sete_al(buf);
+    if (negate) emit_xor_al_1(buf);
+    emit_movzx_r64_al(buf, REG_RAX);
+    size_t bool_done = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, not_bool);
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_INT);
+    size_t not_int = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+    emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+    emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+    emit_sete_al(buf);
+    if (negate) emit_xor_al_1(buf);
+    emit_movzx_r64_al(buf, REG_RAX);
+    size_t int_done = emit_jmp_placeholder(buf);
+    patch_rel32_to_here(buf, not_int);
+    /* FLOAT or OBJECT on both sides (kinds matched but neither NIL/BOOL/INT) -> bail */
+    size_t float_or_object_bail = emit_jmp_placeholder(buf);
+    record_global_patch(jc, float_or_object_bail, BAILOUT_SENTINEL);
+    patch_rel32_to_here(buf, nil_done);
+    patch_rel32_to_here(buf, bool_done);
+    patch_rel32_to_here(buf, int_done);
+    emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+    emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    record_global_patch(jc, kinds_differ, BAILOUT_SENTINEL);
+}
+
+/* mov rdi, <imm64 function address>; call rdi -- the shared "call a C
+ * trampoline" stencil. Arguments must already be loaded into
+ * RDI/RSI/RDX/RCX/R8/R9 by the caller (SysV order) before this runs. */
+static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
+    emit_mov_imm64(buf, REG_R11, (uint64_t)(uintptr_t)function_address);
+    emit_call_reg(buf, REG_R11);
+}
+
+/* SET_IVAR: field-cache/shape-transition bookkeeping and the GC write
+ * barrier are too risky to hand-roll (see jit.h) -- calls
+ * diamond_jit_set_ivar(vm, site, &registers[recv], field, &registers[source]).
+ * `site` is this occurrence's own bytecode offset in the ORIGINAL
+ * function, taken at compile time -- a stable, unique-per-occurrence
+ * address, giving the same per-site cache-key identity an interpreted
+ * execution would have gotten from &chunk->code[instruction_offset]. */
+static void compile_set_ivar(JitCompiler *jc, size_t instruction_start, uint16_t recv,
+                              uint16_t field, uint16_t source) {
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_imm64(buf, REG_RSI, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_mov_imm64(buf, REG_RCX, field);
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_set_ivar);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* INDEX_GET, Hash receiver only (the trampoline itself reports
+ * DIAMOND_VM_TYPE_ERROR -- a bailout -- for anything else at runtime) --
+ * calls diamond_jit_hash_get(&registers[recv], &registers[index], &registers[dest]). */
+static void compile_index_get(JitCompiler *jc, uint16_t dest, uint16_t recv, uint16_t index) {
+    JitBuffer *buf = &jc->buf;
+    emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(index, 0));
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_hash_get);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* CHECK_TYPE -- calls diamond_jit_check_type(chunk, &registers[source], set_index). */
+static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_index) {
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
+    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_mov_imm64(buf, REG_RDX, set_index);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_check_type);
+    emit_bail_if_al_nonzero(jc);
 }
 
 /* Returns false (jc->bailed set) the moment anything outside the supported
@@ -373,25 +616,30 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t dest = 0;
                 if (!decode_u16(fn, &pc, &dest)) { jc->bailed = true; return; }
                 /* DIAMOND_NIL is kind=0 with an all-zero union -- registers
-                 * arrive pre-zeroed (see the call site's own memset), so
-                 * this is a real store, not a no-op, only because a
-                 * register can be reassigned to something else and then
-                 * back to nil within one function body (a while loop's own
-                 * always-nil result register, matching DIAMOND_OP_NIL's own
-                 * surviving emission sites post the jit-experimentation
-                 * NIL-elision work -- see that opcode's comment in vm.c). */
-                emit_store_kind_imm(&jc->buf, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_NIL);
-                emit_mov_imm64(&jc->buf, JIT_REG_RAX, 0);
-                emit_store_r64(&jc->buf, reg_disp(dest, AS_OFF), JIT_REG_RAX);
+                 * arrive pre-zeroed, so this is a real store, not a no-op,
+                 * only because a register can be reassigned to something
+                 * else and then back to nil within one function body (a
+                 * while loop's own always-nil result register). */
+                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_NIL);
+                emit_mov_imm64(&jc->buf, REG_RAX, 0);
+                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+                break;
+            }
+            case DIAMOND_OP_BOOL: {
+                uint16_t dest = 0, boolean = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &boolean)) { jc->bailed = true; return; }
+                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+                emit_mov_imm64(&jc->buf, REG_RAX, boolean != 0 ? 1 : 0);
+                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
                 break;
             }
             case DIAMOND_OP_MOVE: {
                 uint16_t dest = 0, src = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &src)) { jc->bailed = true; return; }
-                emit_load_r64(&jc->buf, JIT_REG_RAX, reg_disp(src, 0));
-                emit_store_r64(&jc->buf, reg_disp(dest, 0), JIT_REG_RAX);
-                emit_load_r64(&jc->buf, JIT_REG_RAX, reg_disp(src, 8));
-                emit_store_r64(&jc->buf, reg_disp(dest, 8), JIT_REG_RAX);
+                emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 0));
+                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RAX);
+                emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 8));
+                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 8), REG_RAX);
                 break;
             }
             case DIAMOND_OP_CONSTANT: {
@@ -400,9 +648,9 @@ static void compile_body(JitCompiler *jc) {
                 if (index >= fn->constant_count) { jc->bailed = true; return; }
                 DiamondValue constant = fn->constants[index];
                 if (constant.kind != DIAMOND_VALUE_INT) { jc->bailed = true; return; }
-                emit_store_kind_imm(&jc->buf, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
-                emit_mov_imm64(&jc->buf, JIT_REG_RAX, (uint64_t)constant.as.integer);
-                emit_store_r64(&jc->buf, reg_disp(dest, AS_OFF), JIT_REG_RAX);
+                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+                emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)constant.as.integer);
+                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
                 break;
             }
             case DIAMOND_OP_ADD_INT:
@@ -416,12 +664,81 @@ static void compile_body(JitCompiler *jc) {
                 compile_binary_int_op(jc, dest, left, right, opcode);
                 break;
             }
+            case DIAMOND_OP_EQUAL:
+            case DIAMOND_OP_NOT_EQUAL: {
+                uint16_t dest = 0, left = 0, right = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                    !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
+                compile_equal_op(jc, dest, left, right, opcode == DIAMOND_OP_NOT_EQUAL);
+                break;
+            }
+            case DIAMOND_OP_SET_IVAR: {
+                uint16_t recv = 0, field = 0, source = 0;
+                if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &field) ||
+                    !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
+                if (field > UINT8_MAX) { jc->bailed = true; return; }
+                compile_set_ivar(jc, instruction_start, recv, field, source);
+                break;
+            }
+            case DIAMOND_OP_ARGUMENT_PROVIDED: {
+                uint16_t dest = 0, index = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
+                /* Known simplification: doesn't check for a
+                 * DIAMOND_VALUE_UNDEFINED sparse-keyword-call gap -- see
+                 * DiamondJitFn's own comment in jit.h for why that's fine
+                 * at every call site this JIT is wired into today. */
+                JitBuffer *buf = &jc->buf;
+                emit_cmp_imm32_64(buf, JIT_ARGUMENT_COUNT, index);
+                emit_seta_al(buf);
+                emit_movzx_r64_al(buf, REG_RAX);
+                emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+                emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+                break;
+            }
+            case DIAMOND_OP_CHECK_TYPE: {
+                uint16_t source = 0, set_index = 0;
+                if (!decode_u16(fn, &pc, &source) || !decode_u16(fn, &pc, &set_index)) { jc->bailed = true; return; }
+                compile_check_type(jc, source, set_index);
+                break;
+            }
+            case DIAMOND_OP_INDEX_GET: {
+                uint16_t dest = 0, recv = 0, index = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                    !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
+                compile_index_get(jc, dest, recv, index);
+                break;
+            }
             case DIAMOND_OP_JUMP: {
                 uint8_t high = 0, low = 0;
                 if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
                 size_t field = emit_jmp_placeholder(&jc->buf);
                 record_global_patch(jc, field, target);
+                break;
+            }
+            case DIAMOND_OP_JUMP_IF_TRUE: {
+                uint16_t condition = 0;
+                uint8_t high = 0, low = 0;
+                if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
+                    !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
+                size_t target = ((size_t)high << 8) | low;
+                JitBuffer *buf = &jc->buf;
+                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+                size_t nil_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* nil -> fall through */
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
+                size_t not_bool_is_truthy = emit_jcc_placeholder(buf, JCC_NE); /* not nil, not bool -> jump */
+                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
+                emit_test_r8(buf, REG_RAX);
+                size_t bool_false_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* bool false -> fall through */
+                /* falls through here only when kind==BOOL && boolean==true */
+                patch_rel32_to_here(buf, not_bool_is_truthy);
+                emit_u8(buf, 0xE9);
+                size_t target_field = jc->buf.length;
+                emit_u32_le(buf, 0);
+                record_global_patch(jc, target_field, target);
+                patch_rel32_to_here(buf, nil_is_falsy);
+                patch_rel32_to_here(buf, bool_false_is_falsy);
                 break;
             }
             case DIAMOND_OP_JUMP_IF_FALSE: {
@@ -431,17 +748,17 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
                 JitBuffer *buf = &jc->buf;
-                emit_load_byte_zx(buf, JIT_REG_RAX, reg_disp(condition, KIND_OFF));
-                emit_cmp_imm32_32(buf, JIT_REG_RAX, DIAMOND_VALUE_NIL);
+                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
                 emit_u8(buf, 0x0F);
                 emit_u8(buf, JCC_E);
                 size_t nil_field = jc->buf.length;
                 emit_u32_le(buf, 0);
                 record_global_patch(jc, nil_field, target);
-                emit_cmp_imm32_32(buf, JIT_REG_RAX, DIAMOND_VALUE_BOOL);
+                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
                 size_t not_bool = emit_jcc_placeholder(buf, JCC_NE);
-                emit_load_byte_zx(buf, JIT_REG_RAX, reg_disp(condition, AS_OFF));
-                emit_test_r8(buf, JIT_REG_RAX);
+                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
+                emit_test_r8(buf, REG_RAX);
                 size_t bool_true = emit_jcc_placeholder(buf, JCC_NE);
                 /* falls through here only when kind==BOOL && boolean==false */
                 emit_u8(buf, 0xE9);
@@ -456,15 +773,11 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t source = 0;
                 if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
                 JitBuffer *buf = &jc->buf;
-                emit_load_r64(buf, JIT_REG_RAX, reg_disp(source, 0));
-                emit_load_r64(buf, JIT_REG_RCX, reg_disp(source, 8));
-                /* store into *result via RSI */
-                emit_u8(buf, 0x48); emit_u8(buf, 0x89);
-                emit_u8(buf, (uint8_t)(0x80 | (JIT_REG_RAX << 3) | JIT_REG_RSI));
-                emit_u32_le(buf, 0);
-                emit_u8(buf, 0x48); emit_u8(buf, 0x89);
-                emit_u8(buf, (uint8_t)(0x80 | (JIT_REG_RCX << 3) | JIT_REG_RSI));
-                emit_u32_le(buf, 8);
+                emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
+                emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(source, 8));
+                emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
+                emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
+                emit_epilogue(buf);
                 emit_mov_al_imm8(buf, 1);
                 emit_ret(buf);
                 break;
@@ -478,10 +791,10 @@ static void compile_body(JitCompiler *jc) {
 
 void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size) {
     *out_size = 0;
-    if (function->arity != 0 || function->required_arity != 0 ||
-        function->has_variadic || function->owner_class != UINT8_MAX ||
-        function->type_variable_count != 0 || function->code_count == 0 ||
-        function->register_count > DIAMOND_JIT_MAX_REGISTERS) {
+    if (function->has_variadic || function->type_variable_count != 0 ||
+        function->code_count == 0 ||
+        function->register_count > DIAMOND_JIT_MAX_REGISTERS ||
+        (size_t)function->arity + 1 > DIAMOND_JIT_MAX_REGISTERS) {
         return nullptr;
     }
 
@@ -491,11 +804,29 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
     if (jc.bytecode_to_native == nullptr) return nullptr;
     for (size_t i = 0; i < function->code_count; i++) jc.bytecode_to_native[i] = SIZE_MAX;
 
+    /* Prologue: save the 5 persistent registers, then load them from the
+     * incoming (vm, registers, result, argument_count, chunk) arguments
+     * (RDI, RSI, RDX, RCX, R8 per SysV). An odd number of pushes (5)
+     * flips RSP's mod-16 parity an odd number of times from entry
+     * (RSP%16==8), landing on 0 -- correctly aligned for the ABI's
+     * pre-call requirement every trampoline call needs, no padding. */
+    emit_push(&jc.buf, JIT_REGISTERS_BASE);
+    emit_push(&jc.buf, JIT_VM);
+    emit_push(&jc.buf, JIT_RESULT_PTR);
+    emit_push(&jc.buf, JIT_ARGUMENT_COUNT);
+    emit_push(&jc.buf, JIT_CHUNK);
+    emit_mov_rr(&jc.buf, JIT_VM, REG_RDI);
+    emit_mov_rr(&jc.buf, JIT_REGISTERS_BASE, REG_RSI);
+    emit_mov_rr(&jc.buf, JIT_RESULT_PTR, REG_RDX);
+    emit_mov_rr(&jc.buf, JIT_ARGUMENT_COUNT, REG_RCX);
+    emit_mov_rr(&jc.buf, JIT_CHUNK, REG_R8);
+
     compile_body(&jc);
 
     void *result = nullptr;
     if (!jc.bailed && !jc.buf.failed) {
         size_t bailout_offset = jc.buf.length;
+        emit_epilogue(&jc.buf);
         emit_mov_al_imm8(&jc.buf, 0);
         emit_ret(&jc.buf);
 

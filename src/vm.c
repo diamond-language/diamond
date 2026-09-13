@@ -6473,6 +6473,25 @@ static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
     return -1;
 }
 
+/* JIT trampoline for DIAMOND_OP_INDEX_GET's Hash branch -- see jit.h's own
+ * comment. Deliberately narrower than the real opcode (String/Array/other
+ * receiver kinds all return DIAMOND_VM_TYPE_ERROR here, a bailout, rather
+ * than being handled): generated code only ever calls this where the JIT
+ * compiler already committed to treating the receiver as a Hash, exactly
+ * the same "guard, and bail to the interpreter the moment reality doesn't
+ * match" discipline as everywhere else in this JIT. */
+DiamondVmStatus diamond_jit_hash_get(const DiamondValue *receiver,
+        const DiamondValue *key, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_HASH) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondHash *hash = (const DiamondHash *)receiver->as.object;
+    const ptrdiff_t found = hash_find(hash, *key);
+    *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+    return DIAMOND_VM_OK;
+}
+
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value) {
     const ptrdiff_t existing=hash_find(hash,key);
@@ -7931,6 +7950,35 @@ static DiamondFieldCacheEntry *lookup_field_cached(
     return &cache->entries[entry];
 }
 
+/* JIT trampoline for DIAMOND_OP_SET_IVAR -- see jit.h's own comment for why
+ * this exists as a real C function generated code calls into rather than a
+ * hand-rolled native field write: shape transitions and the GC write
+ * barrier both need to stay exactly correct, and this is a direct copy of
+ * the interpreter's own DIAMOND_OP_SET_IVAR case (src/vm.c's opcode
+ * dispatch) with `site` threaded in from the caller instead of read off
+ * `chunk`/`instruction_offset`, since generated code has neither -- see
+ * this function's own caller in jit.c for what it passes instead (the
+ * function's own bytecode offset at JIT-compile time, giving the same
+ * per-occurrence cache-key stability an interpreted execution would have
+ * gotten from `&chunk->code[instruction_offset]`). */
+DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, const DiamondValue *value) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondInstance *instance = (DiamondInstance *)receiver->as.object;
+    if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, true);
+    if (instance->shape != cached->output_shape) {
+        instance->shape = cached->output_shape;
+        vm->shape_transitions++;
+    }
+    instance->fields[field] = *value;
+    if (!gc_write_barrier(vm, (DiamondObject *)instance)) return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
 static int named_field_index(const DiamondInstance *instance,
                              const DiamondStringConstant *name) {
     for(size_t field=0;field<instance->class->field_count;field++)
@@ -8451,6 +8499,17 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     for(size_t index=0;index<set->count;index++)
         if(value_matches_member(chunk,value,set->members[index],attach))return true;
     return false;
+}
+
+/* JIT trampoline for DIAMOND_OP_CHECK_TYPE -- see jit.h's own comment.
+ * value_matches_set's own structural/generic matching logic (interfaces,
+ * type variables, unions) is too deep to safely hand-roll in machine
+ * code; this is a thin wrapper translating its bool result into the
+ * DiamondVmStatus every other JIT trampoline already returns. */
+DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
+        const DiamondValue *value, uint16_t set_index) {
+    if (set_index >= chunk->type_set_count) return DIAMOND_VM_INVALID_BYTECODE;
+    return value_matches_set(chunk, *value, set_index, true) ? DIAMOND_VM_OK : DIAMOND_VM_TYPE_ERROR;
 }
 
 static bool array_value_satisfies_constraints(DiamondArray *array,
@@ -10768,6 +10827,75 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
  * out (like call_closure_helper/forward_to_top_level_helper above) so the
  * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
  * run_chunk's own case blocks, times three. */
+
+/* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
+ * call site that invokes a DiamondFunction with an already-assembled
+ * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
+ * helper just below this (which DIAMOND_OP_NEW/SUPER/INVOKE_TYPED's
+ * ordinary instance dispatch all route through) -- neither goes through
+ * the other, so both need their own tier-up/dispatch check rather than
+ * sharing one call site. Tries the compiled path first if the function is
+ * warm enough to have been compiled, falling back to run_chunk for
+ * anything not (yet) compiled or that bails at runtime. `function` came
+ * from a chunk's own functions[] table, declared const the same way a
+ * quickened opcode's own `chunk->code` is -- this is the same "logically
+ * mutable cache metadata behind a const pointer" pattern already used
+ * throughout this file for self-modifying bytecode, not a new one. */
+static DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    if (vm->jit && !function->jit_ineligible) {
+        DiamondFunction *mutable_function = (DiamondFunction *)function;
+        if (mutable_function->jit_code == nullptr) {
+            mutable_function->jit_call_count++;
+            if (mutable_function->jit_call_count >= vm->jit_threshold) {
+                size_t jit_code_size = 0;
+                void *compiled = diamond_jit_try_compile(function, &jit_code_size);
+                if (compiled != nullptr) {
+                    mutable_function->jit_code = compiled;
+                    mutable_function->jit_code_size = jit_code_size;
+                    vm->jit_compiled_functions++;
+                } else {
+                    mutable_function->jit_ineligible = true;
+                }
+            }
+        }
+        if (mutable_function->jit_code != nullptr) {
+            DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
+            const size_t jit_register_count = function->register_count == 0
+                ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+            memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
+            const size_t copy_count = argument_count < jit_register_count
+                ? argument_count : jit_register_count;
+            for (size_t index = 0; index < copy_count; index++) jit_registers[index] = arguments[index];
+            DiamondValue jit_result = DIAMOND_NIL;
+            /* ISO C has no portable object-pointer-to-function-pointer
+             * conversion, but POSIX explicitly requires it to work on any
+             * platform with dlsym (the same cast dlsym's own callers
+             * need) -- unavoidable for calling into mmap'd JIT code, not
+             * a real portability gap on any platform this VM targets. */
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wpedantic"
+            #endif
+            const DiamondJitFn jit_fn = (DiamondJitFn)mutable_function->jit_code;
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic pop
+            #endif
+            if (jit_fn(vm, jit_registers, &jit_result, argument_count, chunk_to_interpret)) {
+                *result = jit_result;
+                return DIAMOND_VM_OK;
+            }
+            vm->jit_bailouts++;
+            /* falls through to the ordinary interpreted call below --
+             * always fully correct regardless of why the compiled
+             * attempt bailed. */
+        }
+    }
+    return run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
+}
+
 static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -10819,7 +10947,7 @@ static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return run_chunk(&child,vm,args,total_args,depth+1,nullptr,result);
+    return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
 }
 
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
@@ -15121,64 +15249,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .register_count=function->register_count,
                     .has_variadic=function->has_variadic,
                 };
-                /* Phase 2 baseline JIT (docs/internal/jit-design.md) --
-                 * tier-up on invocation count, exactly like quickening's
-                 * own observation-threshold pattern. `function` came from
-                 * chunk->functions[], declared const the same way a
-                 * quickened opcode's own `chunk->code` is -- this is the
-                 * same "logically mutable cache metadata behind a const
-                 * pointer" pattern already used throughout this file for
-                 * self-modifying bytecode, not a new one. */
-                if (vm->jit && !function->jit_ineligible) {
-                    DiamondFunction *mutable_function = (DiamondFunction *)function;
-                    if (mutable_function->jit_code == nullptr) {
-                        mutable_function->jit_call_count++;
-                        if (mutable_function->jit_call_count >= vm->jit_threshold) {
-                            size_t jit_code_size = 0;
-                            void *compiled = diamond_jit_try_compile(function, &jit_code_size);
-                            if (compiled != nullptr) {
-                                mutable_function->jit_code = compiled;
-                                mutable_function->jit_code_size = jit_code_size;
-                                vm->jit_compiled_functions++;
-                            } else {
-                                mutable_function->jit_ineligible = true;
-                            }
-                        }
-                    }
-                    if (mutable_function->jit_code != nullptr) {
-                        DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
-                        const size_t jit_register_count = function->register_count == 0
-                            ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
-                        memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
-                        DiamondValue jit_result = DIAMOND_NIL;
-                        /* ISO C has no portable object-pointer-to-function-
-                         * pointer conversion, but POSIX explicitly requires
-                         * it to work on any platform with dlsym (the same
-                         * cast dlsym's own callers need) -- unavoidable for
-                         * calling into mmap'd JIT code, not a real
-                         * portability gap on any platform this VM targets. */
-                        #if defined(__GNUC__)
-                        #pragma GCC diagnostic push
-                        #pragma GCC diagnostic ignored "-Wpedantic"
-                        #endif
-                        const DiamondJitFn jit_fn = (DiamondJitFn)mutable_function->jit_code;
-                        #if defined(__GNUC__)
-                        #pragma GCC diagnostic pop
-                        #endif
-                        if (jit_fn(jit_registers, &jit_result)) {
-                            registers[destination] = jit_result;
-                            break;
-                        }
-                        vm->jit_bailouts++;
-                        /* falls through to the ordinary interpreted call
-                         * below -- always fully correct regardless of why
-                         * the compiled attempt bailed. */
-                    }
-                }
                 DiamondValue call_result = DIAMOND_NIL;
-                const DiamondVmStatus status = run_chunk(
-                    &called_chunk, vm, &registers[argument_base],
-                    call_argument_count, depth + 1, nullptr, &call_result);
+                const DiamondVmStatus status = jit_call_or_interpret(vm, function,
+                    &called_chunk, &registers[argument_base], call_argument_count,
+                    depth, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
                 break;

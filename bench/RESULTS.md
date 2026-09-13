@@ -260,3 +260,70 @@ correctly report 0 compiled functions under `DIAMOND_JIT=1` -- neither
 fits this narrow subset yet -- and produce output identical to the
 non-JIT baseline, confirming the bailout-at-compile-time gate is safe for
 code it was never meant to touch.
+
+## Phase 2b: arguments/self plus Hash-read/ivar-write trampolines (2026-09-12)
+
+Extended the same day, without needing the general frame/GC-root contract
+either -- see `docs/internal/jit-design.md`'s own updated status note for
+the full design. New: any arity (including instance methods, `self` is
+just register 0), `EQUAL`/`NOT_EQUAL` on primitives, and `SET_IVAR`/
+`INDEX_GET`(Hash)/`CHECK_TYPE` via three narrow C trampolines
+(`diamond_jit_set_ivar`/`diamond_jit_hash_get`/`diamond_jit_check_type` in
+`vm.c`) rather than hand-rolled machine code -- each individually
+confirmed allocation-free by reading its own call chain. The dispatch
+check is now wired into `invoke_resolved_method_helper` too (covers
+`NEW`/`SUPER`/`INVOKE_TYPED`'s ordinary dispatch), not just
+`DIAMOND_OP_CALL`.
+
+**The actual motivating target still isn't reachable.**
+`bench/object_hydration.di`'s own `HydratedUser#initialize` -- modeling
+skindicate's real row hydration -- still doesn't compile:
+`attributes["email"]`-style Hash access compiles a fresh `DIAMOND_OP_
+STRING` construction for the literal key on every call, and string
+construction is a real allocation. This isn't specific to this benchmark
+-- string-literal Hash keys are pervasive in ordinary Diamond code -- so
+it's a real, general gap, not an edge case to special-case around.
+Confirmed directly: deploying this build to skindicate would show 0
+compiled functions on its real controller/model code and no measurable
+difference on `/`, exactly like Phase 2 did. `object_hydration.di`'s own
+comment now documents this in detail.
+
+**What does work, measured honestly:** `bench/hash_ivar_construct.di` (new)
+isolates the same `SET_IVAR`/`INDEX_GET`/`CHECK_TYPE`/self/argument
+machinery with the Hash key passed as a parameter instead of a literal,
+sidestepping the string-construction gap -- `Box#initialize` compiles and
+produces correct output. Its own end-to-end driver-loop timing shows *no*
+measurable difference (interpreted and JIT both ~0.0236s for the full
+100×100 loop, `DIAMOND_JIT_THRESHOLD=1`), because the surrounding loop's
+own Hash-literal construction and `Box.new`'s own allocation (both
+necessarily still interpreted) dominate the total time far more than the
+now-cheap `initialize` call itself.
+
+Isolating `initialize` specifically (2,000,000 calls against one already-
+constructed, reused Hash and key -- no fresh allocation per call in the
+timed loop) shows the real, honest effect size:
+
+| | wall time (2,000,000 calls) |
+|---|---:|
+| Interpreted | ~1.91-1.98s (3 rounds) |
+| JIT | ~1.85-1.87s (3 rounds) |
+
+**~4-7% faster, not a multiple.** Consistent and reproducible across
+rounds, but genuinely modest compared to Phase 2's ~2.95x on pure
+arithmetic -- and the reason why is itself the finding: `initialize`'s own
+compiled body does almost the same work either way, since `CHECK_TYPE`/
+`INDEX_GET`/`SET_IVAR` all immediately call into the *same* C trampoline
+functions the interpreter's own opcode handlers would call. The JIT only
+saves bytecode fetch/decode/dispatch overhead for those three opcodes, not
+the underlying work -- unlike Phase 2's pure-native arithmetic, which
+replaced interpretation with real, dependency-free machine instructions
+end to end. A future phase that can also compile calls/allocation
+natively (or find a way to shrink the per-trampoline-call overhead itself)
+would need to reduce trampoline-call weight specifically to see a larger
+win here, not just widen opcode coverage further.
+
+Full test suite (1329 cases: the existing 1327 plus 2 new regression
+cases, `jit_hash_ivar_construct`/`jit_hash_ivar_construct_stress_gc` --
+the latter run under `DIAMOND_STRESS_GC=1`, forcing a collection on every
+allocation, specifically to stress-test the "no GC frame needed" claim
+above) passes unchanged under both debug and ASan/UBSan sanitizer builds.

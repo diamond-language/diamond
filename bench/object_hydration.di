@@ -9,13 +9,41 @@
 # construction was. No real database here (deliberately, for a fast,
 # reproducible microbenchmark) -- just the Hash-in, typed-fields-out shape
 # repeated at scale.
+#
+# `attributes` is a required parameter, not `= {}` (skindicate's real
+# User#initialize does default it, but Repository-driven construction --
+# the only real call site -- always supplies a real Hash) -- a default
+# value's own construction (DIAMOND_OP_HASH, an allocation) is out of
+# scope for the Phase 2b JIT slice this benchmark now also exercises
+# (docs/internal/jit-design.md/bench/RESULTS.md), which only compiles
+# allocation-free functions; a defaulted-but-always-provided parameter
+# would otherwise make this whole class permanently JIT-ineligible over
+# bytecode that never actually runs for any real call this benchmark makes.
+# Same reasoning for @role below: no `"user"` string-literal fallback --
+# constructing a literal String is itself an allocation (DIAMOND_OP_
+# STRING), and this benchmark's own `row` always supplies "role" anyway,
+# so the fallback branch never actually ran even before this change.
+#
+# Still not JIT-eligible even after both changes above: every
+# `attributes["email"]`-shaped access ALSO compiles to a fresh
+# DIAMOND_OP_STRING construction for the literal key ("email"/"username"/
+# "role"/"is_seed") on every call, not just the removed default-value
+# cases -- confirmed via --dump-bytecode. String-literal hash keys are
+# pervasive in ordinary Diamond code (this is not a benchmark-specific
+# quirk), so a real allocation-capable trampoline plus the general frame/
+# GC-root contract docs/internal/jit-design.md describes is a real
+# prerequisite for compiling this exact method, not an edge case --
+# tests/cases/jit_hash_ivar_construct.di is the same INDEX_GET/SET_IVAR/
+# CHECK_TYPE/self/argument machinery validated instead, with the Hash key
+# passed as a parameter rather than a literal to sidestep this specific
+# gap and prove the rest of the mechanism end-to-end today.
 class HydratedUser
   attr_accessor email: String, username: String, role: String, is_seed
 
-  def initialize(attributes: Hash = {})
+  def initialize(attributes: Hash)
     @email = attributes["email"]
     @username = attributes["username"]
-    @role = if attributes["role"] == nil then "user" else attributes["role"] end
+    @role = attributes["role"]
     @is_seed = attributes["is_seed"] == true
   end
 end

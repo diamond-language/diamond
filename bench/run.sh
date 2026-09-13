@@ -38,6 +38,7 @@ declare -A REPEATS=(
     [case_pattern_matching]=7
     [typed_dispatch]=6
     [object_hydration]=120
+    [hash_ivar_construct]=250
 )
 
 run_pass() {
