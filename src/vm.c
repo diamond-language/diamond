@@ -6532,25 +6532,6 @@ static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
     return -1;
 }
 
-/* JIT trampoline for DIAMOND_OP_INDEX_GET's Hash branch -- see jit.h's own
- * comment. Deliberately narrower than the real opcode (String/Array/other
- * receiver kinds all return DIAMOND_VM_TYPE_ERROR here, a bailout, rather
- * than being handled): generated code only ever calls this where the JIT
- * compiler already committed to treating the receiver as a Hash, exactly
- * the same "guard, and bail to the interpreter the moment reality doesn't
- * match" discipline as everywhere else in this JIT. */
-DiamondVmStatus diamond_jit_hash_get(const DiamondValue *receiver,
-        const DiamondValue *key, DiamondValue *out) {
-    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
-        receiver->as.object->kind != DIAMOND_OBJECT_HASH) {
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    const DiamondHash *hash = (const DiamondHash *)receiver->as.object;
-    const ptrdiff_t found = hash_find(hash, *key);
-    *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
-    return DIAMOND_VM_OK;
-}
-
 static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value) {
     const ptrdiff_t existing=hash_find(hash,key);
@@ -6607,16 +6588,6 @@ DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
             return DIAMOND_VM_OUT_OF_MEMORY;
     }
     return DIAMOND_VM_OK;
-}
-
-/* JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case (mismatched
- * primitive kinds, or FLOAT/OBJECT operands) -- values_equal is a pure,
- * always-succeeding, non-allocating function (no DiamondVmStatus, no `vm`
- * needed), confirmed by reading its full body, so unlike every other
- * trampoline here this one can never fail and never needs a bailout check
- * at its call site. */
-bool diamond_jit_values_equal(const DiamondValue *left, const DiamondValue *right) {
-    return values_equal(*left, *right);
 }
 
 static bool is_truthy(DiamondValue value) {
@@ -6794,6 +6765,44 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
+}
+
+/* JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case -- Phase 2e
+ * fix, extracted verbatim from that case's own real tail (src/vm.c's
+ * EQUAL/NOT_EQUAL case, right after this file's own INT fast path, which
+ * the JIT's own compile_equal_op already replicates directly in generated
+ * code and never routes through here). The Phase 2d version of this
+ * trampoline (diamond_jit_values_equal) called values_equal() directly for
+ * every non-fast-path case, silently skipping the "==" override check
+ * below for a DIAMOND_OBJECT_INSTANCE operand -- a real, shipped
+ * correctness bug (a class defining `def ==` would get identity
+ * comparison instead of its own override when compared via JIT'd EQUAL).
+ * This version checks the override first, exactly like the interpreter's
+ * own case does, and only falls back to values_equal when no override is
+ * found -- matching that case's own comment ("two instances of a class
+ * with no '==' compare by identity exactly as before this feature
+ * existed"). Unlike the old version, this can genuinely invoke arbitrary
+ * interpreted code (the override method), so it's status-bearing, not
+ * infallible -- compile_equal_op sets jc->has_called = true accordingly. */
+DiamondVmStatus diamond_jit_equal_general(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, bool negate, DiamondValue *out) {
+    if (left->kind == DIAMOND_VALUE_OBJECT &&
+        left->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)left->as.object, "==", 2, right, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            const bool overloaded_equal = is_truthy(op_result);
+            *out = DIAMOND_BOOL(negate ? !overloaded_equal : overloaded_equal);
+            return DIAMOND_VM_OK;
+        }
+    }
+    const bool equal = values_equal(*left, *right);
+    *out = DIAMOND_BOOL(negate ? !equal : equal);
+    return DIAMOND_VM_OK;
 }
 
 static bool case_numeric_compare(DiamondValue left,DiamondValue right,int *comparison) {
@@ -8716,6 +8725,198 @@ static bool hash_entry_satisfies_constraints(DiamondHash *hash,
            !value_matches_set(&context,value,constraint->value_set,true))return false;
     }
     return true;
+}
+
+/* JIT trampoline for DIAMOND_OP_INDEX_GET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below) so the interpreter and the JIT
+ * share one implementation. Replaces Phase 2b's diamond_jit_hash_get,
+ * which only ever handled a Hash receiver, returning DIAMOND_VM_TYPE_ERROR
+ * for everything else -- accidentally safe before Phase 2d (every bailout
+ * retried via full interpretation, which correctly checks the `[]`
+ * override below), but a real latent correctness bug once a function's
+ * bailout target can be "propagate" (jc->has_called already true from an
+ * earlier call): a JIT'd INDEX_GET on an Instance with a real `[]`
+ * override, reached after such a call, would have incorrectly propagated
+ * TYPE_ERROR instead of invoking the override. This version handles
+ * Hash/String/Array/Instance-overload exactly like the real opcode, and
+ * -- because the Instance branch can genuinely invoke arbitrary code --
+ * is compiled with jc->has_called = true unconditionally, the same
+ * conservative, compile-time-only choice diamond_jit_equal_general's own
+ * compile_equal_op already makes. */
+DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        const ptrdiff_t found = hash_find(hash, *index);
+        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        if (index->kind != DIAMOND_VALUE_INT) {
+            char actual[80];
+            format_value_type(actual, sizeof actual, *index);
+            snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int, got %s", actual);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *source = (const DiamondString *)receiver->as.object;
+        const int64_t char_index = index->as.integer;
+        if (char_index < 0 || (uint64_t)char_index >= source->length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "index %" PRId64 " out of bounds for String of length %zu",
+                     char_index, source->length);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        DiamondString *character = allocate_string(vm, source->chars + (size_t)char_index, 1);
+        if (character == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(character);
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]", 2, index, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            *out = op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        DiamondArray *sliced = allocate_array(vm, &array->values[range_start], range_length);
+        if (sliced == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(sliced);
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[] index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    *out = array->values[(size_t)array_index];
+    return DIAMOND_VM_OK;
+}
+
+/* JIT trampoline for DIAMOND_OP_INDEX_SET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below), new in this phase (INDEX_SET
+ * was entirely unsupported before). Handles Hash/String/Instance-
+ * overload/Array exactly like the real opcode; the Instance branch can
+ * genuinely invoke arbitrary code, so this is compiled with jc->has_called
+ * = true unconditionally, same as diamond_jit_index_get/diamond_jit_
+ * equal_general. No `out` parameter -- INDEX_SET never writes a
+ * destination register (see the real case's own comment: `x[i] = v`
+ * already evaluates to `v` itself, computed before this opcode runs). */
+DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, const DiamondValue *source) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        if (!hash_entry_satisfies_constraints(hash, *index, *source)) {
+            snprintf(vm->error, sizeof vm->error, "hash entry violates its type annotation");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if (!hash_set(vm, hash, *index, *source)) return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error, sizeof vm->error, "String does not support element assignment");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondValue setter_arguments[2] = {*index, *source};
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]=", 3, setter_arguments, 2,
+            &op_result, &found);
+        if (found) return status;
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        if (source->kind != DIAMOND_VALUE_OBJECT ||
+            source->as.object->kind != DIAMOND_OBJECT_ARRAY ||
+            ((DiamondArray *)source->as.object)->count != range_length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "range assignment requires a replacement Array of exactly %zu element(s)",
+                     range_length);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *replacement = (const DiamondArray *)source->as.object;
+        for (size_t i = 0; i < range_length; i++) {
+            if (!array_value_satisfies_constraints(array, replacement->values[i])) {
+                snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+        for (size_t i = 0; i < range_length; i++)
+            array->values[range_start + i] = replacement->values[i];
+        if (!gc_write_barrier_range(vm, (DiamondObject *)array, range_start, range_length))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[]= index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    if (!array_value_satisfies_constraints(array, *source)) {
+        snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    array->values[(size_t)array_index] = *source;
+    if (!gc_write_barrier_index(vm, (DiamondObject *)array, (size_t)array_index))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
 }
 
 static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
@@ -15091,24 +15292,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * falls through to values_equal unchanged, so two
                  * instances of a class with no "==" compare by identity
                  * exactly as before this feature existed. */
-                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                {
                     const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "==",2,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        const bool overloaded_equal=is_truthy(op_result);
-                        registers[destination]=DIAMOND_BOOL(
-                            opcode==DIAMOND_OP_EQUAL?overloaded_equal:!overloaded_equal);
-                        break;
-                    }
+                    DiamondValue general_result=DIAMOND_NIL;
+                    const DiamondVmStatus status=diamond_jit_equal_general(vm,chunk,depth,
+                        site,&registers[left],&registers[right],
+                        opcode==DIAMOND_OP_NOT_EQUAL,&general_result);
+                    VM_PROPAGATE(status);
+                    registers[destination]=general_result;
                 }
-                const bool equal = values_equal(registers[left], registers[right]);
-                registers[destination] = DIAMOND_BOOL(
-                    opcode == DIAMOND_OP_EQUAL ? equal : !equal);
                 break;
             }
             case DIAMOND_OP_LESS:
@@ -19850,219 +20042,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INDEX_GET: {
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_SHORT(destination);READ_SHORT(receiver);READ_SHORT(index_register);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    const ptrdiff_t found=hash_find(hash,registers[index_register]);
-                    registers[destination]=found<0 ? DIAMOND_NIL
-                        : hash->entries[(size_t)found].value;
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                        char actual[80];
-                        format_value_type(actual,sizeof actual,registers[index_register]);
-                        snprintf(vm->error,sizeof vm->error,
-                            "String#[] index must be an Int, got %s",actual);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondString *source=
-                        (const DiamondString *)registers[receiver].as.object;
-                    const int64_t index=registers[index_register].as.integer;
-                    if(index<0 || (uint64_t)index>=source->length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "index %" PRId64 " out of bounds for String of length %zu",
-                                 index,source->length);
-                        VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                    }
-                    DiamondString *character=
-                        allocate_string(vm,source->chars+(size_t)index,1);
-                    if(character==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(character);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]` overloading (docs/syntax.md's "Operator
-                     * overloading" section) -- receiver-based only, no
-                     * coercion, no Range/slice special-casing the way
-                     * Array gets below: whatever's between the brackets
-                     * (an Int, a Range instance, anything) is passed to
-                     * the receiver's own `[]` method verbatim, same rule
-                     * every other overloadable operator already follows.
-                     * Not found falls through to the same TypeError any
-                     * non-overloading Instance already got before this
-                     * feature existed. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]",2,&registers[index_register],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    DiamondArray *sliced=
-                        allocate_array(vm,&array->values[range_start],range_length);
-                    if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(sliced);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[] index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                registers[destination]=array->values[(size_t)index];
+                const uint8_t *site=chunk->code+instruction_offset;
+                DiamondValue indexed=DIAMOND_NIL;
+                const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&indexed);
+                VM_PROPAGATE(status);
+                registers[destination]=indexed;
                 break;
             }
             case DIAMOND_OP_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_SHORT(receiver);READ_SHORT(index_register);READ_SHORT(source);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    if(!hash_entry_satisfies_constraints(hash,
-                       registers[index_register],registers[source])) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "hash entry violates its type annotation");
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    if(!hash_set(vm,hash,registers[index_register],registers[source]))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "String does not support element assignment");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]=` overloading, mirroring DIAMOND_OP_INDEX_GET's
-                     * own `[]` branch above -- index then value, verbatim,
-                     * no coercion. `x[i] = v` already evaluates to `v`
-                     * itself (compile_index_assignment's own return
-                     * value, computed before this opcode ever runs, not
-                     * a destination register this opcode writes), so the
-                     * setter method's own return value is simply
-                     * discarded here, matching Ruby's own `[]=`
-                     * semantics -- only `status` matters, for error
-                     * propagation. Not found falls through to the same
-                     * TypeError any non-overloading Instance already got. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondValue setter_arguments[2]=
-                        {registers[index_register],registers[source]};
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]=",3,setter_arguments,2,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    /* Deliberately no grow/shrink splice in this first
-                     * version (docs/roadmap.md) -- the replacement must
-                     * be an Array of exactly the range's own (already
-                     * clamped) length. Every replacement value is
-                     * checked against the array's own type constraints
-                     * *before* writing any of them back, so a
-                     * constraint violation partway through leaves the
-                     * array completely untouched, not half-mutated. */
-                    if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
-                       registers[source].as.object->kind!=DIAMOND_OBJECT_ARRAY||
-                       ((DiamondArray *)registers[source].as.object)->count!=range_length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "range assignment requires a replacement Array of "
-                                 "exactly %zu element(s)",range_length);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondArray *replacement=
-                        (const DiamondArray *)registers[source].as.object;
-                    for(size_t i=0;i<range_length;i++) {
-                        if(!array_value_satisfies_constraints(array,replacement->values[i])) {
-                            snprintf(vm->error,sizeof vm->error,
-                                     "array element violates its type annotation");
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        }
-                    }
-                    for(size_t i=0;i<range_length;i++)
-                        array->values[range_start+i]=replacement->values[i];
-                    if(!gc_write_barrier_range(vm,(DiamondObject *)array,
-                            range_start,range_length))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[]= index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                if(!array_value_satisfies_constraints(array,registers[source])) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "array element violates its type annotation");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                array->values[(size_t)index]=registers[source];
-                if(!gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)index))
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                const uint8_t *site=chunk->code+instruction_offset;
+                const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&registers[source]);
+                VM_PROPAGATE(status);
                 break;
             }
             case DIAMOND_OP_HASH: {

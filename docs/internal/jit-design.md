@@ -182,6 +182,85 @@ JIT-eligible would need ordinary method-call/`INVOKE` support plus
 Array `INDEX_GET`/`INDEX_SET` -- a materially larger feature than
 anything built so far, not scoped or decided.
 
+**Status (2026-09-13): Phase 2e found and fixed two real, already-shipped
+correctness bugs while continuing to scope `Model#initialize`, and closed
+the `INDEX_GET`/`INDEX_SET` gap above (Array support is now real) without
+reaching `Model#initialize` itself.** Reading `DIAMOND_OP_INDEX_GET`'s and
+the generic `DIAMOND_OP_LESS` family's *full* real case bodies for the
+first time (Phase 2b only read enough of `INDEX_GET` to build a Hash-only
+trampoline, and Phase 2d's `EQUAL`/`NOT_EQUAL` fix was written without
+re-checking `EQUAL`'s own full case) surfaced:
+
+1. **`EQUAL`/`NOT_EQUAL` silently skipped a `==` override.** The real case
+   checks `invoke_operator_method` for a user-defined `==` on a
+   `DIAMOND_OBJECT_INSTANCE` operand *before* falling back to
+   `values_equal` -- Phase 2d's `diamond_jit_values_equal` called
+   `values_equal` directly, unconditionally. A class defining `def ==`
+   compared via JIT'd `EQUAL` silently got identity comparison instead.
+   Confirmed as a real, catchable bug: `tests/cases/jit_equal_overload.di`
+   (two equal-by-value `Point` instances compared inside a small JIT'd
+   `compare(a, b) = a == b`) returns `10` with the fix and `0` without it
+   -- verified directly by temporarily reverting the fix (`git stash`) and
+   re-running the test against the old code before restoring it.
+2. **`INDEX_GET`'s Hash-only trampoline became unsafe once "propagate"
+   existed.** Before Phase 2d, every `INDEX_GET` bailout retried via full
+   interpretation, which correctly checks the real case's Instance `[]`
+   override -- accidentally safe. Once a bailout could "propagate" instead
+   (`jc->has_called` already true from an earlier call), a JIT'd
+   `INDEX_GET` on an Instance with a real `[]` override, reached *after*
+   such a call, would have incorrectly propagated `TYPE_ERROR` rather than
+   invoking the override. Confirmed the same way:
+   `tests/cases/jit_index_get_overload_after_super.di` (a `Box` defining
+   `def [](key)`, indexed from inside a JIT'd constructor right after its
+   own `super()` call) returns `1050` with the fix and raises an uncaught
+   `TypeError` without it.
+
+**The fix, generalized into a standing rule**: stop hand-picking which
+sub-cases of an opcode's real body to port into a trampoline -- extract
+the *entire* real case verbatim (the pattern `diamond_jit_super_call`/
+`diamond_jit_new_hash` already used) and make the interpreter's own case a
+thin wrapper calling it, so the two can never drift apart again.
+`diamond_jit_equal_general` (replacing `diamond_jit_values_equal`) and
+`diamond_jit_index_get`/`diamond_jit_index_set` (replacing the old
+`diamond_jit_hash_get`, and adding `INDEX_SET` support for the first
+time) were built this way -- each a full Hash/String/Array/Instance-
+overload extraction. Since the Instance-overload branch is structurally
+present in every compiled occurrence regardless of the runtime receiver,
+all three trampolines are compiled with `jc->has_called = true`
+unconditionally (the same conservative, compile-time-only choice
+`compile_super_call` already makes), and `diamond_jit_index_get`/`_set`
+additionally set `jc->needs_frame = true` (their String/Array paths can
+allocate). A new `tests/cases/jit_array_index.di` exercises Array
+`INDEX_GET`/`INDEX_SET` directly as a real new capability, not just a bug
+fix. Full suite (1340 cases) green under debug + ASan/UBSan, `DIAMOND_JIT`
+unset and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`; no
+regression on Phase 2/2b/2c/2d's benchmarks or on the real end-to-end
+`User.new` measurement (still within noise of interpreted, unchanged from
+Phase 2d, since `Model#initialize` still doesn't compile).
+
+**Still does not reach `Model#initialize`, and the reason is now a
+genuinely different, bigger design question than "add more opcodes."**
+Its loop condition (`while index < keys.length()`) compiles to the
+*generic* `DIAMOND_OP_LESS` (never quickened to `LESS_INT` under
+`DIAMOND_JIT=1` alone, since quickening is a separate opt-in flag), which
+has its own Instance `<` override branch, structurally identical to
+`EQUAL`'s -- so it too must conservatively set `jc->has_called = true` on
+every compiled occurrence. But `jc->has_called` is compile-time-only and
+monotonic: once true, every later opcode in the same compile is affected,
+regardless of which runtime branch actually executes. Since this `LESS`
+sits *inside* the loop, every iteration, `index += 1` (immediately after
+it) is then rejected outright by the same "no arithmetic once a call
+could have happened" rule this whole safety mechanism depends on.
+Reaching `Model#initialize` would need either a genuinely different
+**runtime-checked** has-a-call-actually-happened flag (generated code
+itself branches on whether the override path was taken *this specific
+execution*, not a fixed compile-time decision) in place of today's
+compile-time-only `jc->has_called`, or enough local type inference to
+prove a given `LESS` site's operands are always Int. Neither is scoped or
+decided -- a materially bigger design change than anything in Phases
+2-2e, since it would replace the core exception-safety mechanism Phase 2d
+built rather than extend it.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

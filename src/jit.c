@@ -625,17 +625,23 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
 }
 
 /* EQUAL/NOT_EQUAL. A fast CPU-comparison path handles both operands NIL,
- * BOOL, or INT with *matching* kinds; everything else (mismatched kinds,
- * or matching FLOAT/OBJECT kinds) calls diamond_jit_values_equal instead
- * of bailing (Phase 2d) -- values_equal is pure and always succeeds, so
- * this opcode never needs a bailout check at all, unlike every other
- * opcode in this file. This isn't just an optimization: User#initialize's
- * own role/is_seed fields use `==` *after* a SUPER call, and this JIT
- * cannot safely bail-and-retry once a call has already run (see
- * jc->has_called), so a bail here would otherwise force rejecting the
- * whole function outright. */
-static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
-                              uint16_t right, bool negate) {
+ * BOOL, or INT with *matching* kinds -- never a real call, no bail check
+ * needed, matches DIAMOND_OP_EQUAL/NOT_EQUAL's own INT fast path exactly.
+ * Everything else (mismatched kinds, or matching FLOAT/OBJECT kinds)
+ * calls diamond_jit_equal_general (Phase 2e), which checks for a `==`
+ * override on an Instance operand before falling back to values_equal --
+ * see that trampoline's own comment in jit.h for why this replaced Phase
+ * 2d's diamond_jit_values_equal (a real, shipped correctness bug: the old
+ * trampoline skipped the override check entirely). Because the general
+ * case can now genuinely invoke arbitrary code, jc->has_called is set
+ * unconditionally here -- every compiled EQUAL/NOT_EQUAL structurally
+ * *could* reach the override branch at runtime, regardless of whether a
+ * given call's actual operands turn out to be Instances, so this is a
+ * conservative, compile-time-only decision exactly like compile_super_
+ * call's own jc->has_called = true. */
+static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                              uint16_t left, uint16_t right, bool negate) {
+    jc->has_called = true;
     JitBuffer *buf = &jc->buf;
     emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, KIND_OFF));
     emit_load_byte_zx(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, KIND_OFF));
@@ -668,18 +674,38 @@ static void compile_equal_op(JitCompiler *jc, uint16_t dest, uint16_t left,
     size_t int_done = emit_jmp_placeholder(buf);
     patch_rel32_to_here(buf, not_int);
     /* General case: mismatched kinds (kinds_differ also lands here), or
-     * matching FLOAT/OBJECT kinds. */
+     * matching FLOAT/OBJECT kinds. Unlike the fast paths above, this
+     * writes the full result (kind + value) directly into registers[dest]
+     * via the trampoline's own `out` pointer, so it must jump past the
+     * fast paths' own shared "store RAX as a Bool" tail below rather than
+     * falling into it (which would clobber the just-written result with
+     * whatever garbage the trampoline call left in RAX). diamond_jit_
+     * equal_general takes 8 arguments; the last two (negate, out) go on
+     * the stack per the SysV ABI's own overflow convention -- pushed in
+     * reverse (out, then negate) so the last push (negate) ends up at the
+     * lowest address, [rsp+0], matching that layout; the caller (this
+     * generated code) reclaims the 16 bytes after the call returns. */
     patch_rel32_to_here(buf, kinds_differ);
-    emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(left, 0));
-    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(right, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_values_equal);
-    if (negate) emit_xor_al_1(buf);
-    emit_movzx_r64_al(buf, REG_RAX);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_imm64(buf, REG_RAX, negate ? 1 : 0);
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
+    emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_equal_general);
+    emit_add_rsp_imm32(buf, 16);
+    emit_bail_if_al_nonzero(jc);
+    size_t general_done = emit_jmp_placeholder(buf);
     patch_rel32_to_here(buf, nil_done);
     patch_rel32_to_here(buf, bool_done);
     patch_rel32_to_here(buf, int_done);
     emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
     emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    patch_rel32_to_here(buf, general_done);
 }
 
 /* SET_IVAR: field-cache/shape-transition bookkeeping and the GC write
@@ -701,15 +727,60 @@ static void compile_set_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_bail_if_al_nonzero(jc);
 }
 
-/* INDEX_GET, Hash receiver only (the trampoline itself reports
- * DIAMOND_VM_TYPE_ERROR -- a bailout -- for anything else at runtime) --
- * calls diamond_jit_hash_get(&registers[recv], &registers[index], &registers[dest]). */
-static void compile_index_get(JitCompiler *jc, uint16_t dest, uint16_t recv, uint16_t index) {
+/* INDEX_GET (Phase 2e: full Hash/String/Array/Instance-overload support,
+ * replacing Phase 2b's Hash-only version -- see diamond_jit_index_get's
+ * own comment in jit.h for why). Can allocate (String/Array paths) and
+ * can genuinely invoke arbitrary code (the Instance `[]` override), so
+ * sets both jc->needs_frame and jc->has_called unconditionally. Calls
+ * diamond_jit_index_get(vm, chunk, depth, site, &registers[recv],
+ * &registers[index], &registers[dest]) -- 7 arguments, so the last
+ * (`out`) goes on the stack per the SysV ABI's overflow convention; a
+ * padding push keeps the total an even (16-byte-aligned) count. */
+static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                               uint16_t recv, uint16_t index) {
+    jc->needs_frame = true;
+    jc->has_called = true;
     JitBuffer *buf = &jc->buf;
-    emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
-    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(index, 0));
-    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_hash_get);
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(index, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_get);
+    emit_add_rsp_imm32(buf, 16);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* INDEX_SET (Phase 2e, new -- was entirely unsupported before). Full
+ * Hash/String/Instance-overload/Array support, mirroring compile_index_
+ * get's own treatment (jc->needs_frame and jc->has_called both
+ * unconditional). Calls diamond_jit_index_set(vm, chunk, depth, site,
+ * &registers[recv], &registers[index], &registers[source]) -- same
+ * 7-argument, stack-plus-padding shape as compile_index_get. No
+ * destination register: INDEX_SET never writes one (see diamond_jit_
+ * index_set's own comment). */
+static void compile_index_set(JitCompiler *jc, size_t instruction_start,
+                               uint16_t recv, uint16_t index, uint16_t source) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(index, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_set);
+    emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -891,7 +962,7 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t dest = 0, left = 0, right = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
                     !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                compile_equal_op(jc, dest, left, right, opcode == DIAMOND_OP_NOT_EQUAL);
+                compile_equal_op(jc, instruction_start, dest, left, right, opcode == DIAMOND_OP_NOT_EQUAL);
                 break;
             }
             case DIAMOND_OP_SET_IVAR: {
@@ -933,7 +1004,14 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t dest = 0, recv = 0, index = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
-                compile_index_get(jc, dest, recv, index);
+                compile_index_get(jc, instruction_start, dest, recv, index);
+                break;
+            }
+            case DIAMOND_OP_INDEX_SET: {
+                uint16_t recv = 0, index = 0, source = 0;
+                if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &index) ||
+                    !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
+                compile_index_set(jc, instruction_start, recv, index, source);
                 break;
             }
             case DIAMOND_OP_HASH: {

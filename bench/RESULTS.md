@@ -462,3 +462,66 @@ JIT-eligible would need ordinary method-call (`INVOKE`) support plus
 Array `INDEX_GET`/`INDEX_SET` -- each individually a materially larger
 feature than anything built across Phases 2-2d, not a narrow extension
 of the existing trampoline pattern.
+
+## Phase 2e: two correctness bugs found and fixed, plus Array INDEX_GET/INDEX_SET (2026-09-13)
+
+Continuing to scope `Model#initialize` meant reading `DIAMOND_OP_INDEX_GET`'s
+and the generic `DIAMOND_OP_LESS` family's *full* real interpreter case
+bodies for the first time -- Phase 2b only read enough of `INDEX_GET` to
+build a Hash-only trampoline, and Phase 2d's `EQUAL`/`NOT_EQUAL` fix never
+re-checked `EQUAL`'s own full case. That surfaced two real, already-shipped
+correctness bugs (silent wrong answers, not crashes):
+
+1. `EQUAL`/`NOT_EQUAL` (Phase 2d) skipped a user-defined `==` override on
+   an Instance operand, silently falling back to identity comparison
+   instead.
+2. `INDEX_GET`'s Hash-only trampoline (Phase 2b) would, once a bailout
+   could "propagate" instead of retry (true from Phase 2d onward), have
+   incorrectly propagated `TYPE_ERROR` for an Instance with a real `[]`
+   override reached after an earlier call, instead of invoking it.
+
+**Both fixed, and verified as real fixes, not just "the new test passes"**:
+for each bug, the new regression test was run against the pre-fix code
+(via a temporary `git stash` of the fix) and confirmed to actually fail
+there before trusting that it passing afterward means anything --
+`jit_equal_overload.di` returns `0` instead of the correct `10` without
+the fix; `jit_index_get_overload_after_super.di` raises an uncaught
+`TypeError` instead of returning `1050` without the fix. Both trampolines
+were rewritten as full extractions of their real opcode's case body
+(`diamond_jit_equal_general`, `diamond_jit_index_get`, and new
+`diamond_jit_index_set`), the same drift-proof pattern
+`diamond_jit_super_call`/`diamond_jit_new_hash` already used -- a
+standing rule now, not a one-off fix: never hand-pick a subset of an
+opcode's real behavior into a trampoline again.
+
+**New real capability, not just a fix**: `INDEX_SET` is JIT-compiled for
+the first time (Hash/String/Instance-overload/Array, full parity with the
+real opcode), and `INDEX_GET` now handles Array receivers too (previously
+Hash-only). `tests/cases/jit_array_index.di` exercises both directly.
+
+No regression on Phase 2/2b/2c/2d's benchmarks: `int_arithmetic.di` still
+~2.9-3x, `hash_ivar_construct.di` still ~6-8% faster, `object_hydration.di`
+still ~4-8% faster (release, 3 alternating rounds each, `DIAMOND_JIT_
+THRESHOLD=1` where applicable). The real end-to-end `User.new` benchmark
+(skindicate's actual `User#initialize`, 100,000 calls) is unchanged from
+Phase 2d -- still within noise of interpreted (~7.1-7.3s both), since
+`Model#initialize` still doesn't compile.
+
+Full suite (1340 cases: 1336 plus these 4 new) green under debug +
+ASan/UBSan, both with `DIAMOND_JIT` unset and with `DIAMOND_JIT=1
+DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`.
+
+**`Model#initialize` still doesn't compile, confirmed as a clean bailout,
+not a regression**: its loop condition uses the generic `DIAMOND_OP_LESS`
+(never quickened to `LESS_INT` under `DIAMOND_JIT=1` alone), which has its
+own Instance `<` override branch and so must also conservatively set
+`jc->has_called = true` -- but that flag is compile-time-only and
+monotonic, so `index += 1` immediately after it, every loop iteration, is
+then rejected by the same "no arithmetic once a call could have happened"
+rule Phase 2d's own safety depends on. Reaching `Model#initialize` would
+need either a genuinely different runtime-checked (not compile-time-only)
+has-a-call-happened flag, or local type inference proving `LESS`'s
+operands are always Int -- a materially bigger design change than
+anything in Phases 2-2e, not scoped or decided (see
+`docs/internal/jit-design.md`'s own Phase 2e status note for the full
+reasoning).

@@ -169,10 +169,35 @@ void diamond_jit_free(void *jit_code, size_t jit_code_size);
  * one will need the real frame contract the design doc describes. */
 DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, const DiamondValue *value);
-DiamondVmStatus diamond_jit_hash_get(const DiamondValue *receiver,
-        const DiamondValue *key, DiamondValue *out);
 DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index);
+
+/* Phase 2e. JIT trampolines for DIAMOND_OP_INDEX_GET/INDEX_SET -- full
+ * extractions of those opcodes' own real case bodies (src/vm.c), replacing
+ * Phase 2b's Hash-only diamond_jit_hash_get. That narrower trampoline
+ * returned DIAMOND_VM_TYPE_ERROR for any non-Hash receiver, which was
+ * *accidentally* safe before Phase 2d (every bailout retried via full
+ * interpretation, which correctly checks the Instance `[]` override
+ * below) but became a real, if narrow, latent correctness bug the moment
+ * a bailout could "propagate" instead (see docs/internal/jit-design.md's
+ * Phase 2e status note). These handle Hash/String/Array/Instance-overload
+ * (GET) and Hash/String/Instance-overload/Array (SET) exactly like the
+ * real opcodes. Both can genuinely invoke arbitrary code via the
+ * Instance-overload branch, so both are compiled with jc->has_called =
+ * true unconditionally (see compile_index_get/compile_index_set in
+ * jit.c) -- the same conservative, compile-time-only choice every other
+ * overload-checking trampoline here makes. `site` is this occurrence's
+ * own bytecode address, the same per-occurrence method-cache key
+ * `diamond_jit_equal_general` and `diamond_jit_super_call` already use.
+ * INDEX_SET has no `out` parameter -- see its own real case's comment in
+ * vm.c for why (`x[i] = v` already evaluates to `v` itself, computed
+ * before this opcode runs, not a destination register it writes). */
+DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, DiamondValue *out);
+DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, const DiamondValue *source);
 
 /* Phase 2c: opaque DiamondFrame management -- DiamondFrame's own layout is
  * private to vm.c (not declared in vm.h), so a JIT'd function can never
@@ -221,12 +246,24 @@ DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
 DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
         uint16_t base, uint16_t count, DiamondValue *out);
 
-/* Phase 2d. JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case
- * (mismatched primitive kinds, or FLOAT/OBJECT operands) -- values_equal
- * is pure and always succeeds (no DiamondVmStatus, no `vm` needed), so
- * unlike every other trampoline here this one never needs a bailout check
- * at its call site. */
-bool diamond_jit_values_equal(const DiamondValue *left, const DiamondValue *right);
+/* Phase 2e. JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case
+ * (mismatched primitive kinds, or FLOAT/OBJECT operands) -- extracted
+ * verbatim from that case's own real tail (src/vm.c), which checks for a
+ * user-defined `==` override on a DIAMOND_OBJECT_INSTANCE operand via
+ * invoke_operator_method *before* falling back to values_equal. Replaces
+ * Phase 2d's diamond_jit_values_equal, which called values_equal directly
+ * and silently skipped that override check -- a real, shipped correctness
+ * bug (see docs/internal/jit-design.md's Phase 2e status note). Because
+ * the override call can genuinely invoke arbitrary interpreted code, this
+ * is status-bearing (unlike its predecessor): compile_equal_op sets
+ * jc->has_called = true unconditionally to account for it. `site` is
+ * this occurrence's own bytecode address (`jc->function->code +
+ * instruction_start`), the same per-occurrence method-cache key every
+ * other overload-checking trampoline here already uses. `negate` is true
+ * for NOT_EQUAL. */
+DiamondVmStatus diamond_jit_equal_general(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, bool negate, DiamondValue *out);
 
 /* Phase 2d. JIT trampoline for DIAMOND_OP_SUPER -- extracted from that
  * opcode's own interpreter case (src/vm.c) so the two share one
