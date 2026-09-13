@@ -170,3 +170,45 @@ type inference eliding runtime checks where possible), and twice for
 `wrap` (once for its `T`-bound parameter, once for its `Array[T]`
 return, since a generic return type can't be statically proven the
 same way). Each check is a real, measured cost, not free at runtime.
+
+## Addition: `object_hydration.di` (2026-09-12)
+
+Added while gathering representative benchmark evidence ahead of planning
+real JIT work (`docs/roadmap.md`'s "Native-code execution" section requires
+this before any codegen). Models `ActiveRecord::Repository`-style row
+hydration — skindicate's own `User` class (a real application, not a
+synthetic worst case) is the template: a class with typed `attr_accessor`
+fields and an `initialize(attributes: Hash)` that pulls values out of a
+Hash "row" with simple conditional defaulting, called once per fetched
+database row. No real database involved (deliberately, for a fast,
+reproducible microbenchmark) — 100 batches × 100 hydrations of a 4-field
+class from a freshly-built Hash each time.
+
+Same environment/methodology as above (`gcc`, `make release`
+`-march=native`, `DIAMOND_REPEAT`-based in-process re-execution). Verified
+stable across 5 independent runs before trusting the number (21.16–21.53ms
+per 100-hydration iteration, <2% spread):
+
+| Benchmark | Iterations (repeat) | Default (per-iter) |
+|---|---:|---:|
+| `object_hydration` (new) | 120 | ~0.0213s |
+
+Opcode trace (`DIAMOND_TRACE_OPCODES=1`, top opcodes by count over the full
+run): `MOVE` 140,202; `STRING` 130,000; `INDEX_GET` 50,000; `ADD` 40,000;
+`SET_IVAR` 40,000 (the 4 typed field writes × 10,000 hydrations); `CONSTANT`
+20,403; `CHECK_TYPE` 20,000 (typed `attr_accessor` writes being checked).
+No `INVOKE`/`INVOKE_MONO` in the top 15 — this workload's cost is
+dominated by object construction and typed field assignment, not method
+dispatch, distinct from `typed_dispatch.di` above.
+
+**Motivating context**: this shape was found to dominate a real
+application's (skindicate) front-page response time this session — a
+direct SQLite timing of the exact same query took ~8ms against a real
+8,000+ row table, while hydrating the ~100 resulting rows into model
+objects (`ActiveRecord::Repository`, batched, no N+1) took ~25ms. The
+query was never the bottleneck; object construction was, and it's already
+linear (confirmed by profiling at n=10/25/50/100/200) with no algorithmic
+fix available at the query or application level. This benchmark exists so
+that claim has a reproducible, application-independent number behind it,
+per `docs/roadmap.md`'s explicit requirement not to pursue JIT work
+"without representative profiling evidence."
