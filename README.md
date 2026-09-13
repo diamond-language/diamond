@@ -112,7 +112,15 @@ Required system dependencies:
 - SQLite3, PostgreSQL (`libpq`), and MariaDB/MySQL client development
   headers and libraries;
 - zlib and libcrypt (`crypt(3)`) development headers and libraries;
-- POSIX threads and `ucontext`, provided by the target Linux environment.
+- POSIX threads and `ucontext`, provided by the target Linux environment;
+- On x86_64: a CPU supporting the `x86-64-v3` microarchitecture level
+  (AVX2, BMI2, FMA -- roughly Intel Haswell/2013 or AMD Excavator/2015
+  onward). `make`/`make release` default to `-march=native`, which
+  already requires at least this on any CPU still in real service; older
+  hardware isn't specifically supported, since Diamond's arbitrary-
+  precision integers (`src/bignum.c`) lean on BMI2/ADX heavily enough
+  that going without them is roughly a 7x slowdown, not a rounding
+  error (measured via `bench/int_arithmetic.di`).
 
 On Fedora:
 

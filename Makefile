@@ -70,34 +70,41 @@ CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 # trip. Clang's -O1 measures 23,144 bytes/frame (smaller than even GCC's
 # -O0), so only Clang's `debug` build trades away full -O0 variable
 # visibility under a debugger; GCC's is unaffected.
-ifeq ($(findstring clang,$(CC)),clang)
-CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG
-else
-CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
-endif
-# -march=native: with no distro packaging story yet, whoever builds
-# this builds it for themselves, on the machine that's going to run
-# it -- so there's no "built on a faster machine, copied to a
-# different one" case to protect by default. That distinction matters
-# because -native is not just "some missed vectorization on newer
-# CPUs" the way a bytecode VM's non-numeric hot path might suggest --
-# measured directly (bench/int_arithmetic.di, this repo's own
-# bignum.c, which -march=x86-64's baseline denies BMI2/ADX): ~3.9s/iter
-# generic vs ~0.5s/iter native, a ~7x difference, not a rounding error.
-# Multi-precision arithmetic leans on BMI2 (mulx)/ADX (adcx/adox) far
-# more than "AVX/FMA" alone suggests.
+#
+# Both CFLAGS_DEBUG and CFLAGS_RELEASE below add -march=native on x86_64:
+# with no distro packaging story yet, whoever builds this builds it for
+# themselves, on the machine that's going to run it -- so there's no
+# "built on a faster machine, copied to a different one" case to protect
+# by default, for a debug build any more than a release one. That
+# distinction matters because -native is not just "some missed
+# vectorization on newer CPUs" the way a bytecode VM's non-numeric hot
+# path might suggest -- measured directly (bench/int_arithmetic.di, this
+# repo's own bignum.c, which a plain `-march=x86-64` baseline denies
+# BMI2/ADX): ~3.9s/iter generic vs ~0.5s/iter native, a ~7x difference,
+# not a rounding error. Multi-precision arithmetic leans on BMI2
+# (mulx)/ADX (adcx/adox) far more than "AVX/FMA" alone suggests.
+#
+# Practical minimum supported configuration: x86-64-v3 (AVX2/BMI2/FMA/
+# LZCNT/MOVBE -- roughly 2013 Intel Haswell or 2015 AMD Excavator
+# onward). Below that, the ~7x arithmetic falloff above isn't worth
+# specifically supporting -- but this is a stated policy, not enforced
+# in code: no compile-time or runtime check exists for it, and
+# -march=native already clears this floor on any real CPU still in
+# service, so there's nothing to enforce in the common case. Building
+# for genuinely older hardware by overriding CFLAGS_DEBUG/CFLAGS_RELEASE
+# yourself is possible; it's just unsupported.
+#
 # Anything that deliberately builds on one machine to run the binary
 # on a *different* one -- applications/skindicate.dia's own
 # build_ubuntu.sh cross-build script is the current real example --
-# must override CFLAGS_RELEASE itself rather than rely on this
+# must override CFLAGS_RELEASE itself rather than rely on the -native
 # default, e.g. `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
-# release`: x86-64-v3 is a named, standardized ISA tier (AVX2/BMI2/
-# FMA/LZCNT/MOVBE), not one specific CPU's exact feature set --
-# supported by any real x86_64 deploy target from roughly 2013
-# (Intel Haswell) or 2015 (AMD Excavator) onward, recovers the same
-# ~7x win as native for this workload (confirmed directly), without
-# native's "tied to whichever machine happened to compile it" risk of
-# an illegal-instruction crash on a different CPU.
+# release`: x86-64-v3 is a named, standardized ISA tier, not one
+# specific CPU's exact feature set -- it recovers the same ~7x win as
+# native for this workload (confirmed directly) without native's "tied
+# to whichever machine happened to compile it" risk of an
+# illegal-instruction crash on a different CPU.
+#
 # -march=native is itself an x86-only flag -- both gcc and clang reject it
 # outright targeting arm64 ("unsupported argument"), which every current
 # GitHub-hosted `macos-*` runner is by default (Apple Silicon). Guarded by
@@ -106,8 +113,18 @@ endif
 # separate, unmeasured decision -- not made here.)
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),x86_64)
+ifeq ($(findstring clang,$(CC)),clang)
+CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG -march=native
+else
+CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG -march=native
+endif
 CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 else
+ifeq ($(findstring clang,$(CC)),clang)
+CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG
+else
+CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
+endif
 CFLAGS_RELEASE := -O3 -DNDEBUG
 endif
 # -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line

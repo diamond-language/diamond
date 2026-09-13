@@ -128,6 +128,12 @@ needs the same explicit override -- verify the actual deploy target's CPU
 flags first (`ssh target grep flags /proc/cpuinfo`, checking for `avx2
 bmi2 fma`), don't just assume.
 
+`x86-64-v3` isn't an arbitrary choice of override for this one script --
+it's Diamond's stated practical minimum supported configuration (see the
+Makefile's own `CFLAGS_RELEASE` comment and the README's system
+dependencies section). A deploy target older than that is unsupported, not
+just slower.
+
 **Caveat:** matching the target's distro and major version is "very likely
 works," not a guaranteed identical package snapshot -- the container image's
 installed library versions are whatever that base image shipped with at
