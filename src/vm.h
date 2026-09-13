@@ -852,6 +852,19 @@ typedef struct DiamondFunction {
      * Safe as an exact zero-init/GC-scan bound only because register
      * allocation is monotonic per function body (never recycled). */
     uint16_t register_count;
+    /* Phase 2 baseline JIT (docs/internal/jit-design.md) -- jit_code is
+     * executable memory owned by this DiamondFunction (freed by
+     * diamond_jit_free wherever this function itself is destroyed), never
+     * copied by diamond_function_copy: a Thread.new/gremlin_serve worker's
+     * cloned function always starts back at "not yet compiled," matching
+     * the design doc's explicit v1 threading scope. jit_ineligible is set
+     * once compilation is attempted and rejected (an unsupported opcode
+     * found), so it's never retried. jit_call_count is the tier-up trigger,
+     * checked against DiamondVm's own jit_threshold. */
+    void *jit_code;
+    size_t jit_code_size;
+    size_t jit_call_count;
+    bool jit_ineligible;
     /* Every local/parameter declared directly in this function's own
      * body (not a nested `def`'s -- that gets its own DiamondFunction
      * and its own scope_locals), see DiamondScopeLocal above. Also
@@ -1219,6 +1232,14 @@ struct DiamondVm {
     size_t quickening_observations;
     size_t quickened_sites;
     size_t deoptimized_sites;
+    /* Phase 2 baseline JIT (docs/internal/jit-design.md) -- opt-in via
+     * DIAMOND_JIT, same pattern as `quickening` above. jit_threshold is
+     * the tier-up trigger's invocation-count threshold, checked against
+     * each DiamondFunction's own jit_call_count. */
+    bool jit;
+    size_t jit_threshold;
+    size_t jit_compiled_functions;
+    size_t jit_bailouts;
     /* Copied from the top-level DiamondChunk's own field once, at
      * diamond_vm_run's own entry -- NOT re-read from whatever
      * DiamondChunk happens to be ambient at a given opcode, since a

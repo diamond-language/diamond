@@ -6,9 +6,26 @@ threading model -- written ahead of any codegen, per
 [`docs/roadmap.md`](../roadmap.md)'s "Native-code execution" section, which
 gates real JIT work on exactly this plus representative benchmark evidence
 (see [`bench/RESULTS.md`](../../bench/RESULTS.md)'s `object_hydration.di`
-addition and the existing `typed_dispatch.di`). No native code generation
-exists yet; this is a contract for whenever it's built, not a description of
-running code.
+addition and the existing `typed_dispatch.di`).
+
+**Status (2026-09-12): a first, deliberately narrow implementation now
+exists** (`src/jit.c`/`src/jit.h`, opt-in via `DIAMOND_JIT=1`) -- everything
+below was written before that code and describes the *general* contract a
+future, broader JIT (one that compiles calls, allocation, or anything that
+can trigger GC or raise) will need. The v1 slice sidesteps almost all of it
+on purpose: it only compiles zero-argument, call-free, allocation-free,
+exception-free functions, which by construction never hit a GC safepoint or
+need to unwind -- so it needs no `DiamondFrame`, no GC-root publishing, and
+no mid-function deopt, only a compile-time "don't compile this at all"
+bailout for anything outside its whitelist plus a handful of runtime
+bailouts (integer overflow, division edge cases) that re-run the *whole*
+function via the interpreter rather than resuming mid-flight. See `src/
+jit.c`'s own header comment for the precise, current scope, and `bench/
+RESULTS.md`'s "Phase 2 baseline JIT" section for the first real measurement
+(~2.95x on `bench/int_arithmetic.di`, release build). The frame contract,
+tier-up trigger, and deopt design below remain the target for whatever
+comes after this slice -- most concretely, compiling `INVOKE_MONO`-guarded
+calls, which is the first thing that would actually need them.
 
 ## Why the interop seam is already clean
 

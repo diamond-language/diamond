@@ -212,3 +212,51 @@ fix available at the query or application level. This benchmark exists so
 that claim has a reproducible, application-independent number behind it,
 per `docs/roadmap.md`'s explicit requirement not to pursue JIT work
 "without representative profiling evidence."
+
+## Phase 2 baseline JIT: first real measurement (2026-09-12)
+
+`DIAMOND_JIT=1` (see `docs/internal/jit-design.md`) against `bench/
+int_arithmetic.di`, same environment as above (`make release`,
+`-march=native`, one binary, `DIAMOND_JIT` toggled purely via env var so
+this is a true same-binary A/B, not a rebuild comparison). Interpreted
+figures here use the **release** (`-O3`) build specifically -- an earlier
+debug-build (`-O0`) comparison during development showed a much larger
+apparent win (~22x) purely because the unoptimized interpreter baseline
+itself was artificially slow; the release-build number below is the
+honest one.
+
+5 alternating rounds, single call each (`DIAMOND_JIT_THRESHOLD=1`, so the
+very first call compiles and every call in a `DIAMOND_REPEAT` run after
+the first amortizes that one-time cost):
+
+| | per-iteration (repeat=15) |
+|---|---:|
+| Interpreted | ~0.530s |
+| JIT | ~0.180s |
+
+**~2.95x speedup**, consistent to within 1% across all 5 rounds (both
+single-call and `DIAMOND_REPEAT=15` measurements agree closely, so the
+one-time compile cost is not a meaningfully confounding factor here).
+Verified correct against the interpreted baseline's own output
+(`12499992500000`) in every configuration tested, including the two
+runtime bailout paths this narrow slice deliberately doesn't handle
+inline (integer overflow promoting to bignum, confirmed via a dedicated
+overflow test producing the identical bignum-promoted result; truncating
+division, confirmed via a dedicated division test) -- both fall back
+mid-function to a full, correct interpreted re-run of that same function,
+exactly as designed.
+
+This is the first real native-code-generation result for Diamond (the
+`jit-experimentation` branch predating this was interpreter-loop tuning,
+not codegen -- see that section above). Scope is deliberately narrow: only
+zero-argument, non-generic, non-method top-level functions built entirely
+from register moves/constants/`_INT` arithmetic/comparisons/jumps/return
+-- see `src/jit.c`'s own header comment and `docs/internal/jit-design.md`
+for exactly what is and isn't covered, and why (a call-free,
+allocation-free, exception-free subset needs none of the general frame/
+GC-root contract the design doc lays out for a future call-compiling
+tier). `bench/object_hydration.di` and `bench/typed_dispatch.di` both
+correctly report 0 compiled functions under `DIAMOND_JIT=1` -- neither
+fits this narrow subset yet -- and produce output identical to the
+non-JIT baseline, confirming the bailout-at-compile-time gate is safe for
+code it was never meant to touch.
