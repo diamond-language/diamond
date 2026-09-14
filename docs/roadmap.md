@@ -9,6 +9,35 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### `struct` declarations: what's next, if anything
+
+`struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md,
+landed this cycle) is deliberately narrow -- see that section's own list
+of what it doesn't do. Real possibilities this opens up, none attempted
+yet, none committed:
+
+- **an additional hand-written body** -- `struct Point(x: Int, y: Int)`
+  followed by ordinary `def`/`attr`/`include` lines before `end`, so a
+  struct's generated methods could be supplemented rather than only
+  used as-is. Needs `compile_class`'s own body-parsing loop factored out
+  so `compile_struct` can call it too -- a real, separate refactor of
+  already-delicate, working code, not attempted alongside the rest of
+  this feature.
+- **a superclass, or being reopened** -- both ruled out for this pass
+  specifically because there's no obviously correct semantics for
+  regenerating `==`/`to_s`/`initialize` against an inherited or changed
+  field list; revisit only with a concrete design for what that would
+  mean, not speculatively.
+- **exact-class `==`** -- the generated `==` accepts any subclass of the
+  struct's own class (`IS_TYPE`'s ordinary `is_a?`-style semantics, the
+  only building block available without a new opcode), not just an
+  exact class match. A struct can't itself have a superclass, but
+  nothing stops an ordinary `class Sub < Point` from subclassing one, in
+  which case `Point.new(1,2) == sub_instance_with_same_x_y` is `true`
+  even though `Sub` may carry extra fields `==` never compares. Narrow,
+  known, and not fixed without a real driving need -- Ruby's own naive
+  `==` implementations have the identical wrinkle.
+
 ### freeze / frozen?: what's next, if anything
 
 `freeze`/`frozen?` (docs/classes-and-modules.md, landed this cycle) is

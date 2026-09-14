@@ -537,6 +537,66 @@ author promise plus the one restriction needed to make matching just the
 direct subclasses sound, not a barrier against some external boundary
 that doesn't exist in this language.
 
+## `struct` declarations
+
+```ruby
+struct Point(x: Int, y: Int)
+end
+
+p1 = Point.new(1, 2)
+p2 = Point.new(x: 1, y: 2)
+p1.x()               # 1
+p1 == p2              # true
+p1.to_s()             # "Point(x: 1, y: 2)"
+```
+
+`struct Name(field: Type, ...) ... end` declares an ordinary class (no
+runtime class synthesis -- see [roadmap.md](roadmap.md)'s "Explicitly
+deferred" section on why that approach was ruled out) with one field per
+declared member, and generates four methods for it automatically:
+
+- `initialize` -- assigns each argument to its matching field, in order.
+  `Point.new(1, 2)` and the keyword form `Point.new(x: 1, y: 2)` both
+  work, the same as a hand-written `def initialize(x: Int, y: Int)`.
+- One reader per field (`x`, `y` above) -- exactly what `attr_reader`
+  would generate, including the declared field type.
+- `==(other)` -- `true` only when `other` is the same class (checked
+  first; comparing against an unrelated type, or a different class
+  entirely, is `false`, never a raised error) *and* every field is
+  `==` to its counterpart.
+- `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
+  `name: value.to_s()`, comma-separated.
+
+A struct composes normally with everything else: `.freeze()`/
+`.frozen?()` work on an instance like any other
+([tap / dup / freeze / frozen? / respond_to? / public_send](#tap--dup--freeze--frozen--respond_to--public_send)),
+a struct's own class can appear in a `Type | Type` union and participate
+in [exhaustiveness checking](core-syntax.md#exhaustiveness-checking) the
+same way any other class does, and a field's declared type may refer to
+the struct's own name (`struct Node(value: Int, rest: Node | Nil)`) --
+the class is registered before its field list is parsed specifically so
+this resolves.
+
+**Deliberately narrow for this first pass:**
+
+- **No superclass.** `struct Point(x: Int) < Base` is a compile error --
+  keeps the generated `==` and field list from needing to reason about
+  inherited fields at all. (Nothing stops an ordinary `class` from
+  subclassing a struct's class the normal way; a struct simply can't
+  declare one of its own.)
+- **No reopening.** A second `struct Point(...)` for an already-declared
+  name is a compile error, unlike a plain `class`. Regenerating
+  `initialize`/`==`/`to_s` for a redeclared field list has no obviously
+  correct semantics, so it's simply disallowed rather than guessed at.
+- **No additional body.** `struct Point(x: Int, y: Int)\nend` is the
+  whole declaration -- no extra `def`/`attr`/`include` between the field
+  list and `end` yet. Planned as a later extension; see roadmap.md.
+- **Field types are required.** `struct Point(x, y)` (no `: Type`) is a
+  compile error -- this is what lets the generated readers carry a real
+  return type and keeps `==`/`to_s` simple.
+- A field cannot be named `initialize`, `==`, or `to_s` (it would
+  collide with one of the four generated methods).
+
 ## Operator overloading
 
 ```ruby

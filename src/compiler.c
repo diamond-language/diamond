@@ -10678,6 +10678,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
         compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
         compiler->current.kind == DIAMOND_TOKEN_SEALED ||
+        compiler->current.kind == DIAMOND_TOKEN_STRUCT ||
         compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
         compiler->current.kind == DIAMOND_TOKEN_MODULE) {
         return DIAMOND_TOKEN_EOF;
@@ -14003,6 +14004,410 @@ static uint16_t compile_class(Compiler *compiler) {
     return result;
 }
 
+/* Same shape as add_string_range/add_name_string just above, but for a
+ * literal C string this compile-time synthesis code built itself (e.g.
+ * "Point(x: ") rather than a span into the user's own source -- no
+ * escape processing needed, the caller already controls every byte. */
+static uint16_t add_literal_string(Compiler *compiler,const char *text,
+                                   DiamondSpan span) {
+    const size_t length=strlen(text);
+    if(compiler->function->string_count==DIAMOND_MAX_STRING_CONSTANTS||
+       length>DIAMOND_MAX_STRING_LENGTH) {
+        fail(compiler,span,"too many or oversized generated string literals");
+        return 0;
+    }
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,span,"out of memory growing function strings");return 0;
+    }
+    DiamondStringConstant *string=
+        &compiler->function->strings[compiler->function->string_count];
+    memcpy(string->chars,text,length);
+    string->length=length;string->chars[length]='\0';
+    return (uint16_t)compiler->function->string_count++;
+}
+
+/* Saved/restored around each of `struct`'s own three hand-emitted method
+ * bodies (initialize/==/to_s) -- the same "swap compiler->function,
+ * regenerate registers from 0, restore known_types/known_type_sets
+ * afterward" dance compile_definition's own (much larger) save/restore
+ * block performs whenever a nested `def` is compiled, narrowed to just
+ * the state this generator's own straight-line emit_instruction/
+ * allocate_register/emit_jump/patch_jump calls actually touch. Nothing
+ * else compile_definition also saves (locals, current_method, begin_
+ * depth, current_loop, etc.) is relevant here: this generator never
+ * parses an identifier, never calls compile_return/compile_begin, and
+ * never opens a block -- only compiler->function/next_register/
+ * known_types/known_type_sets are ever read or written by the plain
+ * emission helpers this uses. See compile_definition's own copy of the
+ * inline-then-heap-fallback comment for why the 256 cap needs a fallback
+ * rather than just being a fixed bound. */
+typedef struct StructMethodState {
+    DiamondFunction *outer_function;
+    uint16_t outer_next_register;
+    uint8_t inline_known_types[256];
+    int32_t inline_known_type_sets[256];
+    uint8_t *heap_known_types;
+    int32_t *heap_known_type_sets;
+} StructMethodState;
+
+static bool begin_struct_method(Compiler *compiler,DiamondFunction *function,
+                                StructMethodState *state) {
+    state->outer_function=compiler->function;
+    state->outer_next_register=compiler->next_register;
+    state->heap_known_types=nullptr;state->heap_known_type_sets=nullptr;
+    uint8_t *known_types=state->inline_known_types;
+    int32_t *known_type_sets=state->inline_known_type_sets;
+    if(compiler->next_register>256) {
+        state->heap_known_types=
+            malloc((size_t)compiler->next_register*sizeof(uint8_t));
+        state->heap_known_type_sets=
+            malloc((size_t)compiler->next_register*sizeof(int32_t));
+        if(state->heap_known_types==nullptr||state->heap_known_type_sets==nullptr) {
+            free(state->heap_known_types);free(state->heap_known_type_sets);
+            return false;
+        }
+        known_types=state->heap_known_types;
+        known_type_sets=state->heap_known_type_sets;
+    }
+    for(size_t index=0;index<compiler->next_register;index++) {
+        known_types[index]=compiler->known_types[index];
+        known_type_sets[index]=compiler->known_type_sets[index];
+    }
+    compiler->function=function;
+    compiler->next_register=0;
+    return true;
+}
+
+static void end_struct_method(Compiler *compiler,StructMethodState *state) {
+    compiler->function->register_count=compiler->next_register;
+    compiler->function=state->outer_function;
+    compiler->next_register=state->outer_next_register;
+    const uint8_t *known_types=state->heap_known_types?
+        state->heap_known_types:state->inline_known_types;
+    const int32_t *known_type_sets=state->heap_known_type_sets?
+        state->heap_known_type_sets:state->inline_known_type_sets;
+    for(size_t index=0;index<state->outer_next_register;index++) {
+        compiler->known_types[index]=known_types[index];
+        compiler->known_type_sets[index]=known_type_sets[index];
+    }
+    free(state->heap_known_types);free(state->heap_known_type_sets);
+}
+
+static void register_struct_method(Compiler *compiler,DiamondClass *class,
+        DiamondSpan name,const char *method_name,uint16_t function_index,
+        uint8_t caller_arity) {
+    if(class->method_count==DIAMOND_MAX_METHODS) {
+        fail(compiler,name,"too many methods");return;
+    }
+    DiamondMethod *method=&class->methods[class->method_count++];
+    (void)snprintf(method->name,sizeof method->name,"%s",method_name);
+    method->function_index=function_index;
+    method->arity=caller_arity;method->required_arity=caller_arity;
+}
+
+/* `struct Name(field: Type, ...) ... end` -- a compile-time-only data
+ * class: registers an ordinary DiamondClass (no runtime synthesis, see
+ * docs/roadmap.md's "Explicitly deferred" entry on that) with one field
+ * per declared member, then generates `initialize`/one reader per
+ * field/`==`/`to_s` exactly as if they'd been hand-written. Readers
+ * reuse compile_attribute_named verbatim (same as attr_reader); the
+ * other three are hand-emitted via begin_struct_method's swap since
+ * their bodies (a per-field GET_IVAR/SET_IVAR/EQUAL/IS_TYPE/TO_STRING
+ * chain) don't correspond to any parseable source text. Deliberately
+ * narrow for this first pass -- no superclass, no reopening, no
+ * additional body -- see docs/classes-and-modules.md's own "struct
+ * declarations" section for the reasoning. */
+static uint16_t compile_struct(Compiler *compiler) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected valid struct name");
+        return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
+        fail(compiler,name,"struct name is too long");return 0;
+    }
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
+    /* Registered *before* the field list parses (unlike compile_class's
+     * own superclass clause, which is likewise parsed only after this
+     * same registration) so a self-referential field type -- `struct
+     * Node(value: Int, next: Node)` -- can already resolve this class's
+     * own name via parse_type_annotation/resolve_type_name below. */
+    const int existing_class=find_class_name(compiler,stored_name);
+    int index;DiamondClass *class;
+    if(existing_class>=0) {
+        class=&compiler->program->classes[(size_t)existing_class];
+        if(!class->declared_by_discovery) {
+            fail(compiler,name,"struct is already defined");return 0;
+        }
+        index=existing_class;
+    } else {
+        if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
+            fail(compiler,name,"expected valid struct name");return 0;
+        }
+        index=(int)compiler->program->class_count++;
+        class=&compiler->program->classes[(size_t)index];
+    }
+    memset(class->methods,0,sizeof class->methods);
+    memset(class->singleton_methods,0,sizeof class->singleton_methods);
+    memset(class->fields,0,sizeof class->fields);
+    memset(class->field_type_status,0,sizeof class->field_type_status);
+    memset(class->field_known_class,0,sizeof class->field_known_class);
+    memset(class->class_variables,0,sizeof class->class_variables);
+    class->method_count=0;class->singleton_method_count=0;
+    class->field_count=0;class->class_variable_count=0;
+    class->declared_by_discovery=false;
+    class->superclass=UINT8_MAX;class->sealed=false;
+    class->declaration_line=(uint32_t)name.line;
+    class->declaration_column=(uint32_t)name.column;
+    class->declaration_start=name.start;
+    (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after struct name");
+        return 0;
+    }
+    advance_token(compiler);
+    DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
+    int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t field_count=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        while(!compiler->failed) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,"expected field name");break;
+            }
+            if(field_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
+                fail(compiler,compiler->current.span,"too many struct fields");break;
+            }
+            const DiamondSpan field_span=compiler->current.span;
+            char field_name[DIAMOND_MAX_FUNCTION_NAME];
+            if(field_span.length>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,field_span,"field name is too long");break;
+            }
+            for(size_t ch=0;ch<field_span.length;ch++)
+                field_name[ch]=compiler->source[field_span.start+ch];
+            field_name[field_span.length]='\0';
+            if(strcmp(field_name,"initialize")==0||strcmp(field_name,"==")==0||
+               strcmp(field_name,"to_s")==0) {
+                fail(compiler,field_span,
+                     "field name collides with a generated struct method");
+                break;
+            }
+            for(size_t existing=0;existing<class->field_count;existing++)
+                if(strcmp(class->fields[existing],field_name)==0) {
+                    fail(compiler,field_span,"duplicate struct field name");break;
+                }
+            if(compiler->failed)break;
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,
+                     "expected ':' and a type after field name");break;
+            }
+            advance_token(compiler);
+            const int type_set=parse_type_annotation(compiler);
+            (void)snprintf(class->fields[class->field_count],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",field_name);
+            field_name_spans[field_count]=field_span;
+            field_type_sets[field_count]=type_set;
+            field_count++;class->field_count++;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+    }
+    if(compiler->failed)return 0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after struct fields");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        fail(compiler,compiler->current.span,
+             "struct declarations cannot have a superclass");
+        return 0;
+    }
+    if(!consume_block_start(compiler))return 0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+        fail(compiler,compiler->current.span,
+             "struct declarations cannot contain a body yet");
+        return 0;
+    }
+    advance_token(compiler);
+    const int outer_class=compiler->current_class;
+    compiler->current_class=index;
+    const bool outer_private=compiler->methods_private;
+    const bool outer_protected=compiler->methods_protected;
+    compiler->methods_private=false;compiler->methods_protected=false;
+    for(size_t field=0;field<field_count&&!compiler->failed;field++)
+        compile_attribute_named(compiler,false,false,
+            field_name_spans[field],field_type_sets[field]);
+    /* initialize(field0, field1, ...): one SET_IVAR per field, register
+     * 1+index holding that parameter by the ordinary calling convention
+     * (see compile_attribute_named's own identical comment on this). */
+    if(!compiler->failed) {
+        size_t init_function_index=0;
+        DiamondFunction *init=
+            compiler_add_function(compiler,&init_function_index);
+        if(init==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(init->name,sizeof init->name,"initialize");
+            init->owner_class=(uint8_t)index;
+            init->arity=(uint8_t)(field_count+1);
+            init->required_arity=init->arity;
+            init->return_type_set=DIAMOND_NO_TYPE_SET;
+            init->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                init->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            for(size_t field=0;field<field_count;field++)
+                (void)snprintf(init->parameter_names[field],
+                    DIAMOND_MAX_FUNCTION_NAME,"%s",class->fields[field]);
+            StructMethodState state;
+            if(!begin_struct_method(compiler,init,&state)) {
+                fail(compiler,name,"out of memory compiling initialize");
+            } else {
+                (void)allocate_register(compiler);
+                for(size_t field=0;field<field_count;field++) {
+                    const uint16_t value_register=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
+                        (uint16_t)field,value_register,3);
+                }
+                emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"initialize",
+                (uint16_t)init_function_index,(uint8_t)field_count);
+        }
+    }
+    /* ==(other): same-class check via IS_TYPE, then a short-circuit AND
+     * of one GET_IVAR+GET_IVAR+EQUAL+JUMP_IF_FALSE per field -- the same
+     * shape compile_begin's own rescue-type matching already uses. */
+    if(!compiler->failed) {
+        size_t eq_function_index=0;
+        DiamondFunction *eq=compiler_add_function(compiler,&eq_function_index);
+        if(eq==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(eq->name,sizeof eq->name,"==");
+            eq->owner_class=(uint8_t)index;
+            eq->arity=2;eq->required_arity=2;
+            eq->return_type_set=DIAMOND_NO_TYPE_SET;
+            eq->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                eq->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            (void)snprintf(eq->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,"other");
+            StructMethodState state;
+            if(!begin_struct_method(compiler,eq,&state)) {
+                fail(compiler,name,"out of memory compiling ==");
+            } else {
+                (void)allocate_register(compiler);
+                const uint16_t other=allocate_register(compiler);
+                const uint16_t type_ok=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
+                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
+                size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+1];
+                size_t mismatch_count=0;
+                mismatch_jumps[mismatch_count++]=
+                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
+                for(size_t field=0;field<field_count;field++) {
+                    const uint16_t left=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,left,0,
+                        (uint16_t)field,3);
+                    const uint16_t right=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,right,other,
+                        (uint16_t)field,3);
+                    const uint16_t equal=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_EQUAL,equal,left,right,3);
+                    mismatch_jumps[mismatch_count++]=
+                        emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,equal);
+                }
+                const uint16_t true_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_BOOL,true_result,true,0,2);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,true_result,0,0,1);
+                const size_t mismatch_target=compiler->function->code_count;
+                for(size_t jump=0;jump<mismatch_count;jump++)
+                    patch_jump(compiler,mismatch_jumps[jump],mismatch_target);
+                const uint16_t false_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_BOOL,false_result,false,0,2);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,false_result,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"==",
+                (uint16_t)eq_function_index,1);
+        }
+    }
+    /* to_s(): "ClassName(field0: v0, field1: v1)" -- a CONSTANT-free
+     * chain of STRING/GET_IVAR/TO_STRING/ADD, exactly the shape
+     * parse_string's own interpolation-joining loop already uses. */
+    if(!compiler->failed) {
+        size_t to_s_function_index=0;
+        DiamondFunction *to_s=compiler_add_function(compiler,&to_s_function_index);
+        if(to_s==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(to_s->name,sizeof to_s->name,"to_s");
+            to_s->owner_class=(uint8_t)index;
+            to_s->arity=1;to_s->required_arity=1;
+            to_s->return_type_set=DIAMOND_NO_TYPE_SET;
+            to_s->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                to_s->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            StructMethodState state;
+            if(!begin_struct_method(compiler,to_s,&state)) {
+                fail(compiler,name,"out of memory compiling to_s");
+            } else {
+                (void)allocate_register(compiler);
+                char piece[DIAMOND_MAX_FUNCTION_NAME+4];
+                (void)snprintf(piece,sizeof piece,"%s(",stored_name);
+                uint16_t result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_STRING,result,
+                    add_literal_string(compiler,piece,name),0,2);
+                for(size_t field=0;field<field_count;field++) {
+                    (void)snprintf(piece,sizeof piece,field==0?"%s: ":", %s: ",
+                        class->fields[field]);
+                    const uint16_t prefix=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_STRING,prefix,
+                        add_literal_string(compiler,piece,name),0,2);
+                    const uint16_t joined=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,
+                        prefix,3);
+                    const uint16_t field_value=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,field_value,0,
+                        (uint16_t)field,3);
+                    const uint16_t stringified=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_TO_STRING,stringified,
+                        field_value,0,2);
+                    result=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_ADD,result,joined,
+                        stringified,3);
+                }
+                const uint16_t suffix=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_STRING,suffix,
+                    add_literal_string(compiler,")",name),0,2);
+                const uint16_t final_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ADD,final_result,result,
+                    suffix,3);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,final_result,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"to_s",
+                (uint16_t)to_s_function_index,0);
+        }
+    }
+    compiler->current_class=outer_class;
+    compiler->methods_private=outer_private;
+    compiler->methods_protected=outer_protected;
+    const uint16_t result=allocate_register(compiler);
+    /* Sole writer; run_chunk's zero-init already covers this. */
+    return result;
+}
+
 /* Scans one `(...)` parameter list via a throwaway lookahead lexer copy
  * (never touches compiler->lexer/current/previous), computing just
  * enough -- arity, required_arity, has_variadic -- to register an
@@ -14479,6 +14884,8 @@ static uint16_t compile_module(Compiler *compiler) {
         } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS||
                   compiler->current.kind==DIAMOND_TOKEN_SEALED) {
             (void)compile_class(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_STRUCT) {
+            (void)compile_struct(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INTERFACE) {
             (void)compile_interface(compiler);
         } else {
@@ -15357,6 +15764,7 @@ static uint16_t compile_sequence(Compiler *compiler) {
             compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
             compiler->current.kind == DIAMOND_TOKEN_CLASS ||
             compiler->current.kind == DIAMOND_TOKEN_SEALED ||
+            compiler->current.kind == DIAMOND_TOKEN_STRUCT ||
             compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
             compiler->current.kind == DIAMOND_TOKEN_MODULE;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
@@ -15366,6 +15774,8 @@ static uint16_t compile_sequence(Compiler *compiler) {
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS ||
                    compiler->current.kind == DIAMOND_TOKEN_SEALED) {
             result = compile_class(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_STRUCT) {
+            result = compile_struct(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {
             result = compile_interface(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {

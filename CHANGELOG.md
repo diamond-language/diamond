@@ -149,6 +149,21 @@ authoritative fine-grained record.
   trampoline, matching the same fix already applied to `INDEX_SET` in an
   earlier JIT phase. See docs/classes-and-modules.md's "tap / dup /
   freeze / frozen? / respond_to? / public_send" section.
+- Added `struct Name(field: Type, ...) ... end`: a compile-time-only data
+  class declaration (no runtime class synthesis) that generates
+  `initialize`, one reader per field, `==`, and `to_s` automatically --
+  `struct Point(x: Int, y: Int)` gives `Point.new(1, 2)` (or the keyword
+  form `Point.new(x: 1, y: 2)`), `.x()`/`.y()`, field-wise `==` (`false`,
+  never a raised error, against an unrelated type), and
+  `"Point(x: 1, y: 2)"` from `.to_s()`. Deliberately narrow for this
+  first pass: no superclass, no reopening, and no additional
+  hand-written body yet. Composes normally with everything else -- a
+  struct's class can appear in a `Type | Type` union or participate in
+  exhaustiveness checking like any other class, `.freeze()`/`.frozen?()`
+  work on an instance the ordinary way, and a field's declared type may
+  refer to the struct's own name (`struct Node(value: Int, rest: Node |
+  Nil)`). See docs/classes-and-modules.md's "`struct` declarations"
+  section.
 
 ### Packages
 
