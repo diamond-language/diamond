@@ -42,6 +42,51 @@ rescue error: SandboxError
 end
 ```
 
+## Per-capability granularity
+
+`DIAMOND_SANDBOX=1` alone still denies everything above, unchanged. `DIAMOND_SANDBOX_
+ALLOW` (only consulted once `DIAMOND_SANDBOX` is already set) names categories to let
+through instead:
+
+```sh
+DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.di   # filesystem/database/subprocess still denied
+```
+
+Four categories, comma-separated when combining more than one:
+
+- `filesystem` -- `File.open`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`
+- `network` -- `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`,
+  `UDPSocket.bind`/`.open`, `TLSSocket.connect`, `TLSServer.listen`
+- `database` -- `SQLite3.open`, `PostgreSQL.open`, `MySQL.open` (kept separate from
+  `filesystem`/`network` even though SQLite3 technically opens a file and Postgres/MySQL
+  are technically network -- "allow DB access but not raw sockets/files" is a real,
+  distinct policy shape)
+- `subprocess` -- `Process.run`, `Process.spawn`
+
+**Deliberately an allow-list, not a deny-list.** An unrecognized or misspelled category
+name in `DIAMOND_SANDBOX_ALLOW` (a typo, a name from some future category that doesn't
+exist yet) simply never matches anything -- that capability *stays denied*, the same
+fail-safe direction as leaving `DIAMOND_SANDBOX_ALLOW` unset entirely. A deny-list design
+would fail the other way: the same typo would silently deny *less* than intended.
+
+```ruby
+begin
+  TCPServer.listen(8080)
+  server.close()
+rescue error: SandboxError
+  # not reached with DIAMOND_SANDBOX_ALLOW=network
+end
+File.open("secrets.txt")  # still denied -- filesystem wasn't in the allow-list
+```
+
+**Not covered**: allow-listing specific paths or hosts (e.g. "deny filesystem except
+under `/tmp`," "deny network except to one host") -- a real, separate design problem
+(path traversal, symlink following, host-prefix-matching bypasses) this pass
+deliberately doesn't attempt. Category matching here is a small, fixed, hand-verified
+set of literal strings with no pattern-matching surface to get wrong; path/host
+matching would be a materially different, higher-stakes feature. Revisit only with a
+concrete driving need.
+
 ## Resource limits
 
 Independent of `--sandbox`/`DIAMOND_SANDBOX` -- these bound *how much* a program can
@@ -111,9 +156,9 @@ to handle it.
 Stated honestly, matching this project's own convention for every other feature's
 known limitations:
 
-- **No per-capability granularity.** It's all-or-nothing -- no "allow network but not
-  filesystem," no allow-listing specific paths or hosts. Not attempted without a
-  concrete use case asking for it.
+- **No path/host allow-listing**, only whole-category granularity -- see "Per-capability
+  granularity" above for exactly what's covered and why finer-grained matching stays
+  out of scope for now.
 - **`Thread.new`/`Supervisor.add_child` are not restricted.** A sandboxed program can
   still spawn OS threads (up to the existing 64-thread process-wide cap) -- this is a
   resource-exhaustion concern, a different category from "touching the outside world,"

@@ -13916,6 +13916,40 @@ static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
     *merged=values;*merged_count=count;return DIAMOND_VM_OK;
 }
 
+/* Sandbox per-capability granularity (docs/sandbox.md's own "Per-capability
+ * granularity" section) -- VM_SANDBOX_GUARD's own second argument. Reads
+ * DIAMOND_SANDBOX_ALLOW fresh on every call, exactly like VM_SANDBOX_GUARD
+ * itself reads DIAMOND_SANDBOX fresh every time (see that macro's own
+ * comment for why: every execution path -- top-level, a spawned Thread's
+ * child_vm, a Supervisor child's run_vm, ProgramBuilder#run's own run_vm --
+ * independently reads the same real process environment, so nothing needs
+ * to propagate from a parent VM to a child one). `category` is always a
+ * plain string literal from a VM_SANDBOX_GUARD call site, never a dynamic
+ * value. Matches whole, comma-separated tokens only (surrounding spaces
+ * trimmed) -- never a substring match, so a future longer category name
+ * can never accidentally match a shorter one contained within it. Absent
+ * or empty DIAMOND_SANDBOX_ALLOW (the common case: DIAMOND_SANDBOX=1 alone,
+ * meaning "deny everything") returns false for every category, unchanged
+ * from sandbox mode's original all-or-nothing behavior. */
+static bool sandbox_category_allowed(const char *category) {
+    const char *allow = getenv("DIAMOND_SANDBOX_ALLOW");
+    if (allow == nullptr) return false;
+    const size_t category_length = strlen(category);
+    const char *cursor = allow;
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == ',') cursor++;
+        const char *token_start = cursor;
+        while (*cursor != '\0' && *cursor != ',') cursor++;
+        const char *token_end = cursor;
+        while (token_end > token_start && token_end[-1] == ' ') token_end--;
+        const size_t token_length = (size_t)(token_end - token_start);
+        if (token_length == category_length &&
+            memcmp(token_start, category, category_length) == 0)
+            return true;
+    }
+    return false;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -14081,10 +14115,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
  * environment, so nothing needs to propagate a flag from a parent VM to a
  * child one -- the one propagation mistake that would actually matter for
  * a security feature like this. `capability_name_` is a plain string
- * literal (a Diamond-facing name, e.g. "File.open"), not a dynamic value. */
-#define VM_SANDBOX_GUARD(capability_name_)                                \
+ * literal (a Diamond-facing name, e.g. "File.open"), not a dynamic value.
+ *
+ * `category_` (docs/sandbox.md's own "Per-capability granularity" section)
+ * is one of "filesystem"/"network"/"database"/"subprocess", also always a
+ * plain string literal -- sandbox_category_allowed (just above this
+ * function) checks it against DIAMOND_SANDBOX_ALLOW, an opt-in allow-list
+ * consulted only once DIAMOND_SANDBOX is already denying everything.
+ * Deliberately an allow-list, not a deny-list: an unrecognized or
+ * misspelled category name in DIAMOND_SANDBOX_ALLOW simply never matches,
+ * leaving that capability denied (fails safe) -- the equivalent mistake in
+ * a deny-list design would silently fail open instead. */
+#define VM_SANDBOX_GUARD(capability_name_, category_)                     \
     do {                                                                  \
-        if (getenv("DIAMOND_SANDBOX") != nullptr) {                      \
+        if (getenv("DIAMOND_SANDBOX") != nullptr &&                      \
+            !sandbox_category_allowed(category_)) {                       \
             snprintf(vm->error,sizeof vm->error,                          \
                 "sandbox denies %s",(capability_name_));                  \
             VM_RETURN(DIAMOND_VM_SANDBOX_ERROR);                          \
@@ -19507,7 +19552,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_PROCESS_RUN: {
                 uint16_t destination=0,argv_register=0;
                 READ_SHORT(destination);READ_SHORT(argv_register);
-                VM_SANDBOX_GUARD("Process.run");
+                VM_SANDBOX_GUARD("Process.run", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     snprintf(vm->error,sizeof vm->error,
@@ -19528,7 +19573,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_PROCESS_SPAWN: {
                 uint16_t destination=0,argv_register=0;
                 READ_SHORT(destination);READ_SHORT(argv_register);
-                VM_SANDBOX_GUARD("Process.spawn");
+                VM_SANDBOX_GUARD("Process.spawn", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     snprintf(vm->error,sizeof vm->error,
@@ -20402,7 +20447,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_FILE_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
-                VM_SANDBOX_GUARD("File.open");
+                VM_SANDBOX_GUARD("File.open", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[mode_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -20431,7 +20476,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_FILE_DELETE: {
                 uint16_t dest=0,path_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);
-                VM_SANDBOX_GUARD("File.delete");
+                VM_SANDBOX_GUARD("File.delete", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,"File.delete argument must be a String value");
@@ -20454,7 +20499,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_DIR_ENTRIES: {
                 uint16_t dest=0,path_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);
-                VM_SANDBOX_GUARD("Dir.entries");
+                VM_SANDBOX_GUARD("Dir.entries", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,"Dir.entries argument must be a String value");
@@ -20550,10 +20595,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     case DIAMOND_FILE_PATH_ABSOLUTE:
                         path_result=DIAMOND_BOOL(path->length>0&&path->chars[0]=='/');break;
                     case DIAMOND_FILE_PATH_EXPAND:
-                        VM_SANDBOX_GUARD("File.expand_path");
+                        VM_SANDBOX_GUARD("File.expand_path", "filesystem");
                         path_status=file_path_expand_helper(vm,path,second,&path_result);break;
                     case DIAMOND_FILE_PATH_DIRECTORY: {
-                        VM_SANDBOX_GUARD("File.directory?");
+                        VM_SANDBOX_GUARD("File.directory?", "filesystem");
                         struct stat path_stat;
                         const bool is_directory=
                             stat(path->chars,&path_stat)==0&&S_ISDIR(path_stat.st_mode);
@@ -20587,7 +20632,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_SQLITE3_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
-                VM_SANDBOX_GUARD("SQLite3.open");
+                VM_SANDBOX_GUARD("SQLite3.open", "database");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -20611,7 +20656,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_POSTGRES_OPEN: {
                 uint16_t dest=0,conninfo_reg=0;
                 READ_SHORT(dest);READ_SHORT(conninfo_reg);
-                VM_SANDBOX_GUARD("PostgreSQL.open");
+                VM_SANDBOX_GUARD("PostgreSQL.open", "database");
                 if(registers[conninfo_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[conninfo_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -20648,7 +20693,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     port_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(user_reg);
                 READ_SHORT(password_reg);READ_SHORT(database_reg);READ_SHORT(port_reg);
-                VM_SANDBOX_GUARD("MySQL.open");
+                VM_SANDBOX_GUARD("MySQL.open", "database");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -20957,7 +21002,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
-                VM_SANDBOX_GUARD("TCPSocket.connect");
+                VM_SANDBOX_GUARD("TCPSocket.connect", "network");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[port_reg].kind!=DIAMOND_VALUE_INT) {
@@ -20995,7 +21040,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
                 uint16_t dest=0,port_reg=0,reuse_port_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(reuse_port_reg);
-                VM_SANDBOX_GUARD("TCPServer.listen");
+                VM_SANDBOX_GUARD("TCPServer.listen", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "TCPServer.listen argument must be an Int port");
@@ -21019,7 +21064,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_UDP_BIND: {
                 uint16_t dest=0,port_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);
-                VM_SANDBOX_GUARD("UDPSocket.bind");
+                VM_SANDBOX_GUARD("UDPSocket.bind", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "UDPSocket.bind argument must be an Int port");
@@ -21036,7 +21081,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_UDP_OPEN: {
                 uint16_t dest=0;
                 READ_SHORT(dest);
-                VM_SANDBOX_GUARD("UDPSocket.open");
+                VM_SANDBOX_GUARD("UDPSocket.open", "network");
                 DiamondUdpSocketHandle *udp_handle=nullptr;
                 const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,&udp_handle);
                 VM_PROPAGATE(udp_status);
@@ -21101,7 +21146,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
-                VM_SANDBOX_GUARD("TLSSocket.connect");
+                VM_SANDBOX_GUARD("TLSSocket.connect", "network");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[port_reg].kind!=DIAMOND_VALUE_INT) {
@@ -21301,7 +21346,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,port_reg=0,cert_reg=0,key_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(cert_reg);READ_SHORT(key_reg);
                 READ_SHORT(options_reg);
-                VM_SANDBOX_GUARD("TLSServer.listen");
+                VM_SANDBOX_GUARD("TLSServer.listen", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT||
                    registers[cert_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[cert_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
