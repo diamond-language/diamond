@@ -8,6 +8,7 @@
 #define _GNU_SOURCE
 
 #include "vm.h"
+#include "jit.h"
 #include "bignum.h"
 #include "compiler.h"
 #include "disassemble.h"
@@ -225,6 +226,49 @@ typedef struct DiamondFrame {
     const DiamondChunk *chunk;
     const size_t *instruction_offset;
 } DiamondFrame;
+
+/* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
+ * is private to this file, so jit.c can never construct or link one
+ * directly; it only ever reserves opaque bytes on its own native stack and
+ * calls these to manage them, the same "risky logic stays in real C, not
+ * hand-rolled machine code" pattern already used for SET_IVAR/INDEX_GET/
+ * CHECK_TYPE. diamond_jit_frame_size is called once per *compile* (not per
+ * generated call) so jit.c learns the exact byte count to reserve without
+ * a hardcoded constant that could silently drift out of sync with this
+ * struct's own layout -- unlike DIAMOND_JIT_MAX_REGISTERS (a bare enum,
+ * nothing to query), sizeof() on a real struct is exactly this available
+ * here. The extra trailing size_t past the frame itself is instruction_
+ * offset's own backing storage: that field is a *pointer* to a live value
+ * for the frame's whole lifetime (see its own struct comment above), not
+ * a copy, and a JIT'd function has no `ip`-like local of its own to point
+ * at -- this reserves one, initialized to 0 (a synthetic placeholder;
+ * this JIT compiles no begin/rescue and nothing it calls through these
+ * trampolines can itself raise, so no code path today ever reads it back
+ * for a real backtrace, but a future one might). */
+size_t diamond_jit_frame_size(void) {
+    return sizeof(DiamondFrame) + sizeof(size_t);
+}
+
+void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk) {
+    DiamondFrame *frame = (DiamondFrame *)frame_storage;
+    size_t *offset_storage = (size_t *)(frame + 1);
+    *offset_storage = 0;
+    *frame = (DiamondFrame){
+        .previous = vm->frames,
+        .registers = registers,
+        .pending = nullptr,
+        .register_count = register_count,
+        .chunk = chunk,
+        .instruction_offset = offset_storage,
+    };
+    vm->frames = frame;
+}
+
+void diamond_jit_frame_pop(DiamondVm *vm) {
+    DiamondFrame *frame = (DiamondFrame *)vm->frames;
+    vm->frames = frame->previous;
+}
 
 /* Native backing struct for DiamondThreadHandle (object.h) -- see
  * docs/threads.md. `child_vm`/`child_program` are this thread's own,
@@ -1170,6 +1214,13 @@ void diamond_vm_init(DiamondVm *vm) {
         .minor_gc_threshold_bytes = 1048576,.debug_fd=-1};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
+    /* Much higher than quickening_threshold's 1: an opcode rewrite is a
+     * single in-place byte write, while a JIT compile allocates and fills
+     * a whole executable-memory buffer -- worth doing only for a function
+     * that's actually going to be called a lot, not the first handful of
+     * calls. Unmeasured beyond "clearly should not be 1"; see
+     * docs/internal/jit-design.md. */
+    vm->jit_threshold = 50;
     /* See DiamondVm.debug_fd's own comment (src/vm.h): read once here,
      * not per-pause. An unparseable or negative value is treated the
      * same as unset -- debugger_helper's ordinary stdout/stdin path --
@@ -1666,6 +1717,22 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
     vm->young_objects = &string->object;
     vm->bytes_allocated += sizeof(DiamondString) + length + 1;
     return string;
+}
+
+/* JIT trampoline for DIAMOND_OP_STRING -- see jit.h's own comment. Mirrors
+ * that opcode's own interpreter case exactly (src/vm.c's dispatch loop):
+ * resolve the string constant, allocate via allocate_string (which calls
+ * maybe_collect unconditionally -- the actual reason this whole trampoline
+ * needs the caller to have already published a DiamondFrame, unlike
+ * SET_IVAR/INDEX_GET/CHECK_TYPE). */
+DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
+        uint16_t string_index, DiamondValue *out) {
+    if (string_index >= chunk->string_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondStringConstant *constant = &chunk->strings[string_index];
+    DiamondString *string = allocate_string(vm, constant->chars, constant->length);
+    if (string == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(string);
+    return DIAMOND_VM_OK;
 }
 
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
@@ -6576,6 +6643,31 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     return gc_write_barrier_index(vm,(DiamondObject *)hash,new_index);
 }
 
+/* JIT trampoline for DIAMOND_OP_HASH -- extracted from that case's own
+ * body (below) so the interpreter and the JIT share one implementation
+ * rather than risking the two drifting apart. Allocates via
+ * allocate_hash, which (like allocate_string) calls maybe_collect
+ * unconditionally -- a real GC safepoint, so any JIT'd function compiling
+ * this opcode must already have published a DiamondFrame. `count` is a
+ * compile-time-known immediate (baked into the bytecode by the compiler,
+ * exactly like DIAMOND_OP_STRING's own string_index), so the whole
+ * key/value-pair loop lives here in C rather than needing to be unrolled
+ * into generated machine code. */
+DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out) {
+    if ((size_t)base + (size_t)count * 2 > DIAMOND_REGISTER_COUNT)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondHash *hash = allocate_hash(vm);
+    if (hash == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(hash);
+    for (size_t i = 0; i < count; i++) {
+        if (!hash_set(vm, hash, registers[(size_t)base + i * 2],
+                      registers[(size_t)base + i * 2 + 1]))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    return DIAMOND_VM_OK;
+}
+
 static bool is_truthy(DiamondValue value) {
     return value.kind != DIAMOND_VALUE_NIL &&
            !(value.kind == DIAMOND_VALUE_BOOL && !value.as.boolean);
@@ -6751,6 +6843,44 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
+}
+
+/* JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case -- Phase 2e
+ * fix, extracted verbatim from that case's own real tail (src/vm.c's
+ * EQUAL/NOT_EQUAL case, right after this file's own INT fast path, which
+ * the JIT's own compile_equal_op already replicates directly in generated
+ * code and never routes through here). The Phase 2d version of this
+ * trampoline (diamond_jit_values_equal) called values_equal() directly for
+ * every non-fast-path case, silently skipping the "==" override check
+ * below for a DIAMOND_OBJECT_INSTANCE operand -- a real, shipped
+ * correctness bug (a class defining `def ==` would get identity
+ * comparison instead of its own override when compared via JIT'd EQUAL).
+ * This version checks the override first, exactly like the interpreter's
+ * own case does, and only falls back to values_equal when no override is
+ * found -- matching that case's own comment ("two instances of a class
+ * with no '==' compare by identity exactly as before this feature
+ * existed"). Unlike the old version, this can genuinely invoke arbitrary
+ * interpreted code (the override method), so it's status-bearing, not
+ * infallible -- compile_equal_op sets jc->has_called = true accordingly. */
+DiamondVmStatus diamond_jit_equal_general(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, bool negate, DiamondValue *out) {
+    if (left->kind == DIAMOND_VALUE_OBJECT &&
+        left->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)left->as.object, "==", 2, right, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            const bool overloaded_equal = is_truthy(op_result);
+            *out = DIAMOND_BOOL(negate ? !overloaded_equal : overloaded_equal);
+            return DIAMOND_VM_OK;
+        }
+    }
+    const bool equal = values_equal(*left, *right);
+    *out = DIAMOND_BOOL(negate ? !equal : equal);
+    return DIAMOND_VM_OK;
 }
 
 static bool case_numeric_compare(DiamondValue left,DiamondValue right,int *comparison) {
@@ -8001,6 +8131,35 @@ static DiamondFieldCacheEntry *lookup_field_cached(
     return &cache->entries[entry];
 }
 
+/* JIT trampoline for DIAMOND_OP_SET_IVAR -- see jit.h's own comment for why
+ * this exists as a real C function generated code calls into rather than a
+ * hand-rolled native field write: shape transitions and the GC write
+ * barrier both need to stay exactly correct, and this is a direct copy of
+ * the interpreter's own DIAMOND_OP_SET_IVAR case (src/vm.c's opcode
+ * dispatch) with `site` threaded in from the caller instead of read off
+ * `chunk`/`instruction_offset`, since generated code has neither -- see
+ * this function's own caller in jit.c for what it passes instead (the
+ * function's own bytecode offset at JIT-compile time, giving the same
+ * per-occurrence cache-key stability an interpreted execution would have
+ * gotten from `&chunk->code[instruction_offset]`). */
+DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, const DiamondValue *value) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondInstance *instance = (DiamondInstance *)receiver->as.object;
+    if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, true);
+    if (instance->shape != cached->output_shape) {
+        instance->shape = cached->output_shape;
+        vm->shape_transitions++;
+    }
+    instance->fields[field] = *value;
+    if (!gc_write_barrier(vm, (DiamondObject *)instance)) return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
 static int named_field_index(const DiamondInstance *instance,
                              const DiamondStringConstant *name) {
     for(size_t field=0;field<instance->class->field_count;field++)
@@ -8523,6 +8682,17 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     return false;
 }
 
+/* JIT trampoline for DIAMOND_OP_CHECK_TYPE -- see jit.h's own comment.
+ * value_matches_set's own structural/generic matching logic (interfaces,
+ * type variables, unions) is too deep to safely hand-roll in machine
+ * code; this is a thin wrapper translating its bool result into the
+ * DiamondVmStatus every other JIT trampoline already returns. */
+DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
+        const DiamondValue *value, uint16_t set_index) {
+    if (set_index >= chunk->type_set_count) return DIAMOND_VM_INVALID_BYTECODE;
+    return value_matches_set(chunk, *value, set_index, true) ? DIAMOND_VM_OK : DIAMOND_VM_TYPE_ERROR;
+}
+
 static bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value) {
     for(size_t index=0;index<array->constraint_count;index++) {
@@ -8633,6 +8803,198 @@ static bool hash_entry_satisfies_constraints(DiamondHash *hash,
            !value_matches_set(&context,value,constraint->value_set,true))return false;
     }
     return true;
+}
+
+/* JIT trampoline for DIAMOND_OP_INDEX_GET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below) so the interpreter and the JIT
+ * share one implementation. Replaces Phase 2b's diamond_jit_hash_get,
+ * which only ever handled a Hash receiver, returning DIAMOND_VM_TYPE_ERROR
+ * for everything else -- accidentally safe before Phase 2d (every bailout
+ * retried via full interpretation, which correctly checks the `[]`
+ * override below), but a real latent correctness bug once a function's
+ * bailout target can be "propagate" (jc->has_called already true from an
+ * earlier call): a JIT'd INDEX_GET on an Instance with a real `[]`
+ * override, reached after such a call, would have incorrectly propagated
+ * TYPE_ERROR instead of invoking the override. This version handles
+ * Hash/String/Array/Instance-overload exactly like the real opcode, and
+ * -- because the Instance branch can genuinely invoke arbitrary code --
+ * is compiled with jc->has_called = true unconditionally, the same
+ * conservative, compile-time-only choice diamond_jit_equal_general's own
+ * compile_equal_op already makes. */
+DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        const ptrdiff_t found = hash_find(hash, *index);
+        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        if (index->kind != DIAMOND_VALUE_INT) {
+            char actual[80];
+            format_value_type(actual, sizeof actual, *index);
+            snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int, got %s", actual);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *source = (const DiamondString *)receiver->as.object;
+        const int64_t char_index = index->as.integer;
+        if (char_index < 0 || (uint64_t)char_index >= source->length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "index %" PRId64 " out of bounds for String of length %zu",
+                     char_index, source->length);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        DiamondString *character = allocate_string(vm, source->chars + (size_t)char_index, 1);
+        if (character == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(character);
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]", 2, index, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            *out = op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        DiamondArray *sliced = allocate_array(vm, &array->values[range_start], range_length);
+        if (sliced == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(sliced);
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[] index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    *out = array->values[(size_t)array_index];
+    return DIAMOND_VM_OK;
+}
+
+/* JIT trampoline for DIAMOND_OP_INDEX_SET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below), new in this phase (INDEX_SET
+ * was entirely unsupported before). Handles Hash/String/Instance-
+ * overload/Array exactly like the real opcode; the Instance branch can
+ * genuinely invoke arbitrary code, so this is compiled with jc->has_called
+ * = true unconditionally, same as diamond_jit_index_get/diamond_jit_
+ * equal_general. No `out` parameter -- INDEX_SET never writes a
+ * destination register (see the real case's own comment: `x[i] = v`
+ * already evaluates to `v` itself, computed before this opcode runs). */
+DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, const DiamondValue *source) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        if (!hash_entry_satisfies_constraints(hash, *index, *source)) {
+            snprintf(vm->error, sizeof vm->error, "hash entry violates its type annotation");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if (!hash_set(vm, hash, *index, *source)) return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error, sizeof vm->error, "String does not support element assignment");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondValue setter_arguments[2] = {*index, *source};
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]=", 3, setter_arguments, 2,
+            &op_result, &found);
+        if (found) return status;
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        if (source->kind != DIAMOND_VALUE_OBJECT ||
+            source->as.object->kind != DIAMOND_OBJECT_ARRAY ||
+            ((DiamondArray *)source->as.object)->count != range_length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "range assignment requires a replacement Array of exactly %zu element(s)",
+                     range_length);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *replacement = (const DiamondArray *)source->as.object;
+        for (size_t i = 0; i < range_length; i++) {
+            if (!array_value_satisfies_constraints(array, replacement->values[i])) {
+                snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+        for (size_t i = 0; i < range_length; i++)
+            array->values[range_start + i] = replacement->values[i];
+        if (!gc_write_barrier_range(vm, (DiamondObject *)array, range_start, range_length))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[]= index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    if (!array_value_satisfies_constraints(array, *source)) {
+        snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    array->values[(size_t)array_index] = *source;
+    if (!gc_write_barrier_index(vm, (DiamondObject *)array, (size_t)array_index))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
 }
 
 static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
@@ -10856,6 +11218,106 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
  * out (like call_closure_helper/forward_to_top_level_helper above) so the
  * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
  * run_chunk's own case blocks, times three. */
+
+/* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
+ * call site that invokes a DiamondFunction with an already-assembled
+ * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
+ * helper just below this (which DIAMOND_OP_NEW/SUPER/INVOKE_TYPED's
+ * ordinary instance dispatch all route through) -- neither goes through
+ * the other, so both need their own tier-up/dispatch check rather than
+ * sharing one call site. Tries the compiled path first if the function is
+ * warm enough to have been compiled, falling back to run_chunk for
+ * anything not (yet) compiled or that bails at runtime. `function` came
+ * from a chunk's own functions[] table, declared const the same way a
+ * quickened opcode's own `chunk->code` is -- this is the same "logically
+ * mutable cache metadata behind a const pointer" pattern already used
+ * throughout this file for self-modifying bytecode, not a new one. */
+static DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    /* Phase 2d: this is the ONE place both the compiled and interpreted
+     * dispatch paths funnel through, so it's also the one place that can
+     * enforce DIAMOND_MAX_CALL_DEPTH uniformly. Before Phase 2d, a
+     * compiled function could never itself make a further call, so a
+     * missing check here was harmless (run_chunk's own entry check caught
+     * every call that ever reached it). Now that a compiled function can
+     * invoke SUPER, which can reach an arbitrarily deep chain of further
+     * calls, a sequence of hops that happen to all be compiled would
+     * otherwise never touch run_chunk's own check at all -- a real latent
+     * gap, not a theoretical one, that this closes for every call site
+     * uniformly (not just the ones this phase adds). */
+    if (depth + 1 >= DIAMOND_MAX_CALL_DEPTH) {
+        return DIAMOND_VM_STACK_OVERFLOW;
+    }
+    if (vm->jit && !function->jit_ineligible) {
+        DiamondFunction *mutable_function = (DiamondFunction *)function;
+        if (mutable_function->jit_code == nullptr) {
+            mutable_function->jit_call_count++;
+            if (mutable_function->jit_call_count >= vm->jit_threshold) {
+                size_t jit_code_size = 0;
+                void *compiled = diamond_jit_try_compile(function, &jit_code_size);
+                if (compiled != nullptr) {
+                    mutable_function->jit_code = compiled;
+                    mutable_function->jit_code_size = jit_code_size;
+                    vm->jit_compiled_functions++;
+                } else {
+                    mutable_function->jit_ineligible = true;
+                }
+            }
+        }
+        if (mutable_function->jit_code != nullptr) {
+            DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
+            const size_t jit_register_count = function->register_count == 0
+                ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+            memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
+            const size_t copy_count = argument_count < jit_register_count
+                ? argument_count : jit_register_count;
+            for (size_t index = 0; index < copy_count; index++) jit_registers[index] = arguments[index];
+            DiamondValue jit_result = DIAMOND_NIL;
+            /* ISO C has no portable object-pointer-to-function-pointer
+             * conversion, but POSIX explicitly requires it to work on any
+             * platform with dlsym (the same cast dlsym's own callers
+             * need) -- unavoidable for calling into mmap'd JIT code, not
+             * a real portability gap on any platform this VM targets. */
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wpedantic"
+            #endif
+            const DiamondJitFn jit_fn = (DiamondJitFn)mutable_function->jit_code;
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic pop
+            #endif
+            /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
+             * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
+             * (0) means success (*result written); DIAMOND_JIT_RETRY means
+             * the existing "discard this attempt, fall back to run_chunk"
+             * behavior every phase before this one relied on exclusively;
+             * anything else is a real DiamondVmStatus (most notably
+             * DIAMOND_VM_EXCEPTION from a SUPER call that itself raised)
+             * that must be returned exactly as-is -- NOT retried, since a
+             * real, already-executed side effect (the SUPER call) may be
+             * why this status exists at all, and re-running the whole
+             * function from scratch would invoke it a second time. */
+            const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
+                    argument_count, chunk_to_interpret, depth + 1);
+            if (jit_status == DIAMOND_VM_OK) {
+                *result = jit_result;
+                return DIAMOND_VM_OK;
+            }
+            if (jit_status != DIAMOND_JIT_RETRY) {
+                vm->jit_hard_propagations++;
+                return (DiamondVmStatus)jit_status;
+            }
+            vm->jit_bailouts++;
+            /* falls through to the ordinary interpreted call below --
+             * always fully correct regardless of why the compiled
+             * attempt bailed. */
+        }
+    }
+    return run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
+}
+
 static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -10907,7 +11369,69 @@ static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return run_chunk(&child,vm,args,total_args,depth+1,nullptr,result);
+    return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
+}
+
+/* JIT trampoline for DIAMOND_OP_SUPER -- extracted from that case's own
+ * body (below) so the interpreter and the JIT share one implementation
+ * rather than risking the two drifting apart, exactly like DIAMOND_OP_
+ * HASH's own diamond_jit_new_hash just above. Unlike every other
+ * trampoline in this file, this one's own failure can be a *real,
+ * already-happened* outcome -- an uncaught exception genuinely raised
+ * somewhere inside the superclass method this calls, surfacing here as
+ * DIAMOND_VM_EXCEPTION exactly the way invoke_resolved_method_helper's
+ * own return already works for the interpreter -- not just an internal
+ * condition safe to retry from scratch. jit.c's own compiler is written
+ * to treat this trampoline's failure specially because of that (see
+ * jc->has_called in jit.c): every bail site from the moment this compiles
+ * onward propagates its exact returned status directly rather than
+ * discarding the whole compiled attempt and re-running the function,
+ * which -- now that a real call with real side effects can have already
+ * happened -- would risk invoking this same super() call a second time. */
+DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
+        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out) {
+    if ((size_t)owner_index >= chunk->class_count ||
+        (size_t)name >= chunk->string_count ||
+        registers[0].kind != DIAMOND_VALUE_OBJECT ||
+        registers[0].as.object->kind != DIAMOND_OBJECT_INSTANCE)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondClass *owner = &chunk->classes[owner_index];
+    if (owner->superclass == UINT8_MAX) return DIAMOND_VM_TYPE_ERROR;
+    const DiamondStringConstant *method_name = &chunk->strings[name];
+    const DiamondMethod *method = lookup_method(chunk,
+        &chunk->classes[owner->superclass], method_name->chars, method_name->length);
+    if (method == nullptr) {
+        /* No user-defined method anywhere up the superclass chain -- if
+         * this is super(...) from an overridden initialize() reaching for
+         * the built-in Exception constructor, apply that same behavior
+         * here instead of treating the built-in as missing. */
+        bool reaches_exception = false;
+        const DiamondClass *ancestor = &chunk->classes[owner->superclass];
+        while (ancestor != nullptr) {
+            if (ancestor == &chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                reaches_exception = true;
+                break;
+            }
+            ancestor = ancestor->superclass == UINT8_MAX ? nullptr :
+                &chunk->classes[ancestor->superclass];
+        }
+        if (reaches_exception && method_name->length == 10 &&
+            memcmp(method_name->chars, "initialize", 10) == 0) {
+            if (argc > 2) return DIAMOND_VM_ARITY_ERROR;
+            DiamondInstance *self = (DiamondInstance *)registers[0].as.object;
+            if (argc > 0 && self->field_count > 0) self->fields[0] = registers[base];
+            if (argc > 1 && self->field_count > 1) self->fields[1] = registers[(size_t)base + 1];
+            if (!gc_write_barrier(vm, (DiamondObject *)self)) return DIAMOND_VM_OUT_OF_MEMORY;
+            *out = DIAMOND_NIL;
+            return DIAMOND_VM_OK;
+        }
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (argc < method->required_arity || (argc > method->arity && !method->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    return invoke_resolved_method_helper(vm, chunk, method, registers[0], registers, base, argc,
+        false, 0, nullptr, chunk, depth, out);
 }
 
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
@@ -14957,24 +15481,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * falls through to values_equal unchanged, so two
                  * instances of a class with no "==" compare by identity
                  * exactly as before this feature existed. */
-                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                {
                     const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "==",2,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        const bool overloaded_equal=is_truthy(op_result);
-                        registers[destination]=DIAMOND_BOOL(
-                            opcode==DIAMOND_OP_EQUAL?overloaded_equal:!overloaded_equal);
-                        break;
-                    }
+                    DiamondValue general_result=DIAMOND_NIL;
+                    const DiamondVmStatus status=diamond_jit_equal_general(vm,chunk,depth,
+                        site,&registers[left],&registers[right],
+                        opcode==DIAMOND_OP_NOT_EQUAL,&general_result);
+                    VM_PROPAGATE(status);
+                    registers[destination]=general_result;
                 }
-                const bool equal = values_equal(registers[left], registers[right]);
-                registers[destination] = DIAMOND_BOOL(
-                    opcode == DIAMOND_OP_EQUAL ? equal : !equal);
                 break;
             }
             case DIAMOND_OP_LESS:
@@ -15303,9 +15818,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .has_variadic=function->has_variadic,
                 };
                 DiamondValue call_result = DIAMOND_NIL;
-                const DiamondVmStatus status = run_chunk(
-                    &called_chunk, vm, &registers[argument_base],
-                    call_argument_count, depth + 1, nullptr, &call_result);
+                const DiamondVmStatus status = jit_call_or_interpret(vm, function,
+                    &called_chunk, &registers[argument_base], call_argument_count,
+                    depth, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
                 break;
@@ -19098,58 +19613,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,base=0,name=0;uint8_t owner_index=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(owner_index);READ_SHORT(name);
                 READ_SHORT(base); READ_BYTE(argc);
-                if((size_t)owner_index>=chunk->class_count ||
-                   (size_t)name>=chunk->string_count ||
-                   registers[0].kind!=DIAMOND_VALUE_OBJECT ||
-                   registers[0].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                const DiamondClass *owner=&chunk->classes[owner_index];
-                if(owner->superclass==UINT8_MAX) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                const DiamondStringConstant *method_name=&chunk->strings[name];
-                const DiamondMethod *method=lookup_method(chunk,
-                    &chunk->classes[owner->superclass],method_name->chars,
-                    method_name->length);
-                if(method==nullptr) {
-                    /* No user-defined method anywhere up the superclass
-                     * chain -- if this is super(...) from an overridden
-                     * initialize() reaching for the built-in Exception
-                     * constructor (message/cause field assignment,
-                     * otherwise synthesized inline by NEW's own
-                     * exception_class branch for a class that never
-                     * overrides initialize), apply that same behavior
-                     * here instead of treating the built-in as missing. */
-                    bool reaches_exception=false;
-                    const DiamondClass *ancestor=&chunk->classes[owner->superclass];
-                    while(ancestor!=nullptr) {
-                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
-                            reaches_exception=true;break;
-                        }
-                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-                            &chunk->classes[ancestor->superclass];
-                    }
-                    if(reaches_exception&&method_name->length==10&&
-                       memcmp(method_name->chars,"initialize",10)==0) {
-                        if(argc>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        DiamondInstance *self=
-                            (DiamondInstance *)registers[0].as.object;
-                        if(argc>0&&self->field_count>0)
-                            self->fields[0]=registers[base];
-                        if(argc>1&&self->field_count>1)
-                            self->fields[1]=registers[(size_t)base+1];
-                        if(!gc_write_barrier(vm,(DiamondObject *)self))
-                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[dest]=DIAMOND_NIL;
-                        break;
-                    }
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(argc<method->required_arity||
-                   (argc>method->arity && !method->has_variadic))
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus status=invoke_resolved_method_helper(vm,
-                    chunk,method,registers[0],registers,base,argc,false,0,
-                    nullptr,chunk,depth,&call_result);
+                const DiamondVmStatus status=diamond_jit_super_call(vm,chunk,
+                    owner_index,name,registers,base,argc,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
@@ -19765,234 +20231,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INDEX_GET: {
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_SHORT(destination);READ_SHORT(receiver);READ_SHORT(index_register);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    const ptrdiff_t found=hash_find(hash,registers[index_register]);
-                    registers[destination]=found<0 ? DIAMOND_NIL
-                        : hash->entries[(size_t)found].value;
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                        char actual[80];
-                        format_value_type(actual,sizeof actual,registers[index_register]);
-                        snprintf(vm->error,sizeof vm->error,
-                            "String#[] index must be an Int, got %s",actual);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondString *source=
-                        (const DiamondString *)registers[receiver].as.object;
-                    const int64_t index=registers[index_register].as.integer;
-                    if(index<0 || (uint64_t)index>=source->length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "index %" PRId64 " out of bounds for String of length %zu",
-                                 index,source->length);
-                        VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                    }
-                    DiamondString *character=
-                        allocate_string(vm,source->chars+(size_t)index,1);
-                    if(character==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(character);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]` overloading (docs/syntax.md's "Operator
-                     * overloading" section) -- receiver-based only, no
-                     * coercion, no Range/slice special-casing the way
-                     * Array gets below: whatever's between the brackets
-                     * (an Int, a Range instance, anything) is passed to
-                     * the receiver's own `[]` method verbatim, same rule
-                     * every other overloadable operator already follows.
-                     * Not found falls through to the same TypeError any
-                     * non-overloading Instance already got before this
-                     * feature existed. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]",2,&registers[index_register],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    DiamondArray *sliced=
-                        allocate_array(vm,&array->values[range_start],range_length);
-                    if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(sliced);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[] index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                registers[destination]=array->values[(size_t)index];
+                const uint8_t *site=chunk->code+instruction_offset;
+                DiamondValue indexed=DIAMOND_NIL;
+                const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&indexed);
+                VM_PROPAGATE(status);
+                registers[destination]=indexed;
                 break;
             }
             case DIAMOND_OP_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_SHORT(receiver);READ_SHORT(index_register);READ_SHORT(source);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    if(!hash_entry_satisfies_constraints(hash,
-                       registers[index_register],registers[source])) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "hash entry violates its type annotation");
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    if(!hash_set(vm,hash,registers[index_register],registers[source]))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "String does not support element assignment");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]=` overloading, mirroring DIAMOND_OP_INDEX_GET's
-                     * own `[]` branch above -- index then value, verbatim,
-                     * no coercion. `x[i] = v` already evaluates to `v`
-                     * itself (compile_index_assignment's own return
-                     * value, computed before this opcode ever runs, not
-                     * a destination register this opcode writes), so the
-                     * setter method's own return value is simply
-                     * discarded here, matching Ruby's own `[]=`
-                     * semantics -- only `status` matters, for error
-                     * propagation. Not found falls through to the same
-                     * TypeError any non-overloading Instance already got. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondValue setter_arguments[2]=
-                        {registers[index_register],registers[source]};
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]=",3,setter_arguments,2,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    /* Deliberately no grow/shrink splice in this first
-                     * version (docs/roadmap.md) -- the replacement must
-                     * be an Array of exactly the range's own (already
-                     * clamped) length. Every replacement value is
-                     * checked against the array's own type constraints
-                     * *before* writing any of them back, so a
-                     * constraint violation partway through leaves the
-                     * array completely untouched, not half-mutated. */
-                    if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
-                       registers[source].as.object->kind!=DIAMOND_OBJECT_ARRAY||
-                       ((DiamondArray *)registers[source].as.object)->count!=range_length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "range assignment requires a replacement Array of "
-                                 "exactly %zu element(s)",range_length);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondArray *replacement=
-                        (const DiamondArray *)registers[source].as.object;
-                    for(size_t i=0;i<range_length;i++) {
-                        if(!array_value_satisfies_constraints(array,replacement->values[i])) {
-                            snprintf(vm->error,sizeof vm->error,
-                                     "array element violates its type annotation");
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        }
-                    }
-                    for(size_t i=0;i<range_length;i++)
-                        array->values[range_start+i]=replacement->values[i];
-                    if(!gc_write_barrier_range(vm,(DiamondObject *)array,
-                            range_start,range_length))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[]= index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                if(!array_value_satisfies_constraints(array,registers[source])) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "array element violates its type annotation");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                array->values[(size_t)index]=registers[source];
-                if(!gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)index))
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                const uint8_t *site=chunk->code+instruction_offset;
+                const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&registers[source]);
+                VM_PROPAGATE(status);
                 break;
             }
             case DIAMOND_OP_HASH: {
                 uint16_t destination=0,base=0,count=0;
                 READ_SHORT(destination);READ_SHORT(base);READ_SHORT(count);
-                if((size_t)base+(size_t)count*2>DIAMOND_REGISTER_COUNT)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondHash *hash=allocate_hash(vm);
-                if(hash==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination]=DIAMOND_OBJECT(hash);
-                for(size_t i=0;i<count;i++) {
-                    if(!hash_set(vm,hash,registers[(size_t)base+i*2],
-                                 registers[(size_t)base+i*2+1]))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                }
+                DiamondValue built=DIAMOND_NIL;
+                const DiamondVmStatus hash_status=
+                    diamond_jit_new_hash(vm,registers,base,count,&built);
+                VM_PROPAGATE(hash_status);
+                registers[destination]=built;
                 break;
             }
             case DIAMOND_OP_NOT: {

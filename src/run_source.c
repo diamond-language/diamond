@@ -156,6 +156,16 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
             vm.quickening_threshold = (size_t)parsed;
         }
     }
+    vm.jit = getenv("DIAMOND_JIT") != nullptr;
+    const char *jit_threshold = getenv("DIAMOND_JIT_THRESHOLD");
+    if (jit_threshold != nullptr && jit_threshold[0] != '\0') {
+        char *end = nullptr;
+        const unsigned long long parsed = strtoull(jit_threshold, &end, 10);
+        if (end != jit_threshold && *end == '\0' && parsed > 0 &&
+            parsed <= SIZE_MAX) {
+            vm.jit_threshold = (size_t)parsed;
+        }
+    }
     const char *mono_threshold = getenv("DIAMOND_IC_MONO_THRESHOLD");
     if (mono_threshold != nullptr && mono_threshold[0] != '\0') {
         char *end = nullptr;
@@ -200,6 +210,10 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
     if (getenv("DIAMOND_TRACE_IC") != nullptr) {
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);
+    }
+    if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
+        fprintf(stderr,"jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
+                vm.jit_compiled_functions,vm.jit_bailouts,vm.jit_hard_propagations);
     }
     if (getenv("DIAMOND_TRACE_IC_SITES") != nullptr) {
         for (size_t index=0;index<DIAMOND_INLINE_CACHE_COUNT;index++) {

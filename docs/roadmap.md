@@ -328,14 +328,39 @@ Potential research:
 ### Native-code execution
 
 The register bytecode VM has inline caches, object shapes, specialization, and
-opt-in quickening. A tracing or method JIT remains an open research direction,
-not a committed feature.
+opt-in quickening. A first, deliberately narrow baseline JIT now exists
+(`src/jit.c`/`src/jit.h`, opt-in via `DIAMOND_JIT=1`, see
+[`docs/internal/jit-design.md`](internal/jit-design.md) for the full design
+and phase history) -- it compiles call/argument/self-passing, primitive
+arithmetic and comparisons, `SUPER`, and Hash/String/Array-backed ivar and
+index access, each via a hand-verified trampoline extracted from the real
+interpreter's own opcode body rather than a general codegen pipeline.
+Measured, real wins on `bench/RESULTS.md`'s own benchmarks (release build):
+~2.9-3x on `int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
+`object_hydration.di`.
 
-Before implementation:
+**It never reached its original motivating target.** The actual goal was
+skindicate's own `Model#initialize`-shaped row hydration; that still doesn't
+compile because its loop condition needs the generic `DIAMOND_OP_LESS`
+(never quickened to `LESS_INT` under `DIAMOND_JIT=1` alone), whose own
+Instance `<`-override branch forces a conservative, monotonic
+compile-time-only "a call could have happened" flag that then blocks the
+very next `index += 1`. Reaching it for real would need either a
+runtime-checked (not compile-time-only) has-a-call-happened flag, or local
+type inference proving `LESS`'s operands are always `Int` -- a materially
+bigger design change, not scoped or decided. A general tracing or method
+JIT covering arbitrary call graphs remains further out still, an open
+research direction rather than a committed feature.
 
-- identify hot workloads that remain VM-bound after existing specialization;
-- define deoptimization and GC-root contracts;
-- require benchmark evidence large enough to justify a second execution tier.
+Before extending past the current narrow slice:
+
+- identify hot workloads that remain VM-bound after existing specialization
+  *and* after the current JIT's own whitelist (a workload similar to
+  `Model#initialize` needs the has-a-call-happened redesign above first);
+- define deoptimization and GC-root contracts for anything that compiles a
+  call, allocation, or exception path the current slice deliberately avoids;
+- require benchmark evidence large enough to justify the added complexity,
+  the same bar the current slice was itself held to.
 
 ### Compiler representation
 

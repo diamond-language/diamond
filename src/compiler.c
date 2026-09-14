@@ -3,6 +3,7 @@
 #define __BSD_VISIBLE 1
 #define _DARWIN_C_SOURCE
 #include "compiler.h"
+#include "jit.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -15255,6 +15256,14 @@ bool diamond_function_copy(DiamondFunction *destination,
     destination->strings=nullptr;destination->string_capacity=0;
     destination->type_sets=nullptr;destination->type_set_capacity=0;
     destination->owns_combined_buffer=false;
+    /* jit_code is executable memory tied to the SOURCE's own lifetime/
+     * process, never shared across a Thread.new/gremlin_serve clone --
+     * see docs/internal/jit-design.md's threading section. The clone
+     * starts back at "not yet compiled," exactly like a brand-new
+     * function; it will re-warm up and (if hot enough) re-compile
+     * independently in its own thread. */
+    destination->jit_code=nullptr;destination->jit_code_size=0;
+    destination->jit_call_count=0;destination->jit_ineligible=false;
 
     size_t code_offset=0,lines_offset=0,columns_offset=0;
     size_t constants_offset=0,strings_offset=0,type_sets_offset=0;
@@ -15351,6 +15360,11 @@ static void diamond_function_free_arrays(DiamondFunction *function) {
     function->type_sets=nullptr;function->type_set_count=0;
     function->type_set_capacity=0;
     function->owns_combined_buffer=false;
+    /* jit_code is executable memory (mmap), never one of the arrays above --
+     * see jit.h/docs/internal/jit-design.md. */
+    diamond_jit_free(function->jit_code,function->jit_code_size);
+    function->jit_code=nullptr;function->jit_code_size=0;
+    function->jit_call_count=0;function->jit_ineligible=false;
 }
 
 void diamond_program_free(DiamondProgram *program) {
