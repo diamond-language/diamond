@@ -349,7 +349,7 @@ inside the declaring class hierarchy. Private methods remain restricted to
 the current implicit/self receiver. `respond_to?` reports public and protected
 methods, but not private methods.
 
-### tap / dup / respond_to? / public_send
+### tap / dup / freeze / frozen? / respond_to? / public_send
 
 ```ruby
 class Point
@@ -370,6 +370,11 @@ p1.public_send(:x)     # => 1
 [1, 2, 3].tap() do |arr|
   puts(arr.length())   # side effect, doesn't change the chain
 end.push(4)             # => [1, 2, 3, 4]
+
+point = Point.new(3, 4)
+point.freeze()
+point.frozen?()         # => true
+point.dup().frozen?()   # => false -- dup never carries freeze over
 ```
 
 `tap` yields the receiver to a block and returns the receiver itself
@@ -384,6 +389,45 @@ and primitives — native resource-backed types (`Regexp`, `Time`, `File`,
 `Socket`, ...) don't support it, since "shallow copy" isn't a
 well-defined operation for those. A class that defines its own `dup`
 always wins over this default.
+
+`freeze()` marks an `Array`, `Hash`, or `Instance` immutable and returns
+the receiver (chainable); `frozen?()` reports whether it's marked. Every
+native mutation those three kinds support -- `Array#push`/`#pop`, `[]=`
+on an `Array` or `Hash` (single index or a range), and an instance
+variable write -- raises a rescuable `FrozenError` instead of proceeding
+once the receiver is frozen:
+
+```ruby
+values = [1, 2, 3].freeze()
+begin
+  values.push(4)
+rescue error: FrozenError
+  puts(error.message())  # => "frozen object cannot be modified"
+end
+```
+
+Every other Array/Hash method Diamond has is either already read-only
+(`length`, `each`, `[]`, `slice`, `keys`, ...) or -- like `delete_at`,
+built from `[]=` and `pop` in the standard library -- raises the same
+way by hitting one of those two primitives internally; there's no
+separate list of "mutating methods" to keep in sync, since Diamond's own
+`Array`/`Hash` have no in-place `!`-suffixed methods at all (`sort`,
+`reverse`, `uniq`, and friends already return a new collection, same as
+Ruby's own non-`!` forms). `freeze`/`frozen?` mirror `dup`'s own
+"already immutable" precedent for a primitive or an already-immutable
+`String`/`Symbol`: `freeze()` is a harmless no-op, `frozen?()` is always
+`true` -- never an "undefined method" error, matching how `5.dup()`
+already works today. Not defined for native resource-backed types
+(`Regexp`, `Time`, `File`, `Socket`, ...), the same set `dup` itself
+excludes. A class that defines its own `freeze`/`frozen?` always wins
+over this default, exactly like `dup`.
+
+`dup` **never** carries a source's frozen status to the copy -- a
+`dup` of a frozen value is itself unfrozen and freely mutable, the same
+distinction Ruby draws between `dup` and `clone`. Freezing is also
+**shallow**: freezing a `Hash`/`Array`/`Instance` only marks that one
+value -- a `Hash` it merely holds a reference to (in a value, or an
+ivar) stays exactly as mutable as it was.
 
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same

@@ -571,6 +571,7 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_SUPERVISOR_ERROR,
     DIAMOND_CLASS_SANDBOX_ERROR,
     DIAMOND_CLASS_RESOURCE_LIMIT_ERROR,
+    DIAMOND_CLASS_FROZEN_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -1085,6 +1086,16 @@ typedef enum DiamondVmStatus : uint8_t {
      * memory_limit_tripped is set, so all three budget kinds end up
      * uniformly catchable as ResourceLimitError from Diamond code. */
     DIAMOND_VM_RESOURCE_LIMIT_ERROR,
+    /* Array#push/#pop, `[]=` (Array or Hash), or an instance variable
+     * write reached a receiver whose own `frozen` flag (src/object.h)
+     * is set -- see docs/classes-and-modules.md's "freeze / frozen?"
+     * section for the exact, small mutation surface this covers and why
+     * it's exhaustive despite Diamond's own Array/Hash having no
+     * in-place "bang" methods otherwise. An ordinary, rescuable
+     * StandardError -- unlike DIAMOND_VM_RESOURCE_LIMIT_ERROR's own
+     * neighbors DIAMOND_VM_STACK_OVERFLOW/DIAMOND_VM_OUT_OF_MEMORY, this
+     * is never a resource-exhaustion signal. */
+    DIAMOND_VM_FROZEN_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

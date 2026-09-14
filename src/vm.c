@@ -8149,6 +8149,7 @@ DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         return DIAMOND_VM_TYPE_ERROR;
     }
     DiamondInstance *instance = (DiamondInstance *)receiver->as.object;
+    if (instance->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
     if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
     const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, true);
     if (instance->shape != cached->output_shape) {
@@ -8921,6 +8922,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
     }
     if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
         DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        if (hash->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
         if (!hash_entry_satisfies_constraints(hash, *index, *source)) {
             snprintf(vm->error, sizeof vm->error, "hash entry violates its type annotation");
             return DIAMOND_VM_TYPE_ERROR;
@@ -8948,6 +8950,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
         return DIAMOND_VM_TYPE_ERROR;
     }
     DiamondArray *array = (DiamondArray *)receiver->as.object;
+    if (array->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
     size_t range_start = 0, range_length = 0;
     const int range_result = resolve_array_range(vm, chunk, *index, array->count,
         &range_start, &range_length);
@@ -9061,6 +9064,7 @@ static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus st
         case DIAMOND_VM_SUPERVISOR_ERROR: return DIAMOND_CLASS_SUPERVISOR_ERROR;
         case DIAMOND_VM_SANDBOX_ERROR: return DIAMOND_CLASS_SANDBOX_ERROR;
         case DIAMOND_VM_RESOURCE_LIMIT_ERROR: return DIAMOND_CLASS_RESOURCE_LIMIT_ERROR;
+        case DIAMOND_VM_FROZEN_ERROR: return DIAMOND_CLASS_FROZEN_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -17074,6 +17078,41 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                         registers[dest]=DIAMOND_OBJECT(copy);break;
                     }
+                    /* freeze/frozen? -- defined for exactly the same
+                     * receiver set dup_defined already names. For a
+                     * primitive or an already-immutable String/Symbol,
+                     * mirrors dup's own "already immutable, return self/
+                     * true unchanged" precedent (see that block's own
+                     * comment) rather than raising "undefined method" --
+                     * freeze() is a harmless no-op, frozen?() is always
+                     * true. Array/Hash get the real, effectful check:
+                     * every native mutation they support (push, pop,
+                     * `[]=`, and everything built from those -- see
+                     * docs/classes-and-modules.md's "freeze / frozen?"
+                     * section) tests object.frozen before proceeding. */
+                    if(dup_defined&&method_name->length==6&&
+                       memcmp(method_name->chars,"freeze",6)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[recv].kind==DIAMOND_VALUE_OBJECT) {
+                            const DiamondObjectKind freeze_kind=
+                                registers[recv].as.object->kind;
+                            if(freeze_kind==DIAMOND_OBJECT_ARRAY||
+                               freeze_kind==DIAMOND_OBJECT_HASH)
+                                registers[recv].as.object->frozen=true;
+                        }
+                        registers[dest]=registers[recv];break;
+                    }
+                    if(dup_defined&&method_name->length==7&&
+                       memcmp(method_name->chars,"frozen?",7)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const bool is_frozen=registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                            registers[recv].as.object->kind==DIAMOND_OBJECT_STRING||
+                            registers[recv].as.object->kind==DIAMOND_OBJECT_SYMBOL||
+                            registers[recv].as.object->frozen;
+                        registers[dest]=DIAMOND_BOOL(is_frozen);break;
+                    }
                 }
                 if(registers[recv].kind==DIAMOND_VALUE_INT||
                    registers[recv].kind==DIAMOND_VALUE_FLOAT) {
@@ -18089,6 +18128,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"pop",3)==0;
                     if(push_method) {
                         if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(array->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                         if(!array_value_satisfies_constraints(array,registers[base])) {
                             snprintf(vm->error,sizeof vm->error,
                                      "array element violates its type annotation");
@@ -18100,6 +18140,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(pop_method) {
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(array->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                         registers[dest]=array->count==0?DIAMOND_NIL:
                             array->values[--array->count];break;
                     }
@@ -19527,6 +19568,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     copy->shape=instance->shape;
                     registers[dest]=DIAMOND_OBJECT(copy);break;
                 }
+                if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
+                   lookup_method(owner,instance->class,"freeze",6)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    instance->object.frozen=true;
+                    registers[dest]=registers[recv];break;
+                }
+                if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
+                   lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    registers[dest]=DIAMOND_BOOL(instance->object.frozen);break;
+                }
                 if(method_name->length==11&&
                    memcmp(method_name->chars,"respond_to?",11)==0&&
                    lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
@@ -19682,23 +19736,35 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     ? instance->fields[field] : DIAMOND_NIL;break;
             }
             case DIAMOND_OP_SET_IVAR: {
+                /* A thin wrapper around diamond_jit_set_ivar -- the same
+                 * function src/jit.c's own ivar-write codegen calls --
+                 * rather than a second, independent copy of its real
+                 * logic. This case used to duplicate that whole body
+                 * verbatim (shape-transition tracking, the actual field
+                 * write, the GC write barrier); freeze checking is what
+                 * made the drift a real, user-visible bug rather than
+                 * just untidy: adding it to only one of the two copies
+                 * would have made freezing silently not apply to ivar
+                 * writes in JIT-compiled methods while still applying
+                 * under plain interpretation. Only the two checks that
+                 * must happen *before* narrowing field_operand to the
+                 * trampoline's own uint8_t stay here -- a hand-built
+                 * (ProgramBuilder) field_operand wider than 255 must be
+                 * rejected as invalid before truncating it, not silently
+                 * wrap into some other, smaller, valid-looking field
+                 * index. */
                 const uint8_t *site=&chunk->code[instruction_offset];
                 uint16_t recv=0,field_operand=0,source=0;
                 READ_SHORT(recv);READ_SHORT(field_operand);READ_SHORT(source);
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                if(field_operand>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint8_t field=(uint8_t)field_operand;
-                const DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,true);
-                if(instance->shape!=cached->output_shape) {
-                    instance->shape=cached->output_shape;
-                    vm->shape_transitions++;
-                }
-                instance->fields[field]=registers[source];
-                if(!gc_write_barrier(vm,(DiamondObject *)instance))
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(field_operand>=
+                   ((DiamondInstance *)registers[recv].as.object)->field_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondVmStatus set_ivar_status=diamond_jit_set_ivar(vm,site,
+                    &registers[recv],(uint8_t)field_operand,&registers[source]);
+                VM_PROPAGATE(set_ivar_status);
                 break;
             }
             case DIAMOND_OP_GET_IVAR_NAME:
@@ -19723,6 +19789,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondFieldCacheEntry *cached=lookup_field_cached(
                     vm,site,instance,field,write);
                 if(write) {
+                    if(instance->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                     if(instance->shape!=cached->output_shape) {
                         instance->shape=cached->output_shape;
                         vm->shape_transitions++;
@@ -22039,6 +22106,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "sandbox error";
         case DIAMOND_VM_RESOURCE_LIMIT_ERROR:
             return "resource limit exceeded";
+        case DIAMOND_VM_FROZEN_ERROR:
+            return "frozen object cannot be modified";
     }
     return "unknown VM status";
 }

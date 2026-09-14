@@ -9,6 +9,31 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### freeze / frozen?: what's next, if anything
+
+`freeze`/`frozen?` (docs/classes-and-modules.md, landed this cycle) is
+deliberately shallow -- freezing a `Hash`/`Array`/`Instance` marks only
+that one value, never anything it merely references (an ivar holding a
+separate `Array` stays exactly as mutable as it was, matching Ruby's own
+shallow-freeze semantics). Real possibilities this opens up, none
+attempted yet, none committed:
+
+- **deep/recursive freeze** -- a `freeze(deep: true)`-style option (or a
+  separate method) that walks a frozen value's own fields/elements and
+  freezes those too. Needs a real cycle-detection story (a frozen
+  `Instance` holding an ivar that, transitively, holds a reference back
+  to itself) that a plain recursive walk doesn't get for free;
+- **frozen string/array literals** -- some languages let a literal itself
+  be frozen at the point it's written (`# frozen_string_literal: true` in
+  Ruby, or a `%i[]`-style always-frozen literal), avoiding a separate
+  `.freeze()` call at every construction site. Diamond's own `String` is
+  already unconditionally immutable, so this would only matter for
+  `Array`/`Hash` literals; not attempted without a concrete use case
+  asking for it.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Tail-call optimization: what's next, if anything
 
 Self-recursive tail-call optimization (docs/callables.md, landed this

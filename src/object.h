@@ -101,6 +101,19 @@ typedef struct DiamondObject {
      * deliberately never gets cleared except when the object itself
      * dies. Meaningless (always false) for a young object. */
     bool remembered;
+    /* Set only by Array#freeze/Hash#freeze/Instance#freeze -- never
+     * copied by `dup` (a fresh allocate_array/allocate_hash always
+     * starts false), matching Ruby's own dup-vs-clone distinction: a
+     * duplicate of a frozen value is itself unfrozen. Checked before
+     * every native mutation these three kinds support (array_push,
+     * Array#pop, diamond_jit_index_set's Array/Hash branches,
+     * diamond_jit_set_ivar, DIAMOND_OP_SET_IVAR_NAME's write branch --
+     * see docs/classes-and-modules.md's own "freeze / frozen?" section
+     * for the exact, small, hand-verified mutation surface this covers).
+     * Meaningless (always false, never checked) for every other object
+     * kind -- native resources and already-immutable String/Symbol have
+     * no mutating operations this would ever need to guard. */
+    bool frozen;
 } DiamondObject;
 
 typedef struct DiamondString {

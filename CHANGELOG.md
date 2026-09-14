@@ -129,6 +129,26 @@ authoritative fine-grained record.
   including the one real observable consequence: a function that
   recurses forever with no base case, written as a qualifying tail call,
   now loops forever instead of eventually raising `SystemStackError`.
+- Added `freeze()`/`frozen?()` for `Array`, `Hash`, and `Instance`: once
+  frozen, every native mutation those three kinds support (`Array#push`/
+  `#pop`, `[]=` on an `Array` or `Hash`, an instance variable write, and
+  anything -- like `delete_at` -- built from those in the standard
+  library) raises a rescuable `FrozenError` instead of proceeding.
+  `freeze()` returns the receiver (chainable); for a primitive or an
+  already-immutable `String`/`Symbol`, both mirror `dup`'s own existing
+  "already immutable" precedent (a harmless no-op, always `true`) rather
+  than an "undefined method" error. `dup` never carries frozen status to
+  the copy (Ruby's own `dup`-vs-`clone` distinction), and freezing is
+  shallow -- a frozen value's own fields/elements are unaffected. Fixed
+  a real, previously-latent bug found while adding this:
+  `DIAMOND_OP_SET_IVAR`'s interpreter case and the JIT's own
+  `diamond_jit_set_ivar` trampoline were two independent, byte-for-byte
+  duplicated implementations, which would have made freezing silently
+  not apply to instance-variable writes in JIT-compiled methods; the
+  interpreter's own case is now a thin wrapper calling the shared
+  trampoline, matching the same fix already applied to `INDEX_SET` in an
+  earlier JIT phase. See docs/classes-and-modules.md's "tap / dup /
+  freeze / frozen? / respond_to? / public_send" section.
 
 ### Packages
 

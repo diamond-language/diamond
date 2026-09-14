@@ -1,0 +1,8 @@
+true
+push blocked
+[]= blocked
+pop blocked
+delete_at blocked
+3
+1
+nil
