@@ -388,4 +388,116 @@ fi
 grep -q "no tag on '$work/semver_repo' satisfies" "$error_file"
 rm -f "$error_file"
 
-echo "33 facet tests passed"
+# --- facet init: writes a minimal manifest, refuses to clobber an
+# existing one, and defaults the name from the current directory ---
+
+mkdir project16
+(cd project16 && "$facet" init explicit-name >/dev/null)
+[[ "$(cd project16 && "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+
+error_file="$(mktemp)"
+if (cd project16 && "$facet" init another-name) >/dev/null 2>"$error_file"; then
+    echo "facet init unexpectedly overwrote an existing diamond.cut" >&2
+    exit 1
+fi
+grep -q "already exists" "$error_file"
+rm -f "$error_file"
+[[ "$(cd project16 && "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+
+mkdir -p project17/my-default-name-dir
+(cd project17/my-default-name-dir && "$facet" init >/dev/null)
+[[ "$(cd project17/my-default-name-dir && "$diamond" diamond.cut)" == "{name: my-default-name-dir}" ]]
+
+# --- facet add: appends a dependency and the result actually installs
+# -- one real end-to-end check per ref kind (tag/branch/commit/version),
+# not just a manifest-content assertion, since the interesting risk is
+# write_manifest round-tripping the *right* key (see FacetRefKind) ---
+
+mkdir project18
+(cd project18 && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --git "$work/greeter_repo" --tag v1.0.0 >/dev/null &&
+    "$facet" install >/dev/null)
+[[ "$(cd project18 && "$diamond" -e 'require_cut "greeter"
+greet("world")')" == "hi, world" ]]
+
+mkdir project19
+(cd project19 && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --git "$work/greeter_repo" --branch main >/dev/null &&
+    "$facet" install >/dev/null)
+[[ "$(cd project19 && "$diamond" -e 'require_cut "greeter"
+greet("world")')" == "hi, world" ]]
+
+mkdir project20
+(cd project20 && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --git "$work/greeter_repo" --commit "$greeter_v1" >/dev/null &&
+    "$facet" install >/dev/null)
+[[ "$(cd project20 && "$diamond" -e 'require_cut "greeter"
+greet("world")')" == "hello, world" ]]
+
+mkdir project21
+(cd project21 && "$facet" init myapp >/dev/null &&
+    "$facet" add semver --git "$work/semver_repo" --version "^1.0.0" >/dev/null &&
+    "$facet" install >/dev/null)
+[[ -f project21/cuts/semver/semver.di ]]
+
+# --- facet add: rejects a duplicate name, an ambiguous or missing ref,
+# an invalid version constraint, and running before facet init ---
+
+mkdir project22
+(cd project22 && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --git "$work/greeter_repo" --tag v1.0.0 >/dev/null)
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add greeter --git "$work/greeter_repo" --tag v2.0.0) \
+        >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly overwrote an existing dependency" >&2
+    exit 1
+fi
+grep -q "already exists" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add other --git "$work/greeter_repo") \
+        >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly accepted no ref/version at all" >&2
+    exit 1
+fi
+grep -q "specify exactly one of --tag, --branch, --commit, --version" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add other --git "$work/greeter_repo" \
+        --tag v1.0.0 --branch main) >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly accepted both a tag and a branch" >&2
+    exit 1
+fi
+grep -q "specify exactly one of --tag, --branch, --commit, --version" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add other --git "$work/greeter_repo" \
+        --version "not-a-constraint") >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly accepted an invalid version constraint" >&2
+    exit 1
+fi
+grep -q "not a valid version constraint" "$error_file"
+rm -f "$error_file"
+
+mkdir project23
+error_file="$(mktemp)"
+if (cd project23 && "$facet" add greeter --git "$work/greeter_repo" --tag v1.0.0) \
+        >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly succeeded with no diamond.cut present" >&2
+    exit 1
+fi
+grep -q "run 'facet init' first" "$error_file"
+rm -f "$error_file"
+
+# --- facet add: existing dependencies survive a second `add` unchanged
+# (write_manifest regenerates the whole file, so this is the real check
+# that it does so losslessly for every ref kind, not just the new one) ---
+
+(cd project18 && "$facet" add other --git "$work/greeter_repo" --branch main >/dev/null)
+[[ "$(cd project18 && "$diamond" diamond.cut)" == \
+    "{name: myapp, dependencies: {greeter: {git: $work/greeter_repo, tag: v1.0.0}, other: {git: $work/greeter_repo, branch: main}}}" ]]
+
+echo "47 facet tests passed"

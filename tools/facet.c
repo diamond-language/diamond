@@ -21,14 +21,26 @@ enum {
     FACET_MAX_DEPENDENCIES = 64,
 };
 
+/* Which literal manifest key a dependency's ref came from -- needed (not
+ * just for resolution, which treats tag/branch/commit identically via
+ * `git checkout <ref>`) so `write_manifest` can round-trip an existing
+ * dependency's spec exactly, rather than guessing "tag" for every
+ * non-commit ref and silently turning a tracked `branch` dependency into
+ * a pinned `tag` one on the next `facet add`. */
+typedef enum FacetRefKind {
+    FACET_REF_TAG,
+    FACET_REF_BRANCH,
+    FACET_REF_COMMIT,
+} FacetRefKind;
+
 typedef struct FacetDependency {
     char name[FACET_MAX_NAME];
     char git[FACET_MAX_URL];
-    /* Exactly one of (ref, ref_is_commit) or (uses_version, version_text)
+    /* Exactly one of (ref, ref_kind) or (uses_version, version_text)
      * is meaningful, set at manifest-parse time by parse_dependencies --
      * see docs/roadmap.md's "Real semver dependency resolution". */
     char ref[FACET_MAX_REF];
-    bool ref_is_commit;
+    FacetRefKind ref_kind;
     bool uses_version;
     char version_text[FACET_MAX_REF];
 } FacetDependency;
@@ -544,16 +556,18 @@ static bool parse_dependencies(const DiamondHash *dependencies,
             return false;
         }
         int ref_keys = 0;
-        bool ref_is_commit = false;
+        FacetRefKind ref_kind = FACET_REF_TAG;
         if (hash_find_string(spec, "tag", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
+            ref_kind = FACET_REF_TAG;
         }
         if (hash_find_string(spec, "branch", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
+            ref_kind = FACET_REF_BRANCH;
         }
         if (hash_find_string(spec, "commit", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
-            ref_is_commit = true;
+            ref_kind = FACET_REF_COMMIT;
         }
         const bool has_version = hash_find_string(spec, "version", dependency->version_text,
             sizeof dependency->version_text);
@@ -580,7 +594,7 @@ static bool parse_dependencies(const DiamondHash *dependencies,
             return false;
         }
         dependency->uses_version = has_version;
-        dependency->ref_is_commit = !has_version && ref_is_commit;
+        dependency->ref_kind = ref_kind;
         if (has_version) dependency->ref[0] = '\0';
         manifest->dependency_count++;
     }
@@ -702,6 +716,60 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
             fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\"}, ",
                     resolved->name, resolved->git, resolved->commit);
         }
+    }
+    fputs("}\n", file);
+    const bool ok = fclose(file) == 0;
+    if (!ok) {
+        (void)snprintf(error, error_size, "cannot write '%s': %s", path,
+                       strerror(errno));
+    }
+    return ok;
+}
+
+/* Writes `manifest` back out to `path` in a fixed, pretty-printed
+ * canonical form -- used by `facet init`/`facet add` (write_lockfile's
+ * own single-line style is deliberately not reused here: unlike
+ * facet.lock, `diamond.cut` is meant to be hand-read, per docs/
+ * packages.md's own "A manifest can be pretty-printed" note, which this
+ * mirrors: a newline right after `{`, right after each `,`, and right
+ * before `}`). This necessarily rewrites the *entire* file, not just the
+ * dependency being added -- there is no Hash-literal-aware text editor
+ * here, so any hand-added comment or unusual formatting in an existing
+ * diamond.cut does not survive a `facet add`. Each individual dependency
+ * spec (the `{"git": ..., "tag": ...}` part) stays on one line -- short
+ * enough that breaking it up further would hurt readability rather than
+ * help it. */
+static bool write_manifest(const char *path, const FacetManifest *manifest,
+                           char *error, size_t error_size) {
+    FILE *file = fopen(path, "wb");
+    if (file == nullptr) {
+        (void)snprintf(error, error_size, "cannot write '%s': %s", path,
+                       strerror(errno));
+        return false;
+    }
+    fprintf(file, "{\n  \"name\": \"%s\"", manifest->name);
+    if (manifest->has_version) {
+        fprintf(file, ",\n  \"version\": \"%s\"", manifest->version);
+    }
+    if (manifest->dependency_count > 0) {
+        fputs(",\n  \"dependencies\": {\n", file);
+        for (size_t index = 0; index < manifest->dependency_count; index++) {
+            const FacetDependency *dependency = &manifest->dependencies[index];
+            fprintf(file, "    \"%s\": {\"git\": \"%s\", ", dependency->name,
+                    dependency->git);
+            if (dependency->uses_version) {
+                fprintf(file, "\"version\": \"%s\"}", dependency->version_text);
+            } else {
+                const char *ref_key = dependency->ref_kind == FACET_REF_BRANCH
+                    ? "branch"
+                    : dependency->ref_kind == FACET_REF_COMMIT ? "commit" : "tag";
+                fprintf(file, "\"%s\": \"%s\"}", ref_key, dependency->ref);
+            }
+            fputs(index + 1 < manifest->dependency_count ? ",\n" : "\n", file);
+        }
+        fputs("  }\n", file);
+    } else {
+        fputs("\n", file);
     }
     fputs("}\n", file);
     const bool ok = fclose(file) == 0;
@@ -1166,8 +1234,172 @@ static int run_install_or_update(bool force_resolve) {
     return 0;
 }
 
+/* Derives a default `facet init` name from the current directory's own
+ * basename -- e.g. running it inside `~/projects/greeter` defaults to
+ * "greeter", the same convention `cargo init`/`npm init -y` already use.
+ * Returns false only if the working directory itself can't be read
+ * (never for "/" specifically -- see the fallback below). */
+static bool basename_of_cwd(char *out, size_t out_size) {
+    char cwd[FACET_MAX_PATH];
+    if (getcwd(cwd, sizeof cwd) == nullptr) return false;
+    const char *slash = strrchr(cwd, '/');
+    const char *base = slash != nullptr ? slash + 1 : cwd;
+    if (base[0] == '\0') base = "cut"; /* cwd was "/" itself */
+    return snprintf(out, out_size, "%s", base) < (int)out_size;
+}
+
+static int cmd_init(int argc, char **argv) {
+    if (argc > 3) {
+        fputs("usage: facet init [name]\n", stderr);
+        return 64;
+    }
+    if (file_exists("diamond.cut")) {
+        fprintf(stderr,
+                "facet: 'diamond.cut' already exists in the current directory\n");
+        return 65;
+    }
+    FacetManifest manifest = {0};
+    if (argc == 3) {
+        if (strlen(argv[2]) >= sizeof manifest.name) {
+            fprintf(stderr, "facet: name '%s' is too long\n", argv[2]);
+            return 64;
+        }
+        (void)snprintf(manifest.name, sizeof manifest.name, "%s", argv[2]);
+    } else if (!basename_of_cwd(manifest.name, sizeof manifest.name)) {
+        fprintf(stderr,
+                "facet: cannot determine a default name from the current "
+                "directory; pass one explicitly (facet init <name>)\n");
+        return 74;
+    }
+    if (manifest.name[0] == '\0' || !is_safe_field(manifest.name)) {
+        fprintf(stderr, "facet: '%s' is not a valid cut name\n", manifest.name);
+        return 64;
+    }
+    char error[512];
+    if (!write_manifest("diamond.cut", &manifest, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        return 70;
+    }
+    printf("facet: wrote diamond.cut (name: %s)\n", manifest.name);
+    return 0;
+}
+
+static int cmd_add(int argc, char **argv) {
+    if (argc < 4) {
+        fputs("usage: facet add <name> --git <url> "
+              "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
+              stderr);
+        return 64;
+    }
+    const char *name = argv[2];
+    const char *git = nullptr;
+    const char *tag = nullptr, *branch = nullptr, *commit = nullptr, *version = nullptr;
+    for (int index = 3; index < argc; index++) {
+        const char *flag = argv[index];
+        const char **slot = strcmp(flag, "--git") == 0 ? &git
+            : strcmp(flag, "--tag") == 0 ? &tag
+            : strcmp(flag, "--branch") == 0 ? &branch
+            : strcmp(flag, "--commit") == 0 ? &commit
+            : strcmp(flag, "--version") == 0 ? &version
+            : nullptr;
+        if (slot == nullptr) {
+            fprintf(stderr, "facet: unrecognized option '%s'\n", flag);
+            return 64;
+        }
+        if (index + 1 >= argc) {
+            fprintf(stderr, "facet: '%s' requires a value\n", flag);
+            return 64;
+        }
+        *slot = argv[++index];
+    }
+    if (git == nullptr) {
+        fprintf(stderr, "facet: --git is required\n");
+        return 64;
+    }
+    const int ref_count = (tag != nullptr) + (branch != nullptr) +
+        (commit != nullptr) + (version != nullptr);
+    if (ref_count != 1) {
+        fprintf(stderr,
+                "facet: specify exactly one of --tag, --branch, --commit, --version\n");
+        return 64;
+    }
+    if (!file_exists("diamond.cut")) {
+        fprintf(stderr,
+                "facet: no diamond.cut found in the current directory -- "
+                "run 'facet init' first\n");
+        return 66;
+    }
+    char error[512];
+    FacetManifest manifest;
+    if (!parse_manifest("diamond.cut", &manifest, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        return 70;
+    }
+    if (name[0] == '\0' || strlen(name) >= FACET_MAX_NAME || !is_safe_field(name)) {
+        fprintf(stderr, "facet: '%s' is not a valid dependency name\n", name);
+        return 64;
+    }
+    for (size_t index = 0; index < manifest.dependency_count; index++) {
+        if (strcmp(manifest.dependencies[index].name, name) == 0) {
+            fprintf(stderr,
+                    "facet: dependency '%s' already exists in diamond.cut -- "
+                    "edit it directly, or remove it first\n", name);
+            return 65;
+        }
+    }
+    if (git[0] == '\0' || !is_safe_field(git)) {
+        fprintf(stderr, "facet: '%s' is not a valid git URL\n", git);
+        return 64;
+    }
+    if (manifest.dependency_count == FACET_MAX_DEPENDENCIES) {
+        fprintf(stderr, "facet: too many dependencies (max %d)\n",
+                FACET_MAX_DEPENDENCIES);
+        return 65;
+    }
+    FacetDependency *dependency = &manifest.dependencies[manifest.dependency_count];
+    memset(dependency, 0, sizeof *dependency);
+    (void)snprintf(dependency->name, sizeof dependency->name, "%s", name);
+    (void)snprintf(dependency->git, sizeof dependency->git, "%s", git);
+    if (version != nullptr) {
+        if (version[0] == '\0' || strlen(version) >= sizeof dependency->version_text ||
+            !is_safe_field(version)) {
+            fprintf(stderr, "facet: '%s' is not a valid version constraint\n", version);
+            return 64;
+        }
+        SemverConstraint probe;
+        if (!semver_constraint_parse(version, &probe)) {
+            fprintf(stderr, "facet: '%s' is not a valid version constraint\n", version);
+            return 64;
+        }
+        dependency->uses_version = true;
+        (void)snprintf(dependency->version_text, sizeof dependency->version_text, "%s",
+                        version);
+    } else {
+        const char *ref = tag != nullptr ? tag : branch != nullptr ? branch : commit;
+        if (ref[0] == '\0' || strlen(ref) >= sizeof dependency->ref || !is_safe_field(ref)) {
+            fprintf(stderr, "facet: '%s' is not a valid ref\n", ref);
+            return 64;
+        }
+        dependency->ref_kind = tag != nullptr ? FACET_REF_TAG
+            : branch != nullptr ? FACET_REF_BRANCH : FACET_REF_COMMIT;
+        (void)snprintf(dependency->ref, sizeof dependency->ref, "%s", ref);
+    }
+    manifest.dependency_count++;
+    if (!write_manifest("diamond.cut", &manifest, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        return 70;
+    }
+    printf("facet: added '%s' to diamond.cut -- run 'facet update' to fetch it\n", name);
+    return 0;
+}
+
 static void print_usage(void) {
-    fputs("usage: facet install\n       facet update\n", stderr);
+    fputs("usage: facet install\n"
+          "       facet update\n"
+          "       facet init [name]\n"
+          "       facet add <name> --git <url> "
+          "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
+          stderr);
 }
 
 int main(int argc, char **argv) {
@@ -1176,6 +1408,12 @@ int main(int argc, char **argv) {
     }
     if (argc == 2 && strcmp(argv[1], "update") == 0) {
         return run_install_or_update(true);
+    }
+    if (argc >= 2 && strcmp(argv[1], "init") == 0) {
+        return cmd_init(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "add") == 0) {
+        return cmd_add(argc, argv);
     }
     print_usage();
     return 64;

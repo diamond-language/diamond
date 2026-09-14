@@ -212,9 +212,37 @@ enforces for hand-installed cuts (see above) — so a misconfigured
 or renamed dependency fails clearly at `facet install` time rather than
 surprising `require_cut` later.
 
-No `facet init` or `facet add <dep>` — `diamond.cut` stays a plain,
-hand-edited Diamond `Hash` literal; only the fetch/install/lock steps
-are automated.
+### `facet init` and `facet add`
+
+```sh
+facet init [name]     # writes a fresh diamond.cut; defaults name to the
+                       # current directory's own basename if omitted
+facet add <name> --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
+```
+
+`facet init` refuses to run if `diamond.cut` already exists — it never
+overwrites one. `facet add` requires one to already exist (`facet init`
+first, or hand-write one), parses it, appends the new dependency (a hard
+error if that name is already present — edit the existing entry by hand,
+or remove it first, rather than guessing you meant to replace it), and
+rewrites the file. Both validate what they write the same way `facet
+install` would reject it later: exactly one of `--tag`/`--branch`/
+`--commit`/`--version`, and a `--version` value that actually parses as a
+constraint (`tools/semver.h`'s own grammar) — so a mistake is caught
+immediately, not at the next `facet install`.
+
+`facet add` rewrites the **entire** `diamond.cut`, not just the one entry
+being added — there's no Hash-literal-aware text editor here, only a
+parse-the-whole-thing-and-regenerate-it round trip (mirroring how `facet
+install`/`update` already regenerate `facet.lock` from scratch every
+time). Any hand-added comment or unusual formatting in an existing
+`diamond.cut` does not survive a `facet add`; the regenerated file uses
+the same pretty-printed, multi-line style described above. It does
+round-trip every existing dependency's own ref kind exactly (a `branch`
+dependency stays a `branch` dependency after adding an unrelated one) —
+this is the one thing worth getting right in a full-file rewrite, since
+guessing wrong here would silently change *what a dependency actually
+tracks*, not just how the file looks.
 
 ### A real example: `packages/http`
 
@@ -272,8 +300,6 @@ the first place.
 - **A hosted registry/index**: `facet install greeter` by short name,
   search, or anything else that would need a service to query — cut
   identity is a git URL, full stop.
-- **`facet init`/`facet add`**: manifest-editing commands; `diamond.cut`
-  is hand-edited.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together — see `docs/roadmap.md`.

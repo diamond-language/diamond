@@ -90,6 +90,16 @@ authoritative fine-grained record.
   the full deny list and what's explicitly not covered yet (per-capability
   granularity, resource limits, `Thread`/`Signal.trap` restriction).
 
+### Packages
+
+- Added `facet init [name]` (writes a fresh `diamond.cut`, refusing to overwrite
+  an existing one) and `facet add <name> --git <url> (--tag <ref> | --branch <ref>
+  | --commit <ref> | --version <constraint>)` (appends a dependency and
+  rewrites the manifest) -- `diamond.cut` no longer has to be hand-edited from
+  scratch, though `facet add` still regenerates the whole file rather than
+  patching it in place, so hand-added comments or unusual formatting don't
+  survive it. See docs/packages.md's "`facet init` and `facet add`" section.
+
 ### Performance
 
 - Added transparent bytecode caching: `diamond script.di` now caches the compiled
