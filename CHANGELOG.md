@@ -96,14 +96,25 @@ authoritative fine-grained record.
   a known union type made entirely of `nil` and/or user classes now requires
   either an `else` or an unguarded `when` naming every member, or it's a
   compile error instead of silently returning `nil` from the uncovered path.
-  Deliberately conservative -- a single non-union type, or a union
-  containing any native scalar/container type, interface, or generic type
-  variable, is left exactly as unchecked as before (no `when` syntax can
-  prove a whole native type is covered today); only a bare class-name/`nil`
-  scalar `when` value counts as coverage, never a structural Array/Hash/
-  Object pattern, a guarded `when ... if` clause, or a superclass covering
-  a subclass union member. See docs/core-syntax.md's "Exhaustiveness
-  checking" section.
+  Deliberately conservative -- a single non-union type naming an ordinary
+  (non-sealed -- see below) class, or a union containing any native scalar/
+  container type, interface, or generic type variable, is left exactly as
+  unchecked as before (no `when` syntax can prove a whole native type is
+  covered today); only a bare class-name/`nil` scalar `when` value counts
+  as coverage, never a structural Array/Hash/Object pattern, a guarded
+  `when ... if` clause, or a superclass covering a subclass union member.
+  See docs/core-syntax.md's "Exhaustiveness checking" section.
+- Added `sealed class Name ... end`: an opt-in author promise that a class
+  hierarchy is closed, not an enforcement mechanism against some external
+  boundary (Diamond has no per-file/module compile boundary that survives
+  into the compiler at all -- see docs/classes-and-modules.md's "Sealed
+  classes" section for the full architectural reasoning). Two effects:
+  `Shape.new(...)` becomes a compile error (only a subclass can be
+  constructed), and a `case` subject whose plain (non-union) type names a
+  sealed class becomes eligible for the exhaustiveness checking above, over
+  that class's own direct subclasses -- a zero- or more-than-8-subclass
+  sealed class stays unchecked either way, matching the same member-count
+  ceiling every union already has.
 
 ### Packages
 

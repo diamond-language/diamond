@@ -432,6 +432,67 @@ defined on a superclass covers every subclass too. Scoped to this one
 dispatch site only -- not operator overloading, `to_s`, `super`, or
 `self.`-singleton calls, each of which already has its own fallback.
 
+## Sealed classes
+
+```ruby
+sealed class Shape
+end
+class Circle < Shape
+  def initialize(radius: Int)
+    @radius = radius
+  end
+end
+class Square < Shape
+  def initialize(side: Int)
+    @side = side
+  end
+end
+```
+
+`sealed class Name ... end` marks a class an author intends as a closed,
+fixed set of subclasses -- an algebraic sum type built from ordinary
+classes rather than an explicit `A | B` union annotation. It composes
+normally with an explicit superclass, generics, and interfaces; `sealed`
+only ever sets one flag, nothing else about class-header parsing changes.
+Reopening (see above) is a one-way ratchet -- a class sealed by any one
+of its declarations stays sealed even if a later reopening omits the
+keyword, never the other way around.
+
+**Two effects, both narrow:**
+
+- `Shape.new(...)` is a compile error (`cannot instantiate a sealed class
+  directly`) -- only a subclass can be constructed. This is what makes
+  the second effect below sound: with no possible direct-`Shape`
+  instance, every runtime value handed to something typed `shape: Shape`
+  is provably one of its subclasses.
+- A `case` subject whose plain (non-union) type names a sealed class
+  becomes eligible for [exhaustiveness checking](core-syntax.md#exhaustiveness-checking)
+  over that class's own direct subclasses, the same way an explicit
+  `Circle | Square` union already is -- see that section for exactly
+  which `when` forms count as coverage, and for the two conditions
+  (zero or more than 8 direct subclasses) that leave a sealed hierarchy
+  unchecked instead of erroring.
+
+**Deliberately not a module/file-boundary enforcement mechanism, unlike
+Kotlin's or Rust's own sealed/closed types** -- and this isn't a smaller
+version of that feature, it's a different one for a real architectural
+reason. Diamond's own compiled source has no per-file or per-module
+boundary that survives past `require` expansion at all (the top-level
+[README](../README.md)'s own pipeline: `source -> require expansion ->
+lexer -> Pratt compiler` splices every required file's text into one flat
+buffer before lexing begins), and there is no separate/incremental
+compilation model either --
+every program is compiled fresh, as one flat unit, every single run. The
+classic justification for sealed types elsewhere (a consumer, compiled
+*separately* and *later*, could otherwise add a subclass a library's own
+exhaustive `case` never accounted for) simply doesn't apply here: there is
+no "later, separately compiled" consumer to guard against. Whatever
+subclasses exist when a program is compiled are, by construction, the
+complete set for that one compile -- `sealed` is an explicit, opt-in
+author promise plus the one restriction needed to make matching just the
+direct subclasses sound, not a barrier against some external boundary
+that doesn't exist in this language.
+
 ## Operator overloading
 
 ```ruby

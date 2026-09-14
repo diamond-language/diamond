@@ -692,6 +692,18 @@ struct DiamondClass {
     uint32_t declaration_column;
     size_t declaration_start;
     uint8_t superclass;
+    /* `sealed class Name ... end` -- rejects `Name.new(...)` at compile
+     * time (see src/compiler.c's own `.new`-dispatch site) and makes a
+     * `case` subject whose plain (non-union) type names this class
+     * eligible for exhaustiveness checking over its own direct
+     * subclasses (see CaseExhaustiveness in src/compiler.c). Diamond has
+     * no per-file/module compile boundary that survives into the
+     * compiler (see docs/classes-and-modules.md's own "Sealed classes"
+     * section for why), so this is deliberately not an enforcement
+     * mechanism against some external boundary -- just an opt-in author
+     * promise plus the one restriction (no direct instantiation) needed
+     * to make exhaustiveness over just the direct subclasses sound. */
+    bool sealed;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];

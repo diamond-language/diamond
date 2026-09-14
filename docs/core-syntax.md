@@ -185,10 +185,17 @@ literals, not binding patterns; pattern bindings require a case subject.
 
 ### Exhaustiveness checking
 
-A `case` whose subject has a known union type made entirely of `nil`
-and/or user classes (`shape: Circle | Square`, `shape: Circle | Nil`)
-must cover every member, either with an `else` or with an unguarded
-`when` naming each one, or it's a compile error:
+A `case` whose subject has a known *closed* type must cover every member,
+either with an `else` or with an unguarded `when` naming each one, or it's
+a compile error. There are two independent ways a subject's type counts
+as closed:
+
+- an explicit union made entirely of `nil` and/or user classes
+  (`shape: Circle | Square`, `shape: Circle | Nil`);
+- a plain (non-union) type naming a [sealed
+  class](classes-and-modules.md#sealed-classes) (`shape: Shape` where
+  `Shape` is `sealed`) — every direct subclass of it is required instead
+  of an explicit union's own members.
 
 ```ruby
 def area(shape: Circle | Square)
@@ -196,40 +203,76 @@ def area(shape: Circle | Square)
   when Circle
     3.14159 * shape.radius() * shape.radius()
   end
-  # error: case is not exhaustive over its subject's known union type --
+  # error: case is not exhaustive over its subject's known closed type --
   # add a branch for the missing type(s), or an 'else'
 end
 ```
 
-Adding `when Square ... end` (or an `else`) fixes it. This only ever
-*adds* a compile error to code that previously compiled and silently
-returned `nil` from the uncovered path — it never changes what a
-covered `case` does, and it never fires at all outside this specific
-shape of subject:
+Adding `when Square ... end` (or an `else`) fixes it. The sealed-class
+form reads identically, just without writing the union out by hand:
 
-- **A single, non-union type never triggers it** — `case n; when 0 ...
-  end` for a plain `n: Int` stays exactly as unchecked as it's always
-  been; only a genuine multi-member union does.
+```ruby
+sealed class Shape
+end
+class Circle < Shape
+  # ...
+end
+class Square < Shape
+  # ...
+end
+def area(shape: Shape)   # plain type, not a union -- Shape being sealed
+  case shape              # is what makes this exhaustible at all
+  when Circle
+    3.14159 * shape.radius() * shape.radius()
+  when Square
+    shape.side() * shape.side()
+  end
+end
+```
+
+Both forms only ever *add* a compile error to code that previously
+compiled and silently returned `nil` from the uncovered path — they never
+change what a covered `case` does, and neither fires at all outside its
+own specific shape of subject:
+
+- **A single, non-union type naming a class that isn't `sealed` never
+  triggers it** — `case n; when 0 ... end` for a plain `n: Int`, or `case
+  shape; when Circle ... end` for `shape: Shape` when `Shape` is an
+  ordinary (non-sealed) class, both stay exactly as unchecked as they've
+  always been.
+- **A `sealed` class with zero, or more than 8, direct subclasses is left
+  unchecked too**, not an error either way — zero is more likely "this
+  hierarchy isn't built out yet" than an intentional 0-variant type, and
+  more than 8 exceeds the same fixed member-count ceiling every union in
+  Diamond already has (`DIAMOND_MAX_UNION_TYPES`). A `case` with no
+  `else` over either of these compiles exactly as if `Shape` weren't
+  sealed at all.
 - **A union containing any native scalar/container type (`Int`,
   `String`, `Array`, ...), interface, or generic type variable is never
   checked** — there is no `when` syntax that can prove "this whole
   native type is covered" (native type names aren't class-pattern
   values, unlike a user class name), so a case like `x: Int | String`
   is left exactly as unchecked as today rather than either inventing
-  new pattern syntax or producing false positives.
+  new pattern syntax or producing false positives. A union containing a
+  sealed class as one of several members does not recursively expand
+  into that member's own subclasses either — only the union's own
+  explicit members are required in that case.
 - **Only a bare class-name or `nil` *scalar* `when` value counts as
   covering a member** — an Array/Hash/Object structural pattern (even
   an empty `Circle{}` class-only guard) never does, and neither does a
   guarded `when Circle if ...` clause (the guard could reject the match
   at runtime, so the type isn't unconditionally covered). Comma-
   separated values in one `when` (`when Circle, Square`) each count
-  independently.
-- **A superclass `when` does not cover a subclass union member** — for
+  independently. Applies identically to both forms.
+- **A superclass `when` does not cover a subclass member** — for
   `shape: Circle | Square` (both `< Shape`), `when Shape` does not
   count as covering either `Circle` or `Square`; each member needs its
   own exact match. Conservative on purpose: this never *under*-reports
   a real gap, only occasionally asks for a branch a human might
-  consider redundant.
+  consider redundant. (The sealed-class form sidesteps this in its own
+  common case: `when Circle` already matches Circle-or-any-of-*its own*
+  subclasses at runtime the ordinary way, so a deeper hierarchy under a
+  sealed class's direct subclasses doesn't need separate coverage.)
 - The compile error itself does not name which member(s) are missing
   (Diamond's compiler diagnostics are static strings throughout, with
   no per-call-site interpolation mechanism) — it only reports that the

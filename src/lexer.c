@@ -68,6 +68,7 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "def", 3)) return DIAMOND_TOKEN_DEF;
     if (text_equals(lexer, "closure", 7)) return DIAMOND_TOKEN_CLOSURE;
     if (text_equals(lexer, "class", 5)) return DIAMOND_TOKEN_CLASS;
+    if (text_equals(lexer, "sealed", 6)) return DIAMOND_TOKEN_SEALED;
     if (text_equals(lexer, "interface", 9)) return DIAMOND_TOKEN_INTERFACE;
     if (text_equals(lexer, "module", 6)) return DIAMOND_TOKEN_MODULE;
     if (text_equals(lexer, "include", 7)) return DIAMOND_TOKEN_INCLUDE;

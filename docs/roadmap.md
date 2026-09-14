@@ -11,18 +11,24 @@ a more valuable runtime, language, or tooling question.
 
 ### Case/when exhaustiveness checking: what's next, if anything
 
-Exhaustiveness checking (docs/core-syntax.md, landed this cycle) covers only
-a `case` subject whose known union type is made entirely of `nil` and/or
-user classes -- deliberately conservative in several ways (see that
-section's own list). Real possibilities this opens up, none attempted yet,
-none committed:
+Exhaustiveness checking (docs/core-syntax.md, landed this cycle) now covers
+two independent closed-type shapes: an explicit union made entirely of
+`nil`/user classes, and (added this same cycle, alongside sealed classes --
+docs/classes-and-modules.md) a plain type naming a `sealed` class, required
+against its own direct subclasses. Both are deliberately conservative in
+several ways (see that section's own list). Real possibilities this still
+opens up, none attempted yet, none committed:
 
-- **sealed class hierarchies** -- a `sealed class Shape` declaring a fixed,
-  compiler-known set of subclasses would let exhaustiveness checking (and a
-  `when Shape` covering all of them, soundly, unlike the current exact-
-  member-match-only rule) apply to a plain class-hierarchy subject, not
-  just an explicit `A | B | C` union annotation. Needs the sealed-hierarchy
-  feature itself first, which doesn't exist yet in any form;
+- **a sealed class's own `when` does not cover its subclasses as a group**
+  -- `when Shape` does not count as covering `Circle`/`Square` even though
+  `Shape` is exactly the sealed base they both extend (the same exact-
+  member-match-only rule an explicit union's own superclass `when` is
+  already subject to, applied consistently rather than special-cased for
+  the sealed-hierarchy path specifically). Each direct subclass still needs
+  its own `when`. Not attempted because it would need to reason about
+  "this `when`'s named class is the sealed base itself" as a genuinely
+  different, third coverage rule, not just reusing the existing exact-id
+  match;
 - **structural (Array/Hash/Object) pattern coverage** -- an empty `Circle{}`
   class-only guard already means "any Circle instance" per docs/core-
   syntax.md's own case/when semantics, so it could soundly count as covering

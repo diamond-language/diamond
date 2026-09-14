@@ -6288,6 +6288,19 @@ static uint16_t parse_name(Compiler *compiler) {
             }
             return parse_singleton_call(compiler,method,name,class_index);
         }
+        /* Gated to the real pass only, same reasoning as case/when
+         * exhaustiveness's own discovery-pass guard (resolve_type_name
+         * has the original precedent): a `sealed class Shape` declared
+         * later in the same source might not have set its own `sealed`
+         * flag yet if discovery reaches this call site first, and fail()
+         * only remembers the first failure. */
+        if(!compiler->discovery_pass&&
+           compiler->program->classes[(size_t)class_index].sealed) {
+            fail(compiler,compiler->current.span,
+                "cannot instantiate a sealed class directly -- "
+                "use one of its subclasses");
+            return 0;
+        }
         advance_token(compiler);
         const DiamondFunction *initializer=
             constructor_signature(compiler,class_index);
@@ -9153,26 +9166,42 @@ typedef struct CaseFlowJoin {
     uint32_t new_alias[DIAMOND_MAX_LOCALS];
 } CaseFlowJoin;
 
-/* Tracks whether every member of a `case` subject's known union type is
+/* Tracks whether every member of a `case` subject's known closed type is
  * covered by some unguarded `when` branch, so reaching `end` with no
  * `else` and an uncovered member is a compile error instead of silently
- * returning Nil (see parse_case). Only ever active when the subject's
- * static type is a genuine multi-member union (compiler->known_type_
- * sets[subject]>=0) whose every member is either Nil or a concrete user
- * class -- a union containing any native scalar/container type, generic
- * variable, or interface member has no current `when` syntax that can
- * prove "this whole member is covered" (native type names aren't
- * class-pattern values -- see docs/core-syntax.md's Case/when section),
- * so such a case is left exactly as unchecked as it is today rather than
- * either inventing new pattern syntax or producing false positives.
- * Deliberately conservative in one more way: only a bare class-name/
- * `nil` *scalar* `when` value marks a member covered, never an Array/
- * Hash/Object structural pattern (even an empty `Class{}` class-only
- * guard) and never a guarded `when ... if` clause -- see
+ * returning Nil (see parse_case). `required_ids` is populated from either
+ * of two independent sources, never both at once:
+ *
+ * - an explicit multi-member union (compiler->known_type_sets[subject]
+ *   >=0) whose every member is either Nil or a concrete user class -- a
+ *   union containing any native scalar/container type, generic variable,
+ *   or interface member has no current `when` syntax that can prove
+ *   "this whole member is covered" (native type names aren't class-
+ *   pattern values -- see docs/core-syntax.md's Case/when section), so
+ *   such a case is left exactly as unchecked as it is today rather than
+ *   either inventing new pattern syntax or producing false positives;
+ * - a single (non-union) subject type naming a `sealed` class -- every
+ *   *direct* subclass of it (found via a linear scan of compiler->
+ *   program->classes[] for a matching `.superclass`), never recursed
+ *   further, since `when Circle` already matches Circle-or-any-of-its-
+ *   own-subclasses at runtime (CASE_MATCH) regardless of this feature.
+ *   Only meaningful because a sealed class can't be instantiated
+ *   directly (see the `.new`-dispatch site in src/compiler.c) -- with no
+ *   possible direct-Shape instance, every runtime value is provably one
+ *   of these direct subclasses (or deeper), so enumerating just them is
+ *   sound. Not composed with the union case above: a union containing a
+ *   sealed class as one of several members does not recursively expand
+ *   into that member's own subclasses.
+ *
+ * Deliberately conservative in one more way, for both sources: only a
+ * bare class-name/`nil` *scalar* `when` value marks a member covered,
+ * never an Array/Hash/Object structural pattern (even an empty `Class{}`
+ * class-only guard) and never a guarded `when ... if` clause -- see
  * parse_case_branches' own comment at the point this is populated. */
 typedef struct CaseExhaustiveness {
     bool active;
-    const DiamondTypeSet *type_set;
+    uint8_t required_ids[DIAMOND_MAX_UNION_TYPES];
+    uint8_t required_count;
     bool covered[DIAMOND_MAX_UNION_TYPES];
     DiamondSpan case_span;
 } CaseExhaustiveness;
@@ -9810,11 +9839,11 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     if(compiler->current.kind==DIAMOND_TOKEN_END) {
         if(exhaustiveness->active) {
             bool all_covered=true;
-            for(uint8_t member=0;member<exhaustiveness->type_set->count;member++)
+            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
                 if(!exhaustiveness->covered[member]){all_covered=false;break;}
             if(!all_covered) {
                 fail(compiler,exhaustiveness->case_span,
-                    "case is not exhaustive over its subject's known union "
+                    "case is not exhaustive over its subject's known closed "
                     "type -- add a branch for the missing type(s), or an 'else'");
                 return destination;
             }
@@ -9973,8 +10002,8 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     }
     if(exhaustiveness->active)
         for(size_t covered_index=0;covered_index<covered_id_count;covered_index++)
-            for(uint8_t member=0;member<exhaustiveness->type_set->count;member++)
-                if(exhaustiveness->type_set->members[member].id==
+            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
+                if(exhaustiveness->required_ids[member]==
                         covered_ids[covered_index])
                     exhaustiveness->covered[member]=true;
     if(!consume_conditional_start(compiler))return destination;
@@ -10023,10 +10052,22 @@ static uint16_t parse_case(Compiler *compiler) {
      * would incorrectly abort compilation before the real pass ever gets
      * a chance to see the complete picture. */
     CaseExhaustiveness exhaustiveness={0};
+    /* A *genuine* multi-member union (`set->count>1`) is the only signal
+     * that activates the explicit-union path below -- a plain, single-
+     * type annotation (`shape: Shape`, no `|` at all) still gets
+     * represented as a `known_type_sets[subject]>=0` trivial one-member
+     * DiamondTypeSet internally (confirmed empirically: known_types[reg]
+     * held the real concrete class id, not TYPE_UNKNOWN, even while
+     * known_type_sets[reg] was also >=0), so `known_type_sets[subject]
+     * >=0` alone is NOT a reliable "this is a real union" test on its
+     * own -- checking `set->count>1` is what actually distinguishes the
+     * two, and is why this and the sealed-single-type branch below are
+     * both plain `if`s (never else-if): whichever one's own precise
+     * condition matches is the only one that can ever activate. */
     if(!subjectless&&!compiler->discovery_pass&&compiler->known_type_sets[subject]>=0) {
         const DiamondTypeSet *set=
             &compiler->function->type_sets[(uint16_t)compiler->known_type_sets[subject]];
-        bool exhaustible=set->count>0;
+        bool exhaustible=set->count>1;
         for(uint8_t member=0;member<set->count&&exhaustible;member++) {
             const uint8_t id=set->members[member].id;
             if(id!=DIAMOND_TYPE_NIL&&
@@ -10035,7 +10076,44 @@ static uint16_t parse_case(Compiler *compiler) {
         }
         if(exhaustible) {
             exhaustiveness.active=true;
-            exhaustiveness.type_set=set;
+            exhaustiveness.required_count=set->count;
+            for(uint8_t member=0;member<set->count;member++)
+                exhaustiveness.required_ids[member]=set->members[member].id;
+            exhaustiveness.case_span=case_span;
+        }
+    }
+    if(!exhaustiveness.active&&!subjectless&&!compiler->discovery_pass&&
+       compiler->known_types[subject]>=DIAMOND_TYPE_CLASS_BASE&&
+       compiler->known_types[subject]<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES&&
+       compiler->program->classes[
+           compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE].sealed) {
+        /* A single (non-union) subject type naming a sealed class --
+         * every direct subclass is required, found by a plain linear
+         * scan since discovery has already registered every class in
+         * the whole (flat-compiled) program by the time the real pass
+         * reaches here. Sound specifically because a sealed class can't
+         * be instantiated directly (see the `.new`-dispatch site) -- no
+         * stray direct-Shape instance could ever fall through uncovered. */
+        uint8_t required_ids[DIAMOND_MAX_UNION_TYPES];
+        size_t direct_subclass_count=0;
+        for(size_t candidate=0;candidate<compiler->program->class_count;candidate++) {
+            if(compiler->program->classes[candidate].superclass!=
+                    compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE)
+                continue;
+            /* Counted unconditionally, past DIAMOND_MAX_UNION_TYPES too --
+             * a >8-direct-subclass hierarchy must be detected as such and
+             * left unchecked, not silently truncated to its first 8
+             * (which would be unsound: the check would then believe
+             * exactly those 8 were the whole set). */
+            if(direct_subclass_count<DIAMOND_MAX_UNION_TYPES)
+                required_ids[direct_subclass_count]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+candidate);
+            direct_subclass_count++;
+        }
+        if(direct_subclass_count>0&&direct_subclass_count<=DIAMOND_MAX_UNION_TYPES) {
+            exhaustiveness.active=true;
+            exhaustiveness.required_count=(uint8_t)direct_subclass_count;
+            for(size_t member=0;member<direct_subclass_count;member++)
+                exhaustiveness.required_ids[member]=required_ids[member];
             exhaustiveness.case_span=case_span;
         }
     }
@@ -10541,6 +10619,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
         compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+        compiler->current.kind == DIAMOND_TOKEN_SEALED ||
         compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
         compiler->current.kind == DIAMOND_TOKEN_MODULE) {
         return DIAMOND_TOKEN_EOF;
@@ -13564,7 +13643,13 @@ static void compile_delegate(Compiler *compiler) {
 }
 
 static uint16_t compile_class(Compiler *compiler) {
+    const bool this_declaration_sealed=compiler->current.kind==DIAMOND_TOKEN_SEALED;
     advance_token(compiler);
+    if(this_declaration_sealed&&compiler->current.kind!=DIAMOND_TOKEN_CLASS) {
+        fail(compiler,compiler->current.span,"expected 'class' after 'sealed'");
+        return 0;
+    }
+    if(this_declaration_sealed)advance_token(compiler);
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
         fail(compiler, compiler->current.span, "expected valid class name"); return 0;
     }
@@ -13617,6 +13702,7 @@ static uint16_t compile_class(Compiler *compiler) {
             class->field_count=0;
             class->class_variable_count=0;
             class->superclass=UINT8_MAX;
+            class->sealed=false;
             class->declared_by_discovery=false;
             superclass_decided=false;
         } else {
@@ -13656,8 +13742,14 @@ static uint16_t compile_class(Compiler *compiler) {
         class->class_variable_count=0;
         class->declared_by_discovery=false;
         class->superclass=UINT8_MAX;
+        class->sealed=false;
         superclass_decided=false;
     }
+    /* A one-way ratchet, not a plain assignment: any declaration or
+     * reopening of this class that says `sealed` makes it sealed for
+     * good, within this compile pass -- a later reopen that omits the
+     * keyword doesn't silently unseal it. */
+    class->sealed=class->sealed||this_declaration_sealed;
     class->declaration_line=(uint32_t)name.line;
     class->declaration_column=(uint32_t)name.column;
     class->declaration_start=name.start;
@@ -14259,7 +14351,8 @@ static uint16_t compile_module(Compiler *compiler) {
             (void)compile_definition(compiler,false);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
             (void)compile_module(compiler);
-        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS) {
+        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS||
+                  compiler->current.kind==DIAMOND_TOKEN_SEALED) {
             (void)compile_class(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INTERFACE) {
             (void)compile_interface(compiler);
@@ -15138,13 +15231,15 @@ static uint16_t compile_sequence(Compiler *compiler) {
             compiler->current.kind == DIAMOND_TOKEN_DEF ||
             compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
             compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+            compiler->current.kind == DIAMOND_TOKEN_SEALED ||
             compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
             compiler->current.kind == DIAMOND_TOKEN_MODULE;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
             result = compile_definition(compiler,false);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLOSURE) {
             result = compile_definition(compiler,true);
-        } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
+        } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+                   compiler->current.kind == DIAMOND_TOKEN_SEALED) {
             result = compile_class(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {
             result = compile_interface(compiler);
