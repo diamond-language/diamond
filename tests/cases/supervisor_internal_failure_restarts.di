@@ -1,5 +1,5 @@
 def recurse_forever(n)
-  recurse_forever(n + 1)
+  1 + recurse_forever(n + 1)
 end
 
 def infinite_recursion(ch)

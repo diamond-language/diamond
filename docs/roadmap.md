@@ -9,6 +9,48 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### Tail-call optimization: what's next, if anything
+
+Self-recursive tail-call optimization (docs/callables.md, landed this
+cycle) covers only a function's own tail call to itself -- deliberately
+narrower than general tail-call elimination, chosen specifically because
+self-recursion needs no register-count, chunk, or constant-pool swap
+(the callee is always literally the same compiled function already
+running). Real possibilities this opens up, none attempted yet, none
+committed:
+
+- **mutual tail calls** -- `A` tail-calling a different function `B`
+  that in turn tail-calls `A` back (or any statically-resolved direct
+  call in tail position to a *different* known function, not just self)
+  is real, general tail-call elimination, not just this narrower slice.
+  A callee needing a different register count, chunk, or constant pool
+  than the caller turns this from "reuse the exact same already-
+  allocated `run_chunk` state in place" into "swap out most of the
+  current C stack frame's own locals mid-loop," inside `run_chunk`
+  itself -- the most performance-audited, most delicate code in the
+  codebase. Meaningfully more implementation risk for real, broader
+  value;
+- **a generic function's own self-tail-call** -- excluded because a
+  generic function derives its type-variable bindings fresh from each
+  call's own argument values (`run_chunk`'s own `infer_from_value`
+  logic, run once at entry); redoing that correctly for an in-place
+  looped call, rather than a real recursive re-entry, is a separate,
+  unattempted problem;
+- **a variadic function's own self-tail-call** -- excluded because a
+  variadic call's overflow arguments (beyond its declared fixed
+  parameters) are tracked against the *original* call's own `arguments`/
+  `argument_count` (`run_chunk`'s own parameters, read directly by
+  `DIAMOND_OP_COLLECT_VARIADIC`), not something an in-place "next
+  iteration" could actually update without its own new mechanism;
+- **surfacing that a call was optimized** -- neither `--dump-bytecode`
+  (which does already show `TAIL_CALL` distinctly from `CALL` in
+  disassembly) nor any `DIAMOND_TRACE_*` env var currently reports this
+  as a runtime event; not attempted without a concrete debugging need
+  asking for it.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Case/when exhaustiveness checking: what's next, if anything
 
 Exhaustiveness checking (docs/core-syntax.md, landed this cycle) now covers

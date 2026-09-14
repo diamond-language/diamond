@@ -15825,6 +15825,53 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination] = call_result;
                 break;
             }
+            case DIAMOND_OP_TAIL_CALL: {
+                /* Only ever produced by the compiler rewriting an
+                 * already-validated self-recursive CALL in tail position
+                 * (see maybe_rewrite_self_tail_call, src/compiler.c) --
+                 * `function_index`/`destination` are intentionally unread:
+                 * the target is always *this* function (chunk/registers/
+                 * frame/depth all stay exactly as they are, since a self-
+                 * call can never need a different one of any of them),
+                 * and a value that would have been returned here was
+                 * already checked byte-for-byte to be the immediately
+                 * preceding CALL's own destination, needing no separate
+                 * confirmation at run time. Bounds/arity were already
+                 * enforced when that CALL itself first compiled; the only
+                 * new check needed here is argument_base/count staying in
+                 * range, the same defensive validation CALL's own case
+                 * applies, in case this was ever hand-built directly
+                 * (ProgramBuilder exposes raw opcode numbers). */
+                uint16_t destination = 0, function_index = 0, argument_base = 0;
+                uint8_t call_argument_count = 0;
+                READ_SHORT(destination); /* unused, see above */
+                READ_SHORT(function_index); /* unused, see above */
+                READ_SHORT(argument_base);
+                READ_BYTE(call_argument_count);
+                (void)destination;
+                (void)function_index;
+                if ((size_t)argument_base + call_argument_count >
+                        DIAMOND_REGISTER_COUNT ||
+                    call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS) {
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                /* Captured into a small local buffer *before* zeroing
+                 * registers[] below -- argument_base is ordinary bytecode
+                 * addressing the same register file being cleared, unlike
+                 * a real CALL's own `arguments` (always a genuinely
+                 * separate C array, the caller's own registers one C
+                 * stack frame up). */
+                DiamondValue tail_arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
+                for (size_t index = 0; index < call_argument_count; index++)
+                    tail_arguments[index] = registers[argument_base + index];
+                memset(registers, 0, live_register_count * sizeof(DiamondValue));
+                const size_t copied = (size_t)call_argument_count < live_register_count
+                    ? (size_t)call_argument_count : live_register_count;
+                for (size_t index = 0; index < copied; index++)
+                    registers[index] = tail_arguments[index];
+                ip = 0;
+                break;
+            }
             case DIAMOND_OP_CALL_TYPED: {
                 uint16_t destination=0,argument_base=0;
                 uint16_t function_index=0;

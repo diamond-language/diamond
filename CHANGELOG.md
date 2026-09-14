@@ -115,6 +115,20 @@ authoritative fine-grained record.
   that class's own direct subclasses -- a zero- or more-than-8-subclass
   sealed class stays unchecked either way, matching the same member-count
   ceiling every union already has.
+- Added self-recursive tail-call optimization: a function's own tail call
+  to itself (the entire value of a `return`, or a body's own trailing
+  expression, nothing done to the result afterward) now runs in constant
+  native stack space instead of the ordinary 95-level call-depth limit.
+  Transparent -- never changes what a program computes, only how deep a
+  qualifying recursive shape can go before hitting that limit. Excludes,
+  falling back to ordinary bounded recursion rather than erring: non-tail
+  self-recursion, a tail call inside `begin`/`rescue`/`ensure`, mutual
+  recursion (a different function, even one that tail-calls back), a
+  generic function's own self-call, and a variadic function's own
+  self-call. See docs/callables.md's "Tail-call optimization" section,
+  including the one real observable consequence: a function that
+  recurses forever with no base case, written as a qualifying tail call,
+  now loops forever instead of eventually raising `SystemStackError`.
 
 ### Packages
 

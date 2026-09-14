@@ -507,6 +507,26 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset += 8;
                 break;
             }
+            case DIAMOND_OP_TAIL_CALL: {
+                if (!require_bytes(stream, chunk, offset, 8)) {
+                    valid = false;
+                    offset = chunk->code_count;
+                    break;
+                }
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
+                fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "TAIL_CALL",
+                        checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
+                        function_index,
+                        checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
+                            chunk->code[offset + 7], &valid),
+                        chunk->code[offset + 7]);
+                if (function_index >= chunk->function_count) {
+                    valid = false;
+                }
+                offset += 8;
+                break;
+            }
             case DIAMOND_OP_CALL_SPREAD: {
                 if(!require_bytes(stream,chunk,offset,7)) {
                     valid=false;offset=chunk->code_count;break;

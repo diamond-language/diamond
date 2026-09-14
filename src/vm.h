@@ -467,6 +467,27 @@ typedef enum DiamondOpCode : uint8_t {
      * Appended here for the same stable-numbering reason as DIAMOND_OP_
      * CHANNEL_NEW just above. */
     DIAMOND_OP_SUPERVISOR_NEW,
+    /* Same operand layout as DIAMOND_OP_CALL (destination, function_index,
+     * argument_base, argument_count) -- the compiler produces this by
+     * rewriting an already-emitted CALL's own opcode byte in place, never
+     * by emitting different operands, specifically so nothing about
+     * jump-offset arithmetic elsewhere in the function has to change.
+     * Only ever targets the function currently executing itself (self-
+     * recursion in tail position, no enclosing begin/rescue/ensure, no
+     * type variables -- see compile_return's own comment in src/
+     * compiler.c for the exact eligibility rule). run_chunk's own
+     * handling reuses the current call's registers/frame/depth in place
+     * instead of recursing, giving qualifying tail recursion O(1) C-stack
+     * usage regardless of how deep it goes -- see docs/callables.md's
+     * "Tail-call optimization" section for the full, user-facing
+     * contract and why this is scoped to self-recursion only. Appended
+     * here, not grouped next to DIAMOND_OP_CALL above, for the same
+     * stable-numbering reason as DIAMOND_OP_CHANNEL_NEW/DIAMOND_OP_
+     * SUPERVISOR_NEW just above -- anything encoding a raw opcode number
+     * directly (hand-built ProgramBuilder bytecode, an old cached .dic)
+     * must never have an existing opcode's own number silently reassigned
+     * to something else. */
+    DIAMOND_OP_TAIL_CALL,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

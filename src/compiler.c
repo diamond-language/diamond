@@ -104,6 +104,45 @@ typedef struct Compiler {
     DiamondToken previous;
     DiamondProgram *program;
     DiamondFunction *function;
+    /* >0 anywhere lexically inside a begin/rescue/ensure block of the
+     * function currently being compiled (compile_begin increments/
+     * decrements around its own try/rescue/else/ensure bodies) --
+     * disqualifies a self-tail-call from DIAMOND_OP_TAIL_CALL rewriting
+     * (see compile_return's own comment): a live handler's jump target
+     * is an offset into the *current* chunk's bytecode, which reusing
+     * the same run_chunk invocation for "the next iteration" must never
+     * invalidate. Saved to 0 and restored around compiling any nested
+     * function's own body (every site that reassigns `function` above)
+     * -- a def nested inside an outer begin block starts its own body
+     * fresh, not already inside anything, regardless of its lexical
+     * position in the outer function's own source. */
+    size_t begin_depth;
+    /* Records exactly where the most recently emitted plain (non-generic,
+     * non-spread, non-method/singleton) DIAMOND_OP_CALL sits, for
+     * compile_return's own tail-call peephole rewrite (see
+     * maybe_rewrite_self_tail_call) -- set only at parse_call's own
+     * plain-CALL emission site. Deliberately NOT scoped/saved-restored
+     * around a nested function's own compilation the way begin_depth is:
+     * code_count is per-DiamondFunction (each has its own separate code
+     * buffer), so comparing last_plain_call_code_count against
+     * compiler->function's *own current* code_count already self-
+     * invalidates whenever anything else -- including an entire nested
+     * function's own body -- was compiled in between, without needing
+     * explicit scoping. This is deliberately NOT reconstructed by
+     * decoding bytes backward from code_count (an earlier version of
+     * this feature did exactly that, assuming the preceding instruction
+     * was exactly 8 bytes without proving it actually was one real CALL
+     * instruction boundary -- a real, found-by-testing bug: a coincidental
+     * byte match on unrelated bytecode got misidentified as a self-call
+     * and corrupted, causing an infinite loop in a completely unrelated
+     * function that never actually called itself at all). Tracking the
+     * exact offset at emission time instead makes this sound by
+     * construction rather than by inference. */
+    size_t last_plain_call_code_count;
+    size_t last_plain_call_offset;
+    uint16_t last_plain_call_destination;
+    uint16_t last_plain_call_function_index;
+    DiamondFunction *last_plain_call_function;
     DiamondDiagnostic *diagnostic;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
@@ -3240,6 +3279,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                          (uint16_t)(argument_base + index), slot_registers[index], 0, 2);
     }
     const uint16_t destination = allocate_register(compiler);
+    const size_t call_opcode_offset=compiler->function->code_count;
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_CALL:DIAMOND_OP_CALL_TYPED);
     emit_register(compiler,destination);
@@ -3250,6 +3290,18 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
+    } else {
+        /* Self-tail-call eligibility tracking -- see compiler->last_
+         * plain_call_* fields' own comment and maybe_rewrite_self_tail_
+         * call (both above compile_return). Recorded here, the one place
+         * a plain (non-generic) CALL is ever emitted for an ordinary
+         * function-name call, rather than reconstructed later by
+         * decoding bytes backward from code_count. */
+        compiler->last_plain_call_function=compiler->function;
+        compiler->last_plain_call_code_count=compiler->function->code_count;
+        compiler->last_plain_call_offset=call_opcode_offset;
+        compiler->last_plain_call_destination=destination;
+        compiler->last_plain_call_function_index=(uint16_t)function_index;
     }
     publish_declared_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
@@ -3473,11 +3525,13 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     const uint16_t outer_next_register=compiler->next_register;
     const size_t outer_local_count=compiler->local_count;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
 
     compiler->function=function;
     compiler->next_register=0;
     compiler->local_count=0;
     compiler->in_function=true;
+    compiler->begin_depth=0;
 
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<method->arity;index++) {
@@ -3518,6 +3572,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;
     compiler->in_function=outer_in_function;
+    compiler->begin_depth=outer_begin_depth;
 
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
@@ -7472,8 +7527,10 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     memcpy(outer_types,compiler->known_types,outer_next_register);
     memcpy(outer_type_sets,compiler->known_type_sets,
         outer_next_register*sizeof *outer_type_sets);
+    const size_t outer_begin_depth=compiler->begin_depth;
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
+    compiler->begin_depth=0;
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     const size_t argument_count=typed_wrapper?wrapper->arity:1;
     for(size_t index=0;index<argument_count;index++)
@@ -7533,6 +7590,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
 
     compiler->function=outer_function;compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
+    compiler->begin_depth=outer_begin_depth;
     memcpy(compiler->known_types,outer_types,outer_next_register);
     memcpy(compiler->known_type_sets,outer_type_sets,
         outer_next_register*sizeof *outer_type_sets);
@@ -10852,6 +10910,60 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     return destination;
 }
 
+/* If the most recently emitted plain CALL (tracked precisely at emission
+ * time by parse_call -- see compiler->last_plain_call_* fields' own
+ * comment for why this is sound and a byte-guessing alternative was not)
+ * is still exactly the last thing emitted for the function currently
+ * being compiled, its own destination is exactly `return_value_register`,
+ * and its own target is this same function (self-recursion), rewrites
+ * that CALL's opcode byte to DIAMOND_OP_TAIL_CALL in place -- see that
+ * opcode's own comment (src/vm.h) for the runtime side and the full
+ * eligibility rule. Called from every site about to emit a RETURN for an
+ * ordinary user function body (an explicit `return EXPR`, or a body's own
+ * trailing implicit return) -- harmless, silent no-op whenever nothing
+ * eligible was just emitted, so it's safe to call unconditionally rather
+ * than needing each call site to first prove its own context is eligible.
+ *
+ * Deliberately excludes: any call inside a begin/rescue/ensure block
+ * (compiler->begin_depth>0 -- a live handler's own jump target is an
+ * offset into the *current* chunk's bytecode, which reusing the same
+ * run_chunk invocation for "the next iteration" must never invalidate);
+ * a generic function's own self-call (compiler->function->type_variable_
+ * count>0 -- re-deriving per-call type-variable bindings for a looped-
+ * back call, the way run_chunk's own entry-time inference already does
+ * once per real call, is real, separate complexity not attempted here);
+ * and, structurally, anything that isn't a plain positional CALL to
+ * *this exact* function (a method/singleton call, a CALL_TYPED generic
+ * call, or a call to any other function, self-recursive or not, all use
+ * a different opcode, a different function_index, or never touch
+ * last_plain_call_* at all). */
+static void maybe_rewrite_self_tail_call(Compiler *compiler,
+        uint16_t return_value_register) {
+    if(compiler->begin_depth>0)return;
+    if(compiler->function->type_variable_count>0)return;
+    /* A variadic function's own overflow arguments (beyond its fixed
+     * arity) live in run_chunk's own `arguments`/`argument_count`
+     * parameters, read directly by DIAMOND_OP_COLLECT_VARIADIC -- values
+     * fixed at this *original* call's own entry, not something a tail
+     * call reusing the same run_chunk invocation could actually update.
+     * Excluding has_variadic entirely sidesteps that hazard, and as a
+     * side effect keeps call_argument_count bounded by DIAMOND_MAX_
+     * DECLARED_PARAMETERS for every function this can still rewrite
+     * (a non-variadic function's own arity is already capped there) --
+     * exactly what run_chunk's own TAIL_CALL handling sizes its
+     * argument-staging buffer to. */
+    if(compiler->function->has_variadic)return;
+    if(compiler->last_plain_call_function!=compiler->function)return;
+    if(compiler->last_plain_call_code_count!=compiler->function->code_count)
+        return;
+    if(compiler->last_plain_call_destination!=return_value_register)return;
+    const uint16_t function_index=compiler->last_plain_call_function_index;
+    if((size_t)function_index>=compiler->program->function_count)return;
+    if(compiler->program->functions[function_index]!=compiler->function)return;
+    compiler->function->code[compiler->last_plain_call_offset]=
+        DIAMOND_OP_TAIL_CALL;
+}
+
 static uint16_t compile_return(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     if(!compiler->in_function) {
@@ -10891,6 +11003,7 @@ static uint16_t compile_return(Compiler *compiler) {
             compiler->known_types[value],compiler->known_type_sets[value],
             &compiler->return_flow_type,&compiler->return_flow_set);
     }
+    maybe_rewrite_self_tail_call(compiler,value);
     emit_instruction(compiler,DIAMOND_OP_RETURN,value,0,0,1);
     return value;
 }
@@ -11026,6 +11139,7 @@ static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
 
 static uint16_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
+    compiler->begin_depth++;
     const size_t ensure_operand=compiler->function->code_count+1;
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
     emit_byte(compiler,0);emit_byte(compiler,0);
@@ -11176,6 +11290,7 @@ static uint16_t compile_begin(Compiler *compiler) {
     }
     advance_token(compiler);
     patch_jump(compiler,continuation_operand,compiler->function->code_count);
+    compiler->begin_depth--;
     return destination;
 }
 
@@ -11327,6 +11442,7 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
@@ -11398,6 +11514,7 @@ static uint16_t compile_block(Compiler *compiler) {
     }
 
     compiler->function = function;
+    compiler->begin_depth=0;
     uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
     if(contextual_return_set>=0&&
        (size_t)contextual_return_set<outer_function->type_set_count)
@@ -11625,6 +11742,7 @@ static uint16_t compile_block(Compiler *compiler) {
             compiler->known_type_sets[reg];
     }
     compiler->function = outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
         compiler->locals[index] = outer_locals[index];
@@ -11964,6 +12082,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
@@ -12041,6 +12160,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
     }
     compiler->function = function;
+    compiler->begin_depth=0;
     compiler->has_current_block=false;
     compiler->current_block_register=0;
     compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
@@ -12602,6 +12722,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 }
             }
         }
+        maybe_rewrite_self_tail_call(compiler,body_result);
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
         if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
             fail(compiler, compiler->current.span, "expected 'end' after function body");
@@ -12630,6 +12751,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             reg==DIAMOND_NO_TYPE_SET?-1:compiler->known_type_sets[reg];
     }
     compiler->function = outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
         compiler->locals[index] = outer_locals[index];
@@ -13448,6 +13570,7 @@ static void compile_delegate(Compiler *compiler) {
     const bool outer_in_method=compiler->in_method;
     const bool outer_in_singleton_method=compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -13492,6 +13615,7 @@ static void compile_delegate(Compiler *compiler) {
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     compiler->function=function;
+    compiler->begin_depth=0;
     compiler->local_count=0;
     compiler->next_register=0;
     compiler->current_method=method_name;
@@ -13610,6 +13734,7 @@ static void compile_delegate(Compiler *compiler) {
     }
 
     compiler->function=outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count=outer_local_count;
     for(size_t index=0;index<outer_local_count;index++)
         compiler->locals[index]=outer_locals[index];
