@@ -9153,6 +9153,30 @@ typedef struct CaseFlowJoin {
     uint32_t new_alias[DIAMOND_MAX_LOCALS];
 } CaseFlowJoin;
 
+/* Tracks whether every member of a `case` subject's known union type is
+ * covered by some unguarded `when` branch, so reaching `end` with no
+ * `else` and an uncovered member is a compile error instead of silently
+ * returning Nil (see parse_case). Only ever active when the subject's
+ * static type is a genuine multi-member union (compiler->known_type_
+ * sets[subject]>=0) whose every member is either Nil or a concrete user
+ * class -- a union containing any native scalar/container type, generic
+ * variable, or interface member has no current `when` syntax that can
+ * prove "this whole member is covered" (native type names aren't
+ * class-pattern values -- see docs/core-syntax.md's Case/when section),
+ * so such a case is left exactly as unchecked as it is today rather than
+ * either inventing new pattern syntax or producing false positives.
+ * Deliberately conservative in one more way: only a bare class-name/
+ * `nil` *scalar* `when` value marks a member covered, never an Array/
+ * Hash/Object structural pattern (even an empty `Class{}` class-only
+ * guard) and never a guarded `when ... if` clause -- see
+ * parse_case_branches' own comment at the point this is populated. */
+typedef struct CaseExhaustiveness {
+    bool active;
+    const DiamondTypeSet *type_set;
+    bool covered[DIAMOND_MAX_UNION_TYPES];
+    DiamondSpan case_span;
+} CaseExhaustiveness;
+
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
     CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP,
@@ -9744,7 +9768,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
         const int32_t *entry_sets, size_t flow_local_count,
         const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
-        bool subjectless) {
+        bool subjectless,CaseExhaustiveness *exhaustiveness) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
@@ -9784,6 +9808,17 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         return destination;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END) {
+        if(exhaustiveness->active) {
+            bool all_covered=true;
+            for(uint8_t member=0;member<exhaustiveness->type_set->count;member++)
+                if(!exhaustiveness->covered[member]){all_covered=false;break;}
+            if(!all_covered) {
+                fail(compiler,exhaustiveness->case_span,
+                    "case is not exhaustive over its subject's known union "
+                    "type -- add a branch for the missing type(s), or an 'else'");
+                return destination;
+            }
+        }
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
         compiler->known_types[destination]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[destination]=-1;
@@ -9808,6 +9843,11 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * implements Range inclusion, Regexp search, class/subclass matching,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
+    /* Type ids this `when` clause covers unconditionally, for
+     * exhaustiveness -- only ever populated by the scalar (non-array-
+     * pattern) branch below, and only kept if this clause turns out to
+     * have no `if` guard (see the guard-handling block further down). */
+    uint8_t covered_ids[DIAMOND_MAX_UNION_TYPES]={0};size_t covered_id_count=0;
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
     CaseBinding bindings[64]={};size_t binding_count=0;
     DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
@@ -9886,9 +9926,18 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             const int pattern_class=
                 probe_case_pattern_class(compiler,&after_pattern);
             if(pattern_class>=0&&after_pattern!=DIAMOND_TOKEN_DOT&&
-               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE)
+               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE) {
                 value_reg=compile_case_pattern_class(compiler,pattern_class);
-            else value_reg=parse_expression(compiler);
+                if(covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                    covered_ids[covered_id_count++]=
+                        (uint8_t)(DIAMOND_TYPE_CLASS_BASE+pattern_class);
+            } else {
+                value_reg=parse_expression(compiler);
+                if(compiler->known_types[value_reg]==DIAMOND_TYPE_NIL&&
+                   compiler->known_type_sets[value_reg]<0&&
+                   covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                    covered_ids[covered_id_count++]=DIAMOND_TYPE_NIL;
+            }
             const uint16_t eq_reg=allocate_register(compiler);
             if(subjectless) {
                 emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);
@@ -9917,7 +9966,17 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,guard,0,2);
         emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,match_reg,0,2);
         patch_jump(compiler,skip_guard,compiler->function->code_count);
+        /* A guard can reject an otherwise-matching pattern at runtime, so
+         * a guarded `when` never proves a type is unconditionally
+         * covered -- see CaseExhaustiveness's own comment. */
+        covered_id_count=0;
     }
+    if(exhaustiveness->active)
+        for(size_t covered_index=0;covered_index<covered_id_count;covered_index++)
+            for(uint8_t member=0;member<exhaustiveness->type_set->count;member++)
+                if(exhaustiveness->type_set->members[member].id==
+                        covered_ids[covered_index])
+                    exhaustiveness->covered[member]=true;
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
@@ -9929,7 +9988,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
         compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
-        entry_alias,destination,join,subjectless);
+        entry_alias,destination,join,subjectless,exhaustiveness);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
 }
@@ -9942,6 +10001,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
  * Array/Hash binding patterns combine non-raising shape/key checks, INDEX_GET,
  * and CASE_MATCH, then commit their bindings only on the successful path. */
 static uint16_t parse_case(Compiler *compiler) {
+    const DiamondSpan case_span=compiler->previous.span;
     const bool subjectless=compiler->current.kind==DIAMOND_TOKEN_NEWLINE;
     uint16_t subject=0;
     if(subjectless) {
@@ -9952,6 +10012,32 @@ static uint16_t parse_case(Compiler *compiler) {
     } else {
         subject=parse_expression(compiler);
         skip_newlines(compiler);
+    }
+    /* Only ever active outside the discovery pass -- a forward-referenced
+     * class in the subject's own union type annotation may not be known
+     * yet during discovery (see resolve_type_name's own comment for the
+     * same, pre-existing concern), so checking here could fail() based on
+     * incomplete information even though the real, second pass -- which
+     * always runs with every declaration already known -- would not.
+     * fail() only remembers the first failure, so a false positive here
+     * would incorrectly abort compilation before the real pass ever gets
+     * a chance to see the complete picture. */
+    CaseExhaustiveness exhaustiveness={0};
+    if(!subjectless&&!compiler->discovery_pass&&compiler->known_type_sets[subject]>=0) {
+        const DiamondTypeSet *set=
+            &compiler->function->type_sets[(uint16_t)compiler->known_type_sets[subject]];
+        bool exhaustible=set->count>0;
+        for(uint8_t member=0;member<set->count&&exhaustible;member++) {
+            const uint8_t id=set->members[member].id;
+            if(id!=DIAMOND_TYPE_NIL&&
+               !(id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES))
+                exhaustible=false;
+        }
+        if(exhaustible) {
+            exhaustiveness.active=true;
+            exhaustiveness.type_set=set;
+            exhaustiveness.case_span=case_span;
+        }
     }
     const uint16_t destination=allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
@@ -9997,7 +10083,7 @@ static uint16_t parse_case(Compiler *compiler) {
         .result_type=TYPE_UNKNOWN,.result_set=-1};
     const uint16_t result=parse_case_branches(
         compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
-        entry_alias,destination,&join,subjectless);
+        entry_alias,destination,&join,subjectless,&exhaustiveness);
     free(heap_types);free(heap_sets);free(heap_varied);
     return result;
 }

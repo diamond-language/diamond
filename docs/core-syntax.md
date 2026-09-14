@@ -183,6 +183,58 @@ expressions short-circuit from left to right, and ordinary `if` guards remain
 available. Array and Hash spellings in a subjectless clause are ordinary
 literals, not binding patterns; pattern bindings require a case subject.
 
+### Exhaustiveness checking
+
+A `case` whose subject has a known union type made entirely of `nil`
+and/or user classes (`shape: Circle | Square`, `shape: Circle | Nil`)
+must cover every member, either with an `else` or with an unguarded
+`when` naming each one, or it's a compile error:
+
+```ruby
+def area(shape: Circle | Square)
+  case shape
+  when Circle
+    3.14159 * shape.radius() * shape.radius()
+  end
+  # error: case is not exhaustive over its subject's known union type --
+  # add a branch for the missing type(s), or an 'else'
+end
+```
+
+Adding `when Square ... end` (or an `else`) fixes it. This only ever
+*adds* a compile error to code that previously compiled and silently
+returned `nil` from the uncovered path — it never changes what a
+covered `case` does, and it never fires at all outside this specific
+shape of subject:
+
+- **A single, non-union type never triggers it** — `case n; when 0 ...
+  end` for a plain `n: Int` stays exactly as unchecked as it's always
+  been; only a genuine multi-member union does.
+- **A union containing any native scalar/container type (`Int`,
+  `String`, `Array`, ...), interface, or generic type variable is never
+  checked** — there is no `when` syntax that can prove "this whole
+  native type is covered" (native type names aren't class-pattern
+  values, unlike a user class name), so a case like `x: Int | String`
+  is left exactly as unchecked as today rather than either inventing
+  new pattern syntax or producing false positives.
+- **Only a bare class-name or `nil` *scalar* `when` value counts as
+  covering a member** — an Array/Hash/Object structural pattern (even
+  an empty `Circle{}` class-only guard) never does, and neither does a
+  guarded `when Circle if ...` clause (the guard could reject the match
+  at runtime, so the type isn't unconditionally covered). Comma-
+  separated values in one `when` (`when Circle, Square`) each count
+  independently.
+- **A superclass `when` does not cover a subclass union member** — for
+  `shape: Circle | Square` (both `< Shape`), `when Shape` does not
+  count as covering either `Circle` or `Square`; each member needs its
+  own exact match. Conservative on purpose: this never *under*-reports
+  a real gap, only occasionally asks for a branch a human might
+  consider redundant.
+- The compile error itself does not name which member(s) are missing
+  (Diamond's compiler diagnostics are static strings throughout, with
+  no per-call-site interpolation mechanism) — it only reports that the
+  `case` isn't exhaustive.
+
 ## Ternary
 
 ```ruby

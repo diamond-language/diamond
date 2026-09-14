@@ -9,6 +9,39 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### Case/when exhaustiveness checking: what's next, if anything
+
+Exhaustiveness checking (docs/core-syntax.md, landed this cycle) covers only
+a `case` subject whose known union type is made entirely of `nil` and/or
+user classes -- deliberately conservative in several ways (see that
+section's own list). Real possibilities this opens up, none attempted yet,
+none committed:
+
+- **sealed class hierarchies** -- a `sealed class Shape` declaring a fixed,
+  compiler-known set of subclasses would let exhaustiveness checking (and a
+  `when Shape` covering all of them, soundly, unlike the current exact-
+  member-match-only rule) apply to a plain class-hierarchy subject, not
+  just an explicit `A | B | C` union annotation. Needs the sealed-hierarchy
+  feature itself first, which doesn't exist yet in any form;
+- **structural (Array/Hash/Object) pattern coverage** -- an empty `Circle{}`
+  class-only guard already means "any Circle instance" per docs/core-
+  syntax.md's own case/when semantics, so it could soundly count as covering
+  the `Circle` member the same way a bare `when Circle` does; a *non-empty*
+  object/array/hash pattern (`Circle{radius: r}`) cannot, since it only
+  matches a subset of the type. Not attempted here -- the current pass
+  deliberately never inspects the array/object-pattern branch at all, to
+  keep the initial change small and easy to verify;
+- **naming the missing member(s) in the compile error** -- Diamond's
+  compiler diagnostics are static string literals throughout
+  (`DiamondDiagnostic.message` is a raw, non-owning `const char *`, and the
+  `Compiler` struct compiling one function is stack-local and gone before a
+  caller could read a dynamically-built message out of it), so this needs a
+  real, separate diagnostic-message-ownership mechanism benefiting every
+  compile error, not something worth inventing for this one check alone.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
+
 ### Channel: what's next, if anything
 
 `Channel` (docs/threads.md, landed this cycle) is a bounded mailbox --

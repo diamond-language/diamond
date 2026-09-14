@@ -90,6 +90,21 @@ authoritative fine-grained record.
   the full deny list and what's explicitly not covered yet (per-capability
   granularity, resource limits, `Thread`/`Signal.trap` restriction).
 
+### Language
+
+- Added exhaustiveness checking for `case`/`when`: a `case` whose subject has
+  a known union type made entirely of `nil` and/or user classes now requires
+  either an `else` or an unguarded `when` naming every member, or it's a
+  compile error instead of silently returning `nil` from the uncovered path.
+  Deliberately conservative -- a single non-union type, or a union
+  containing any native scalar/container type, interface, or generic type
+  variable, is left exactly as unchecked as before (no `when` syntax can
+  prove a whole native type is covered today); only a bare class-name/`nil`
+  scalar `when` value counts as coverage, never a structural Array/Hash/
+  Object pattern, a guarded `when ... if` clause, or a superclass covering
+  a subclass union member. See docs/core-syntax.md's "Exhaustiveness
+  checking" section.
+
 ### Packages
 
 - Added `facet init [name]` (writes a fresh `diamond.cut`, refusing to overwrite
