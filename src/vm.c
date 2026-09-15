@@ -8183,6 +8183,29 @@ DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
     return DIAMOND_VM_OK;
 }
 
+/* JIT trampoline for DIAMOND_OP_GET_IVAR -- see diamond_jit_set_ivar's own
+ * comment just above for why this exists as a real C function rather than
+ * hand-rolled generated code: the field cache lookup is the same shared
+ * machinery either way. A direct copy of the interpreter's own
+ * DIAMOND_OP_GET_IVAR case (src/vm.c's opcode dispatch), with `site`
+ * threaded in from the caller (generated code has no `chunk`/
+ * instruction_offset to compute it from) exactly like diamond_jit_set_ivar.
+ * Unlike SET_IVAR, this can never allocate or invoke user code (no operator
+ * overload exists for plain field access), so its caller in jit.c needs
+ * neither a DiamondFrame nor jc->has_called. */
+DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondInstance *instance = (const DiamondInstance *)receiver->as.object;
+    if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, false);
+    *out = cached->materialized ? instance->fields[field] : DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
+
 static int named_field_index(const DiamondInstance *instance,
                              const DiamondStringConstant *name) {
     for(size_t field=0;field<instance->class->field_count;field++)
@@ -19861,18 +19884,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_GET_IVAR: {
+                /* A thin wrapper around diamond_jit_get_ivar -- the same
+                 * function src/jit.c's own ivar-read codegen calls --
+                 * mirroring DIAMOND_OP_SET_IVAR's own treatment just below.
+                 * As there, the field_operand bounds check happens here,
+                 * before narrowing to the trampoline's own uint8_t, since a
+                 * hand-built (ProgramBuilder) field_operand wider than 255
+                 * must be rejected as invalid rather than silently
+                 * truncated into some other, smaller, valid-looking field
+                 * index. */
                 const uint8_t *site=&chunk->code[instruction_offset];
                 uint16_t dest=0,recv=0,field_operand=0;
                 READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(field_operand);
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                if(field_operand>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint8_t field=(uint8_t)field_operand;
-                const DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,false);
-                registers[dest]=cached->materialized
-                    ? instance->fields[field] : DIAMOND_NIL;break;
+                if(field_operand>=
+                   ((DiamondInstance *)registers[recv].as.object)->field_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondVmStatus get_ivar_status=diamond_jit_get_ivar(vm,site,
+                    &registers[recv],(uint8_t)field_operand,&registers[dest]);
+                VM_PROPAGATE(get_ivar_status);
+                break;
             }
             case DIAMOND_OP_SET_IVAR: {
                 /* A thin wrapper around diamond_jit_set_ivar -- the same

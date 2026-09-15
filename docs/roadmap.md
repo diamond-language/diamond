@@ -542,24 +542,33 @@ unconditionally JIT-ineligible for three independent reasons:
 - `jc->has_called`'s own compile-time-only, monotonic nature (original
   finding, unchanged) -- a real armed-breakpoint-vs-step-mode-shaped
   problem, needing a genuinely runtime-checked flag instead;
-- `DIAMOND_OP_GET_IVAR` has no case in the JIT's own compile-time
-  opcode scan at all (only `SET_IVAR` does) -- confirmed directly by
-  compiling a method that only *reads* an ivar in a loop condition,
-  with no calls anywhere in it, and observing it still bails;
+- ~~`DIAMOND_OP_GET_IVAR` has no case in the JIT's own compile-time
+  opcode scan at all~~ -- **closed** (2026-09, `docs/internal/jit-
+  design.md`'s own "Phase 2g"): a new `diamond_jit_get_ivar` trampoline,
+  mirroring `SET_IVAR`'s own existing one exactly (same field-cache
+  lookup, no `has_called`/frame needed -- plain field access can never
+  invoke user code or allocate). A method that only reads/writes its
+  own ivars plus does int arithmetic is now fully JIT-eligible where it
+  wasn't before (verified via `DIAMOND_TRACE_JIT`, `tests/cases/jit_
+  get_ivar.*`), though `Model#initialize`-shaped code specifically still
+  isn't (see below -- its loop body's real `INDEX_GET`/`INDEX_SET` calls
+  are the remaining blocker, not ivar access);
 - generic `DIAMOND_OP_INVOKE` (dynamic dispatch by name, used for
   *every* `.method()` call regardless of receiver type, not a
-  dedicated per-native-method opcode) also has no case at all --
-  confirmed the same way, isolating a `.length()`-calling method's own
-  JIT attempt from an unrelated `initialize` method's own successful
-  one in the same program.
+  dedicated per-native-method opcode) still has no case at all --
+  confirmed by isolating a `.length()`-calling method's own JIT attempt
+  from an unrelated `initialize` method's own successful one in the
+  same program.
 
-Each is independently sufficient to block the whole function (the same
-unconditional, whole-function `default: jc->bailed = true` every
-unrecognized opcode already hits) -- fixing `has_called` alone, without
-also adding real `GET_IVAR` and `INVOKE` support, still would not reach
-`Model#initialize`. A general tracing or method JIT covering arbitrary
-call graphs remains further out still, an open research direction
-rather than a committed feature.
+`has_called` and generic `INVOKE` remain independently sufficient to
+block the whole function (the same unconditional, whole-function
+`default: jc->bailed = true` every unrecognized opcode already hits) --
+fixing `has_called` alone, without also adding real `INVOKE` support,
+still would not reach `Model#initialize`, whose own loop already does
+`INDEX_GET`/`INDEX_SET` (Hash access, not ivar access) before its
+`index += 1`. A general tracing or method JIT covering arbitrary call
+graphs remains further out still, an open research direction rather
+than a committed feature.
 
 Before extending past the current narrow slice:
 

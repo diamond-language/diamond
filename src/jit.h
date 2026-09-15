@@ -143,10 +143,11 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
  * call. Safe to call with nullptr (no-op). */
 void diamond_jit_free(void *jit_code, size_t jit_code_size);
 
-/* Trampolines called *from* generated machine code for the two operations
- * too risky to hand-roll directly in x86-64 (field-cache/shape-transition
- * bookkeeping + the GC write barrier for SET_IVAR; Hash lookup for
- * INDEX_GET) -- both defined in vm.c, where the internal helpers they
+/* Trampolines called *from* generated machine code for the operations too
+ * risky to hand-roll directly in x86-64 (field-cache/shape-transition
+ * bookkeeping + the GC write barrier for SET_IVAR; the matching field-cache
+ * lookup for GET_IVAR; Hash lookup for INDEX_GET) -- all defined in vm.c,
+ * where the internal helpers they
  * reuse (lookup_field_cached, gc_write_barrier, hash_find) already live
  * with internal linkage. Every DiamondValue is passed by pointer, not by
  * value, specifically to keep every argument a plain 8-byte pointer for
@@ -169,6 +170,11 @@ void diamond_jit_free(void *jit_code, size_t jit_code_size);
  * one will need the real frame contract the design doc describes. */
 DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, const DiamondValue *value);
+/* GET_IVAR's counterpart -- unlike SET_IVAR, can never allocate or invoke
+ * user code (plain field access has no operator-overload equivalent), so
+ * its caller in jit.c needs neither a DiamondFrame nor jc->has_called. */
+DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, DiamondValue *out);
 DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index);
 

@@ -312,6 +312,41 @@ confirmed via `--dump-bytecode` showing identical `LESS_INT` output
 with `DIAMOND_QUICKEN` unset entirely. A real, safe, always-on
 interpreter improvement; not a JIT-coverage one.
 
+### Phase 2g: `DIAMOND_OP_GET_IVAR` support -- closes one of the three gaps above
+
+Added a JIT trampoline, `diamond_jit_get_ivar` (`src/vm.c`, declared
+`src/jit.h`), and a `compile_get_ivar`/switch case (`src/jit.c`)
+mirroring `SET_IVAR`'s own existing treatment exactly: same field-cache
+lookup, same "no `jc->needs_frame`/`jc->has_called`" treatment (a plain
+ivar read can never invoke user code or allocate -- there is no
+operator-overload equivalent for field access), same 5-argument
+register-only calling convention (no stack args needed, simpler than
+`INDEX_GET`'s 7-argument shape). The interpreter's own `DIAMOND_OP_
+GET_IVAR` case is now a thin wrapper around the same trampoline,
+matching `SET_IVAR`'s own existing anti-duplication shape rather than
+adding a second, independent copy of the read logic.
+
+Verified empirically, not just by re-reading the whitelist: a method
+that reads one of its own ivars in a loop with no other calls (`while
+i < 100000; v = @value; i = i + 1; end`) failed to compile before this
+change (`jit_ineligible` set, no counter change -- compile-time
+rejection isn't counted as a runtime `jit_bailouts`, only a runtime
+`DIAMOND_JIT_RETRY` is) and compiles cleanly after
+(`tests/cases/jit_get_ivar.*`, asserting `DIAMOND_TRACE_JIT`'s own
+`jit: 2 compiled function(s)` line).
+
+**Still doesn't reach `Model#initialize`-shaped code on its own**: that
+method's loop body does `INDEX_GET`/`INDEX_SET` (real Hash access)
+*before* any hypothetical ivar read, and those trampolines still set
+`jc->has_called` unconditionally, which is still what blocks `ADD_INT`
+afterward. Closing this gap and leaving the other two (`has_called`,
+generic `INVOKE`) means a method that *only* reads/writes its own
+ivars plus does int arithmetic is now fully JIT-eligible, which was not
+true before -- a real, if narrow, class of methods (simple accessors,
+counters, accumulators) -- but nothing that also calls another method
+or does Hash/Array indexing is any closer than the Phase 2f picture
+already described.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

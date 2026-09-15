@@ -727,6 +727,24 @@ static void compile_set_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_bail_if_al_nonzero(jc);
 }
 
+/* GET_IVAR: mirrors compile_set_ivar's own trampoline call exactly, except
+ * the last argument is an `out` pointer (diamond_jit_get_ivar writes the
+ * full destination value -- kind and payload -- since an ivar can hold any
+ * type, unlike the ALU opcodes' own direct-store fast paths which already
+ * know the result kind at compile time). All 5 real arguments fit in the
+ * SysV register slots (rdi/rsi/rdx/rcx/r8); no stack arguments needed. */
+static void compile_get_ivar(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                              uint16_t recv, uint16_t field) {
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_imm64(buf, REG_RSI, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_mov_imm64(buf, REG_RCX, field);
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_get_ivar);
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* INDEX_GET (Phase 2e: full Hash/String/Array/Instance-overload support,
  * replacing Phase 2b's Hash-only version -- see diamond_jit_index_get's
  * own comment in jit.h for why). Can allocate (String/Array paths) and
@@ -971,6 +989,14 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
                 if (field > UINT8_MAX) { jc->bailed = true; return; }
                 compile_set_ivar(jc, instruction_start, recv, field, source);
+                break;
+            }
+            case DIAMOND_OP_GET_IVAR: {
+                uint16_t dest = 0, recv = 0, field = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                    !decode_u16(fn, &pc, &field)) { jc->bailed = true; return; }
+                if (field > UINT8_MAX) { jc->bailed = true; return; }
+                compile_get_ivar(jc, instruction_start, dest, recv, field);
                 break;
             }
             case DIAMOND_OP_ARGUMENT_PROVIDED: {

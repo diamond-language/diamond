@@ -245,6 +245,17 @@ authoritative fine-grained record.
   docs/internal/jit-design.md's "Phase 2f" and docs/roadmap.md's
   "Native-code execution" for the full, corrected picture of what's
   still needed there.
+- JIT (`DIAMOND_JIT=1`) now supports `DIAMOND_OP_GET_IVAR` (reading one
+  of an instance's own fields), via a new `diamond_jit_get_ivar`
+  trampoline mirroring the existing `SET_IVAR` one exactly. A method
+  that only reads/writes its own instance variables plus does int
+  arithmetic is now fully JIT-eligible where it previously bailed
+  unconditionally -- a real, if narrow, class of methods (accessors,
+  counters, accumulators). Does not, by itself, make any method that
+  also calls another method or does Hash/Array indexing (such as
+  skindicate's own `Model#initialize`) JIT-eligible -- see
+  docs/internal/jit-design.md's "Phase 2g" and docs/roadmap.md's
+  "Native-code execution" for the two gaps that remain.
 
 ## 0.4.0
 
