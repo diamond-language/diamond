@@ -22,9 +22,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-/* diamond-dap: a Debug Adapter Protocol server for the v1 compile-time-
- * breakpoint step debugger (see the plan this implements, and
- * docs/debugging.md for the end-user contract). Talks DAP over stdio to
+/* diamond-dap: a Debug Adapter Protocol server for the step debugger
+ * (docs/debugging.md for the end-user contract). Talks DAP over stdio to
  * an editor (Content-Length-framed JSON, reusing lsp/json.c/lsp/rpc.c the
  * same way diamond-lsp already does -- see lsp/main.c), and separately
  * spawns and controls one `diamond` child process per debug session over
@@ -32,24 +31,30 @@
  * debug_fd's own comment, src/vm.h) plus two ordinary pipes relaying the
  * child's stdout/stderr as DAP `output` events.
  *
- * v1 scope, matching the plan: one debuggee at a time, no step-over/
- * into/out (`continue` is the only resume command), outer stack frames
- * carry no locals, and changing breakpoints means restarting the whole
- * session (there is no "already running, add a breakpoint" path -- the
- * child isn't spawned at all until `configurationDone`, precisely so
- * every breakpoint already known by then is baked in at compile time).
+ * Scope: one debuggee at a time, no step-over/into/out (`continue` is
+ * the only resume command), outer stack frames carry no locals. A
+ * `setBreakpoints` request *after* the debuggee is already running does
+ * NOT require a restart (send_live_breakpoints/handle_set_breakpoints
+ * below, and DiamondVm.debug_active_lines's own comment, src/vm.h) --
+ * every statement is unconditionally instrumented with
+ * DIAMOND_OP_BREAKPOINT_CHECK whenever DIAMOND_DEBUG_FD is set at all,
+ * regardless of which lines (if any) were selected before launch, so a
+ * live update just changes which of those already-present checks
+ * actually pauses.
  *
  * Real DAP ordering (client sends `launch` before it's necessarily done
  * sending `setBreakpoints` for every source -- `configurationDone` is
  * the client's own signal that it's finished) is why `launch` here only
- * *records* the program/args/cwd rather than spawning immediately: the
- * plan's own prose says "launch... spawns diamond", but doing that
- * literally would race a `setBreakpoints` request that arrives after
- * `launch`, silently dropping those breakpoints. Waiting for
+ * *records* the program/args/cwd rather than spawning immediately:
+ * spawning directly out of `launch` would race a `setBreakpoints`
+ * request that arrives after it, silently dropping those breakpoints
+ * from the *initial* DIAMOND_DEBUG_BREAKPOINTS seed (a live update
+ * would eventually correct it, but the debuggee would still start with
+ * the wrong set for however long that takes). Waiting for
  * `configurationDone` (this server declares
  * supportsConfigurationDoneRequest, so a compliant client always sends
- * it) is what actually keeps "every breakpoint already known is baked
- * in" true.
+ * it) is what actually keeps "every breakpoint already known by launch
+ * time is baked in as the initial set" true.
  */
 
 enum {
@@ -236,6 +241,53 @@ static size_t resolve_breakpoint_line(DapServer *server, const char *path, size_
     return diamond_combined_buffer_line(server->combined, offset);
 }
 
+/* Resolves every currently-stored (path,line) pair -- across every
+ * source the client has ever called setBreakpoints for, not just one
+ * file -- into combined-buffer line numbers. Shared by
+ * handle_configuration_done's own initial DIAMOND_DEBUG_BREAKPOINTS
+ * construction and send_live_breakpoints below: both need "the complete
+ * current set", since neither the env var nor the live control-channel
+ * message has a file discriminator (see docs/debugging.md's own
+ * "known gap" on this). */
+static size_t resolve_all_breakpoint_lines(DapServer *server,
+        size_t *out_lines, size_t capacity) {
+    size_t count = 0;
+    for(size_t index = 0; index < server->breakpoint_count && count < capacity; index++) {
+        const size_t resolved = resolve_breakpoint_line(server,
+            server->breakpoints[index].path, server->breakpoints[index].line);
+        if(resolved != SIZE_MAX) out_lines[count++] = resolved;
+    }
+    return count;
+}
+
+/* The live half of setBreakpoints (see handle_set_breakpoints below,
+ * and docs/debugging.md's "live breakpoints" section): sends the
+ * *complete* current armed-line set (never a diff -- see
+ * resolve_all_breakpoint_lines's own comment) to an already-running
+ * debuggee over the same control channel handle_continue already
+ * writes "continue" on, using the identical JsonValue+rpc_write_message
+ * pattern. A no-op when the child hasn't been spawned yet
+ * (server->control_stream is only ever non-null once
+ * handle_configuration_done has actually forked) -- that case still
+ * gets the initial DIAMOND_DEBUG_BREAKPOINTS env var built at spawn
+ * time, unchanged from v1. */
+static void send_live_breakpoints(DapServer *server) {
+    if(server->control_stream == nullptr) return;
+    size_t lines[DAP_MAX_BREAKPOINTS];
+    const size_t count = resolve_all_breakpoint_lines(server, lines, DAP_MAX_BREAKPOINTS);
+    JsonValue *command = json_object();
+    JsonValue *lines_array = json_array();
+    if(command == nullptr || lines_array == nullptr) {
+        json_free(command); json_free(lines_array); return;
+    }
+    for(size_t index = 0; index < count; index++)
+        json_array_push(lines_array, json_number((double)lines[index]));
+    json_object_set(command, "command", json_string_z("setBreakpoints"));
+    json_object_set(command, "lines", lines_array);
+    rpc_write_message(server->control_stream, command);
+    json_free(command);
+}
+
 static void free_stopped_payload(DapServer *server) {
     json_free(server->stopped_message);
     server->stopped_message = nullptr;
@@ -324,6 +376,17 @@ static void handle_set_breakpoints(DapServer *server, const JsonValue *request,
             json_array_push(verified, breakpoint);
         }
     }
+    /* Live update: real DAP allows setBreakpoints at any time, not just
+     * before configurationDone -- if the child is already running,
+     * push the complete, freshly-recomputed armed-line set (across
+     * every stored path, this one included) over the control channel
+     * so it takes effect with no restart at all (docs/debugging.md's
+     * "live breakpoints" section). A session still mid-configuration
+     * (server->launched false) needs no such push: its own eventual
+     * DIAMOND_DEBUG_BREAKPOINTS construction at configurationDone
+     * already reads server->breakpoints[] fresh, unchanged from v1. */
+    if(server->launched) send_live_breakpoints(server);
+
     JsonValue *body = json_object();
     if(body != nullptr) json_object_set(body, "breakpoints", verified);
     else json_free(verified);
@@ -381,13 +444,8 @@ static void handle_configuration_done(DapServer *server, const JsonValue *reques
     }
 
     size_t breakpoint_lines[DAP_MAX_BREAKPOINTS];
-    size_t breakpoint_line_count = 0;
-    for(size_t index = 0; index < server->breakpoint_count &&
-            breakpoint_line_count < DAP_MAX_BREAKPOINTS; index++) {
-        const size_t resolved = resolve_breakpoint_line(server,
-            server->breakpoints[index].path, server->breakpoints[index].line);
-        if(resolved != SIZE_MAX) breakpoint_lines[breakpoint_line_count++] = resolved;
-    }
+    const size_t breakpoint_line_count =
+        resolve_all_breakpoint_lines(server, breakpoint_lines, DAP_MAX_BREAKPOINTS);
     char breakpoints_env[DAP_MAX_BREAKPOINTS * 8] = {0};
     size_t written = 0;
     for(size_t index = 0; index < breakpoint_line_count; index++) {

@@ -1283,6 +1283,29 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 }
                 offset+=total;break;
             }
+            case DIAMOND_OP_BREAKPOINT_CHECK: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                const uint16_t dest=checked_register(chunk,stream,
+                    read_operand(chunk,offset+1),&valid);
+                const uint8_t local_count=chunk->code[offset+3];
+                const size_t total=4+(size_t)local_count*4;
+                if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, %u locals\n","BREAKPOINT_CHECK",dest,local_count);
+                for(size_t index=0;index<local_count;index++) {
+                    const size_t entry_offset=offset+4+index*4;
+                    const uint16_t name_index=read_operand(chunk,entry_offset);
+                    const uint16_t local_register=checked_register(chunk,stream,
+                        read_operand(chunk,entry_offset+2),&valid);
+                    const char *local_name="?";size_t local_name_length=1;
+                    if((size_t)name_index<chunk->string_count) {
+                        local_name=chunk->strings[name_index].chars;
+                        local_name_length=chunk->strings[name_index].length;
+                    }
+                    fprintf(stream,"                     %.*s -> r%u\n",
+                        (int)local_name_length,local_name,local_register);
+                }
+                offset+=total;break;
+            }
             case DIAMOND_OP_ARGV:
                 offset=one_register(stream,chunk,"ARGV",offset, &valid);break;
             case DIAMOND_OP_ENV:

@@ -10,23 +10,23 @@ identical pause -- without editing source -- for VS Code's "Run & Debug"
 view or any other DAP-compatible client (`editors/vscode`'s own
 "Debugging" section covers the VS Code side specifically).
 
-## What this is (v1 scope)
+## What this is
 
 Editor-settable breakpoints, a real call stack, and locals at the paused
 frame -- reusing the exact pause/print/locals machinery
-`debugger()`/`breakpoint()` already had, not a new stepping engine. Two
-deliberate limitations, in exchange for that low-risk scope:
+`debugger()`/`breakpoint()` already had, not a new stepping engine.
+Breakpoints can be added or removed at any time, including against an
+already-running debuggee, with no restart needed (see "Live breakpoints"
+below). Remaining deliberate limitations:
 
 - **No step-over/into/out.** `continue` is the only resume command a
-  paused debuggee understands.
-- **Changing breakpoints means restarting the debuggee.** Every
-  breakpoint is compiled in as a `DIAMOND_OP_DEBUGGER` pause *before the
-  debuggee starts running at all* -- there is no way to add or remove one
-  against an already-running process.
+  paused debuggee understands -- real stepping needs its own new
+  bytecode debug-info format and deoptimization bookkeeping, and is a
+  separate, not-yet-attempted roadmap item.
 - **Only the innermost, paused frame has locals.** An outer call-stack
   frame's own locals aren't tracked anywhere the VM can reconstruct after
   the fact (no general per-chunk local-debug table exists; only the exact
-  `debugger()`/breakpoint call site's own baked-in operand list does) --
+  paused call site's own baked-in operand list does) --
   `stackTrace` still shows every frame's own name/file/line, just no
   variables for anything but frame 0.
 - **A breakpoint inside a spawned `Thread` is invisible.** Each `Thread`
@@ -34,8 +34,36 @@ deliberate limitations, in exchange for that low-risk scope:
   pauses reach the control channel below.
 - **No interactive stdin forwarding to the debuggee while paused.**
 
-Both bigger limitations (real stepping, live no-restart breakpoints) are
-the explicit v2 direction -- see `docs/roadmap.md`.
+## Live breakpoints
+
+Every statement is compiled with a `DIAMOND_OP_BREAKPOINT_CHECK` --
+regardless of which lines (if any) were selected as breakpoints when the
+debuggee launched -- whenever `DIAMOND_DEBUG_FD` is set at all. Unlike
+the explicit `debugger()`/`breakpoint()` call's own `DIAMOND_OP_DEBUGGER`
+(which always pauses, unconditionally, the instant it's reached), this
+opcode checks a runtime, freely mutable set of "currently armed" lines
+(`DiamondVm.debug_active_lines`, `src/vm.h`) before deciding whether to
+actually pause. A `setBreakpoints` request sent at any time -- before
+launch, while the debuggee is running, or while it's already stopped at
+a different line -- replaces that set wholesale and takes effect with no
+recompile or restart: `diamond-dap` resolves its complete, current
+breakpoint table (across every source the client has ever set
+breakpoints for) and pushes it over the same control channel described
+below.
+
+This does mean a debug session's compiled bytecode is meaningfully
+larger than an ordinary run's (every statement in the whole program --
+prelude included, since `diamond-dap` always compiles fresh with no
+cache -- gets its own check, not just the handful of lines actually
+selected). Accepted deliberately: a debug session already forgoes the
+bytecode cache, the embedded-prelude-template fast path, and JIT
+compilation (this and every other debug opcode is unrecognized by the
+JIT's own compile-time scan, so any function containing one is
+automatically JIT-ineligible, exactly like `debugger()`/`breakpoint()`
+already were) -- it was never the startup/steady-state-throughput-
+sensitive case those optimizations target. An ordinary `diamond
+script.di` run has none of this instrumentation at all and pays nothing
+for the feature existing.
 
 ## How it fits together
 
@@ -46,29 +74,42 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
 - `diamond-dap` (`dap/main.c`) speaks ordinary DAP over its own stdio
   (`Content-Length`-framed JSON, via `lsp/json.c`/`lsp/rpc.c` -- the
   identical transport `diamond-lsp` already uses).
-- `setBreakpoints` only records `(source path, line)` pairs; the real
-  spawn waits for `configurationDone` (DAP's own signal that a client is
-  done sending initial breakpoints) rather than `launch` itself, so a
+- `setBreakpoints` records `(source path, line)` pairs, replacing
+  whatever was previously stored for that one path; the real spawn waits
+  for `configurationDone` (DAP's own signal that a client is done
+  sending its initial breakpoints) rather than `launch` itself, so a
   breakpoint that arrives after `launch` but before `configurationDone`
-  still lands in the compiled program.
+  still lands in the debuggee's *initial* armed set.
 - At `configurationDone`, `diamond-dap` loads and require-expands the
   program exactly the way the CLI's own non-template compile path does
-  (`run_source_from_bundle_program`, `src/run_source.c`), resolves each
+  (`run_source_from_bundle_program`, `src/run_source.c`), resolves every
   stored breakpoint's original `(path, line)` against that expanded
   buffer (`diamond_resolve_source_position` + `diamond_combined_buffer_line`,
   `src/compiler.h`), and spawns `diamond <program> [args...]` with two
   environment variables set (see below) and a dedicated `AF_UNIX`
   `SOCK_STREAM` socketpair wired to one end as the "control channel" --
   `DIAMOND_DEBUG_FD` names its fd number in the child.
+- A `setBreakpoints` request that arrives *after* the debuggee is already
+  running takes the exact same resolve step, then instead sends the
+  complete, freshly-recomputed set as a `{"command":"setBreakpoints",
+  "lines":[...]}` message over the already-open control channel
+  (`send_live_breakpoints`, `dap/main.c`) -- no recompile, no restart.
 - The debuggee's stdout/stderr are piped back as DAP `output` events; its
   exit becomes `exited`/`terminated` events.
-- Every `DIAMOND_OP_DEBUGGER` pause (compiled-in or explicit `debugger()`)
-  writes one hand-formatted JSON payload, framed the same
-  `Content-Length` way, to the control fd (`debugger_structured_helper`,
-  `src/vm.c`) and then blocks reading exactly one framed command back
-  (`{"command":"continue"}` is the only one v1 needs) before resuming --
-  the VM itself never links a JSON library for this; only `diamond-dap`
-  (which needs to speak real DAP to its own client) does.
+- Every pause (an armed `DIAMOND_OP_BREAKPOINT_CHECK`, or the explicit
+  `debugger()`/`breakpoint()` call's own always-unconditional
+  `DIAMOND_OP_DEBUGGER`) writes one hand-formatted JSON payload, framed
+  the same `Content-Length` way, to the control fd
+  (`debugger_structured_helper`, `src/vm.c`) and then blocks reading
+  framed commands back in a loop -- applying any `setBreakpoints` it
+  sees in place and only resuming once a `continue` arrives -- rather
+  than a single fixed read; the VM itself never links a JSON library for
+  this (`parse_debug_command` hand-scans the two fixed shapes it needs to
+  recognize instead), only `diamond-dap` (which needs to speak real DAP
+  to its own client) does. A `DIAMOND_OP_BREAKPOINT_CHECK` that *isn't*
+  currently armed also does a quick non-blocking check of the same
+  control fd before falling through -- see "Live breakpoints" above for
+  why that has to happen there rather than via some other mechanism.
 - `diamond-dap` translates that payload's `(name, line, column)` --
   expressed in the same expanded-buffer terms the compiler itself
   used -- back to `(original file, original line)` via
@@ -83,38 +124,46 @@ A compiled program's line numbers reset to 1 at the start of every
 segment (`diamond_lexer_next`'s own `#line 1` handling, `src/lexer.c` --
 the loader writes that literal marker ahead of the top-level user source
 and every `require`d file's own inlined text, `src/loader.c`'s `expand`).
-`DIAMOND_DEBUG_BREAKPOINTS` (below) is a flat set of these per-segment
-line numbers with no file discriminator, so a breakpoint on line *N* in
-one file and an unrelated statement that happens to start on line *N* in
-a different file (the entry script, or another `require`d file) currently
-pause identically -- not caught or resolved, just an open, documented gap
-for a program that spans more than one file's own breakpoints landing on
-the same line number in each.
+`DIAMOND_DEBUG_BREAKPOINTS` (below) -- and, equally, a live
+`setBreakpoints` command's own `DiamondVm.debug_active_lines` set -- is a
+flat set of these per-segment line numbers with no file discriminator,
+so a breakpoint on line *N* in one file and an unrelated statement that
+happens to start on line *N* in a different file (the entry script, or
+another `require`d file) currently pause identically -- not caught or
+resolved, just an open, documented gap for a program that spans more
+than one file's own breakpoints landing on the same line number in
+each. Unaffected by the move to live breakpoints: unchanged from v1.
 
 ## The env-var contract (for a second DAP-compatible client)
 
 - `DIAMOND_DEBUG_FD=<fd>` -- an already-open, connected file descriptor
   number in the child process (read once, in `diamond_vm_init`,
-  `src/vm.c`) that every `DIAMOND_OP_DEBUGGER` pause writes its
-  `{"event":"paused","stack":[...],"locals":[...]}` payload to and reads
-  one framed command back from, on the *same* fd -- a plain pipe can't do
-  that; it needs to be a full-duplex descriptor (a `socketpair` end, as
-  `dap/main.c` uses). Unset (or a negative/unparseable value) keeps
-  `debugger()`/`breakpoint()`'s ordinary print-to-stdout/`getchar()`
-  behavior, unaffected by anything below.
+  `src/vm.c`) that every pause writes its `{"event":"paused","stack":
+  [...],"locals":[...]}` payload to and reads framed commands back from,
+  on the *same* fd -- a plain pipe can't do that; it needs to be a
+  full-duplex descriptor (a `socketpair` end, as `dap/main.c` uses).
+  Unset (or a negative/unparseable value) keeps `debugger()`/
+  `breakpoint()`'s ordinary print-to-stdout/`getchar()` behavior,
+  unaffected by anything below. **Also the sole trigger for full-program
+  `DIAMOND_OP_BREAKPOINT_CHECK` instrumentation and the live/uncached
+  compile path** (`src/run_source.c`) -- a real DAP session sets this
+  unconditionally, so a debuggee that starts with zero breakpoints
+  selected is still fully instrumented and ready for a live
+  `setBreakpoints` later; `DIAMOND_DEBUG_BREAKPOINTS` alone (no
+  `DIAMOND_DEBUG_FD`, e.g. direct manual testing with no DAP client at
+  all) also still triggers it.
 - `DIAMOND_DEBUG_BREAKPOINTS=<line>[,<line>...]` -- a comma-separated list
   of the *expanded-buffer* line numbers (not the original file's own,
   except in the common single-file, no-`require` case where they're
   identical -- see `diamond_combined_buffer_line`'s own doc comment,
-  `src/compiler.h`) to pause at the start of. Read once by
-  `diamond_run_source` (`src/run_source.c`), which forces the ordinary
-  live prelude+source compile path (never the embedded-prelude-template
-  fast path `diamond_run_source` otherwise prefers) whenever this is set,
-  so `diamond_compile_with_breakpoints`'s own `breakpoint_lines` always
-  lands against the exact buffer layout a client resolved positions
-  against. A line with no statement start on it (blank, a comment,
-  mid-expression) silently has no effect, matching how an editor already
-  snaps a gutter breakpoint to the nearest valid line for most languages.
+  `src/compiler.h`) that start out armed (`DiamondVm.debug_active_lines`,
+  seeded once in `diamond_vm_init`, `src/vm.c`) -- freely replaceable
+  afterward by a live `setBreakpoints` command over the control channel,
+  never itself re-read after process startup. May be empty or absent
+  entirely (a session with nothing selected yet). A line with no
+  statement start on it (blank, a comment, mid-expression) silently has
+  no effect either way, matching how an editor already snaps a gutter
+  breakpoint to the nearest valid line for most languages.
 
 ## Building it
 

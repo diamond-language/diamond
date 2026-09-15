@@ -58,35 +58,6 @@ static char *diamond_cache_path_for(const char *name) {
     return path;
 }
 
-/* DIAMOND_DEBUG_BREAKPOINTS: a comma-separated list of combined-buffer
- * line numbers (see diamond_compile_with_breakpoints's own doc comment,
- * compiler.h), the env-var contract dap/main.c's `launch` handling drives
- * to turn editor breakpoints into compile-time debugger() pauses (see
- * docs/debugging.md). Same convention as every other DIAMOND_*-env-var
- * knob elsewhere in this file. 256 entries is generous for an editor's
- * own gutter breakpoints (compile_sequence's own line_has_breakpoint
- * comment, src/compiler.c, makes the identical sizing argument) -- an
- * env var with more than that is almost certainly malformed, so this
- * silently stops accepting further entries rather than erroring out. */
-enum { DIAMOND_MAX_DEBUG_BREAKPOINTS = 256 };
-
-static size_t parse_debug_breakpoints_env(const char *env,
-        size_t *out_lines, size_t capacity) {
-    if(env==nullptr)return 0;
-    size_t count=0;
-    const char *cursor=env;
-    while(*cursor!='\0'&&count<capacity) {
-        while(*cursor==' '||*cursor==',')cursor++;
-        if(*cursor=='\0')break;
-        char *end=nullptr;
-        const unsigned long long parsed=strtoull(cursor,&end,10);
-        if(end==cursor)break;
-        out_lines[count++]=(size_t)parsed;
-        cursor=end;
-    }
-    return count;
-}
-
 /* DIAMOND_TRACE_STARTUP=1 reports where process time actually goes,
  * following the DIAMOND_TRACE_GC pattern below (also seconds via
  * CLOCK_MONOTONIC). "load" is diamond_load_program's require expansion,
@@ -278,7 +249,6 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
         bool dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
-        const size_t *breakpoint_lines, size_t breakpoint_line_count,
         const char *cache_path, const uint8_t *source_hash) {
     const bool include_json=diamond_prelude_needs_json(bundle->source);
     const size_t prelude_length=diamond_prelude_length(include_json);
@@ -300,8 +270,7 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
     memcpy(combined+offset,bundle->source,source_length+1);
     DiamondDiagnostic diagnostic;
     diamond_program_free(program);
-    if (!diamond_compile_with_breakpoints(combined, program,
-            breakpoint_lines, breakpoint_line_count, &diagnostic)) {
+    if (!diamond_compile_with_breakpoints(combined, program, &diagnostic)) {
         print_diagnostic(name,combined,diagnostic,bundle,prelude_length+reset_length);
         free(combined);
         diamond_source_bundle_free(bundle);
@@ -331,7 +300,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
-        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,0,
+        script_argc,script_argv,trace_startup,start_time,loaded_time,
         nullptr,nullptr);
 }
 
@@ -449,24 +418,34 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
 
-    size_t breakpoint_lines[DIAMOND_MAX_DEBUG_BREAKPOINTS];
-    const size_t breakpoint_line_count=parse_debug_breakpoints_env(
-        getenv("DIAMOND_DEBUG_BREAKPOINTS"),breakpoint_lines,
-        DIAMOND_MAX_DEBUG_BREAKPOINTS);
+    /* A debug session always takes the ordinary live prelude+source
+     * compile below, never the embedded-template fast path:
+     * diamond_compile_with_breakpoints only has a no-template overload
+     * (see its own doc comment, compiler.h), and a debug launch isn't
+     * the startup-time-sensitive case this optimization exists for --
+     * see build_embedded_prelude_template's own comment. dap/main.c's
+     * own breakpoint-position resolution (setBreakpoints) assumes this
+     * exact combined-buffer layout (prelude+reset+bundle source, the
+     * same one run_source_from_bundle_program builds below) whenever it
+     * launches a debuggee, so the two sides must keep agreeing on which
+     * path runs -- forcing it here, unconditionally, is what keeps that
+     * true regardless of diamond_prelude_needs_json.
+     *
+     * Triggered by DIAMOND_DEBUG_BREAKPOINTS *or* DIAMOND_DEBUG_FD being
+     * present, not just the former: a DAP session that starts with zero
+     * breakpoints selected (attach and run first, decide where to break
+     * later -- a real, common workflow) still needs every statement
+     * instrumented with DIAMOND_OP_BREAKPOINT_CHECK, or there would be
+     * nothing for a later live `setBreakpoints` command to arm at all --
+     * see DiamondVm.debug_active_lines's own comment (src/vm.h) and
+     * docs/debugging.md's "live breakpoints" section. dap/main.c already
+     * sets DIAMOND_DEBUG_FD unconditionally for every spawned child, so
+     * this reaches every real DAP session regardless of its initial
+     * breakpoint set; DIAMOND_DEBUG_BREAKPOINTS alone (no DAP client at
+     * all) remains supported too, for direct manual testing. */
+    const bool debug_mode = getenv("DIAMOND_DEBUG_BREAKPOINTS")!=nullptr ||
+        getenv("DIAMOND_DEBUG_FD")!=nullptr;
 
-    /* A debug session (breakpoint_line_count>0) always takes the
-     * ordinary live prelude+source compile below, never the embedded-
-     * template fast path: diamond_compile_with_breakpoints only has a
-     * no-template overload (see its own doc comment, compiler.h), and a
-     * debug launch isn't the startup-time-sensitive case this
-     * optimization exists for -- see build_embedded_prelude_template's
-     * own comment. dap/main.c's own breakpoint-position resolution
-     * (setBreakpoints) assumes this exact combined-buffer layout
-     * (prelude+reset+bundle source, the same one run_source_from_bundle_
-     * program builds below) whenever it's about to launch with
-     * DIAMOND_DEBUG_BREAKPOINTS set, so the two sides must keep agreeing
-     * on which path runs -- forcing it here, unconditionally, is what
-     * keeps that true regardless of diamond_prelude_needs_json. */
     /* Bytecode cache (docs/caching.md): only for this auto-dispatch entry
      * point, never diamond_run_source_with_program/_with_template (those
      * two are for a caller -- tests/run_cases.c -- running many programs
@@ -477,7 +456,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
      * session (must not interfere with dap/main.c's own combined-buffer
      * assumptions, same reason the embedded-template fast path above is
      * already skipped for one), and whenever DIAMOND_NO_CACHE is set. */
-    char *cache_path = (breakpoint_line_count==0 && getenv("DIAMOND_NO_CACHE")==nullptr) ?
+    char *cache_path = (!debug_mode && getenv("DIAMOND_NO_CACHE")==nullptr) ?
         diamond_cache_path_for(name) : nullptr;
     uint8_t source_hash[32];
     bool used_cache = false;
@@ -497,7 +476,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
             user_bytes, 0, user_bytes, nullptr, &bundle);
     } else {
         DiamondProgram *template=nullptr;
-        if (breakpoint_line_count==0&&!diamond_prelude_needs_json(bundle.source))
+        if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
             template=build_embedded_prelude_template();
 
         if (template != nullptr) {
@@ -509,7 +488,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
         } else {
             status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
                 script_argc,script_argv,trace_startup,start_time,loaded_time,
-                breakpoint_lines,breakpoint_line_count,cache_path,source_hash);
+                cache_path,source_hash);
         }
     }
     free(cache_path);

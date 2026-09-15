@@ -27,6 +27,8 @@ end
 
 result = add(2, 3)
 puts(result)
+result2 = add(10, 20)
+puts(result2)
 EOF
 
 send() {
@@ -130,23 +132,180 @@ count=$((count + 1))
 [[ "$response" == *'"name":"x","value":"5"'* ]]
 count=$((count + 1))
 
-# --- continue resumes to a clean exit ---
+# --- live add: while already stopped (no restart), arm a line that was
+# never in the initial breakpoint set at all -- setBreakpoints replaces
+# the whole set for this source, so this also implicitly drops line 3 ---
 
-send '{"seq":8,"type":"request","command":"continue","arguments":{"threadId":1}}'
+send '{"seq":8,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$fixture"'"},"breakpoints":[{"line":4}]}}'
+response="$(read_until '"command":"setBreakpoints"')"
+[[ "$response" == *'"verified":true'* ]]
+count=$((count + 1))
+
+send '{"seq":9,"type":"request","command":"continue","arguments":{"threadId":1}}'
 read_until '"command":"continue"' >/dev/null
 count=$((count + 1))
 
-read_until '"event":"exited"' >/dev/null
+stopped="$(read_until '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"breakpoint"'* ]]
+count=$((count + 1))
+
+send '{"seq":10,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until '"command":"stackTrace"')"
+[[ "$response" == *'"line":4'* ]]
+count=$((count + 1))
+
+# --- live remove: clear every breakpoint while still stopped, then
+# confirm the second add() call (same shape as the first) does NOT pause
+# again -- proves removal, not just that nothing new was ever added ---
+
+send '{"seq":11,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$fixture"'"},"breakpoints":[]}}'
+read_until '"command":"setBreakpoints"' >/dev/null
+count=$((count + 1))
+
+send '{"seq":12,"type":"request","command":"continue","arguments":{"threadId":1}}'
+read_until '"command":"continue"' >/dev/null
+count=$((count + 1))
+
+saw_unexpected_stop=0
+tries=0
+while (( tries < 30 )); do
+    msg="$(read_message)"
+    if [[ "$msg" == *'"event":"stopped"'* ]]; then
+        saw_unexpected_stop=1
+        break
+    fi
+    if [[ "$msg" == *'"event":"exited"'* ]]; then
+        break
+    fi
+    tries=$((tries + 1))
+done
+[[ "$saw_unexpected_stop" == "0" ]]
 count=$((count + 1))
 read_until '"event":"terminated"' >/dev/null
 count=$((count + 1))
 
 # --- disconnect: clean exit code 0 ---
 
-send '{"seq":9,"type":"request","command":"disconnect"}'
+send '{"seq":13,"type":"request","command":"disconnect"}'
 read_until '"command":"disconnect"' >/dev/null
 count=$((count + 1))
 wait "$DAP_PID"
+count=$((count + 1))
+
+# --- a fresh session that starts with ZERO breakpoints selected before
+# configurationDone still lets a live setBreakpoints pause it later --
+# proves DIAMOND_DEBUG_FD alone (not just a nonempty initial set) is
+# enough to fully instrument the debuggee. Uses an explicit debugger()
+# call as a deterministic synchronization point (no breakpoint/timing
+# race needed): it always pauses regardless of any armed-line set, the
+# same way it already does with no debugger attached at all. ---
+
+fixture2="$work/fixture2.di"
+cat > "$fixture2" <<'EOF'
+def helper()
+  debugger()
+  first = 1
+  second = 2
+  second
+end
+
+result = helper()
+puts(result)
+EOF
+
+coproc DAP2 { "$dap"; }
+
+send2() {
+    local body="$1"
+    printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" >&"${DAP2[1]}"
+}
+read_message2() {
+    local line length=-1 body
+    while IFS= read -r -u "${DAP2[0]}" line; do
+        line="${line%$'\r'}"
+        [[ -z "$line" ]] && break
+        if [[ "$line" == Content-Length:* ]]; then
+            length="${line#Content-Length: }"
+        fi
+    done
+    if (( length < 0 )); then
+        echo "dap_test: message with no Content-Length header" >&2
+        exit 1
+    fi
+    IFS= read -r -u "${DAP2[0]}" -N "$length" body
+    printf '%s' "$body"
+}
+read_until2() {
+    local pattern="$1" tries=0 msg
+    while (( tries < 30 )); do
+        msg="$(read_message2)"
+        if [[ "$msg" == *"$pattern"* ]]; then
+            printf '%s' "$msg"
+            return 0
+        fi
+        tries=$((tries + 1))
+    done
+    echo "dap_test: never saw a message matching: $pattern" >&2
+    exit 1
+}
+
+send2 '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"diamond"}}'
+read_until2 '"command":"initialize"' >/dev/null
+count=$((count + 1))
+read_until2 '"event":"initialized"' >/dev/null
+count=$((count + 1))
+
+# No setBreakpoints call at all -- launch straight from initialize.
+
+send2 '{"seq":2,"type":"request","command":"launch","arguments":{"program":"'"$fixture2"'"}}'
+read_until2 '"command":"launch"' >/dev/null
+count=$((count + 1))
+
+send2 '{"seq":3,"type":"request","command":"configurationDone"}'
+read_until2 '"command":"configurationDone"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until2 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"breakpoint"'* ]]
+count=$((count + 1))
+
+send2 '{"seq":4,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until2 '"command":"stackTrace"')"
+[[ "$response" == *'"line":2'* ]]
+count=$((count + 1))
+
+# Live-arm a line that was never selected before this debuggee even
+# started -- the only way it can ever pause there.
+
+send2 '{"seq":5,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$fixture2"'"},"breakpoints":[{"line":4}]}}'
+read_until2 '"command":"setBreakpoints"' >/dev/null
+count=$((count + 1))
+
+send2 '{"seq":6,"type":"request","command":"continue","arguments":{"threadId":1}}'
+read_until2 '"command":"continue"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until2 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"breakpoint"'* ]]
+count=$((count + 1))
+
+send2 '{"seq":7,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until2 '"command":"stackTrace"')"
+[[ "$response" == *'"line":4'* ]]
+count=$((count + 1))
+
+send2 '{"seq":8,"type":"request","command":"continue","arguments":{"threadId":1}}'
+read_until2 '"command":"continue"' >/dev/null
+count=$((count + 1))
+read_until2 '"event":"exited"' >/dev/null
+count=$((count + 1))
+read_until2 '"event":"terminated"' >/dev/null
+count=$((count + 1))
+
+send2 '{"seq":9,"type":"request","command":"disconnect"}'
+read_until2 '"command":"disconnect"' >/dev/null
+count=$((count + 1))
+wait "$DAP2_PID"
 count=$((count + 1))
 
 echo "$count dap tests passed"

@@ -97,6 +97,10 @@ enum {
      * run_chunk -- so both sides need to agree on the same fixed-size
      * table cap. */
     DIAMOND_MAX_LOCALS = 64,
+    /* How many source lines can be simultaneously armed as a live
+     * breakpoint (DiamondVm.debug_active_lines below) -- generous for
+     * real editor usage, matching dap/main.c's own DAP_MAX_BREAKPOINTS. */
+    DIAMOND_MAX_ACTIVE_BREAKPOINTS = 256,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -488,6 +492,23 @@ typedef enum DiamondOpCode : uint8_t {
      * must never have an existing opcode's own number silently reassigned
      * to something else. */
     DIAMOND_OP_TAIL_CALL,
+    /* Sibling to DIAMOND_OP_DEBUGGER, emitted once per compiled
+     * statement instead of only at a fixed, compile-time-selected set
+     * of lines -- see docs/debugging.md's "live breakpoints" section.
+     * Reads the exact same baked-in (name,register) locals-table
+     * operand shape emit_debugger_pause already writes (see
+     * emit_breakpoint_check, src/compiler.c), then checks the
+     * *current*, runtime-mutable DiamondVm.debug_active_lines set for
+     * its own source line before deciding whether to actually pause --
+     * this indirection (checked at runtime, not baked in as "pause
+     * here" at compile time) is what lets a debugger add or remove a
+     * breakpoint against an already-running process with no restart.
+     * Only ever emitted when compiling a debug session at all (see
+     * Compiler.debug_mode) -- an ordinary `diamond script.di` run has
+     * none of these and pays nothing for this feature. Appended here
+     * for the same stable-numbering reason as DIAMOND_OP_TAIL_CALL
+     * just above. */
+    DIAMOND_OP_BREAKPOINT_CHECK,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -1428,6 +1449,21 @@ struct DiamondVm {
      * debugger_helper instead writes a Content-Length-framed JSON pause
      * payload to and blocks reading one framed command back from. */
     int debug_fd;
+    /* The live, runtime-mutable set of source lines currently armed as a
+     * breakpoint -- consulted by DIAMOND_OP_BREAKPOINT_CHECK (src/vm.c),
+     * emitted once per statement whenever the program was compiled with
+     * Compiler.debug_mode set (see src/compiler.c), unlike the fixed,
+     * baked-in-at-compile-time DIAMOND_OP_DEBUGGER pauses above. Seeded
+     * from DIAMOND_DEBUG_BREAKPOINTS at diamond_vm_init (the initial
+     * set), then freely replaced wholesale at runtime by a `setBreakpoints`
+     * command arriving over debug_fd (dap/main.c's own live-update path,
+     * docs/debugging.md) -- no restart needed to add or remove one.
+     * Single-threaded, no lock: only ever read/written from the one VM
+     * thread that's already executing DIAMOND_OP_BREAKPOINT_CHECK itself
+     * (which is also the only thing that ever reads debug_fd), so there's
+     * no concurrent access to guard against. */
+    size_t debug_active_lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];
+    size_t debug_active_line_count;
     /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
      * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS/DIAMOND_MAX_
      * MEMORY_BYTES, read once here by diamond_vm_init exactly like debug_fd

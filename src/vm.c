@@ -1230,6 +1230,28 @@ void diamond_vm_init(DiamondVm *vm) {
         const long parsed=strtol(debug_fd_env,nullptr,10);
         if(parsed>=0&&parsed<=INT_MAX)vm->debug_fd=(int)parsed;
     }
+    /* DIAMOND_DEBUG_BREAKPOINTS (see DiamondVm.debug_active_lines's own
+     * comment above): the initial armed set, read directly here rather
+     * than threaded in as a parameter, matching debug_fd's own
+     * independent-per-VM env read just above. A live `setBreakpoints`
+     * command (docs/debugging.md) freely replaces this later -- this is
+     * only ever the *starting* point, and may legitimately be empty
+     * (comma-separated, same convention as every other DIAMOND_*-env-var
+     * list elsewhere in this codebase; malformed entries are skipped
+     * rather than failing VM init, matching debug_fd's own tolerance). */
+    const char *debug_breakpoints_env=getenv("DIAMOND_DEBUG_BREAKPOINTS");
+    if(debug_breakpoints_env!=nullptr) {
+        const char *cursor=debug_breakpoints_env;
+        while(*cursor!='\0'&&vm->debug_active_line_count<DIAMOND_MAX_ACTIVE_BREAKPOINTS) {
+            while(*cursor==' '||*cursor==',')cursor++;
+            if(*cursor=='\0')break;
+            char *end=nullptr;
+            const unsigned long long parsed=strtoull(cursor,&end,10);
+            if(end==cursor)break;
+            vm->debug_active_lines[vm->debug_active_line_count++]=(size_t)parsed;
+            cursor=end;
+        }
+    }
     /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
      * DiamondVm.max_instructions/max_wall_nanoseconds/max_memory_bytes's
      * own comment (src/vm.h) explains why this is read once per VM here
@@ -14019,15 +14041,70 @@ static bool debug_pipe_read_header_line(int fd,char *buffer,size_t capacity) {
     }
 }
 
-/* Blocks reading one Content-Length-framed command off `fd` and discards
- * its body: v1 has exactly one command (`{"command":"continue"}`), so
- * there's nothing to branch on yet and no reason to parse JSON in the
- * core VM to find out -- draining the exact framed byte count is enough
- * to know a real command arrived (not a truncated write) and to leave
- * the pipe positioned at the next frame for the *next* pause. Returns
- * false on any framing/read problem; the caller treats that the same as
- * an ordinary "continue" (see its own comment). */
-static bool debug_pipe_read_command(int fd) {
+typedef enum DiamondDebugCommandKind {
+    DIAMOND_DEBUG_COMMAND_NONE,
+    DIAMOND_DEBUG_COMMAND_CONTINUE,
+    DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS,
+} DiamondDebugCommandKind;
+
+/* Hand-scans exactly the two fixed command shapes dap/main.c ever sends
+ * over the debug control channel -- not a JSON parser (see
+ * debugger_structured_helper's own comment on why the core VM doesn't
+ * link one): `{"command":"continue"}` and `{"command":"setBreakpoints",
+ * "lines":[1,2,3]}`. Plain substring/number scanning is safe here
+ * specifically because this wire format is internal (dap/main.c is the
+ * only possible sender, never exposed to a DAP client's own, genuinely
+ * untrusted JSON) and fixed-shape -- no nesting, no escaping, and no
+ * whitespace variance beyond what's scanned for explicitly. `body` must
+ * be nul-terminated (debug_pipe_read_command's own caller already needs
+ * to null-terminate it to bound the scan); `lines`/`line_count` are
+ * left untouched for anything but DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS.
+ * A `lines` array longer than `capacity` still reports the real total in
+ * `*line_count` (matching add_string_range's own "count what's there,
+ * cap what's stored" convention elsewhere in this codebase) -- the
+ * caller only ever copies min(*line_count,capacity) entries out. */
+static DiamondDebugCommandKind parse_debug_command(const char *body,
+        size_t *lines,size_t *line_count,size_t capacity) {
+    if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
+        size_t count=0;
+        const char *lines_key=strstr(body,"\"lines\"");
+        const char *cursor=lines_key!=nullptr?strchr(lines_key,'['):nullptr;
+        if(cursor!=nullptr) {
+            cursor++;
+            while(*cursor!='\0'&&*cursor!=']') {
+                while(*cursor==' '||*cursor==',')cursor++;
+                if(*cursor=='\0'||*cursor==']')break;
+                char *end=nullptr;
+                const unsigned long long parsed=strtoull(cursor,&end,10);
+                if(end==cursor)break;
+                if(count<capacity)lines[count]=(size_t)parsed;
+                count++;
+                cursor=end;
+            }
+        }
+        *line_count=count<capacity?count:capacity;
+        return DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS;
+    }
+    if(strstr(body,"\"continue\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_CONTINUE;
+    return DIAMOND_DEBUG_COMMAND_NONE;
+}
+
+/* Blocks reading one Content-Length-framed command off `fd`. v1 only
+ * ever discarded the body here (exactly one command shape existed,
+ * `{"command":"continue"}`, so there was nothing to branch on) -- live
+ * breakpoints (docs/debugging.md) added a second shape, so the body now
+ * gets copied into a bounded stack buffer and handed to
+ * parse_debug_command instead. A command larger than the buffer is
+ * still fully drained (so the pipe lands correctly at the *next* frame
+ * boundary either way) but reports DIAMOND_DEBUG_COMMAND_NONE -- best-
+ * effort, matching every other malformed-input case here. Returns false
+ * on any framing/read problem, in which case `*kind` is left at
+ * DIAMOND_DEBUG_COMMAND_NONE; the caller treats that the same as an
+ * ordinary "continue" (see its own comment). */
+static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
+        size_t *lines,size_t *line_count,size_t capacity) {
+    *kind=DIAMOND_DEBUG_COMMAND_NONE;
+    *line_count=0;
     long content_length=-1;
     char line[256];
     while(true) {
@@ -14042,13 +14119,21 @@ static bool debug_pipe_read_command(int fd) {
         }
     }
     if(content_length<0)return false;
+    char body[4096];
+    const size_t body_capacity=sizeof body-1;
+    const size_t body_length=
+        (size_t)content_length<body_capacity?(size_t)content_length:body_capacity;
+    if(!debug_pipe_read_exact(fd,body,body_length))return false;
+    body[body_length]='\0';
     char discard[256];
-    size_t remaining=(size_t)content_length;
+    size_t remaining=(size_t)content_length-body_length;
     while(remaining>0) {
         const size_t next=remaining<sizeof discard?remaining:sizeof discard;
         if(!debug_pipe_read_exact(fd,discard,next))return false;
         remaining-=next;
     }
+    if(body_length==(size_t)content_length)
+        *kind=parse_debug_command(body,lines,line_count,capacity);
     return true;
 }
 
@@ -14085,30 +14170,33 @@ static bool debug_json_append_escaped_string(GrowBuffer *buffer,
     return GROW_BUFFER_APPEND_LITERAL(buffer,"\"");
 }
 
-/* DIAMOND_OP_DEBUGGER's structured, DAP-facing pause path -- see
- * DiamondVm.debug_fd's own comment (src/vm.h) for when debugger_helper
- * takes this branch instead of its ordinary print-to-stdout/getchar()
- * path. Hand-formats a JSON "paused" payload (`{"event":"paused",
- * "stack":[{"name","line","column"},...],"locals":[{"name","value"},...]}`)
- * with snprintf/GrowBuffer rather than linking lsp/json.c into the core
- * VM/`diamond` binary -- dap/main.c (which already links lsp/json.c and
- * lsp/rpc.c for its own DAP-client-facing transport) is the one side of
- * this pipe that ever needs a real JSON parser; the VM only ever
- * produces this one payload shape and only ever reads back one command
- * shape (see debug_pipe_read_command), so it never needs to parse JSON
- * at all. Content-Length-frames the payload onto vm->debug_fd the same
- * way lsp/rpc.c's rpc_write_message frames a message onto a FILE*, then
- * blocks reading one framed command back before returning -- exactly
- * where the ordinary path calls getchar(). vm->frames (walked the same
- * way raise_capture_backtrace_helper already does) gives the full call
- * stack with zero new state; only the innermost, paused frame gets
- * locals attached (see the plan's own "outer frames have no locals in
- * v1" note -- no per-chunk local-debug table exists for any frame but
- * the exact call site's own baked-in operand list this opcode already
- * carries). A write or read failure here (the DAP client vanished, the
- * pipe broke) is treated the same as a clean "continue": best-effort,
- * not a reason to fail the debuggee's own execution over a detached
- * debugger. */
+/* DIAMOND_OP_DEBUGGER/DIAMOND_OP_BREAKPOINT_CHECK's shared structured,
+ * DAP-facing pause path -- see DiamondVm.debug_fd's own comment (src/
+ * vm.h) for when debugger_helper takes this branch instead of its
+ * ordinary print-to-stdout/getchar() path. Hand-formats a JSON "paused"
+ * payload (`{"event":"paused","stack":[{"name","line","column"},...],
+ * "locals":[{"name","value"},...]}`) with snprintf/GrowBuffer rather
+ * than linking lsp/json.c into the core VM/`diamond` binary -- dap/
+ * main.c (which already links lsp/json.c and lsp/rpc.c for its own
+ * DAP-client-facing transport) is the one side of this pipe that ever
+ * needs a real JSON parser; the VM only ever produces this one payload
+ * shape and only ever reads back two fixed command shapes (see
+ * parse_debug_command), so it never needs to parse general JSON at all.
+ * Content-Length-frames the payload onto vm->debug_fd the same way
+ * lsp/rpc.c's rpc_write_message frames a message onto a FILE*, then
+ * blocks reading commands back in a loop -- exactly where the ordinary
+ * path calls getchar() -- applying any `setBreakpoints` in place
+ * (letting a user edit breakpoints *while stopped*, the more common
+ * real workflow, before resuming) and only returning once a `continue`
+ * arrives. vm->frames (walked the same way raise_capture_backtrace_
+ * helper already does) gives the full call stack with zero new state;
+ * only the innermost, paused frame gets locals attached (see docs/
+ * debugging.md's own "outer frames have no locals" note -- no per-chunk
+ * local-debug table exists for any frame but the exact call site's own
+ * baked-in operand list this opcode already carries). A write or read
+ * failure here (the DAP client vanished, the pipe broke) ends the loop
+ * the same as a clean "continue": best-effort, not a reason to fail the
+ * debuggee's own execution over a detached debugger. */
 static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         const DiamondChunk *chunk,size_t depth,size_t instruction_offset,
         DiamondValue *registers,const uint16_t *name_indices,
@@ -14165,7 +14253,16 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
     if(header_length>0&&debug_pipe_write_all(vm->debug_fd,header,(size_t)header_length))
         debug_pipe_write_all(vm->debug_fd,body.data,body.length);
     free(body.data);
-    debug_pipe_read_command(vm->debug_fd);
+    while(true) {
+        DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
+        size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+        if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
+                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+            break;
+        if(kind!=DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS)break;
+        memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+        vm->debug_active_line_count=line_count;
+    }
     return DIAMOND_VM_OK;
 }
 
@@ -20314,6 +20411,54 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
                     instruction_offset,registers,name_indices,local_registers,local_count);
                 VM_PROPAGATE(debugger_status);
+                registers[destination]=DIAMOND_NIL;
+                break;
+            }
+            case DIAMOND_OP_BREAKPOINT_CHECK: {
+                uint16_t destination=0;uint8_t local_count=0;
+                READ_SHORT(destination);READ_BYTE(local_count);
+                uint16_t name_indices[DIAMOND_MAX_LOCALS];
+                uint16_t local_registers[DIAMOND_MAX_LOCALS];
+                for(size_t index=0;index<local_count;index++) {
+                    READ_SHORT(name_indices[index]);
+                    READ_SHORT(local_registers[index]);
+                }
+                /* Non-blocking: a live `setBreakpoints` sent while this
+                 * program is running (not currently paused at any
+                 * breakpoint) has nobody else reading vm->debug_fd to
+                 * receive it -- see DiamondVm.debug_active_lines's own
+                 * comment (src/vm.h) and docs/debugging.md's "live
+                 * breakpoints" section for why this has to happen right
+                 * here, at every statement, rather than via a background
+                 * thread. Applies every currently-buffered command
+                 * (there could be more than one queued up) before
+                 * deciding whether *this* statement's own line is armed. */
+                if(vm->debug_fd>=0) {
+                    struct pollfd poll_fd={.fd=vm->debug_fd,.events=POLLIN};
+                    while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
+                        DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
+                        size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+                        if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
+                                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+                            break;
+                        if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
+                            memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+                            vm->debug_active_line_count=line_count;
+                        }
+                        poll_fd.revents=0;
+                    }
+                }
+                const bool in_bounds=instruction_offset<chunk->code_count;
+                const uint32_t statement_line=in_bounds&&chunk->lines!=nullptr?
+                    chunk->lines[instruction_offset]:0;
+                bool armed=false;
+                for(size_t index=0;index<vm->debug_active_line_count;index++)
+                    if(vm->debug_active_lines[index]==(size_t)statement_line) { armed=true; break; }
+                if(armed) {
+                    const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
+                        instruction_offset,registers,name_indices,local_registers,local_count);
+                    VM_PROPAGATE(debugger_status);
+                }
                 registers[destination]=DIAMOND_NIL;
                 break;
             }

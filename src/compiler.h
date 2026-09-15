@@ -92,22 +92,23 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 bool diamond_compile_incremental(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
                                  DiamondDiagnostic *diagnostic);
-/* Same as diamond_compile, but additionally emits a DIAMOND_OP_DEBUGGER
- * pause (see emit_debugger_pause in compiler.c) at the start of every
- * statement whose first token lands on one of `breakpoint_lines`
- * (`breakpoint_line_count` entries, combined-buffer line numbers -- see
- * diamond_combined_buffer_line below for how a caller gets one of those
- * from a resolved source position) -- the compile-time-breakpoint
- * mechanism the DAP server (dap/main.c) drives. A line with no statement
- * start on it (blank line, comment, mid-expression continuation) has no
- * effect, matching how an editor already snaps a gutter breakpoint to
- * the nearest valid line for most languages. `breakpoint_lines` may be
- * nullptr when `breakpoint_line_count` is 0 (an ordinary compile with no
- * breakpoints requested, distinct from diamond_compile only in that it
- * doesn't need its own separate code path). */
+/* Same as diamond_compile, but additionally emits a
+ * DIAMOND_OP_BREAKPOINT_CHECK (see emit_breakpoint_check in compiler.c)
+ * at the start of *every* statement -- the compile-time half of the live
+ * step-debugger's editor-breakpoint mechanism (docs/debugging.md's "live
+ * breakpoints" section; the DAP server, dap/main.c, drives it). Unlike
+ * v1's DIAMOND_OP_DEBUGGER (which was baked in only at a fixed,
+ * compile-time-selected set of lines and always paused unconditionally),
+ * this opcode always checks the *runtime*, freely mutable
+ * DiamondVm.debug_active_lines set (src/vm.h) before deciding whether to
+ * actually pause -- so the caller no longer needs to know in advance
+ * which lines will ever matter: a debugger can add or remove a
+ * breakpoint against an already-running process with no recompile at
+ * all. A blank line/comment/mid-expression continuation still has no
+ * statement of its own to attach a check to, matching how an editor
+ * already snaps a gutter breakpoint to the nearest valid line for most
+ * languages. */
 bool diamond_compile_with_breakpoints(const char *source, DiamondProgram *program,
-                                      const size_t *breakpoint_lines,
-                                      size_t breakpoint_line_count,
                                       DiamondDiagnostic *diagnostic);
 DiamondChunk diamond_program_chunk(const DiamondProgram *program);
 
@@ -176,8 +177,10 @@ size_t diamond_resolve_source_position(const char *path, const char *combined,
  * inlined text) -- see the implementation's own comment for why this
  * has to recognize that same marker to agree with what the compiler
  * will actually see. Exists for a DAP server (dap/main.c) translating a
- * resolved breakpoint position into the line-number space
- * diamond_compile_with_breakpoints' own breakpoint_lines expects. */
+ * resolved breakpoint position into the same combined-buffer line-number
+ * space DIAMOND_DEBUG_BREAKPOINTS and a live `setBreakpoints` control-
+ * channel message both expect (see DiamondVm.debug_active_lines, src/
+ * vm.h, and docs/debugging.md). */
 size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 
 #endif

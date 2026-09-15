@@ -9,6 +9,39 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
+### Step debugger v2: real stepping
+
+Live, no-restart breakpoints landed this cycle (docs/debugging.md) via a
+new `DIAMOND_OP_BREAKPOINT_CHECK`, emitted at every statement whenever a
+debug session is compiling at all (not `run_chunk`'s own shared dispatch
+header -- that was the roadmap's own original, overly broad framing of
+the risk; a source-line breakpoint's real granularity is a statement,
+and the whole check lives inside this one new opcode's own case, so an
+ordinary run pays nothing at all). What's left:
+
+- **Real step-over/into/out** -- `continue` is still the only resume
+  command a paused debuggee understands. Needs its own new bytecode
+  debug-info format plus deoptimization-style bookkeeping, genuinely
+  separate new mechanism from live breakpoints' own opcode-level
+  approach. Revisit only with a concrete need driving that work, not
+  speculatively.
+- **Throttling the live-breakpoint poll if it's ever a real problem** --
+  `DIAMOND_OP_BREAKPOINT_CHECK` does a non-blocking `poll()` on the
+  control fd at *every* statement to notice a `setBreakpoints` sent
+  while running (not currently paused); unthrottled today since nothing
+  has shown a need to throttle it (same "revisit with a real driving
+  need" bar). If it ever matters, checking only every Nth hit via a
+  counter mask is the same well-precedented shape
+  `DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK` already uses for
+  `clock_gettime`.
+
+See docs/debugging.md's own "known gap" section too: breakpoints in more
+than one `require`d file can still collide on line number, a limitation
+of the flat combined-buffer line-number set (both the initial
+`DIAMOND_DEBUG_BREAKPOINTS` seed and a live `setBreakpoints` update)
+having no file discriminator -- unrelated to and unchanged by the move
+to live breakpoints.
+
 ### `struct` declarations: what's next, if anything
 
 `struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md,
@@ -537,31 +570,6 @@ A first stability pass should cover:
 - package layout and lockfile compatibility.
 
 ## Tooling and distribution
-
-### Step debugger v2: live breakpoints and real stepping
-
-v1 (`dap/`, docs/debugging.md) ships editor gutter breakpoints, a real
-call stack, and locals at the paused frame -- entirely by compiling a
-`DIAMOND_OP_DEBUGGER` pause in at each breakpoint's own line before the
-debuggee starts, reusing `debugger()`/`breakpoint()`'s existing pause
-machinery untouched. Two limitations were taken on deliberately to keep
-that scope low-risk (no new bytecode, no changes to `run_chunk`'s own
-dispatch loop):
-
-- no step-over/into/out -- `continue` is the only resume command;
-- changing a breakpoint means restarting the whole debuggee -- there is
-  no way to add or remove one against an already-running process.
-
-Both need real new mechanism, not a bigger v1: a per-instruction
-breakpoint-check hook inside `run_chunk`'s hot dispatch loop (the most
-performance-audited code in the project) for live, no-restart
-breakpoints, and a new bytecode debug-info format plus deoptimization-
-style bookkeeping for stepping. Revisit only with a concrete need driving
-the added dispatch-loop risk -- not attempted speculatively. See
-docs/debugging.md's own "known gap" section too: breakpoints in more than
-one `require`d file can currently collide on line number, a v1 limitation
-of the flat `DIAMOND_DEBUG_BREAKPOINTS` set having no file discriminator,
-separate from either limitation above.
 
 ### Self-hosted frontend
 

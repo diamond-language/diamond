@@ -54,10 +54,25 @@ authoritative fine-grained record.
   compile-time breakpoint mechanism (`diamond_compile_with_breakpoints`,
   `DIAMOND_DEBUG_BREAKPOINTS`/`DIAMOND_DEBUG_FD`) that makes zero changes
   to `run_chunk`'s own dispatch loop or the bytecode format. No step-over/
-  into/out yet, and changing a breakpoint means restarting the debuggee --
-  see docs/debugging.md for the full contract and limitations, and
-  docs/roadmap.md's "Step debugger v2" for what's next. `editors/vscode`
-  wires this up as a VS Code debugger via `diamond.debugAdapterPath`.
+  into/out yet -- see docs/debugging.md for the full contract and
+  limitations, and docs/roadmap.md's "Step debugger v2" for what's next.
+  `editors/vscode` wires this up as a VS Code debugger via
+  `diamond.debugAdapterPath`.
+- Added live breakpoints: a `setBreakpoints` request no longer requires
+  restarting the debuggee, whether it arrives before launch, while
+  running, or while already stopped at a different line. A new
+  `DIAMOND_OP_BREAKPOINT_CHECK`, emitted at *every* statement whenever a
+  debug session is compiling at all (regardless of which lines, if any,
+  were selected beforehand), checks a runtime-mutable armed-line set
+  (`DiamondVm.debug_active_lines`) instead of always pausing the way the
+  compile-time-selected `DIAMOND_OP_DEBUGGER` did -- `diamond-dap` pushes
+  the complete current set over the existing control channel on every
+  `setBreakpoints` call once the debuggee is running
+  (`send_live_breakpoints`, `dap/main.c`). Deliberately confined to this
+  one new opcode's own case rather than `run_chunk`'s shared dispatch
+  header, so an ordinary (non-debug) run has none of this instrumentation
+  and pays nothing for the feature existing. Real step-over/into/out is
+  still not included -- see docs/debugging.md/docs/roadmap.md.
 - Added `diamond build SOURCE [-o OUTPUT]`, producing a standalone native
   executable with no separate interpreter, `.di` source file, or
   recompilation step at run time -- reusing the same compiled-program
