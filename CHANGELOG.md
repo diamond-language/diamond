@@ -199,6 +199,19 @@ authoritative fine-grained record.
   scratch, though `facet add` still regenerates the whole file rather than
   patching it in place, so hand-added comments or unusual formatting don't
   survive it. See docs/packages.md's "`facet init` and `facet add`" section.
+- Added real backtracking to `facet`'s dependency resolver, closing the
+  one gap 0.3's own semver resolver explicitly deferred: a version-
+  constrained dependency that resolves before every requester's own
+  constraint on it is known used to hard-error unconditionally the
+  moment a later, tighter constraint turned up, even when a different,
+  still-available tag would have satisfied everyone. `resolve_full_graph`
+  now retries the whole graph walk (wiping the ephemeral scratch clones
+  each time) when that happens, carrying forward the full intersected
+  constraint history for every version-constrained name across attempts
+  so the next attempt resolves it correctly the first time. A genuinely
+  disjoint pair of constraints (no tag could ever satisfy both) still
+  hard-errors immediately, with no restart wasted. See docs/packages.md's
+  "Real backtracking" section.
 
 ### Performance
 

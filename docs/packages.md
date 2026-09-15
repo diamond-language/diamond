@@ -129,13 +129,18 @@ come from `git ls-remote --tags --refs` against its own repository,
 filtered to tags that parse as semver (with or without a leading `v`).
 When two different requesters in the dependency graph constrain the
 same cut, `facet` intersects both ranges and picks the *highest*
-available tag satisfying the result, deterministically — no
-backtracking. An empty intersection (no version satisfies both) is a
-hard error naming both requesters and their own ranges; mixing an exact
-ref and a `version` constraint for the same cut is also a hard error,
-except when whichever side resolved first happens to already satisfy
-the other's own constraint too. See `tools/semver.h` for the exact
-range grammar and `docs/roadmap.md` for the resolver's own design.
+available tag satisfying the result, deterministically. If a requester
+imposing a tighter range is only discovered *after* the cut already
+resolved to a tag that range excludes, `facet` retries the whole
+resolution rather than treating that as unrecoverable — see "real
+backtracking" below. An empty intersection (no version satisfies both,
+independent of resolution order) is still an immediate hard error
+naming both requesters and their own ranges; mixing an exact ref and a
+`version` constraint for the same cut is also a hard error, except when
+whichever side resolved first happens to already satisfy the other's
+own constraint too — that one is never resolved by backtracking (see
+below). See `tools/semver.h` for the exact range grammar and
+`docs/roadmap.md` for the resolver's own design.
 
 Declaring a dependency here does **not** implicitly `require_cut` it —
 `require_cut` and `dependencies` are separate mechanisms. A project that
@@ -205,6 +210,22 @@ resolves exact-ref dependencies immediately (as always) but defers each
 version-constrained name until the exact-ref-reachable part of the
 graph runs dry, then resolves one pending name at a time, folding
 whatever new work that uncovers back in, until nothing pending remains.
+
+**Real backtracking**: it's still possible for a name to resolve (clone
+a concrete tag) before every requester's own constraint on it is known
+— a requester reached only through a *different* pending name, resolved
+later, can turn out to want a tighter range the already-chosen tag
+doesn't satisfy. Rather than treating that as unrecoverable, `facet`
+wipes its ephemeral scratch clones and re-resolves the whole graph from
+scratch, carrying forward the full intersected constraint history for
+every version-constrained name across attempts — so a later attempt
+already knows everything an earlier one discovered about that name,
+however late, and resolves it correctly the first time that attempt
+reaches it. This converges quickly in practice (at most one retry per
+name that's ever affected) and is bounded (a resolver-internal error,
+not a manifest problem, if it somehow doesn't). A genuinely disjoint
+pair of constraints is unaffected by any of this — that's still an
+immediate hard error, not a reason to retry.
 
 A cloned dependency's own `diamond.cut` must declare a `name` matching
 the dependency key it was fetched as — the same rule `require_cut` already

@@ -371,9 +371,25 @@ needs none of that operational cost:
   good reason (docs/packages.md's own "architecturally constrained"
   note: two versions of one cut could never coexist in Diamond's single
   flat compiled namespace anyway) and neither changes with this work.
-  Also not attempted: re-resolving an already-cloned version-constrained
-  dependency when a later-discovered constraint it doesn't satisfy shows
-  up (a real backtracking problem, hard-errors instead of guessing).
+- **Real backtracking landed (2026-09)**: re-resolving an already-cloned
+  version-constrained dependency when a later-discovered constraint it
+  doesn't satisfy shows up used to be an unconditional hard error, even
+  when a different, still-available tag would have satisfied every
+  requester. `resolve_full_graph` now retries the whole graph walk
+  (wiping the ephemeral scratch clones each time) whenever that happens,
+  carrying forward the full intersected constraint history for every
+  version-constrained name across attempts -- so a later attempt already
+  knows everything an earlier one discovered, however late, and resolves
+  correctly the first time it reaches that name. Bounded at
+  `FACET_MAX_DEPENDENCIES` attempts, a real provable limit (one restart
+  per genuinely new conflicting-constraint discovery, and there are at
+  most that many version-constrained edges in the whole graph), not a
+  guess. A genuinely disjoint pair of constraints (no tag could ever
+  satisfy both, independent of resolution order) still hard-errors
+  immediately, on the first attempt -- no restart wasted on an
+  unsatisfiable graph. Scoped to pure version-vs-version conflicts only;
+  mixing an exact ref and a version constraint for the same name is
+  still `docs/packages.md`'s own by-design hard error, unrelated to this.
 
 0.3 overall is a bugfix-and-ecosystem release: this packaging work was
 the headline addition, alongside whatever bugs turn up along the way

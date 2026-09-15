@@ -96,6 +96,29 @@ typedef struct FacetPendingTable {
     size_t count;
 } FacetPendingTable;
 
+/* Real backtracking (docs/roadmap.md's own former "not attempted yet"
+ * gap): the AND of every version constraint ever seen for this name,
+ * across every resolve_full_graph *attempt* so far -- unlike
+ * FacetPendingSemver.constraint above, this is never cleared when the
+ * name resolves, and it survives a full graph-walk restart (see
+ * resolve_full_graph's own comment). Seeding a name's very first
+ * pending entry in a later attempt from this accumulated history is
+ * what lets that attempt resolve it correctly the first time, instead
+ * of repeating the same premature choice that forced the restart.
+ * `most_recent_requester` mirrors FacetPendingSemver's own identical
+ * simplification (error messages only, not full provenance). */
+typedef struct FacetConstraintRecord {
+    char name[FACET_MAX_NAME];
+    char git[FACET_MAX_URL];
+    SemverConstraint accumulated;
+    char most_recent_requester[FACET_MAX_NAME];
+} FacetConstraintRecord;
+
+typedef struct FacetConstraintHistory {
+    FacetConstraintRecord entries[FACET_MAX_DEPENDENCIES];
+    size_t count;
+} FacetConstraintHistory;
+
 /* A cloned dependency's own diamond.cut, still needing its own
  * dependencies walked -- see resolve_full_graph's own comment. */
 typedef struct FacetWorkItem {
@@ -122,7 +145,8 @@ static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
-    FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size);
+    FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
+    bool *needs_restart, char *error, size_t error_size);
 
 static bool file_exists(const char *path) {
     struct stat info;
@@ -836,6 +860,35 @@ static bool find_pending(FacetPendingTable *pending, const char *name,
     return false;
 }
 
+/* Finds this name's constraint-history record, creating a fresh
+ * (unconstrained-until-first-merge) one on first sighting -- mirrors
+ * find_resolved/find_pending's own linear-scan-by-name shape. `git` is
+ * only used to populate a freshly created record (a repeat sighting
+ * already has it; a git-URL mismatch for the same name is handle_
+ * version_dependency's own existing pending-table check to make, not
+ * this function's). */
+static bool find_or_create_constraint_record(FacetConstraintHistory *history,
+        const char *name, const char *git, FacetConstraintRecord **out,
+        char *error, size_t error_size) {
+    for (size_t index = 0; index < history->count; index++) {
+        if (strcmp(history->entries[index].name, name) == 0) {
+            *out = &history->entries[index];
+            return true;
+        }
+    }
+    if (history->count == FACET_MAX_DEPENDENCIES) {
+        (void)snprintf(error, error_size,
+                       "too many distinct version-constrained dependencies (max %d)",
+                       FACET_MAX_DEPENDENCIES);
+        return false;
+    }
+    FacetConstraintRecord *record = &history->entries[history->count++];
+    (void)snprintf(record->name, sizeof record->name, "%s", name);
+    (void)snprintf(record->git, sizeof record->git, "%s", git);
+    *out = record;
+    return true;
+}
+
 static bool work_queue_push(FacetWorkQueue *queue, const char *path,
         const char *cut_name, char *error, size_t error_size) {
     if (queue->count == FACET_MAX_DEPENDENCIES) {
@@ -936,8 +989,28 @@ static bool handle_exact_dependency(const FacetDependency *dependency,
     return true;
 }
 
+/* `history`/`needs_restart` are the real-backtracking mechanism
+ * (docs/roadmap.md's own former "not attempted yet" gap; see resolve_
+ * full_graph's own comment for the retry loop this feeds): every
+ * version constraint ever seen for a name, across every graph-walk
+ * attempt, is folded into `history` *before* any of the resolved/
+ * pending branching below -- accumulating first means the one
+ * genuinely unrecoverable case (two constraints whose ranges provably
+ * never overlap, checked by semver_constraint_intersect's own pure
+ * range math, independent of which tags actually exist) is caught
+ * uniformly, regardless of whether this name happens to be already
+ * resolved, already pending, or brand new. When a *resolved* name's
+ * chosen version stops satisfying the newly-widened accumulated
+ * constraint, that range math has already proven some version could
+ * satisfy everyone -- just not the one already picked -- so this sets
+ * `*needs_restart` instead of failing outright: the caller wipes the
+ * scratch state and tries the whole graph again, this time with this
+ * name's own pending entry seeded from the full accumulated history
+ * from the very start (see the brand-new-pending-entry branch below),
+ * so it resolves correctly the first time that attempt reaches it. */
 static bool handle_version_dependency(const FacetDependency *dependency,
         const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
+        FacetConstraintHistory *history, bool *needs_restart,
         char *error, size_t error_size) {
     SemverConstraint constraint;
     if (!semver_constraint_parse(dependency->version_text, &constraint)) {
@@ -949,6 +1022,28 @@ static bool handle_version_dependency(const FacetDependency *dependency,
             dependency->name, dependency->version_text);
         return false;
     }
+    FacetConstraintRecord *record;
+    if (!find_or_create_constraint_record(history, dependency->name, dependency->git,
+                                          &record, error, error_size)) {
+        return false;
+    }
+    SemverConstraint merged;
+    if (!semver_constraint_intersect(&record->accumulated, &constraint, &merged)) {
+        char existing_text[128], new_text[128];
+        (void)semver_constraint_format(&record->accumulated, existing_text,
+                                       sizeof existing_text);
+        (void)semver_constraint_format(&constraint, new_text, sizeof new_text);
+        (void)snprintf(error, error_size,
+            "conflicting dependency '%s': '%s' wants %s, but '%s' wants %s "
+            "-- no version can satisfy both",
+            dependency->name, record->most_recent_requester, existing_text,
+            required_by, new_text);
+        return false;
+    }
+    record->accumulated = merged;
+    (void)snprintf(record->most_recent_requester, sizeof record->most_recent_requester,
+                   "%s", required_by);
+
     FacetResolved *existing;
     if (find_resolved(resolution, dependency->name, &existing)) {
         if (existing->version[0] == '\0') {
@@ -963,16 +1058,10 @@ static bool handle_version_dependency(const FacetDependency *dependency,
         }
         Semver resolved_version;
         if (semver_parse(existing->version, &resolved_version) &&
-            semver_satisfies(&resolved_version, &constraint)) {
+            semver_satisfies(&resolved_version, &record->accumulated)) {
             return true; /* already-resolved version also satisfies this one */
         }
-        (void)snprintf(error, error_size,
-            "conflicting dependency '%s': '%s' wants version %s, but it was "
-            "already resolved to version %s (required by '%s') before this "
-            "constraint was seen -- re-resolving an already-cloned dependency "
-            "is not supported yet",
-            dependency->name, required_by, dependency->version_text,
-            existing->version, existing->required_by);
+        *needs_restart = true;
         return false;
     }
     FacetPendingSemver *pending_existing;
@@ -985,21 +1074,9 @@ static bool handle_version_dependency(const FacetDependency *dependency,
                 dependency->git, pending_existing->git);
             return false;
         }
-        SemverConstraint intersected;
-        if (!semver_constraint_intersect(&pending_existing->constraint, &constraint,
-                                         &intersected)) {
-            char existing_text[128], new_text[128];
-            (void)semver_constraint_format(&pending_existing->constraint, existing_text,
-                                           sizeof existing_text);
-            (void)semver_constraint_format(&constraint, new_text, sizeof new_text);
-            (void)snprintf(error, error_size,
-                "conflicting dependency '%s': '%s' wants %s, but '%s' wants %s "
-                "-- no version can satisfy both",
-                dependency->name, pending_existing->first_requester, existing_text,
-                required_by, new_text);
-            return false;
-        }
-        pending_existing->constraint = intersected;
+        /* Already merged into `record->accumulated` above -- no separate
+         * intersection needed here. */
+        pending_existing->constraint = record->accumulated;
         (void)snprintf(pending_existing->first_requester, sizeof pending_existing->first_requester,
                        "%s", required_by);
         return true;
@@ -1012,19 +1089,22 @@ static bool handle_version_dependency(const FacetDependency *dependency,
     FacetPendingSemver *new_entry = &pending->entries[pending->count++];
     (void)snprintf(new_entry->name, sizeof new_entry->name, "%s", dependency->name);
     (void)snprintf(new_entry->git, sizeof new_entry->git, "%s", dependency->git);
-    new_entry->constraint = constraint;
+    /* Seeded from the full cross-attempt history, not just this one
+     * sighting's own constraint -- see this function's own top comment. */
+    new_entry->constraint = record->accumulated;
     (void)snprintf(new_entry->first_requester, sizeof new_entry->first_requester, "%s", required_by);
     return true;
 }
 
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
-    FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
+    FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
+    bool *needs_restart, char *error, size_t error_size) {
     for (size_t index = 0; index < manifest->dependency_count; index++) {
         const FacetDependency *dependency = &manifest->dependencies[index];
         if (dependency->uses_version) {
             if (!handle_version_dependency(dependency, required_by, resolution, pending,
-                                           error, error_size)) {
+                                           history, needs_restart, error, error_size)) {
                 return false;
             }
         } else if (!handle_exact_dependency(dependency, required_by, resolution, pending,
@@ -1036,7 +1116,8 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
 }
 
 static bool process_work_queue(FacetWorkQueue *queue, FacetResolution *resolution,
-        FacetPendingTable *pending, const char *scratch_root, char *error, size_t error_size) {
+        FacetPendingTable *pending, const char *scratch_root, FacetConstraintHistory *history,
+        bool *needs_restart, char *error, size_t error_size) {
     while (queue->count > 0) {
         FacetWorkItem item = queue->items[0];
         memmove(&queue->items[0], &queue->items[1],
@@ -1050,7 +1131,8 @@ static bool process_work_queue(FacetWorkQueue *queue, FacetResolution *resolutio
             return false;
         }
         if (!resolve_manifest_dependencies(&nested, item.cut_name, resolution, pending,
-                                           queue, scratch_root, error, error_size)) {
+                                           queue, scratch_root, history, needs_restart,
+                                           error, error_size)) {
             return false;
         }
     }
@@ -1131,26 +1213,88 @@ static bool resolve_one_pending(FacetPendingTable *pending, FacetResolution *res
     return true;
 }
 
-static bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,
-        const char *scratch_root, char *error, size_t error_size) {
+/* One graph-walk attempt -- see resolve_full_graph's own comment below
+ * for the retry loop this feeds and what `history`/`needs_restart` are
+ * for. Otherwise unchanged from before real backtracking existed:
+ * classify the root manifest's own dependencies, fully drain whatever
+ * that queues before ever resolving a pending name (so exact-ref work
+ * never waits on a version-constrained sibling), then alternate
+ * resolving exactly one pending name and re-draining the queue until
+ * both are empty. */
+static bool attempt_resolve_graph(const FacetManifest *manifest, FacetResolution *resolution,
+        const char *scratch_root, FacetConstraintHistory *history, bool *needs_restart,
+        char *error, size_t error_size) {
     FacetPendingTable pending = {0};
     FacetWorkQueue queue = {0};
     if (!resolve_manifest_dependencies(manifest, manifest->name, resolution, &pending,
-                                       &queue, scratch_root, error, error_size)) {
+                                       &queue, scratch_root, history, needs_restart,
+                                       error, error_size)) {
         return false;
     }
-    if (!process_work_queue(&queue, resolution, &pending, scratch_root, error, error_size)) {
+    if (!process_work_queue(&queue, resolution, &pending, scratch_root, history,
+                            needs_restart, error, error_size)) {
         return false;
     }
     while (pending.count > 0) {
         if (!resolve_one_pending(&pending, resolution, &queue, scratch_root, error, error_size)) {
             return false;
         }
-        if (!process_work_queue(&queue, resolution, &pending, scratch_root, error, error_size)) {
+        if (!process_work_queue(&queue, resolution, &pending, scratch_root, history,
+                                needs_restart, error, error_size)) {
             return false;
         }
     }
     return true;
+}
+
+/* Real backtracking (docs/roadmap.md's own former "not attempted yet"
+ * gap): attempt_resolve_graph's only way to signal "an already-resolved
+ * name's chosen version stopped satisfying a later-discovered
+ * constraint, but some version could still satisfy everyone" is
+ * `needs_restart` (see handle_version_dependency's own comment for
+ * exactly when that fires and why it's provably not a dead end). On
+ * that signal, wipe the ephemeral scratch clones and try the whole
+ * graph again -- `history` (never reset, unlike `resolution`/the
+ * pending table/queue, which start fresh every attempt) is what makes
+ * the next attempt actually converge instead of repeating the same
+ * premature choice: by the time a name is first seen in a later
+ * attempt, `history` already reflects every constraint discovered
+ * about it in every earlier attempt, however late.
+ *
+ * The `FACET_MAX_DEPENDENCIES` attempt bound is a real, provable limit,
+ * not an arbitrary guess: each restart is caused by discovering a
+ * genuinely new (name, conflicting-constraint) fact that didn't exist
+ * in `history` before that exact attempt, and there are at most that
+ * many version-constrained dependency edges in the whole graph -- so
+ * exhausting the bound means a resolver bug (a restart loop that isn't
+ * actually converging), not a hard-to-satisfy manifest; those still
+ * fail fast, on the very first attempt, via the range-intersection
+ * check in handle_version_dependency itself. */
+static bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,
+        const char *scratch_root, char *error, size_t error_size) {
+    FacetConstraintHistory history = {0};
+    for (size_t attempt = 0; attempt < FACET_MAX_DEPENDENCIES; attempt++) {
+        *resolution = (FacetResolution){0};
+        if (attempt > 0) {
+            (void)remove_directory_recursive(scratch_root);
+            if (!ensure_directory(scratch_root)) {
+                (void)snprintf(error, error_size,
+                    "cannot recreate '%s' while retrying dependency resolution: %s",
+                    scratch_root, strerror(errno));
+                return false;
+            }
+        }
+        bool needs_restart = false;
+        if (attempt_resolve_graph(manifest, resolution, scratch_root, &history,
+                                  &needs_restart, error, error_size)) {
+            return true;
+        }
+        if (!needs_restart) return false; /* a real error; `error` is already set */
+    }
+    (void)snprintf(error, error_size,
+        "dependency resolution did not converge after %d attempts (internal error)",
+        FACET_MAX_DEPENDENCIES);
+    return false;
 }
 
 /* --- install: move each resolved package's checkout into

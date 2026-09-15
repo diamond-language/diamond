@@ -500,4 +500,53 @@ rm -f "$error_file"
 [[ "$(cd project18 && "$diamond" diamond.cut)" == \
     "{name: myapp, dependencies: {greeter: {git: $work/greeter_repo, tag: v1.0.0}, other: {git: $work/greeter_repo, branch: main}}}" ]]
 
-echo "47 facet tests passed"
+# --- real backtracking: a name resolved via one requester's own looser
+# constraint, then constrained tighter by a requester whose own nested
+# dependency is only discovered afterward (breadth-first: root's two
+# version-constrained deps both go pending immediately with nothing
+# queued yet, so `semver` resolves -- to v1.2.0, the highest match for
+# root's own "^1.0.0" -- a full outer-loop iteration before `needs_old`
+# resolves and its own clone's diamond.cut is ever read) resolves to the
+# one tag satisfying *both* constraints instead of hard-erroring the way
+# it used to (the exact scenario docs/roadmap.md's former "not attempted
+# yet" gap named) ---
+
+mkdir needs_old_repo
+printf 'require_cut "semver"\ndef old_value() = semver_value()\n' > needs_old_repo/needs_old.di
+cat > needs_old_repo/diamond.cut <<EOF
+{"name": "needs_old", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <1.2.0"}}}
+EOF
+commit_repo needs_old_repo
+(cd needs_old_repo && git tag v1.0.0)
+
+mkdir project24
+cat > project24/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^1.0.0"}, "needs_old": {"git": "$work/needs_old_repo", "version": "^1.0.0"}}}
+EOF
+output_file="$(mktemp)"
+(cd project24 && "$facet" install) >/dev/null 2>"$output_file"
+! grep -q "is not supported yet" "$output_file"
+rm -f "$output_file"
+actual="$(cd project24 && "$diamond" -e 'require_cut "semver"
+semver_value()')"
+[[ "$actual" == "1" ]]
+grep -q '"version": "v1.0.0"' project24/facet.lock
+
+# --- ...but a genuinely disjoint pair of constraints (no tag could ever
+# satisfy both, independent of resolution order) still hard-errors right
+# away -- no restart wasted on an unsatisfiable graph ---
+
+mkdir project25
+cat > project25/diamond.cut <<EOF
+{"name": "myapp", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^2.0.0"}, "needs_old": {"git": "$work/needs_old_repo", "version": "^1.0.0"}}}
+EOF
+error_file="$(mktemp)"
+if (cd project25 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet install unexpectedly succeeded on an unsatisfiable version graph" >&2
+    exit 1
+fi
+grep -q "conflicting dependency 'semver'" "$error_file"
+grep -q "no version can satisfy both" "$error_file"
+rm -f "$error_file"
+
+echo "52 facet tests passed"
