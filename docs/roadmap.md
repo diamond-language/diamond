@@ -469,9 +469,26 @@ real type-consistency question found (PostgreSQL/MySQL rejecting a Hash
 `params` argument that SQLite3 accepts) turned out to be a genuine,
 already-documented driver-level constraint, not an oversight. One real
 range-check inconsistency was found and fixed: `UDPSocket#receive`
-rejected `0` where the read-family methods didn't. Re-run this audit
-periodically as new native surface is added, rather than treating it as
-permanently closed.
+rejected `0` where the read-family methods didn't.
+
+Re-run (2026-09-15) against every native surface added since the first
+pass -- `Tensor`, `Channel`, `Supervisor` -- the same way: sibling-method
+arity/type/range consistency (`Tensor#get`/`#set` share one arity/bounds
+check before their own method-specific work; `Supervisor#restart_count`/
+`#last_error`/`#alive?` all validate their shared child-index argument
+identically), constructor-level range/overflow guards (`Tensor.zeros`/
+`.random` both reject non-positive rows/cols; `allocate_tensor` itself
+guards `rows*cols*sizeof(double)` against overflow before ever calling
+`malloc`, so an absurd shape fails cleanly with `OUT_OF_MEMORY` rather
+than wrapping into a too-small allocation), and cross-type error-code
+consistency (`Channel#try_send`/`#try_receive`'s `WouldBlockError` is
+the exact same status non-blocking `Socket`/`File` reads already use,
+not a parallel invented one). Found nothing to fix this time -- a real,
+useful outcome in its own right, not just a formality: confirms the
+audit's own bar was met by three independently-authored features
+without anyone deliberately checking against it at the time each shipped.
+Re-run this audit periodically as new native surface is added, rather
+than treating it as permanently closed.
 
 Priorities:
 
