@@ -7071,13 +7071,24 @@ static void publish_collection_method_return_type(Compiler *compiler,
  * mattered: `index < keys.length()` couldn't compile-time-select
  * DIAMOND_OP_LESS_INT without it. */
 static void publish_native_scalar_method_return_type(Compiler *compiler,
-        uint16_t reg,int32_t receiver_set_index,DiamondSpan name,uint8_t arity) {
-    if(receiver_set_index<0||
-       (size_t)receiver_set_index>=compiler->function->type_set_count)return;
-    const DiamondTypeSet *receiver_set=
-        &compiler->function->type_sets[(size_t)receiver_set_index];
-    if(receiver_set->count!=1)return;
-    const uint8_t receiver_type=receiver_set->members[0].id;
+        uint16_t reg,uint16_t receiver,int32_t receiver_set_index,
+        DiamondSpan name,uint8_t arity) {
+    uint8_t receiver_type;
+    if(receiver_set_index>=0) {
+        if((size_t)receiver_set_index>=compiler->function->type_set_count)return;
+        const DiamondTypeSet *receiver_set=
+            &compiler->function->type_sets[(size_t)receiver_set_index];
+        if(receiver_set->count!=1)return;
+        receiver_type=receiver_set->members[0].id;
+    } else {
+        /* No registered type set at all -- the common case for a plain
+         * scalar String local (parse_string never registers one; there's
+         * no element type to track), which Array/Hash literals always
+         * get via record_collection_type_set regardless of this
+         * function's own needs. Fall back to the receiver's own plain
+         * known_types[] scalar tag directly. */
+        receiver_type=compiler->known_types[receiver];
+    }
     if(receiver_type!=DIAMOND_TYPE_STRING&&receiver_type!=DIAMOND_TYPE_ARRAY&&
        receiver_type!=DIAMOND_TYPE_HASH)return;
     char method_name[DIAMOND_MAX_FUNCTION_NAME];
@@ -8001,8 +8012,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         type_arguments,type_argument_count,args,count);
     publish_instance_return_type(compiler,result,receiver_set_index,name,
         return_target,resolved_arguments,resolved_count);
-    publish_native_scalar_method_return_type(compiler,result,receiver_set_index,
-        name,(uint8_t)count);
+    publish_native_scalar_method_return_type(compiler,result,receiver,
+        receiver_set_index,name,(uint8_t)count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
     publish_array_push_return_type(compiler,result,mutation_receiver,name,args,

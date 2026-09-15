@@ -240,14 +240,21 @@ authoritative fine-grained record.
   -- see docs/caching.md for the full contract and docs/roadmap.md's "Bytecode
   caching: what's next, if anything" for what's deferred.
 - A comparison against a native `.length()`/`.to_i()`/`.ord()`/etc. call
-  (`while i < arr.length()`) now compiles straight to `LESS_INT` (and
-  siblings) from its very first execution under the plain interpreter,
-  with no dependence on `DIAMOND_QUICKEN` ever observing enough int-int
-  comparisons to rewrite it in place -- the receiver's call result now
-  publishes its known, fixed scalar return type at compile time (reusing
-  `DIAMOND_NATIVE_METHODS`, the same table already used for structural
-  interface conformance checking) the same way `.keys()`/`.values()`
-  already did for their own container types. An interpreter-level
+  (`while i < s.length()`, `s` a `String`, `Array`, or `Hash`) now
+  compiles straight to `LESS_INT` (and siblings) from its very first
+  execution under the plain interpreter, with no dependence on
+  `DIAMOND_QUICKEN` ever observing enough int-int comparisons to rewrite
+  it in place -- the receiver's call result now publishes its known,
+  fixed scalar return type at compile time (reusing `DIAMOND_NATIVE_
+  METHODS`, the same table already used for structural interface
+  conformance checking) the same way `.keys()`/`.values()` already did
+  for their own container types. Fixed same-day to actually cover a
+  plain `String` receiver, not just `Array`/`Hash`: the first version
+  only fired for a receiver with a *registered type set*, which `Array`/
+  `Hash` locals always have (needed for element-type tracking
+  regardless) but a bare `String` local never does -- confirmed directly
+  via `--dump-bytecode` that `s.length()` on a plain String still
+  compiled to generic `LESS` before this correction. An interpreter-level
   improvement only -- confirmed this does **not** move JIT (`DIAMOND_JIT=1`)
   coverage any closer to compiling a method that reads an instance
   variable or calls a native collection method; both remain entirely

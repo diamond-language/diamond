@@ -551,7 +551,12 @@ publish their known fixed scalar return type at compile time (reusing
 `DIAMOND_NATIVE_METHODS`, a table already built for interface
 conformance checking), so a `.length()`-bounded comparison gets
 `LESS_INT` from its very first execution under the plain interpreter,
-with no dependence on `DIAMOND_QUICKEN` ever kicking in. **This is an
+with no dependence on `DIAMOND_QUICKEN` ever kicking in -- corrected
+2026-09-15 to also cover a plain `String`/`Array`/`Hash` receiver with
+no registered type set (originally only fired for Array/Hash, which
+always get one for unrelated element-tracking reasons; a bare `String`
+local never did), see `docs/internal/jit-design.md`'s own Phase 2f
+correction note. **This is an
 interpreter-level win only, confirmed not to move JIT eligibility at
 all** -- investigated end to end, empirically, not just by re-reading
 the opcode whitelist: `Model#initialize`-shaped code remains

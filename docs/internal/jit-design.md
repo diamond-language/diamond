@@ -312,6 +312,23 @@ confirmed via `--dump-bytecode` showing identical `LESS_INT` output
 with `DIAMOND_QUICKEN` unset entirely. A real, safe, always-on
 interpreter improvement; not a JIT-coverage one.
 
+**Correction (2026-09-15, same day)**: the phase as originally shipped
+only actually fired for a receiver that already had a *registered type
+set* (`compiler->known_type_sets[receiver]>=0`) -- true for Array/Hash
+locals (which always get one via `record_collection_type_set`, needed
+for element-type tracking regardless), but never true for a plain
+`String` local (`parse_string` sets only the scalar `known_types[reg]`
+tag, no type set -- there's no element type to track). Confirmed
+directly: `while i < s.length()` for a plain String `s` still compiled
+to generic `LESS`, not `LESS_INT`, despite the identically-shaped Array
+case working. Found investigating a related LSP hover gap (see
+`docs/roadmap.md`'s "Improve receiver-aware tooling"). Fixed by widening
+`publish_native_scalar_method_return_type` to fall back to the
+receiver's own plain scalar `known_types[]` tag when no type set is
+registered at all (`receiver_set_index<0`) -- purely additive; the
+type-set branch's own existing behavior for Array/Hash is unchanged.
+`tests/cases/jit_length_less_int_string.di` is the regression case.
+
 ### Phase 2g: `DIAMOND_OP_GET_IVAR` support -- closes one of the three gaps above
 
 Added a JIT trampoline, `diamond_jit_get_ivar` (`src/vm.c`, declared
