@@ -1187,6 +1187,17 @@ typedef struct DiamondFiberQueue {
     size_t head;
 } DiamondFiberQueue;
 
+/* DiamondVm.debug_step_mode's own values -- see that field's comment.
+ * DIAMOND_STEP_NONE is the zero value (every DiamondVm that never
+ * receives a step command has this by construction, no explicit init
+ * needed). */
+typedef enum DiamondStepMode : uint8_t {
+    DIAMOND_STEP_NONE,
+    DIAMOND_STEP_IN,
+    DIAMOND_STEP_OVER,
+    DIAMOND_STEP_OUT,
+} DiamondStepMode;
+
 struct DiamondVm {
     /* The nursery -- every allocate_* helper always links a fresh object
      * here (never onto old_objects directly). bytes_allocated/next_gc
@@ -1464,6 +1475,24 @@ struct DiamondVm {
      * no concurrent access to guard against. */
     size_t debug_active_lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];
     size_t debug_active_line_count;
+    /* Real stepping (docs/debugging.md's own "Stepping" section):
+     * DIAMOND_STEP_NONE (the default) means DIAMOND_OP_BREAKPOINT_CHECK
+     * only ever consults debug_active_lines above. A `next`/`stepIn`/
+     * `stepOut` command received while paused (debugger_structured_
+     * helper's own resume loop, src/vm.c) sets this plus debug_step_
+     * target_depth to that exact pause's own `depth` (the real, already-
+     * tracked run_chunk recursion-depth parameter -- incremented on every
+     * ordinary call, not by a self-recursive tail call), then resumes.
+     * The very next checkpoint hit satisfying the mode's own depth
+     * comparison (DIAMOND_STEP_IN: any; DIAMOND_STEP_OVER: depth<=target;
+     * DIAMOND_STEP_OUT: depth<target) pauses and resets this to
+     * DIAMOND_STEP_NONE -- a real armed breakpoint line still always
+     * wins/pauses regardless, checked first. No new bytecode or compile-
+     * time mechanism needed: every statement already has a checkpoint
+     * (see debug_active_lines' own comment), so stepping is purely this
+     * extra runtime state consulted by the same opcode. */
+    DiamondStepMode debug_step_mode;
+    size_t debug_step_target_depth;
     /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
      * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS/DIAMOND_MAX_
      * MEMORY_BYTES, read once here by diamond_vm_init exactly like debug_fd

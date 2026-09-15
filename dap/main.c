@@ -533,6 +533,39 @@ static void handle_continue(DapServer *server, const JsonValue *request) {
     send_response(server, request, true, body);
 }
 
+/* next/stepIn/stepOut (docs/debugging.md's own "Stepping" section)
+ * share this exact shape with handle_continue above: write one bare
+ * `{"command":"<name>"}` over the control channel (`name` is the same
+ * literal string src/vm.c's own parse_debug_command recognizes -- no
+ * translation table needed anywhere) and respond to the DAP client.
+ * Only ever meaningful while the debuggee is genuinely stopped -- a real
+ * DAP client only ever sends these against an already-paused debuggee,
+ * unlike setBreakpoints -- so no `server->launched` guard beyond the
+ * same nullptr check handle_continue already relies on. */
+static void send_debug_command(DapServer *server, const char *name) {
+    if(server->control_stream == nullptr) return;
+    JsonValue *command = json_object();
+    if(command == nullptr) return;
+    json_object_set(command, "command", json_string_z(name));
+    rpc_write_message(server->control_stream, command);
+    json_free(command);
+}
+
+static void handle_next(DapServer *server, const JsonValue *request) {
+    send_debug_command(server, "next");
+    send_response(server, request, true, nullptr);
+}
+
+static void handle_step_in(DapServer *server, const JsonValue *request) {
+    send_debug_command(server, "stepIn");
+    send_response(server, request, true, nullptr);
+}
+
+static void handle_step_out(DapServer *server, const JsonValue *request) {
+    send_debug_command(server, "stepOut");
+    send_response(server, request, true, nullptr);
+}
+
 static void handle_threads(DapServer *server, const JsonValue *request) {
     JsonValue *threads = json_array();
     JsonValue *thread = json_object();
@@ -678,9 +711,22 @@ static void handle_stopped_payload(DapServer *server, JsonValue *message) {
     server->stopped_message = message;
     server->stopped_stack = json_object_get(message, "stack");
     server->stopped_locals = json_object_get(message, "locals");
+    /* "breakpoint" or "step" (docs/debugging.md's own "Stepping"
+     * section) -- src/vm.c's own debugger_structured_helper always
+     * includes this now; the fallback is only for a message that
+     * somehow lacks it (there is no other producer of this payload
+     * today, but this is cheap insurance against ever silently
+     * regressing to no reason at all). */
+    const char *reason_chars = nullptr;
+    size_t reason_length = 0;
+    if(!json_as_string(json_object_get(message, "reason"), &reason_chars, &reason_length) ||
+       reason_length == 0) {
+        reason_chars = "breakpoint";
+        reason_length = sizeof "breakpoint" - 1;
+    }
     JsonValue *body = json_object();
     if(body != nullptr) {
-        json_object_set(body, "reason", json_string_z("breakpoint"));
+        json_object_set(body, "reason", json_string(reason_chars, reason_length));
         json_object_set(body, "threadId", json_number(1));
         json_object_set(body, "allThreadsStopped", json_bool(true));
     }
@@ -712,6 +758,9 @@ static void handle_request(DapServer *server, const JsonValue *request) {
     else if(strcmp(command, "launch") == 0) handle_launch(server, request, arguments);
     else if(strcmp(command, "configurationDone") == 0) handle_configuration_done(server, request);
     else if(strcmp(command, "continue") == 0) handle_continue(server, request);
+    else if(strcmp(command, "next") == 0) handle_next(server, request);
+    else if(strcmp(command, "stepIn") == 0) handle_step_in(server, request);
+    else if(strcmp(command, "stepOut") == 0) handle_step_out(server, request);
     else if(strcmp(command, "threads") == 0) handle_threads(server, request);
     else if(strcmp(command, "stackTrace") == 0) handle_stack_trace(server, request);
     else if(strcmp(command, "scopes") == 0) handle_scopes(server, request, arguments);

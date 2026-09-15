@@ -71,8 +71,18 @@ authoritative fine-grained record.
   (`send_live_breakpoints`, `dap/main.c`). Deliberately confined to this
   one new opcode's own case rather than `run_chunk`'s shared dispatch
   header, so an ordinary (non-debug) run has none of this instrumentation
-  and pays nothing for the feature existing. Real step-over/into/out is
-  still not included -- see docs/debugging.md/docs/roadmap.md.
+  and pays nothing for the feature existing.
+- Added real stepping: `next` (step over), `stepIn`, and `stepOut`, all
+  reusing the exact same `DIAMOND_OP_BREAKPOINT_CHECK` live breakpoints
+  already install everywhere -- no new bytecode or compile-time mechanism
+  needed. Sending one while stopped arms a runtime step mode with the
+  current pause's own already-tracked call depth as a target; the next
+  checkpoint hit satisfying that mode's own depth comparison pauses
+  (`"reason":"step"` in the resulting DAP `stopped` event, alongside the
+  existing `"reason":"breakpoint"`) -- a real armed breakpoint line
+  always still wins regardless of any pending step. See
+  docs/debugging.md's "Stepping" section for the exact depth semantics
+  and one accepted edge case around self-recursive tail calls.
 - Added `diamond build SOURCE [-o OUTPUT]`, producing a standalone native
   executable with no separate interpreter, `.di` source file, or
   recompilation step at run time -- reusing the same compiled-program

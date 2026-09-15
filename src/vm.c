@@ -14045,24 +14045,37 @@ typedef enum DiamondDebugCommandKind {
     DIAMOND_DEBUG_COMMAND_NONE,
     DIAMOND_DEBUG_COMMAND_CONTINUE,
     DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS,
+    /* Real stepping (docs/debugging.md's own "Stepping" section) --
+     * named after DAP's own request names directly (`next` is DAP's own
+     * step-over request), so dap/main.c's handlers need no translation
+     * table: they just write the same literal command string here
+     * expects. Only ever meaningful from within debugger_structured_
+     * helper's own pause/resume loop (a real DAP client only ever sends
+     * these against an already-stopped debuggee, unlike setBreakpoints,
+     * which legitimately arrives while running too). */
+    DIAMOND_DEBUG_COMMAND_NEXT,
+    DIAMOND_DEBUG_COMMAND_STEP_IN,
+    DIAMOND_DEBUG_COMMAND_STEP_OUT,
 } DiamondDebugCommandKind;
 
-/* Hand-scans exactly the two fixed command shapes dap/main.c ever sends
- * over the debug control channel -- not a JSON parser (see
+/* Hand-scans exactly the fixed command shapes dap/main.c ever sends over
+ * the debug control channel -- not a JSON parser (see
  * debugger_structured_helper's own comment on why the core VM doesn't
- * link one): `{"command":"continue"}` and `{"command":"setBreakpoints",
- * "lines":[1,2,3]}`. Plain substring/number scanning is safe here
- * specifically because this wire format is internal (dap/main.c is the
- * only possible sender, never exposed to a DAP client's own, genuinely
- * untrusted JSON) and fixed-shape -- no nesting, no escaping, and no
- * whitespace variance beyond what's scanned for explicitly. `body` must
- * be nul-terminated (debug_pipe_read_command's own caller already needs
- * to null-terminate it to bound the scan); `lines`/`line_count` are
- * left untouched for anything but DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS.
- * A `lines` array longer than `capacity` still reports the real total in
- * `*line_count` (matching add_string_range's own "count what's there,
- * cap what's stored" convention elsewhere in this codebase) -- the
- * caller only ever copies min(*line_count,capacity) entries out. */
+ * link one): `{"command":"continue"}`, `{"command":"setBreakpoints",
+ * "lines":[1,2,3]}`, and the stepping commands `{"command":"next"}`/
+ * `"stepIn"`/`"stepOut"` (no other fields). Plain substring/number
+ * scanning is safe here specifically because this wire format is
+ * internal (dap/main.c is the only possible sender, never exposed to a
+ * DAP client's own, genuinely untrusted JSON) and fixed-shape -- no
+ * nesting, no escaping, and no whitespace variance beyond what's scanned
+ * for explicitly. `body` must be nul-terminated (debug_pipe_read_
+ * command's own caller already needs to null-terminate it to bound the
+ * scan); `lines`/`line_count` are left untouched for anything but
+ * DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS. A `lines` array longer than
+ * `capacity` still reports the real total in `*line_count` (matching
+ * add_string_range's own "count what's there, cap what's stored"
+ * convention elsewhere in this codebase) -- the caller only ever copies
+ * min(*line_count,capacity) entries out. */
 static DiamondDebugCommandKind parse_debug_command(const char *body,
         size_t *lines,size_t *line_count,size_t capacity) {
     if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
@@ -14086,6 +14099,9 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
         return DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS;
     }
     if(strstr(body,"\"continue\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_CONTINUE;
+    if(strstr(body,"\"next\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_NEXT;
+    if(strstr(body,"\"stepIn\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    if(strstr(body,"\"stepOut\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_OUT;
     return DIAMOND_DEBUG_COMMAND_NONE;
 }
 
@@ -14174,13 +14190,16 @@ static bool debug_json_append_escaped_string(GrowBuffer *buffer,
  * DAP-facing pause path -- see DiamondVm.debug_fd's own comment (src/
  * vm.h) for when debugger_helper takes this branch instead of its
  * ordinary print-to-stdout/getchar() path. Hand-formats a JSON "paused"
- * payload (`{"event":"paused","stack":[{"name","line","column"},...],
- * "locals":[{"name","value"},...]}`) with snprintf/GrowBuffer rather
- * than linking lsp/json.c into the core VM/`diamond` binary -- dap/
- * main.c (which already links lsp/json.c and lsp/rpc.c for its own
- * DAP-client-facing transport) is the one side of this pipe that ever
- * needs a real JSON parser; the VM only ever produces this one payload
- * shape and only ever reads back two fixed command shapes (see
+ * payload (`{"event":"paused","reason":"breakpoint"|"step","stack":
+ * [{"name","line","column"},...],"locals":[{"name","value"},...]}`) --
+ * `reason` lets dap/main.c's own `stopped` event distinguish a real
+ * breakpoint from a step for the DAP client's own UI (docs/debugging.md's
+ * "Stepping" section) -- with snprintf/GrowBuffer rather than linking
+ * lsp/json.c into the core VM/`diamond` binary -- dap/main.c (which
+ * already links lsp/json.c and lsp/rpc.c for its own DAP-client-facing
+ * transport) is the one side of this pipe that ever needs a real JSON
+ * parser; the VM only ever produces this one payload shape and only ever
+ * reads back a small, fixed set of command shapes (see
  * parse_debug_command), so it never needs to parse general JSON at all.
  * Content-Length-frames the payload onto vm->debug_fd the same way
  * lsp/rpc.c's rpc_write_message frames a message onto a FILE*, then
@@ -14200,10 +14219,12 @@ static bool debug_json_append_escaped_string(GrowBuffer *buffer,
 static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         const DiamondChunk *chunk,size_t depth,size_t instruction_offset,
         DiamondValue *registers,const uint16_t *name_indices,
-        const uint16_t *local_registers,uint8_t local_count) {
+        const uint16_t *local_registers,uint8_t local_count,const char *reason) {
     (void)instruction_offset;
     GrowBuffer body={};
-    bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"stack\":[");
+    bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"reason\":");
+    if(ok)ok=debug_json_append_escaped_string(&body,reason,strlen(reason));
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,",\"stack\":[");
     size_t frame_index=0;
     for(const DiamondFrame *frame=vm->frames;ok&&frame!=nullptr;
             frame=frame->previous,frame_index++) {
@@ -14259,16 +14280,34 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
                 DIAMOND_MAX_ACTIVE_BREAKPOINTS))
             break;
-        if(kind!=DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS)break;
-        memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
-        vm->debug_active_line_count=line_count;
+        if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
+            memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+            vm->debug_active_line_count=line_count;
+            continue;
+        }
+        /* next/stepIn/stepOut (docs/debugging.md's own "Stepping"
+         * section): arm the target depth from `depth`, this exact
+         * pause's own already-known run_chunk recursion depth -- no
+         * argument needs to travel from dap/main.c at all -- then resume
+         * the same way `continue` does. DIAMOND_OP_BREAKPOINT_CHECK's own
+         * case (further down this file) is what actually consumes this
+         * on the next qualifying checkpoint hit. */
+        if(kind==DIAMOND_DEBUG_COMMAND_NEXT)vm->debug_step_mode=DIAMOND_STEP_OVER;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN)vm->debug_step_mode=DIAMOND_STEP_IN;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_OUT)vm->debug_step_mode=DIAMOND_STEP_OUT;
+        if(vm->debug_step_mode!=DIAMOND_STEP_NONE)vm->debug_step_target_depth=depth;
+        break;
     }
     return DIAMOND_VM_OK;
 }
 
-/* debugger()/breakpoint()'s runtime half -- see parse_debugger_call's own
- * comment in compiler.c for the compile-time half (name, register) pairs
- * come from. Under DIAMOND_DEBUG_FD (see DiamondVm.debug_fd's own
+/* The shared runtime pause helper for both DIAMOND_OP_DEBUGGER (an
+ * explicit debugger()/breakpoint() call, always unconditional -- see
+ * parse_debugger_call's own comment in compiler.c for the compile-time
+ * half (name, register) pairs come from) and an armed
+ * DIAMOND_OP_BREAKPOINT_CHECK. `reason` ("breakpoint" or "step") is
+ * purely for the DAP-facing structured payload below -- see its own
+ * comment. Under DIAMOND_DEBUG_FD (see DiamondVm.debug_fd's own
  * comment, src/vm.h), delegates to debugger_structured_helper's DAP-
  * facing pause instead of this ordinary path. Otherwise prints
  * "chunk:line:column" matching the exact format RECORD_ERROR/
@@ -14278,17 +14317,20 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
  * local's own register contents with a DiamondCell wrapper in place, so
  * this checks the *runtime* value kind rather than trusting any
  * compile-time "captured" bookkeeping passed through), then blocks on
- * one line of stdin. Kept as its own helper (not inlined into
- * DIAMOND_OP_DEBUGGER's own case block) both for this file's usual
- * stack-frame-budget reasons and because it may recurse into run_chunk
- * itself once per local, through stringify_value calling a user-defined
- * to_s. */
+ * one line of stdin -- `reason` is unused on this plain path, which has
+ * no stepping concept at all (a DAP control channel is what stepping
+ * commands travel over, and this path only ever runs without one). Kept
+ * as its own helper (not inlined into DIAMOND_OP_DEBUGGER's own case
+ * block) both for this file's usual stack-frame-budget reasons and
+ * because it may recurse into run_chunk itself once per local, through
+ * stringify_value calling a user-defined to_s. */
 static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,size_t instruction_offset,DiamondValue *registers,
-        const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
+        const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count,
+        const char *reason) {
     if(vm->debug_fd>=0)
         return debugger_structured_helper(vm,chunk,depth,instruction_offset,
-            registers,name_indices,local_registers,local_count);
+            registers,name_indices,local_registers,local_count,reason);
     const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
     const bool in_bounds=instruction_offset<chunk->code_count;
     const uint32_t line=in_bounds&&chunk->lines!=nullptr?
@@ -20409,7 +20451,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     READ_SHORT(local_registers[index]);
                 }
                 const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                    instruction_offset,registers,name_indices,local_registers,local_count);
+                    instruction_offset,registers,name_indices,local_registers,local_count,
+                    "breakpoint");
                 VM_PROPAGATE(debugger_status);
                 registers[destination]=DIAMOND_NIL;
                 break;
@@ -20454,9 +20497,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 bool armed=false;
                 for(size_t index=0;index<vm->debug_active_line_count;index++)
                     if(vm->debug_active_lines[index]==(size_t)statement_line) { armed=true; break; }
-                if(armed) {
+                /* Real stepping (docs/debugging.md's own "Stepping"
+                 * section): an armed breakpoint line always wins/pauses
+                 * regardless (checked above, unconditionally) -- this is
+                 * only a fallback for when that check didn't already
+                 * decide to pause. See DiamondVm.debug_step_mode's own
+                 * comment (src/vm.h) for the full semantics; `depth` is
+                 * this exact run_chunk invocation's own already-tracked
+                 * recursion depth, needing no new state to read. */
+                bool stepped=false;
+                if(!armed&&vm->debug_step_mode!=DIAMOND_STEP_NONE) {
+                    switch(vm->debug_step_mode) {
+                        case DIAMOND_STEP_IN: stepped=true; break;
+                        case DIAMOND_STEP_OVER:
+                            stepped=depth<=vm->debug_step_target_depth; break;
+                        case DIAMOND_STEP_OUT:
+                            stepped=depth<vm->debug_step_target_depth; break;
+                        default: break;
+                    }
+                }
+                if(armed||stepped) {
+                    vm->debug_step_mode=DIAMOND_STEP_NONE;
                     const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                        instruction_offset,registers,name_indices,local_registers,local_count);
+                        instruction_offset,registers,name_indices,local_registers,local_count,
+                        armed?"breakpoint":"step");
                     VM_PROPAGATE(debugger_status);
                 }
                 registers[destination]=DIAMOND_NIL;

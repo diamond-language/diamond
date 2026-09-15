@@ -12,17 +12,13 @@ view or any other DAP-compatible client (`editors/vscode`'s own
 
 ## What this is
 
-Editor-settable breakpoints, a real call stack, and locals at the paused
-frame -- reusing the exact pause/print/locals machinery
-`debugger()`/`breakpoint()` already had, not a new stepping engine.
-Breakpoints can be added or removed at any time, including against an
-already-running debuggee, with no restart needed (see "Live breakpoints"
-below). Remaining deliberate limitations:
+Editor-settable breakpoints, a real call stack, locals at the paused
+frame, and `next`/`stepIn`/`stepOut` -- reusing the exact pause/print/
+locals machinery `debugger()`/`breakpoint()` already had, not a separate
+stepping engine. Breakpoints can be added or removed at any time,
+including against an already-running debuggee, with no restart needed
+(see "Live breakpoints" below). Remaining deliberate limitations:
 
-- **No step-over/into/out.** `continue` is the only resume command a
-  paused debuggee understands -- real stepping needs its own new
-  bytecode debug-info format and deoptimization bookkeeping, and is a
-  separate, not-yet-attempted roadmap item.
 - **Only the innermost, paused frame has locals.** An outer call-stack
   frame's own locals aren't tracked anywhere the VM can reconstruct after
   the fact (no general per-chunk local-debug table exists; only the exact
@@ -65,6 +61,39 @@ sensitive case those optimizations target. An ordinary `diamond
 script.di` run has none of this instrumentation at all and pays nothing
 for the feature existing.
 
+## Stepping
+
+`next` (step over), `stepIn`, and `stepOut` all reuse the exact same
+per-statement `DIAMOND_OP_BREAKPOINT_CHECK` live breakpoints already
+install everywhere -- no new bytecode, no new compile-time mechanism.
+Sending one of these while stopped arms `DiamondVm.debug_step_mode`
+(`src/vm.h`) with the *current* pause's own already-tracked `run_chunk`
+recursion depth as a target, then resumes; the next checkpoint hit
+satisfying that mode's own depth comparison pauses (`"reason":"step"` in
+the resulting `stopped` event, distinguishing it from `"reason":
+"breakpoint"`) and clears the mode -- a real armed breakpoint line
+always still wins/pauses first, regardless of any pending step:
+
+- **`stepIn`** -- pauses at the very next checkpoint hit, at any depth.
+- **`next`** (step over) -- pauses at the next checkpoint whose depth is
+  `<=` the depth stepping started at (i.e. the same frame, or a
+  shallower one if the current statement returns) -- so a call made
+  *from* the stepped-over statement runs to completion uninterrupted.
+- **`stepOut`** -- pauses at the next checkpoint whose depth is `<` the
+  starting depth -- i.e. back in the caller, right after the current
+  call returns.
+
+One known, accepted edge case: a self-recursive tail call
+(`docs/callables.md`'s "Tail-call optimization") deliberately reuses
+the *same* `run_chunk` recursion depth rather than incrementing it (that
+feature's own whole point). Stepping over or out of a statement that
+happens to be such a call therefore can't distinguish "still the same
+logical call" from "a fresh tail-recursive invocation" by depth alone --
+in practice this means step-over lands on the first statement of the
+new invocation rather than skipping it entirely. Not fixed: an
+accepted, narrow consequence of two features that were never designed
+to interact, not a bug in either one on its own.
+
 ## How it fits together
 
 ```text
@@ -94,21 +123,29 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   complete, freshly-recomputed set as a `{"command":"setBreakpoints",
   "lines":[...]}` message over the already-open control channel
   (`send_live_breakpoints`, `dap/main.c`) -- no recompile, no restart.
+  `next`/`stepIn`/`stepOut` write a bare `{"command":"next"}`/`"stepIn"`/
+  `"stepOut"` the same way (`handle_next`/`handle_step_in`/
+  `handle_step_out`, `dap/main.c`) -- no arguments needed, since the VM
+  already knows its own current call depth at the exact moment it
+  processes the command (see "Stepping" above).
 - The debuggee's stdout/stderr are piped back as DAP `output` events; its
   exit becomes `exited`/`terminated` events.
-- Every pause (an armed `DIAMOND_OP_BREAKPOINT_CHECK`, or the explicit
-  `debugger()`/`breakpoint()` call's own always-unconditional
-  `DIAMOND_OP_DEBUGGER`) writes one hand-formatted JSON payload, framed
+- Every pause (an armed `DIAMOND_OP_BREAKPOINT_CHECK`, a step condition
+  being satisfied, or the explicit `debugger()`/`breakpoint()` call's own
+  always-unconditional `DIAMOND_OP_DEBUGGER`) writes one hand-formatted
+  JSON payload -- including a `"reason":"breakpoint"`/`"step"` field
+  `dap/main.c`'s own `stopped` event passes straight through -- framed
   the same `Content-Length` way, to the control fd
   (`debugger_structured_helper`, `src/vm.c`) and then blocks reading
-  framed commands back in a loop -- applying any `setBreakpoints` it
-  sees in place and only resuming once a `continue` arrives -- rather
-  than a single fixed read; the VM itself never links a JSON library for
-  this (`parse_debug_command` hand-scans the two fixed shapes it needs to
-  recognize instead), only `diamond-dap` (which needs to speak real DAP
-  to its own client) does. A `DIAMOND_OP_BREAKPOINT_CHECK` that *isn't*
-  currently armed also does a quick non-blocking check of the same
-  control fd before falling through -- see "Live breakpoints" above for
+  framed commands back in a loop -- applying any `setBreakpoints` in
+  place and only resuming once a `continue`/`next`/`stepIn`/`stepOut`
+  arrives -- rather than a single fixed read; the VM itself never links a
+  JSON library for this (`parse_debug_command` hand-scans the fixed set
+  of shapes it needs to recognize instead), only `diamond-dap` (which
+  needs to speak real DAP to its own client) does. A
+  `DIAMOND_OP_BREAKPOINT_CHECK` that *isn't* currently armed also does a
+  quick non-blocking check of the same control fd before falling
+  through -- see "Live breakpoints" above for
   why that has to happen there rather than via some other mechanism.
 - `diamond-dap` translates that payload's `(name, line, column)` --
   expressed in the same expanded-buffer terms the compiler itself

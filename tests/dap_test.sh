@@ -308,4 +308,157 @@ count=$((count + 1))
 wait "$DAP2_PID"
 count=$((count + 1))
 
+# --- real stepping: next/stepIn/stepOut, chained through one continuous
+# session. A fixture where every call is a leaf can't distinguish
+# step-over from step-in, so this one has outer() call inner(). ---
+
+fixture3="$work/fixture3.di"
+cat > "$fixture3" <<'EOF'
+def inner()
+  a = 1
+  b = 2
+  b
+end
+
+def outer()
+  x = inner()
+  y = x + 1
+  y
+end
+
+result = outer()
+puts(result)
+EOF
+
+coproc DAP3 { "$dap"; }
+
+send3() {
+    local body="$1"
+    printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" >&"${DAP3[1]}"
+}
+read_message3() {
+    local line length=-1 body
+    while IFS= read -r -u "${DAP3[0]}" line; do
+        line="${line%$'\r'}"
+        [[ -z "$line" ]] && break
+        if [[ "$line" == Content-Length:* ]]; then
+            length="${line#Content-Length: }"
+        fi
+    done
+    if (( length < 0 )); then
+        echo "dap_test: message with no Content-Length header" >&2
+        exit 1
+    fi
+    IFS= read -r -u "${DAP3[0]}" -N "$length" body
+    printf '%s' "$body"
+}
+read_until3() {
+    local pattern="$1" tries=0 msg
+    while (( tries < 30 )); do
+        msg="$(read_message3)"
+        if [[ "$msg" == *"$pattern"* ]]; then
+            printf '%s' "$msg"
+            return 0
+        fi
+        tries=$((tries + 1))
+    done
+    echo "dap_test: never saw a message matching: $pattern" >&2
+    exit 1
+}
+
+send3 '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"diamond"}}'
+read_until3 '"command":"initialize"' >/dev/null
+count=$((count + 1))
+read_until3 '"event":"initialized"' >/dev/null
+count=$((count + 1))
+
+send3 '{"seq":2,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$fixture3"'"},"breakpoints":[{"line":8}]}}'
+read_until3 '"command":"setBreakpoints"' >/dev/null
+count=$((count + 1))
+
+send3 '{"seq":3,"type":"request","command":"launch","arguments":{"program":"'"$fixture3"'"}}'
+read_until3 '"command":"launch"' >/dev/null
+count=$((count + 1))
+
+send3 '{"seq":4,"type":"request","command":"configurationDone"}'
+read_until3 '"command":"configurationDone"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until3 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"breakpoint"'* ]]
+count=$((count + 1))
+
+send3 '{"seq":5,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until3 '"command":"stackTrace"')"
+[[ "$response" == *'"name":"outer"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":8'* ]]
+count=$((count + 1))
+
+# --- stepIn: from the call site, land inside inner()'s own first
+# statement, one frame deeper ---
+
+send3 '{"seq":6,"type":"request","command":"stepIn","arguments":{"threadId":1}}'
+read_until3 '"command":"stepIn"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until3 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"step"'* ]]
+count=$((count + 1))
+
+send3 '{"seq":7,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until3 '"command":"stackTrace"')"
+[[ "$response" == *'"name":"inner"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":2'* ]]
+count=$((count + 1))
+
+# --- stepOut: back in outer(), right after the call returns ---
+
+send3 '{"seq":8,"type":"request","command":"stepOut","arguments":{"threadId":1}}'
+read_until3 '"command":"stepOut"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until3 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"step"'* ]]
+count=$((count + 1))
+
+send3 '{"seq":9,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until3 '"command":"stackTrace"')"
+[[ "$response" == *'"name":"outer"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":9'* ]]
+count=$((count + 1))
+
+# --- next (step over): stays in outer(), doesn't descend into anything ---
+
+send3 '{"seq":10,"type":"request","command":"next","arguments":{"threadId":1}}'
+read_until3 '"command":"next"' >/dev/null
+count=$((count + 1))
+
+stopped="$(read_until3 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"step"'* ]]
+count=$((count + 1))
+
+send3 '{"seq":11,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until3 '"command":"stackTrace"')"
+[[ "$response" == *'"name":"outer"'* ]]
+count=$((count + 1))
+[[ "$response" == *'"line":10'* ]]
+count=$((count + 1))
+
+send3 '{"seq":12,"type":"request","command":"continue","arguments":{"threadId":1}}'
+read_until3 '"command":"continue"' >/dev/null
+count=$((count + 1))
+read_until3 '"event":"exited"' >/dev/null
+count=$((count + 1))
+read_until3 '"event":"terminated"' >/dev/null
+count=$((count + 1))
+
+send3 '{"seq":13,"type":"request","command":"disconnect"}'
+read_until3 '"command":"disconnect"' >/dev/null
+count=$((count + 1))
+wait "$DAP3_PID"
+count=$((count + 1))
+
 echo "$count dap tests passed"
