@@ -247,6 +247,9 @@ module Div
     [
       "def #{escape_fn_name}(value)",
       "  s = \"\#{value}\"",
+      "  if s.index_of(\"&\") == nil && s.index_of(\"<\") == nil && s.index_of(\">\") == nil && s.index_of(\"\\\"\") == nil && s.index_of(\"'\") == nil",
+      "    return s",
+      "  end",
       "  sb = StringBuilder.new()",
       "  i = 0",
       "  while i < s.length()",

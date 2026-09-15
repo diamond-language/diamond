@@ -111,6 +111,34 @@ actual="$("$diamond" "$work/driver_escape.di")"
 assert_contains "$actual" "match=true value=&lt;a href=&quot;x&quot;&gt;tom &amp; jerry&#39;s&lt;/a&gt;"
 count=$((count + 1))
 
+# --- escape_html's fast path (skip the char-by-char loop entirely when
+# nothing needs escaping) stays behaviorally identical to the unescaped
+# slow path across: a string with no special characters at all (proves
+# the fast path is actually reachable and returns the input unchanged,
+# not just correct when it doesn't fire), a special character at each
+# boundary (first/last byte), and non-ASCII content with a special
+# character mixed in (proves the byte-level scan isn't confused by
+# multi-byte UTF-8 sequences) ---
+cat >"$work/driver_escape_fastpath.di" <<DRIVEREOF
+require "$work/escape_check.html"
+require "$(pwd)/lib/div/runtime"
+samples = ["plain text with no specials", "&leading amp", "trailing lt<", "café <b>olé</b> naïve"]
+i = 0
+while i < samples.length()
+  sample = samples[i]
+  from_template = escape_check_html(sample).strip()
+  from_runtime = Div.escape_html(sample)
+  puts("match=#{from_template == from_runtime} unchanged=#{from_runtime == sample} value=#{from_runtime}")
+  i += 1
+end
+DRIVEREOF
+actual="$("$diamond" "$work/driver_escape_fastpath.di")"
+assert_contains "$actual" "match=true unchanged=true value=plain text with no specials"
+assert_contains "$actual" "match=true unchanged=false value=&amp;leading amp"
+assert_contains "$actual" "match=true unchanged=false value=trailing lt&lt;"
+assert_contains "$actual" "match=true unchanged=false value=café &lt;b&gt;olé&lt;/b&gt; naïve"
+count=$((count + 1))
+
 # --- two different templates required into the SAME program don't
 # collide, on either the render function name or the inlined escape
 # helper name -- the whole reason function_name_for derives both from

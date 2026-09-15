@@ -256,6 +256,21 @@ authoritative fine-grained record.
   skindicate's own `Model#initialize`) JIT-eligible -- see
   docs/internal/jit-design.md's "Phase 2g" and docs/roadmap.md's
   "Native-code execution" for the two gaps that remain.
+- `div` templates' HTML-escaping (`Div.escape_html` and the equivalent
+  helper inlined into every compiled template) now skips its
+  char-by-char `StringBuilder` loop entirely for the common case of a
+  string containing none of `& < > " '` -- a cheap upfront native
+  `.index_of()` scan returns the input unchanged instead of paying one
+  single-character String allocation per byte for output that ends up
+  byte-identical to the input anyway. Found via profiling skindicate.dia's
+  own root page locally: rendering a 30-card grid dropped from ~55ms to
+  ~43ms (~22% faster), cutting total request time from ~86-98ms to
+  ~72ms -- escaping alone is ~11x faster in isolation
+  (a targeted microbenchmark went from ~7.4ms to ~0.7ms for the same
+  escape workload), though grid rendering does more than just escaping,
+  which is why the end-to-end win is smaller than that. No behavior
+  change for any input, including the rare case where escaping actually
+  is needed (unchanged, still the original char-by-char loop).
 
 ## 0.4.0
 
