@@ -50,13 +50,14 @@ landed this cycle) is deliberately narrow -- see that section's own list
 of what it doesn't do. Real possibilities this opens up, none attempted
 yet, none committed:
 
-- **an additional hand-written body** -- `struct Point(x: Int, y: Int)`
-  followed by ordinary `def`/`attr`/`include` lines before `end`, so a
-  struct's generated methods could be supplemented rather than only
-  used as-is. Needs `compile_class`'s own body-parsing loop factored out
-  so `compile_struct` can call it too -- a real, separate refactor of
-  already-delicate, working code, not attempted alongside the rest of
-  this feature.
+- ~~an additional hand-written body~~ -- **closed** (2026-09, docs/
+  classes-and-modules.md's own struct section): `compile_class`'s body-
+  parsing loop is now a shared `compile_class_body` (`src/compiler.c`),
+  called by `compile_struct` after it registers its own generated
+  readers/`initialize`/`==`/`to_s`. A hand-written member can only add,
+  not override -- a name collision with a generated method already fails
+  via the same duplicate-method checks an ordinary `class` redefining a
+  method twice already hits, with no struct-specific handling needed.
 - **a superclass, or being reopened** -- both ruled out for this pass
   specifically because there's no obviously correct semantics for
   regenerating `==`/`to_s`/`initialize` against an inherited or changed

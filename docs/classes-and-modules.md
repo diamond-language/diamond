@@ -577,6 +577,37 @@ the struct's own name (`struct Node(value: Int, rest: Node | Nil)`) --
 the class is registered before its field list is parsed specifically so
 this resolves.
 
+**A struct's own body can supplement the generated methods** -- ordinary
+`def`/`attr`/`attr_reader`/`attr_writer`/`attr_accessor`/`attr_predicate`/
+`include`/`private`/`protected`/`public`/`alias_method`/`delegate` lines
+between the field list and `end`, exactly as a `class` body accepts:
+
+```ruby
+module Greetable
+  def greet() = "hi, #{self.name_for_greeting()}"
+end
+
+struct Point(x: Int, y: Int)
+  include Greetable
+
+  def name_for_greeting() = "point"
+
+  def distance_squared_to(other)
+    dx = @x - other.x()
+    dy = @y - other.y()
+    dx * dx + dy * dy
+  end
+end
+```
+
+A hand-written member can only *add*, not override: `def to_s`/`def ==`/
+`def initialize`, or a `def`/`attr` matching a field's own generated
+reader name, is a compile error ("duplicate or excessive method
+definition" / "attribute method is already defined") -- the same error
+an ordinary `class` already gives for defining the same method twice,
+since a struct's generated methods are registered before its own body
+compiles and nothing distinguishes how a method got its name.
+
 **Deliberately narrow for this first pass:**
 
 - **No superclass.** `struct Point(x: Int) < Base` is a compile error --
@@ -588,9 +619,6 @@ this resolves.
   name is a compile error, unlike a plain `class`. Regenerating
   `initialize`/`==`/`to_s` for a redeclared field list has no obviously
   correct semantics, so it's simply disallowed rather than guessed at.
-- **No additional body.** `struct Point(x: Int, y: Int)\nend` is the
-  whole declaration -- no extra `def`/`attr`/`include` between the field
-  list and `end` yet. Planned as a later extension; see roadmap.md.
 - **Field types are required.** `struct Point(x, y)` (no `: Type`) is a
   compile error -- this is what lets the generated readers carry a real
   return type and keeps `==`/`to_s` simple.

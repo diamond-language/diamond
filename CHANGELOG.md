@@ -181,14 +181,24 @@ authoritative fine-grained record.
   form `Point.new(x: 1, y: 2)`), `.x()`/`.y()`, field-wise `==` (`false`,
   never a raised error, against an unrelated type), and
   `"Point(x: 1, y: 2)"` from `.to_s()`. Deliberately narrow for this
-  first pass: no superclass, no reopening, and no additional
-  hand-written body yet. Composes normally with everything else -- a
-  struct's class can appear in a `Type | Type` union or participate in
-  exhaustiveness checking like any other class, `.freeze()`/`.frozen?()`
-  work on an instance the ordinary way, and a field's declared type may
-  refer to the struct's own name (`struct Node(value: Int, rest: Node |
-  Nil)`). See docs/classes-and-modules.md's "`struct` declarations"
-  section.
+  first pass: no superclass, no reopening. Composes normally with
+  everything else -- a struct's class can appear in a `Type | Type`
+  union or participate in exhaustiveness checking like any other class,
+  `.freeze()`/`.frozen?()` work on an instance the ordinary way, and a
+  field's declared type may refer to the struct's own name (`struct
+  Node(value: Int, rest: Node | Nil)`). See docs/classes-and-modules.md's
+  "`struct` declarations" section.
+- A struct's body can now supplement its generated methods with ordinary
+  `def`/`attr`/`include`/visibility/`alias_method`/`delegate` lines
+  between the field list and `end` -- `compile_class`'s own body-parsing
+  loop is now shared (`compile_class_body`, `src/compiler.c`) between
+  `class` and `struct`. A hand-written member can only add, not
+  override: a name collision with a generated reader/`initialize`/`==`/
+  `to_s` fails with the same "duplicate or excessive method definition"/
+  "attribute method is already defined" error an ordinary `class`
+  already gives for defining a method twice, with no struct-specific
+  handling needed. See docs/classes-and-modules.md's "`struct`
+  declarations" section.
 
 ### Packages
 
