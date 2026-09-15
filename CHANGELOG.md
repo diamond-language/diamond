@@ -271,6 +271,22 @@ authoritative fine-grained record.
   which is why the end-to-end win is smaller than that. No behavior
   change for any input, including the rare case where escaping actually
   is needed (unchanged, still the original char-by-char loop).
+- `ActiveRecord::Model#initialize` now copies its incoming attributes
+  via the native `Hash#dup` instead of a manual `.keys()` + indexed
+  loop -- both produce the same independent, mutable copy, but `#dup`
+  measured ~16-24x faster across realistic row shapes (7-16 columns).
+  Every row any query returns constructs one `Model` instance, so this
+  runs on every row of every query result across every ActiveRecord-based
+  app (skindicate.dia, project_board, pheint.dia). Found continuing the
+  same skindicate.dia profiling pass as the `div` escaping fix above,
+  after ruling out template rendering and `StringBuilder` as the
+  remaining cost (both measured negligible at this scale) and tracing
+  the real remaining time into ActiveRecord's row-to-object hydration:
+  cut `SkinsController#index`'s own measured cost from ~43ms to ~26ms
+  (~41% faster), and the real end-to-end root-page request from ~72ms
+  to ~52-58ms. No behavior change -- `dirty_attributes.di` and every
+  other `@attributes` reader/writer in `model.di` work identically
+  against either copy.
 
 ## 0.4.0
 
