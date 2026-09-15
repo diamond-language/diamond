@@ -524,24 +524,49 @@ Measured, real wins on `bench/RESULTS.md`'s own benchmarks (release build):
 ~2.9-3x on `int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
 `object_hydration.di`.
 
-**It never reached its original motivating target.** The actual goal was
-skindicate's own `Model#initialize`-shaped row hydration; that still doesn't
-compile because its loop condition needs the generic `DIAMOND_OP_LESS`
-(never quickened to `LESS_INT` under `DIAMOND_JIT=1` alone), whose own
-Instance `<`-override branch forces a conservative, monotonic
-compile-time-only "a call could have happened" flag that then blocks the
-very next `index += 1`. Reaching it for real would need either a
-runtime-checked (not compile-time-only) has-a-call-happened flag, or local
-type inference proving `LESS`'s operands are always `Int` -- a materially
-bigger design change, not scoped or decided. A general tracing or method
-JIT covering arbitrary call graphs remains further out still, an open
-research direction rather than a committed feature.
+**It never reached its original motivating target, and the real reason
+turned out to be three separate gaps, not one.** The actual goal was
+skindicate's own `Model#initialize`-shaped row hydration. Landed one
+narrow, real, independently-useful piece (2026-09, `docs/internal/jit-
+design.md`'s own "Phase 2f"): `.length()`/`.to_i()`/`.ord()`/etc. now
+publish their known fixed scalar return type at compile time (reusing
+`DIAMOND_NATIVE_METHODS`, a table already built for interface
+conformance checking), so a `.length()`-bounded comparison gets
+`LESS_INT` from its very first execution under the plain interpreter,
+with no dependence on `DIAMOND_QUICKEN` ever kicking in. **This is an
+interpreter-level win only, confirmed not to move JIT eligibility at
+all** -- investigated end to end, empirically, not just by re-reading
+the opcode whitelist: `Model#initialize`-shaped code remains
+unconditionally JIT-ineligible for three independent reasons:
+
+- `jc->has_called`'s own compile-time-only, monotonic nature (original
+  finding, unchanged) -- a real armed-breakpoint-vs-step-mode-shaped
+  problem, needing a genuinely runtime-checked flag instead;
+- `DIAMOND_OP_GET_IVAR` has no case in the JIT's own compile-time
+  opcode scan at all (only `SET_IVAR` does) -- confirmed directly by
+  compiling a method that only *reads* an ivar in a loop condition,
+  with no calls anywhere in it, and observing it still bails;
+- generic `DIAMOND_OP_INVOKE` (dynamic dispatch by name, used for
+  *every* `.method()` call regardless of receiver type, not a
+  dedicated per-native-method opcode) also has no case at all --
+  confirmed the same way, isolating a `.length()`-calling method's own
+  JIT attempt from an unrelated `initialize` method's own successful
+  one in the same program.
+
+Each is independently sufficient to block the whole function (the same
+unconditional, whole-function `default: jc->bailed = true` every
+unrecognized opcode already hits) -- fixing `has_called` alone, without
+also adding real `GET_IVAR` and `INVOKE` support, still would not reach
+`Model#initialize`. A general tracing or method JIT covering arbitrary
+call graphs remains further out still, an open research direction
+rather than a committed feature.
 
 Before extending past the current narrow slice:
 
-- identify hot workloads that remain VM-bound after existing specialization
-  *and* after the current JIT's own whitelist (a workload similar to
-  `Model#initialize` needs the has-a-call-happened redesign above first);
+- identify hot workloads that remain VM-bound after existing
+  specialization *and* after the current JIT's own whitelist (a
+  workload similar to `Model#initialize` needs all three gaps above
+  closed together, not just one);
 - define deoptimization and GC-root contracts for anything that compiles a
   call, allocation, or exception path the current slice deliberately avoids;
 - require benchmark evidence large enough to justify the added complexity,

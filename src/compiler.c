@@ -7049,6 +7049,48 @@ static void publish_collection_method_return_type(Compiler *compiler,
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
 }
 
+/* A small number of native String/Array/Hash methods (.length, .to_i,
+ * .ord, .strip, ...) always return one fixed scalar type regardless of
+ * the receiver's own element type -- unlike publish_collection_method_
+ * return_type just above, which exists specifically to preserve what a
+ * transform's own *nested* element/value type sets are. Reuses
+ * DIAMOND_NATIVE_METHODS (src/vm.c), the exact same table already
+ * exposed to this file for structural interface conformance checking
+ * (see known_type_satisfies_one's own call to diamond_native_method_
+ * satisfies above) -- one source of truth for "what does this native
+ * method return," not a second, parallel list of the same facts.
+ * Deliberately narrow: only when the receiver's own type set has
+ * exactly one member and it's a plain String/Array/Hash, never a
+ * union or a user class. Sound because none of these three are ever
+ * reachable through the user-facing method-redefinition machinery
+ * (that operates on a real DiamondClass's own mutable method table;
+ * these are native value kinds dispatched through a fixed C-level
+ * switch instead) -- "a plain Array's own .length() always returns
+ * Int" can never be invalidated by user code at runtime. See
+ * docs/internal/jit-design.md's own note on why this specific gap
+ * mattered: `index < keys.length()` couldn't compile-time-select
+ * DIAMOND_OP_LESS_INT without it. */
+static void publish_native_scalar_method_return_type(Compiler *compiler,
+        uint16_t reg,int32_t receiver_set_index,DiamondSpan name,uint8_t arity) {
+    if(receiver_set_index<0||
+       (size_t)receiver_set_index>=compiler->function->type_set_count)return;
+    const DiamondTypeSet *receiver_set=
+        &compiler->function->type_sets[(size_t)receiver_set_index];
+    if(receiver_set->count!=1)return;
+    const uint8_t receiver_type=receiver_set->members[0].id;
+    if(receiver_type!=DIAMOND_TYPE_STRING&&receiver_type!=DIAMOND_TYPE_ARRAY&&
+       receiver_type!=DIAMOND_TYPE_HASH)return;
+    char method_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(name.length>=sizeof method_name)return;
+    for(size_t index=0;index<name.length;index++)
+        method_name[index]=compiler->source[name.start+index];
+    method_name[name.length]='\0';
+    uint8_t return_type=UINT8_MAX;
+    if(diamond_native_method_satisfies(receiver_type,method_name,arity,&return_type)&&
+       return_type!=UINT8_MAX)
+        compiler->known_types[reg]=return_type;
+}
+
 static int32_t joined_collection_argument(Compiler *compiler,
         int32_t collection_set_index,uint8_t collection_type,bool second) {
     if(collection_set_index<0||
@@ -7959,6 +8001,8 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         type_arguments,type_argument_count,args,count);
     publish_instance_return_type(compiler,result,receiver_set_index,name,
         return_target,resolved_arguments,resolved_count);
+    publish_native_scalar_method_return_type(compiler,result,receiver_set_index,
+        name,(uint8_t)count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
     publish_array_push_return_type(compiler,result,mutation_receiver,name,args,

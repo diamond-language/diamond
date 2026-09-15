@@ -261,6 +261,57 @@ decided -- a materially bigger design change than anything in Phases
 2-2e, since it would replace the core exception-safety mechanism Phase 2d
 built rather than extend it.
 
+### Phase 2f: compile-time Int return type for native scalar methods -- a real, narrower win, *not* a JIT-eligibility fix
+
+Investigated whether the local-type-inference half of the paragraph
+above was reachable as a smaller, standalone step. It was, but turned
+out to matter for a different reason than expected. The actual gap:
+`compile_binary_op` already picks `DIAMOND_OP_LESS_INT` at compile time
+whenever both operands' `known_types` are already `DIAMOND_TYPE_INT`
+(this is compile-time selection, unrelated to `DIAMOND_QUICKEN`'s own
+separate runtime rewrite) -- `attributes.keys()`'s own destination
+register already gets `known_types` published as `DIAMOND_TYPE_ARRAY`
+(`"keys"` is in `collection_relay`'s own table), but `.length()` had no
+equivalent publisher at all, leaving `keys.length()`'s own register
+`TYPE_UNKNOWN` and forcing generic `LESS`. Fixed by a new `publish_
+native_scalar_method_return_type` (`src/compiler.c`) consulting
+`DIAMOND_NATIVE_METHODS`/`diamond_native_method_satisfies` (`src/vm.c`,
+`src/vm.h`) -- a table already built for structural interface
+conformance checking, already exposed across the compiler/vm boundary,
+and already correctly declaring `.length()`/`.to_i()`/`.ord()`/etc.'s
+own fixed scalar return types -- rather than inventing a second,
+parallel list of the same facts.
+
+**This does not move `Model#initialize` (or any `.length()`-bounded
+loop) any closer to JIT-eligible**, and saying so plainly here to avoid
+this section repeating the same "should have been enough" mistake the
+original phase's own investigation made. Confirmed directly, empirically,
+not just by re-reading the opcode whitelist: a method whose body reads
+an ivar (`while i < @n`, no calls at all) still fails to compile --
+`DIAMOND_OP_GET_IVAR` has no case in `compile_body`'s own switch (only
+`SET_IVAR` does, which is why an `initialize`-shaped method that only
+*writes* ivars from its own parameters was ever JIT-eligible in the
+first place). A method that calls a native collection method
+(`.length()`, `.keys()`, ...) fails for the separate, additional reason
+that generic `DIAMOND_OP_INVOKE` -- dynamic dispatch by name, used for
+*every* `.method()` call regardless of receiver type, not a dedicated
+per-native-method opcode -- also has no case anywhere in `compile_body`.
+Both are unconditional, whole-function bails via the same `default:
+jc->bailed = true` every other unrecognized opcode already hits.
+
+So the accurate picture, updated: reaching `Model#initialize`-shaped
+code needs `has_called`'s own redesign (above) *and* real `GET_IVAR`
+support *and* either real `INVOKE` support or hoisting/caching its
+result outside the JIT'd region -- three separate, independently real
+gaps, not one. This phase's own real, shipped value is narrower and
+unconditional: any `.length()`/`.to_i()`/etc.-bounded comparison now
+gets the cheaper `LESS_INT`/etc. dispatch from its very first execution
+under the plain interpreter, with no dependence on `DIAMOND_QUICKEN`
+ever observing enough int-int comparisons to rewrite it in place --
+confirmed via `--dump-bytecode` showing identical `LESS_INT` output
+with `DIAMOND_QUICKEN` unset entirely. A real, safe, always-on
+interpreter improvement; not a JIT-coverage one.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
