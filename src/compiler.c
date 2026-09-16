@@ -9329,10 +9329,12 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
 typedef struct CaseFlowJoin {
     uint8_t *types;
     int32_t *sets;
+    int32_t *tooling_sets;
     bool *varied;
     bool initialized;
     uint8_t result_type;
     int32_t result_set;
+    int32_t result_tooling_set;
     /* Bounded by DIAMOND_MAX_LOCALS (64), unlike types/sets/varied above,
      * so these travel inline with no malloc dance. */
     uint32_t alias[DIAMOND_MAX_LOCALS];
@@ -9908,15 +9910,18 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,size_t flow_local_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
     const int32_t branch_result_set=compiler->known_type_sets[branch_result];
+    const int32_t branch_result_tooling=compiler->tooling_type_sets[branch_result];
     if(!join->initialized) {
         for(size_t index=0;index<flow_reg_count;index++) {
             join->types[index]=compiler->known_types[index];
             join->sets[index]=compiler->known_type_sets[index];
+            join->tooling_sets[index]=compiler->tooling_type_sets[index];
         }
         for(size_t index=0;index<flow_local_count;index++)
             join->alias[index]=compiler->locals[index].alias_identity;
         merge_case_new_locals(compiler,join,flow_local_count);
         join->result_type=branch_result_type;join->result_set=branch_result_set;
+        join->result_tooling_set=branch_result_tooling;
         join->initialized=true;return;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
@@ -9925,6 +9930,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         merge_flow_types(compiler,join->types[index],join->sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &join->types[index],&join->sets[index]);
+        if(join->tooling_sets[index]!=compiler->tooling_type_sets[index])
+            join->tooling_sets[index]=-1;
     }
     for(size_t index=0;index<flow_local_count;index++)
         join->alias[index]=merge_alias_identity(join->alias[index],
@@ -9932,6 +9939,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
     merge_case_new_locals(compiler,join,flow_local_count);
     merge_flow_types(compiler,join->result_type,join->result_set,
         branch_result_type,branch_result_set,&join->result_type,&join->result_set);
+    if(join->result_tooling_set!=branch_result_tooling)
+        join->result_tooling_set=-1;
 }
 
 static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
@@ -9940,7 +9949,7 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=join->types[index];
         compiler->known_type_sets[index]=join->sets[index];
-        compiler->tooling_type_sets[index]=-1;
+        compiler->tooling_type_sets[index]=join->tooling_sets[index];
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
@@ -9959,6 +9968,7 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     }
     compiler->known_types[destination]=join->result_type;
     compiler->known_type_sets[destination]=join->result_set;
+    compiler->tooling_type_sets[destination]=join->result_tooling_set;
 }
 
 /* Compiles one `when`/`else`/`end` branch of a case expression and
@@ -9970,8 +9980,8 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * the whole chain, so every level's jump converges on that same address
  * without this function needing to collect and patch a jump list itself.
  *
- * `entry_types`/`entry_sets` (a snapshot of compiler->known_types/
- * known_type_sets taken once, in parse_case, before the first branch)
+ * `entry_types`/`entry_sets`/`entry_tooling` (snapshots of the three
+ * corresponding compiler fact arrays taken once, in parse_case, before the first branch)
  * gets restored at the top of every call -- a when-clause's values and
  * body are compiled as though no earlier when-clause's (also-compiled,
  * possibly-speculative) body actually ran, mirroring why parse_if resets
@@ -9980,12 +9990,14 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int32_t *entry_sets, size_t flow_local_count,
+        const int32_t *entry_sets,const int32_t *entry_tooling,
+        size_t flow_local_count,
         const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
         bool subjectless,CaseExhaustiveness *exhaustiveness) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
+        compiler->tooling_type_sets[index]=entry_tooling[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=entry_alias[index];
@@ -10002,6 +10014,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         const uint16_t reg=compiler->locals[index].reg;
         compiler->known_types[reg]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[reg]=-1;
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=0;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
@@ -10201,7 +10214,8 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
+        compiler,subject,flow_reg_count,entry_types,entry_sets,entry_tooling,
+        flow_local_count,
         entry_alias,destination,join,subjectless,exhaustiveness);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
@@ -10314,40 +10328,48 @@ static uint16_t parse_case(Compiler *compiler) {
      * here otherwise. */
     uint8_t inline_entry_types[256],inline_join_types[256];
     int32_t inline_entry_sets[256],inline_join_sets[256];
+    int32_t inline_entry_tooling[256],inline_join_tooling[256];
     bool inline_varied[256]={};
     uint8_t *entry_types=inline_entry_types;int32_t *entry_sets=inline_entry_sets;
     uint8_t *join_types=inline_join_types;int32_t *join_sets=inline_join_sets;
+    int32_t *entry_tooling=inline_entry_tooling,*join_tooling=inline_join_tooling;
     bool *varied=inline_varied;
-    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;bool *heap_varied=nullptr;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr,*heap_tooling=nullptr;
+    bool *heap_varied=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
         heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
+        heap_tooling=malloc(flow_reg_count*2*sizeof(int32_t));
         heap_varied=calloc(flow_reg_count,sizeof(bool));
-        if(heap_types==nullptr||heap_sets==nullptr||heap_varied==nullptr) {
+        if(heap_types==nullptr||heap_sets==nullptr||heap_tooling==nullptr||
+           heap_varied==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling case expression");
-            free(heap_types);free(heap_sets);free(heap_varied);
+            free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
             return destination;
         }
         entry_types=heap_types;join_types=heap_types+flow_reg_count;
         entry_sets=heap_sets;join_sets=heap_sets+flow_reg_count;varied=heap_varied;
+        entry_tooling=heap_tooling;join_tooling=heap_tooling+flow_reg_count;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
         entry_types[index]=compiler->known_types[index];
         entry_sets[index]=compiler->known_type_sets[index];
+        entry_tooling[index]=compiler->tooling_type_sets[index];
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
         fail(compiler,compiler->current.span,
              "expected 'when' after case expression");
-        free(heap_types);free(heap_sets);free(heap_varied);
+        free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
         return destination;
     }
-    CaseFlowJoin join={.types=join_types,.sets=join_sets,.varied=varied,
-        .result_type=TYPE_UNKNOWN,.result_set=-1};
+    CaseFlowJoin join={.types=join_types,.sets=join_sets,
+        .tooling_sets=join_tooling,.varied=varied,
+        .result_type=TYPE_UNKNOWN,.result_set=-1,.result_tooling_set=-1};
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
-        entry_alias,destination,&join,subjectless,&exhaustiveness);
-    free(heap_types);free(heap_sets);free(heap_varied);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,entry_tooling,
+        flow_local_count,entry_alias,destination,&join,subjectless,&exhaustiveness);
+    free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
     return result;
 }
 

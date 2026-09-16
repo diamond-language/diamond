@@ -311,6 +311,26 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"}}}'
 read_message >/dev/null
 
+# Case joins apply the same rule across every when/else path.
+receiver_case_uri="file://$work/receiver_case.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_case_uri"'","text":"require \"receiver_dependency\"\ndef preserve_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    puts(1)\n  else\n    puts(2)\n  end\n  pet.bark()\nend\n\ndef discard_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    pet = ImportedFactory.build()\n  else\n    puts(2)\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":152,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"},"position":{"line":9,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":153,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"},"position":{"line":20,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 
