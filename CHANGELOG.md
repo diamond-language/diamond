@@ -39,6 +39,10 @@ authoritative fine-grained record.
 - Extended per-case minor-GC stress coverage to Channel and Supervisor
   producer/consumer, restart, and nested-tree cases. The batch runner now
   isolates `DIAMOND_STRESS_MINOR_GC` between cases just like major-GC stress.
+- Audited TCP, TLS, and `Process.spawn` timeout/error cleanup paths, including
+  descriptor closure after failed setup and rooted TLS-handle cleanup after a
+  handshake failure; existing timeout and failure cases passed without leaks or
+  double-close symptoms.
 
 ### Tooling
 

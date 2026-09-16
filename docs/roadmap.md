@@ -524,6 +524,11 @@ channels, Supervisor restart, and nested supervision cases; the shared batch
 runner clears `DIAMOND_STRESS_MINOR_GC` between cases so those settings cannot
 leak across the corpus.
 
+TCP, TLS, and subprocess timeout/error cleanup was audited in 2026-09. Failed
+connect/listen/handshake and pipe-setup paths close transient descriptors, while
+rooted TLS handles retain sole ownership for later sweep cleanup; the existing
+timeout and failure cases passed without an ownership defect.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database
