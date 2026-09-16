@@ -6885,7 +6885,7 @@ static const DiamondFunction *instance_call_signature(
 
 static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,const uint16_t *bindings,
-        size_t binding_count) {
+        size_t binding_count,bool tooling_only) {
     if(receiver_set_index<0||
        (size_t)receiver_set_index>=compiler->function->type_set_count)return;
     const DiamondTypeSet *receiver_set=
@@ -6903,19 +6903,29 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
     for(size_t index=0;index<member_count;index++) {
         const DiamondFunction *target=class_instance_signature(compiler,
             members[index],name);
-        if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET) {
+        if(target==nullptr) {
             compiler->function->type_set_count=original_count;return;
+        }
+        uint16_t source_set=target->return_type_set;
+        if(source_set==DIAMOND_NO_TYPE_SET) {
+            if(!tooling_only) {
+                compiler->function->type_set_count=original_count;return;
+            }
+            source_set=target->inferred_return_type_set;
+            if(source_set==DIAMOND_NO_TYPE_SET||target->type_variable_count>0) {
+                compiler->function->type_set_count=original_count;return;
+            }
         }
         uint16_t current;
         if(target->type_variable_count>0) {
             bool resolved=true;
             current=clone_substituted_type_set(compiler,target,
-                target->return_type_set,bindings,binding_count,&resolved);
+                source_set,bindings,binding_count,&resolved);
             if(!resolved) {
                 compiler->function->type_set_count=original_count;return;
             }
         } else current=clone_type_set_into_current(compiler,target->type_sets,
-            target->type_set_count,target->return_type_set);
+            target->type_set_count,source_set);
         if(current==DIAMOND_NO_TYPE_SET) {
             compiler->function->type_set_count=original_count;return;
         }
@@ -6925,7 +6935,8 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
             compiler->function->type_set_count=original_count;return;
         }
     }
-    publish_known_type_set(compiler,reg,(uint16_t)joined);
+    if(tooling_only)compiler->tooling_type_sets[reg]=joined;
+    else publish_known_type_set(compiler,reg,(uint16_t)joined);
 }
 
 static int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index);
@@ -7529,14 +7540,22 @@ static uint16_t compile_instance_contextual_block(Compiler *compiler,
 }
 
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
+        uint16_t receiver,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
         size_t binding_count) {
     if(matching_target!=nullptr)
         publish_call_return_type(compiler,reg,matching_target,bindings,
             binding_count);
-    else publish_union_instance_return_type(compiler,reg,receiver_set_index,
-        name,bindings,binding_count);
+    else {
+        int32_t effective_set=receiver_set_index;bool tooling_only=false;
+        if(effective_set<0) {
+            effective_set=compiler->tooling_type_sets[receiver];
+            tooling_only=effective_set>=0;
+        }
+        publish_union_instance_return_type(compiler,reg,effective_set,
+            name,bindings,binding_count,tooling_only);
+    }
     publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
 }
 
@@ -7900,7 +7919,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
-        publish_instance_return_type(compiler,result,receiver_set_index,name,
+        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
             return_target,resolved_arguments,resolved_count);
         publish_collection_keyword_return_type(compiler,result,
             receiver_set_index,name,keyword_names,keyword_values,keyword_count);
@@ -7950,7 +7969,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
-                publish_instance_return_type(compiler,result,
+                publish_instance_return_type(compiler,result,receiver,
                     receiver_set_index,name,return_target,resolved_arguments,
                     resolved_count);
                 return result;
@@ -7960,7 +7979,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
             spread,type_arguments,type_argument_count);
-        publish_instance_return_type(compiler,result,receiver_set_index,name,
+        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
             return_target,resolved_arguments,resolved_count);
         return result;
     }
@@ -8028,7 +8047,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
-            publish_instance_return_type(compiler,result,receiver_set_index,
+            publish_instance_return_type(compiler,result,receiver,receiver_set_index,
                 name,return_target,resolved_arguments,resolved_count);
             return result;
         }
@@ -8036,7 +8055,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
-    publish_instance_return_type(compiler,result,receiver_set_index,name,
+    publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
         return_target,resolved_arguments,resolved_count);
     publish_native_scalar_method_return_type(compiler,result,receiver,
         receiver_set_index,name,(uint8_t)count);

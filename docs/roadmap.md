@@ -454,7 +454,8 @@ Next steps:
   separate from compile-time type semantics. `if`/`unless` joins now retain
   the same fact across `if`/`unless`, `case`, and loop exits and clear
   conflicting facts; other unrepresentable dynamic results remain deliberately
-  unresolved;
+  unresolved. An inferred union receiver also carries an assigned method
+  result when every class arm has a usable declared or inferred return;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

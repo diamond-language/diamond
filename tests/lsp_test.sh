@@ -238,6 +238,38 @@ end
 def build_imported_pet()
   ImportedPet.new()
 end
+
+class UnionProduct
+  def ping()
+    3
+  end
+end
+
+class UnionLeft
+  def product(value)
+    UnionProduct.new()
+  end
+end
+
+class UnionRight
+  def product(value)
+    UnionProduct.new()
+  end
+end
+
+class UnionUnknown
+  def product(value)
+    value
+  end
+end
+
+def build_union_receiver(flag)
+  flag ? UnionLeft.new() : UnionRight.new()
+end
+
+def build_unknown_union_receiver(flag)
+  flag ? UnionLeft.new() : UnionUnknown.new()
+end
 EOF
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
@@ -350,6 +382,26 @@ count=$((count + 1))
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"}}}'
+read_message >/dev/null
+
+# An inferred union receiver can feed an assigned method result when every
+# class arm has a usable inferred return. One unknown arm invalidates the
+# whole result rather than letting the known arm win.
+receiver_union_uri="file://$work/receiver_union.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_uri"'","text":"require \"receiver_dependency\"\ndef compatible_union_result()\n  source = build_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend\n\ndef unknown_union_result()\n  source = build_unknown_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":156,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"},"position":{"line":4,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":157,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"},"position":{"line":10,"character":10}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"}}}'
 read_message >/dev/null
 
 # --- hover resolves a top-level function name, at its own declaration

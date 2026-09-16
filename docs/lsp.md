@@ -159,6 +159,9 @@ search over a real (if scoped) lexical symbol table:
     joins preserve that fact only when every runtime path carries the same
     fact (including the zero-iteration and `break` exits of a loop);
     conflicting paths clear it rather than retaining the last branch compiled.
+    An inferred union receiver can likewise publish an assigned method result
+    when every class arm defines the method with a usable declared or inferred
+    return; one missing or unknown arm makes the result unresolved.
     Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three
