@@ -392,7 +392,7 @@ read_message >/dev/null
 
 # A class-typed Array local carries its element set through one indexing step.
 receiver_index_uri="file://$work/receiver_index.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":172,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":2,"character":10}}}'
@@ -403,6 +403,11 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","id":173,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":6,"character":14}}}'
 response="$(read_message)"
 [[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":174,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":10,"character":15}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"}}}'

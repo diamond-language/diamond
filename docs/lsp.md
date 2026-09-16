@@ -123,8 +123,9 @@ search over a real (if scoped) lexical symbol table:
     receiver also resolves when every assignment to that field agrees on one
     concrete class; conflicting or unknown assignments deliberately erase the
     candidate rather than guessing. Grouping parentheses around any otherwise
-    resolvable receiver are ignored. One indexing step from a local explicitly
-    typed as `Array[Class]` resolves to its class element type; `Hash[K, V]`
+    resolvable receiver are ignored. Repeated indexing from a local explicitly
+    typed as a nested `Array` resolves to its eventual class element type;
+    `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a

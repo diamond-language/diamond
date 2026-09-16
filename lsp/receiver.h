@@ -17,9 +17,9 @@
  * `x = flag ? Dog.new() : Cat.new()`, DiamondScopeLocal.known_type_set), an instance variable
  * whose assignments all agree on one class, or a call chain whose top-level
  * function/method links have explicit class return annotations. Grouping
- * parentheses around any supported receiver form are ignored. One indexing
- * step from a local typed as `Array[Class]` resolves as Class; nullable Hash
- * indexing remains unresolved. `Class.new()` is intrinsically an instance of
+ * parentheses around any supported receiver form are ignored. Repeated
+ * indexing from a local typed as a nested `Array` resolves its eventual class;
+ * nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
  * Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
  * explicit bindings when each binding is a plain class name, or infer a

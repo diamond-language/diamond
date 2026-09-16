@@ -211,18 +211,7 @@ static size_t resolve_indexed_local(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
         bool *is_singleton) {
-    size_t nesting=0,left=end;
-    for(size_t index=end+1;index>start;index--) {
-        const DiamondTokenKind kind=tokens[index-1].kind;
-        if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)nesting++;
-        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&--nesting==0) {
-            left=index-1;break;
-        }
-    }
-    /* This first slice intentionally accepts only `local[index]`. Chained
-     * indexing and indexed call results need structural facts for arbitrary
-     * temporary expressions, which the LSP metadata does not retain. */
-    if(left!=start+1||tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
     const DiamondToken name_token=tokens[start];
     const DiamondFunction *owner=nullptr;
     const DiamondScopeLocal *local=find_scope_local(program,chunk,
@@ -235,12 +224,24 @@ static size_t resolve_indexed_local(const DiamondProgram *program,
     (void)known_type;
     if(known_set<0)known_set=tooling_set;
     if(known_set<0||(size_t)known_set>=owner->type_set_count)return 0;
-    const DiamondTypeSet *outer=&owner->type_sets[(size_t)known_set];
-    if(outer->count!=1||outer->members[0].id!=DIAMOND_TYPE_ARRAY||
-       outer->members[0].argument_set==DIAMOND_NO_TYPE_SET||
-       outer->members[0].argument_set>=owner->type_set_count)return 0;
-    const DiamondTypeSet *elements=
-        &owner->type_sets[outer->members[0].argument_set];
+    size_t token=start+1;
+    while(token<=end) {
+        if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
+        size_t nesting=0,close=token;
+        for(size_t index=token;index<=end;index++) {
+            if(tokens[index].kind==DIAMOND_TOKEN_LEFT_BRACKET)nesting++;
+            else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
+                    --nesting==0) {close=index;break;}
+        }
+        if(close==token)return 0;
+        const DiamondTypeSet *outer=&owner->type_sets[(size_t)known_set];
+        if(outer->count!=1||outer->members[0].id!=DIAMOND_TYPE_ARRAY||
+           outer->members[0].argument_set==DIAMOND_NO_TYPE_SET||
+           outer->members[0].argument_set>=owner->type_set_count)return 0;
+        known_set=(int32_t)outer->members[0].argument_set;
+        token=close+1;
+    }
+    const DiamondTypeSet *elements=&owner->type_sets[(size_t)known_set];
     size_t count=0;
     for(size_t index=0;index<elements->count;index++) {
         size_t class_index;
