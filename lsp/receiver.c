@@ -223,6 +223,17 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         if(kind==DIAMOND_TOKEN_LEFT_PAREN)paren_depth++;
         else if(kind==DIAMOND_TOKEN_RIGHT_PAREN&&paren_depth>0)paren_depth--;
         else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&paren_depth==0) {
+            size_t bracket_depth=0,close=index;
+            for(size_t candidate=index;candidate<=end;candidate++) {
+                if(tokens[candidate].kind==DIAMOND_TOKEN_LEFT_BRACKET)
+                    bracket_depth++;
+                else if(tokens[candidate].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
+                        --bracket_depth==0) {close=candidate;break;}
+            }
+            if(close>index&&close<end&&
+               tokens[close+1].kind==DIAMOND_TOKEN_LEFT_PAREN) {
+                index=close;continue;
+            }
             first_index=index;break;
         }
     }
@@ -255,12 +266,30 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
                 left=index-1;break;
             }
         }
-        if(left==start||tokens[left-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
-        const DiamondToken callee=tokens[left-1];
+        if(left==start)return 0;
+        size_t callee_index=left-1;bool has_explicit_bindings=false;
+        if(tokens[callee_index].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
+            size_t bracket_depth=0,open=callee_index;
+            for(size_t index=callee_index+1;index>start;index--) {
+                const DiamondTokenKind kind=tokens[index-1].kind;
+                if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)bracket_depth++;
+                else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&--bracket_depth==0) {
+                    open=index-1;break;
+                }
+            }
+            if(open==start||tokens[open-1].kind!=DIAMOND_TOKEN_IDENTIFIER)
+                return 0;
+            binding_count=explicit_class_bindings(chunk,source,tokens,open+1,
+                callee_index-1,bindings,8);
+            if(binding_count==0)return 0;
+            has_explicit_bindings=true;callee_index=open-1;
+        }
+        if(tokens[callee_index].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+        const DiamondToken callee=tokens[callee_index];
         const char *name=source+callee.span.start;
         const size_t name_length=callee.span.length;
         const DiamondFunction *target=nullptr;
-        if(left-1==start) {
+        if(callee_index==start) {
             for(size_t index=chunk->function_count;index>0;index--) {
                 const DiamondFunction *candidate=chunk->functions[index-1];
                 if(candidate->owner_class==UINT8_MAX&&!candidate->nested&&
@@ -270,11 +299,13 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
                 }
             }
         } else {
-            if(left<3||tokens[left-2].kind!=DIAMOND_TOKEN_DOT)return 0;
+            if(callee_index<2||tokens[callee_index-1].kind!=DIAMOND_TOKEN_DOT)
+                return 0;
             size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];
             bool receiver_singleton=false;
             const size_t receiver_count=resolve_expression(program,chunk,source,
-                tokens,start,left-3,receiver_classes,DIAMOND_MAX_UNION_TYPES,
+                tokens,start,callee_index-2,receiver_classes,
+                DIAMOND_MAX_UNION_TYPES,
                 &receiver_singleton,depth+1);
             if(receiver_count!=1)return 0;
             const DiamondMethod *method=receiver_lookup_method(chunk,
@@ -285,11 +316,13 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         }
         if(target==nullptr)return 0;
         if(target->type_variable_count>0) {
-            if(first_index<2)return 0;
-            binding_count=infer_class_bindings(program,chunk,source,tokens,
-                left+1,first_index-2,target,bindings,depth);
+            if(!has_explicit_bindings) {
+                if(first_index<2)return 0;
+                binding_count=infer_class_bindings(program,chunk,source,tokens,
+                    left+1,first_index-2,target,bindings,depth);
+            }
             if(binding_count!=target->type_variable_count)return 0;
-        }
+        } else if(has_explicit_bindings)return 0;
         uint16_t return_set=target->return_type_set;
         if(return_set==DIAMOND_NO_TYPE_SET)
             return_set=target->inferred_return_type_set;

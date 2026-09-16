@@ -417,7 +417,7 @@ read_message >/dev/null
 
 # A class-typed Array local carries its element set through one indexing step.
 receiver_index_uri="file://$work/receiver_index.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend\n\ndef indexed_explicit_generic_receivers()\n  generic_array[ImportedPet](ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap[ImportedPet](ImportedPet.new())[0].bark()\nend"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":172,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":2,"character":10}}}'
@@ -434,6 +434,14 @@ for request in '176 19 20' '177 20 33'; do
 done
 
 for request in '178 24 38' '179 25 49'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+for request in '180 29 51' '181 30 62'; do
   set -- $request
   send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
   response="$(read_message)"
