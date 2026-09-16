@@ -207,6 +207,51 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
 
+static size_t resolve_indexed_local(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,size_t *classes,size_t capacity,
+        bool *is_singleton) {
+    size_t nesting=0,left=end;
+    for(size_t index=end+1;index>start;index--) {
+        const DiamondTokenKind kind=tokens[index-1].kind;
+        if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)nesting++;
+        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&--nesting==0) {
+            left=index-1;break;
+        }
+    }
+    /* This first slice intentionally accepts only `local[index]`. Chained
+     * indexing and indexed call results need structural facts for arbitrary
+     * temporary expressions, which the LSP metadata does not retain. */
+    if(left!=start+1||tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    const DiamondToken name_token=tokens[start];
+    const DiamondFunction *owner=nullptr;
+    const DiamondScopeLocal *local=find_scope_local(program,chunk,
+        source+name_token.span.start,name_token.span.length,
+        name_token.span.start,&owner);
+    if(local==nullptr||owner==nullptr)return 0;
+    uint8_t known_type;int32_t known_set,tooling_set;
+    local_type_at_offset(owner,local,name_token.span.start,&known_type,&known_set,
+        &tooling_set);
+    (void)known_type;
+    if(known_set<0)known_set=tooling_set;
+    if(known_set<0||(size_t)known_set>=owner->type_set_count)return 0;
+    const DiamondTypeSet *outer=&owner->type_sets[(size_t)known_set];
+    if(outer->count!=1||outer->members[0].id!=DIAMOND_TYPE_ARRAY||
+       outer->members[0].argument_set==DIAMOND_NO_TYPE_SET||
+       outer->members[0].argument_set>=owner->type_set_count)return 0;
+    const DiamondTypeSet *elements=
+        &owner->type_sets[outer->members[0].argument_set];
+    size_t count=0;
+    for(size_t index=0;index<elements->count;index++) {
+        size_t class_index;
+        if(!decode_class_type(chunk,elements->members[index].id,&class_index))
+            return 0;
+        count=append_class(classes,count,capacity,class_index);
+    }
+    *is_singleton=false;
+    return count;
+}
+
 static size_t infer_class_bindings(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,const DiamondFunction *function,
@@ -421,6 +466,9 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         }
         return 0;
     }
+    if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET)
+        return resolve_indexed_local(program,chunk,source,tokens,start,end,
+            classes,capacity,is_singleton);
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN)
         return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth);
     return 0;
