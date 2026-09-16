@@ -448,10 +448,11 @@ Next steps:
 
 - improve receiver facts across imported files further where they still
   lose precision. One concrete dynamic-flow boundary is now closed: an
-  unannotated imported factory's inferred result survives assignment to a
-  local for hover/definition/completion, via metadata kept separate from
-  compile-time type semantics; other unrepresentable dynamic results remain
-  deliberately unresolved;
+  unannotated imported function or method's inferred result survives
+  assignment to a local for hover/definition/completion, including an
+  instance-method call through an already inferred local, via metadata kept
+  separate from compile-time type semantics; other unrepresentable dynamic
+  results remain deliberately unresolved;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

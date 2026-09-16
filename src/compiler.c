@@ -998,10 +998,22 @@ static void publish_callable_return_type(Compiler *compiler,uint16_t reg,
     publish_known_type_set(compiler,reg,return_set);
 }
 
-static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
+static void publish_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
         size_t binding_count) {
-    if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET)return;
+    if(target==nullptr)return;
+    if(target->return_type_set==DIAMOND_NO_TYPE_SET) {
+        /* Unlike a declared return, this remains tooling-only: it may feed
+         * scope facts for receiver completion after assignment, but never
+         * known_type_sets (and therefore never type checks or opcode choice). */
+        if(target->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
+           target->inferred_return_type_set>=target->type_set_count||
+           target->type_variable_count>0)return;
+        const uint16_t set=clone_type_set_into_current(compiler,target->type_sets,
+            target->type_set_count,target->inferred_return_type_set);
+        if(set!=DIAMOND_NO_TYPE_SET)compiler->tooling_type_sets[reg]=(int32_t)set;
+        return;
+    }
     uint16_t return_set;
     if(target->type_variable_count>0) {
         bool resolved=true;
@@ -1015,17 +1027,6 @@ static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
         target->return_type_set:clone_type_set_into_current(compiler,
             target->type_sets,target->type_set_count,target->return_type_set);
     publish_known_type_set(compiler,reg,return_set);
-}
-
-static void publish_inferred_tooling_return_type(Compiler *compiler,uint16_t reg,
-        const DiamondFunction *target) {
-    if(target==nullptr||target->return_type_set!=DIAMOND_NO_TYPE_SET||
-       target->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
-       target->inferred_return_type_set>=target->type_set_count||
-       target->type_variable_count>0)return;
-    const uint16_t set=clone_type_set_into_current(compiler,target->type_sets,
-        target->type_set_count,target->inferred_return_type_set);
-    if(set!=DIAMOND_NO_TYPE_SET)compiler->tooling_type_sets[reg]=(int32_t)set;
 }
 
 static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
@@ -3145,9 +3146,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
-        publish_inferred_tooling_return_type(compiler,destination,function);
         return destination;
     }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
@@ -3264,9 +3264,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
             emit_register(compiler,block);
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
-            publish_inferred_tooling_return_type(compiler,destination,function);
             return destination;
         }
         slot_registers[argument_count]=block;
@@ -3324,9 +3323,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         compiler->last_plain_call_destination=destination;
         compiler->last_plain_call_function_index=(uint16_t)function_index;
     }
-    publish_declared_return_type(compiler,destination,function,
+    publish_call_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
-    publish_inferred_tooling_return_type(compiler,destination,function);
     return destination;
 }
 
@@ -3402,7 +3400,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     if(!unresolved) {
         const DiamondFunction *target=
             compiler->program->functions[method->function_index];
-        publish_declared_return_type(compiler,destination,target,
+        publish_call_return_type(compiler,destination,target,
             type_arguments,type_argument_count);
     }
     return destination;
@@ -3743,7 +3741,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
         return destination;
     }
@@ -3786,7 +3784,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
             return destination;
         }
@@ -3805,7 +3803,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
         return destination;
     }
@@ -3877,7 +3875,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
             return destination;
         }
@@ -3915,7 +3913,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
-    publish_declared_return_type(compiler,destination,function,
+    publish_call_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
     return destination;
 }
@@ -6853,13 +6851,20 @@ static const DiamondFunction *instance_call_signature(
     const uint8_t type=compiler->known_types[receiver];
     if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
         return class_instance_signature(compiler,type,name);
-    const int32_t set_index=compiler->known_type_sets[receiver];
+    int32_t set_index=compiler->known_type_sets[receiver];
+    bool tooling_only=false;
+    if(set_index<0&&require_matching_return) {
+        set_index=compiler->tooling_type_sets[receiver];
+        tooling_only=set_index>=0;
+    }
     if(set_index<0||(size_t)set_index>=compiler->function->type_set_count)
         return nullptr;
     const DiamondTypeSet *set=
         &compiler->function->type_sets[(size_t)set_index];
     const DiamondFunction *shared=nullptr;
-    if(set->count==0)return nullptr;
+    /* A tooling-only union would need to join each candidate method's own
+     * inferred return. Keep this first slice exact and conservative. */
+    if(set->count==0||(tooling_only&&set->count!=1))return nullptr;
     for(size_t index=0;index<set->count;index++) {
         const uint8_t member=set->members[index].id;
         if(member<DIAMOND_TYPE_CLASS_BASE||
@@ -7526,7 +7531,7 @@ static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *matching_target,const uint16_t *bindings,
         size_t binding_count) {
     if(matching_target!=nullptr)
-        publish_declared_return_type(compiler,reg,matching_target,bindings,
+        publish_call_return_type(compiler,reg,matching_target,bindings,
             binding_count);
     else publish_union_instance_return_type(compiler,reg,receiver_set_index,
         name,bindings,binding_count);

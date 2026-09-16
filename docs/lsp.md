@@ -152,7 +152,8 @@ search over a real (if scoped) lexical symbol table:
     every `return value` it saw, merged in alongside the trailing-
     expression case rather than replacing it. An inferred result also
     survives a simple local assignment (`pet = build_pet(); pet.bark()`),
-    including when the unannotated factory comes from `require`; this uses
+    including for unannotated singleton and instance methods and when the
+    factory comes from `require`; this uses
     a separate tooling-only scope fact and never enters the compiler facts
     used for type checks or opcode selection. Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of

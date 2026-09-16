@@ -217,13 +217,31 @@ class ImportedPet
   end
 end
 
+class ImportedLeaf
+  def ping()
+    2
+  end
+end
+
+class ImportedBranch
+  def leaf()
+    ImportedLeaf.new()
+  end
+end
+
+class ImportedFactory
+  def self.build()
+    ImportedBranch.new()
+  end
+end
+
 def build_imported_pet()
   ImportedPet.new()
 end
 EOF
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\n  branch = ImportedFactory.build()\n  leaf = branch.leaf()\n  leaf.ping()\nend"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":122,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":6}}}'
@@ -241,6 +259,31 @@ response="$(read_message)"
 [[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
 count=$((count + 1))
 [[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+# The same tooling-only propagation works for an unannotated singleton
+# method result, then recursively for an unannotated instance method called
+# through the assigned receiver.
+send '{"jsonrpc":"2.0","id":125,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":5,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":126,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":127,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def ping()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":128,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"start":{"line":7,"character":6}'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"}}}'
