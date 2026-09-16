@@ -131,7 +131,8 @@ search over a real (if scoped) lexical symbol table:
     variable rule used for direct chains, or supplied explicitly as class
     unions or nested `Array` shapes ending in a class union. Inference also descends
     through matching parameterized shapes such as `Array[T]` versus a local
-    `Array[Pet | Leaf]`. `Hash[K, V]`
+    `Array[Pet | Leaf]`, or `Hash[String, T]` versus
+    `Hash[String, Pet | Leaf]`. Direct `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.

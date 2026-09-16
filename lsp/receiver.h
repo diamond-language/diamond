@@ -23,8 +23,9 @@
  * or single-class instance-method call result, plus a generic call whose class
  * bindings can be inferred from bare type-variable parameters or supplied
  * explicitly as plain class names or nested class-element `Array` shapes.
- * Inference also descends through matching
- * parameterized shapes such as `Array[T]` and `Array[Pet | Leaf]`.
+ * Inference also descends through matching parameterized shapes such as
+ * `Array[T]`/`Array[Pet | Leaf]` and
+ * `Hash[String, T]`/`Hash[String, Pet | Leaf]`.
  * Union receivers can supply an indexed method result when every candidate has
  * an equivalent non-generic structural array return.
  * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of

@@ -42,6 +42,10 @@ authoritative fine-grained record.
 - Generic receiver inference now retains every class in a union-valued
   argument, both for a bare `T` and through `Array[T]`, rather than abandoning
   the call chain unless the argument resolved to exactly one class.
+- Generic receiver inference now also descends through both parameters of a
+  `Hash[K, V]` shape, so a function accepting `Hash[String, T]` can recover a
+  `Pet | Leaf` result from a `Hash[String, Pet | Leaf]` argument. Direct hash
+  indexing remains unresolved because its runtime result is nullable.
 - Extended receiver-aware call-chain resolution (`textDocument/hover`/
   `definition`/`completion`) to functions whose body uses `return`
   across separate branches with no shared annotation: `compile_return`

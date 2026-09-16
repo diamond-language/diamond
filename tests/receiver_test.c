@@ -69,6 +69,9 @@ int main(void) {
         "def array_identity[T](values: Array[T]) -> Array[T]\n"
         "  values\n"
         "end\n"
+        "def hash_value[T](values: Hash[String, T]) -> T\n"
+        "  values[\"value\"]\n"
+        "end\n"
         "class PetFactoryLeft\n"
         "  def pets()\n"
         "    [Pet.new()]\n"
@@ -99,9 +102,10 @@ int main(void) {
         "  matching_factory(true).pets()[0].bark()\n"
         "  conflicting_factory(true).pets()[0].bark()\n"
         "end\n"
-        "def inspect_inferred_unions(value: Pet | Leaf, values: Array[Pet | Leaf])\n"
+        "def inspect_inferred_unions(value: Pet | Leaf, values: Array[Pet | Leaf], map: Hash[String, Pet | Leaf])\n"
         "  identity(value).bark()\n"
         "  array_identity(values)[0].bark()\n"
+        "  hash_value(map).bark()\n"
         "end\n";
 
     char *combined=diamond_lsp_build_compile_buffer(nullptr,source,sizeof source-1,
@@ -128,6 +132,8 @@ int main(void) {
         "identity(value).","Pet","Leaf");
     failed|=check_receiver_pair(program,&chunk,combined,
         "array_identity(values)[0].","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "hash_value(map).","Pet","Leaf");
     failed|=check_receiver(program,&chunk,combined,
         "matching_factory(true).pets()[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,

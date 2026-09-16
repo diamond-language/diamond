@@ -468,8 +468,8 @@ Next steps:
   receiver fact, including a structurally known non-generic top-level,
   singleton, or single-class instance-method call as the array source
   (including generic calls with class-union argument inference or
-  matching parameterized shapes such as `Array[T]`, and explicit class-union
-  or nested class-union `Array` bindings;
+  matching parameterized shapes such as `Array[T]` and `Hash[String, T]`, and
+  explicit class-union or nested class-union `Array` bindings;
   nullable `Hash` indexing remains conservative);
   union receivers preserve indexed method results when every candidate has an
   equivalent non-generic structural array return;
