@@ -470,6 +470,8 @@ Next steps:
   matching parameterized shapes such as `Array[T]`, and explicit plain-class
   or nested class-element `Array` bindings;
   nullable `Hash` indexing remains conservative);
+  union receivers preserve indexed method results when every candidate has an
+  equivalent non-generic structural array return;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

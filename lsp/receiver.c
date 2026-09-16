@@ -279,6 +279,37 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
     return true;
 }
 
+static bool receiver_type_sets_equal(const DiamondTypeSet *left_sets,
+        size_t left_count,uint16_t left_index,const DiamondTypeSet *right_sets,
+        size_t right_count,uint16_t right_index,unsigned depth) {
+    if(depth>32||left_index>=left_count||right_index>=right_count)return false;
+    const DiamondTypeSet *left=&left_sets[left_index];
+    const DiamondTypeSet *right=&right_sets[right_index];
+    if(left->count!=right->count)return false;
+    for(size_t index=0;index<left->count;index++) {
+        const DiamondTypeMember *a=&left->members[index];
+        const DiamondTypeMember *b=&right->members[index];
+        if(a->id!=b->id||
+           (a->argument_set==DIAMOND_NO_TYPE_SET)!=
+               (b->argument_set==DIAMOND_NO_TYPE_SET)||
+           (a->second_argument_set==DIAMOND_NO_TYPE_SET)!=
+               (b->second_argument_set==DIAMOND_NO_TYPE_SET))return false;
+        if(a->argument_set!=DIAMOND_NO_TYPE_SET&&
+           !receiver_type_sets_equal(left_sets,left_count,a->argument_set,
+               right_sets,right_count,b->argument_set,depth+1))return false;
+        if(a->second_argument_set!=DIAMOND_NO_TYPE_SET&&
+           !receiver_type_sets_equal(left_sets,left_count,a->second_argument_set,
+               right_sets,right_count,b->second_argument_set,depth+1))
+            return false;
+    }
+    return true;
+}
+
+static uint16_t receiver_return_set(const DiamondFunction *function) {
+    return function->return_type_set!=DIAMOND_NO_TYPE_SET?
+        function->return_type_set:function->inferred_return_type_set;
+}
+
 static size_t resolve_indexed_expression(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
@@ -374,12 +405,28 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
                 tokens,start,callee_index-2,receiver_classes,
                 DIAMOND_MAX_UNION_TYPES,
                 &receiver_singleton,depth+1);
-            if(receiver_count!=1)return 0;
-            const DiamondMethod *method=receiver_lookup_method(chunk,
-                receiver_classes[0],receiver_singleton,name,name_length);
-            if(method==nullptr||method->function_index>=chunk->function_count)
-                return 0;
-            target=chunk->functions[method->function_index];
+            if(receiver_count==0)return 0;
+            for(size_t receiver=0;receiver<receiver_count;receiver++) {
+                const DiamondMethod *method=receiver_lookup_method(chunk,
+                    receiver_classes[receiver],receiver_singleton,name,
+                    name_length);
+                if(method==nullptr||method->function_index>=chunk->function_count)
+                    return 0;
+                const DiamondFunction *candidate=
+                    chunk->functions[method->function_index];
+                if(candidate->type_variable_count>0&&receiver_count>1)return 0;
+                if(target==nullptr)target=candidate;
+                else {
+                    const uint16_t target_return=receiver_return_set(target);
+                    const uint16_t candidate_return=receiver_return_set(candidate);
+                    if(target_return==DIAMOND_NO_TYPE_SET||
+                       candidate_return==DIAMOND_NO_TYPE_SET||
+                       !receiver_type_sets_equal(target->type_sets,
+                           target->type_set_count,target_return,
+                           candidate->type_sets,candidate->type_set_count,
+                           candidate_return,0))return 0;
+                }
+            }
         }
         if(target==nullptr)return 0;
         if(target->type_variable_count>0) {
@@ -390,9 +437,7 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
             }
             if(binding_count!=target->type_variable_count)return 0;
         } else if(has_explicit_bindings)return 0;
-        uint16_t return_set=target->return_type_set;
-        if(return_set==DIAMOND_NO_TYPE_SET)
-            return_set=target->inferred_return_type_set;
+        const uint16_t return_set=receiver_return_set(target);
         if(return_set==DIAMOND_NO_TYPE_SET||return_set>=target->type_set_count)
             return 0;
         type_sets=target->type_sets;type_set_count=target->type_set_count;

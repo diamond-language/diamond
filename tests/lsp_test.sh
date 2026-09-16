@@ -315,6 +315,34 @@ class GenericArrayFactory
     [value]
   end
 end
+
+
+class UnionArrayLeft
+  def pets()
+    [ImportedPet.new()]
+  end
+end
+
+class UnionArrayRight
+  def pets()
+    [ImportedPet.new()]
+  end
+end
+
+
+class UnionArrayOther
+  def pets()
+    [ImportedLeaf.new()]
+  end
+end
+
+def build_union_array_receiver(flag)
+  flag ? UnionArrayLeft.new() : UnionArrayRight.new()
+end
+
+def build_conflicting_union_array_receiver(flag)
+  flag ? UnionArrayLeft.new() : UnionArrayOther.new()
+end
 EOF
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
@@ -493,6 +521,27 @@ response="$(read_message)"
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"}}}'
+read_message >/dev/null
+
+# Every arm of a union receiver may feed indexing when its method has the same
+# structural array return graph.
+receiver_union_array_uri="file://$work/receiver_union_array.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'","text":"require \"receiver_dependency\"\ndef union_array_receiver()\n  factory = build_union_array_receiver(true)\n  factory.pets()[0].bark()\nend\n\ndef conflicting_union_array_receiver()\n  factory = build_conflicting_union_array_receiver(true)\n  factory.pets()[0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":185,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"},"position":{"line":3,"character":20}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":186,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"},"position":{"line":8,"character":20}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"}}}'
 read_message >/dev/null
 
 # Case joins apply the same rule across every when/else path.

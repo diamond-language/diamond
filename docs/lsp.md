@@ -133,6 +133,8 @@ search over a real (if scoped) lexical symbol table:
     through matching single-member parameterized
     shapes such as `Array[T]` versus a local `Array[Pet]`. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
+    A union receiver may supply the array-valued method when every candidate
+    has the same non-generic structural return graph.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
     singleton factory such as `Factory.build().leaf()` resolve through each
