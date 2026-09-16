@@ -519,6 +519,11 @@ The focused ThreadSanitizer suite was re-run in 2026-09 across the thread,
 channel, supervisor, and representative fiber cases: 35 cases passed with no
 races reported.
 
+Minor-GC stress now covers representative Channel payload transfer, nested
+channels, Supervisor restart, and nested supervision cases; the shared batch
+runner clears `DIAMOND_STRESS_MINOR_GC` between cases so those settings cannot
+leak across the corpus.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

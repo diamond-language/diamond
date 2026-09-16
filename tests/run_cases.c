@@ -67,7 +67,7 @@ static bool format_path(char *buffer, size_t size, const char *format, ...) {
  * get for free by spawning a fresh process per case) has to be
  * reproduced by hand now that every case shares one process. */
 static const char *const DIAMOND_ENV_VARS[] = {
-    "DIAMOND_STRESS_GC", "DIAMOND_QUICKEN", "DIAMOND_QUICKEN_THRESHOLD",
+    "DIAMOND_STRESS_GC", "DIAMOND_STRESS_MINOR_GC", "DIAMOND_QUICKEN", "DIAMOND_QUICKEN_THRESHOLD",
     "DIAMOND_IC_MONO_THRESHOLD", "DIAMOND_REPEAT", "DIAMOND_INVALIDATE_IC_EACH_RUN",
     "DIAMOND_TRACE_IC_EACH_RUN", "DIAMOND_TRACE_IC", "DIAMOND_TRACE_IC_SITES",
     "DIAMOND_TRACE_IC_FAST", "DIAMOND_TRACE_IC_PROBES", "DIAMOND_TRACE_IC_REWRITES",

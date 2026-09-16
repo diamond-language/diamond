@@ -36,6 +36,9 @@ authoritative fine-grained record.
 - Re-ran the focused ThreadSanitizer concurrency suite across `Thread`,
   `Channel`, `Supervisor`, and representative `Fiber` cases: all 35 cases
   passed with no data races reported.
+- Extended per-case minor-GC stress coverage to Channel and Supervisor
+  producer/consumer, restart, and nested-tree cases. The batch runner now
+  isolates `DIAMOND_STRESS_MINOR_GC` between cases just like major-GC stress.
 
 ### Tooling
 
