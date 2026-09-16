@@ -207,24 +207,76 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
 
-static size_t resolve_indexed_local(const DiamondProgram *program,
+static size_t resolve_indexed_expression(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
         bool *is_singleton) {
     if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    size_t first_index=end,paren_depth=0;
+    for(size_t index=start+1;index<=end;index++) {
+        const DiamondTokenKind kind=tokens[index].kind;
+        if(kind==DIAMOND_TOKEN_LEFT_PAREN)paren_depth++;
+        else if(kind==DIAMOND_TOKEN_RIGHT_PAREN&&paren_depth>0)paren_depth--;
+        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&paren_depth==0) {
+            first_index=index;break;
+        }
+    }
+    if(tokens[first_index].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
+
+    const DiamondTypeSet *type_sets=nullptr;size_t type_set_count=0;
+    int32_t known_set=-1;
     const DiamondToken name_token=tokens[start];
-    const DiamondFunction *owner=nullptr;
-    const DiamondScopeLocal *local=find_scope_local(program,chunk,
-        source+name_token.span.start,name_token.span.length,
-        name_token.span.start,&owner);
-    if(local==nullptr||owner==nullptr)return 0;
-    uint8_t known_type;int32_t known_set,tooling_set;
-    local_type_at_offset(owner,local,name_token.span.start,&known_type,&known_set,
-        &tooling_set);
-    (void)known_type;
-    if(known_set<0)known_set=tooling_set;
-    if(known_set<0||(size_t)known_set>=owner->type_set_count)return 0;
-    size_t token=start+1;
+    if(first_index==start+1) {
+        const DiamondFunction *owner=nullptr;
+        const DiamondScopeLocal *local=find_scope_local(program,chunk,
+            source+name_token.span.start,name_token.span.length,
+            name_token.span.start,&owner);
+        if(local==nullptr||owner==nullptr)return 0;
+        uint8_t known_type;int32_t tooling_set;
+        local_type_at_offset(owner,local,name_token.span.start,&known_type,
+            &known_set,&tooling_set);
+        (void)known_type;
+        if(known_set<0)known_set=tooling_set;
+        type_sets=owner->type_sets;type_set_count=owner->type_set_count;
+    } else {
+        /* Array-valued top-level calls are the only temporary base supported
+         * here. Method/generic calls need substitution across another
+         * function's structural set graph and remain conservative for now. */
+        if(first_index<start+3||tokens[start+1].kind!=DIAMOND_TOKEN_LEFT_PAREN||
+           tokens[first_index-1].kind!=DIAMOND_TOKEN_RIGHT_PAREN)return 0;
+        size_t call_depth=0;
+        for(size_t index=start+1;index<first_index;index++) {
+            if(tokens[index].kind==DIAMOND_TOKEN_LEFT_PAREN)call_depth++;
+            else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+                if(call_depth==0)return 0;
+                call_depth--;
+                if(call_depth==0&&index+1<first_index)return 0;
+            }
+        }
+        if(call_depth!=0)return 0;
+        const char *name=source+name_token.span.start;
+        const size_t name_length=name_token.span.length;
+        const DiamondFunction *target=nullptr;
+        for(size_t index=chunk->function_count;index>0;index--) {
+            const DiamondFunction *candidate=chunk->functions[index-1];
+            if(candidate->owner_class==UINT8_MAX&&!candidate->nested&&
+               candidate->type_variable_count==0&&
+               strlen(candidate->name)==name_length&&
+               memcmp(candidate->name,name,name_length)==0) {
+                target=candidate;break;
+            }
+        }
+        if(target==nullptr)return 0;
+        uint16_t return_set=target->return_type_set;
+        if(return_set==DIAMOND_NO_TYPE_SET)
+            return_set=target->inferred_return_type_set;
+        if(return_set==DIAMOND_NO_TYPE_SET||return_set>=target->type_set_count)
+            return 0;
+        type_sets=target->type_sets;type_set_count=target->type_set_count;
+        known_set=(int32_t)return_set;
+    }
+    if(known_set<0||(size_t)known_set>=type_set_count)return 0;
+    size_t token=first_index;
     while(token<=end) {
         if(tokens[token].kind!=DIAMOND_TOKEN_LEFT_BRACKET)return 0;
         size_t nesting=0,close=token;
@@ -234,14 +286,14 @@ static size_t resolve_indexed_local(const DiamondProgram *program,
                     --nesting==0) {close=index;break;}
         }
         if(close==token)return 0;
-        const DiamondTypeSet *outer=&owner->type_sets[(size_t)known_set];
+        const DiamondTypeSet *outer=&type_sets[(size_t)known_set];
         if(outer->count!=1||outer->members[0].id!=DIAMOND_TYPE_ARRAY||
            outer->members[0].argument_set==DIAMOND_NO_TYPE_SET||
-           outer->members[0].argument_set>=owner->type_set_count)return 0;
+           outer->members[0].argument_set>=type_set_count)return 0;
         known_set=(int32_t)outer->members[0].argument_set;
         token=close+1;
     }
-    const DiamondTypeSet *elements=&owner->type_sets[(size_t)known_set];
+    const DiamondTypeSet *elements=&type_sets[(size_t)known_set];
     size_t count=0;
     for(size_t index=0;index<elements->count;index++) {
         size_t class_index;
@@ -468,7 +520,7 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         return 0;
     }
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET)
-        return resolve_indexed_local(program,chunk,source,tokens,start,end,
+        return resolve_indexed_expression(program,chunk,source,tokens,start,end,
             classes,capacity,is_singleton);
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN)
         return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth);

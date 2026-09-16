@@ -19,7 +19,8 @@
  * function/method links have explicit class return annotations. Grouping
  * parentheses around any supported receiver form are ignored. Repeated
  * indexing from a local typed as a nested `Array` resolves its eventual class;
- * nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
+ * the same is true for a structurally known non-generic top-level call result.
+ * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
  * Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
  * explicit bindings when each binding is a plain class name, or infer a

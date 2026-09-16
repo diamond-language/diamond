@@ -239,6 +239,10 @@ def build_imported_pet()
   ImportedPet.new()
 end
 
+def build_imported_pets()
+  [ImportedPet.new()]
+end
+
 class UnionProduct
   def ping()
     3
@@ -392,10 +396,15 @@ read_message >/dev/null
 
 # A class-typed Array local carries its element set through one indexing step.
 receiver_index_uri="file://$work/receiver_index.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":172,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":2,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":175,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":14,"character":27}}}'
 response="$(read_message)"
 [[ "$response" == *'"label":"bark","kind":3'* ]]
 count=$((count + 1))

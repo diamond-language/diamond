@@ -125,7 +125,8 @@ search over a real (if scoped) lexical symbol table:
     candidate rather than guessing. Grouping parentheses around any otherwise
     resolvable receiver are ignored. Repeated indexing from a local explicitly
     typed as a nested `Array` resolves to its eventual class element type;
-    `Hash[K, V]`
+    the same applies to a non-generic top-level call with a structurally known
+    array return. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
