@@ -223,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -505,7 +505,17 @@ $(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PREL
 
 lsp: $(BUILD_DIR)/diamond-lsp
 
-test-lsp: $(BUILD_DIR)/diamond-lsp
+$(BUILD_DIR)/receiver_test: tests/receiver_test.c lsp/receiver.c lsp/compile_buffer.c \
+		$(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) \
+		lsp/receiver.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
+
+test-receiver: $(BUILD_DIR)/receiver_test
+	$(BUILD_DIR)/receiver_test
+
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test
+	$(BUILD_DIR)/receiver_test
 	bash tests/lsp_test.sh
 
 DAP_SOURCES := $(wildcard dap/*.c)
