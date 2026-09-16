@@ -109,6 +109,10 @@ authoritative fine-grained record.
   contract and what it doesn't do (no cross-compilation, no static
   linking, must build from a repo checkout), and docs/roadmap.md's
   "`diamond build`: what's next, if anything" for what's deferred.
+- `diamond build` now preserves arbitrarily long output paths and `--cc`
+  values when passing them to `make`; its former fixed argument buffers could
+  silently truncate either value and build the wrong target or invoke the
+  wrong compiler.
 
 ### Security
 

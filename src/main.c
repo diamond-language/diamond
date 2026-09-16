@@ -164,6 +164,17 @@ static bool write_embed_data_file(const char *bin_path, const char *embed_path) 
     return ok;
 }
 
+static char *make_assignment(const char *name,const char *value) {
+    const size_t name_length=strlen(name),value_length=strlen(value);
+    if(name_length>SIZE_MAX-value_length-2)return nullptr;
+    char *assignment=malloc(name_length+value_length+2);
+    if(assignment==nullptr)return nullptr;
+    memcpy(assignment,name,name_length);
+    assignment[name_length]='=';
+    memcpy(assignment+name_length+1,value,value_length+1);
+    return assignment;
+}
+
 /* Runs `make aot-build AOT_EMBED=... AOT_OUTPUT=... [CC=...]` (the
  * Makefile target added alongside diamond-lsp/diamond-dap's own) via
  * fork/execvp -- not system(3), so none of these paths ever pass
@@ -179,9 +190,13 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
             "diamond: 'diamond build' must be run from the Diamond repository root\n");
         return 74;
     }
-    char embed_arg[4096], output_arg[4096], cc_arg[512];
-    (void)snprintf(embed_arg, sizeof embed_arg, "AOT_EMBED=%s", embed_path);
-    (void)snprintf(output_arg, sizeof output_arg, "AOT_OUTPUT=%s", output_path);
+    char *embed_arg=make_assignment("AOT_EMBED",embed_path);
+    char *output_arg=make_assignment("AOT_OUTPUT",output_path);
+    char *cc_arg=cc!=nullptr?make_assignment("CC",cc):nullptr;
+    if(embed_arg==nullptr||output_arg==nullptr||(cc!=nullptr&&cc_arg==nullptr)) {
+        fprintf(stderr,"diamond: out of memory\n");
+        free(embed_arg);free(output_arg);free(cc_arg);return 74;
+    }
     char *args[8];
     size_t arg_count = 0;
     args[arg_count++] = (char *)"make";
@@ -189,7 +204,6 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     args[arg_count++] = embed_arg;
     args[arg_count++] = output_arg;
     if (cc != nullptr) {
-        (void)snprintf(cc_arg, sizeof cc_arg, "CC=%s", cc);
         args[arg_count++] = cc_arg;
     }
     args[arg_count] = nullptr;
@@ -197,6 +211,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     const pid_t child = fork();
     if (child < 0) {
         fprintf(stderr, "diamond: fork failed: %s\n", strerror(errno));
+        free(embed_arg);free(output_arg);free(cc_arg);
         return 74;
     }
     if (child == 0) {
@@ -207,8 +222,10 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     int status = 0;
     if (waitpid(child, &status, 0) < 0) {
         fprintf(stderr, "diamond: waitpid failed: %s\n", strerror(errno));
+        free(embed_arg);free(output_arg);free(cc_arg);
         return 74;
     }
+    free(embed_arg);free(output_arg);free(cc_arg);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         fprintf(stderr, "diamond: build failed\n");
         return 74;

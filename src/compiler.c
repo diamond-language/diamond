@@ -13295,8 +13295,11 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     uint8_t field=UINT8_MAX;
     DiamondMethod *method=nullptr;
     char method_name[DIAMOND_MAX_FUNCTION_NAME];
-    (void)snprintf(method_name,sizeof method_name,"%s%s",field_name,
-                   writer?"=":predicate?"?":"");
+    memcpy(method_name,field_name,name.length);
+    size_t method_name_length=name.length;
+    if(writer)method_name[method_name_length++]='=';
+    else if(predicate)method_name[method_name_length++]='?';
+    method_name[method_name_length]='\0';
     if(compiler->current_class>=0) {
         DiamondClass *class=
             &compiler->program->classes[(size_t)compiler->current_class];
