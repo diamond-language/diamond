@@ -468,7 +468,7 @@ Next steps:
   singleton, or single-class instance-method call as the array source
   (including generic calls with simple single-class argument inference or
   matching parameterized shapes such as `Array[T]`, and explicit plain-class
-  bindings;
+  or nested class-element `Array` bindings;
   nullable `Hash` indexing remains conservative);
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;

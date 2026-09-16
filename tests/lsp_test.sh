@@ -476,6 +476,25 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"}}}'
 read_message >/dev/null
 
+# Explicit generic bindings can carry a nested Array shape; indexing consumes
+# that shape until the final class receiver is exposed.
+receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'","text":"require \"receiver_dependency\"\ndef parameterized_binding_receiver()\n  generic_identity[Array[ImportedPet]]([ImportedPet.new()])[0].bark()\n  generic_identity[Array[Array[ImportedPet]]]([[ImportedPet.new()]])[0][0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":183,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"},"position":{"line":2,"character":63}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":184,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"},"position":{"line":3,"character":75}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"}}}'
+read_message >/dev/null
+
 # Case joins apply the same rule across every when/else path.
 receiver_case_uri="file://$work/receiver_case.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_case_uri"'","text":"require \"receiver_dependency\"\ndef preserve_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    puts(1)\n  else\n    puts(2)\n  end\n  pet.bark()\nend\n\ndef discard_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    pet = ImportedFactory.build()\n  else\n    puts(2)\n  end\n  pet.bark()\nend"}}}'
