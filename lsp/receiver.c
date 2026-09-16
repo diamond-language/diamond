@@ -210,7 +210,7 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
 static size_t resolve_indexed_expression(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
-        bool *is_singleton) {
+        bool *is_singleton,unsigned depth) {
     if(tokens[start].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
     size_t first_index=end,paren_depth=0;
     for(size_t index=start+1;index<=end;index++) {
@@ -239,34 +239,46 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         if(known_set<0)known_set=tooling_set;
         type_sets=owner->type_sets;type_set_count=owner->type_set_count;
     } else {
-        /* Array-valued top-level calls are the only temporary base supported
-         * here. Method/generic calls need substitution across another
-         * function's structural set graph and remain conservative for now. */
-        if(first_index<start+3||tokens[start+1].kind!=DIAMOND_TOKEN_LEFT_PAREN||
+        if(first_index<start+3||
            tokens[first_index-1].kind!=DIAMOND_TOKEN_RIGHT_PAREN)return 0;
-        size_t call_depth=0;
-        for(size_t index=start+1;index<first_index;index++) {
-            if(tokens[index].kind==DIAMOND_TOKEN_LEFT_PAREN)call_depth++;
-            else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_PAREN) {
-                if(call_depth==0)return 0;
-                call_depth--;
-                if(call_depth==0&&index+1<first_index)return 0;
+        size_t call_depth=0,left=first_index-1;
+        for(size_t index=first_index;index>start;index--) {
+            const DiamondTokenKind kind=tokens[index-1].kind;
+            if(kind==DIAMOND_TOKEN_RIGHT_PAREN)call_depth++;
+            else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&--call_depth==0) {
+                left=index-1;break;
             }
         }
-        if(call_depth!=0)return 0;
-        const char *name=source+name_token.span.start;
-        const size_t name_length=name_token.span.length;
+        if(left==start||tokens[left-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+        const DiamondToken callee=tokens[left-1];
+        const char *name=source+callee.span.start;
+        const size_t name_length=callee.span.length;
         const DiamondFunction *target=nullptr;
-        for(size_t index=chunk->function_count;index>0;index--) {
-            const DiamondFunction *candidate=chunk->functions[index-1];
-            if(candidate->owner_class==UINT8_MAX&&!candidate->nested&&
-               candidate->type_variable_count==0&&
-               strlen(candidate->name)==name_length&&
-               memcmp(candidate->name,name,name_length)==0) {
-                target=candidate;break;
+        if(left-1==start) {
+            for(size_t index=chunk->function_count;index>0;index--) {
+                const DiamondFunction *candidate=chunk->functions[index-1];
+                if(candidate->owner_class==UINT8_MAX&&!candidate->nested&&
+                   candidate->type_variable_count==0&&
+                   strlen(candidate->name)==name_length&&
+                   memcmp(candidate->name,name,name_length)==0) {
+                    target=candidate;break;
+                }
             }
+        } else {
+            if(left<3||tokens[left-2].kind!=DIAMOND_TOKEN_DOT)return 0;
+            size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];
+            bool receiver_singleton=false;
+            const size_t receiver_count=resolve_expression(program,chunk,source,
+                tokens,start,left-3,receiver_classes,DIAMOND_MAX_UNION_TYPES,
+                &receiver_singleton,depth+1);
+            if(receiver_count!=1)return 0;
+            const DiamondMethod *method=receiver_lookup_method(chunk,
+                receiver_classes[0],receiver_singleton,name,name_length);
+            if(method==nullptr||method->function_index>=chunk->function_count)
+                return 0;
+            target=chunk->functions[method->function_index];
         }
-        if(target==nullptr)return 0;
+        if(target==nullptr||target->type_variable_count>0)return 0;
         uint16_t return_set=target->return_type_set;
         if(return_set==DIAMOND_NO_TYPE_SET)
             return_set=target->inferred_return_type_set;
@@ -521,7 +533,7 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
     }
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET)
         return resolve_indexed_expression(program,chunk,source,tokens,start,end,
-            classes,capacity,is_singleton);
+            classes,capacity,is_singleton,depth);
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN)
         return resolve_call(program,chunk,source,tokens,start,end,classes,capacity,is_singleton,depth);
     return 0;
