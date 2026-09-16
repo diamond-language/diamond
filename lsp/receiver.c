@@ -272,6 +272,57 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
 
+typedef struct ReceiverCallTargets {
+    const DiamondFunction *functions[DIAMOND_MAX_UNION_TYPES];
+    size_t function_count;
+    size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];
+    size_t receiver_count;
+    bool receiver_singleton;
+    bool constructor;
+} ReceiverCallTargets;
+
+static bool resolve_call_targets(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,const ReceiverCallSyntax *call,unsigned depth,
+        ReceiverCallTargets *targets) {
+    *targets=(ReceiverCallTargets){};
+    const DiamondToken callee=tokens[call->callee_index];
+    const char *name=source+callee.span.start;
+    const size_t name_length=callee.span.length;
+    if(call->callee_index==start) {
+        for(size_t index=chunk->function_count;index>0;index--) {
+            const DiamondFunction *function=chunk->functions[index-1];
+            if(function->owner_class==UINT8_MAX&&!function->nested&&
+               strlen(function->name)==name_length&&
+               memcmp(function->name,name,name_length)==0) {
+                targets->functions[0]=function;targets->function_count=1;
+                return true;
+            }
+        }
+        return false;
+    }
+    if(call->callee_index<2||
+       tokens[call->callee_index-1].kind!=DIAMOND_TOKEN_DOT)return false;
+    targets->receiver_count=resolve_expression(program,chunk,source,tokens,
+        start,call->callee_index-2,targets->receiver_classes,
+        DIAMOND_MAX_UNION_TYPES,&targets->receiver_singleton,depth+1);
+    if(targets->receiver_count==0)return false;
+    if(name_length==3&&memcmp(name,"new",3)==0&&
+       targets->receiver_singleton) {
+        targets->constructor=true;return true;
+    }
+    for(size_t index=0;index<targets->receiver_count;index++) {
+        const DiamondMethod *method=receiver_lookup_method(chunk,
+            targets->receiver_classes[index],targets->receiver_singleton,name,
+            name_length);
+        if(method==nullptr||method->function_index>=chunk->function_count)
+            return false;
+        targets->functions[targets->function_count++]=
+            chunk->functions[method->function_index];
+    }
+    return true;
+}
+
 static size_t infer_class_bindings(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,const DiamondFunction *function,
@@ -404,53 +455,23 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
                 &call))return 0;
         memcpy(bindings,call.bindings,sizeof bindings);
         binding_count=call.binding_count;
-        const DiamondToken callee=tokens[call.callee_index];
-        const char *name=source+callee.span.start;
-        const size_t name_length=callee.span.length;
-        const DiamondFunction *target=nullptr;
-        if(call.callee_index==start) {
-            for(size_t index=chunk->function_count;index>0;index--) {
-                const DiamondFunction *candidate=chunk->functions[index-1];
-                if(candidate->owner_class==UINT8_MAX&&!candidate->nested&&
-                   strlen(candidate->name)==name_length&&
-                   memcmp(candidate->name,name,name_length)==0) {
-                    target=candidate;break;
-                }
-            }
-        } else {
-            if(call.callee_index<2||
-               tokens[call.callee_index-1].kind!=DIAMOND_TOKEN_DOT)
+        ReceiverCallTargets targets;
+        if(!resolve_call_targets(program,chunk,source,tokens,start,&call,depth,
+                &targets)||targets.constructor||targets.function_count==0)
+            return 0;
+        const DiamondFunction *target=targets.functions[0];
+        for(size_t index=1;index<targets.function_count;index++) {
+            const DiamondFunction *candidate=targets.functions[index];
+            if(candidate->type_variable_count>0||target->type_variable_count>0)
                 return 0;
-            size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];
-            bool receiver_singleton=false;
-            const size_t receiver_count=resolve_expression(program,chunk,source,
-                tokens,start,call.callee_index-2,receiver_classes,
-                DIAMOND_MAX_UNION_TYPES,
-                &receiver_singleton,depth+1);
-            if(receiver_count==0)return 0;
-            for(size_t receiver=0;receiver<receiver_count;receiver++) {
-                const DiamondMethod *method=receiver_lookup_method(chunk,
-                    receiver_classes[receiver],receiver_singleton,name,
-                    name_length);
-                if(method==nullptr||method->function_index>=chunk->function_count)
-                    return 0;
-                const DiamondFunction *candidate=
-                    chunk->functions[method->function_index];
-                if(candidate->type_variable_count>0&&receiver_count>1)return 0;
-                if(target==nullptr)target=candidate;
-                else {
-                    const uint16_t target_return=receiver_return_set(target);
-                    const uint16_t candidate_return=receiver_return_set(candidate);
-                    if(target_return==DIAMOND_NO_TYPE_SET||
-                       candidate_return==DIAMOND_NO_TYPE_SET||
-                       !receiver_type_sets_equal(target->type_sets,
-                           target->type_set_count,target_return,
-                           candidate->type_sets,candidate->type_set_count,
-                           candidate_return,0))return 0;
-                }
-            }
+            const uint16_t target_return=receiver_return_set(target);
+            const uint16_t candidate_return=receiver_return_set(candidate);
+            if(target_return==DIAMOND_NO_TYPE_SET||
+               candidate_return==DIAMOND_NO_TYPE_SET||
+               !receiver_type_sets_equal(target->type_sets,
+                   target->type_set_count,target_return,candidate->type_sets,
+                   candidate->type_set_count,candidate_return,0))return 0;
         }
-        if(target==nullptr)return 0;
         if(target->type_variable_count>0) {
             if(!call.has_explicit_bindings) {
                 if(first_index<2)return 0;
@@ -636,43 +657,19 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
     ReceiverCallSyntax call;
     if(!parse_receiver_call_syntax(chunk,source,tokens,start,end,&call))return 0;
-    const DiamondToken callee=tokens[call.callee_index];
-    const char *name=source+callee.span.start;const size_t name_length=callee.span.length;
-    if(call.callee_index==start) {
-        for(size_t index=chunk->function_count;index>0;index--) {
-            const DiamondFunction *function=chunk->functions[index-1];
-            if(function->owner_class==UINT8_MAX&&!function->nested&&
-               strlen(function->name)==name_length&&memcmp(function->name,name,name_length)==0) {
-                if(!call.has_explicit_bindings&&function->type_variable_count>0)
-                    call.binding_count=infer_class_bindings(program,chunk,source,
-                        tokens,call.left+1,end-1,function,call.bindings,depth);
-                if(call.binding_count!=function->type_variable_count)return 0;
-                *is_singleton=false;
-                return function_return_classes_bound(chunk,function,
-                    call.bindings,call.binding_count,classes,capacity);
-            }
-        }
-        return 0;
-    }
-    if(call.callee_index<2||
-       tokens[call.callee_index-1].kind!=DIAMOND_TOKEN_DOT)return 0;
-    size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];bool receiver_singleton=false;
-    const size_t receiver_count=resolve_expression(program,chunk,source,tokens,start,
-        call.callee_index-2,
-        receiver_classes,DIAMOND_MAX_UNION_TYPES,&receiver_singleton,depth+1);
-    if(receiver_count==0)return 0;
-    if(name_length==3&&memcmp(name,"new",3)==0&&receiver_singleton) {
+    ReceiverCallTargets targets;
+    if(!resolve_call_targets(program,chunk,source,tokens,start,&call,depth,
+            &targets))return 0;
+    if(targets.constructor) {
         size_t count=0;
-        for(size_t index=0;index<receiver_count;index++)
-            count=append_class(classes,count,capacity,receiver_classes[index]);
+        for(size_t index=0;index<targets.receiver_count;index++)
+            count=append_class(classes,count,capacity,
+                targets.receiver_classes[index]);
         *is_singleton=false;return count;
     }
     size_t count=0;
-    for(size_t index=0;index<receiver_count;index++) {
-        const DiamondMethod *method=receiver_lookup_method(chunk,receiver_classes[index],
-            receiver_singleton,name,name_length);
-        if(method==nullptr||method->function_index>=chunk->function_count)return 0;
-        const DiamondFunction *function=chunk->functions[method->function_index];
+    for(size_t index=0;index<targets.function_count;index++) {
+        const DiamondFunction *function=targets.functions[index];
         size_t candidate_binding_count=call.binding_count;
         ReceiverTypeBinding candidate_bindings[8];
         memcpy(candidate_bindings,call.bindings,sizeof candidate_bindings);
