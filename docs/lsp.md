@@ -129,7 +129,8 @@ search over a real (if scoped) lexical symbol table:
     instance-method call with a structurally known array return. Generic calls
     also work when their class bindings can be inferred by the same exact-type-
     variable rule used for direct chains, or supplied explicitly as plain class
-    names. `Hash[K, V]`
+    names. Inference also descends through matching single-member parameterized
+    shapes such as `Array[T]` versus a local `Array[Pet]`. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a

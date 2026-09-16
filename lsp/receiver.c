@@ -212,6 +212,47 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         size_t start,size_t end,const DiamondFunction *function,
         size_t *bindings,unsigned depth);
 
+static bool infer_structural_class_bindings(const DiamondChunk *chunk,
+        const DiamondTypeSet *expected_sets,size_t expected_count,
+        uint16_t expected_index,const DiamondTypeSet *actual_sets,
+        size_t actual_count,uint16_t actual_index,size_t *bindings,
+        size_t binding_count,unsigned depth) {
+    if(depth>32||expected_index>=expected_count||actual_index>=actual_count)
+        return false;
+    const DiamondTypeSet *expected=&expected_sets[expected_index];
+    const DiamondTypeSet *actual=&actual_sets[actual_index];
+    if(expected->count==1&&
+       expected->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
+       expected->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
+        if(actual->count!=1)return false;
+        size_t class_index;
+        if(!decode_class_type(chunk,actual->members[0].id,&class_index))return false;
+        const size_t variable=(size_t)(expected->members[0].id-
+            DIAMOND_TYPE_VARIABLE_BASE);
+        if(variable>=binding_count)return false;
+        if(bindings[variable]==SIZE_MAX)bindings[variable]=class_index;
+        return bindings[variable]==class_index;
+    }
+    if(expected->count!=1||actual->count!=1||
+       expected->members[0].id!=actual->members[0].id)return false;
+    const DiamondTypeMember *wanted=&expected->members[0];
+    const DiamondTypeMember *known=&actual->members[0];
+    if(wanted->argument_set!=DIAMOND_NO_TYPE_SET) {
+        if(known->argument_set==DIAMOND_NO_TYPE_SET||
+           !infer_structural_class_bindings(chunk,expected_sets,expected_count,
+               wanted->argument_set,actual_sets,actual_count,
+               known->argument_set,bindings,binding_count,depth+1))return false;
+    }
+    if(wanted->second_argument_set!=DIAMOND_NO_TYPE_SET) {
+        if(known->second_argument_set==DIAMOND_NO_TYPE_SET||
+           !infer_structural_class_bindings(chunk,expected_sets,expected_count,
+               wanted->second_argument_set,actual_sets,actual_count,
+               known->second_argument_set,bindings,binding_count,depth+1))
+            return false;
+    }
+    return true;
+}
+
 static size_t resolve_indexed_expression(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
         size_t start,size_t end,size_t *classes,size_t capacity,
@@ -387,7 +428,29 @@ static size_t infer_class_bindings(const DiamondProgram *program,
             if(expected_index!=DIAMOND_NO_TYPE_SET&&
                expected_index<function->type_set_count) {
                 const DiamondTypeSet *expected=&function->type_sets[expected_index];
-                if(expected->count==1&&
+                bool inferred_structurally=false;
+                if(argument_start+1==index&&
+                   tokens[argument_start].kind==DIAMOND_TOKEN_IDENTIFIER) {
+                    const DiamondToken argument=tokens[argument_start];
+                    const DiamondFunction *owner=nullptr;
+                    const DiamondScopeLocal *local=find_scope_local(program,chunk,
+                        source+argument.span.start,argument.span.length,
+                        argument.span.start,&owner);
+                    if(local!=nullptr&&owner!=nullptr) {
+                        uint8_t known_type;int32_t actual,tooling;
+                        local_type_at_offset(owner,local,argument.span.start,
+                            &known_type,&actual,&tooling);
+                        (void)known_type;
+                        if(actual<0)actual=tooling;
+                        if(actual>=0&&(size_t)actual<owner->type_set_count)
+                            inferred_structurally=infer_structural_class_bindings(
+                                chunk,function->type_sets,function->type_set_count,
+                                expected_index,owner->type_sets,
+                                owner->type_set_count,(uint16_t)actual,bindings,
+                                function->type_variable_count,0);
+                    }
+                }
+                if(!inferred_structurally&&expected->count==1&&
                    expected->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
                    expected->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
                     size_t classes[DIAMOND_MAX_UNION_TYPES];bool singleton=false;

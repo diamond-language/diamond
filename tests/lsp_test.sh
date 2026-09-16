@@ -283,6 +283,10 @@ def generic_array[T](value: T) -> Array[T]
   [value]
 end
 
+def generic_array_identity[T](values: Array[T]) -> Array[T]
+  values
+end
+
 class GenericFactory
   def echo[T](value: T)
     value
@@ -417,7 +421,7 @@ read_message >/dev/null
 
 # A class-typed Array local carries its element set through one indexing step.
 receiver_index_uri="file://$work/receiver_index.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend\n\ndef indexed_explicit_generic_receivers()\n  generic_array[ImportedPet](ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap[ImportedPet](ImportedPet.new())[0].bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend\n\ndef indexed_explicit_generic_receivers()\n  generic_array[ImportedPet](ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap[ImportedPet](ImportedPet.new())[0].bark()\nend\n\ndef indexed_nested_generic_receiver(pets: Array[ImportedPet])\n  generic_array_identity(pets)[0].bark()\nend"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":172,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":2,"character":10}}}'
@@ -448,6 +452,11 @@ for request in '180 29 51' '181 30 62'; do
   [[ "$response" == *'"label":"bark","kind":3'* ]]
   count=$((count + 1))
 done
+
+send '{"jsonrpc":"2.0","id":182,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":34,"character":34}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
 
 send '{"jsonrpc":"2.0","id":175,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":14,"character":27}}}'
 response="$(read_message)"

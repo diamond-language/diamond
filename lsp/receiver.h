@@ -22,7 +22,8 @@
  * the same is true for a structurally known non-generic top-level, singleton,
  * or single-class instance-method call result, plus a generic call whose class
  * bindings can be inferred from bare type-variable parameters or supplied
- * explicitly as plain class names.
+ * explicitly as plain class names. Inference also descends through matching
+ * single-member parameterized shapes such as `Array[T]` and `Array[Pet]`.
  * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
  * Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
