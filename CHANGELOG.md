@@ -43,6 +43,8 @@ authoritative fine-grained record.
   descriptor closure after failed setup and rooted TLS-handle cleanup after a
   handshake failure; existing timeout and failure cases passed without leaks or
   double-close symptoms.
+- Revalidated the native and LSP suites with the locally installed Fedora
+  Clang 22 toolchain: 1543 language cases and 277 LSP cases passed.
 
 ### Tooling
 

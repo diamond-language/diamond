@@ -9,6 +9,9 @@ enough POSIX-adjacent surface area to matter here.
 
 ## Validated platforms
 
+- **Fedora 44, Clang 22, x86_64 (glibc, local 2026-09 run)** -- the full
+  1543-case suite and the 277-case LSP suite both passed. This supplements,
+  but does not replace, the continuous Fedora/Ubuntu CI matrix below.
 - **Fedora and Ubuntu 26.04, GCC and Clang, x86_64 (glibc)** -- CI runs the
   full test suite (`make test-all`) across this 2x2 matrix on every push
   (`.github/workflows/ci.yml`, `test-all` job).
