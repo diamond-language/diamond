@@ -280,6 +280,12 @@ class GenericFactory
     value
   end
 end
+
+class GenericSingletonFactory
+  def self.echo[T](value: T)
+    value
+  end
+end
 EOF
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
@@ -432,10 +438,11 @@ read_message >/dev/null
 # unannotated callee's inferred return, without promoting it to a real
 # compile-time return contract.
 receiver_generic_uri="file://$work/receiver_generic.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'","text":"require \"receiver_dependency\"\ndef generic_results()\n  inferred = generic_identity(ImportedPet.new())\n  inferred.bark()\n  explicit = generic_identity[ImportedLeaf](ImportedLeaf.new())\n  explicit.ping()\n  factory = GenericFactory.new()\n  from_method = factory.echo(ImportedPet.new())\n  from_method.bark()\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'","text":"require \"receiver_dependency\"\ndef generic_results()\n  inferred = generic_identity(ImportedPet.new())\n  inferred.bark()\n  explicit = generic_identity[ImportedLeaf](ImportedLeaf.new())\n  explicit.ping()\n  factory = GenericFactory.new()\n  from_method = factory.echo(ImportedPet.new())\n  from_method.bark()\n  from_singleton = GenericSingletonFactory.echo(ImportedPet.new())\n  from_singleton.bark()\n  explicit_singleton = GenericSingletonFactory.echo[ImportedLeaf](ImportedLeaf.new())\n  explicit_singleton.ping()\nend"}}}'
 read_message >/dev/null
 
-for request in '158 3 11 bark' '159 5 11 ping' '160 8 14 bark'; do
+for request in '158 3 11 bark' '159 5 11 ping' '160 8 14 bark' \
+               '164 10 17 bark' '165 12 21 ping'; do
   set -- $request
   send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
   response="$(read_message)"

@@ -163,9 +163,10 @@ search over a real (if scoped) lexical symbol table:
     An inferred union receiver can likewise publish an assigned method result
     when every class arm defines the method with a usable declared or inferred
     return; one missing or unknown arm makes the result unresolved.
-    Generic functions and methods apply the same tooling-only inference after
-    substituting explicit or argument-inferred type-variable bindings; if any
-    binding remains unresolved, no receiver fact is published.
+    Generic functions, instance methods, and singleton methods apply the same
+    tooling-only inference after substituting explicit or argument-inferred
+    type-variable bindings; if any binding remains unresolved, no receiver
+    fact is published.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this
