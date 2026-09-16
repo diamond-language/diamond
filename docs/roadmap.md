@@ -466,7 +466,8 @@ Next steps:
   repeated indexing from a nested class-element `Array` local preserves the element
   receiver fact, including a structurally known non-generic top-level,
   singleton, or single-class instance-method call as the array source
-  (nullable `Hash` indexing remains conservative);
+  (including generic calls with simple single-class argument inference;
+  nullable `Hash` indexing remains conservative);
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

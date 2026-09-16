@@ -126,7 +126,9 @@ search over a real (if scoped) lexical symbol table:
     resolvable receiver are ignored. Repeated indexing from a local explicitly
     typed as a nested `Array` resolves to its eventual class element type;
     the same applies to a non-generic top-level, singleton, or single-class
-    instance-method call with a structurally known array return. `Hash[K, V]`
+    instance-method call with a structurally known array return. Generic calls
+    also work when their class bindings can be inferred by the same exact-type-
+    variable rule used for direct chains. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a

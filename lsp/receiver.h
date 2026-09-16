@@ -20,7 +20,8 @@
  * parentheses around any supported receiver form are ignored. Repeated
  * indexing from a local typed as a nested `Array` resolves its eventual class;
  * the same is true for a structurally known non-generic top-level, singleton,
- * or single-class instance-method call result.
+ * or single-class instance-method call result, plus a generic call whose class
+ * bindings can be inferred from bare type-variable parameters.
  * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
  * Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
