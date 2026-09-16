@@ -328,6 +328,12 @@ static size_t infer_class_bindings(const DiamondProgram *program,
         size_t start,size_t end,const DiamondFunction *function,
         ReceiverTypeBinding *bindings,unsigned depth);
 
+static bool resolve_target_bindings(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t argument_start,size_t argument_end,
+        const DiamondFunction *function,const ReceiverCallSyntax *call,
+        ReceiverTypeBinding *bindings,size_t *binding_count,unsigned depth);
+
 static bool infer_structural_class_bindings(const DiamondChunk *chunk,
         const DiamondTypeSet *expected_sets,size_t expected_count,
         uint16_t expected_index,const DiamondTypeSet *actual_sets,
@@ -453,8 +459,6 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         ReceiverCallSyntax call;
         if(!parse_receiver_call_syntax(chunk,source,tokens,start,first_index-1,
                 &call))return 0;
-        memcpy(bindings,call.bindings,sizeof bindings);
-        binding_count=call.binding_count;
         ReceiverCallTargets targets;
         if(!resolve_call_targets(program,chunk,source,tokens,start,&call,depth,
                 &targets)||targets.constructor||targets.function_count==0)
@@ -472,14 +476,9 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
                    target->type_set_count,target_return,candidate->type_sets,
                    candidate->type_set_count,candidate_return,0))return 0;
         }
-        if(target->type_variable_count>0) {
-            if(!call.has_explicit_bindings) {
-                if(first_index<2)return 0;
-                binding_count=infer_class_bindings(program,chunk,source,tokens,
-                    call.left+1,first_index-2,target,bindings,depth);
-            }
-            if(binding_count!=target->type_variable_count)return 0;
-        } else if(call.has_explicit_bindings)return 0;
+        if(first_index<2||!resolve_target_bindings(program,chunk,source,tokens,
+                call.left+1,first_index-2,target,&call,bindings,&binding_count,
+                depth))return 0;
         const uint16_t return_set=receiver_return_set(target);
         if(return_set==DIAMOND_NO_TYPE_SET||return_set>=target->type_set_count)
             return 0;
@@ -612,6 +611,21 @@ static size_t infer_class_bindings(const DiamondProgram *program,
     return function->type_variable_count;
 }
 
+static bool resolve_target_bindings(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t argument_start,size_t argument_end,
+        const DiamondFunction *function,const ReceiverCallSyntax *call,
+        ReceiverTypeBinding *bindings,size_t *binding_count,unsigned depth) {
+    memcpy(bindings,call->bindings,8*sizeof bindings[0]);
+    *binding_count=call->binding_count;
+    if(function->type_variable_count==0)
+        return !call->has_explicit_bindings;
+    if(!call->has_explicit_bindings)
+        *binding_count=infer_class_bindings(program,chunk,source,tokens,
+            argument_start,argument_end,function,bindings,depth);
+    return *binding_count==function->type_variable_count;
+}
+
 static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,DiamondToken token,size_t *classes,size_t capacity,
         bool *is_singleton) {
@@ -670,13 +684,11 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
     size_t count=0;
     for(size_t index=0;index<targets.function_count;index++) {
         const DiamondFunction *function=targets.functions[index];
-        size_t candidate_binding_count=call.binding_count;
+        size_t candidate_binding_count=0;
         ReceiverTypeBinding candidate_bindings[8];
-        memcpy(candidate_bindings,call.bindings,sizeof candidate_bindings);
-        if(!call.has_explicit_bindings&&function->type_variable_count>0)
-            candidate_binding_count=infer_class_bindings(program,chunk,source,
-                tokens,call.left+1,end-1,function,candidate_bindings,depth);
-        if(candidate_binding_count!=function->type_variable_count)return 0;
+        if(!resolve_target_bindings(program,chunk,source,tokens,call.left+1,
+                end-1,function,&call,candidate_bindings,
+                &candidate_binding_count,depth))return 0;
         size_t returned[DIAMOND_MAX_UNION_TYPES];
         const size_t returned_count=function_return_classes_bound(chunk,function,
             candidate_bindings,candidate_binding_count,returned,
