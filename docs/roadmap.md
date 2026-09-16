@@ -459,6 +459,7 @@ Next steps:
   result when every class arm has a usable declared or inferred return;
   generic functions, instance methods, and singleton methods do likewise when
   every type variable resolves;
+  directly chained generic calls resolve explicit plain-class bindings;
   captured/boxed locals preserve the same tooling-only fact through the cell;
   grouping parentheses preserve any otherwise resolvable receiver expression;
 - explore incremental compilation only after the compiler has a reusable unit

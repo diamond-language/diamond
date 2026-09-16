@@ -151,8 +151,9 @@ static size_t append_class(size_t *classes,size_t count,size_t capacity,size_t v
     return count;
 }
 
-static size_t function_return_classes(const DiamondChunk *chunk,
-        const DiamondFunction *function,size_t *classes,size_t capacity) {
+static size_t function_return_classes_bound(const DiamondChunk *chunk,
+        const DiamondFunction *function,const size_t *bindings,
+        size_t binding_count,size_t *classes,size_t capacity) {
     /* return_type_set (an explicit `-> Type` annotation) wins when
      * present; inferred_return_type_set (compile_definition's own
      * best-effort inference from an unannotated body's last expression)
@@ -165,8 +166,39 @@ static size_t function_return_classes(const DiamondChunk *chunk,
     size_t count=0;
     for(size_t index=0;index<set->count;index++) {
         size_t class_index;
-        if(!decode_class_type(chunk,set->members[index].id,&class_index))return 0;
+        const uint8_t type=set->members[index].id;
+        if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
+            const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
+            if(variable>=binding_count||bindings==nullptr)return 0;
+            class_index=bindings[variable];
+        } else if(!decode_class_type(chunk,type,&class_index))return 0;
         count=append_class(classes,count,capacity,class_index);
+    }
+    return count;
+}
+
+/* Parse the deliberately narrow, provable generic-call form `[Class, ...]`.
+ * Parameterized/union arguments remain unresolved until the receiver resolver
+ * has a full source-level type-expression parser of its own. */
+static size_t explicit_class_bindings(const DiamondChunk *chunk,
+        const char *source,const DiamondToken *tokens,size_t start,size_t end,
+        size_t *bindings,size_t capacity) {
+    size_t count=0;
+    for(size_t index=start;index<=end;) {
+        if(tokens[index].kind!=DIAMOND_TOKEN_IDENTIFIER||count==capacity)return 0;
+        const char *name=source+tokens[index].span.start;
+        const size_t length=tokens[index].span.length;
+        bool found=false;
+        for(size_t candidate=0;candidate<chunk->class_count;candidate++)
+            if(strlen(chunk->classes[candidate].name)==length&&
+               memcmp(chunk->classes[candidate].name,name,length)==0) {
+                bindings[count++]=candidate;found=true;break;
+            }
+        if(!found)return 0;
+        index++;
+        if(index>end)break;
+        if(tokens[index].kind!=DIAMOND_TOKEN_COMMA)return 0;
+        index++;
     }
     return count;
 }
@@ -224,23 +256,44 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
         if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
         else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&--nesting==0) {left=index-1;break;}
     }
-    if(left==start||tokens[left-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
-    const DiamondToken callee=tokens[left-1];
+    if(left==start)return 0;
+    size_t callee_index=left-1;
+    size_t bindings[8];size_t binding_count=0;
+    if(tokens[callee_index].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
+        size_t bracket_nesting=0,open=callee_index;
+        for(size_t index=callee_index+1;index>start;index--) {
+            const DiamondTokenKind kind=tokens[index-1].kind;
+            if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)bracket_nesting++;
+            else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&--bracket_nesting==0) {
+                open=index-1;break;
+            }
+        }
+        if(open==start||tokens[open-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+        binding_count=explicit_class_bindings(chunk,source,tokens,open+1,
+            callee_index-1,bindings,8);
+        if(binding_count==0)return 0;
+        callee_index=open-1;
+    }
+    if(tokens[callee_index].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
+    const DiamondToken callee=tokens[callee_index];
     const char *name=source+callee.span.start;const size_t name_length=callee.span.length;
-    if(left-1==start) {
+    if(callee_index==start) {
         for(size_t index=chunk->function_count;index>0;index--) {
             const DiamondFunction *function=chunk->functions[index-1];
             if(function->owner_class==UINT8_MAX&&!function->nested&&
                strlen(function->name)==name_length&&memcmp(function->name,name,name_length)==0) {
+                if(binding_count!=function->type_variable_count)return 0;
                 *is_singleton=false;
-                return function_return_classes(chunk,function,classes,capacity);
+                return function_return_classes_bound(chunk,function,bindings,
+                    binding_count,classes,capacity);
             }
         }
         return 0;
     }
-    if(tokens[left-2].kind!=DIAMOND_TOKEN_DOT||left<3)return 0;
+    if(callee_index<2||tokens[callee_index-1].kind!=DIAMOND_TOKEN_DOT)return 0;
     size_t receiver_classes[DIAMOND_MAX_UNION_TYPES];bool receiver_singleton=false;
-    const size_t receiver_count=resolve_expression(program,chunk,source,tokens,start,left-3,
+    const size_t receiver_count=resolve_expression(program,chunk,source,tokens,start,
+        callee_index-2,
         receiver_classes,DIAMOND_MAX_UNION_TYPES,&receiver_singleton,depth+1);
     if(receiver_count==0)return 0;
     if(name_length==3&&memcmp(name,"new",3)==0&&receiver_singleton) {
@@ -254,9 +307,11 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
         const DiamondMethod *method=receiver_lookup_method(chunk,receiver_classes[index],
             receiver_singleton,name,name_length);
         if(method==nullptr||method->function_index>=chunk->function_count)return 0;
+        const DiamondFunction *function=chunk->functions[method->function_index];
+        if(binding_count!=function->type_variable_count)return 0;
         size_t returned[DIAMOND_MAX_UNION_TYPES];
-        const size_t returned_count=function_return_classes(chunk,
-            chunk->functions[method->function_index],returned,DIAMOND_MAX_UNION_TYPES);
+        const size_t returned_count=function_return_classes_bound(chunk,function,
+            bindings,binding_count,returned,DIAMOND_MAX_UNION_TYPES);
         if(returned_count==0)return 0;
         for(size_t member=0;member<returned_count;member++)
             count=append_class(classes,count,capacity,returned[member]);
@@ -343,23 +398,29 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     /* Walk backward to the start of the receiver's current expression. A
      * newline was discarded above, so the last statement boundary is the
      * nearest token that cannot participate in a postfix call chain. */
-    size_t start=dot-1,nesting=0;
+    size_t start=dot-1,nesting=0,bracket_nesting=0;
     for(size_t index=dot;index>0;index--) {
         const DiamondTokenKind kind=tokens[index-1].kind;
         if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
+        else if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)bracket_nesting++;
+        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&bracket_nesting>0)
+            bracket_nesting--;
         else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&nesting>0) {
             nesting--;
             /* A matched `(` preceded by an identifier belongs to a call and
              * its callee is still part of the receiver chain. Otherwise it is
              * a grouping boundary: do not absorb the preceding statement. */
             if(nesting==0&&
-               (index==1||tokens[index-2].kind!=DIAMOND_TOKEN_IDENTIFIER)) {
+               (index==1||(tokens[index-2].kind!=DIAMOND_TOKEN_IDENTIFIER&&
+                            tokens[index-2].kind!=DIAMOND_TOKEN_RIGHT_BRACKET))) {
                 start=index-1;break;
             }
         }
         start=index-1;
-        if(nesting==0&&index>1&&tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
+        if(nesting==0&&bracket_nesting==0&&index>1&&
+           tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
            kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&
+           kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&kind!=DIAMOND_TOKEN_LEFT_BRACKET&&
            kind!=DIAMOND_TOKEN_DOT)break;
     }
     const size_t result=resolve_expression(program,chunk,source,tokens,start,dot-1,
