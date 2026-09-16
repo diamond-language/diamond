@@ -8502,6 +8502,21 @@ static void merge_flow_types(Compiler *compiler,uint8_t left_type,int32_t left_s
     *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
 }
 
+/* Tooling-only receiver facts are sometimes cloned independently while
+ * compiling separate control-flow arms. Their table indices then differ even
+ * though they describe the same receiver graph, so compare the graphs before
+ * conservatively discarding the fact at the join. */
+static int32_t merge_tooling_type_sets(const Compiler *compiler,int32_t left,
+        int32_t right) {
+    if(left==right)return left;
+    if(left<0||right<0||(size_t)left>=compiler->function->type_set_count||
+       (size_t)right>=compiler->function->type_set_count)return -1;
+    return type_sets_structurally_equal(compiler->function->type_sets,
+        compiler->function->type_set_count,(uint16_t)left,
+        compiler->function->type_sets,compiler->function->type_set_count,
+        (uint16_t)right,0)?left:-1;
+}
+
 /* Conservatively joins two control-flow alias-identity states for the same
  * local. Agreeing branches keep the shared identity; disagreeing branches
  * (including either being unaliased) detach to 0 rather than guessing which
@@ -8594,8 +8609,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         merge_flow_types(compiler,loop->exit_types[index],loop->exit_sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &loop->exit_types[index],&loop->exit_sets[index]);
-        if(loop->exit_tooling_sets[index]!=compiler->tooling_type_sets[index])
-            loop->exit_tooling_sets[index]=-1;
+        loop->exit_tooling_sets[index]=merge_tooling_type_sets(compiler,
+            loop->exit_tooling_sets[index],compiler->tooling_type_sets[index]);
     }
     for(size_t index=0;index<loop->flow_local_count;index++)
         loop->exit_alias[index]=merge_alias_identity(loop->exit_alias[index],
@@ -8604,8 +8619,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         &loop->new_local_count,loop->new_types,loop->new_sets,loop->new_alias);
     merge_flow_types(compiler,loop->result_type,loop->result_set,
         result_type,result_set,&loop->result_type,&loop->result_set);
-    if(loop->result_tooling_set!=result_tooling_set)
-        loop->result_tooling_set=-1;
+    loop->result_tooling_set=merge_tooling_type_sets(compiler,
+        loop->result_tooling_set,result_tooling_set);
 }
 
 static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
@@ -8870,8 +8885,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
         const int32_t false_tooling=compiler->tooling_type_sets[index];
-        compiler->tooling_type_sets[index]=then_tooling[index]==false_tooling?
-            then_tooling[index]:-1;
+        compiler->tooling_type_sets[index]=merge_tooling_type_sets(compiler,
+            then_tooling[index],false_tooling);
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);
@@ -8905,8 +8920,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             false_type,false_set,&compiler->known_types[reg],
             &compiler->known_type_sets[reg]);
         const int32_t false_tooling=compiler->tooling_type_sets[reg];
-        compiler->tooling_type_sets[reg]=then_side_tooling==false_tooling?
-            then_side_tooling:-1;
+        compiler->tooling_type_sets[reg]=merge_tooling_type_sets(compiler,
+            then_side_tooling,false_tooling);
         compiler->locals[index].alias_identity=
             merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
         record_scope_type_fact(compiler,reg,compiler->current.span.start);
@@ -8915,8 +8930,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     merge_flow_types(compiler,then_type,then_set,false_result_type,
         false_result_set,&compiler->known_types[destination],
         &compiler->known_type_sets[destination]);
-    compiler->tooling_type_sets[destination]=
-        then_result_tooling==false_result_tooling?then_result_tooling:-1;
+    compiler->tooling_type_sets[destination]=merge_tooling_type_sets(compiler,
+        then_result_tooling,false_result_tooling);
 
     if (!end_consumed&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
@@ -9976,8 +9991,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         merge_flow_types(compiler,join->types[index],join->sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &join->types[index],&join->sets[index]);
-        if(join->tooling_sets[index]!=compiler->tooling_type_sets[index])
-            join->tooling_sets[index]=-1;
+        join->tooling_sets[index]=merge_tooling_type_sets(compiler,
+            join->tooling_sets[index],compiler->tooling_type_sets[index]);
     }
     for(size_t index=0;index<flow_local_count;index++)
         join->alias[index]=merge_alias_identity(join->alias[index],
@@ -9985,8 +10000,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
     merge_case_new_locals(compiler,join,flow_local_count);
     merge_flow_types(compiler,join->result_type,join->result_set,
         branch_result_type,branch_result_set,&join->result_type,&join->result_set);
-    if(join->result_tooling_set!=branch_result_tooling)
-        join->result_tooling_set=-1;
+    join->result_tooling_set=merge_tooling_type_sets(compiler,
+        join->result_tooling_set,branch_result_tooling);
 }
 
 static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,

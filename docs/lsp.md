@@ -157,7 +157,8 @@ search over a real (if scoped) lexical symbol table:
     a separate tooling-only scope fact and never enters the compiler facts
     used for type checks or opcode selection. `if`/`unless`, `case`, and loop
     joins preserve that fact only when every runtime path carries the same
-    fact (including the zero-iteration and `break` exits of a loop);
+    fact (including structurally equivalent graphs independently inferred in
+    separate branches, and the zero-iteration and `break` exits of a loop);
     conflicting paths clear it rather than retaining the last branch compiled.
     An inferred union receiver can likewise publish an assigned method result
     when every class arm defines the method with a usable declared or inferred

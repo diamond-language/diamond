@@ -453,8 +453,9 @@ Next steps:
   instance-method call through an already inferred local, via metadata kept
   separate from compile-time type semantics. `if`/`unless` joins now retain
   the same fact across `if`/`unless`, `case`, and loop exits and clear
-  conflicting facts; other unrepresentable dynamic results remain deliberately
-  unresolved. An inferred union receiver also carries an assigned method
+  conflicting facts; independently cloned but structurally equivalent facts
+  merge as the same receiver graph. Other unrepresentable dynamic results
+  remain deliberately unresolved. An inferred union receiver also carries an assigned method
   result when every class arm has a usable declared or inferred return;
   generic functions/methods do likewise when every type variable resolves;
   captured/boxed locals preserve the same tooling-only fact through the cell;

@@ -353,6 +353,20 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"}}}'
 read_message >/dev/null
 
+# Separate branches can independently clone the same inferred receiver graph.
+# The join compares graph structure, not the otherwise unrelated table indices.
+receiver_equivalent_flow_uri="file://$work/receiver_equivalent_flow.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'","text":"require \"receiver_dependency\"\ndef equivalent_branch_receiver(flag)\n  if flag\n    pet = build_imported_pet()\n  else\n    pet = build_imported_pet()\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":163,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'"},"position":{"line":7,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'"}}}'
+read_message >/dev/null
+
 # Case joins apply the same rule across every when/else path.
 receiver_case_uri="file://$work/receiver_case.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_case_uri"'","text":"require \"receiver_dependency\"\ndef preserve_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    puts(1)\n  else\n    puts(2)\n  end\n  pet.bark()\nend\n\ndef discard_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    pet = ImportedFactory.build()\n  else\n    puts(2)\n  end\n  pet.bark()\nend"}}}'
