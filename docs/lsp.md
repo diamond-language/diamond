@@ -130,8 +130,8 @@ search over a real (if scoped) lexical symbol table:
     also work when their class bindings can be inferred by the same exact-type-
     variable rule used for direct chains, or supplied explicitly as class
     unions or nested `Array` shapes ending in a class union. Inference also descends
-    through matching single-member parameterized
-    shapes such as `Array[T]` versus a local `Array[Pet]`. `Hash[K, V]`
+    through matching parameterized shapes such as `Array[T]` versus a local
+    `Array[Pet | Leaf]`. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
@@ -182,7 +182,7 @@ search over a real (if scoped) lexical symbol table:
     fact is published. A directly chained generic function or method call also
     resolves when its explicit bindings are class unions, optionally nested in
     `Array`, or when each binding can be inferred from a parameter that is
-    exactly that type variable and a single-class receiver argument. Other
+    exactly that type variable and a class-union receiver argument. Other
     source-level type arguments and more complex inference shapes remain
     deliberately unresolved.
     Capturing/boxing a local preserves the separate tooling fact through the

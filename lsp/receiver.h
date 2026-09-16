@@ -24,15 +24,14 @@
  * bindings can be inferred from bare type-variable parameters or supplied
  * explicitly as plain class names or nested class-element `Array` shapes.
  * Inference also descends through matching
- * single-member parameterized shapes such as `Array[T]` and `Array[Pet]`.
+ * parameterized shapes such as `Array[T]` and `Array[Pet | Leaf]`.
  * Union receivers can supply an indexed method result when every candidate has
  * an equivalent non-generic structural array return.
  * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
  * Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
  * explicit bindings when each binding is a class union, optionally nested in
- * `Array`, or infer a binding from a single-class argument to a bare
- * type-variable parameter.
+ * `Array`, or infer a class-union binding from a bare type-variable parameter.
  * Every class-kind
  * union member is returned as a candidate. Unknown/conflicting ivars and unannotated call returns
  * deliberately return 0 so callers fall back to their existing behavior.

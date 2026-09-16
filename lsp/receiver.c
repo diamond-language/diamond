@@ -157,6 +157,29 @@ typedef struct ReceiverTypeBinding {
     uint8_t array_depth;
 } ReceiverTypeBinding;
 
+static bool binding_matches_classes(const ReceiverTypeBinding *binding,
+        const size_t *classes,size_t count) {
+    if(binding->class_count!=count||binding->array_depth!=0)return false;
+    for(size_t index=0;index<count;index++) {
+        bool found=false;
+        for(size_t known=0;known<binding->class_count;known++)
+            if(binding->classes[known]==classes[index]) {found=true;break;}
+        if(!found)return false;
+    }
+    return true;
+}
+
+static bool bind_classes(ReceiverTypeBinding *binding,const size_t *classes,
+        size_t count) {
+    if(count==0||count>DIAMOND_MAX_UNION_TYPES)return false;
+    if(binding->class_count!=0)return binding_matches_classes(binding,classes,count);
+    for(size_t index=0;index<count;index++)
+        binding->class_count=append_class(binding->classes,binding->class_count,
+            DIAMOND_MAX_UNION_TYPES,classes[index]);
+    binding->array_depth=0;
+    return binding->class_count==count;
+}
+
 static size_t function_return_classes_bound(const DiamondChunk *chunk,
         const DiamondFunction *function,const ReceiverTypeBinding *bindings,
         size_t binding_count,size_t *classes,size_t capacity) {
@@ -372,20 +395,18 @@ static bool infer_structural_class_bindings(const DiamondChunk *chunk,
     if(expected->count==1&&
        expected->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
        expected->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
-        if(actual->count!=1)return false;
-        size_t class_index;
-        if(!decode_class_type(chunk,actual->members[0].id,&class_index))return false;
+        size_t classes[DIAMOND_MAX_UNION_TYPES];size_t class_count=0;
+        for(size_t index=0;index<actual->count;index++) {
+            size_t class_index;
+            if(!decode_class_type(chunk,actual->members[index].id,&class_index))
+                return false;
+            class_count=append_class(classes,class_count,
+                DIAMOND_MAX_UNION_TYPES,class_index);
+        }
         const size_t variable=(size_t)(expected->members[0].id-
             DIAMOND_TYPE_VARIABLE_BASE);
         if(variable>=binding_count)return false;
-        if(bindings[variable].class_count==0) {
-            bindings[variable].classes[0]=class_index;
-            bindings[variable].class_count=1;
-            bindings[variable].array_depth=0;
-        }
-        return bindings[variable].class_count==1&&
-            bindings[variable].classes[0]==class_index&&
-            bindings[variable].array_depth==0;
+        return bind_classes(&bindings[variable],classes,class_count);
     }
     if(expected->count!=1||actual->count!=1||
        expected->members[0].id!=actual->members[0].id)return false;
@@ -629,14 +650,9 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                         DIAMOND_MAX_UNION_TYPES,&singleton,depth+1);
                     const size_t variable=(size_t)(expected->members[0].id-
                         DIAMOND_TYPE_VARIABLE_BASE);
-                    if(count!=1||singleton||variable>=function->type_variable_count)
+                    if(count==0||singleton||variable>=function->type_variable_count)
                         return 0;
-                    if(bindings[variable].class_count==0) {
-                        bindings[variable].classes[0]=classes[0];
-                        bindings[variable].class_count=1;
-                    } else if(bindings[variable].class_count!=1||
-                            bindings[variable].classes[0]!=classes[0]||
-                            bindings[variable].array_depth!=0)return 0;
+                    if(!bind_classes(&bindings[variable],classes,count))return 0;
                 }
             }
         }

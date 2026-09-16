@@ -39,6 +39,9 @@ authoritative fine-grained record.
   `identity[Pet | Leaf](value).method()` now exposes both possible receiver
   classes to hover, definition, and completion, including after indexing a
   nested shape such as `identity[Array[Pet | Leaf]](values)[0]`.
+- Generic receiver inference now retains every class in a union-valued
+  argument, both for a bare `T` and through `Array[T]`, rather than abandoning
+  the call chain unless the argument resolved to exactly one class.
 - Extended receiver-aware call-chain resolution (`textDocument/hover`/
   `definition`/`completion`) to functions whose body uses `return`
   across separate branches with no shared annotation: `compile_return`
