@@ -150,7 +150,11 @@ search over a real (if scoped) lexical symbol table:
     across separate branches instead -- `body_result` alone can never see
     those -- gets it from `compile_return`'s own accumulated union of
     every `return value` it saw, merged in alongside the trailing-
-    expression case rather than replacing it. Any other receiver this
+    expression case rather than replacing it. An inferred result also
+    survives a simple local assignment (`pet = build_pet(); pet.bark()`),
+    including when the unannotated factory comes from `require`; this uses
+    a separate tooling-only scope fact and never enters the compiler facts
+    used for type checks or opcode selection. Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty

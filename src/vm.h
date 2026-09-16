@@ -800,6 +800,8 @@ typedef struct DiamondScopeLocal {
      * joins can synthesize this set when all paths have representable known
      * types (`cond ? Dog.new() : Cat.new()`, for example). */
     int32_t known_type_set;
+    /* LSP-only return inference propagated through a local assignment. */
+    int32_t tooling_type_set;
 } DiamondScopeLocal;
 
 typedef struct DiamondScopeTypeFact {
@@ -810,6 +812,7 @@ typedef struct DiamondScopeTypeFact {
     size_t effective_start;
     uint8_t known_type;
     int32_t known_type_set;
+    int32_t tooling_type_set;
 } DiamondScopeTypeFact;
 
 typedef struct DiamondFunction {

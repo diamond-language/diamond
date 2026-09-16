@@ -207,6 +207,45 @@ read_message >/dev/null
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$main_uri"'"}}}'
 read_message >/dev/null
 
+# --- an unannotated factory pulled in through require keeps its inferred,
+# tooling-only return type when its result is first assigned to a local. ---
+
+cat > "$work/receiver_dependency.di" <<'EOF'
+class ImportedPet
+  def bark()
+    1
+  end
+end
+
+def build_imported_pet()
+  ImportedPet.new()
+end
+EOF
+receiver_import_uri="file://$work/receiver_import.di"
+receiver_dependency_uri="file://$work/receiver_dependency.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":122,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":123,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def bark()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":124,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 

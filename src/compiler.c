@@ -181,6 +181,10 @@ typedef struct Compiler {
     bool loop_captures_pending;
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
     int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
+    /* LSP-only inferred return facts. Kept separate from known_type_sets so
+     * an unannotated callee can improve receiver tooling after assignment
+     * without changing opcode selection or compile-time type checks. */
+    int32_t tooling_type_sets[DIAMOND_REGISTER_COUNT];
     /* Set when a register was loaded via one INDEX_GET directly off a
      * tracked local's own register (`x[i]`, one level only -- a chained
      * `x[a][b]` sees a non-local `receiver` on its second INDEX_GET and
@@ -424,6 +428,7 @@ static uint16_t allocate_register(Compiler *compiler) {
     const uint16_t reg=(uint16_t)compiler->next_register++;
     compiler->known_types[reg]=TYPE_UNKNOWN;
     compiler->known_type_sets[reg]=-1;
+    compiler->tooling_type_sets[reg]=-1;
     return reg;
 }
 
@@ -1010,6 +1015,17 @@ static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
         target->return_type_set:clone_type_set_into_current(compiler,
             target->type_sets,target->type_set_count,target->return_type_set);
     publish_known_type_set(compiler,reg,return_set);
+}
+
+static void publish_inferred_tooling_return_type(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *target) {
+    if(target==nullptr||target->return_type_set!=DIAMOND_NO_TYPE_SET||
+       target->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
+       target->inferred_return_type_set>=target->type_set_count||
+       target->type_variable_count>0)return;
+    const uint16_t set=clone_type_set_into_current(compiler,target->type_sets,
+        target->type_set_count,target->inferred_return_type_set);
+    if(set!=DIAMOND_NO_TYPE_SET)compiler->tooling_type_sets[reg]=(int32_t)set;
 }
 
 static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
@@ -3131,6 +3147,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         }
         publish_declared_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
+        publish_inferred_tooling_return_type(compiler,destination,function);
         return destination;
     }
     /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
@@ -3249,6 +3266,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_register(compiler,block);
             publish_declared_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
+            publish_inferred_tooling_return_type(compiler,destination,function);
             return destination;
         }
         slot_registers[argument_count]=block;
@@ -3308,6 +3326,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     publish_declared_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
+    publish_inferred_tooling_return_type(compiler,destination,function);
     return destination;
 }
 
@@ -8554,6 +8573,7 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
     for(size_t index=0;index<loop->flow_reg_count;index++) {
         compiler->known_types[index]=loop->exit_types[index];
         compiler->known_type_sets[index]=loop->exit_sets[index];
+        compiler->tooling_type_sets[index]=-1;
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
@@ -8562,13 +8582,11 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
         index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
         const size_t slot=index-loop->flow_local_count;
         const uint16_t reg=compiler->locals[index].reg;
-        const uint8_t old_type=compiler->known_types[reg];
-        const int32_t old_set=compiler->known_type_sets[reg];
         compiler->known_types[reg]=loop->new_types[slot];
         compiler->known_type_sets[reg]=loop->new_sets[slot];
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=loop->new_alias[slot];
-        if(old_type!=loop->new_types[slot]||old_set!=loop->new_sets[slot])
-            record_scope_type_fact(compiler,reg,effective_start);
+        record_scope_type_fact(compiler,reg,effective_start);
     }
     compiler->known_types[loop->result_register]=loop->result_type;
     compiler->known_type_sets[loop->result_register]=loop->result_set;
@@ -8793,8 +8811,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_types[index],then_sets[index],
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
-        if(register_is_local(compiler,(uint16_t)index)&&
-           (then_types[index]!=false_type||then_sets[index]!=false_set))
+        compiler->tooling_type_sets[index]=-1;
+        if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);
     }
@@ -8824,10 +8842,10 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_side_type,then_side_set,
             false_type,false_set,&compiler->known_types[reg],
             &compiler->known_type_sets[reg]);
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=
             merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
-        if(then_side_type!=false_type||then_side_set!=false_set)
-            record_scope_type_fact(compiler,reg,compiler->current.span.start);
+        record_scope_type_fact(compiler,reg,compiler->current.span.start);
     }
     free(heap_types);free(heap_sets);
     merge_flow_types(compiler,then_type,then_set,false_result_type,
@@ -9895,7 +9913,8 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=join->types[index];
         compiler->known_type_sets[index]=join->sets[index];
-        if(join->varied[index]&&register_is_local(compiler,(uint16_t)index))
+        compiler->tooling_type_sets[index]=-1;
+        if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
     for(size_t index=0;index<flow_local_count;index++)
@@ -9905,13 +9924,11 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
         index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
         const size_t slot=index-flow_local_count;
         const uint16_t reg=compiler->locals[index].reg;
-        const uint8_t old_type=compiler->known_types[reg];
-        const int32_t old_set=compiler->known_type_sets[reg];
         compiler->known_types[reg]=join->new_types[slot];
         compiler->known_type_sets[reg]=join->new_sets[slot];
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=join->new_alias[slot];
-        if(old_type!=join->new_types[slot]||old_set!=join->new_sets[slot])
-            record_scope_type_fact(compiler,reg,effective_start);
+        record_scope_type_fact(compiler,reg,effective_start);
     }
     compiler->known_types[destination]=join->result_type;
     compiler->known_type_sets[destination]=join->result_set;
@@ -11207,6 +11224,7 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
         recorded->reg=local->reg;
         recorded->known_type=compiler->known_types[local->reg];
         recorded->known_type_set=compiler->known_type_sets[local->reg];
+        recorded->tooling_type_set=compiler->tooling_type_sets[local->reg];
     }
 }
 
@@ -11218,7 +11236,8 @@ static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         &function->scope_type_facts[function->scope_type_fact_count++];
     *fact=(DiamondScopeTypeFact){.reg=reg,.effective_start=effective_start,
         .known_type=compiler->known_types[reg],
-        .known_type_set=compiler->known_type_sets[reg]};
+        .known_type_set=compiler->known_type_sets[reg],
+        .tooling_type_set=compiler->tooling_type_sets[reg]};
 }
 
 static uint16_t compile_begin(Compiler *compiler) {
@@ -15247,6 +15266,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         const uint16_t local_register=compiler->locals[(size_t)local].reg;
         compiler->known_types[local_register]=compiler->known_types[value];
         compiler->known_type_sets[local_register]=compiler->known_type_sets[value];
+        compiler->tooling_type_sets[local_register]=compiler->tooling_type_sets[value];
         compiler->locals[(size_t)local].alias_identity=value_alias_identity;
         record_scope_type_fact(compiler,local_register,compiler->current.span.start);
         return value;
@@ -15271,6 +15291,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
+    compiler->tooling_type_sets[destination]=compiler->tooling_type_sets[value];
     for(size_t index=compiler->local_count;index>0;index--)
         if(compiler->locals[index-1].reg==destination) {
             compiler->locals[index-1].alias_identity=value_alias_identity;break;

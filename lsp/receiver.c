@@ -100,9 +100,10 @@ static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_
 
 static void local_type_at_offset(const DiamondFunction *owner,
         const DiamondScopeLocal *local,size_t offset,uint8_t *known_type,
-        int32_t *known_type_set) {
+        int32_t *known_type_set,int32_t *tooling_type_set) {
     *known_type=local->known_type;
     *known_type_set=local->known_type_set;
+    *tooling_type_set=local->tooling_type_set;
     size_t latest=0;bool found=false;
     for(size_t index=0;index<owner->scope_type_fact_count;index++) {
         const DiamondScopeTypeFact *fact=&owner->scope_type_facts[index];
@@ -111,6 +112,7 @@ static void local_type_at_offset(const DiamondFunction *owner,
             found=true;latest=fact->effective_start;
             *known_type=fact->known_type;
             *known_type_set=fact->known_type_set;
+            *tooling_type_set=fact->tooling_type_set;
         }
     }
 }
@@ -127,9 +129,11 @@ bool receiver_resolve_local_type_set(const DiamondProgram *program,
     const DiamondScopeLocal *local=find_scope_local(program,chunk,name,
         name_length,offset,owner);
     if(local==nullptr||*owner==nullptr)return false;
-    uint8_t known_type;int32_t known_type_set;
-    local_type_at_offset(*owner,local,offset,&known_type,&known_type_set);
+    uint8_t known_type;int32_t known_type_set,tooling_type_set;
+    local_type_at_offset(*owner,local,offset,&known_type,&known_type_set,
+        &tooling_type_set);
     (void)known_type;
+    if(known_type_set<0)known_type_set=tooling_type_set;
     if(known_type_set<0||(size_t)known_type_set>=(*owner)->type_set_count)
         return false;
     const DiamondTypeSet *set=&(*owner)->type_sets[(size_t)known_type_set];
@@ -189,11 +193,14 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
     if(local==nullptr)return 0;
     *is_singleton=false;
     uint8_t known_type=local->known_type;int32_t known_type_set=local->known_type_set;
-    local_type_at_offset(owner,local,token.span.start,&known_type,&known_type_set);
+    int32_t tooling_type_set=local->tooling_type_set;
+    local_type_at_offset(owner,local,token.span.start,&known_type,&known_type_set,
+        &tooling_type_set);
     size_t class_index;
     if(decode_class_type(chunk,known_type,&class_index)) {
         classes[0]=class_index;return 1;
     }
+    if(known_type_set<0)known_type_set=tooling_type_set;
     if(known_type_set<0||(size_t)known_type_set>=owner->type_set_count)return 0;
     const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
     size_t count=0;
