@@ -33,6 +33,24 @@ static int check_receiver(const DiamondProgram *program,const DiamondChunk *chun
     return 0;
 }
 
+static int check_receiver_pair(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *combined,const char *needle,const char *first,const char *second) {
+    const char *position=strstr(combined,needle);
+    if(position==nullptr)return 1;
+    size_t classes[DIAMOND_MAX_UNION_TYPES];bool singleton=false;
+    const size_t count=receiver_resolve_classes(program,chunk,combined,
+        (size_t)(position-combined)+strlen(needle),classes,
+        DIAMOND_MAX_UNION_TYPES,&singleton);
+    bool found_first=false,found_second=false;
+    for(size_t index=0;index<count;index++) {
+        if(strcmp(chunk->classes[classes[index]].name,first)==0)found_first=true;
+        if(strcmp(chunk->classes[classes[index]].name,second)==0)found_second=true;
+    }
+    if(count==2&&!singleton&&found_first&&found_second)return 0;
+    fprintf(stderr,"unexpected union receiver for %s: count=%zu\n",needle,count);
+    return 1;
+}
+
 int main(void) {
     static const char source[] =
         "class Pet\n"
@@ -73,6 +91,8 @@ int main(void) {
         "  Pet.new().bark()\n"
         "  identity(Pet.new()).bark()\n"
         "  identity[Array[Array[Pet]]]([[Pet.new()]])[0][0].bark()\n"
+        "  identity[Pet | Leaf](Pet.new()).bark()\n"
+        "  identity[Array[Pet | Leaf]]([Pet.new()])[0].bark()\n"
         "  matching_factory(true).pets()[0].bark()\n"
         "  conflicting_factory(true).pets()[0].bark()\n"
         "end\n";
@@ -93,6 +113,10 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"identity(Pet.new()).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,
         "identity[Array[Array[Pet]]]([[Pet.new()]])[0][0].","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "identity[Pet | Leaf](Pet.new()).","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "identity[Array[Pet | Leaf]]([Pet.new()])[0].","Pet","Leaf");
     failed|=check_receiver(program,&chunk,combined,
         "matching_factory(true).pets()[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,

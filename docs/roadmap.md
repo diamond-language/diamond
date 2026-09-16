@@ -459,16 +459,17 @@ Next steps:
   result when every class arm has a usable declared or inferred return;
   generic functions, instance methods, and singleton methods do likewise when
   every type variable resolves;
-  directly chained generic calls resolve explicit plain-class bindings and
-  simple single-class argument inference;
+  directly chained generic calls resolve explicit class-union bindings,
+  including unions nested in class-element `Array` shapes, and simple
+  single-class argument inference;
   captured/boxed locals preserve the same tooling-only fact through the cell;
   grouping parentheses preserve any otherwise resolvable receiver expression;
   repeated indexing from a nested class-element `Array` local preserves the element
   receiver fact, including a structurally known non-generic top-level,
   singleton, or single-class instance-method call as the array source
   (including generic calls with simple single-class argument inference or
-  matching parameterized shapes such as `Array[T]`, and explicit plain-class
-  or nested class-element `Array` bindings;
+  matching parameterized shapes such as `Array[T]`, and explicit class-union
+  or nested class-union `Array` bindings;
   nullable `Hash` indexing remains conservative);
   union receivers preserve indexed method results when every candidate has an
   equivalent non-generic structural array return;

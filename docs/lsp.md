@@ -128,8 +128,8 @@ search over a real (if scoped) lexical symbol table:
     the same applies to a non-generic top-level, singleton, or single-class
     instance-method call with a structurally known array return. Generic calls
     also work when their class bindings can be inferred by the same exact-type-
-    variable rule used for direct chains, or supplied explicitly as plain class
-    names or nested `Array` shapes ending in a class. Inference also descends
+    variable rule used for direct chains, or supplied explicitly as class
+    unions or nested `Array` shapes ending in a class union. Inference also descends
     through matching single-member parameterized
     shapes such as `Array[T]` versus a local `Array[Pet]`. `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
@@ -180,10 +180,11 @@ search over a real (if scoped) lexical symbol table:
     tooling-only inference after substituting explicit or argument-inferred
     type-variable bindings; if any binding remains unresolved, no receiver
     fact is published. A directly chained generic function or method call also
-    resolves when its explicit bindings are plain class names, or when each
-    binding can be inferred from a parameter that is exactly that type variable
-    and a single-class receiver argument. More complex source-level type
-    arguments and inference shapes remain deliberately unresolved.
+    resolves when its explicit bindings are class unions, optionally nested in
+    `Array`, or when each binding can be inferred from a parameter that is
+    exactly that type variable and a single-class receiver argument. Other
+    source-level type arguments and more complex inference shapes remain
+    deliberately unresolved.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this

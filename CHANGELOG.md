@@ -35,6 +35,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Extended receiver-aware generic call chains to explicit union bindings:
+  `identity[Pet | Leaf](value).method()` now exposes both possible receiver
+  classes to hover, definition, and completion, including after indexing a
+  nested shape such as `identity[Array[Pet | Leaf]](values)[0]`.
 - Extended receiver-aware call-chain resolution (`textDocument/hover`/
   `definition`/`completion`) to functions whose body uses `return`
   across separate branches with no shared annotation: `compile_return`
