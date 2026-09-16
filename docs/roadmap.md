@@ -515,6 +515,10 @@ without anyone deliberately checking against it at the time each shipped.
 Re-run this audit periodically as new native surface is added, rather
 than treating it as permanently closed.
 
+The focused ThreadSanitizer suite was re-run in 2026-09 across the thread,
+channel, supervisor, and representative fiber cases: 35 cases passed with no
+races reported.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

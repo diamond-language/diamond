@@ -33,6 +33,10 @@ authoritative fine-grained record.
   than being recreated per attempt. See docs/threads.md's Supervisors
   section and docs/internal/concurrency-internals.md for the full design.
 
+- Re-ran the focused ThreadSanitizer concurrency suite across `Thread`,
+  `Channel`, `Supervisor`, and representative `Fiber` cases: all 35 cases
+  passed with no data races reported.
+
 ### Tooling
 
 - Extended receiver-aware generic call chains to explicit union bindings:
