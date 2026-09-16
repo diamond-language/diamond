@@ -457,6 +457,7 @@ Next steps:
   unresolved. An inferred union receiver also carries an assigned method
   result when every class arm has a usable declared or inferred return;
   generic functions/methods do likewise when every type variable resolves;
+  captured/boxed locals preserve the same tooling-only fact through the cell;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

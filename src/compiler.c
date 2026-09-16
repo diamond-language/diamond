@@ -1517,6 +1517,8 @@ static uint16_t parse_identifier(Compiler *compiler) {
         compiler->known_types[compiler->locals[(size_t)local].reg];
     compiler->known_type_sets[destination]=
         compiler->known_type_sets[compiler->locals[(size_t)local].reg];
+    compiler->tooling_type_sets[destination]=
+        compiler->tooling_type_sets[compiler->locals[(size_t)local].reg];
     return destination;
 }
 
@@ -11675,24 +11677,33 @@ static uint16_t compile_block(Compiler *compiler) {
      * a block can appear after arbitrarily many registers have already
      * been allocated in the enclosing function body. */
     uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
+    int32_t inline_outer_tooling_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
     int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    int32_t *outer_tooling_type_sets=inline_outer_tooling_type_sets;
     uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
+    int32_t *heap_outer_tooling_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
             malloc((size_t)outer_next_register*sizeof(int32_t));
-        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+        heap_outer_tooling_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int32_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr||
+           heap_outer_tooling_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,"out of memory compiling block");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            free(heap_outer_tooling_type_sets);
             return 0;
         }
         outer_known_types=heap_outer_known_types;
         outer_known_type_sets=heap_outer_known_type_sets;
+        outer_tooling_type_sets=heap_outer_tooling_type_sets;
     }
     for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
-         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+         outer_known_type_sets[index]=compiler->known_type_sets[index];
+         outer_tooling_type_sets[index]=compiler->tooling_type_sets[index];}
     uint16_t captured_fact_registers[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
         captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
@@ -11881,6 +11892,15 @@ static uint16_t compile_block(Compiler *compiler) {
                     if(cloned!=DIAMOND_NO_TYPE_SET)
                         compiler->known_type_sets[cell]=(int32_t)cloned;
                 }
+                const int32_t tooling_set=outer_tooling_type_sets[source];
+                if(tooling_set>=0&&
+                   (size_t)tooling_set<outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)tooling_set);
+                    if(cloned!=DIAMOND_NO_TYPE_SET)
+                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
+                }
             }
         }
     }
@@ -11933,12 +11953,15 @@ static uint16_t compile_block(Compiler *compiler) {
 
     uint8_t captured_fact_types[DIAMOND_MAX_LOCALS];
     int32_t captured_fact_sets[DIAMOND_MAX_LOCALS];
+    int32_t captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<outer_local_count;index++) {
         const uint16_t reg=captured_fact_registers[index];
         captured_fact_types[index]=reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:
             compiler->known_types[reg];
         captured_fact_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
             compiler->known_type_sets[reg];
+        captured_fact_tooling_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
+            compiler->tooling_type_sets[reg];
     }
     compiler->function = outer_function;
     compiler->begin_depth=outer_begin_depth;
@@ -11970,7 +11993,8 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<outer_next_register;index++)
         {compiler->known_types[index]=outer_known_types[index];
-         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+         compiler->known_type_sets[index]=outer_known_type_sets[index];
+         compiler->tooling_type_sets[index]=outer_tooling_type_sets[index];}
     for(size_t index=0;index<outer_local_count;index++) {
         if(captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
         const uint16_t source=outer_locals[index].reg;
@@ -11985,9 +12009,20 @@ static uint16_t compile_block(Compiler *compiler) {
             if(cloned!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[source]=(int32_t)cloned;
         }
+        const int32_t inner_tooling_set=captured_fact_tooling_sets[index];
+        compiler->tooling_type_sets[source]=-1;
+        if(inner_tooling_set>=0&&
+           (size_t)inner_tooling_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_tooling_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->tooling_type_sets[source]=(int32_t)cloned;
+        }
         record_scope_type_fact(compiler,source,compiler->current.span.start);
     }
     free(heap_outer_known_types);free(heap_outer_known_type_sets);
+    free(heap_outer_tooling_type_sets);
 
     /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
      * now that compiler->function/locals have been restored -- same
@@ -12318,25 +12353,34 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * own (unrelated, register-index-0-based) body happened to write into
      * those same slots after this function returns. */
     uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
+    int32_t inline_outer_tooling_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
     int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    int32_t *outer_tooling_type_sets=inline_outer_tooling_type_sets;
     uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
+    int32_t *heap_outer_tooling_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
             malloc((size_t)outer_next_register*sizeof(int32_t));
-        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+        heap_outer_tooling_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int32_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr||
+           heap_outer_tooling_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling function definition");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            free(heap_outer_tooling_type_sets);
             return 0;
         }
         outer_known_types=heap_outer_known_types;
         outer_known_type_sets=heap_outer_known_type_sets;
+        outer_tooling_type_sets=heap_outer_tooling_type_sets;
     }
     for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
-         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+         outer_known_type_sets[index]=compiler->known_type_sets[index];
+         outer_tooling_type_sets[index]=compiler->tooling_type_sets[index];}
     uint16_t definition_captured_fact_registers[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
         definition_captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
@@ -12791,6 +12835,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                     if(cloned!=DIAMOND_NO_TYPE_SET)
                         compiler->known_type_sets[cell]=(int32_t)cloned;
                 }
+                const int32_t tooling_set=outer_tooling_type_sets[source];
+                if(tooling_set>=0&&
+                   (size_t)tooling_set<outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)tooling_set);
+                    if(cloned!=DIAMOND_NO_TYPE_SET)
+                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
+                }
             }
         }
     }
@@ -12942,12 +12995,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     }
     uint8_t definition_captured_fact_types[DIAMOND_MAX_LOCALS];
     int32_t definition_captured_fact_sets[DIAMOND_MAX_LOCALS];
+    int32_t definition_captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<outer_local_count;index++) {
         const uint16_t reg=definition_captured_fact_registers[index];
         definition_captured_fact_types[index]=
             reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:compiler->known_types[reg];
         definition_captured_fact_sets[index]=
             reg==DIAMOND_NO_TYPE_SET?-1:compiler->known_type_sets[reg];
+        definition_captured_fact_tooling_sets[index]=
+            reg==DIAMOND_NO_TYPE_SET?-1:compiler->tooling_type_sets[reg];
     }
     compiler->function = outer_function;
     compiler->begin_depth=outer_begin_depth;
@@ -12979,7 +13035,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<outer_next_register;index++)
         {compiler->known_types[index]=outer_known_types[index];
-         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+         compiler->known_type_sets[index]=outer_known_type_sets[index];
+         compiler->tooling_type_sets[index]=outer_tooling_type_sets[index];}
     for(size_t index=0;index<outer_local_count;index++) {
         if(definition_captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
         const uint16_t source=outer_locals[index].reg;
@@ -12994,9 +13051,21 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             if(cloned!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[source]=(int32_t)cloned;
         }
+        const int32_t inner_tooling_set=
+            definition_captured_fact_tooling_sets[index];
+        compiler->tooling_type_sets[source]=-1;
+        if(inner_tooling_set>=0&&
+           (size_t)inner_tooling_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_tooling_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->tooling_type_sets[source]=(int32_t)cloned;
+        }
         record_scope_type_fact(compiler,source,compiler->current.span.start);
     }
     free(heap_outer_known_types);free(heap_outer_known_type_sets);
+    free(heap_outer_tooling_type_sets);
     if(compiler->current_class>=0&&!module_singleton&&
        !compiler->failed&&at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];

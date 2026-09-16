@@ -432,6 +432,26 @@ done
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"}}}'
 read_message >/dev/null
 
+# Declaring a nested function boxes its enclosing locals. Loading an inferred
+# receiver back through GET_CELL and assigning it again must retain the
+# tooling-only fact in the new local.
+receiver_capture_uri="file://$work/receiver_capture.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'","text":"require \"receiver_dependency\"\ndef captured_result()\n  pet = build_imported_pet()\n  def observe_pet()\n    pet\n  end\n  copy = pet\n  copy.bark()\nend\n\ndef block_captured_result()\n  pet = build_imported_pet()\n  [1].each() do |value|\n    pet\n  end\n  copy = pet\n  copy.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":161,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"},"position":{"line":7,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":162,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"},"position":{"line":16,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 
