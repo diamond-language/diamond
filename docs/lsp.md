@@ -168,8 +168,10 @@ search over a real (if scoped) lexical symbol table:
     tooling-only inference after substituting explicit or argument-inferred
     type-variable bindings; if any binding remains unresolved, no receiver
     fact is published. A directly chained generic function or method call also
-    resolves when its explicit bindings are plain class names; more complex
-    source-level type arguments remain deliberately unresolved.
+    resolves when its explicit bindings are plain class names, or when each
+    binding can be inferred from a parameter that is exactly that type variable
+    and a single-class receiver argument. More complex source-level type
+    arguments and inference shapes remain deliberately unresolved.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this

@@ -207,6 +207,51 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
 
+static size_t infer_class_bindings(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,const DiamondFunction *function,
+        size_t *bindings,unsigned depth) {
+    if(start>end||function->type_variable_count==0)return 0;
+    for(size_t index=0;index<function->type_variable_count;index++)
+        bindings[index]=SIZE_MAX;
+    size_t argument_start=start,parameter=0,paren_depth=0,bracket_depth=0;
+    for(size_t index=start;index<=end+1;index++) {
+        const bool at_end=index==end+1;
+        const DiamondTokenKind kind=at_end?DIAMOND_TOKEN_COMMA:tokens[index].kind;
+        if(!at_end&&kind==DIAMOND_TOKEN_LEFT_PAREN)paren_depth++;
+        else if(!at_end&&kind==DIAMOND_TOKEN_RIGHT_PAREN&&paren_depth>0)paren_depth--;
+        else if(!at_end&&kind==DIAMOND_TOKEN_LEFT_BRACKET)bracket_depth++;
+        else if(!at_end&&kind==DIAMOND_TOKEN_RIGHT_BRACKET&&bracket_depth>0)
+            bracket_depth--;
+        if(kind!=DIAMOND_TOKEN_COMMA||paren_depth!=0||bracket_depth!=0)continue;
+        if(parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&argument_start<index) {
+            const uint16_t expected_index=function->parameter_type_sets[parameter];
+            if(expected_index!=DIAMOND_NO_TYPE_SET&&
+               expected_index<function->type_set_count) {
+                const DiamondTypeSet *expected=&function->type_sets[expected_index];
+                if(expected->count==1&&
+                   expected->members[0].id>=DIAMOND_TYPE_VARIABLE_BASE&&
+                   expected->members[0].id<DIAMOND_TYPE_INTERFACE_BASE) {
+                    size_t classes[DIAMOND_MAX_UNION_TYPES];bool singleton=false;
+                    const size_t count=resolve_expression(program,chunk,source,
+                        tokens,argument_start,index-1,classes,
+                        DIAMOND_MAX_UNION_TYPES,&singleton,depth+1);
+                    const size_t variable=(size_t)(expected->members[0].id-
+                        DIAMOND_TYPE_VARIABLE_BASE);
+                    if(count!=1||singleton||variable>=function->type_variable_count)
+                        return 0;
+                    if(bindings[variable]==SIZE_MAX)bindings[variable]=classes[0];
+                    else if(bindings[variable]!=classes[0])return 0;
+                }
+            }
+        }
+        parameter++;argument_start=index+1;
+    }
+    for(size_t index=0;index<function->type_variable_count;index++)
+        if(bindings[index]==SIZE_MAX)return 0;
+    return function->type_variable_count;
+}
+
 static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,DiamondToken token,size_t *classes,size_t capacity,
         bool *is_singleton) {
@@ -258,7 +303,7 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
     }
     if(left==start)return 0;
     size_t callee_index=left-1;
-    size_t bindings[8];size_t binding_count=0;
+    size_t bindings[8]={};size_t binding_count=0;bool has_explicit_bindings=false;
     if(tokens[callee_index].kind==DIAMOND_TOKEN_RIGHT_BRACKET) {
         size_t bracket_nesting=0,open=callee_index;
         for(size_t index=callee_index+1;index>start;index--) {
@@ -272,6 +317,7 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
         binding_count=explicit_class_bindings(chunk,source,tokens,open+1,
             callee_index-1,bindings,8);
         if(binding_count==0)return 0;
+        has_explicit_bindings=true;
         callee_index=open-1;
     }
     if(tokens[callee_index].kind!=DIAMOND_TOKEN_IDENTIFIER)return 0;
@@ -282,6 +328,9 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
             const DiamondFunction *function=chunk->functions[index-1];
             if(function->owner_class==UINT8_MAX&&!function->nested&&
                strlen(function->name)==name_length&&memcmp(function->name,name,name_length)==0) {
+                if(!has_explicit_bindings&&function->type_variable_count>0)
+                    binding_count=infer_class_bindings(program,chunk,source,tokens,
+                        left+1,end-1,function,bindings,depth);
                 if(binding_count!=function->type_variable_count)return 0;
                 *is_singleton=false;
                 return function_return_classes_bound(chunk,function,bindings,
@@ -308,10 +357,17 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
             receiver_singleton,name,name_length);
         if(method==nullptr||method->function_index>=chunk->function_count)return 0;
         const DiamondFunction *function=chunk->functions[method->function_index];
-        if(binding_count!=function->type_variable_count)return 0;
+        size_t candidate_binding_count=binding_count;
+        size_t candidate_bindings[8];
+        memcpy(candidate_bindings,bindings,sizeof candidate_bindings);
+        if(!has_explicit_bindings&&function->type_variable_count>0)
+            candidate_binding_count=infer_class_bindings(program,chunk,source,
+                tokens,left+1,end-1,function,candidate_bindings,depth);
+        if(candidate_binding_count!=function->type_variable_count)return 0;
         size_t returned[DIAMOND_MAX_UNION_TYPES];
         const size_t returned_count=function_return_classes_bound(chunk,function,
-            bindings,binding_count,returned,DIAMOND_MAX_UNION_TYPES);
+            candidate_bindings,candidate_binding_count,returned,
+            DIAMOND_MAX_UNION_TYPES);
         if(returned_count==0)return 0;
         for(size_t member=0;member<returned_count;member++)
             count=append_class(classes,count,capacity,returned[member]);

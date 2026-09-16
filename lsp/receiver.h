@@ -20,7 +20,9 @@
  * parentheses around any supported receiver form are ignored. `Class.new()`
  * is intrinsically an instance of Class; all other links use the declared
  * DiamondFunction.return_type_set. Direct generic call chains substitute
- * explicit bindings when each binding is a plain class name. Every class-kind
+ * explicit bindings when each binding is a plain class name, or infer a
+ * binding from a single-class argument to a bare type-variable parameter.
+ * Every class-kind
  * union member is returned as a candidate. Unknown/conflicting ivars and unannotated call returns
  * deliberately return 0 so callers fall back to their existing behavior.
  *
