@@ -155,10 +155,11 @@ search over a real (if scoped) lexical symbol table:
     including for unannotated singleton and instance methods and when the
     factory comes from `require`; this uses
     a separate tooling-only scope fact and never enters the compiler facts
-    used for type checks or opcode selection. `if`/`unless` and `case` joins
-    preserve that fact only when every runtime path carries the same fact
-    (including when no path reassigns the local); conflicting paths clear it
-    rather than retaining the last branch compiled. Any other receiver this
+    used for type checks or opcode selection. `if`/`unless`, `case`, and loop
+    joins preserve that fact only when every runtime path carries the same
+    fact (including the zero-iteration and `break` exits of a loop);
+    conflicting paths clear it rather than retaining the last branch compiled.
+    Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty

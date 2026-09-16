@@ -331,6 +331,27 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"}}}'
 read_message >/dev/null
 
+# Loop exits include the zero-iteration path and every break. An unchanged
+# receiver survives; a body assignment that only some exits observe clears it.
+receiver_loop_uri="file://$work/receiver_loop.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'","text":"require \"receiver_dependency\"\ndef preserve_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    break\n  end\n  pet.bark()\nend\n\ndef discard_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    pet = ImportedFactory.build()\n    break\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":154,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"},"position":{"line":6,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":155,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"},"position":{"line":15,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 
