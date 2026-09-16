@@ -451,8 +451,9 @@ Next steps:
   unannotated imported function or method's inferred result survives
   assignment to a local for hover/definition/completion, including an
   instance-method call through an already inferred local, via metadata kept
-  separate from compile-time type semantics; other unrepresentable dynamic
-  results remain deliberately unresolved;
+  separate from compile-time type semantics. `if`/`unless` joins now retain
+  the same fact when both paths carry it and clear conflicting facts; other
+  unrepresentable dynamic results remain deliberately unresolved;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

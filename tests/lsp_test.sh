@@ -289,6 +289,28 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"}}}'
 read_message >/dev/null
 
+# Tooling-only inferred receiver facts survive a conditional that leaves the
+# local untouched, but conflicting assignments across the two runtime paths
+# clear the fact instead of keeping whichever branch compiled last.
+receiver_flow_uri="file://$work/receiver_flow.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'","text":"require \"receiver_dependency\"\ndef preserve_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    puts(1)\n  end\n  pet.bark()\nend\n\ndef discard_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    pet = ImportedFactory.build()\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":129,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"},"position":{"line":6,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":149,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"},"position":{"line":14,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"}}}'
+read_message >/dev/null
+
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 

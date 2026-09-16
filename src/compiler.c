@@ -8711,6 +8711,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
      * register. Bounded by DIAMOND_MAX_LOCALS (64) like before_alias/
      * then_alias above, so no malloc dance needed. */
     uint8_t then_new_types[DIAMOND_MAX_LOCALS];int32_t then_new_sets[DIAMOND_MAX_LOCALS];
+    int32_t then_new_tooling[DIAMOND_MAX_LOCALS];
     uint32_t then_new_alias[DIAMOND_MAX_LOCALS];
     /* Inline arrays cover the overwhelming majority of if/elsif sites (a
      * function rarely has more than 256 registers live before one) at no
@@ -8728,24 +8729,29 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
      * reproduced with a 260-line register-churning program. */
     uint8_t inline_before_types[256];int32_t inline_before_sets[256];
     uint8_t inline_then_types[256];int32_t inline_then_sets[256];
+    int32_t inline_before_tooling[256],inline_then_tooling[256];
     uint8_t *before_types=inline_before_types,*then_types=inline_then_types;
     int32_t *before_sets=inline_before_sets,*then_sets=inline_then_sets;
-    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;
+    int32_t *before_tooling=inline_before_tooling,*then_tooling=inline_then_tooling;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr,*heap_tooling=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
         heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
-        if(heap_types==nullptr||heap_sets==nullptr) {
+        heap_tooling=malloc(flow_reg_count*2*sizeof(int32_t));
+        if(heap_types==nullptr||heap_sets==nullptr||heap_tooling==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling if expression");
-            free(heap_types);free(heap_sets);
+            free(heap_types);free(heap_sets);free(heap_tooling);
             return destination;
         }
         before_types=heap_types;then_types=heap_types+flow_reg_count;
         before_sets=heap_sets;then_sets=heap_sets+flow_reg_count;
+        before_tooling=heap_tooling;then_tooling=heap_tooling+flow_reg_count;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
         before_types[index]=compiler->known_types[index];
         before_sets[index]=compiler->known_type_sets[index];
+        before_tooling[index]=compiler->tooling_type_sets[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         before_alias[index]=compiler->locals[index].alias_identity;
@@ -8756,9 +8762,11 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     const uint16_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int32_t then_set=compiler->known_type_sets[then_result];
+    const int32_t then_result_tooling=compiler->tooling_type_sets[then_result];
     for(size_t index=0;index<flow_reg_count;index++) {
         then_types[index]=compiler->known_types[index];
         then_sets[index]=compiler->known_type_sets[index];
+        then_tooling[index]=compiler->tooling_type_sets[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         then_alias[index]=compiler->locals[index].alias_identity;
@@ -8768,9 +8776,11 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t reg=compiler->locals[index].reg;
         then_new_types[index-flow_local_count]=compiler->known_types[reg];
         then_new_sets[index-flow_local_count]=compiler->known_type_sets[reg];
+        then_new_tooling[index-flow_local_count]=compiler->tooling_type_sets[reg];
         then_new_alias[index-flow_local_count]=compiler->locals[index].alias_identity;
         compiler->known_types[reg]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[reg]=-1;
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=0;
     }
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, then_result, 0, 2);
@@ -8780,6 +8790,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=before_types[index];
         compiler->known_type_sets[index]=before_sets[index];
+        compiler->tooling_type_sets[index]=before_tooling[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=before_alias[index];
@@ -8789,6 +8800,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             inverted?narrowing.when_true_count:narrowing.when_false_count);
 
     uint8_t false_result_type=DIAMOND_TYPE_NIL;int32_t false_result_set=-1;
+    int32_t false_result_tooling=-1;
     bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
@@ -8796,6 +8808,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
         const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
         false_result_type=else_type;false_result_set=else_set;
     } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
@@ -8803,6 +8816,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t else_result=parse_if(compiler,false);
         const uint8_t else_type=compiler->known_types[else_result];
         const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
         false_result_type=else_type;false_result_set=else_set;
         end_consumed=true;
@@ -8816,7 +8830,9 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_types[index],then_sets[index],
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
-        compiler->tooling_type_sets[index]=-1;
+        const int32_t false_tooling=compiler->tooling_type_sets[index];
+        compiler->tooling_type_sets[index]=then_tooling[index]==false_tooling?
+            then_tooling[index]:-1;
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);
@@ -8840,6 +8856,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             then_new_types[index-flow_local_count]:DIAMOND_TYPE_NIL;
         const int32_t then_side_set=index<then_local_count?
             then_new_sets[index-flow_local_count]:-1;
+        const int32_t then_side_tooling=index<then_local_count?
+            then_new_tooling[index-flow_local_count]:-1;
         const uint32_t then_side_alias=index<then_local_count?
             then_new_alias[index-flow_local_count]:0;
         const uint8_t false_type=compiler->known_types[reg];
@@ -8847,15 +8865,19 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_side_type,then_side_set,
             false_type,false_set,&compiler->known_types[reg],
             &compiler->known_type_sets[reg]);
-        compiler->tooling_type_sets[reg]=-1;
+        const int32_t false_tooling=compiler->tooling_type_sets[reg];
+        compiler->tooling_type_sets[reg]=then_side_tooling==false_tooling?
+            then_side_tooling:-1;
         compiler->locals[index].alias_identity=
             merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
         record_scope_type_fact(compiler,reg,compiler->current.span.start);
     }
-    free(heap_types);free(heap_sets);
+    free(heap_types);free(heap_sets);free(heap_tooling);
     merge_flow_types(compiler,then_type,then_set,false_result_type,
         false_result_set,&compiler->known_types[destination],
         &compiler->known_type_sets[destination]);
+    compiler->tooling_type_sets[destination]=
+        then_result_tooling==false_result_tooling?then_result_tooling:-1;
 
     if (!end_consumed&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
