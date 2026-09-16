@@ -162,6 +162,9 @@ search over a real (if scoped) lexical symbol table:
     An inferred union receiver can likewise publish an assigned method result
     when every class arm defines the method with a usable declared or inferred
     return; one missing or unknown arm makes the result unresolved.
+    Generic functions and methods apply the same tooling-only inference after
+    substituting explicit or argument-inferred type-variable bindings; if any
+    binding remains unresolved, no receiver fact is published.
     Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three

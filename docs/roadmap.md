@@ -456,6 +456,7 @@ Next steps:
   conflicting facts; other unrepresentable dynamic results remain deliberately
   unresolved. An inferred union receiver also carries an assigned method
   result when every class arm has a usable declared or inferred return;
+  generic functions/methods do likewise when every type variable resolves;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

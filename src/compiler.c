@@ -1009,9 +1009,17 @@ static void publish_call_return_type(Compiler *compiler,uint16_t reg,
          * scope facts for receiver completion after assignment, but never
          * known_type_sets (and therefore never type checks or opcode choice). */
         if(target->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
-           target->inferred_return_type_set>=target->type_set_count||
-           target->type_variable_count>0)return;
-        const uint16_t set=clone_type_set_into_current(compiler,target->type_sets,
+           target->inferred_return_type_set>=target->type_set_count)return;
+        uint16_t set;
+        if(target->type_variable_count>0) {
+            bool resolved=true;
+            const size_t original_count=compiler->function->type_set_count;
+            set=clone_substituted_type_set(compiler,target,
+                target->inferred_return_type_set,bindings,binding_count,&resolved);
+            if(!resolved) {
+                compiler->function->type_set_count=original_count;return;
+            }
+        } else set=clone_type_set_into_current(compiler,target->type_sets,
             target->type_set_count,target->inferred_return_type_set);
         if(set!=DIAMOND_NO_TYPE_SET)compiler->tooling_type_sets[reg]=(int32_t)set;
         return;
@@ -6912,7 +6920,7 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
                 compiler->function->type_set_count=original_count;return;
             }
             source_set=target->inferred_return_type_set;
-            if(source_set==DIAMOND_NO_TYPE_SET||target->type_variable_count>0) {
+            if(source_set==DIAMOND_NO_TYPE_SET) {
                 compiler->function->type_set_count=original_count;return;
             }
         }

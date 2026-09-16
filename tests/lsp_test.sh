@@ -270,6 +270,16 @@ end
 def build_unknown_union_receiver(flag)
   flag ? UnionLeft.new() : UnionUnknown.new()
 end
+
+def generic_identity[T](value: T)
+  value
+end
+
+class GenericFactory
+  def echo[T](value: T)
+    value
+  end
+end
 EOF
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
@@ -402,6 +412,24 @@ response="$(read_message)"
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"}}}'
+read_message >/dev/null
+
+# Generic calls substitute fully resolved type-variable bindings into the
+# unannotated callee's inferred return, without promoting it to a real
+# compile-time return contract.
+receiver_generic_uri="file://$work/receiver_generic.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'","text":"require \"receiver_dependency\"\ndef generic_results()\n  inferred = generic_identity(ImportedPet.new())\n  inferred.bark()\n  explicit = generic_identity[ImportedLeaf](ImportedLeaf.new())\n  explicit.ping()\n  factory = GenericFactory.new()\n  from_method = factory.echo(ImportedPet.new())\n  from_method.bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '158 3 11 bark' '159 5 11 ping' '160 8 14 bark'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *"\"label\":\"$4\",\"kind\":3"* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"}}}'
 read_message >/dev/null
 
 # --- hover resolves a top-level function name, at its own declaration
