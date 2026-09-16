@@ -122,7 +122,8 @@ search over a real (if scoped) lexical symbol table:
     class instance-variable
     receiver also resolves when every assignment to that field agrees on one
     concrete class; conflicting or unknown assignments deliberately erase the
-    candidate rather than guessing. Call results can be receivers recursively:
+    candidate rather than guessing. Grouping parentheses around any otherwise
+    resolvable receiver are ignored. Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
     singleton factory such as `Factory.build().leaf()` resolve through each
     link's return type, preferring an explicit class or class-union

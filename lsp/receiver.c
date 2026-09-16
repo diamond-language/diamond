@@ -268,6 +268,23 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth) {
     if(start>end||capacity==0||depth>32)return 0;
+    /* Grouping parentheses do not change the receiver. Only unwrap when the
+     * opening token's matching close is this range's final token; otherwise
+     * the trailing `)` belongs to a call and resolve_call must inspect it. */
+    if(tokens[start].kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        size_t nesting=0;
+        for(size_t index=start;index<=end;index++) {
+            if(tokens[index].kind==DIAMOND_TOKEN_LEFT_PAREN)nesting++;
+            else if(tokens[index].kind==DIAMOND_TOKEN_RIGHT_PAREN&&
+                    --nesting==0) {
+                if(index==end)
+                    return resolve_expression(program,chunk,source,tokens,
+                        start+1,end-1,classes,capacity,is_singleton,depth+1);
+                break;
+            }
+        }
+    }
     if(start==end) {
         const DiamondToken token=tokens[start];
         if(token.kind==DIAMOND_TOKEN_IDENTIFIER)
@@ -330,7 +347,16 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     for(size_t index=dot;index>0;index--) {
         const DiamondTokenKind kind=tokens[index-1].kind;
         if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
-        else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&nesting>0)nesting--;
+        else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&nesting>0) {
+            nesting--;
+            /* A matched `(` preceded by an identifier belongs to a call and
+             * its callee is still part of the receiver chain. Otherwise it is
+             * a grouping boundary: do not absorb the preceding statement. */
+            if(nesting==0&&
+               (index==1||tokens[index-2].kind!=DIAMOND_TOKEN_IDENTIFIER)) {
+                start=index-1;break;
+            }
+        }
         start=index-1;
         if(nesting==0&&index>1&&tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
            kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&

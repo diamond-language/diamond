@@ -460,6 +460,7 @@ Next steps:
   generic functions, instance methods, and singleton methods do likewise when
   every type variable resolves;
   captured/boxed locals preserve the same tooling-only fact through the cell;
+  grouping parentheses preserve any otherwise resolvable receiver expression;
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.

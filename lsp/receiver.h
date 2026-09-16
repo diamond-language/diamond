@@ -16,7 +16,8 @@
  * `if`/`unless`/ternary join (`x: Dog | Cat`, or
  * `x = flag ? Dog.new() : Cat.new()`, DiamondScopeLocal.known_type_set), an instance variable
  * whose assignments all agree on one class, or a call chain whose top-level
- * function/method links have explicit class return annotations. `Class.new()`
+ * function/method links have explicit class return annotations. Grouping
+ * parentheses around any supported receiver form are ignored. `Class.new()`
  * is intrinsically an instance of Class; all other links use the declared
  * DiamondFunction.return_type_set. Every class-kind union member is returned
  * as a candidate. Unknown/conflicting ivars and unannotated call returns
