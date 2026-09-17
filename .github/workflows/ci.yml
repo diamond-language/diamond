@@ -75,11 +75,13 @@ jobs:
       - name: make test-all
         run: make CC=${{ matrix.cc }} test-all
 
-  # Native Linux arm64 coverage. This intentionally starts with the baseline
-  # corpus rather than claiming sanitizer/package parity before the target
-  # architecture has had one clean run. The container stays Ubuntu 26.04 so
-  # its compiler and dependency versions match the existing Ubuntu leg; the
-  # runner is the part that is genuinely different (arm64 hardware).
+  # Native Linux arm64 coverage. The baseline has passed repeatedly, so this
+  # now includes the same focused API/compiler/fiber/tooling targets used by
+  # the other portability jobs. It still does not claim sanitizer/package
+  # parity with test-all before those suites are checked deliberately. The
+  # container stays Ubuntu 26.04 so its compiler and dependency versions match
+  # the existing Ubuntu leg; the runner is the genuinely different part
+  # (arm64 hardware).
   test-arm64:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -110,6 +112,15 @@ jobs:
           done
       - name: make test (Ubuntu arm64)
         run: make CC=gcc test
+      - name: Focused test targets (Ubuntu arm64)
+        run: |
+          make CC=gcc test-api
+          make CC=gcc test-incremental-compile
+          make CC=gcc test-compiled-prelude
+          make CC=gcc test-fibers
+          make CC=gcc test-fiber-run
+          make CC=gcc test-lsp
+          make CC=gcc test-repl
 
   # A third, genuinely different target -- musl, not just another distro
   # (fedora/ubuntu above are both glibc). Its own job, not another
