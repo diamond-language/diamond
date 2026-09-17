@@ -697,10 +697,14 @@ endianness assumptions, subprocess behavior, and editor tooling all execute on
 the target architecture on every push. A separate `test-arm64-sanitize` job
 also runs the full ASan/UBSan suite natively; it is kept separate because its
 24-minute instrumented build and run nearly exhausted the baseline job's
-30-minute budget on the first combined attempt. Coverage remains intentionally
-narrower than `test-all`: TSan and package-specific suites have not yet been
-validated on Linux arm64 and should be widened only as separate measured
-increments.
+30-minute budget on the first combined attempt. The baseline job additionally
+runs five representative package suites natively (database configuration,
+HTTP, Gremlin, Rack, and GraphQL), covering configuration/filesystem work,
+TCP/TLS, threaded serving, middleware, and application-level parsing without
+requiring an external service. Coverage remains intentionally narrower than
+`test-all`: TSan, Redis/external-database integration, and the remaining package
+suites have not yet been validated on Linux arm64 and should be widened only as
+separate measured increments.
 
 The arm64, musl, and macOS jobs exclude the JIT cases while still compiling
 the JIT source and exercising the interpreter. The current JIT is validated
@@ -751,8 +755,9 @@ itself is also untested (Ubuntu is the glibc target CI actually runs). The
 musl/FreeBSD/macOS/arm64 jobs are each narrower than the two-glibc-distro one
 on purpose (GCC-only for musl/arm64, Clang-only for FreeBSD/macOS, no
 sanitizers on musl/FreeBSD/macOS, no TSan on arm64, and no package-specific
-tests on any of these narrower targets) -- widening any of them needs that
-coverage actually checked first, not just enabled.
+tests on musl/FreeBSD/macOS while arm64 runs only a representative package
+slice) -- widening any of them needs that coverage actually checked first, not
+just enabled.
 
 ## Explicitly deferred
 
