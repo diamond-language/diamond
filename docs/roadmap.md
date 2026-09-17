@@ -687,6 +687,19 @@ Areas worth considering:
 - explicit metaprogramming operations with inspectable behavior;
 - better ways to express common typed callback and data-shaping patterns.
 
+### Non-x86_64 architecture validation: what's next
+
+All currently validated targets are x86_64 except the existing macOS arm64
+job. The remaining native-portability gap is a Linux arm64 run of the actual
+build and test matrix, not another compiler-only check: fibers, dynamic
+loading, atomics, alignment, endianness assumptions, and subprocess behavior
+need to execute on the target architecture. The next concrete step is an
+arm64 CI runner (or a real arm64 VM) with the standard `make test` baseline
+before widening it to sanitizer, LSP, or package-specific suites. No local
+arm64 emulator/toolchain is available in the current development environment,
+so this remains an explicitly unvalidated target rather than a speculative
+cross-build claim.
+
 ### Stable public boundaries
 
 The language, bytecode format, embedding API, and package conventions are still

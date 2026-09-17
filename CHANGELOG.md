@@ -63,6 +63,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Clarified the remaining portability milestone: Linux arm64 needs a real
+  build-and-test runner before Diamond can claim non-x86_64 coverage; a
+  compiler-only cross-build is not sufficient for fibers, atomics, loading,
+  and subprocess behavior.
 - Restored self-hosted lexer parity for the `sealed` and `struct` keywords;
   the native/self-hosted lexer differential suite now covers all 1,438 lexer
   cases without unknown-token fallbacks, and the parser differential suite
