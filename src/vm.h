@@ -1625,5 +1625,16 @@ const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
                                      uint8_t arity,uint8_t *return_type);
+/* Writes `value`'s bare runtime type name ("String", "Int", "Tensor", a
+ * user class's own name for an Instance, ...) into `buffer` -- the exact
+ * name every "expected X, got Y" type-error message and `.class()`
+ * already use (src/vm.c). Exported so src/value.c's own diamond_value_
+ * fprint can reuse this one canonical per-kind name table for its
+ * fallback case instead of hand-duplicating it -- exactly that kind of
+ * duplication (two independent copies of the same per-kind switch)
+ * previously let src/value.c's own copy silently miss cases (Tensor,
+ * Channel, Supervisor, Time, ...) that src/vm.c's copy already covered,
+ * found the hard way while writing bench/tensor_matmul.di. */
+void diamond_format_value_type(char *buffer, size_t capacity, DiamondValue value);
 
 #endif

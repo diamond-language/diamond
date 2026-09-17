@@ -143,8 +143,21 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
                     fwrite(digits,1,length,stream);
                     free(digits);
                 }
-            } else {
+            } else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) {
                 fputs("#<Closure>",stream);
+            } else {
+                /* Every other object kind (Fiber, File, Thread, Time,
+                 * Tensor, Channel, Supervisor, Regexp, SQLite3, ...) used
+                 * to fall through to this same hardcoded "#<Closure>"
+                 * literal -- wrong for everything but a real Closure.
+                 * diamond_format_value_type (src/vm.c, exported via vm.h)
+                 * is the one canonical per-kind name table already used
+                 * for type-error messages; reused here instead of
+                 * hand-duplicating a second copy that could (and did)
+                 * silently miss a kind the other one already covers. */
+                char kind_name[80];
+                diamond_format_value_type(kind_name,sizeof kind_name,value);
+                fprintf(stream,"#<%s>",kind_name);
             }
             break;
         }

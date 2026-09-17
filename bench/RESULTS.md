@@ -525,3 +525,97 @@ operands are always Int -- a materially bigger design change than
 anything in Phases 2-2e, not scoped or decided (see
 `docs/internal/jit-design.md`'s own Phase 2e status note for the full
 reasoning).
+
+## Addition: seven new workloads for previously unbenchmarked primitives (2026-09-17)
+
+`Tensor`, `Channel`, `Supervisor`, `Regexp`, `struct`, and `freeze`/
+`frozen?` had zero `bench/*.di` coverage before this session, despite
+several landing across the current release cycle -- only ad-hoc
+one-off numbers in their own commit messages (Tensor's own GFLOPS
+figures) existed anywhere. Seven new files close that gap, one
+workload per primitive, `Thread` included as `Supervisor`'s own
+steady-state baseline:
+
+- `tensor_matmul.di` -- `Tensor#matmul` at 512x512 (real, threaded,
+  k-blocked native path: total FLOPS is far above
+  `DIAMOND_TENSOR_MATMUL_THREAD_FLOOR`, not the single-threaded
+  small-shape fallback).
+- `channel_message_passing.di` -- 20,000 `Channel#send`/`#receive`
+  round trips between two real OS threads (every payload deep-copied
+  across the heap boundary).
+- `thread_pool.di` / `supervisor_pool.di` -- the identical 16-worker,
+  fixed-arithmetic workload run under plain `Thread.new` versus
+  `Supervisor`, to isolate supervision's own steady-state overhead
+  (nothing crashes in either) from plain thread spawn/join cost.
+- `regexp_match.di` -- `Regexp#match` with two capture groups, 20,000
+  freshly-built subject strings (reginold, `docs/runtime-reference.md`).
+- `freeze_mutation_check.di` -- `Array#push`/`Hash#[]=`/instance-variable
+  writes on ordinary, never-frozen receivers, 200,000 iterations each --
+  every one of these now pays a frozen check before the mutation
+  proceeds regardless of whether the receiver is actually frozen; this
+  is the common (unfrozen) path's own baseline cost.
+- `struct_field_access.di` -- `struct Point(x: Int, y: Int)`
+  construction plus both generated readers, 200,000 iterations, to
+  compare against `hash_ivar_construct.di`/`object_hydration.di`'s own
+  hand-written-class numbers below.
+
+Same environment/methodology as the rest of this file (`gcc (GCC)
+16.2.1`, `make release` `-O3 -march=native`, `DIAMOND_REPEAT`-based
+in-process re-execution, default pass only -- `DIAMOND_QUICKEN` has no
+effect on any of these, all dominated by native calls or thread
+scheduling rather than the plain-Int arithmetic quickening targets):
+
+| Benchmark | Iterations (repeat) | Default (per-iter) |
+|---|---:|---:|
+| `tensor_matmul` (new) | 20 | ~0.00751s |
+| `channel_message_passing` (new) | 15 | ~0.02421s |
+| `thread_pool` (new) | 15 | ~0.07585s |
+| `supervisor_pool` (new) | 15 | ~0.07858s |
+| `regexp_match` (new) | 15 | ~0.02358s |
+| `freeze_mutation_check` (new) | 10 | ~0.20095s |
+| `struct_field_access` (new) | 15 | ~0.31933s |
+
+**`tensor_matmul`**: ~268M FLOPs/call (2 x 512^3) at ~7.5ms/call is
+~35.7 GFLOPS -- in the same ballpark as, if a bit under, the 38-62
+GFLOPS range cited in `Tensor#matmul`'s own commit message, since this
+number also includes two `Tensor.random` fills per iteration, not
+matmul alone. Its own opcode trace is nearly empty (`CONSTANT` 6,
+`MOVE` 3, `TENSOR_RANDOM` 2, `RETURN`/`INVOKE`/`CALL` 1 each) --
+confirms the real work happens entirely inside the native, threaded C
+matmul, not the bytecode interpreter loop, exactly as intended.
+
+**`thread_pool` vs. `supervisor_pool`**: ~0.0759s vs. ~0.0786s per
+16-worker iteration -- roughly 3.6% slower under supervision with
+nothing ever crashing. Real, but small next to thread-spawn cost
+itself dominating both numbers (16 real OS threads spun up and joined
+per iteration in each case); not a number worth optimizing against
+without a concrete workload that cares.
+
+**`struct_field_access` vs. hand-written-class equivalents**: ~0.319s
+for 200,000 struct construct+read cycles here versus
+`hash_ivar_construct.di`'s ~100x100-per-batch hand-written-class shape
+and `object_hydration.di`'s own 4-field hand-written class -- opcode
+trace (`CHECK_TYPE`/`SET_IVAR`/`GET_IVAR`/`INVOKE_MONO` all at
+~400,000, matching two typed fields x 200,000 iterations) shows
+`struct`'s generated `initialize`/readers compiling to the exact same
+opcode shape a hand-written class's own typed `attr_accessor` already
+would -- no generic/reflective struct-specific dispatch path, as
+documented.
+
+**A real bug found while writing `tensor_matmul.di`, not a benchmark
+result**: `puts(tensor_result)` printed `#<Closure>` instead of
+anything Tensor-shaped. `src/vm.c`'s `builder_format_value` (backs
+`puts`/string interpolation) and `src/value.c`'s `diamond_value_fprint`
+(the CLI's own top-level-result auto-print) each had one hardcoded
+`"#<Closure>"` fallback for *every* object kind neither explicitly
+handled -- correct only for a real `Closure`, silently wrong for
+`Tensor`, `Channel`, `Supervisor`, `Regexp`, `Fiber`, `File`, `Thread`,
+`SQLite3`, and every other native resource kind added since either
+function was last extended. Fixed by consolidating both functions onto
+one canonical per-kind name table (`diamond_format_value_type`,
+exported from `src/vm.c` via `vm.h`, previously `format_value_type`
+and `static`) instead of two independently hand-maintained copies --
+the same "two duplicated implementations silently drift" failure shape
+this project has hit before (`DIAMOND_OP_SET_IVAR`'s interpreter case
+versus the JIT's own trampoline, `freeze`/`frozen?`'s own addition).
+Regression test: `tests/cases/native_resource_default_to_s.di`.

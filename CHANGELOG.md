@@ -6,6 +6,21 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- Fixed `puts`/string interpolation/the CLI's own top-level-result
+  auto-print misreporting any native resource value (`Tensor`, `Channel`,
+  `Supervisor`, `Regexp`, `Fiber`, `File`, `Thread`, `SQLite3`, ...) as
+  `#<Closure>` -- correct only for an actual `Closure`, silently wrong
+  for everything else added since. Two independent stringification
+  functions (`src/vm.c`'s `builder_format_value`, `src/value.c`'s
+  `diamond_value_fprint`) each had their own hardcoded `"#<Closure>"`
+  fallback for any object kind neither one explicitly handled; both now
+  share one canonical per-kind name table
+  (`diamond_format_value_type`, exported from `src/vm.c` via `vm.h`)
+  instead of two independently hand-maintained copies. Found writing a
+  `Tensor#matmul` benchmark.
+
 ## 0.5.2
 
 ### Documentation

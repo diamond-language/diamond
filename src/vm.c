@@ -488,7 +488,9 @@ static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key);
 static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
-static void format_value_type(char *buffer, size_t capacity, DiamondValue value);
+/* diamond_format_value_type itself is declared in vm.h now (exported for
+ * src/value.c's own reuse) -- this forward declaration would otherwise
+ * conflict with that extern one (mismatched static/extern storage class). */
 static void format_uncaught_exception_message(DiamondVm *vm, DiamondValue exception);
 static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
@@ -7707,7 +7709,7 @@ static DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value,
         DiamondValue *out_result) {
     if(epoch_value.kind!=DIAMOND_VALUE_INT&&epoch_value.kind!=DIAMOND_VALUE_FLOAT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,epoch_value);
+        diamond_format_value_type(actual,sizeof actual,epoch_value);
         snprintf(vm->error,sizeof vm->error,
             "Time.at epoch must be an Int or Float, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7763,14 +7765,14 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
     if(password_value.kind!=DIAMOND_VALUE_OBJECT||
        password_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,password_value);
+        diamond_format_value_type(actual,sizeof actual,password_value);
         snprintf(vm->error,sizeof vm->error,
             "BCrypt.hash password must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(cost_value.kind!=DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,cost_value);
+        diamond_format_value_type(actual,sizeof actual,cost_value);
         snprintf(vm->error,sizeof vm->error,
             "BCrypt.hash cost must be an Int, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7837,7 +7839,7 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
     if(password_value.kind!=DIAMOND_VALUE_OBJECT||
        password_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,password_value);
+        diamond_format_value_type(actual,sizeof actual,password_value);
         snprintf(vm->error,sizeof vm->error,
             "BCrypt.verify password must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7845,7 +7847,7 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
     if(digest_value.kind!=DIAMOND_VALUE_OBJECT||
        digest_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,digest_value);
+        diamond_format_value_type(actual,sizeof actual,digest_value);
         snprintf(vm->error,sizeof vm->error,
             "BCrypt.verify digest must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7892,7 +7894,7 @@ static DiamondVmStatus secure_random_bytes_helper(DiamondVm *vm,DiamondValue cou
         DiamondValue *out_result) {
     if(count_value.kind!=DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,count_value);
+        diamond_format_value_type(actual,sizeof actual,count_value);
         snprintf(vm->error,sizeof vm->error,
             "SecureRandom.bytes count must be an Int, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7923,7 +7925,7 @@ static DiamondVmStatus secure_random_hex_helper(DiamondVm *vm,DiamondValue count
         DiamondValue *out_result) {
     if(count_value.kind!=DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,count_value);
+        diamond_format_value_type(actual,sizeof actual,count_value);
         snprintf(vm->error,sizeof vm->error,
             "SecureRandom.hex count must be an Int, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -7964,7 +7966,7 @@ static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "%s data must be a String, got %s",keyed?"HMAC.sha256":"Digest.sha256",
             actual);
@@ -7973,7 +7975,7 @@ static DiamondVmStatus sha256_hex_helper(DiamondVm *vm,DiamondValue key_value,
     if(keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
           key_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
         char actual[80];
-        format_value_type(actual,sizeof actual,key_value);
+        diamond_format_value_type(actual,sizeof actual,key_value);
         snprintf(vm->error,sizeof vm->error,
             "HMAC.sha256 key must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8020,7 +8022,7 @@ static DiamondVmStatus sha1_hex_helper(DiamondVm *vm,DiamondValue key_value,
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "%s data must be a String, got %s",keyed?"HMAC.sha1":"Digest.sha1",
             actual);
@@ -8029,7 +8031,7 @@ static DiamondVmStatus sha1_hex_helper(DiamondVm *vm,DiamondValue key_value,
     if(keyed&&(key_value.kind!=DIAMOND_VALUE_OBJECT||
           key_value.as.object->kind!=DIAMOND_OBJECT_STRING)) {
         char actual[80];
-        format_value_type(actual,sizeof actual,key_value);
+        diamond_format_value_type(actual,sizeof actual,key_value);
         snprintf(vm->error,sizeof vm->error,
             "HMAC.sha1 key must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8256,7 +8258,7 @@ static DiamondVmStatus gzip_compress_helper(DiamondVm *vm,DiamondValue data_valu
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "Gzip.compress data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8320,14 +8322,14 @@ static DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_va
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "Gzip.decompress data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(max_size_value.kind!=DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,max_size_value);
+        diamond_format_value_type(actual,sizeof actual,max_size_value);
         snprintf(vm->error,sizeof vm->error,
             "Gzip.decompress max_size must be an Int, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8406,7 +8408,7 @@ static DiamondVmStatus base64_encode_helper(DiamondVm *vm,DiamondValue data_valu
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "Base64.encode data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8446,7 +8448,7 @@ static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_valu
     if(data_value.kind!=DIAMOND_VALUE_OBJECT||
        data_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
         char actual[80];
-        format_value_type(actual,sizeof actual,data_value);
+        diamond_format_value_type(actual,sizeof actual,data_value);
         snprintf(vm->error,sizeof vm->error,
             "Base64.decode data must be a String, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -8512,7 +8514,7 @@ static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_valu
 static DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value) {
     if(code_value.kind!=DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual,sizeof actual,code_value);
+        diamond_format_value_type(actual,sizeof actual,code_value);
         snprintf(vm->error,sizeof vm->error,
             "exit code must be an Int, got %s",actual);
         return DIAMOND_VM_TYPE_ERROR;
@@ -9343,7 +9345,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *index, DiamondValue *out) {
     if (receiver->kind != DIAMOND_VALUE_OBJECT) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *receiver);
+        diamond_format_value_type(actual, sizeof actual, *receiver);
         snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9356,7 +9358,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
         if (index->kind != DIAMOND_VALUE_INT) {
             char actual[80];
-            format_value_type(actual, sizeof actual, *index);
+            diamond_format_value_type(actual, sizeof actual, *index);
             snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int, got %s", actual);
             return DIAMOND_VM_TYPE_ERROR;
         }
@@ -9386,7 +9388,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     }
     if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *receiver);
+        diamond_format_value_type(actual, sizeof actual, *receiver);
         snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9403,7 +9405,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     }
     if (index->kind != DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *index);
+        diamond_format_value_type(actual, sizeof actual, *index);
         snprintf(vm->error, sizeof vm->error, "Array#[] index must be an Int or Range, got %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9432,7 +9434,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
         const DiamondValue *index, const DiamondValue *source) {
     if (receiver->kind != DIAMOND_VALUE_OBJECT) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *receiver);
+        diamond_format_value_type(actual, sizeof actual, *receiver);
         snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9461,7 +9463,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
     }
     if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *receiver);
+        diamond_format_value_type(actual, sizeof actual, *receiver);
         snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9495,7 +9497,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
     }
     if (index->kind != DIAMOND_VALUE_INT) {
         char actual[80];
-        format_value_type(actual, sizeof actual, *index);
+        diamond_format_value_type(actual, sizeof actual, *index);
         snprintf(vm->error, sizeof vm->error, "Array#[]= index must be an Int or Range, got %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
@@ -9726,7 +9728,7 @@ static void format_type_set_index(char *buffer,size_t capacity,
     }
 }
 
-static void format_value_type(char *buffer, size_t capacity,
+void diamond_format_value_type(char *buffer, size_t capacity,
                               DiamondValue value) {
     const char *name="<unknown>";
     if(value.kind==DIAMOND_VALUE_NIL) name="Nil";
@@ -9793,8 +9795,8 @@ static void format_value_type(char *buffer, size_t capacity,
 static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
         DiamondValue right_value,const char *op_name) {
     char left_type[80],right_type[80];
-    format_value_type(left_type,sizeof left_type,left_value);
-    format_value_type(right_type,sizeof right_type,right_value);
+    diamond_format_value_type(left_type,sizeof left_type,left_value);
+    diamond_format_value_type(right_type,sizeof right_type,right_value);
     const bool either_callable=
         (left_value.kind==DIAMOND_VALUE_OBJECT&&
          left_value.as.object->kind==DIAMOND_OBJECT_CLOSURE)||
@@ -10947,7 +10949,24 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     }
     if(object->kind==DIAMOND_OBJECT_TIME)
         return format_time_default((const DiamondTime *)object,builder);
-    return builder_append(builder,"#<Closure>",10);
+    /* Every other object kind (Fiber, File, Thread, Tensor, Channel,
+     * Supervisor, Regexp, SQLite3, ...) used to fall through to a single
+     * hardcoded "#<Closure>" literal here -- correct only for a real
+     * DIAMOND_OBJECT_CLOSURE (see format_operator_type_error's own
+     * comment on why that exact string matters for the bare-method-
+     * reference footgun), wrong and misleading for everything else:
+     * `puts(some_tensor)` printed "#<Closure>", indistinguishable from
+     * an actual closure printed by mistake. diamond_format_value_type already
+     * has the real per-kind name table (used for type-error messages);
+     * reused here instead of hand-duplicating it, and left updated
+     * automatically the same way as any new object kind added there. */
+    if(object->kind==DIAMOND_OBJECT_CLOSURE)
+        return builder_append(builder,"#<Closure>",10);
+    char kind_name[80];
+    diamond_format_value_type(kind_name,sizeof kind_name,value);
+    length=snprintf(scalar,sizeof scalar,"#<%s>",kind_name);
+    return length>=0&&(size_t)length<sizeof scalar&&
+        builder_append(builder,scalar,(size_t)length);
 }
 
 /* Fills vm->error with "uncaught exception: <detail>" for whatever
@@ -15958,7 +15977,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,source=0;
                 READ_SHORT(destination);READ_SHORT(source);
                 char name[80];
-                format_value_type(name,sizeof name,registers[source]);
+                diamond_format_value_type(name,sizeof name,registers[source]);
                 DiamondString *class_name=allocate_string(vm,name,strlen(name));
                 if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[destination]=DIAMOND_OBJECT(class_name);
@@ -16064,7 +16083,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if (registers[operand].kind != DIAMOND_VALUE_INT) {
                     char actual[80];
-                    format_value_type(actual,sizeof actual,registers[operand]);
+                    diamond_format_value_type(actual,sizeof actual,registers[operand]);
                     snprintf(vm->error,sizeof vm->error,
                         "undefined method 'negate' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -16995,7 +17014,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[callable].kind!=DIAMOND_VALUE_OBJECT||
                    registers[callable].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
                     char actual[80];
-                    format_value_type(actual,sizeof actual,registers[callable]);
+                    diamond_format_value_type(actual,sizeof actual,registers[callable]);
                     snprintf(vm->error,sizeof vm->error,
                         "undefined method 'call' for %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -17888,7 +17907,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * -- deliberately not given a `self` story) just said
                      * "runtime error: type error" with no further detail. */
                     char actual[80];
-                    format_value_type(actual,sizeof actual,registers[recv]);
+                    diamond_format_value_type(actual,sizeof actual,registers[recv]);
                     snprintf(vm->error,sizeof vm->error,
                         "undefined method '%.*s' for %s",
                         (int)method_name->length,method_name->chars,actual);
@@ -17932,7 +17951,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
                                    registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
                                     char actual[80];
-                                    format_value_type(actual,sizeof actual,registers[base]);
+                                    diamond_format_value_type(actual,sizeof actual,registers[base]);
                                     snprintf(vm->error,sizeof vm->error,
                                         "Array#join separator must be a String, got %s",
                                         actual);
@@ -20150,7 +20169,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if(receiver_kind!=DIAMOND_OBJECT_INSTANCE) {
                     char actual[80];
-                    format_value_type(actual,sizeof actual,registers[recv]);
+                    diamond_format_value_type(actual,sizeof actual,registers[recv]);
                     snprintf(vm->error,sizeof vm->error,
                         "undefined method '%.*s' for %s",
                         (int)method_name->length,method_name->chars,actual);
@@ -20503,7 +20522,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(!matches) {
                     char expected[80]; char actual[80];
                     format_type_set_index(expected,sizeof expected,chunk,set_index);
-                    format_value_type(actual,sizeof actual,registers[source]);
+                    diamond_format_value_type(actual,sizeof actual,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -20542,7 +20561,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[array_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[array_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     char actual[80];
-                    format_value_type(actual,sizeof actual,registers[array_reg]);
+                    diamond_format_value_type(actual,sizeof actual,registers[array_reg]);
                     snprintf(vm->error,sizeof vm->error,"expected Array, got %s",actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }

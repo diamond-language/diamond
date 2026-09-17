@@ -39,6 +39,13 @@ declare -A REPEATS=(
     [typed_dispatch]=6
     [object_hydration]=120
     [hash_ivar_construct]=250
+    [tensor_matmul]=20
+    [channel_message_passing]=15
+    [thread_pool]=15
+    [supervisor_pool]=15
+    [regexp_match]=15
+    [freeze_mutation_check]=10
+    [struct_field_access]=15
 )
 
 run_pass() {
