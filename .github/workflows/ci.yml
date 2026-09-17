@@ -77,11 +77,11 @@ jobs:
 
   # Native Linux arm64 coverage. The baseline has passed repeatedly, so this
   # now includes the same focused API/compiler/fiber/tooling targets used by
-  # the other portability jobs plus an ASan/UBSan run. It still does not claim
-  # TSan/package parity with test-all before those suites are checked
-  # deliberately. The container stays Ubuntu 26.04 so its compiler and
-  # dependency versions match the existing Ubuntu leg; the runner is the
-  # genuinely different part (arm64 hardware).
+  # the other portability jobs. ASan/UBSan has its own job below because its
+  # instrumented build alone nearly exhausts this job's 30-minute budget. The
+  # container stays Ubuntu 26.04 so its compiler and dependency versions match
+  # the existing Ubuntu leg; the runner is the genuinely different part
+  # (arm64 hardware).
   test-arm64:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -121,6 +121,35 @@ jobs:
           make CC=gcc test-fiber-run
           make CC=gcc test-lsp
           make CC=gcc test-repl
+
+  # Keep the expensive instrumented build independent from test-arm64: the
+  # first native attempt passed that job's baseline/focused coverage and then
+  # reached its 30-minute timeout while this target was still running.
+  test-arm64-sanitize:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu arm64)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+      - name: Exclude x86-64 JIT cases
+        run: |
+          mkdir -p /tmp/excluded-cases
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
       - name: ASan and UBSan (Ubuntu arm64)
         run: make CC=gcc test-sanitize
 
