@@ -3043,7 +3043,59 @@ fi
 # .combined/.exitcode files it wrote per case with bash's own $(<file), which
 # strips a trailing newline the same way $(cat ...) used to.
 case_output_dir="build/case_output"
-"$run_cases_abs" tests/cases "$case_output_dir"
+if [[ "${DIAMOND_CASE_RUNNER:-batch}" == "subprocess" ]]; then
+    # Portability diagnostic/fallback: some non-glibc targets have exposed
+    # crashes only when many cases share run_cases' prelude/program state.
+    # Keep the exact same output-file contract while restoring the old
+    # one-process-per-case isolation so a platform run can distinguish runner
+    # state reuse from a genuine VM failure.
+    rm -rf "$case_output_dir"
+    mkdir -p "$case_output_dir"
+    for case_file in tests/cases/*.di; do
+        case_name="${case_file%.di}"
+        case_base="$(basename "$case_name")"
+        if [[ ! -f "$case_name.expected" && ! -f "$case_name.expected_error" &&
+              ! -f "$case_name.expected_contains" && ! -f "$case_name.expected_lastline" &&
+              ! -f "$case_name.flags" && ! -f "$case_name.env" ]]; then
+            if ! grep -q 'suite.run!()' "$case_file"; then continue; fi
+        fi
+        env_args=()
+        if [[ -f "$case_name.env" ]]; then
+            while IFS= read -r env_line; do
+                [[ -n "$env_line" ]] && env_args+=("$env_line")
+            done < "$case_name.env"
+        fi
+        flag_args=()
+        if [[ -f "$case_name.flags" ]]; then
+            while IFS= read -r flag_line; do
+                [[ -n "$flag_line" ]] && flag_args+=("$flag_line")
+            done < "$case_name.flags"
+        fi
+        for var in DIAMOND_STRESS_GC DIAMOND_STRESS_MINOR_GC DIAMOND_QUICKEN \
+            DIAMOND_QUICKEN_THRESHOLD DIAMOND_IC_MONO_THRESHOLD DIAMOND_REPEAT \
+            DIAMOND_INVALIDATE_IC_EACH_RUN DIAMOND_TRACE_IC_EACH_RUN DIAMOND_TRACE_IC \
+            DIAMOND_TRACE_IC_SITES DIAMOND_TRACE_IC_FAST DIAMOND_TRACE_IC_PROBES \
+            DIAMOND_TRACE_IC_REWRITES DIAMOND_TRACE_IC_POLICY DIAMOND_TRACE_SHAPES \
+            DIAMOND_TRACE_FIELDS DIAMOND_TRACE_OPCODES DIAMOND_TRACE_QUICKEN \
+            DIAMOND_FORCE_REPL DIAMOND_SANDBOX DIAMOND_SANDBOX_ALLOW DIAMOND_NO_CACHE \
+            DIAMOND_TRACE_CACHE DIAMOND_MAX_INSTRUCTIONS DIAMOND_MAX_WALL_MILLISECONDS \
+            DIAMOND_MAX_MEMORY_BYTES DIAMOND_JIT DIAMOND_JIT_THRESHOLD DIAMOND_TRACE_JIT; do
+            unset "$var"
+        done
+        if env "${env_args[@]}" "$diamond_abs" "${flag_args[@]}" "$case_file" \
+            >"$case_output_dir/$case_base.stdout" \
+            2>"$case_output_dir/$case_base.stderr"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+        cat "$case_output_dir/$case_base.stdout" "$case_output_dir/$case_base.stderr" \
+            >"$case_output_dir/$case_base.combined"
+        printf '%s' "$exit_code" >"$case_output_dir/$case_base.exitcode"
+    done
+else
+    "$run_cases_abs" tests/cases "$case_output_dir"
+fi
 
 case_count=0
 for case_file in tests/cases/*.di; do

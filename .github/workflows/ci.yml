@@ -169,7 +169,7 @@ jobs:
             done
           done
       - name: make test (musl)
-        run: make CC=gcc LDLIBS_EXTRA=-lucontext test
+        run: DIAMOND_CASE_RUNNER=subprocess make CC=gcc LDLIBS_EXTRA=-lucontext test
       - name: Focused test targets (musl)
         run: |
           make CC=gcc LDLIBS_EXTRA=-lucontext test-api
@@ -274,7 +274,7 @@ jobs:
             mkdir -p /tmp/gnubin
             ln -sf "$(which gsed)" /tmp/gnubin/sed
             export PATH="/tmp/gnubin:$PATH"
-            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
+            DIAMOND_CASE_RUNNER=subprocess gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-api
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-incremental-compile
             gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-compiled-prelude
@@ -365,7 +365,7 @@ jobs:
         run: |
           CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
           LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
-          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
+          DIAMOND_CASE_RUNNER=subprocess make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
       - name: Focused test targets (macOS)
         run: |
           CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
