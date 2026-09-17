@@ -280,16 +280,8 @@ test-release: release
 # detect_leaks=1 only when the caller hasn't set ASAN_OPTIONS at all,
 # preserving real leak detection for a local `make test-sanitize`.
 #
-# The retry loop is a separate, still-open matter: this step has failed
-# silently (no diagnostic output at all, not even from a temporary ERR
-# trap) on roughly half of real CI runs on both Fedora and Ubuntu, GCC
-# and Clang alike, and has never once reproduced on a real non-container
-# Linux box across many attempts -- disabling LeakSanitizer here turned
-# out not to be the fix either (A/B'd directly: one real CI run passed
-# with detect_leaks=1 still active, a later one failed with
-# detect_leaks=0 confirmed active). Genuinely unexplained, consistent
-# with GitHub's own shared/virtualized runners rather than anything in
-# this codebase -- retried here rather than chased further.
+# The retry remains for runner-level flakes outside the corpus (network probes
+# and timing checks) which can still fail transiently in hosted CI.
 test-sanitize: sanitize
 	for attempt in 1 2; do \
 		ASAN_OPTIONS="$${ASAN_OPTIONS:-detect_leaks=1}" UBSAN_OPTIONS="$${UBSAN_OPTIONS:-print_stacktrace=1}" bash tests/run.sh && exit 0; \

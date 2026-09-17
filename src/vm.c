@@ -11306,6 +11306,18 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
  * quickened opcode's own `chunk->code` is -- this is the same "logically
  * mutable cache metadata behind a const pointer" pattern already used
  * throughout this file for self-modifying bytecode, not a new one. */
+/* Clang's UBSan `function` check assumes every indirect-call target was
+ * emitted by Clang and probes its private 8-byte type signature immediately
+ * before the target address. A Diamond JIT target is the first byte of an
+ * mmap'd executable region and deliberately has no compiler-owned prefix, so
+ * that probe reads the unmapped guard page at jit_code-8 and segfaults before
+ * the generated function can run. The JIT ABI is declared by DiamondJitFn and
+ * emitted in one place (jit.c); exempt only this dispatcher's indirect call
+ * from that inapplicable check while retaining ASan and every other UBSan
+ * check throughout the function and its C trampolines. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
 static DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
