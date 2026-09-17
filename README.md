@@ -206,6 +206,16 @@ smoke tests, and a self-hosting bootstrap smoke check. It is thorough and
 correspondingly slow; CI is the normal place to run it after a focused local
 test.
 
+`make test` and `make test-all` require local loopback networking. The native
+suite starts real TCP, UDP, and TLS listeners, and several package suites start
+HTTP and WebSocket servers, all bound only to `127.0.0.1`/`localhost`; they do
+not need public Internet access. Run these targets outside any OS/container or
+agent sandbox that denies socket creation, binding, or loopback connections.
+An error such as `TCPServer.listen ... Operation not permitted` or
+`TCPSocket.connect ... Operation not permitted` indicates that outer sandbox
+policy, not a Diamond test failure. This host-level requirement is independent
+of Diamond's own `--sandbox` mode, which is itself exercised by the suite.
+
 `make sanitize`/`test-sanitize` run with LeakSanitizer enabled
 (`ASAN_OPTIONS=detect_leaks=1`) by default -- real, working leak detection on
 a normal Linux machine. Under ptrace-restricted containers, including

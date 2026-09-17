@@ -41,8 +41,8 @@ make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic
 
 At minimum, `make test` must pass before a commit. If the change touches
 `lsp/`, also run `make test-lsp`. See README.md for required system
-dependencies and the sanitizer/ptrace note relevant to running in a
-container.
+dependencies, the loopback-network requirement, and the sanitizer/ptrace note
+relevant to running in a container or agent sandbox.
 
 ## Code style
 
