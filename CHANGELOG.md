@@ -6,6 +6,35 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.5.1
+
+### Tooling
+
+- Added `textDocument/references` to the Language Server: finds every
+  workspace occurrence of the top-level function, class, module, or
+  interface name under the cursor -- the same globally-unambiguous
+  declaration kinds hover/definition/documentSymbol already single out
+  -- by walking every `*.di` file under the workspace root the same way
+  `workspace/symbol` does and tokenizing each compiled file's own buffer
+  for the name in a resolvable position (a call/access site, a type
+  position, or a class/module/interface declaration header). A candidate
+  is dropped if a lexical local of the same name is in scope there,
+  ruling out a keyword-argument label, a hash key, or a shadowing local.
+  Deliberately name-based, not a full alias-aware resolver -- a bare-name
+  reference with none of those adjacent shapes (a class passed as a
+  first-class value, say) isn't found, a known, deliberate
+  under-approximation. See docs/lsp.md.
+- Added `textDocument/rename`, sharing `textDocument/references`'s own
+  workspace scan directly rather than duplicating it: the same search,
+  built into a `WorkspaceEdit` instead of a `Location[]`. The new name
+  must lex as exactly one identifier token consuming the whole string
+  (rejects empty, a keyword, a qualified `A::B` name, or embedded
+  whitespace), since accepting anything else would hand back an edit
+  guaranteed not to recompile. No collision detection against an
+  existing same-named symbol at the target scope -- the same
+  deliberately name-based, conservative-scope cut `references` itself
+  already makes. See docs/lsp.md.
+
 ## 0.5.0
 
 ### Concurrency
