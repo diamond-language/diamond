@@ -63,6 +63,21 @@ immediately; this is a known limitation of not implementing
 read-with-a-timeout disambiguation, not something expected to matter in
 practice (every arrow/function key sends its CSI bytes back-to-back).
 
+## Tab-completion
+
+Pressing **Tab** completes the identifier (or `receiver.method`) at the
+cursor, reusing the LSP's own completion engine in-process (no
+subprocess, no JSON-RPC transport) — the same candidate list an editor
+connected to `diamond lsp` would see for the same position. Exactly one
+match splices the unmatched remainder into the buffer at the cursor and
+redraws, the same way typing it would have; two or more matches print
+every candidate label on a fresh line below the prompt (unfiltered by
+score or frequency) and redraw the prompt unchanged, for the user to
+keep typing and press Tab again to narrow further — no arrow-key
+menu navigation. Zero matches is a no-op. Completion only activates in
+raw-mode interactive line editing (see above); the non-interactive
+fallback below has no Tab handling at all.
+
 ## History
 
 Entries persist to `$HOME/.diamond_history`, one physical line per entry,

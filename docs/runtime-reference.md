@@ -150,9 +150,10 @@ Backed by `reginold`, a companion regex engine vendored in-repo under
 syntax. `Regexp.new(pattern, options = 0)` —
 the options argument is a plain `Int` bitmask: `1` = ignore case, `2` = `.`
 matches newline, `4` = extended (whitespace and `#` comments ignored in
-the pattern). Diamond has no bitwise-OR operator, so combine flags by
-adding them (they're disjoint bits — addition and OR coincide): `3` for
-case-insensitive *and* dot-matches-newline together.
+the pattern) — combine flags with `|` (or plain addition, since they're
+disjoint bits and the two coincide): `1 | 2` for case-insensitive *and*
+dot-matches-newline together. See [Classes and modules](classes-and-modules.md)
+for `|`/`&`/`^`/`>>`'s own Int-only bitwise semantics.
 
 `.match(string)` returns an `Array` — index `0` is the full match, indices
 `1..` are capture groups in order, `nil` at any index for an unmatched

@@ -77,9 +77,14 @@ already uses). `.execute`/`.query`/`.prepare`/`.last_insert_row_id`/
 methods use:
 
 - `.execute(sql)` / `.execute(sql, params)` prepares and runs one
-  statement, discarding any rows it produces, and returns the number of
-  rows it changed (`sqlite3_changes`) as an `Int` — the useful return
-  value for `INSERT`/`UPDATE`/`DELETE`/DDL.
+  statement and returns the number of rows it changed (`sqlite3_changes`)
+  as an `Int` — the useful return value for `INSERT`/`UPDATE`/`DELETE`/DDL.
+  A query-shaped statement (a `SELECT`, or anything else that produces a
+  result set) raises `TypeError` instead of silently discarding its rows
+  and returning an unrelated leftover change-count — use `.query` for
+  those. `PRAGMA` set-statements (`journal_mode`, `busy_timeout`, ...)
+  are exempt, since SQLite legitimately echoes their new value back as a
+  one-row result even though they're a settings change, not a read.
 - `.query(sql)` / `.query(sql, params)` prepares and runs one statement,
   collecting every row into `Array[Hash]` (column name → typed value).
 - `.prepare(sql)` compiles `sql` once and returns a reusable `Statement`

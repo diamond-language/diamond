@@ -724,6 +724,18 @@ Any other left operand (a `String`, an `Instance`, ...) is a `TypeError`
 this way; each would need its own dedicated VM-level support, same as
 `Time` and `<<` did.
 
+`>>`/`&`/`|`/`^` are `Int`-only bitwise operators sharing `<<`'s own
+scope cut: no bignum support, not user-overloadable, no quickening.
+`>>` is arithmetic (sign-extending, matching Ruby's `Integer#>>` —
+`-8 >> 1` is `-4`); a shift amount (either direction) outside `0..63`
+raises `RangeError`. `&`/`|`/`^` are ordinary bitwise and/or/xor;
+either operand not an `Int` is `TypeError`. All four share `<<`'s own
+precedence tier (no separate tier per bitwise op). `&`/`|` also have
+unrelated meanings elsewhere in the grammar (`&block` parameter-
+forwarding, `do |x| ... end` block params, `TypeError | NoMethodError`
+rescue-clause union types) — none of those go through general
+expression parsing, so there's no ambiguity with the operator form.
+
 ### `<=>` and `Comparable`
 
 ```ruby
@@ -745,10 +757,18 @@ Box.new(15).clamp(Box.new(1), Box.new(10)).size()  # => 10
 defined ordering — never a raised error on its own, unlike every other
 comparison operator. Built in for `Int`/`Float` (including
 arbitrary-precision `Int`s and mixed `Int`/`Float` operands; `NaN` on
-either side is `Nil`, matching `Float::NAN <=> 1` in Ruby) and for any
+either side is `Nil`, matching `Float::NAN <=> 1` in Ruby), for
+`String` (byte-lexicographic, the same ordering as C's `strcmp`/
+Ruby's own `String#<=>` — not UTF-8/locale-aware, matching `String`
+being a raw byte buffer everywhere else in the language), and for any
 `Instance` whose class defines its own `<=>` method — anything else
-(`String`, `Time`, an `Instance` with no `<=>`, ...) is `Nil` too, not
-`TypeError`.
+(`Time`, an `Instance` with no `<=>`, a `String`/`Int` pair with
+mismatched types, ...) is `Nil` too, not `TypeError`. `String` also has
+native `<`/`<=`/`>`/`>=` built directly on the same byte comparison
+(not derived through `Comparable`, since `String` is a native type with
+no instance methods for `include` to reach) — `["banana", "apple",
+"cherry"].sort_by() do |s| s end` works directly, with no need to
+extract a sortable key first.
 
 `include Comparable` derives `<`, `<=`, `>`, `>=`, `==`, `between?`, and
 `clamp` from that one `<=>` method — the same "several methods derived

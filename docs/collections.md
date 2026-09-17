@@ -25,7 +25,27 @@ has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-
 backed accumulator internally, not repeated string concatenation) —
 stringifies each element (the same formatting string interpolation
 uses, including calling a user-defined `to_s` override) and joins them
-with `separator` between (not trailing).
+with `separator` between (not trailing). `.slice(start, length)` works
+the same way `String#slice` does (below): `start` in `0..count`,
+`length >= 0`, clamped to what's actually available rather than
+erroring past the end.
+
+`==` on both is real structural (not identity) comparison: `Array` by
+length plus elementwise equality, order-sensitive; `Hash` by entry
+count plus every key present in both with an equal value,
+order-insensitive (`{"a": 1, "b": 2} == {"b": 2, "a": 1}` is `true`).
+Recursive to a depth of 256 (`DIAMOND_STRUCTURAL_MAX_DEPTH`), deep
+enough for any real nesting while still bounding a self-referential
+Array/Hash (`a = []; a.push(a)`) — two *different* cyclic values
+compare unequal rather than hanging, and a cyclic value compared to
+itself short-circuits to `true` via an identity check before any
+recursion happens. Hashing matches: an `Array`/`Hash` used as a `Hash`
+key is hashed by the same structural content (`Array` order-sensitive,
+`Hash` order-insensitive, mirroring their own `==`), so `h[[1, 2, 3]]`
+finds a value inserted through a different `[1, 2, 3]` object with
+equal contents. `Instance` is unrelated to any of this — it's still
+identity-only unless its class defines its own `==` (see
+[Classes and modules](classes-and-modules.md)).
 
 Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.count`/`.any?`/`.all?` (shared with Hash, driven by `.each`),
@@ -65,6 +85,12 @@ returns an `Array` of every piece around non-overlapping occurrences of
 unlike Ruby, it keeps every piece including empty ones from consecutive
 or leading/trailing separators (no trailing-empty suppression) — a
 deliberate simplification, not an attempt at Ruby compatibility.
+`separator` can also be a `Regexp` (see [Runtime features](runtime-reference.md)):
+splits on every match instead of a literal substring, collecting the text
+between matches (and whatever's left after the last match, or the whole
+string when there's no match at all). A zero-width match is skipped
+rather than split on, matching `.scan`'s own zero-width handling. Any
+other `separator` type raises `TypeError`.
 `.ord()` returns the first byte's value as an `Int`; an empty String
 raises a rescuable `IndexError`. `chr(code)` is its inverse — a global
 function (not receiver syntax; `Int` has no per-value method dispatch)
