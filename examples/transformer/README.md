@@ -1,19 +1,24 @@
-# Transformer (scaffold, branch `tensor-experiment`)
+# Transformer
 
-A from-scratch, GPT-style decoder-only transformer built on this
-branch's native `Tensor` (`DIAMOND_OBJECT_TENSOR`, `src/vm.c`/`vm.h`/
-`object.h`/`compiler.c`) -- motivated by an earlier Ruby attempt
-(native extensions included) that was still too slow. Diamond's own
-`Array` is boxed `DiamondValue*` with no packed float buffer and no
-SIMD anywhere in the VM, so a matmul in pure Diamond loops sits at
-roughly the same performance class Ruby did; `Tensor#matmul` is a
-real, threaded, k-blocked native implementation instead (38-62 GFLOPS
-on BERT-base-shaped matmuls, see this branch's own commit history for
+A from-scratch, GPT-style decoder-only transformer built on native
+`Tensor` (`DIAMOND_OBJECT_TENSOR`, `src/vm.c`/`vm.h`/`object.h`/
+`compiler.c`) -- motivated by an earlier Ruby attempt (native
+extensions included) that was still too slow. Diamond's own `Array` is
+boxed `DiamondValue*` with no packed float buffer and no SIMD anywhere
+in the VM, so a matmul in pure Diamond loops sits at roughly the same
+performance class Ruby did; `Tensor#matmul` is a real, threaded,
+k-blocked native implementation instead (38-62 GFLOPS on
+BERT-base-shaped matmuls, see this example's own commit history for
 the before/after numbers).
 
-Deliberately **not on `main`** -- this is still an experiment, kept on
-its own branch so it doesn't need to be a fully-committed-to language
-feature yet (see the branch's own root commit message).
+Started life as a deliberately narrow scaffold on its own branch
+(`tensor-experiment`) -- see "Scope" below for exactly what it still
+doesn't do. Merged onto `main` once it had a real answer to `Tensor`'s
+own open question (docs/collections.md: "a narrow prototype ... before
+committing to a fuller API surface") instead of a hypothetical one --
+concretely, `Tensor` staying 2D-only with no reshape/broadcast is a
+real, load-bearing constraint here (see "Scope" below), not a guess at
+what a real workload would need.
 
 ## What's here
 

@@ -290,11 +290,32 @@ cols" reaches real model-weight sizes). Instance methods: `#rows()`,
 `#cols()`, `#get(row, col)`, `#set(row, col, value)` (`IndexError` out of
 bounds, matching `Array#[]`), `#matmul(other)` (threaded, k-blocked; shape
 mismatch raises `TypeError`), `#transpose()` (a fresh copy), and
-`#to_a()` (back to an ordinary nested `Array`). Deliberately a narrow
-prototype, not a general tensor library: no broadcasting, no non-2D
-shapes, no in-place ops, no autodiff — it exists to measure real `matmul`
-throughput (`bench/`-style native code, not boxed `DiamondValue` arrays)
-before committing to a fuller API surface.
+`#to_a()` (back to an ordinary nested `Array`). Also a set of in-place
+elementwise/shape mutators and their backward passes, added once a real
+training loop (`examples/transformer`) showed per-element `#get`/`#set`
+round-trips, not `#matmul`, were the actual bottleneck at that example's
+own training-sized shapes: `#add!(other)`/`#scale!(scalar)`/
+`#add_bias!(bias)`/`#row_softmax!()`/`#gelu!()` (forward mutators, each
+modifying the receiver in place and returning it), `#column_sums()`/
+`#columns(start, count)`/`#add_columns!(start, other)`/`#clone()` (shape
+helpers), and `#softmax_backward(grad_output)`/`#gelu_backward(grad_output)`
+(called on the original input)/`#layernorm_forward(gamma, beta, eps)`
+(returns `[output, normalized, inv_std]`, an `Array[Tensor]`)/
+`#layernorm_backward(gamma, grad_output, inv_std)` (called on
+`layernorm_forward`'s own `normalized` result; returns `[grad_x,
+grad_gamma, grad_beta]`) — see `examples/transformer/lib/tensor_ops.di`
+for friendlier Diamond wrappers around these, and that example's own
+`gradcheck.di` for every formula checked against numerical
+(finite-difference) gradients. Still deliberately
+narrow, not a general tensor library: no broadcasting, no non-2D shapes,
+and no autodiff built into `Tensor` itself — `examples/transformer`'s own
+reverse-mode autograd (`lib/var.di`/`lib/autograd.di`) is ordinary
+Diamond code layered on top of these primitives, not a VM feature. It
+exists to measure real `matmul`/elementwise throughput (`bench/`-style
+native code, not boxed `DiamondValue` arrays) before committing to a
+fuller API surface — see `examples/transformer/README.md`'s own "Scope"
+section for what a real training workload still needs that this doesn't
+provide (batching, a reshape/view story, anything beyond plain SGD).
 
 `Time.monotonic()` returns a `Float` number of seconds from
 `CLOCK_MONOTONIC` — a duration-only clock: the value itself means
