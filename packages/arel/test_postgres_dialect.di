@@ -18,6 +18,25 @@ def run_tests()
   end
   visitor = Arel::PostgreSQLVisitor.new()
 
+  def test_error_cleanup(conninfo)
+    db = PostgreSQL.open(conninfo)
+    invalid = false
+    begin
+      db.execute("SELECT * FROM definitely_missing_pg_cleanup_table")
+    rescue error: PostgreSQLError
+      invalid = true
+    end
+    db.close()
+    closed = false
+    begin
+      db.execute("SELECT 1")
+    rescue error: PostgreSQLError
+      closed = true
+    end
+    Minitest.assert_equal(true, invalid)
+    Minitest.assert_equal(true, closed)
+  end
+
   def test_portable_baseline_select_where_order_join(conninfo, visitor)
     db = PostgreSQL.open(conninfo)
     db.execute("DROP TABLE IF EXISTS pg_dialect_books")
@@ -328,6 +347,9 @@ def run_tests()
   end
 
   suite = Minitest.new()
+  suite.test("invalid query and closed connection cleanup") do
+    test_error_cleanup(conninfo)
+  end
   suite.test("portable baseline: select/where/order/join") do
     test_portable_baseline_select_where_order_join(conninfo, visitor)
   end

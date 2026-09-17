@@ -544,6 +544,9 @@ SQLite's deterministic invalid-query and closed-resource error fixtures also
 run under combined major/minor-GC stress, covering cleanup on rejected
 operations as well as successful statement lifetimes.
 
+The live PostgreSQL, MariaDB, and MySQL suites now include the same invalid-
+query/use-after-close assertions and pass 13/13 each under combined stress.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

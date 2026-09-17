@@ -57,6 +57,9 @@ authoritative fine-grained record.
 - SQLite invalid-query, multi-statement-guard, parameter-mismatch, and
   closed-connection/statement errors now run under combined major/minor-GC
   stress as well.
+- Added explicit invalid-query and use-after-close cleanup assertions to the
+  live PostgreSQL, MariaDB, and MySQL suites; all three now pass 13/13 under
+  combined major/minor-GC stress.
 
 ### Tooling
 
