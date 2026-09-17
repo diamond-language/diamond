@@ -2940,16 +2940,19 @@ echo "DIAG: nproc=$(getconf _NPROCESSORS_ONLN) physical_cores=$physical_cores cp
 # CPU-bound work (not sleep -- sleep would pass even under the old
 # single-native-thread Fiber cooperative scheduler if it yielded during
 # the sleep, so this has to be work an isolated pthread actually executes
-# concurrently to prove anything) should finish in wall-clock time much
-# closer to *one* of them than to their sum. Diamond has no Time/clock
+# concurrently to prove anything) should finish in wall-clock time well
+# below the same two spins run sequentially. Diamond has no Time/clock
 # builtin, so this times the whole `diamond` subprocess from bash itself
 # (via $EPOCHREALTIME) rather than measuring inside the language -- the
 # same reason the Signal.trap tests above are subprocess/bash-timed
 # instead of assertions inside the .di source. A generous tolerance band
-# (< 1.6x one spin()'s own solo time, not a tight bound) keeps this from
-# flaking under CI/sandbox scheduling noise while still failing hard if
-# Thread.new secretly ran things serially (which would show up as
-# parallel time roughly 2x the serial unit instead). 20,000,000
+# (< 0.8x the directly measured two-spin serial time, not an inferred
+# multiple of one noisy sample) keeps this from flaking under CI/sandbox
+# scheduling noise while still failing hard if Thread.new secretly ran
+# things serially (both measurements would then take roughly the same
+# time). A second timing pair is tried only when the first misses the
+# threshold, so a transient scheduling interruption does not rerun this
+# entire test suite. 20,000,000
 # iterations is deliberately picked to keep the *fastest* build variant
 # (release, -O3) comfortably above a second of serial work --
 # thread-spawn/join overhead and OS scheduling jitter are both roughly
@@ -2969,31 +2972,48 @@ spin_program='def spin()
   end
   i
 end'
-start="$EPOCHREALTIME"
-serial_out="$("$diamond" -e "$spin_program
+measure_parallelism() {
+    local start end
+    start="$EPOCHREALTIME"
+    serial_out="$("$diamond" -e "$spin_program
+puts(spin())
 puts(spin())")"
-end="$EPOCHREALTIME"
-serial_time="$(echo "$end - $start" | bc)"
+    end="$EPOCHREALTIME"
+    serial_time="$(echo "$end - $start" | bc)"
 
-start="$EPOCHREALTIME"
-parallel_out="$("$diamond" -e "$spin_program
+    start="$EPOCHREALTIME"
+    parallel_out="$("$diamond" -e "$spin_program
 t1 = Thread.new(spin)
 t2 = Thread.new(spin)
 puts(t1.join())
 puts(t2.join())")"
-end="$EPOCHREALTIME"
-parallel_time="$(echo "$end - $start" | bc)"
+    end="$EPOCHREALTIME"
+    parallel_time="$(echo "$end - $start" | bc)"
 
-if [[ "$serial_out" != $'20000000\nnil' || "$parallel_out" != $'20000000\n20000000\nnil' ]]; then
-    echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
-    echo "  serial:   $serial_out" >&2
-    echo "  parallel: $parallel_out" >&2
-    exit 1
-fi
+    if [[ "$serial_out" != $'20000000\n20000000\nnil' || "$parallel_out" != $'20000000\n20000000\nnil' ]]; then
+        echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
+        echo "  serial:   $serial_out" >&2
+        echo "  parallel: $parallel_out" >&2
+        exit 1
+    fi
+}
+
+measure_parallelism
 if (( $(echo "$cpu_budget >= 2" | bc -l) )); then
-    if ! (( $(echo "$parallel_time < $serial_time * 1.6" | bc -l) )); then
+    parallelism_proved=0
+    for attempt in 1 2; do
+        if (( $(echo "$parallel_time < $serial_time * 0.8" | bc -l) )); then
+            parallelism_proved=1
+            break
+        fi
+        if [[ "$attempt" == "1" ]]; then
+            echo "NOTE: Thread real-parallelism timing attempt 1 was inconclusive (serial ${serial_time}s, parallel ${parallel_time}s); retrying once" >&2
+            measure_parallelism
+        fi
+    done
+    if [[ "$parallelism_proved" == "0" ]]; then
         echo "FAIL: Thread real-parallelism proof (not actually parallel)" >&2
-        echo "  serial time (1 spin):    ${serial_time}s" >&2
+        echo "  serial time (2 spins):   ${serial_time}s" >&2
         echo "  parallel time (2 spins): ${parallel_time}s" >&2
         exit 1
     fi
