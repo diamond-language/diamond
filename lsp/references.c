@@ -222,18 +222,39 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
     return ok;
 }
 
-JsonValue *references_compute(const DocumentTable *documents,const char *workspace_root,
-        const char *uri,const char *text,size_t length,size_t line,size_t character) {
-    if(workspace_root==nullptr||workspace_root[0]=='\0')return json_null();
+/* Shared by references_compute/rename_compute: everything through
+ * finding every workspace occurrence of the top-level symbol under the
+ * cursor -- see references_compute's own doc comment for exactly what
+ * counts as an occurrence. `*out_name_length` gets the resolved
+ * symbol's own name length (references_location/a TextEdit's range
+ * both need it, to know how far the match extends past its start
+ * column).
+ *
+ * Returns true with `*out_list` populated (caller frees via
+ * reference_list_free, even on a technically-empty result) when the
+ * position names a workspace-visible global symbol. Returns false
+ * otherwise (`*out_list` left zeroed, nothing to free) with
+ * `*out_allocation_failed` distinguishing "not applicable, caller
+ * should return json_null()" (left false) from "a real allocation
+ * failure partway through, caller should return nullptr" (set true) --
+ * the same two-case failure contract references_compute's own doc
+ * comment already promises its own callers. */
+static bool find_workspace_occurrences(const DocumentTable *documents,const char *workspace_root,
+        const char *uri,const char *text,size_t length,size_t line,size_t character,
+        ReferenceList *out_list,size_t *out_name_length,bool *out_allocation_failed) {
+    *out_list=(ReferenceList){0};
+    *out_name_length=0;
+    *out_allocation_failed=false;
+    if(workspace_root==nullptr||workspace_root[0]=='\0')return false;
 
     char *source_copy=malloc(length+1);
-    if(source_copy==nullptr)return nullptr;
+    if(source_copy==nullptr) {*out_allocation_failed=true;return false;}
     memcpy(source_copy,text,length);
     source_copy[length]='\0';
     const DiamondToken identifier=identifier_token_at(source_copy,line+1,character+1);
     if(identifier.kind!=DIAMOND_TOKEN_IDENTIFIER) {
         free(source_copy);
-        return json_null();
+        return false;
     }
     char name[64];
     size_t name_length=identifier.span.length;
@@ -247,7 +268,7 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
     size_t user_offset=0;
     char *combined=diamond_lsp_build_compile_buffer(path,text,length,
         document_resolve_source,(void *)documents,&bundle,&user_offset);
-    if(combined==nullptr) {free(path);return json_null();}
+    if(combined==nullptr) {free(path);return false;}
 
     /* Independent from scan_scratch below (a workspace scan can revisit
      * `path` itself while this one's still logically "in use") -- same
@@ -258,7 +279,8 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
         origin_scratch=calloc(1,sizeof *origin_scratch);
         if(origin_scratch==nullptr) {
             free(combined);free(path);diamond_source_bundle_free(&bundle);
-            return nullptr;
+            *out_allocation_failed=true;
+            return false;
         }
     }
     DiamondDiagnostic diagnostic;
@@ -270,14 +292,15 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
         is_global=name_is_global_symbol(&origin_chunk,name,name_length);
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
-    if(!origin_ok||!is_global)return json_null();
+    if(!origin_ok||!is_global)return false;
 
     char **paths=nullptr;
     size_t path_count=0,path_capacity=0;
     if(!collect_di_files(workspace_root,&paths,&path_count,&path_capacity)) {
         for(size_t index=0;index<path_count;index++)free(paths[index]);
         free(paths);
-        return nullptr;
+        *out_allocation_failed=true;
+        return false;
     }
 
     static DiamondProgram *scan_scratch=nullptr;
@@ -286,7 +309,8 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
         if(scan_scratch==nullptr) {
             for(size_t index=0;index<path_count;index++)free(paths[index]);
             free(paths);
-            return nullptr;
+            *out_allocation_failed=true;
+            return false;
         }
     }
 
@@ -299,7 +323,22 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
         free(paths[index]);
     }
     free(paths);
-    if(!scan_ok) {reference_list_free(&list);return nullptr;}
+    if(!scan_ok) {
+        reference_list_free(&list);
+        *out_allocation_failed=true;
+        return false;
+    }
+    *out_list=list;
+    *out_name_length=name_length;
+    return true;
+}
+
+JsonValue *references_compute(const DocumentTable *documents,const char *workspace_root,
+        const char *uri,const char *text,size_t length,size_t line,size_t character) {
+    ReferenceList list;size_t name_length=0;bool allocation_failed=false;
+    if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
+            &list,&name_length,&allocation_failed))
+        return allocation_failed?nullptr:json_null();
 
     JsonValue *result=json_array();
     if(result==nullptr) {reference_list_free(&list);return nullptr;}
@@ -314,5 +353,112 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
     }
     reference_list_free(&list);
     if(!build_ok) {json_free(result);return nullptr;}
+    return result;
+}
+
+/* True iff `name` lexes as exactly one DIAMOND_TOKEN_IDENTIFIER
+ * consuming the whole string -- rejects empty, a keyword (the lexer
+ * hands those back as their own dedicated token kind, never
+ * DIAMOND_TOKEN_IDENTIFIER), a qualified `A::B` name, embedded
+ * whitespace, and anything past DIAMOND_MAX_FUNCTION_NAME - 1 bytes
+ * (every declared name in this language already shares that same
+ * storage limit, so nothing renamed past it could ever be declared
+ * anyway). */
+static bool is_valid_new_name(const char *name,size_t length) {
+    if(length==0||length>=DIAMOND_MAX_FUNCTION_NAME)return false;
+    char buffer[DIAMOND_MAX_FUNCTION_NAME];
+    memcpy(buffer,name,length);
+    buffer[length]='\0';
+    DiamondLexer lexer;
+    diamond_lexer_init(&lexer,buffer);
+    const DiamondToken token=diamond_lexer_next(&lexer);
+    if(token.kind!=DIAMOND_TOKEN_IDENTIFIER||token.span.length!=length)return false;
+    return diamond_lexer_next(&lexer).kind==DIAMOND_TOKEN_EOF;
+}
+
+/* One TextEdit -- see rename_compute's own doc comment for the
+ * WorkspaceEdit shape this nests into. Same 0-based line/column
+ * conversion as references_location, deliberately not shared with it:
+ * a Location has its own "uri" field a TextEdit doesn't (the URI is
+ * this edit's own key in the enclosing "changes" map instead), so
+ * factoring out just the "range" object alone would save less
+ * duplication than it looks like without also complicating both
+ * callers' own object-assembly order. */
+static JsonValue *rename_text_edit(size_t line,size_t column,size_t old_name_length,
+        const char *new_name,size_t new_name_length) {
+    JsonValue *range=json_object();
+    JsonValue *start=json_object();
+    JsonValue *end=json_object();
+    JsonValue *result=json_object();
+    if(range==nullptr||start==nullptr||end==nullptr||result==nullptr) {
+        json_free(range);json_free(start);json_free(end);json_free(result);
+        return nullptr;
+    }
+    const double lsp_line=line>0?(double)(line-1):0;
+    const double lsp_character=column>0?(double)(column-1):0;
+    json_object_set(start,"line",json_number(lsp_line));
+    json_object_set(start,"character",json_number(lsp_character));
+    json_object_set(end,"line",json_number(lsp_line));
+    json_object_set(end,"character",json_number(lsp_character+(double)old_name_length));
+    json_object_set(range,"start",start);
+    json_object_set(range,"end",end);
+    json_object_set(result,"range",range);
+    json_object_set(result,"newText",json_string(new_name,new_name_length));
+    return result;
+}
+
+JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_root,
+        const char *uri,const char *text,size_t length,size_t line,size_t character,
+        const char *new_name,size_t new_name_length) {
+    if(!is_valid_new_name(new_name,new_name_length))return json_null();
+
+    ReferenceList list;size_t name_length=0;bool allocation_failed=false;
+    if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
+            &list,&name_length,&allocation_failed))
+        return allocation_failed?nullptr:json_null();
+
+    JsonValue *changes=json_object();
+    if(changes==nullptr) {reference_list_free(&list);return nullptr;}
+
+    /* Groups edits by URI in first-seen order: a small, growable
+     * "find or create" side-table -- json_object_set has no
+     * update-in-place semantics of its own (a second call with the
+     * same key would append a duplicate member instead of merging into
+     * the array already stored under it, see json.h), and a rename's
+     * own occurrence count is small enough that a linear scan per
+     * entry (not a hash map) is plenty. */
+    typedef struct {const char *uri;JsonValue *edits;} UriGroup;
+    UriGroup *groups=nullptr;size_t group_count=0,group_capacity=0;
+    bool build_ok=true;
+    for(size_t index=0;index<list.count&&build_ok;index++) {
+        const ReferenceEntry *entry=&list.entries[index];
+        JsonValue *edits=nullptr;
+        for(size_t group=0;group<group_count;group++)
+            if(strcmp(groups[group].uri,entry->uri)==0) {edits=groups[group].edits;break;}
+        if(edits==nullptr) {
+            edits=json_array();
+            if(edits==nullptr||!json_object_set(changes,entry->uri,edits)) {
+                json_free(edits);build_ok=false;break;
+            }
+            if(group_count==group_capacity) {
+                const size_t grown_capacity=group_capacity==0?8:group_capacity*2;
+                UriGroup *grown=realloc(groups,grown_capacity*sizeof *grown);
+                if(grown==nullptr) {build_ok=false;break;}
+                groups=grown;group_capacity=grown_capacity;
+            }
+            groups[group_count++]=(UriGroup){.uri=entry->uri,.edits=edits};
+        }
+        JsonValue *edit=rename_text_edit(entry->line,entry->column,name_length,
+            new_name,new_name_length);
+        if(edit==nullptr||!json_array_push(edits,edit)) {json_free(edit);build_ok=false;}
+    }
+    free(groups);
+    reference_list_free(&list);
+    if(!build_ok) {json_free(changes);return nullptr;}
+
+    JsonValue *result=json_object();
+    if(result==nullptr||!json_object_set(result,"changes",changes)) {
+        json_free(result);json_free(changes);return nullptr;
+    }
     return result;
 }

@@ -52,4 +52,33 @@
 JsonValue *references_compute(const DocumentTable *documents,const char *workspace_root,
     const char *uri,const char *text,size_t length,size_t line,size_t character);
 
+/* Computes a textDocument/rename result: a WorkspaceEdit renaming every
+ * workspace occurrence of the top-level symbol under the cursor to
+ * `new_name` -- the exact same scan, and the exact same "reference-
+ * shaped occurrence" false-positive/under-approximation tradeoffs,
+ * references_compute's own doc comment above describes (this shares
+ * that scan directly, differing only in how the results get built into
+ * JSON). No collision detection against an existing same-named symbol
+ * at the rename's own target scope -- that would need real semantic
+ * resolution this deliberately name-based pass doesn't have, the same
+ * conservative-scope cut references_compute itself already makes.
+ *
+ * `new_name` additionally has to lex as exactly one DIAMOND_TOKEN_
+ * IDENTIFIER consuming the whole string (rejects empty, a keyword, a
+ * qualified `A::B` name, embedded whitespace, ...) -- accepting
+ * anything else would hand back an edit guaranteed to leave the
+ * workspace not recompiling. Diamond enforces no class-vs-function
+ * naming-case convention at the language level (confirmed directly:
+ * `class lowercase ... end` compiles), so neither does this -- renaming
+ * a class to a lowercase name is accepted the same way declaring one
+ * with a lowercase name already is.
+ *
+ * Returns a WorkspaceEdit (`{"changes": {uri: TextEdit[], ...}}`)
+ * JsonValue on success, `json_null()` under every condition
+ * references_compute itself returns it for, plus an invalid `new_name`,
+ * and nullptr only on allocation failure. */
+JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_root,
+    const char *uri,const char *text,size_t length,size_t line,size_t character,
+    const char *new_name,size_t new_name_length);
+
 #endif

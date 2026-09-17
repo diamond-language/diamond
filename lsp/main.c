@@ -189,6 +189,7 @@ static void handle_initialize(const JsonValue *id,const JsonValue *params,
         json_object_set(capabilities,"completionProvider",completion_options);
     json_object_set(capabilities,"workspaceSymbolProvider",json_bool(true));
     json_object_set(capabilities,"referencesProvider",json_bool(true));
+    json_object_set(capabilities,"renameProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
@@ -336,6 +337,28 @@ static void handle_references(DocumentTable *documents,const char *workspace_roo
     send_response(id,result);
 }
 
+static void handle_rename(DocumentTable *documents,const char *workspace_root,
+        const JsonValue *id,const JsonValue *params) {
+    char uri_copy[1024];
+    const char *text=nullptr;
+    size_t text_length=0,line=0,character=0;
+    if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
+            &text,&text_length,&line,&character))
+        return;
+    const char *new_name=nullptr;size_t new_name_length=0;
+    if(!json_as_string(json_object_get(params,"newName"),&new_name,&new_name_length)) {
+        send_response(id,json_null());
+        return;
+    }
+    JsonValue *result=rename_compute(documents,workspace_root,uri_copy,text,
+        text_length,line,character,new_name,new_name_length);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
 static void handle_did_open(DocumentTable *documents,DependencyTable *dependencies,
         const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
@@ -446,6 +469,8 @@ int main(void) {
             handle_workspace_symbol(documents,workspace_root,id,params);
         } else if(strcmp(method,"textDocument/references")==0) {
             handle_references(documents,workspace_root,id,params);
+        } else if(strcmp(method,"textDocument/rename")==0) {
+            handle_rename(documents,workspace_root,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

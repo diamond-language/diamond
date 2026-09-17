@@ -1415,6 +1415,39 @@ response="$(read_message)"
 [[ "$response" == '{"jsonrpc":"2.0","id":29,"result":null}' ]]
 count=$((count + 1))
 
+# --- textDocument/rename: same workspace scan as references above, built
+# into a WorkspaceEdit instead of Location[] -- one TextEdit per occurrence,
+# grouped by file, replacing exactly the matched name's own span ---
+
+# cursor on ref_build's declaration, same position references already
+# covers above -- every real call/declaration site gets its own edit,
+# each file's own edits grouped under its own uri, the "label:"
+# keyword-argument label on the same line as one of them correctly
+# excluded (same false-positive rule references already exercises)
+send '{"jsonrpc":"2.0","id":31,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"},"position":{"line":8,"character":6},"newName":"build_widget"}}'
+response="$(read_message)"
+[[ "$response" == *'"changes"'* ]]
+count=$((count + 1))
+[[ "$response" == *"\"$ref_helper_uri\":[{\"range\":{\"start\":{\"line\":8,\"character\":4},\"end\":{\"line\":8,\"character\":13}},\"newText\":\"build_widget\"}]"* ]]
+count=$((count + 1))
+[[ "$response" == *"\"range\":{\"start\":{\"line\":3,\"character\":6},\"end\":{\"line\":3,\"character\":15}},\"newText\":\"build_widget\""* ]]
+count=$((count + 1))
+[[ "$response" == *"\"range\":{\"start\":{\"line\":8,\"character\":13},\"end\":{\"line\":8,\"character\":22}},\"newText\":\"build_widget\""* ]]
+count=$((count + 1))
+
+# a new name that doesn't lex as a single identifier (a keyword here) is
+# rejected outright -- never hands back an edit guaranteed not to recompile
+send '{"jsonrpc":"2.0","id":32,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"},"position":{"line":8,"character":6},"newName":"class"}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":32,"result":null}' ]]
+count=$((count + 1))
+
+# a purely local name is left alone, same as references
+send '{"jsonrpc":"2.0","id":33,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$ref_main_uri"'"},"position":{"line":7,"character":2},"newName":"renamed_local"}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":33,"result":null}' ]]
+count=$((count + 1))
+
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ref_helper_uri"'"}}}'
 read_message >/dev/null
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ref_main_uri"'"}}}'

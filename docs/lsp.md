@@ -25,7 +25,8 @@ search over a real (if scoped) lexical symbol table:
   `hoverProvider: true`, `definitionProvider: true`,
   `documentSymbolProvider: true`, `completionProvider: {}` (no
   `triggerCharacters` — see completion below for why none are needed),
-  `workspaceSymbolProvider: true`, and `referencesProvider: true`. Also
+  `workspaceSymbolProvider: true`, `referencesProvider: true`, and
+  `renameProvider: true`. Also
   reads `workspaceFolders[0]`/
   `rootUri` from the request's own params (the one place this server
   reads anything from `initialize`'s params at all) to know what
@@ -260,6 +261,27 @@ search over a real (if scoped) lexical symbol table:
   rediscovered once per requiring file scanned. Returns `null` when the
   cursor isn't on such a name or the origin document doesn't currently
   compile cleanly, matching hover/definition/completion's own rule.
+- `textDocument/rename` (`lsp/references.c`, sharing its scan with
+  `textDocument/references` directly — same file, same underlying
+  helper, differing only in how the results get built into JSON) runs
+  the exact same workspace scan described above, then returns a
+  `WorkspaceEdit` (`{"changes": {uri: TextEdit[], ...}}`) replacing
+  every occurrence found with `newName` instead of a `Location[]`
+  pointing at them. `newName` additionally has to lex as exactly one
+  identifier token consuming the whole string — a keyword, an empty
+  string, a qualified `A::B` name, or anything with embedded
+  whitespace is rejected outright (`null`), since accepting one would
+  hand back an edit guaranteed not to recompile. No collision detection
+  against an existing same-named symbol at the rename's own target
+  scope — same deliberately name-based, conservative-scope cut
+  `textDocument/references` itself already makes, not a gap specific
+  to rename. Diamond enforces no class-vs-function naming-case
+  convention at the language level, so neither does this: renaming a
+  class to a lowercase name is accepted the same way declaring one
+  with a lowercase name already is. No `textDocument/prepareRename` --
+  a client without it just lets the user type a name unconditionally
+  and calls `rename` anyway, which still correctly returns `null` when
+  the position isn't renameable.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;
