@@ -540,6 +540,10 @@ passed 12/12 tests.
 Those three opt-in scripts now enable both major and minor GC stress by
 default; the live suites passed 36/36 tests under forced collection.
 
+SQLite's deterministic invalid-query and closed-resource error fixtures also
+run under combined major/minor-GC stress, covering cleanup on rejected
+operations as well as successful statement lifetimes.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

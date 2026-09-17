@@ -54,6 +54,9 @@ authoritative fine-grained record.
 - The three live-driver Arel scripts now run with both major and minor GC
   stress enabled; PostgreSQL, MariaDB, and MySQL passed 36/36 tests under
   forced collection.
+- SQLite invalid-query, multi-statement-guard, parameter-mismatch, and
+  closed-connection/statement errors now run under combined major/minor-GC
+  stress as well.
 
 ### Tooling
 
