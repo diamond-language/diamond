@@ -77,11 +77,11 @@ jobs:
 
   # Native Linux arm64 coverage. The baseline has passed repeatedly, so this
   # now includes the same focused API/compiler/fiber/tooling targets used by
-  # the other portability jobs. It still does not claim sanitizer/package
-  # parity with test-all before those suites are checked deliberately. The
-  # container stays Ubuntu 26.04 so its compiler and dependency versions match
-  # the existing Ubuntu leg; the runner is the genuinely different part
-  # (arm64 hardware).
+  # the other portability jobs plus an ASan/UBSan run. It still does not claim
+  # TSan/package parity with test-all before those suites are checked
+  # deliberately. The container stays Ubuntu 26.04 so its compiler and
+  # dependency versions match the existing Ubuntu leg; the runner is the
+  # genuinely different part (arm64 hardware).
   test-arm64:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -121,6 +121,8 @@ jobs:
           make CC=gcc test-fiber-run
           make CC=gcc test-lsp
           make CC=gcc test-repl
+      - name: ASan and UBSan (Ubuntu arm64)
+        run: make CC=gcc test-sanitize
 
   # A third, genuinely different target -- musl, not just another distro
   # (fedora/ubuntu above are both glibc). Its own job, not another
