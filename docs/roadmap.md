@@ -537,6 +537,9 @@ Live-driver validation also passed in 2026-09 against throwaway PostgreSQL 16,
 MariaDB 11, and MySQL 8 containers: all three existing Arel dialect suites
 passed 12/12 tests.
 
+Those three opt-in scripts now enable both major and minor GC stress by
+default; the live suites passed 36/36 tests under forced collection.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

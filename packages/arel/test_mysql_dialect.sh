@@ -55,5 +55,7 @@ export DIAMOND_MYSQL_TEST_USER="root"
 export DIAMOND_MYSQL_TEST_PASSWORD="diamondtest"
 export DIAMOND_MYSQL_TEST_DATABASE="diamond_arel_test"
 export DIAMOND_MYSQL_TEST_PORT="${port}"
+export DIAMOND_STRESS_GC=1
+export DIAMOND_STRESS_MINOR_GC=1
 
 "$diamond" test_mysql_dialect.di

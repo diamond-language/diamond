@@ -51,6 +51,9 @@ authoritative fine-grained record.
 - Revalidated live database integration against throwaway PostgreSQL 16,
   MariaDB 11, and MySQL 8 containers: each Arel dialect suite passed all
   12 tests with no cleanup or driver error failures.
+- The three live-driver Arel scripts now run with both major and minor GC
+  stress enabled; PostgreSQL, MariaDB, and MySQL passed 36/36 tests under
+  forced collection.
 
 ### Tooling
 

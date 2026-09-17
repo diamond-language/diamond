@@ -49,5 +49,7 @@ if [[ "$ready" != "1" ]]; then
 fi
 
 export DIAMOND_PG_TEST_CONNINFO="host=127.0.0.1 port=${port} dbname=diamond_arel_test user=postgres password=diamondtest"
+export DIAMOND_STRESS_GC=1
+export DIAMOND_STRESS_MINOR_GC=1
 
 "$diamond" test_postgres_dialect.di
