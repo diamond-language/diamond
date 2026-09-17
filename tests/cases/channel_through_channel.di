@@ -1,0 +1,6 @@
+inner = Channel.new(2)
+inner.send("payload")
+outer = Channel.new(2)
+outer.send(inner)
+received_inner = outer.receive()
+received_inner.receive()

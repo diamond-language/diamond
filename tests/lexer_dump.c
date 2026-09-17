@@ -66,6 +66,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_SPACESHIP: return "spaceship";
         case DIAMOND_TOKEN_GREATER: return "greater";
         case DIAMOND_TOKEN_GREATER_EQUAL: return "greater_equal";
+        case DIAMOND_TOKEN_GREATER_GREATER: return "greater_greater";
         case DIAMOND_TOKEN_IF: return "if";
         case DIAMOND_TOKEN_UNLESS: return "unless";
         case DIAMOND_TOKEN_THEN: return "then";
@@ -84,6 +85,8 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_DEF: return "def";
         case DIAMOND_TOKEN_CLOSURE: return "closure";
         case DIAMOND_TOKEN_CLASS: return "class";
+        case DIAMOND_TOKEN_SEALED: return "sealed";
+        case DIAMOND_TOKEN_STRUCT: return "struct";
         case DIAMOND_TOKEN_INTERFACE: return "interface";
         case DIAMOND_TOKEN_MODULE: return "module";
         case DIAMOND_TOKEN_INCLUDE: return "include";

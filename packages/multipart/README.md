@@ -59,6 +59,15 @@ Otherwise, it returns `{"fields": Hash, "files": Hash}`:
   own (matching `packages/rack`'s own `StaticFiles` default for the same
   "we genuinely don't know" case).
 
+Either map honors the standard HTML-forms array convention: a name
+ending in `"[]"` (e.g. several checkboxes all named `"platforms[]"`, or
+a real `<input type="file" multiple name="screenshots[]">`) maps the
+`"[]"`-stripped key to an `Array` of every value/file seen for that
+name, in submission order — a single `"x[]"` part still becomes a
+one-element `Array`, not a bare value; the `"[]"` suffix is what a
+caller opts into, not how many parts actually showed up. A plain name
+with no `"[]"` stays last-value-wins, same as always.
+
 See `packages/http/lib/http/status.di`'s `http_max_body_size` for the
 one hard cap on how large a request body — and therefore an upload —
 can be at all; this package does no size-limiting of its own beyond
@@ -100,8 +109,9 @@ leading `.` (`"a.b.ZIP"` -> `"zip"`), or `nil` if there isn't one.
   c.zip"` isn't handled — the value extraction stops at the first `"`,
   full stop. Every other character, including spaces and non-ASCII
   bytes, round-trips correctly; only a literal embedded `"` breaks it.
-- **Nested `multipart/mixed` parts** (multiple files under one field
-  name). Not needed for one file per named field, which is the only
-  shape this package builds.
+- **Nested `multipart/mixed` parts** — a single part whose own body is
+  itself a multipart/mixed document wrapping several files. Multiple
+  *top-level* parts sharing one `"x[]"` name (what a real multi-file
+  `<input>` actually sends) is handled — see above.
 - **Header line-folding** (an obsolete HTTP header continuation form).
   Every header this package looks at is expected on one line.

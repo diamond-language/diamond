@@ -149,9 +149,19 @@ wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 
 kill -TERM "$pid"
-wait "$pid"
-status=$?
-[[ "$status" == "0" ]]
+# `|| status=$?`, not a bare `wait`: $pid is `timeout`'s own PID, and
+# GNU coreutils' timeout reports the child's real exit status once it
+# exits cleanly after being signaled -- but Ubuntu 26.04's default
+# `timeout` is uutils-coreutils, which instead reports the relayed
+# signal's own 128+signal status regardless of the child's real,
+# clean outcome (confirmed via `timeout --version`; see tests/run.sh's
+# identical Signal.trap-test finding for the full writeup). 143 is
+# SIGTERM's 128+15, so it's accepted below alongside the expected 0 --
+# the log-message grep right after is what actually verifies a clean
+# shutdown happened, not this status.
+wait "$pid" || status=$?
+status="${status:-0}"
+[[ "$status" == "0" || "$status" == "143" ]]
 grep -q '"message":"server.shutdown_complete"' "$out"
 grep -q '"forced":false' "$out"
 rm -f "$out"
@@ -185,9 +195,11 @@ response="$(timeout 3 cat <&3)"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 [[ "$response" == $'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 16\r\n\r\nhello, /inflight' ]]
 
-wait "$pid"
-status=$?
-[[ "$status" == "0" ]]
+# Same uutils-coreutils `timeout` status quirk as this file's first
+# kill/wait pair above -- see its comment for the full writeup.
+wait "$pid" || status=$?
+status="${status:-0}"
+[[ "$status" == "0" || "$status" == "143" ]]
 grep -q '"message":"server.shutdown_complete"' "$out"
 grep -q '"forced":false' "$out"
 rm -f "$out"
@@ -238,9 +250,11 @@ for _ in $(seq 1 100); do
 done
 { exec 3<&- 3>&-; } 2>/dev/null || true
 [[ "$exited" == "0" ]]
-wait "$pid"
-status=$?
-[[ "$status" == "0" ]]
+# Same uutils-coreutils `timeout` status quirk as this file's first
+# kill/wait pair above -- see its comment for the full writeup.
+wait "$pid" || status=$?
+status="${status:-0}"
+[[ "$status" == "0" || "$status" == "143" ]]
 grep -q '"message":"server.shutdown_forced_by_signal"' "$out"
 rm -f "$out"
 
@@ -391,9 +405,11 @@ wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
 
 kill -TERM "$pid"
-wait "$pid"
-status=$?
-[[ "$status" == "0" ]]
+# Same uutils-coreutils `timeout` status quirk as this file's first
+# kill/wait pair above -- see its comment for the full writeup.
+wait "$pid" || status=$?
+status="${status:-0}"
+[[ "$status" == "0" || "$status" == "143" ]]
 grep -q '"message":"server.shutdown_complete"' "$out"
 rm -f "$out" "$out.di"
 

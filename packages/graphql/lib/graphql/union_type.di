@@ -29,15 +29,9 @@ module GraphQL
     def type_resolver() = @type_resolver
 
     def includes?(object_type_name)
-      index = 0
-      found = false
-      while index < @possible_types.length() && !found
-        if @possible_types[index].name() == object_type_name
-          found = true
-        end
-        index += 1
-      end
-      found
+      @possible_types.find() do |possible_type|
+        possible_type.name() == object_type_name
+      end != nil
     end
   end
 

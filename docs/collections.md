@@ -25,7 +25,27 @@ has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-
 backed accumulator internally, not repeated string concatenation) —
 stringifies each element (the same formatting string interpolation
 uses, including calling a user-defined `to_s` override) and joins them
-with `separator` between (not trailing).
+with `separator` between (not trailing). `.slice(start, length)` works
+the same way `String#slice` does (below): `start` in `0..count`,
+`length >= 0`, clamped to what's actually available rather than
+erroring past the end.
+
+`==` on both is real structural (not identity) comparison: `Array` by
+length plus elementwise equality, order-sensitive; `Hash` by entry
+count plus every key present in both with an equal value,
+order-insensitive (`{"a": 1, "b": 2} == {"b": 2, "a": 1}` is `true`).
+Recursive to a depth of 256 (`DIAMOND_STRUCTURAL_MAX_DEPTH`), deep
+enough for any real nesting while still bounding a self-referential
+Array/Hash (`a = []; a.push(a)`) — two *different* cyclic values
+compare unequal rather than hanging, and a cyclic value compared to
+itself short-circuits to `true` via an identity check before any
+recursion happens. Hashing matches: an `Array`/`Hash` used as a `Hash`
+key is hashed by the same structural content (`Array` order-sensitive,
+`Hash` order-insensitive, mirroring their own `==`), so `h[[1, 2, 3]]`
+finds a value inserted through a different `[1, 2, 3]` object with
+equal contents. `Instance` is unrelated to any of this — it's still
+identity-only unless its class defines its own `==` (see
+[Classes and modules](classes-and-modules.md)).
 
 Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.count`/`.any?`/`.all?` (shared with Hash, driven by `.each`),
@@ -65,6 +85,12 @@ returns an `Array` of every piece around non-overlapping occurrences of
 unlike Ruby, it keeps every piece including empty ones from consecutive
 or leading/trailing separators (no trailing-empty suppression) — a
 deliberate simplification, not an attempt at Ruby compatibility.
+`separator` can also be a `Regexp` (see [Runtime features](runtime-reference.md)):
+splits on every match instead of a literal substring, collecting the text
+between matches (and whatever's left after the last match, or the whole
+string when there's no match at all). A zero-width match is skipped
+rather than split on, matching `.scan`'s own zero-width handling. Any
+other `separator` type raises `TypeError`.
 `.ord()` returns the first byte's value as an `Int`; an empty String
 raises a rescuable `IndexError`. `chr(code)` is its inverse — a global
 function (not receiver syntax; `Int` has no per-value method dispatch)
@@ -111,6 +137,51 @@ since making the `*` operator polymorphic over String would need a
 new deoptimization mechanism for the compiler's Int-only fast path
 (`MULTIPLY_INT`) that doesn't otherwise exist for it.
 
+`.start_with?(prefix)`/`.end_with?(suffix)` are plain literal String
+checks (no `Regexp` support). `.ljust(width, padding)`/`.rjust(width,
+padding)` pad the receiver on the right/left with `padding` (repeated
+and truncated as needed) until it reaches `width`, or return the
+receiver unchanged if it's already at least `width` long; a negative
+`width` or an empty `padding` both raise a rescuable `ArgumentError`
+rather than looping forever. `.tr(from, to)` is Ruby-style
+character-set translation: `from`/`to` support `a-z`-style ranges and a
+leading `^` to negate `from`, with `\` escaping a literal `-` or `^`;
+each character in the receiver found in `from` is replaced by the
+character at the same position in `to` (a shorter `to` maps every
+remaining `from` character onto its own last character, matching
+Ruby), or deleted outright when `to` is `""`. An empty `from` raises
+`ArgumentError`; a non-`String` argument to any of these raises
+`TypeError`.
+
+```ruby
+"hello".start_with?("he")          # => true
+"abc".ljust(6, "-")                # => "abc---"
+"abc".rjust(6, "-")                # => "---abc"
+"hello".tr("el", "ip")             # => "hippo"
+"hello".tr("aeiou", "*")           # => "h*ll*"
+```
+
+`.sub(pattern, replacement)`/`.gsub(pattern, replacement)` replace the
+first/every match of `pattern` (a `Regexp` -- a `String` pattern raises
+`TypeError`, there's no implicit `Regexp.new` coercion) with
+`replacement`, which may contain Ruby-style backreferences (`\0` the
+whole match, `\1`.. a capture group; a literal backslash is `\\`).
+`.scan(pattern)` (`Regexp` only, same `TypeError` on a `String`) returns
+an `Array` of every match: the matched `String` itself when `pattern`
+has no capture groups, or an `Array` of that match's captures when it
+does -- never a mix of both across one call, since a given `Regexp`
+either has groups or doesn't:
+
+```ruby
+"hello world".gsub(Regexp.new("o"), "0")                  # => "hell0 w0rld"
+"2024-01-15".gsub(Regexp.new("(\\d+)-(\\d+)-(\\d+)"), "\\3/\\2/\\1")  # => "15/01/2024"
+"a1 b22 c333".scan(Regexp.new("[0-9]+"))                   # => ["1", "22", "333"]
+"key1=val1;key2=val2".scan(Regexp.new("([a-z0-9]+)=([a-z0-9]+)"))
+# => [["key1", "val1"], ["key2", "val2"]]
+```
+
+See the [Regexp guide](runtime-reference.md#regexp) for pattern/option syntax.
+
 `.each(callback)`, and the `Enumerable` methods derived from it —
 `.select`/`.count`/`.any?`/`.all?`/`.reduce`/`.map` — work as receiver
 syntax on both arrays and hashes (a hash's Enumerable operates over
@@ -143,17 +214,30 @@ those, rather than re-deriving each one generically over `each()`.
 
 A handful of further Array/Hash conveniences work as receiver syntax too,
 forwarding the same way the Enumerable set above does:
-`values.reverse()` returns a new array in reverse order;
-`values.concat(other)` returns a new array with `other`'s elements
-appended; `values.compact()` returns a new array with any `nil` elements
-dropped; `values.uniq()` returns a new array with only the first
-occurrence of each distinct (`==`) element, order preserved;
+`values.first()`/`values.last()` return the first/last element (an empty
+array's `IndexError` propagates straight from the underlying `[]`);
+`values.first_or(fallback)`/`values.last_or(fallback)` are the safe form,
+returning `fallback` instead when `values` is empty; `values.empty?()`
+returns whether the array has zero elements; `values.include?(needle)`
+returns whether any element `==` `needle`; `values.reverse()` returns a new
+array in reverse order; `values.concat(other)` returns a new array with
+`other`'s elements appended; `values.compact()` returns a new array with
+any `nil` elements dropped; `values.uniq()` returns a new array with only
+the first occurrence of each distinct (`==`) element, order preserved;
 `values.flatten()` returns a new array with nested arrays fully
 flattened (recursively, matching Ruby's default);
 `values.delete_at(index)` mutates `values` in place (like the native
 `.push`/`.pop`), removing and returning the element at `index`, or `nil`
-without mutating if `index` is out of bounds; `hash.merge(other)` returns
-a new `Hash` with the receiver's pairs then `other`'s applied on top
+without mutating if `index` is out of bounds.
+
+`hash.fetch(key, fallback)` returns the value at `key`, or `fallback`
+(not raising) when `key` is absent; `hash.keys()`/`hash.values()` return
+an `Array` of the hash's keys/values respectively, both in insertion
+order; `hash.include_key?(needle)` returns whether `needle` is a key;
+`hash.map_values(callback)` returns a new `Hash` with the same keys and
+each value passed through `callback`; `hash.empty?()` returns whether the
+hash has zero pairs (same name and meaning as Array's own); `hash.merge(other)`
+returns a new `Hash` with the receiver's pairs then `other`'s applied on top
 (`other` wins on key conflicts). Like the rest of the Enumerable set,
 `vm.c`'s native dispatch resolves each of these receiver calls to a
 same-named top-level prelude function (`array_reverse`, `array_concat`,
@@ -188,13 +272,29 @@ raises a rescuable `RangeError` instead (from `to_i` rejecting the
 resulting `Infinity`/`NaN` quotient — `Float` division by zero itself
 never raises, only the truncation step does).
 
-`sqrt(x)`, `sin(x)`, `cos(x)`, `tan(x)`, and `pow(base, exponent)` are
-native functions (no bytecode primitive to build on, same reasoning as
-`chr`/`to_f`/`to_i`) accepting `Int | Float` for every argument and
-always returning `Float` — `pow(2, 10)` is `1024.0`, not `1024`, even
-though both arguments are `Int`. No extra validation: results follow
-IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
+`sqrt(x)`, `sin(x)`, `cos(x)`, `tan(x)`, `exp(x)`, `log(x)`, `tanh(x)`, and
+`pow(base, exponent)` are native functions (no bytecode primitive to build
+on, same reasoning as `chr`/`to_f`/`to_i`) accepting `Int | Float` for every
+argument and always returning `Float` — `pow(2, 10)` is `1024.0`, not
+`1024`, even though both arguments are `Int`. No extra validation: results
+follow IEEE-754 directly, so `sqrt(-1.0)` is `NaN` rather than an error, the
 same philosophy `Float` arithmetic already uses throughout.
+
+`Tensor` is a dense, row-major `Float` matrix — `Tensor.zeros(rows, cols)`,
+`Tensor.from_array(nested_array)` (an `Array` of same-length `Array`s of
+`Int`/`Float`), or `Tensor.random(rows, cols, seed)` (deterministic
+pseudorandom values in `[-1, 1)` from a plain LCG, filled directly in C —
+orders of magnitude faster than building the same values through
+`Tensor.from_array` and a Diamond-level loop, which matters once "rows x
+cols" reaches real model-weight sizes). Instance methods: `#rows()`,
+`#cols()`, `#get(row, col)`, `#set(row, col, value)` (`IndexError` out of
+bounds, matching `Array#[]`), `#matmul(other)` (threaded, k-blocked; shape
+mismatch raises `TypeError`), `#transpose()` (a fresh copy), and
+`#to_a()` (back to an ordinary nested `Array`). Deliberately a narrow
+prototype, not a general tensor library: no broadcasting, no non-2D
+shapes, no in-place ops, no autodiff — it exists to measure real `matmul`
+throughput (`bench/`-style native code, not boxed `DiamondValue` arrays)
+before committing to a fuller API surface.
 
 `Time.monotonic()` returns a `Float` number of seconds from
 `CLOCK_MONOTONIC` — a duration-only clock: the value itself means

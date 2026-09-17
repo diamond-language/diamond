@@ -52,6 +52,15 @@ fixed scalar (`pop`, `key_at`, `value_at`, `String#index_of`) can still
 satisfy an interface method with no return annotation, just never one
 that requires a specific return type.
 
+Satisfying a `-> Type` interface method needs the implementing method's
+own explicit `-> Type` return annotation (an endless `def name() -> String
+= "Ada"` works; a bare `def name() = "Ada"` does not, even though its
+return type is otherwise correctly inferred as `String`) — interface
+conformance is checked against `return_type_set`, which only an explicit
+annotation populates, not the separate, tooling-only return-type inference
+compile_definition also computes for every function (see docs/roadmap.md's
+"Improve receiver-aware tooling").
+
 `x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
 the whole condition is true (and `unless ... || ...`'s branch narrows
 both operands where the whole condition is false) — composed the same
@@ -90,7 +99,7 @@ Neither is a general expression: `Type` in `is_a?(Type)` is a type name
 resolved entirely at compile time, the same way a `rescue error: Type`
 clause's type is — there is no way to obtain a class as an ordinary
 runtime value to pass around, store, or compute `is_a?`'s argument from
-(see docs/design.md's `DIAMOND_VALUE_CLASS` section, and docs/
+(see docs/internal/design.md's `DIAMOND_VALUE_CLASS` section, and docs/
 roadmap.md's "Explicitly deferred" section for why that stays out of
 scope).
 
@@ -110,10 +119,13 @@ end
 name` binds the raised value unconditionally; `rescue error: Type1 | Type2`
 matches nominally (up to eight types, with subclass matching) before
 binding. `ensure` provides cleanup that runs on normal completion,
-exceptions, and explicit `return` alike. Built-in exception classes:
-`Exception`, `StandardError`, `RuntimeError`, `TypeError`, `ArgumentError`,
-`IndexError`, `ZeroDivisionError`, `RangeError`, `SystemStackError`,
-`FiberError`, and `IOError`.
+exceptions, and explicit `return` alike. Built-in exception classes, all
+under `StandardError` except `SystemStackError` (direct `Exception`
+subclass): `RuntimeError`, `TypeError`, `ArgumentError`, `IndexError`,
+`ZeroDivisionError`, `RangeError`, `FiberError`, `IOError`, `RegexpError`,
+`WouldBlockError`, `ThreadError`, `NoMethodError`, `JSONError`, and the
+native database drivers' `SQLite3Error`, `PostgreSQLError`, and
+`MySQLError`.
 
 `Exception.new(message, cause)` takes up to two positional arguments
 (both optional), readable back via `.message()`/`.cause()`. A subclass

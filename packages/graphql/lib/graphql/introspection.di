@@ -111,20 +111,13 @@ module GraphQL
       elsif value is String
         "\"#{value}\""
       elsif value is Array
-        parts = []
-        index = 0
-        while index < value.length()
-          parts.push(self.print_literal(value[index]))
-          index += 1
+        parts = value.map() do |item|
+          self.print_literal(item)
         end
         "[#{parts.join(", ")}]"
       elsif value is Hash
-        parts = []
-        keys = value.keys()
-        index = 0
-        while index < keys.length()
-          parts.push("#{keys[index]}: #{self.print_literal(value[keys[index]])}")
-          index += 1
+        parts = value.keys().map() do |key|
+          "#{key}: #{self.print_literal(value[key])}"
         end
         "{#{parts.join(", ")}}"
       else

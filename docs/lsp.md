@@ -87,7 +87,7 @@ search over a real (if scoped) lexical symbol table:
     reached through `receiver.method(...)`, for the receiver forms
     resolvable without real type inference: a literal class name
     (`Author.find`), `self` inside an instance method or a class-owned
-    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/design.md`), a
+    `def self.x` (wall 2's `DIAMOND_VALUE_CLASS`, `docs/internal/design.md`), a
     local variable known at the cursor position to hold
     `ClassName.new(...)` — `DiamondScopeLocal.known_type` (`src/vm.h`),
     the compiler's own `known_types[reg]`, supplemented by ordered
@@ -122,15 +122,75 @@ search over a real (if scoped) lexical symbol table:
     class instance-variable
     receiver also resolves when every assignment to that field agrees on one
     concrete class; conflicting or unknown assignments deliberately erase the
-    candidate rather than guessing. Call results can be receivers recursively:
+    candidate rather than guessing. Grouping parentheses around any otherwise
+    resolvable receiver are ignored. Repeated indexing from a local explicitly
+    typed as a nested `Array` resolves to its eventual class element type;
+    the same applies to a non-generic top-level, singleton, or single-class
+    instance-method call with a structurally known array return. Generic calls
+    also work when their class bindings can be inferred by the same exact-type-
+    variable rule used for direct chains, or supplied explicitly as class
+    unions or nested `Array` shapes ending in a class union. Inference also descends
+    through matching parameterized shapes such as `Array[T]` versus a local
+    `Array[Pet | Leaf]`, or `Hash[String, T]` versus
+    `Hash[String, Pet | Leaf]`. Direct `Hash[K, V]`
+    indexing remains unresolved because its real result is `V | Nil`.
+    A union receiver may supply the array-valued method when every candidate
+    has the same non-generic structural return graph.
+    Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
     singleton factory such as `Factory.build().leaf()` resolve through each
-    link's explicit class or class-union return annotation
-    (`DiamondFunction.return_type_set`). `Class.new()` is the one intrinsic
-    return rule. Every arm of a union receiver must define a link with a usable
-    annotated class return, so one uncertain arm makes the rest of the chain
-    unresolved. Unannotated results and any other receiver this can't resolve
-    fall back to the ordinary "not found" result instead of a guess. All three
+    link's return type, preferring an explicit class or class-union
+    annotation (`DiamondFunction.return_type_set`) and falling back to a
+    same-shaped *inferred* one (`DiamondFunction.inferred_return_type_set`)
+    when the function has no annotation at all but its own body is simple
+    enough to have a known type at compile time (a single-expression
+    `def make_branch() = Branch.new()`, say) -- the identical inference
+    `compile_block` already does for an unannotated block's own return
+    type, just also applied to `compile_definition`. This inferred field
+    exists purely for this resolution; unlike the explicit one, it plays
+    no part in real compile-time semantics (structural interface
+    conformance, generic instantiation) precisely so this stays a pure
+    tooling improvement with zero behavior-changing risk. `Class.new()` is
+    the one intrinsic return rule. Every arm of a union receiver must
+    define a link with a usable (explicit or inferred) class return, so
+    one uncertain arm makes the rest of the chain unresolved. A body whose
+    control flow branches into more than one class with no shared
+    annotation (an `if`/`case`) resolves as a union either way it's
+    expressed: a bare trailing `if`/`case` expression gets it from the
+    exact same per-branch merge (`merge_flow_types`) an assigned-to-a-
+    local `if`/ternary already synthesizes, since that merge writes
+    straight onto the expression's own destination register regardless of
+    what uses it afterward; a function using explicit `return` statements
+    across separate branches instead -- `body_result` alone can never see
+    those -- gets it from `compile_return`'s own accumulated union of
+    every `return value` it saw, merged in alongside the trailing-
+    expression case rather than replacing it. An inferred result also
+    survives a simple local assignment (`pet = build_pet(); pet.bark()`),
+    including for unannotated singleton and instance methods and when the
+    factory comes from `require`; this uses
+    a separate tooling-only scope fact and never enters the compiler facts
+    used for type checks or opcode selection. `if`/`unless`, `case`, and loop
+    joins preserve that fact only when every runtime path carries the same
+    fact (including structurally equivalent graphs independently inferred in
+    separate branches, and the zero-iteration and `break` exits of a loop);
+    conflicting paths clear it rather than retaining the last branch compiled.
+    An inferred union receiver can likewise publish an assigned method result
+    when every class arm defines the method with a usable declared or inferred
+    return; one missing or unknown arm makes the result unresolved.
+    Generic functions, instance methods, and singleton methods apply the same
+    tooling-only inference after substituting explicit or argument-inferred
+    type-variable bindings; if any binding remains unresolved, no receiver
+    fact is published. A directly chained generic function or method call also
+    resolves when its explicit bindings are class unions, optionally nested in
+    `Array`, or when each binding can be inferred from a parameter that is
+    exactly that type variable and a class-union receiver argument. Other
+    source-level type arguments and more complex inference shapes remain
+    deliberately unresolved.
+    Capturing/boxing a local preserves the separate tooling fact through the
+    capture cell, including when the loaded value is assigned to another local.
+    Any other receiver this
+    can't resolve falls back to the ordinary "not found" result instead of
+    a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty
     rather than a stale result; the document's own diagnostics already
     say why.

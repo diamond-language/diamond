@@ -17,6 +17,6 @@ exception.
 ## Compatibility links
 
 <a id="non-blocking-sockets-tcpserverlisten_nonblocking-socket-iopoll"></a>
-- [Non-blocking sockets and `IO.poll`](networking.md#non-blocking-sockets-tcpserverlistennonblocking-socket-iopoll)
+- [Non-blocking sockets and `IO.poll`](networking.md#non-blocking-sockets-tcpserverlisten_nonblocking-socket-iopoll)
 <a id="time-constructionparsingformattingarithmeticcomparisons"></a>
 - [Time](time.md)

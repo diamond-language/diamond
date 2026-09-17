@@ -18,6 +18,61 @@ add_forty(2)
 a top-level `def`'s name is not itself a value. Closures are invoked
 directly as `f(x)`; there is no `.call` method.
 
+### Tail-call optimization
+
+Each Diamond function call is an ordinary recursive call in the native
+implementation, so ordinary recursion is bounded by a fixed call-depth
+limit (95 levels):
+
+```ruby
+def sum(n, acc)
+  return acc if n == 0
+  return sum(n - 1, acc + n)  # a self-recursive tail call
+end
+sum(100000, 0)  # => 5000050000, not a stack overflow
+```
+
+A **self-recursive tail call** -- a function's own call to itself, as the
+entire value of a `return`, or as a function body's own trailing
+expression, with nothing done to the result afterward -- runs in constant
+native stack space instead, however deep the recursion goes. This is a
+transparent optimization, not new syntax: it only ever changes whether a
+qualifying call blows the ordinary depth limit, never what a program
+computes. A call that doesn't qualify falls back to ordinary recursion,
+bounded exactly as before -- never an error, just not optimized.
+
+**What qualifies**: `return foo(...)` or a trailing `foo(...)` with no
+further operation applied, where `foo` is the *same* function currently
+running (self-recursion only -- `A` tail-calling a *different* function
+`B`, even if `B` in turn tail-calls `A` back, is ordinary recursion, still
+bounded by the depth limit).
+
+**What doesn't, and stays ordinary bounded recursion instead of erring**:
+
+- **Non-tail self-recursion** -- `1 + fib(n - 1)`, or anything else done
+  to the result before returning, is unaffected either way.
+- **A tail call lexically inside a `begin`/`rescue`/`ensure` block** -- a
+  live handler's own resume point is an offset into the *current* call's
+  bytecode, which reusing that same call for "the next iteration" would
+  invalidate. Disqualified regardless of whether the block's own handler
+  would ever actually fire.
+- **A generic function's own self-call** -- a generic function derives
+  its type bindings fresh from each call's own argument values; redoing
+  that correctly for an in-place "looped" call is a separate, unattempted
+  problem (see docs/roadmap.md).
+- **A variadic function's own self-call** -- a variadic call's overflow
+  arguments (beyond its declared fixed parameters) are tracked against
+  the *original* call, not something an in-place tail call can update.
+
+None of these need to be memorized to write correct code -- they only
+ever affect how deep a *specific* recursive shape can go before hitting
+the ordinary depth limit, never what any program returns. The one
+directly observable consequence: a function that recurses forever with
+no base case, written as a qualifying self-recursive tail call, now runs
+forever instead of eventually raising `SystemStackError` -- worth knowing
+if you were ever relying on "it'll eventually crash" as a substitute for
+an actual base case or loop-termination check.
+
 ### Blocks
 
 ```ruby
@@ -48,6 +103,14 @@ Block parameters are bare identifiers only — no `: Type` annotations, no
 all for a zero-arity block. A block captures every local visible at the
 point it's written, the same eager, unconditional capture nested `def`s
 use — not just the ones its body actually references.
+
+`self` is one of those captured locals too. Inside a `do ... end` block
+written in an instance or singleton method, `self` refers to that
+method's own receiver, exactly like a named nested `closure` (see
+"Classes and modules"'s own `closure` section) — `[1].each() do |x|
+self.foo() end` inside an instance method works the same as it would
+outside the block. A block written outside any method still has no
+`self` to capture, same as top-level code.
 
 A function or method can bind its optional trailing block with `&block`.
 Inside that lexical body, `yield(args...)` invokes the bound Callable and
@@ -248,7 +311,7 @@ Keyword arguments work for top-level functions, user-defined instance
 methods, Callable values, constructors with a Diamond-defined `initialize`,
 and class/module singleton methods. Dynamic calls retain keyword names until
 runtime target selection. Native C-backed receiver methods use the central
-signature registry documented in `docs/design.md`.
+signature registry documented in `docs/internal/design.md`.
 
 ### Variadic parameters
 
@@ -284,12 +347,12 @@ feature like this (see `delegate`'s own "bare parameter names only"):
   this feature. Call-site spread (below) isn't subject to it, since a
   spread argument's length is a runtime value, not one argument
   expression per element. A function/method declaration is separately
-  capped at 32 parameters — see docs/design.md's "No artificial
+  capped at 32 parameters — see docs/internal/design.md's "No artificial
   call-argument/parameter ceiling" for why the two limits differ.
 
 A variadic parameter widens `Callable[N]` matching too: a variadic
 closure/function satisfies `Callable[N]` for any `N` at or above its own
-required-argument count, not just an exact match — see docs/design.md's
+required-argument count, not just an exact match — see docs/internal/design.md's
 "Splat/variadic parameters" section for the full mechanism.
 
 ### Call-site spread
@@ -333,4 +396,4 @@ to a variadic *parameter* above. The supported slice is deliberately narrow:
   `TypeError`.
 - native receiver spreads share ordinary native invocation's 255-argument bound;
 
-See docs/design.md's "Call-site spread" section for the full mechanism.
+See docs/internal/design.md's "Call-site spread" section for the full mechanism.

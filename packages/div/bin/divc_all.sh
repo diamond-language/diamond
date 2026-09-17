@@ -29,7 +29,16 @@ find "$resolved_source" -type d -name .cache -prune -exec rm -rf -- {} +
 
 count=0
 while IFS= read -r -d '' source; do
-  "$diamond" "$script_dir/divc.di" "$source"
+  # Passed as divc.di's own name_path (its third argument, with the
+  # second left empty so auto output-path derivation still applies) --
+  # this file's path relative to $resolved_source, e.g. "skins/show.
+  # html.div" for a file under a "skins" subdirectory -- so its
+  # generated function name is qualified by directory instead of
+  # colliding with another file sharing its basename elsewhere in the
+  # tree. A file directly under $resolved_source has no "/" in this
+  # relative path, so its generated name is unaffected either way.
+  relative="${source#"$resolved_source"/}"
+  "$diamond" "$script_dir/divc.di" "$source" "" "$relative"
   count=$((count + 1))
 done < <(find "$resolved_source" -type f -name '*.html.div' -print0 | sort -z)
 

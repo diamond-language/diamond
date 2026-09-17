@@ -28,21 +28,15 @@ module LogViewer
 
     fields = []
     preferred = LogViewer.preferred_fields()
-    index = 0
-    while index < preferred.length()
-      LogViewer.append_field(fields, record, preferred[index])
-      index += 1
+    preferred.each() do |field|
+      LogViewer.append_field(fields, record, field)
     end
 
     skipped = LogViewer.metadata_fields().concat(preferred)
-    keys = record.keys()
-    index = 0
-    while index < keys.length()
-      key = keys[index]
+    record.keys().each() do |key|
       unless skipped.include?(key)
         LogViewer.append_field(fields, record, key)
       end
-      index += 1
     end
 
     suffix = if fields.length() == 0 then "" else " " + fields.join(" ") end

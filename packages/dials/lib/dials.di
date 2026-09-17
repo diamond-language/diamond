@@ -8,3 +8,5 @@
 require "./dials/response"
 require "./dials/params"
 require "./dials/router"
+require "./dials/url_encoding"
+require "./dials/path_helpers"

@@ -65,6 +65,17 @@ class CookieSession
         end
       end
     end
+    # Flash rotation (see cookies/flash.di's own comment for the full
+    # design): whatever a *previous* request wrote into "_flash_next"
+    # becomes readable as "_flash" on this one, and this request gets a
+    # fresh, empty "_flash_next" of its own to write into. Done here,
+    # once per request before `forward` runs, rather than inside Flash
+    # itself -- Flash has no per-request hook of its own to do this from,
+    # and every request already passes through CookieSession exactly
+    # once by construction.
+    next_flash = session["_flash_next"]
+    session["_flash"] = if next_flash == nil then {} else next_flash end
+    session["_flash_next"] = {}
     request["session"] = session
     response = forward(request, context)
     [status, headers, body] = response

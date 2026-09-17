@@ -33,9 +33,51 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
  * being malloc'd and freed internally. diamond_compile always calls
  * diamond_program_init to reset it from scratch before compiling, so
  * one zero-initialized DiamondProgram can safely be reused across many calls;
- * each call releases and rebuilds its dynamically sized function storage. */
+ * each call releases and rebuilds its dynamically sized function storage.
+ *
+ * Never touches the sibling-.dic bytecode cache (docs/caching.md) --
+ * that only exists inside diamond_run_source's own auto-dispatch, keyed
+ * by one real on-disk script path per process. A caller here (tests/
+ * run_cases.c) runs many programs per process against no single stable
+ * path/lifetime a cache file could mean anything for, and (for that same
+ * harness specifically) must never risk a stale-but-fingerprint-
+ * compatible cache silently masking a real compiler regression it exists
+ * to catch -- this is a property of which function gets called, not an
+ * env var a caller could accidentally leave set. */
 int diamond_run_source_with_program(const char *name, const char *source,
     bool dump_bytecode, DiamondProgram *program,
     int script_argc, char *const *script_argv);
+
+/* Same as diamond_run_source_with_program, except `program` is compiled
+ * via diamond_compile_incremental against `template` (an already-
+ * compiled prelude program, see compiler.c's own doc comment on that
+ * function) instead of the ordinary prelude-source-concatenated
+ * diamond_compile -- skips re-lexing/re-parsing the prelude's own
+ * source on every call, the dominant cost `DIAMOND_TRACE_STARTUP=1`
+ * measures for an otherwise-trivial program (see docs/roadmap.md).
+ * Meant for a caller that runs many independent programs in one
+ * process against the same template, e.g. tests/run_cases.c's batch
+ * corpus runner -- not the ordinary `diamond` CLI (src/main.c), which
+ * only ever runs one program per process and has no template to
+ * amortize a compile against. `source` must not redeclare any name
+ * `template` already declares (see diamond_compile_incremental's own
+ * comment); an ordinary Diamond program never has reason to name a
+ * prelude function/class, so this is not a real practical constraint.
+ * Never touches the bytecode cache either -- see diamond_run_source_
+ * with_program's own note on this just above; applies identically here. */
+int diamond_run_source_with_template(const char *name, const char *source,
+    bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+    int script_argc, char *const *script_argv);
+
+/* Compiles (but does not run) `source` exactly the way diamond_run_source's
+ * own auto-dispatch does -- for a caller that wants the finished
+ * DiamondProgram itself (`diamond build`, see src/main.c) rather than a
+ * running result. `program` is compiled into in place, same in/out
+ * contract as diamond_run_source_with_program's own `program` parameter.
+ * On a load or compile failure, prints the same diagnostic diamond_
+ * run_source itself would and returns false -- the caller needs no
+ * diagnostic-formatting path of its own. */
+bool diamond_compile_source(const char *name, const char *source,
+    DiamondProgram *program);
 
 #endif

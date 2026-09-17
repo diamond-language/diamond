@@ -5,7 +5,7 @@
 Ruby-like surface syntax, but expression-oriented and gradually typed — no
 separate "typed" object model, just optional annotations on top of dynamic
 dispatch. This document is a tour of the surface syntax; see
-[Design and VM architecture](design.md) for how it compiles and executes,
+[Design and VM architecture](internal/design.md) for how it compiles and executes,
 [Object model](object-model.md), [Fibers](fibers.md), and
 [I/O and native services](io.md) for focused guides.
 Diamond's runtime intentionally has no HTTP support built in — see
@@ -61,11 +61,10 @@ inclusion, a `Regexp` searches a String subject, and a user class name matches
 instances of that class or its subclasses. Other patterns use equality, with
 the pattern as receiver, so a user instance can customize matching through
 `def ==(value)`. Native type names such as `String` are not class-pattern
-values because Diamond's native types are not reified classes. There is still
-no subject-less boolean form (Ruby's `case` with no
-expression, where each `when`'s own value is tested for truthiness
-instead of compared against a subject) — `case` always requires a
-subject in Diamond today.
+values because Diamond's native types are not reified classes. A subject-less
+boolean form (Ruby's `case` with no expression, where each `when`'s own value
+is tested for truthiness instead of compared against a subject) is also
+supported — see below.
 
 Array patterns can match a nested shape and bind lowercase names:
 
@@ -184,6 +183,101 @@ expressions short-circuit from left to right, and ordinary `if` guards remain
 available. Array and Hash spellings in a subjectless clause are ordinary
 literals, not binding patterns; pattern bindings require a case subject.
 
+### Exhaustiveness checking
+
+A `case` whose subject has a known *closed* type must cover every member,
+either with an `else` or with an unguarded `when` naming each one, or it's
+a compile error. There are two independent ways a subject's type counts
+as closed:
+
+- an explicit union made entirely of `nil` and/or user classes
+  (`shape: Circle | Square`, `shape: Circle | Nil`);
+- a plain (non-union) type naming a [sealed
+  class](classes-and-modules.md#sealed-classes) (`shape: Shape` where
+  `Shape` is `sealed`) — every direct subclass of it is required instead
+  of an explicit union's own members.
+
+```ruby
+def area(shape: Circle | Square)
+  case shape
+  when Circle
+    3.14159 * shape.radius() * shape.radius()
+  end
+  # error: case is not exhaustive over its subject's known closed type --
+  # add a branch for the missing type(s), or an 'else'
+end
+```
+
+Adding `when Square ... end` (or an `else`) fixes it. The sealed-class
+form reads identically, just without writing the union out by hand:
+
+```ruby
+sealed class Shape
+end
+class Circle < Shape
+  # ...
+end
+class Square < Shape
+  # ...
+end
+def area(shape: Shape)   # plain type, not a union -- Shape being sealed
+  case shape              # is what makes this exhaustible at all
+  when Circle
+    3.14159 * shape.radius() * shape.radius()
+  when Square
+    shape.side() * shape.side()
+  end
+end
+```
+
+Both forms only ever *add* a compile error to code that previously
+compiled and silently returned `nil` from the uncovered path — they never
+change what a covered `case` does, and neither fires at all outside its
+own specific shape of subject:
+
+- **A single, non-union type naming a class that isn't `sealed` never
+  triggers it** — `case n; when 0 ... end` for a plain `n: Int`, or `case
+  shape; when Circle ... end` for `shape: Shape` when `Shape` is an
+  ordinary (non-sealed) class, both stay exactly as unchecked as they've
+  always been.
+- **A `sealed` class with zero, or more than 8, direct subclasses is left
+  unchecked too**, not an error either way — zero is more likely "this
+  hierarchy isn't built out yet" than an intentional 0-variant type, and
+  more than 8 exceeds the same fixed member-count ceiling every union in
+  Diamond already has (`DIAMOND_MAX_UNION_TYPES`). A `case` with no
+  `else` over either of these compiles exactly as if `Shape` weren't
+  sealed at all.
+- **A union containing any native scalar/container type (`Int`,
+  `String`, `Array`, ...), interface, or generic type variable is never
+  checked** — there is no `when` syntax that can prove "this whole
+  native type is covered" (native type names aren't class-pattern
+  values, unlike a user class name), so a case like `x: Int | String`
+  is left exactly as unchecked as today rather than either inventing
+  new pattern syntax or producing false positives. A union containing a
+  sealed class as one of several members does not recursively expand
+  into that member's own subclasses either — only the union's own
+  explicit members are required in that case.
+- **Only a bare class-name or `nil` *scalar* `when` value counts as
+  covering a member** — an Array/Hash/Object structural pattern (even
+  an empty `Circle{}` class-only guard) never does, and neither does a
+  guarded `when Circle if ...` clause (the guard could reject the match
+  at runtime, so the type isn't unconditionally covered). Comma-
+  separated values in one `when` (`when Circle, Square`) each count
+  independently. Applies identically to both forms.
+- **A superclass `when` does not cover a subclass member** — for
+  `shape: Circle | Square` (both `< Shape`), `when Shape` does not
+  count as covering either `Circle` or `Square`; each member needs its
+  own exact match. Conservative on purpose: this never *under*-reports
+  a real gap, only occasionally asks for a branch a human might
+  consider redundant. (The sealed-class form sidesteps this in its own
+  common case: `when Circle` already matches Circle-or-any-of-*its own*
+  subclasses at runtime the ordinary way, so a deeper hierarchy under a
+  sealed class's direct subclasses doesn't need separate coverage.)
+- The compile error itself does not name which member(s) are missing
+  (Diamond's compiler diagnostics are static strings throughout, with
+  no per-call-site interpolation mechanism) — it only reports that the
+  `case` isn't exhaustive.
+
 ## Ternary
 
 ```ruby
@@ -244,8 +338,8 @@ count` would treat it.
 
 The target can be a plain local, an `@ivar`, or a `@@cvar` — same three
 targets plain `=` and multiple assignment accept. Indexed targets
-(`arr[i] += 1`, `hash[k] ||= default`) aren't supported yet; write the
-indexed read and assignment out separately.
+(`arr[i] += 1`, `hash[k] ||= default`) are also supported — see "Indexed
+compound assignment" under Ranges below.
 
 ## Writer-call assignment sugar
 
@@ -487,7 +581,7 @@ Ruby, where `Symbol` is interned and pointer-equal. Diamond deliberately
 scoped Symbol this way: interning would mean every Symbol ever created lives
 for the rest of the process (Ruby's own tradeoff), and this codebase defers
 that kind of complexity until profiling shows it's actually worth it (see
-`docs/design.md`'s note on why NaN-boxing is likewise deferred).
+`docs/internal/design.md`'s note on why NaN-boxing is likewise deferred).
 
 `to_sym(string)` converts a `String` to a `Symbol`; the reverse direction
 goes through `puts`/string interpolation/a class's `to_s` method, all of

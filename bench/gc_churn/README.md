@@ -67,7 +67,7 @@ only the total iteration count varies):
 ## Results: generational GC + card marking
 
 Same machine, same debug build shape, now with the generational collector
-(see `docs/gc-generational-design.md`) at its tuned nursery threshold
+(see `docs/internal/gc-generational-design.md`) at its tuned nursery threshold
 (`minor_gc_threshold_bytes` = 1MiB). `DIAMOND_TRACE_GC=1` now reports major
 and minor collections separately.
 
@@ -116,7 +116,7 @@ Total GC time is now close to the pre-generational baseline's (e.g. 2.45s
 vs. ~2.5s at live_set=20,000/200,000 iterations) -- a dramatic recovery
 from the first (reverted) generational attempt's whole-object-remembering
 regression, which cost 64s of minor-collection time alone at this same
-configuration (see `docs/gc-generational-design.md`'s own comparison
+configuration (see `docs/internal/gc-generational-design.md`'s own comparison
 table). Wall time is still higher than the pre-generational baseline
 (~12.4s vs. ~7.35s at this configuration) -- attributed to the per-object
 bookkeeping now present on every allocation/mutation path plus every minor
@@ -141,9 +141,10 @@ different reasons:
    `src/vm.c`) is a plain stop-the-world mark-and-sweep: every collection
    re-marks and re-walks the *entire* live heap, including the large,
    already-stable session cache that hasn't actually changed shape since
-   the last cycle. This is the concrete mechanism `docs/
-   gc-generational-design.md`'s nursery/write-barrier design targets: a
-   minor collection would only need to scan young objects plus whatever
+   the last cycle. This is the concrete mechanism
+   `docs/internal/gc-generational-design.md`'s nursery/write-barrier
+   design targets: a minor collection would only need to scan young
+   objects plus whatever
    old→young edges the write barrier recorded, not re-walk 40,000 old,
    unchanged session entries every single time. This is the number that
    matters for `bench/burn_in`'s own original concern (p99 latency under

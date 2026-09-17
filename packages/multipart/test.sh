@@ -208,4 +208,47 @@ platforms = result["fields"]["platforms"]
 [[ "$actual" == "1|linux" ]]
 count=$((count + 1))
 
+# --- a file field name ending in "[]" (a real multi-file <input>)
+# --- collects every part into an Array of file Hashes under the
+# --- "[]"-stripped key, in submission order; an ordinary file field
+# --- name is completely unaffected (still a bare Hash, still
+# --- last-part-wins on repetition) ---
+actual="$(run_case '
+boundary = "----BoundaryShots"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"screenshots[]\"; filename=\"one.png\"\r\n" +
+  "Content-Type: image/png\r\n\r\n" +
+  "first-bytes\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"screenshots[]\"; filename=\"two.png\"\r\n" +
+  "Content-Type: image/png\r\n\r\n" +
+  "second-bytes\r\n" +
+  "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"theme_file\"; filename=\"theme.zip\"\r\n\r\n" +
+  "zip-bytes\r\n" +
+  "--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+shots = result["files"]["screenshots"]
+"#{shots.length()}|#{shots[0]["filename"]}|#{shots[0]["data"]}|#{shots[1]["filename"]}|#{shots[1]["data"]}|#{result["files"]["theme_file"]["filename"]}"
+')"
+[[ "$actual" == "2|one.png|first-bytes|two.png|second-bytes|theme.zip" ]]
+count=$((count + 1))
+
+# --- a single "x[]" file part still becomes a one-element Array, not a
+# --- bare file Hash -- same "[]" opts in, regardless of count" rule the
+# --- field-array case already has ---
+actual="$(run_case '
+boundary = "----BoundaryOneShot"
+body = "--#{boundary}\r\n" +
+  "Content-Disposition: form-data; name=\"screenshots[]\"; filename=\"solo.png\"\r\n\r\n" +
+  "solo-bytes\r\n--#{boundary}--\r\n"
+request = {"headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+result = multipart_parse(request)
+shots = result["files"]["screenshots"]
+"#{shots.length()}|#{shots[0]["filename"]}"
+')"
+[[ "$actual" == "1|solo.png" ]]
+count=$((count + 1))
+
 echo "$count multipart tests passed"

@@ -3,6 +3,7 @@
 *.db
 *.db-shm
 *.db-wal
+*.dic
 /examples/library/server.log
 /examples/library/lib/views/.cache/
 /examples/project_board/lib/views/.cache/

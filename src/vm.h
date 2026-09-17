@@ -1,3 +1,22 @@
+/* DiamondFiber is part of this header's public data model and contains
+ * ucontext_t by value, so every translation unit including vm.h needs the
+ * feature-test contract required by <ucontext.h> -- not only vm.c itself.
+ * Darwin diagnoses the missing _XOPEN_SOURCE explicitly; musl's libucontext
+ * headers otherwise leave ucontext_t undeclared. Keep these before every
+ * system header this file includes, as feature-test macros require. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#ifndef __BSD_VISIBLE
+#define __BSD_VISIBLE 1
+#endif
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#endif
+
 #ifndef DIAMOND_VM_H
 #define DIAMOND_VM_H
 
@@ -97,6 +116,10 @@ enum {
      * run_chunk -- so both sides need to agree on the same fixed-size
      * table cap. */
     DIAMOND_MAX_LOCALS = 64,
+    /* How many source lines can be simultaneously armed as a live
+     * breakpoint (DiamondVm.debug_active_lines below) -- generous for
+     * real editor usage, matching dap/main.c's own DAP_MAX_BREAKPOINTS. */
+    DIAMOND_MAX_ACTIVE_BREAKPOINTS = 256,
 };
 
 typedef enum DiamondOpCode : uint8_t {
@@ -415,20 +438,6 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TIME_PARSE,
     /* Time.utc/local/fixed(...), also appended for opcode stability. */
     DIAMOND_OP_TIME_BUILD,
-    /* Tensor.zeros(rows, cols) -- a new all-zero DiamondTensor. Prototype
-     * scope: see DiamondTensor's own comment in object.h. */
-    DIAMOND_OP_TENSOR_ZEROS,
-    /* Tensor.from_array(nested_array) -- nested_array is an Array of
-     * Arrays of Int/Float, all rows the same length. */
-    DIAMOND_OP_TENSOR_FROM_ARRAY,
-    /* Tensor.random(rows, cols, seed) -- deterministic (same seed ->
-     * same values) uniform-random Tensor in [-1, 1), generated directly
-     * in C rather than round-tripping through a Diamond-level nested
-     * Array like Tensor.from_array requires -- weight init at any real
-     * model size (a vocab_size x d_model embedding table alone can be
-     * millions of elements) was the actual measured bottleneck in
-     * examples/transformer, not #matmul itself. */
-    DIAMOND_OP_TENSOR_RANDOM,
     /* Dir.entries(path) -- every name in a directory (opendir/readdir),
      * excluding "." and "..", as an Array of Strings. No recursion, no
      * glob patterns -- just the one primitive Diamond had none of at
@@ -458,6 +467,67 @@ typedef enum DiamondOpCode : uint8_t {
      * class -- works uniformly on every value, including native kinds
      * with no DiamondClass of their own at all. */
     DIAMOND_OP_CLASS_NAME,
+    /* Tensor.zeros(rows, cols) -- a new all-zero DiamondTensor. Prototype
+     * scope: see DiamondTensor's own comment in object.h. */
+    DIAMOND_OP_TENSOR_ZEROS,
+    /* Tensor.from_array(nested_array) -- nested_array is an Array of
+     * Arrays of Int/Float, all rows the same length. */
+    DIAMOND_OP_TENSOR_FROM_ARRAY,
+    /* Tensor.random(rows, cols, seed) -- deterministic (same seed ->
+     * same values) uniform-random Tensor in [-1, 1), generated directly
+     * in C rather than round-tripping through a Diamond-level nested
+     * Array like Tensor.from_array requires -- weight init at any real
+     * model size (a vocab_size x d_model embedding table alone can be
+     * millions of elements) was the actual measured bottleneck in
+     * examples/transformer, not #matmul itself. */
+    DIAMOND_OP_TENSOR_RANDOM,
+    /* Channel.new(capacity) -- see docs/threads.md's Channels section.
+     * Appended here, not grouped next to DIAMOND_OP_THREAD_NEW above,
+     * for the same stable-numbering reason this enum's own comment
+     * gives for DIAMOND_OP_GET_CVAR onward. */
+    DIAMOND_OP_CHANNEL_NEW,
+    /* Supervisor.new() -- see docs/threads.md's Supervisors section.
+     * Appended here for the same stable-numbering reason as DIAMOND_OP_
+     * CHANNEL_NEW just above. */
+    DIAMOND_OP_SUPERVISOR_NEW,
+    /* Same operand layout as DIAMOND_OP_CALL (destination, function_index,
+     * argument_base, argument_count) -- the compiler produces this by
+     * rewriting an already-emitted CALL's own opcode byte in place, never
+     * by emitting different operands, specifically so nothing about
+     * jump-offset arithmetic elsewhere in the function has to change.
+     * Only ever targets the function currently executing itself (self-
+     * recursion in tail position, no enclosing begin/rescue/ensure, no
+     * type variables -- see compile_return's own comment in src/
+     * compiler.c for the exact eligibility rule). run_chunk's own
+     * handling reuses the current call's registers/frame/depth in place
+     * instead of recursing, giving qualifying tail recursion O(1) C-stack
+     * usage regardless of how deep it goes -- see docs/callables.md's
+     * "Tail-call optimization" section for the full, user-facing
+     * contract and why this is scoped to self-recursion only. Appended
+     * here, not grouped next to DIAMOND_OP_CALL above, for the same
+     * stable-numbering reason as DIAMOND_OP_CHANNEL_NEW/DIAMOND_OP_
+     * SUPERVISOR_NEW just above -- anything encoding a raw opcode number
+     * directly (hand-built ProgramBuilder bytecode, an old cached .dic)
+     * must never have an existing opcode's own number silently reassigned
+     * to something else. */
+    DIAMOND_OP_TAIL_CALL,
+    /* Sibling to DIAMOND_OP_DEBUGGER, emitted once per compiled
+     * statement instead of only at a fixed, compile-time-selected set
+     * of lines -- see docs/debugging.md's "live breakpoints" section.
+     * Reads the exact same baked-in (name,register) locals-table
+     * operand shape emit_debugger_pause already writes (see
+     * emit_breakpoint_check, src/compiler.c), then checks the
+     * *current*, runtime-mutable DiamondVm.debug_active_lines set for
+     * its own source line before deciding whether to actually pause --
+     * this indirection (checked at runtime, not baked in as "pause
+     * here" at compile time) is what lets a debugger add or remove a
+     * breakpoint against an already-running process with no restart.
+     * Only ever emitted when compiling a debug session at all (see
+     * Compiler.debug_mode) -- an ordinary `diamond script.di` run has
+     * none of these and pays nothing for this feature. Appended here
+     * for the same stable-numbering reason as DIAMOND_OP_TAIL_CALL
+     * just above. */
+    DIAMOND_OP_BREAKPOINT_CHECK,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -537,6 +607,11 @@ typedef enum DiamondBuiltinClass : uint8_t {
     DIAMOND_CLASS_POSTGRES_ERROR,
     DIAMOND_CLASS_MYSQL_ERROR,
     DIAMOND_CLASS_NO_METHOD_ERROR,
+    DIAMOND_CLASS_JSON_ERROR,
+    DIAMOND_CLASS_SUPERVISOR_ERROR,
+    DIAMOND_CLASS_SANDBOX_ERROR,
+    DIAMOND_CLASS_RESOURCE_LIMIT_ERROR,
+    DIAMOND_CLASS_FROZEN_ERROR,
     DIAMOND_BUILTIN_CLASS_COUNT,
 } DiamondBuiltinClass;
 
@@ -679,6 +754,18 @@ struct DiamondClass {
     uint32_t declaration_column;
     size_t declaration_start;
     uint8_t superclass;
+    /* `sealed class Name ... end` -- rejects `Name.new(...)` at compile
+     * time (see src/compiler.c's own `.new`-dispatch site) and makes a
+     * `case` subject whose plain (non-union) type names this class
+     * eligible for exhaustiveness checking over its own direct
+     * subclasses (see CaseExhaustiveness in src/compiler.c). Diamond has
+     * no per-file/module compile boundary that survives into the
+     * compiler (see docs/classes-and-modules.md's own "Sealed classes"
+     * section for why), so this is deliberately not an enforcement
+     * mechanism against some external boundary -- just an opt-in author
+     * promise plus the one restriction (no direct instantiation) needed
+     * to make exhaustiveness over just the direct subclasses sound. */
+    bool sealed;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];
@@ -732,6 +819,8 @@ typedef struct DiamondScopeLocal {
      * joins can synthesize this set when all paths have representable known
      * types (`cond ? Dog.new() : Cat.new()`, for example). */
     int32_t known_type_set;
+    /* LSP-only return inference propagated through a local assignment. */
+    int32_t tooling_type_set;
 } DiamondScopeLocal;
 
 typedef struct DiamondScopeTypeFact {
@@ -742,6 +831,7 @@ typedef struct DiamondScopeTypeFact {
     size_t effective_start;
     uint8_t known_type;
     int32_t known_type_set;
+    int32_t tooling_type_set;
 } DiamondScopeTypeFact;
 
 typedef struct DiamondFunction {
@@ -783,6 +873,22 @@ typedef struct DiamondFunction {
     DiamondTypeSet *type_sets;
     size_t type_set_count;
     size_t type_set_capacity;
+    /* True only for a function built by diamond_function_copy (src/
+     * compiler.c) -- code/lines/columns/constants/strings/type_sets
+     * above all point into ONE combined malloc'd block instead of 6
+     * separate ones (that function's own comment explains why: cuts a
+     * clone from 6 small allocations to 1, which matters wherever many
+     * functions get cloned per call -- seed_program_from_template,
+     * clone_program_from_chunk for Thread.new, diamond_program_read_
+     * compiled). Only `code` is the block's real, freeable base pointer
+     * in that case; the other 5 are interior pointers realloc()/free()
+     * must never see directly. diamond_program_free checks this before
+     * freeing a function's arrays, and diamond_function_reserve_code/
+     * _constants/_strings/_type_sets assert it's false before ever
+     * growing one of these arrays in place -- a combined-allocated
+     * function is a fixed-size, immutable snapshot for its entire
+     * lifetime, never grown after diamond_function_copy returns. */
+    bool owns_combined_buffer;
     uint8_t arity;
     uint8_t required_arity;
     /* Set only by a `*name` parameter. It occupies the final slot unless a
@@ -795,6 +901,19 @@ typedef struct DiamondFunction {
     bool nested;
     uint8_t capture_count;
     uint16_t return_type_set;
+    /* LSP-only best-effort return type, inferred from an unannotated
+     * function/method's own body_result (compile_definition, src/
+     * compiler.c) the same way compile_block already infers a block's
+     * return_type_set when it has no explicit `-> Type` annotation.
+     * Deliberately a *separate* field rather than folding into
+     * return_type_set itself: that field is load-bearing for real
+     * compile-time semantics (structural interface conformance, generic
+     * instantiation/substitution -- see its own call sites), so widening
+     * when it gets populated would risk changing what type-checks,
+     * not just what an editor can show. inferred_return_type_set has
+     * exactly one reader: lsp/receiver.c's call-chain resolution, as a
+     * fallback when return_type_set itself is DIAMOND_NO_TYPE_SET. */
+    uint16_t inferred_return_type_set;
     uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
@@ -811,6 +930,19 @@ typedef struct DiamondFunction {
      * Safe as an exact zero-init/GC-scan bound only because register
      * allocation is monotonic per function body (never recycled). */
     uint16_t register_count;
+    /* Phase 2 baseline JIT (docs/internal/jit-design.md) -- jit_code is
+     * executable memory owned by this DiamondFunction (freed by
+     * diamond_jit_free wherever this function itself is destroyed), never
+     * copied by diamond_function_copy: a Thread.new/gremlin_serve worker's
+     * cloned function always starts back at "not yet compiled," matching
+     * the design doc's explicit v1 threading scope. jit_ineligible is set
+     * once compilation is attempted and rejected (an unsupported opcode
+     * found), so it's never retried. jit_call_count is the tier-up trigger,
+     * checked against DiamondVm's own jit_threshold. */
+    void *jit_code;
+    size_t jit_code_size;
+    size_t jit_call_count;
+    bool jit_ineligible;
     /* Every local/parameter declared directly in this function's own
      * body (not a nested `def`'s -- that gets its own DiamondFunction
      * and its own scope_locals), see DiamondScopeLocal above. Also
@@ -822,6 +954,35 @@ typedef struct DiamondFunction {
     DiamondScopeTypeFact scope_type_facts[DIAMOND_MAX_SCOPE_TYPE_FACTS];
     size_t scope_type_fact_count;
 } DiamondFunction;
+
+/* arity/required_arity above count an implicit self slot for a genuine
+ * class/module method -- compile_definition (src/compiler.c) reserves
+ * register 0 for self and folds it into both counts for any owner_class
+ * that is a real class index or the UINT8_MAX-1 module-method sentinel
+ * (search that function for "direct_class_member" and "nested_in_
+ * singleton_method"); the caller-visible parameter_type_sets/parameter_
+ * names arrays are still indexed from the first *declared* parameter, 0,
+ * with no such offset (their own comment: "Hidden self slots are
+ * deliberately excluded"). A `closure` (captures_self, owner_class==
+ * UINT8_MAX-2) also reserves register 0 for self but does NOT fold it
+ * into arity -- self arrives via capture, not an implicit call-time
+ * argument, so its arity already means exactly what a caller sees. An
+ * ordinary function/nested def with no self at all (owner_class==
+ * UINT8_MAX) has nothing to subtract either. Any code that treats
+ * arity/required_arity as "how many arguments does a generic Callable
+ * *value* holding this function actually take" -- as opposed to code
+ * that already knows it's dispatching a real method and supplies self
+ * separately -- must subtract this offset first, or it double-counts
+ * self as a real parameter. Found the hard way: a nested `def` written
+ * directly inside a `def self.x` singleton method (the nested_in_
+ * singleton_method patch-factory shape above) got owner_class set to
+ * the enclosing class specifically so redefine_method's own exact-match
+ * check keeps working, but every *other* consumer of such a closure --
+ * passing it to Array#find, storing it and calling it as a Callable
+ * value -- only ever supplies its own real, self-less arguments. */
+static inline uint8_t diamond_function_self_offset(const DiamondFunction *fn) {
+    return (fn->owner_class!=UINT8_MAX&&fn->owner_class!=(uint8_t)(UINT8_MAX-2))?1:0;
+}
 
 struct DiamondChunk {
     const char *name;
@@ -934,6 +1095,50 @@ typedef enum DiamondVmStatus : uint8_t {
      * as NoMethodError, a real descriptive exception instead of the bare
      * generic TypeError this replaced. */
     DIAMOND_VM_NO_METHOD_ERROR,
+    /* String#parse_json failures: malformed input at the native JSON
+     * parser (src/vm.c's json_parse_value and friends), replacing
+     * lib/core/json_codec.di's own pure-Diamond JSONCodec#parse for
+     * JSON.parse's hot path. Message is always a specific parse-position
+     * diagnostic, surfaced as JSONError -- see exception_class_for_status.
+     * JSONError itself moved from a lib/core/json_codec.di class
+     * declaration to a builtin (DIAMOND_CLASS_JSON_ERROR) so native code
+     * can raise it the same generic way every other native error class
+     * here already does. */
+    DIAMOND_VM_JSON_ERROR,
+    /* Supervisor#add_child failures that aren't a supervised child's own
+     * crash (that's handled entirely inside the child's own retry loop,
+     * never surfaced as a status code at all -- see docs/threads.md's
+     * Supervisors section): the DIAMOND_MAX_SUPERVISOR_CHILDREN cap, or
+     * add_child called after stop(). */
+    DIAMOND_VM_SUPERVISOR_ERROR,
+    /* A native opcode that opens a real filesystem/network/subprocess
+     * resource was reached with DIAMOND_SANDBOX set -- see docs/sandbox.md.
+     * VM_SANDBOX_GUARD (src/vm.c) is the single macro every gated opcode
+     * uses to raise this; vm->error already carries "sandbox denies X"
+     * by the time this is returned. */
+    DIAMOND_VM_SANDBOX_ERROR,
+    /* A configured DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS
+     * budget was exceeded -- see docs/sandbox.md's own "Resource limits"
+     * section. Checked in run_chunk's own dispatch loop, gated behind
+     * vm->resource_limits_active so there's no cost when neither is
+     * configured. A configured DIAMOND_MAX_MEMORY_BYTES budget is instead
+     * reported as DIAMOND_VM_OUT_OF_MEMORY -- but see exception_class_
+     * for_status's own comment (src/vm.c): unlike a genuine allocator
+     * failure (deliberately uncatchable), that specific case is also
+     * matched to this same DIAMOND_CLASS_RESOURCE_LIMIT_ERROR when vm->
+     * memory_limit_tripped is set, so all three budget kinds end up
+     * uniformly catchable as ResourceLimitError from Diamond code. */
+    DIAMOND_VM_RESOURCE_LIMIT_ERROR,
+    /* Array#push/#pop, `[]=` (Array or Hash), or an instance variable
+     * write reached a receiver whose own `frozen` flag (src/object.h)
+     * is set -- see docs/classes-and-modules.md's "freeze / frozen?"
+     * section for the exact, small mutation surface this covers and why
+     * it's exhaustive despite Diamond's own Array/Hash having no
+     * in-place "bang" methods otherwise. An ordinary, rescuable
+     * StandardError -- unlike DIAMOND_VM_RESOURCE_LIMIT_ERROR's own
+     * neighbors DIAMOND_VM_STACK_OVERFLOW/DIAMOND_VM_OUT_OF_MEMORY, this
+     * is never a resource-exhaustion signal. */
+    DIAMOND_VM_FROZEN_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -1003,6 +1208,17 @@ typedef struct DiamondFiberQueue {
     size_t capacity;
     size_t head;
 } DiamondFiberQueue;
+
+/* DiamondVm.debug_step_mode's own values -- see that field's comment.
+ * DIAMOND_STEP_NONE is the zero value (every DiamondVm that never
+ * receives a step command has this by construction, no explicit init
+ * needed). */
+typedef enum DiamondStepMode : uint8_t {
+    DIAMOND_STEP_NONE,
+    DIAMOND_STEP_IN,
+    DIAMOND_STEP_OVER,
+    DIAMOND_STEP_OUT,
+} DiamondStepMode;
 
 struct DiamondVm {
     /* The nursery -- every allocate_* helper always links a fresh object
@@ -1127,6 +1343,22 @@ struct DiamondVm {
     size_t quickening_observations;
     size_t quickened_sites;
     size_t deoptimized_sites;
+    /* Phase 2 baseline JIT (docs/internal/jit-design.md) -- opt-in via
+     * DIAMOND_JIT, same pattern as `quickening` above. jit_threshold is
+     * the tier-up trigger's invocation-count threshold, checked against
+     * each DiamondFunction's own jit_call_count. */
+    bool jit;
+    size_t jit_threshold;
+    size_t jit_compiled_functions;
+    size_t jit_bailouts;
+    /* Phase 2d: a compiled function's own SUPER call (or any later opcode
+     * once one has run) failed with a real, already-happened
+     * DiamondVmStatus that was propagated directly rather than retried --
+     * see jit_call_or_interpret's own 3-way dispatch and jit.c's
+     * jc->has_called. Distinct from jit_bailouts, which always implies a
+     * full, safe-to-repeat re-run via run_chunk follows; a hard
+     * propagation never falls back to run_chunk at all. */
+    size_t jit_hard_propagations;
     /* Copied from the top-level DiamondChunk's own field once, at
      * diamond_vm_run's own entry -- NOT re-read from whatever
      * DiamondChunk happens to be ambient at a given opcode, since a
@@ -1240,6 +1472,110 @@ struct DiamondVm {
     DiamondValue *gc_protected;
     size_t gc_protected_count;
     size_t gc_protected_capacity;
+    /* DIAMOND_DEBUG_FD (see docs/debugging.md), read once here by
+     * diamond_vm_init rather than re-reading getenv on every
+     * DIAMOND_OP_DEBUGGER pause -- -1 (the ordinary case: no DAP client
+     * attached) means debugger_helper (src/vm.c) takes its original
+     * print-to-stdout/getchar() path unchanged; a value >=0 is an
+     * already-open fd (a dedicated pipe end wired up by whatever spawned
+     * this process, e.g. dap/main.c's launch handling) that
+     * debugger_helper instead writes a Content-Length-framed JSON pause
+     * payload to and blocks reading one framed command back from. */
+    int debug_fd;
+    /* The live, runtime-mutable set of source lines currently armed as a
+     * breakpoint -- consulted by DIAMOND_OP_BREAKPOINT_CHECK (src/vm.c),
+     * emitted once per statement whenever the program was compiled with
+     * Compiler.debug_mode set (see src/compiler.c), unlike the fixed,
+     * baked-in-at-compile-time DIAMOND_OP_DEBUGGER pauses above. Seeded
+     * from DIAMOND_DEBUG_BREAKPOINTS at diamond_vm_init (the initial
+     * set), then freely replaced wholesale at runtime by a `setBreakpoints`
+     * command arriving over debug_fd (dap/main.c's own live-update path,
+     * docs/debugging.md) -- no restart needed to add or remove one.
+     * Single-threaded, no lock: only ever read/written from the one VM
+     * thread that's already executing DIAMOND_OP_BREAKPOINT_CHECK itself
+     * (which is also the only thing that ever reads debug_fd), so there's
+     * no concurrent access to guard against. */
+    size_t debug_active_lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];
+    size_t debug_active_line_count;
+    /* Real stepping (docs/debugging.md's own "Stepping" section):
+     * DIAMOND_STEP_NONE (the default) means DIAMOND_OP_BREAKPOINT_CHECK
+     * only ever consults debug_active_lines above. A `next`/`stepIn`/
+     * `stepOut` command received while paused (debugger_structured_
+     * helper's own resume loop, src/vm.c) sets this plus debug_step_
+     * target_depth to that exact pause's own `depth` (the real, already-
+     * tracked run_chunk recursion-depth parameter -- incremented on every
+     * ordinary call, not by a self-recursive tail call), then resumes.
+     * The very next checkpoint hit satisfying the mode's own depth
+     * comparison (DIAMOND_STEP_IN: any; DIAMOND_STEP_OVER: depth<=target;
+     * DIAMOND_STEP_OUT: depth<target) pauses and resets this to
+     * DIAMOND_STEP_NONE -- a real armed breakpoint line still always
+     * wins/pauses regardless, checked first. No new bytecode or compile-
+     * time mechanism needed: every statement already has a checkpoint
+     * (see debug_active_lines' own comment), so stepping is purely this
+     * extra runtime state consulted by the same opcode. */
+    DiamondStepMode debug_step_mode;
+    size_t debug_step_target_depth;
+    /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
+     * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS/DIAMOND_MAX_
+     * MEMORY_BYTES, read once here by diamond_vm_init exactly like debug_fd
+     * just above, for the same reason: every VM (top-level, a spawned
+     * Thread's own child_vm, a Supervisor child's per-attempt run_vm,
+     * ProgramBuilder#run's own run_vm) independently reads the same real
+     * process environment at its own init, so a configured budget applies
+     * uniformly with nothing to propagate -- but each VM's own counters
+     * below are its own, not shared, so a program that spawns many threads
+     * gets one independent budget *per thread*, not one shared total (a
+     * real, documented limitation, not a bug -- see docs/sandbox.md).
+     * 0 means unlimited for all three, matching this codebase's own
+     * "0/absent means off" convention elsewhere (quickening_threshold,
+     * minor_gc_threshold_bytes, etc. all use a real, deliberately-nonzero
+     * default instead specifically where 0 would be a valid budget). */
+    size_t max_instructions;
+    int64_t max_wall_nanoseconds;
+    size_t max_memory_bytes;
+    /* Runtime state for the two above -- instructions_executed increments
+     * once per opcode dispatch in run_chunk's own loop (only when
+     * resource_limits_active), start_time_ns is set once in diamond_vm_
+     * init (only when max_wall_nanoseconds != 0) via a monotonic clock, so
+     * the wall-clock check has a fixed baseline for this VM's own
+     * lifetime. resource_limits_active is precomputed once (max_
+     * instructions != 0 || max_wall_nanoseconds != 0) so the per-opcode
+     * check is a single cheap boolean read when neither is configured --
+     * max_memory_bytes doesn't need a flag of its own, since maybe_collect
+     * (already called before every allocation) checks it directly. */
+    size_t instructions_executed;
+    int64_t start_time_ns;
+    bool resource_limits_active;
+    /* Set once, by maybe_collect (src/vm.c), the first time a configured
+     * DIAMOND_MAX_MEMORY_BYTES budget is actually exceeded -- lets
+     * exception_class_for_status tell "the OOM this program is seeing was
+     * my own configured budget" apart from a genuine host allocator
+     * failure, so only the former becomes catchable as ResourceLimitError
+     * (see that function's own comment for why genuine DIAMOND_VM_OUT_OF_
+     * MEMORY deliberately stays uncatchable -- this flag doesn't change
+     * that at all, it only ever adds a match for this specific, narrower
+     * case). Sticky for the rest of this VM's lifetime once set -- there's
+     * no scenario where a later, unrelated genuine OOM on the same VM
+     * should stop being attributable to "the budget was already exceeded
+     * once," since maybe_collect's own budget check (now permanently
+     * disabled once tripped, see its own comment) can never be the reason
+     * for a later failure anyway. */
+    bool memory_limit_tripped;
+    /* Extra GC roots beyond every field mark_roots (src/vm.c) already
+     * walks -- null/0 (its zero-init default) for every ordinary VM.
+     * The one user is a Channel's own private DiamondVm (see docs/
+     * threads.md's Channels section, DiamondChannel in src/vm.c): that
+     * VM never runs bytecode of its own (no frames, no running_fiber),
+     * it exists purely as GC-managed storage for values queued between
+     * send and receive, so its own queue array (not a field of DiamondVm
+     * itself) is the only root set it has. Set to point at the
+     * channel's own flat DiamondValue queue buffer, with
+     * extra_root_count updated to the current queued-item count
+     * immediately before any allocation that could trigger a collection
+     * (send/receive already hold the channel's own mutex at that point,
+     * so this is never read concurrently with a write). */
+    DiamondValue *extra_roots;
+    size_t extra_root_count;
 };
 
 void diamond_vm_init(DiamondVm *vm);
@@ -1250,8 +1586,10 @@ void diamond_vm_collect_minor(DiamondVm *vm);
  * actually allocating (src/vm.c) -- declared here, not static, so
  * src/bignum.c's own bignum_alloc (a separate translation unit) can
  * share it too, instead of keeping a second copy of the same check out
- * of sync. */
-void maybe_collect(DiamondVm *vm);
+ * of sync. Returns false once a configured DIAMOND_MAX_MEMORY_BYTES
+ * budget is still exceeded after collecting -- every caller must check
+ * this and bail out (its own OOM path) rather than allocate anyway. */
+bool maybe_collect(DiamondVm *vm);
 void diamond_vm_invalidate_method_caches(DiamondVm *vm);
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue);
 void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv);

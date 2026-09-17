@@ -170,3 +170,358 @@ type inference eliding runtime checks where possible), and twice for
 `wrap` (once for its `T`-bound parameter, once for its `Array[T]`
 return, since a generic return type can't be statically proven the
 same way). Each check is a real, measured cost, not free at runtime.
+
+## Addition: `object_hydration.di` (2026-09-12)
+
+Added while gathering representative benchmark evidence ahead of planning
+real JIT work (`docs/roadmap.md`'s "Native-code execution" section requires
+this before any codegen). Models `ActiveRecord::Repository`-style row
+hydration — skindicate's own `User` class (a real application, not a
+synthetic worst case) is the template: a class with typed `attr_accessor`
+fields and an `initialize(attributes: Hash)` that pulls values out of a
+Hash "row" with simple conditional defaulting, called once per fetched
+database row. No real database involved (deliberately, for a fast,
+reproducible microbenchmark) — 100 batches × 100 hydrations of a 4-field
+class from a freshly-built Hash each time.
+
+Same environment/methodology as above (`gcc`, `make release`
+`-march=native`, `DIAMOND_REPEAT`-based in-process re-execution). Verified
+stable across 5 independent runs before trusting the number (21.16–21.53ms
+per 100-hydration iteration, <2% spread):
+
+| Benchmark | Iterations (repeat) | Default (per-iter) |
+|---|---:|---:|
+| `object_hydration` (new) | 120 | ~0.0213s |
+
+Opcode trace (`DIAMOND_TRACE_OPCODES=1`, top opcodes by count over the full
+run): `MOVE` 140,202; `STRING` 130,000; `INDEX_GET` 50,000; `ADD` 40,000;
+`SET_IVAR` 40,000 (the 4 typed field writes × 10,000 hydrations); `CONSTANT`
+20,403; `CHECK_TYPE` 20,000 (typed `attr_accessor` writes being checked).
+No `INVOKE`/`INVOKE_MONO` in the top 15 — this workload's cost is
+dominated by object construction and typed field assignment, not method
+dispatch, distinct from `typed_dispatch.di` above.
+
+**Motivating context**: this shape was found to dominate a real
+application's (skindicate) front-page response time this session — a
+direct SQLite timing of the exact same query took ~8ms against a real
+8,000+ row table, while hydrating the ~100 resulting rows into model
+objects (`ActiveRecord::Repository`, batched, no N+1) took ~25ms. The
+query was never the bottleneck; object construction was, and it's already
+linear (confirmed by profiling at n=10/25/50/100/200) with no algorithmic
+fix available at the query or application level. This benchmark exists so
+that claim has a reproducible, application-independent number behind it,
+per `docs/roadmap.md`'s explicit requirement not to pursue JIT work
+"without representative profiling evidence."
+
+## Phase 2 baseline JIT: first real measurement (2026-09-12)
+
+`DIAMOND_JIT=1` (see `docs/internal/jit-design.md`) against `bench/
+int_arithmetic.di`, same environment as above (`make release`,
+`-march=native`, one binary, `DIAMOND_JIT` toggled purely via env var so
+this is a true same-binary A/B, not a rebuild comparison). Interpreted
+figures here use the **release** (`-O3`) build specifically -- an earlier
+debug-build (`-O0`) comparison during development showed a much larger
+apparent win (~22x) purely because the unoptimized interpreter baseline
+itself was artificially slow; the release-build number below is the
+honest one.
+
+5 alternating rounds, single call each (`DIAMOND_JIT_THRESHOLD=1`, so the
+very first call compiles and every call in a `DIAMOND_REPEAT` run after
+the first amortizes that one-time cost):
+
+| | per-iteration (repeat=15) |
+|---|---:|
+| Interpreted | ~0.530s |
+| JIT | ~0.180s |
+
+**~2.95x speedup**, consistent to within 1% across all 5 rounds (both
+single-call and `DIAMOND_REPEAT=15` measurements agree closely, so the
+one-time compile cost is not a meaningfully confounding factor here).
+Verified correct against the interpreted baseline's own output
+(`12499992500000`) in every configuration tested, including the two
+runtime bailout paths this narrow slice deliberately doesn't handle
+inline (integer overflow promoting to bignum, confirmed via a dedicated
+overflow test producing the identical bignum-promoted result; truncating
+division, confirmed via a dedicated division test) -- both fall back
+mid-function to a full, correct interpreted re-run of that same function,
+exactly as designed.
+
+This is the first real native-code-generation result for Diamond (the
+`jit-experimentation` branch predating this was interpreter-loop tuning,
+not codegen -- see that section above). Scope is deliberately narrow: only
+zero-argument, non-generic, non-method top-level functions built entirely
+from register moves/constants/`_INT` arithmetic/comparisons/jumps/return
+-- see `src/jit.c`'s own header comment and `docs/internal/jit-design.md`
+for exactly what is and isn't covered, and why (a call-free,
+allocation-free, exception-free subset needs none of the general frame/
+GC-root contract the design doc lays out for a future call-compiling
+tier). `bench/object_hydration.di` and `bench/typed_dispatch.di` both
+correctly report 0 compiled functions under `DIAMOND_JIT=1` -- neither
+fits this narrow subset yet -- and produce output identical to the
+non-JIT baseline, confirming the bailout-at-compile-time gate is safe for
+code it was never meant to touch.
+
+## Phase 2b: arguments/self plus Hash-read/ivar-write trampolines (2026-09-12)
+
+Extended the same day, without needing the general frame/GC-root contract
+either -- see `docs/internal/jit-design.md`'s own updated status note for
+the full design. New: any arity (including instance methods, `self` is
+just register 0), `EQUAL`/`NOT_EQUAL` on primitives, and `SET_IVAR`/
+`INDEX_GET`(Hash)/`CHECK_TYPE` via three narrow C trampolines
+(`diamond_jit_set_ivar`/`diamond_jit_hash_get`/`diamond_jit_check_type` in
+`vm.c`) rather than hand-rolled machine code -- each individually
+confirmed allocation-free by reading its own call chain. The dispatch
+check is now wired into `invoke_resolved_method_helper` too (covers
+`NEW`/`SUPER`/`INVOKE_TYPED`'s ordinary dispatch), not just
+`DIAMOND_OP_CALL`.
+
+**The actual motivating target still isn't reachable.**
+`bench/object_hydration.di`'s own `HydratedUser#initialize` -- modeling
+skindicate's real row hydration -- still doesn't compile:
+`attributes["email"]`-style Hash access compiles a fresh `DIAMOND_OP_
+STRING` construction for the literal key on every call, and string
+construction is a real allocation. This isn't specific to this benchmark
+-- string-literal Hash keys are pervasive in ordinary Diamond code -- so
+it's a real, general gap, not an edge case to special-case around.
+Confirmed directly: deploying this build to skindicate would show 0
+compiled functions on its real controller/model code and no measurable
+difference on `/`, exactly like Phase 2 did. `object_hydration.di`'s own
+comment now documents this in detail.
+
+**What does work, measured honestly:** `bench/hash_ivar_construct.di` (new)
+isolates the same `SET_IVAR`/`INDEX_GET`/`CHECK_TYPE`/self/argument
+machinery with the Hash key passed as a parameter instead of a literal,
+sidestepping the string-construction gap -- `Box#initialize` compiles and
+produces correct output. Its own end-to-end driver-loop timing shows *no*
+measurable difference (interpreted and JIT both ~0.0236s for the full
+100×100 loop, `DIAMOND_JIT_THRESHOLD=1`), because the surrounding loop's
+own Hash-literal construction and `Box.new`'s own allocation (both
+necessarily still interpreted) dominate the total time far more than the
+now-cheap `initialize` call itself.
+
+Isolating `initialize` specifically (2,000,000 calls against one already-
+constructed, reused Hash and key -- no fresh allocation per call in the
+timed loop) shows the real, honest effect size:
+
+| | wall time (2,000,000 calls) |
+|---|---:|
+| Interpreted | ~1.91-1.98s (3 rounds) |
+| JIT | ~1.85-1.87s (3 rounds) |
+
+**~4-7% faster, not a multiple.** Consistent and reproducible across
+rounds, but genuinely modest compared to Phase 2's ~2.95x on pure
+arithmetic -- and the reason why is itself the finding: `initialize`'s own
+compiled body does almost the same work either way, since `CHECK_TYPE`/
+`INDEX_GET`/`SET_IVAR` all immediately call into the *same* C trampoline
+functions the interpreter's own opcode handlers would call. The JIT only
+saves bytecode fetch/decode/dispatch overhead for those three opcodes, not
+the underlying work -- unlike Phase 2's pure-native arithmetic, which
+replaced interpretation with real, dependency-free machine instructions
+end to end. A future phase that can also compile calls/allocation
+natively (or find a way to shrink the per-trampoline-call overhead itself)
+would need to reduce trampoline-call weight specifically to see a larger
+win here, not just widen opcode coverage further.
+
+Full test suite (1329 cases: the existing 1327 plus 2 new regression
+cases, `jit_hash_ivar_construct`/`jit_hash_ivar_construct_stress_gc` --
+the latter run under `DIAMOND_STRESS_GC=1`, forcing a collection on every
+allocation, specifically to stress-test the "no GC frame needed" claim
+above) passes unchanged under both debug and ASan/UBSan sanitizer builds.
+
+## Phase 2c: allocation-capable trampoline + real frame/GC-root contract (2026-09-12)
+
+Closed the gap Phase 2b identified: added `STRING` opcode support via a
+real `DiamondFrame`-publishing prologue/epilogue (built, not just
+designed -- see `docs/internal/jit-design.md`'s own Phase 2c status note
+for the trampolines and the dry-run-compile-pass mechanism that decides,
+per function, whether it's needed at all). `bench/object_hydration.di`'s
+own `HydratedUser#initialize` -- the actual motivating target since
+Phase 0 -- now compiles for the first time.
+
+Same environment as above (`make release`, `-march=native`, one binary,
+`DIAMOND_JIT` toggled via env var). 5 alternating rounds, `DIAMOND_REPEAT`
+matching `bench/run.sh`'s own table:
+
+| benchmark | repeat | interpreted (per round) | JIT (per round) |
+|---|---:|---:|---:|
+| `object_hydration.di` | 120 | ~2.34-2.41s | ~2.28-2.33s |
+| `hash_ivar_construct.di` | 250 | ~2.70-2.78s | ~2.59-2.61s |
+| `int_arithmetic.di` (regression check) | 15 | ~7.6-8.1s | ~2.65-2.69s |
+
+**`object_hydration.di`: ~2-3% faster end to end.** Modest, and consistent
+with Phase 2b's own finding: `initialize`'s compiled body still calls the
+same C trampolines (`diamond_jit_hash_get`/`diamond_jit_set_ivar`/
+`diamond_jit_check_type`/`diamond_jit_new_string`) the interpreter's own
+opcode handlers would call, plus the new frame push/pop itself is not
+free -- the JIT removes bytecode dispatch overhead, not the underlying
+allocation/lookup/write work. Verified correct against the interpreted
+baseline's own output (`59000`) in every configuration tested.
+
+**No regression on Phase 2/2b's allocation-free benchmarks** from adding
+the pre-scan/dry-run mechanism, which was the explicit condition for
+landing this: `int_arithmetic.di` still measures **~2.9x**
+(`DIAMOND_JIT_THRESHOLD=1`, within noise of Phase 2's own ~2.95x),
+`hash_ivar_construct.di`'s `Box` still measures **~6-7%** faster
+(within Phase 2b's own measured 4-7% range) -- neither function triggers
+the pre-scan's `needs_frame` path (no `STRING` in either body), so neither
+pays anything for the mechanism existing.
+
+**Dedicated GC-root stress test** (`tests/cases/jit_string_construct.di`/
+`jit_string_construct_stress_gc.di`, new): a class whose `initialize`
+does three sequential `STRING`+`INDEX_GET`+`SET_IVAR` sequences from
+literal Hash keys, run under `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1` with
+and without `DIAMOND_STRESS_GC=1` (forces a collection on *every*
+allocation, so three collections happen mid-function, mid-compiled-code).
+All three configurations (interpreted, JIT, JIT+stress-GC) agree on output
+(`2800`) -- the sharpest available proof that `self`, the Hash argument,
+and intermediate temporaries held live across a `STRING`-triggered
+allocation actually survive via the published frame, not by good luck.
+
+Full test suite (1331 cases: the existing 1329 plus these 2 new cases)
+passes unchanged under both debug and ASan/UBSan sanitizer builds, with
+`DIAMOND_JIT` unset (default) and with
+`DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1` (compiles
+every eligible function immediately, forces a collection on every
+allocation) -- no missed GC root surfaced under sanitizer instrumentation.
+
+**Still not skindicate's real bottleneck end-to-end**: skindicate's actual
+`User#initialize` additionally calls `super(attributes)` into
+`ActiveRecord::Model#initialize`, which this JIT still can't compile
+through (no call support). Deploying this build would now compile
+`HydratedUser`-shaped `initialize` methods, but skindicate's own model
+classes won't be JIT-eligible until a follow-on phase addresses `super`
+call compilation -- not yet scoped or decided.
+
+## Phase 2d: SUPER call support -- the real User#initialize compiles (2026-09-13)
+
+Added `DIAMOND_OP_SUPER` and `DIAMOND_OP_HASH` (for a `= {}` default
+argument), plus a fix eliminating `EQUAL`/`NOT_EQUAL`'s own bailout
+entirely (a `values_equal` trampoline -- pure, always succeeds). Full
+design rationale (the 3-way `DiamondJitFn` return convention, the
+`jc->has_called`-gated dual bailout stub, why arithmetic-after-a-call is
+rejected outright at compile time) is in `docs/internal/jit-design.md`'s
+own Phase 2d status note.
+
+**The actual target now compiles.** Verified directly against
+`skindicate.dia/lib/models/user.di`'s real `User#initialize` (not just
+the `object_hydration.di` mirror) via `DIAMOND_TRACE_JIT=1`: 1 compiled
+function, 0 bailouts, correct output identical to the interpreted
+baseline across representative attribute Hashes (including the `= {}`
+default-argument path).
+
+**Three dedicated regression cases prove the actual hazard this phase
+exists to prevent is prevented, not just "doesn't crash"**:
+`tests/cases/jit_super_raise_propagates.di` (a superclass constructor
+that raises -- confirms it runs exactly once, not twice, via a Hash-
+mutation counter a double-invocation would double), `jit_super_then_
+bail_propagates.di` (SUPER succeeds, then a *later*, unrelated opcode
+bails -- same "ran exactly once" proof for a different failure site), and
+`jit_super_chain.di` (6 levels of SUPER, all independently compiled,
+proving `depth` threads correctly across multiple compiled hops without
+a false-positive stack-overflow or crash). All three pass identically
+under interpreted, `DIAMOND_JIT=1`, and `DIAMOND_JIT=1
+DIAMOND_STRESS_GC=1`.
+
+**No regression on Phase 2/2b/2c's existing benchmarks** from the 6th
+persistent register (`depth`) and its alignment pad, or the new
+`jc->has_called` dispatch: `int_arithmetic.di` still ~2.9-3x (release,
+`DIAMOND_JIT_THRESHOLD=1`, 5 rounds, JIT side steady at ~2.70-2.73s per
+round vs Phase 2c's own ~2.65-2.69s), `hash_ivar_construct.di` still
+~4-6% faster, `object_hydration.di` still ~2-8% faster (both within the
+same range previously measured).
+
+**Honest end-to-end result -- smaller than object_hydration's own ~2-3%,
+and worth understanding why**: measured a real `User.new(row)` loop
+(100,000 iterations, same skindicate checkout, `boot.di` required
+directly) interpreted vs `DIAMOND_JIT=1`:
+
+| | wall time (100,000 `User.new` calls) |
+|---|---:|
+| Interpreted | ~7.4-7.8s (5 rounds) |
+| JIT | ~7.3-7.6s (5 rounds) |
+
+**Within noise -- not a real win yet.** `DIAMOND_TRACE_JIT=1` on this
+exact benchmark shows exactly **1** compiled function, not 2:
+`User#initialize` compiles, but its own `super(attributes)` call reaches
+`ActiveRecord::Model#initialize`
+(`packages/active_record/lib/active_record/model.di:36-49`), which
+never does -- its body loops over `attributes.keys()` calling ordinary
+methods (`.keys()`, `.length()`) and uses `INDEX_GET` on an *Array*
+(this JIT's own `INDEX_GET` trampoline is Hash-only) plus `INDEX_SET`
+(not in the whitelist at all), so it falls back to full interpretation on
+every single call. That interpreted `Model#initialize` call dominates the
+real per-call cost, swamping whatever `User#initialize`'s own now-
+compiled body saves. **Deploying this build to skindicate today still
+would not show a meaningful `/` improvement** -- a different, now
+precisely understood reason than Phase 2/2b's "0 compiled functions":
+the compile succeeds, but the dominant cost lives one level up the call
+chain, in a superclass method this phase deliberately doesn't reach.
+
+**Not yet scoped or decided**: making `Model#initialize` itself
+JIT-eligible would need ordinary method-call (`INVOKE`) support plus
+Array `INDEX_GET`/`INDEX_SET` -- each individually a materially larger
+feature than anything built across Phases 2-2d, not a narrow extension
+of the existing trampoline pattern.
+
+## Phase 2e: two correctness bugs found and fixed, plus Array INDEX_GET/INDEX_SET (2026-09-13)
+
+Continuing to scope `Model#initialize` meant reading `DIAMOND_OP_INDEX_GET`'s
+and the generic `DIAMOND_OP_LESS` family's *full* real interpreter case
+bodies for the first time -- Phase 2b only read enough of `INDEX_GET` to
+build a Hash-only trampoline, and Phase 2d's `EQUAL`/`NOT_EQUAL` fix never
+re-checked `EQUAL`'s own full case. That surfaced two real, already-shipped
+correctness bugs (silent wrong answers, not crashes):
+
+1. `EQUAL`/`NOT_EQUAL` (Phase 2d) skipped a user-defined `==` override on
+   an Instance operand, silently falling back to identity comparison
+   instead.
+2. `INDEX_GET`'s Hash-only trampoline (Phase 2b) would, once a bailout
+   could "propagate" instead of retry (true from Phase 2d onward), have
+   incorrectly propagated `TYPE_ERROR` for an Instance with a real `[]`
+   override reached after an earlier call, instead of invoking it.
+
+**Both fixed, and verified as real fixes, not just "the new test passes"**:
+for each bug, the new regression test was run against the pre-fix code
+(via a temporary `git stash` of the fix) and confirmed to actually fail
+there before trusting that it passing afterward means anything --
+`jit_equal_overload.di` returns `0` instead of the correct `10` without
+the fix; `jit_index_get_overload_after_super.di` raises an uncaught
+`TypeError` instead of returning `1050` without the fix. Both trampolines
+were rewritten as full extractions of their real opcode's case body
+(`diamond_jit_equal_general`, `diamond_jit_index_get`, and new
+`diamond_jit_index_set`), the same drift-proof pattern
+`diamond_jit_super_call`/`diamond_jit_new_hash` already used -- a
+standing rule now, not a one-off fix: never hand-pick a subset of an
+opcode's real behavior into a trampoline again.
+
+**New real capability, not just a fix**: `INDEX_SET` is JIT-compiled for
+the first time (Hash/String/Instance-overload/Array, full parity with the
+real opcode), and `INDEX_GET` now handles Array receivers too (previously
+Hash-only). `tests/cases/jit_array_index.di` exercises both directly.
+
+No regression on Phase 2/2b/2c/2d's benchmarks: `int_arithmetic.di` still
+~2.9-3x, `hash_ivar_construct.di` still ~6-8% faster, `object_hydration.di`
+still ~4-8% faster (release, 3 alternating rounds each, `DIAMOND_JIT_
+THRESHOLD=1` where applicable). The real end-to-end `User.new` benchmark
+(skindicate's actual `User#initialize`, 100,000 calls) is unchanged from
+Phase 2d -- still within noise of interpreted (~7.1-7.3s both), since
+`Model#initialize` still doesn't compile.
+
+Full suite (1340 cases: 1336 plus these 4 new) green under debug +
+ASan/UBSan, both with `DIAMOND_JIT` unset and with `DIAMOND_JIT=1
+DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`.
+
+**`Model#initialize` still doesn't compile, confirmed as a clean bailout,
+not a regression**: its loop condition uses the generic `DIAMOND_OP_LESS`
+(never quickened to `LESS_INT` under `DIAMOND_JIT=1` alone), which has its
+own Instance `<` override branch and so must also conservatively set
+`jc->has_called = true` -- but that flag is compile-time-only and
+monotonic, so `index += 1` immediately after it, every loop iteration, is
+then rejected by the same "no arithmetic once a call could have happened"
+rule Phase 2d's own safety depends on. Reaching `Model#initialize` would
+need either a genuinely different runtime-checked (not compile-time-only)
+has-a-call-happened flag, or local type inference proving `LESS`'s
+operands are always Int -- a materially bigger design change than
+anything in Phases 2-2e, not scoped or decided (see
+`docs/internal/jit-design.md`'s own Phase 2e status note for the full
+reasoning).

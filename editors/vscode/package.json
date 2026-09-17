@@ -45,6 +45,11 @@
           "type": "string",
           "default": "diamond-lsp",
           "description": "Path to the diamond-lsp binary (built via `make lsp`). Defaults to looking it up on PATH."
+        },
+        "diamond.debugAdapterPath": {
+          "type": "string",
+          "default": "diamond-dap",
+          "description": "Path to the diamond-dap binary (built via `make dap`). Defaults to looking it up on PATH."
         }
       }
     },
@@ -52,6 +57,56 @@
       {
         "command": "diamond.restartLanguageServer",
         "title": "Diamond: Restart Language Server"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "diamond",
+        "label": "Diamond",
+        "languages": ["diamond"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to the Diamond (.di) script to run.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "description": "Command-line arguments passed to the program, available to it as ARGV.",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the launched program.",
+                "default": "${workspaceFolder}"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "diamond",
+            "request": "launch",
+            "name": "Debug Diamond File",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Diamond: Launch",
+            "description": "Launch and debug the currently open Diamond file",
+            "body": {
+              "type": "diamond",
+              "request": "launch",
+              "name": "Debug Diamond File",
+              "program": "^\"${1:\\${file\\}}\""
+            }
+          }
+        ]
       }
     ]
   }

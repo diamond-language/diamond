@@ -64,34 +64,26 @@ def network_safety_ipv4_to_int(text)
   if parts.length() != 4
     return nil
   end
-  total = 0
-  index = 0
-  while index < 4
-    part = parts[index]
+  def valid_octet(part)
     octet = part.to_i()
-    if octet < 0 || octet > 255 || "#{octet}" != part
-      return nil
-    end
-    total = total * 256 + octet
-    index += 1
+    octet >= 0 && octet <= 255 && "#{octet}" == part
   end
-  total
+  unless parts.all?(valid_octet)
+    return nil
+  end
+  def accumulate_octet(total, part)
+    total * 256 + part.to_i()
+  end
+  parts.reduce(0, accumulate_octet)
 end
 
 def network_safety_ipv4_blocked?(ip_int)
-  networks = network_safety_blocked_ipv4_networks()
-  index = 0
-  while index < networks.length()
-    network_text = networks[index][0]
-    prefix = networks[index][1]
-    network_int = network_safety_ipv4_to_int(network_text)
-    divisor = 1 << (32 - prefix)
-    if ip_int / divisor == network_int / divisor
-      return true
-    end
-    index += 1
+  def matches_blocked_network(network)
+    network_int = network_safety_ipv4_to_int(network[0])
+    divisor = 1 << (32 - network[1])
+    ip_int / divisor == network_int / divisor
   end
-  false
+  network_safety_blocked_ipv4_networks().any?(matches_blocked_network)
 end
 
 def network_safety_looks_local?(host)

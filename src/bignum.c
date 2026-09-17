@@ -1,3 +1,16 @@
+/* Needed transitively for vm.h's own <ucontext.h> use (ucontext_t):
+ * under -std=c23 (not -std=gnu23), GCC defines __STRICT_ANSI__, which
+ * blocks musl's own "default to _BSD_SOURCE+_XOPEN_SOURCE=700 when
+ * nothing else is set" fallback (musl's features.h) -- glibc is more
+ * lenient here (defaults to roughly the same exposure regardless), so
+ * this only surfaced building against musl (see docs/roadmap.md's
+ * "Portability"). Must come before bignum.h's own first #include
+ * (vm.h) reaches any libc header -- once <features.h> is processed
+ * once per translation unit, a later #define here has no effect. */
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 #include "bignum.h"
 
 #include <math.h>
@@ -183,7 +196,7 @@ static bool magnitude_to_int64(const uint32_t *limbs, size_t count,
 
 static DiamondBignum *bignum_alloc(DiamondVm *vm, bool negative,
                                    const uint32_t *limbs, size_t limb_count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondBignum *bignum =
         malloc(sizeof(DiamondBignum) + limb_count * sizeof(uint32_t));
     if (bignum == nullptr) return nullptr;

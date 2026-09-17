@@ -201,3 +201,35 @@ second).
   dropping empty and `"."` segments and popping the previous real
   segment on `".."` — kept literally only when there is nothing left to
   pop, so this can never climb above the root, matching Ruby.
+
+## Filesystem: `File.directory?`/`.delete`, `Dir.entries`
+
+```ruby
+File.directory?(".")                 # => true
+File.directory?("README.md")         # => false
+File.directory?("/no/such/path")     # => false -- not an error
+
+File.delete("/tmp/scratch.txt")      # => true, or false if already gone
+
+Dir.entries("/tmp")                  # => ["a.txt", "b.txt", ...] -- excludes "." and ".."
+```
+
+Unlike the pure-string path helpers above, these three touch the
+filesystem. `File.directory?(path)` is `stat()`-backed; a `stat()`
+failure (the path doesn't exist, permission denied, ...) reads as
+`false`, not an error, matching Ruby's own `File.directory?` and
+letting it sit directly in a condition with nothing to rescue.
+`File.delete(path)` removes a file (`remove()`); a file that's already
+gone returns `false` rather than raising (treated as a normal outcome,
+not something to rescue around), but a genuine failure (permission
+denied, path is a non-empty directory, ...) raises a rescuable
+`IOError`, the same convention `File.open` uses. `Dir.entries(path)`
+lists one directory's immediate entries as an `Array[String]`
+(`opendir`/`readdir`/`closedir`, excluding `"."`/`".."`) — no
+recursion, no globbing; a directory that doesn't exist (or otherwise
+fails to open) raises a rescuable `IOError`.
+
+All three are recognized in the compiler the same way `File.open`/
+`Fiber.new` are (shadowable by a local or a top-level function of the
+same name). See [Sandbox mode](sandbox.md) for how `--sandbox` gates
+all three under its `filesystem` capability.

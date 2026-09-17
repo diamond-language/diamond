@@ -1,9 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 #include "compiler.h"
+#include "jit.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,9 +50,11 @@ typedef struct LoopContext {
     size_t flow_reg_count;
     uint8_t *exit_types;
     int32_t *exit_sets;
+    int32_t *exit_tooling_sets;
     bool exit_initialized;
     uint8_t result_type;
     int32_t result_set;
+    int32_t result_tooling_set;
     /* Bounded by DIAMOND_MAX_LOCALS (64), unlike exit_types/exit_sets above,
      * so these travel inline with no malloc dance. */
     size_t flow_local_count;
@@ -98,6 +106,45 @@ typedef struct Compiler {
     DiamondToken previous;
     DiamondProgram *program;
     DiamondFunction *function;
+    /* >0 anywhere lexically inside a begin/rescue/ensure block of the
+     * function currently being compiled (compile_begin increments/
+     * decrements around its own try/rescue/else/ensure bodies) --
+     * disqualifies a self-tail-call from DIAMOND_OP_TAIL_CALL rewriting
+     * (see compile_return's own comment): a live handler's jump target
+     * is an offset into the *current* chunk's bytecode, which reusing
+     * the same run_chunk invocation for "the next iteration" must never
+     * invalidate. Saved to 0 and restored around compiling any nested
+     * function's own body (every site that reassigns `function` above)
+     * -- a def nested inside an outer begin block starts its own body
+     * fresh, not already inside anything, regardless of its lexical
+     * position in the outer function's own source. */
+    size_t begin_depth;
+    /* Records exactly where the most recently emitted plain (non-generic,
+     * non-spread, non-method/singleton) DIAMOND_OP_CALL sits, for
+     * compile_return's own tail-call peephole rewrite (see
+     * maybe_rewrite_self_tail_call) -- set only at parse_call's own
+     * plain-CALL emission site. Deliberately NOT scoped/saved-restored
+     * around a nested function's own compilation the way begin_depth is:
+     * code_count is per-DiamondFunction (each has its own separate code
+     * buffer), so comparing last_plain_call_code_count against
+     * compiler->function's *own current* code_count already self-
+     * invalidates whenever anything else -- including an entire nested
+     * function's own body -- was compiled in between, without needing
+     * explicit scoping. This is deliberately NOT reconstructed by
+     * decoding bytes backward from code_count (an earlier version of
+     * this feature did exactly that, assuming the preceding instruction
+     * was exactly 8 bytes without proving it actually was one real CALL
+     * instruction boundary -- a real, found-by-testing bug: a coincidental
+     * byte match on unrelated bytecode got misidentified as a self-call
+     * and corrupted, causing an infinite loop in a completely unrelated
+     * function that never actually called itself at all). Tracking the
+     * exact offset at emission time instead makes this sound by
+     * construction rather than by inference. */
+    size_t last_plain_call_code_count;
+    size_t last_plain_call_offset;
+    uint16_t last_plain_call_destination;
+    uint16_t last_plain_call_function_index;
+    DiamondFunction *last_plain_call_function;
     DiamondDiagnostic *diagnostic;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
@@ -136,6 +183,10 @@ typedef struct Compiler {
     bool loop_captures_pending;
     uint8_t known_types[DIAMOND_REGISTER_COUNT];
     int32_t known_type_sets[DIAMOND_REGISTER_COUNT];
+    /* LSP-only inferred return facts. Kept separate from known_type_sets so
+     * an unannotated callee can improve receiver tooling after assignment
+     * without changing opcode selection or compile-time type checks. */
+    int32_t tooling_type_sets[DIAMOND_REGISTER_COUNT];
     /* Set when a register was loaded via one INDEX_GET directly off a
      * tracked local's own register (`x[i]`, one level only -- a chained
      * `x[a][b]` sees a non-local `receiver` on its second INDEX_GET and
@@ -170,6 +221,24 @@ typedef struct Compiler {
     uint16_t positional_spread_fixed[DIAMOND_MAX_DECLARED_PARAMETERS];
     int current_return_type;
     DiamondSpan current_return_type_span;
+    /* Accumulates the union of every explicit `return value`'s own known
+     * type/type-set seen so far within the *current* function body being
+     * compiled -- purely advisory input to compile_definition's own
+     * inferred_return_type_set inference (lsp/receiver.c's call-chain
+     * resolution), never return_type_set itself (see that field's own
+     * comment, src/vm.h, for why the two stay separate). Exactly the
+     * incremental-accumulate shape merge_loop_exit already uses for a
+     * loop's own `break` values, minus everything about locals/alias-
+     * identity a `return` doesn't need (it exits the function outright,
+     * not just one control-flow region within it) -- see compile_return's
+     * own use. Saved/restored around a nested function body the same way
+     * every other per-function field here already is (compile_definition/
+     * compile_block's own outer_* dance), and reset to "not seen" at the
+     * start of each one, so an inner def's own returns never leak into an
+     * outer one's inference or vice versa. */
+    bool return_flow_seen;
+    uint8_t return_flow_type;
+    int32_t return_flow_set;
     LoopContext *current_loop;
     int current_exception;
     size_t current_retry_target;
@@ -208,6 +277,19 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
+    /* True only for the real (discovery_pass=false) pass of a
+     * diamond_compile_with_breakpoints call -- compile_sequence emits a
+     * DIAMOND_OP_BREAKPOINT_CHECK at the start of *every* statement
+     * (see its own comment, src/vm.h) rather than only at a fixed,
+     * compile-time-selected set of lines the way v1's DIAMOND_OP_DEBUGGER
+     * did: which lines are actually armed is now a runtime-mutable set
+     * (DiamondVm.debug_active_lines) a live `setBreakpoints` command can
+     * change with no recompile, so the compiler no longer needs to know
+     * which lines matter in advance -- only whether this is a debug
+     * session at all. Never set for the discovery pass: its bytecode is
+     * discarded, so instrumenting it would be wasted work, not
+     * incorrect. */
+    bool debug_mode;
     /* Real-pass cursor through discovery's pre-reserved function slots. */
     size_t next_function_claim;
     /* Pending call-site patches for a module_function/`def self.x` method
@@ -348,6 +430,7 @@ static uint16_t allocate_register(Compiler *compiler) {
     const uint16_t reg=(uint16_t)compiler->next_register++;
     compiler->known_types[reg]=TYPE_UNKNOWN;
     compiler->known_type_sets[reg]=-1;
+    compiler->tooling_type_sets[reg]=-1;
     return reg;
 }
 
@@ -917,10 +1000,30 @@ static void publish_callable_return_type(Compiler *compiler,uint16_t reg,
     publish_known_type_set(compiler,reg,return_set);
 }
 
-static void publish_declared_return_type(Compiler *compiler,uint16_t reg,
+static void publish_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
         size_t binding_count) {
-    if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET)return;
+    if(target==nullptr)return;
+    if(target->return_type_set==DIAMOND_NO_TYPE_SET) {
+        /* Unlike a declared return, this remains tooling-only: it may feed
+         * scope facts for receiver completion after assignment, but never
+         * known_type_sets (and therefore never type checks or opcode choice). */
+        if(target->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
+           target->inferred_return_type_set>=target->type_set_count)return;
+        uint16_t set;
+        if(target->type_variable_count>0) {
+            bool resolved=true;
+            const size_t original_count=compiler->function->type_set_count;
+            set=clone_substituted_type_set(compiler,target,
+                target->inferred_return_type_set,bindings,binding_count,&resolved);
+            if(!resolved) {
+                compiler->function->type_set_count=original_count;return;
+            }
+        } else set=clone_type_set_into_current(compiler,target->type_sets,
+            target->type_set_count,target->inferred_return_type_set);
+        if(set!=DIAMOND_NO_TYPE_SET)compiler->tooling_type_sets[reg]=(int32_t)set;
+        return;
+    }
     uint16_t return_set;
     if(target->type_variable_count>0) {
         bool resolved=true;
@@ -944,15 +1047,22 @@ static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
      * recursive self-reference remains a known Callable, but conservatively
      * omits structural signature facts until its declaration is complete. */
     if(target==compiler->function)return;
+    /* target->arity counts an implicit self slot for some owner_class
+     * shapes (diamond_function_self_offset's own comment, src/vm.h) --
+     * a Callable *value*'s type only ever describes its real, self-less
+     * arguments (parameter_type_sets is already indexed that way), so
+     * that offset must come out of the published arity here too. */
+    const uint8_t self_offset=diamond_function_self_offset(target);
+    const uint8_t declared_arity=(uint8_t)(target->arity-self_offset);
     DiamondTypeMember callable={.id=DIAMOND_TYPE_CALLABLE,
         .argument_set=DIAMOND_NO_TYPE_SET,
         .second_argument_set=DIAMOND_NO_TYPE_SET,
-        .callable_arity=target->arity,
+        .callable_arity=declared_arity,
         .callable_return_set=DIAMOND_NO_TYPE_SET,
         .callable_parameters_typed=true};
     for(size_t parameter=0;parameter<16;parameter++)
         callable.callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
-    for(size_t parameter=0;parameter<target->arity;parameter++) {
+    for(size_t parameter=0;parameter<declared_arity;parameter++) {
         if(target->parameter_type_sets[parameter]==DIAMOND_NO_TYPE_SET) {
             callable.callable_parameters_typed=false;break;
         }
@@ -1407,6 +1517,8 @@ static uint16_t parse_identifier(Compiler *compiler) {
         compiler->known_types[compiler->locals[(size_t)local].reg];
     compiler->known_type_sets[destination]=
         compiler->known_type_sets[compiler->locals[(size_t)local].reg];
+    compiler->tooling_type_sets[destination]=
+        compiler->tooling_type_sets[compiler->locals[(size_t)local].reg];
     return destination;
 }
 
@@ -1443,6 +1555,12 @@ static bool name_equals(const Compiler *compiler, const char *candidate,
     return true;
 }
 
+/* Defined near diamond_program_free below; frees `function`'s own
+ * dynamic arrays without freeing `function` itself, correctly handling
+ * a combined-allocated function (diamond_function_copy's own
+ * owns_combined_buffer, see its comment in src/vm.h). */
+static void diamond_function_free_arrays(DiamondFunction *function);
+
 static DiamondFunction *compiler_add_function(Compiler *compiler,
                                                size_t *function_index) {
     if(!compiler->discovery_pass&&
@@ -1451,10 +1569,12 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
            ->declared_by_discovery) {
         *function_index=compiler->next_function_claim++;
         DiamondFunction *function=compiler->program->functions[*function_index];
-        free(function->code);free(function->lines);free(function->columns);
-        free(function->constants);
-        free(function->strings);
-        free(function->type_sets);
+        /* This slot was populated moments ago by diamond_compile_impl's
+         * own "reserve every compiler-created function" loop, which
+         * clones it from `discovery` via diamond_function_copy -- always
+         * combined-allocated, template or not -- so this must go through
+         * the combined-aware free, not raw free() on each field. */
+        diamond_function_free_arrays(function);
         memset(function,0,sizeof *function);
         return function;
     }
@@ -3038,7 +3158,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
         return destination;
     }
@@ -3156,7 +3276,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_register(compiler,destination);emit_register(compiler,callable);
             emit_register(compiler,positional);emit_byte(compiler,0x80u);
             emit_register(compiler,block);
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
             return destination;
         }
@@ -3191,6 +3311,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
                          (uint16_t)(argument_base + index), slot_registers[index], 0, 2);
     }
     const uint16_t destination = allocate_register(compiler);
+    const size_t call_opcode_offset=compiler->function->code_count;
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_CALL:DIAMOND_OP_CALL_TYPED);
     emit_register(compiler,destination);
@@ -3201,8 +3322,20 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         emit_byte(compiler,(uint8_t)type_argument_count);
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
+    } else {
+        /* Self-tail-call eligibility tracking -- see compiler->last_
+         * plain_call_* fields' own comment and maybe_rewrite_self_tail_
+         * call (both above compile_return). Recorded here, the one place
+         * a plain (non-generic) CALL is ever emitted for an ordinary
+         * function-name call, rather than reconstructed later by
+         * decoding bytes backward from code_count. */
+        compiler->last_plain_call_function=compiler->function;
+        compiler->last_plain_call_code_count=compiler->function->code_count;
+        compiler->last_plain_call_offset=call_opcode_offset;
+        compiler->last_plain_call_destination=destination;
+        compiler->last_plain_call_function_index=(uint16_t)function_index;
     }
-    publish_declared_return_type(compiler,destination,function,
+    publish_call_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
     return destination;
 }
@@ -3279,7 +3412,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     if(!unresolved) {
         const DiamondFunction *target=
             compiler->program->functions[method->function_index];
-        publish_declared_return_type(compiler,destination,target,
+        publish_call_return_type(compiler,destination,target,
             type_arguments,type_argument_count);
     }
     return destination;
@@ -3424,11 +3557,13 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     const uint16_t outer_next_register=compiler->next_register;
     const size_t outer_local_count=compiler->local_count;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
 
     compiler->function=function;
     compiler->next_register=0;
     compiler->local_count=0;
     compiler->in_function=true;
+    compiler->begin_depth=0;
 
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     for(size_t index=0;index<method->arity;index++) {
@@ -3469,6 +3604,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;
     compiler->in_function=outer_in_function;
+    compiler->begin_depth=outer_begin_depth;
 
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
@@ -3617,7 +3753,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
         return destination;
     }
@@ -3660,7 +3796,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
             return destination;
         }
@@ -3679,7 +3815,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             for(size_t index=0;index<type_argument_count;index++)
                 emit_register(compiler,type_arguments[index]);
         }
-        publish_declared_return_type(compiler,destination,function,
+        publish_call_return_type(compiler,destination,function,
             resolved_arguments,resolved_count);
         return destination;
     }
@@ -3751,7 +3887,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
                 for(size_t index=0;index<type_argument_count;index++)
                     emit_register(compiler,type_arguments[index]);
             }
-            publish_declared_return_type(compiler,destination,function,
+            publish_call_return_type(compiler,destination,function,
                 resolved_arguments,resolved_count);
             return destination;
         }
@@ -3789,7 +3925,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         for(size_t index=0;index<type_argument_count;index++)
             emit_register(compiler,type_arguments[index]);
     }
-    publish_declared_return_type(compiler,destination,function,
+    publish_call_return_type(compiler,destination,function,
         resolved_arguments,resolved_count);
     return destination;
 }
@@ -4028,6 +4164,74 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     emit_opcode(compiler,DIAMOND_OP_THREAD_NEW);
     emit_register(compiler,dest);emit_register(compiler,callable_register);
     emit_register(compiler,base);emit_byte(compiler,(uint8_t)argument_count);
+    return dest;
+}
+
+/* Channel.new(capacity) -- see docs/threads.md's Channels section. A
+ * single required Int argument, unlike Thread.new's own variadic
+ * callable+args shape just above -- closer to parse_time_at_call's own
+ * single-argument construction pattern, just with the same "expect the
+ * literal keyword 'new'" check parse_thread_new_call already needs
+ * (Channel.new, like Thread.new/Fiber.new, is recognized by the literal
+ * 'new' method name, not a dedicated bare `Channel(...)` form the way
+ * File.open/SQLite3.open use their own distinct names). */
+static uint16_t parse_channel_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Channel'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Channel.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t capacity_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Channel.new argument");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CHANNEL_NEW);
+    emit_register(compiler,dest);
+    emit_register(compiler,capacity_register);
+    return dest;
+}
+
+/* Supervisor.new() -- see docs/threads.md's Supervisors section. Zero
+ * arguments, same shape as parse_program_builder_new_call just below
+ * (v1 has no configurable policy -- restart delay/child cap are fixed
+ * constants, see DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment in
+ * src/vm.c), just recognized by the literal 'new' method name the same
+ * way Thread.new/Channel.new/Fiber.new are rather than a bare
+ * `Supervisor(...)` form. */
+static uint16_t parse_supervisor_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Supervisor'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Supervisor.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Supervisor.new arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_SUPERVISOR_NEW);
+    emit_register(compiler,dest);
     return dest;
 }
 
@@ -5028,13 +5232,21 @@ static uint16_t parse_exit_call(Compiler *compiler) {
     return dest;
 }
 
-/* debugger()/breakpoint() -- pauses execution, prints the current call
- * site and every currently-live local (name + value, read-only; no
- * expression evaluation against them, see docs/syntax.md for the scope
- * this was deliberately kept to), then blocks on a single line of stdin
- * (EOF -- e.g. stdin redirected from /dev/null, the normal case under a
- * non-interactive test/CI run -- continues immediately rather than
- * hanging) before resuming normally.
+/* Emits one DIAMOND_OP_DEBUGGER pause at the current compile point:
+ * pauses execution unconditionally, prints the current call site and
+ * every currently-live local (name + value, read-only; no expression
+ * evaluation against them, see docs/syntax.md for the scope this was
+ * deliberately kept to), then blocks on a single line of stdin (EOF --
+ * e.g. stdin redirected from /dev/null, the normal case under a non-
+ * interactive test/CI run -- continues immediately rather than hanging)
+ * before resuming normally -- or, under DIAMOND_DEBUG_FD, the structured
+ * DAP pause path instead (see debugger_helper, src/vm.c). Used only by
+ * the explicit debugger()/breakpoint() source calls (parse_debugger_call
+ * below) -- an editor's own gutter breakpoint uses the separate,
+ * conditional DIAMOND_OP_BREAKPOINT_CHECK instead (emit_breakpoint_check,
+ * just below), since whether *that* one actually pauses is a runtime
+ * decision (DiamondVm.debug_active_lines can change with no recompile),
+ * never a compile-time one the way an explicit debugger() call always is.
  *
  * compiler->locals' (name, register) pairs *at this exact point in
  * compilation* get baked into the opcode's own operand data, the same
@@ -5045,13 +5257,7 @@ static uint16_t parse_exit_call(Compiler *compiler) {
  * compiler->local_count is always <= DIAMOND_MAX_LOCALS (enforced by
  * allocate_local), so no separate bounds check is needed before the
  * uint8_t cast below. */
-static uint16_t parse_debugger_call(Compiler *compiler) {
-    advance_token(compiler); /* consume '(' */
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after arguments");
-        return 0;
-    }
-    advance_token(compiler);
+static uint16_t emit_debugger_pause(Compiler *compiler) {
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_DEBUGGER);
     emit_register(compiler,dest);
@@ -5062,6 +5268,43 @@ static uint16_t parse_debugger_call(Compiler *compiler) {
         emit_register(compiler,compiler->locals[index].reg);
     }
     return dest;
+}
+
+/* compile_sequence's own per-statement editor-breakpoint hook (see its
+ * one call site, further down this file) -- same locals-baking shape as
+ * emit_debugger_pause just above (this is still the only place a
+ * register's source variable name is known), but a different opcode:
+ * DIAMOND_OP_BREAKPOINT_CHECK checks DiamondVm.debug_active_lines at
+ * *runtime* before deciding whether to actually pause, rather than
+ * always pausing the instant it's reached. Emitted at every statement
+ * when compiler->debug_mode is set, regardless of which lines (if any)
+ * are armed yet -- see DiamondVm.debug_active_lines's own comment
+ * (src/vm.h) for why compile time no longer needs to know which lines
+ * matter in advance. */
+static uint16_t emit_breakpoint_check(Compiler *compiler) {
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_BREAKPOINT_CHECK);
+    emit_register(compiler,dest);
+    emit_byte(compiler,(uint8_t)compiler->local_count);
+    for(size_t index=0;index<compiler->local_count;index++) {
+        const uint16_t name_index=add_name_string(compiler,compiler->locals[index].name);
+        emit_register(compiler,name_index);
+        emit_register(compiler,compiler->locals[index].reg);
+    }
+    return dest;
+}
+
+/* debugger()/breakpoint() -- see emit_debugger_pause's own comment for
+ * what the pause itself does; this just parses the call syntax (no
+ * arguments) around it. */
+static uint16_t parse_debugger_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    return emit_debugger_pause(compiler);
 }
 
 /* Time.monotonic()/Time.now()/Time.utc_now() -- each zero-argument,
@@ -6005,6 +6248,14 @@ static uint16_t parse_name(Compiler *compiler) {
         return parse_thread_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Channel",name,false))
+        return parse_channel_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Supervisor",name,false))
+        return parse_supervisor_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
         return parse_tcp_connect_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
@@ -6148,6 +6399,19 @@ static uint16_t parse_name(Compiler *compiler) {
                      "undefined class singleton method");return 0;
             }
             return parse_singleton_call(compiler,method,name,class_index);
+        }
+        /* Gated to the real pass only, same reasoning as case/when
+         * exhaustiveness's own discovery-pass guard (resolve_type_name
+         * has the original precedent): a `sealed class Shape` declared
+         * later in the same source might not have set its own `sealed`
+         * flag yet if discovery reaches this call site first, and fail()
+         * only remembers the first failure. */
+        if(!compiler->discovery_pass&&
+           compiler->program->classes[(size_t)class_index].sealed) {
+            fail(compiler,compiler->current.span,
+                "cannot instantiate a sealed class directly -- "
+                "use one of its subclasses");
+            return 0;
         }
         advance_token(compiler);
         const DiamondFunction *initializer=
@@ -6599,13 +6863,20 @@ static const DiamondFunction *instance_call_signature(
     const uint8_t type=compiler->known_types[receiver];
     if(type>=DIAMOND_TYPE_CLASS_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE)
         return class_instance_signature(compiler,type,name);
-    const int32_t set_index=compiler->known_type_sets[receiver];
+    int32_t set_index=compiler->known_type_sets[receiver];
+    bool tooling_only=false;
+    if(set_index<0&&require_matching_return) {
+        set_index=compiler->tooling_type_sets[receiver];
+        tooling_only=set_index>=0;
+    }
     if(set_index<0||(size_t)set_index>=compiler->function->type_set_count)
         return nullptr;
     const DiamondTypeSet *set=
         &compiler->function->type_sets[(size_t)set_index];
     const DiamondFunction *shared=nullptr;
-    if(set->count==0)return nullptr;
+    /* A tooling-only union would need to join each candidate method's own
+     * inferred return. Keep this first slice exact and conservative. */
+    if(set->count==0||(tooling_only&&set->count!=1))return nullptr;
     for(size_t index=0;index<set->count;index++) {
         const uint8_t member=set->members[index].id;
         if(member<DIAMOND_TYPE_CLASS_BASE||
@@ -6624,7 +6895,7 @@ static const DiamondFunction *instance_call_signature(
 
 static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
         int32_t receiver_set_index,DiamondSpan name,const uint16_t *bindings,
-        size_t binding_count) {
+        size_t binding_count,bool tooling_only) {
     if(receiver_set_index<0||
        (size_t)receiver_set_index>=compiler->function->type_set_count)return;
     const DiamondTypeSet *receiver_set=
@@ -6642,19 +6913,29 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
     for(size_t index=0;index<member_count;index++) {
         const DiamondFunction *target=class_instance_signature(compiler,
             members[index],name);
-        if(target==nullptr||target->return_type_set==DIAMOND_NO_TYPE_SET) {
+        if(target==nullptr) {
             compiler->function->type_set_count=original_count;return;
+        }
+        uint16_t source_set=target->return_type_set;
+        if(source_set==DIAMOND_NO_TYPE_SET) {
+            if(!tooling_only) {
+                compiler->function->type_set_count=original_count;return;
+            }
+            source_set=target->inferred_return_type_set;
+            if(source_set==DIAMOND_NO_TYPE_SET) {
+                compiler->function->type_set_count=original_count;return;
+            }
         }
         uint16_t current;
         if(target->type_variable_count>0) {
             bool resolved=true;
             current=clone_substituted_type_set(compiler,target,
-                target->return_type_set,bindings,binding_count,&resolved);
+                source_set,bindings,binding_count,&resolved);
             if(!resolved) {
                 compiler->function->type_set_count=original_count;return;
             }
         } else current=clone_type_set_into_current(compiler,target->type_sets,
-            target->type_set_count,target->return_type_set);
+            target->type_set_count,source_set);
         if(current==DIAMOND_NO_TYPE_SET) {
             compiler->function->type_set_count=original_count;return;
         }
@@ -6664,7 +6945,8 @@ static void publish_union_instance_return_type(Compiler *compiler,uint16_t reg,
             compiler->function->type_set_count=original_count;return;
         }
     }
-    publish_known_type_set(compiler,reg,(uint16_t)joined);
+    if(tooling_only)compiler->tooling_type_sets[reg]=joined;
+    else publish_known_type_set(compiler,reg,(uint16_t)joined);
 }
 
 static int32_t type_set_with_nil(Compiler *compiler,uint16_t source_index);
@@ -6812,6 +7094,59 @@ static void publish_collection_method_return_type(Compiler *compiler,
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,first,-1);
     else if(relay==COLLECTION_RELAY_VALUES)
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
+}
+
+/* A small number of native String/Array/Hash methods (.length, .to_i,
+ * .ord, .strip, ...) always return one fixed scalar type regardless of
+ * the receiver's own element type -- unlike publish_collection_method_
+ * return_type just above, which exists specifically to preserve what a
+ * transform's own *nested* element/value type sets are. Reuses
+ * DIAMOND_NATIVE_METHODS (src/vm.c), the exact same table already
+ * exposed to this file for structural interface conformance checking
+ * (see known_type_satisfies_one's own call to diamond_native_method_
+ * satisfies above) -- one source of truth for "what does this native
+ * method return," not a second, parallel list of the same facts.
+ * Deliberately narrow: only when the receiver's own type set has
+ * exactly one member and it's a plain String/Array/Hash, never a
+ * union or a user class. Sound because none of these three are ever
+ * reachable through the user-facing method-redefinition machinery
+ * (that operates on a real DiamondClass's own mutable method table;
+ * these are native value kinds dispatched through a fixed C-level
+ * switch instead) -- "a plain Array's own .length() always returns
+ * Int" can never be invalidated by user code at runtime. See
+ * docs/internal/jit-design.md's own note on why this specific gap
+ * mattered: `index < keys.length()` couldn't compile-time-select
+ * DIAMOND_OP_LESS_INT without it. */
+static void publish_native_scalar_method_return_type(Compiler *compiler,
+        uint16_t reg,uint16_t receiver,int32_t receiver_set_index,
+        DiamondSpan name,uint8_t arity) {
+    uint8_t receiver_type;
+    if(receiver_set_index>=0) {
+        if((size_t)receiver_set_index>=compiler->function->type_set_count)return;
+        const DiamondTypeSet *receiver_set=
+            &compiler->function->type_sets[(size_t)receiver_set_index];
+        if(receiver_set->count!=1)return;
+        receiver_type=receiver_set->members[0].id;
+    } else {
+        /* No registered type set at all -- the common case for a plain
+         * scalar String local (parse_string never registers one; there's
+         * no element type to track), which Array/Hash literals always
+         * get via record_collection_type_set regardless of this
+         * function's own needs. Fall back to the receiver's own plain
+         * known_types[] scalar tag directly. */
+        receiver_type=compiler->known_types[receiver];
+    }
+    if(receiver_type!=DIAMOND_TYPE_STRING&&receiver_type!=DIAMOND_TYPE_ARRAY&&
+       receiver_type!=DIAMOND_TYPE_HASH)return;
+    char method_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(name.length>=sizeof method_name)return;
+    for(size_t index=0;index<name.length;index++)
+        method_name[index]=compiler->source[name.start+index];
+    method_name[name.length]='\0';
+    uint8_t return_type=UINT8_MAX;
+    if(diamond_native_method_satisfies(receiver_type,method_name,arity,&return_type)&&
+       return_type!=UINT8_MAX)
+        compiler->known_types[reg]=return_type;
 }
 
 static int32_t joined_collection_argument(Compiler *compiler,
@@ -7215,14 +7550,22 @@ static uint16_t compile_instance_contextual_block(Compiler *compiler,
 }
 
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
+        uint16_t receiver,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
         size_t binding_count) {
     if(matching_target!=nullptr)
-        publish_declared_return_type(compiler,reg,matching_target,bindings,
+        publish_call_return_type(compiler,reg,matching_target,bindings,
             binding_count);
-    else publish_union_instance_return_type(compiler,reg,receiver_set_index,
-        name,bindings,binding_count);
+    else {
+        int32_t effective_set=receiver_set_index;bool tooling_only=false;
+        if(effective_set<0) {
+            effective_set=compiler->tooling_type_sets[receiver];
+            tooling_only=effective_set>=0;
+        }
+        publish_union_instance_return_type(compiler,reg,effective_set,
+            name,bindings,binding_count,tooling_only);
+    }
     publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
 }
 
@@ -7320,8 +7663,10 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     memcpy(outer_types,compiler->known_types,outer_next_register);
     memcpy(outer_type_sets,compiler->known_type_sets,
         outer_next_register*sizeof *outer_type_sets);
+    const size_t outer_begin_depth=compiler->begin_depth;
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
+    compiler->begin_depth=0;
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     const size_t argument_count=typed_wrapper?wrapper->arity:1;
     for(size_t index=0;index<argument_count;index++)
@@ -7381,6 +7726,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
 
     compiler->function=outer_function;compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
+    compiler->begin_depth=outer_begin_depth;
     memcpy(compiler->known_types,outer_types,outer_next_register);
     memcpy(compiler->known_type_sets,outer_type_sets,
         outer_next_register*sizeof *outer_type_sets);
@@ -7583,7 +7929,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
             keyword_names,keyword_values,keyword_count,type_arguments,
             type_argument_count,has_block,block);
-        publish_instance_return_type(compiler,result,receiver_set_index,name,
+        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
             return_target,resolved_arguments,resolved_count);
         publish_collection_keyword_return_type(compiler,result,
             receiver_set_index,name,keyword_names,keyword_values,keyword_count);
@@ -7633,7 +7979,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
                     block);
-                publish_instance_return_type(compiler,result,
+                publish_instance_return_type(compiler,result,receiver,
                     receiver_set_index,name,return_target,resolved_arguments,
                     resolved_count);
                 return result;
@@ -7643,7 +7989,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         }
         const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
             spread,type_arguments,type_argument_count);
-        publish_instance_return_type(compiler,result,receiver_set_index,name,
+        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
             return_target,resolved_arguments,resolved_count);
         return result;
     }
@@ -7711,7 +8057,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             const uint16_t positional=emit_argument_array(compiler,args,count);
             const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
                 nullptr,nullptr,0,type_arguments,type_argument_count,true,block);
-            publish_instance_return_type(compiler,result,receiver_set_index,
+            publish_instance_return_type(compiler,result,receiver,receiver_set_index,
                 name,return_target,resolved_arguments,resolved_count);
             return result;
         }
@@ -7719,8 +8065,10 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     }
     const uint16_t result=emit_invoke_call(compiler,receiver,name,writer_name,
         type_arguments,type_argument_count,args,count);
-    publish_instance_return_type(compiler,result,receiver_set_index,name,
+    publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
         return_target,resolved_arguments,resolved_count);
+    publish_native_scalar_method_return_type(compiler,result,receiver,
+        receiver_set_index,name,(uint8_t)count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
     publish_array_push_return_type(compiler,result,mutation_receiver,name,args,
@@ -8154,6 +8502,21 @@ static void merge_flow_types(Compiler *compiler,uint8_t left_type,int32_t left_s
     *result_type=merged.count==1?merged.members[0].id:TYPE_UNKNOWN;
 }
 
+/* Tooling-only receiver facts are sometimes cloned independently while
+ * compiling separate control-flow arms. Their table indices then differ even
+ * though they describe the same receiver graph, so compare the graphs before
+ * conservatively discarding the fact at the join. */
+static int32_t merge_tooling_type_sets(const Compiler *compiler,int32_t left,
+        int32_t right) {
+    if(left==right)return left;
+    if(left<0||right<0||(size_t)left>=compiler->function->type_set_count||
+       (size_t)right>=compiler->function->type_set_count)return -1;
+    return type_sets_structurally_equal(compiler->function->type_sets,
+        compiler->function->type_set_count,(uint16_t)left,
+        compiler->function->type_sets,compiler->function->type_set_count,
+        (uint16_t)right,0)?left:-1;
+}
+
 /* Conservatively joins two control-flow alias-identity states for the same
  * local. Agreeing branches keep the shared identity; disagreeing branches
  * (including either being unaliased) detach to 0 rather than guessing which
@@ -8227,23 +8590,28 @@ static void merge_new_local_facts(Compiler *compiler,bool earlier_branch_exists,
 }
 
 static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
-        uint8_t result_type,int32_t result_set) {
+        uint8_t result_type,int32_t result_set,int32_t result_tooling_set) {
     if(!loop->exit_initialized) {
         for(size_t index=0;index<loop->flow_reg_count;index++) {
             loop->exit_types[index]=compiler->known_types[index];
             loop->exit_sets[index]=compiler->known_type_sets[index];
+            loop->exit_tooling_sets[index]=compiler->tooling_type_sets[index];
         }
         for(size_t index=0;index<loop->flow_local_count;index++)
             loop->exit_alias[index]=compiler->locals[index].alias_identity;
         merge_new_local_facts(compiler,false,loop->flow_local_count,
             &loop->new_local_count,loop->new_types,loop->new_sets,loop->new_alias);
         loop->result_type=result_type;loop->result_set=result_set;
+        loop->result_tooling_set=result_tooling_set;
         loop->exit_initialized=true;return;
     }
-    for(size_t index=0;index<loop->flow_reg_count;index++)
+    for(size_t index=0;index<loop->flow_reg_count;index++) {
         merge_flow_types(compiler,loop->exit_types[index],loop->exit_sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &loop->exit_types[index],&loop->exit_sets[index]);
+        loop->exit_tooling_sets[index]=merge_tooling_type_sets(compiler,
+            loop->exit_tooling_sets[index],compiler->tooling_type_sets[index]);
+    }
     for(size_t index=0;index<loop->flow_local_count;index++)
         loop->exit_alias[index]=merge_alias_identity(loop->exit_alias[index],
             compiler->locals[index].alias_identity);
@@ -8251,6 +8619,8 @@ static void merge_loop_exit(Compiler *compiler,LoopContext *loop,
         &loop->new_local_count,loop->new_types,loop->new_sets,loop->new_alias);
     merge_flow_types(compiler,loop->result_type,loop->result_set,
         result_type,result_set,&loop->result_type,&loop->result_set);
+    loop->result_tooling_set=merge_tooling_type_sets(compiler,
+        loop->result_tooling_set,result_tooling_set);
 }
 
 static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
@@ -8261,6 +8631,7 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
     for(size_t index=0;index<loop->flow_reg_count;index++) {
         compiler->known_types[index]=loop->exit_types[index];
         compiler->known_type_sets[index]=loop->exit_sets[index];
+        compiler->tooling_type_sets[index]=loop->exit_tooling_sets[index];
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
@@ -8269,16 +8640,15 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
         index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
         const size_t slot=index-loop->flow_local_count;
         const uint16_t reg=compiler->locals[index].reg;
-        const uint8_t old_type=compiler->known_types[reg];
-        const int32_t old_set=compiler->known_type_sets[reg];
         compiler->known_types[reg]=loop->new_types[slot];
         compiler->known_type_sets[reg]=loop->new_sets[slot];
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=loop->new_alias[slot];
-        if(old_type!=loop->new_types[slot]||old_set!=loop->new_sets[slot])
-            record_scope_type_fact(compiler,reg,effective_start);
+        record_scope_type_fact(compiler,reg,effective_start);
     }
     compiler->known_types[loop->result_register]=loop->result_type;
     compiler->known_type_sets[loop->result_register]=loop->result_set;
+    compiler->tooling_type_sets[loop->result_register]=loop->result_tooling_set;
 }
 
 /* Shared by parse_index (`x[i]` as an ordinary expression) and
@@ -8395,6 +8765,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
      * register. Bounded by DIAMOND_MAX_LOCALS (64) like before_alias/
      * then_alias above, so no malloc dance needed. */
     uint8_t then_new_types[DIAMOND_MAX_LOCALS];int32_t then_new_sets[DIAMOND_MAX_LOCALS];
+    int32_t then_new_tooling[DIAMOND_MAX_LOCALS];
     uint32_t then_new_alias[DIAMOND_MAX_LOCALS];
     /* Inline arrays cover the overwhelming majority of if/elsif sites (a
      * function rarely has more than 256 registers live before one) at no
@@ -8412,24 +8783,29 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
      * reproduced with a 260-line register-churning program. */
     uint8_t inline_before_types[256];int32_t inline_before_sets[256];
     uint8_t inline_then_types[256];int32_t inline_then_sets[256];
+    int32_t inline_before_tooling[256],inline_then_tooling[256];
     uint8_t *before_types=inline_before_types,*then_types=inline_then_types;
     int32_t *before_sets=inline_before_sets,*then_sets=inline_then_sets;
-    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;
+    int32_t *before_tooling=inline_before_tooling,*then_tooling=inline_then_tooling;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr,*heap_tooling=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
         heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
-        if(heap_types==nullptr||heap_sets==nullptr) {
+        heap_tooling=malloc(flow_reg_count*2*sizeof(int32_t));
+        if(heap_types==nullptr||heap_sets==nullptr||heap_tooling==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling if expression");
-            free(heap_types);free(heap_sets);
+            free(heap_types);free(heap_sets);free(heap_tooling);
             return destination;
         }
         before_types=heap_types;then_types=heap_types+flow_reg_count;
         before_sets=heap_sets;then_sets=heap_sets+flow_reg_count;
+        before_tooling=heap_tooling;then_tooling=heap_tooling+flow_reg_count;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
         before_types[index]=compiler->known_types[index];
         before_sets[index]=compiler->known_type_sets[index];
+        before_tooling[index]=compiler->tooling_type_sets[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         before_alias[index]=compiler->locals[index].alias_identity;
@@ -8440,9 +8816,11 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     const uint16_t then_result = compile_sequence(compiler);
     const uint8_t then_type=compiler->known_types[then_result];
     const int32_t then_set=compiler->known_type_sets[then_result];
+    const int32_t then_result_tooling=compiler->tooling_type_sets[then_result];
     for(size_t index=0;index<flow_reg_count;index++) {
         then_types[index]=compiler->known_types[index];
         then_sets[index]=compiler->known_type_sets[index];
+        then_tooling[index]=compiler->tooling_type_sets[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         then_alias[index]=compiler->locals[index].alias_identity;
@@ -8452,9 +8830,11 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t reg=compiler->locals[index].reg;
         then_new_types[index-flow_local_count]=compiler->known_types[reg];
         then_new_sets[index-flow_local_count]=compiler->known_type_sets[reg];
+        then_new_tooling[index-flow_local_count]=compiler->tooling_type_sets[reg];
         then_new_alias[index-flow_local_count]=compiler->locals[index].alias_identity;
         compiler->known_types[reg]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[reg]=-1;
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=0;
     }
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, then_result, 0, 2);
@@ -8464,6 +8844,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=before_types[index];
         compiler->known_type_sets[index]=before_sets[index];
+        compiler->tooling_type_sets[index]=before_tooling[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=before_alias[index];
@@ -8473,6 +8854,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             inverted?narrowing.when_true_count:narrowing.when_false_count);
 
     uint8_t false_result_type=DIAMOND_TYPE_NIL;int32_t false_result_set=-1;
+    int32_t false_result_tooling=-1;
     bool end_consumed=false;
     if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
         advance_token(compiler);
@@ -8480,6 +8862,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t else_result = compile_sequence(compiler);
         const uint8_t else_type=compiler->known_types[else_result];
         const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
         false_result_type=else_type;false_result_set=else_set;
     } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
@@ -8487,6 +8870,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         const uint16_t else_result=parse_if(compiler,false);
         const uint8_t else_type=compiler->known_types[else_result];
         const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
         false_result_type=else_type;false_result_set=else_set;
         end_consumed=true;
@@ -8500,8 +8884,10 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_types[index],then_sets[index],
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
-        if(register_is_local(compiler,(uint16_t)index)&&
-           (then_types[index]!=false_type||then_sets[index]!=false_set))
+        const int32_t false_tooling=compiler->tooling_type_sets[index];
+        compiler->tooling_type_sets[index]=merge_tooling_type_sets(compiler,
+            then_tooling[index],false_tooling);
+        if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);
     }
@@ -8524,6 +8910,8 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
             then_new_types[index-flow_local_count]:DIAMOND_TYPE_NIL;
         const int32_t then_side_set=index<then_local_count?
             then_new_sets[index-flow_local_count]:-1;
+        const int32_t then_side_tooling=index<then_local_count?
+            then_new_tooling[index-flow_local_count]:-1;
         const uint32_t then_side_alias=index<then_local_count?
             then_new_alias[index-flow_local_count]:0;
         const uint8_t false_type=compiler->known_types[reg];
@@ -8531,15 +8919,19 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
         merge_flow_types(compiler,then_side_type,then_side_set,
             false_type,false_set,&compiler->known_types[reg],
             &compiler->known_type_sets[reg]);
+        const int32_t false_tooling=compiler->tooling_type_sets[reg];
+        compiler->tooling_type_sets[reg]=merge_tooling_type_sets(compiler,
+            then_side_tooling,false_tooling);
         compiler->locals[index].alias_identity=
             merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
-        if(then_side_type!=false_type||then_side_set!=false_set)
-            record_scope_type_fact(compiler,reg,compiler->current.span.start);
+        record_scope_type_fact(compiler,reg,compiler->current.span.start);
     }
-    free(heap_types);free(heap_sets);
+    free(heap_types);free(heap_sets);free(heap_tooling);
     merge_flow_types(compiler,then_type,then_set,false_result_type,
         false_result_set,&compiler->known_types[destination],
         &compiler->known_type_sets[destination]);
+    compiler->tooling_type_sets[destination]=merge_tooling_type_sets(compiler,
+        then_result_tooling,false_result_tooling);
 
     if (!end_consumed&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after if expression");
@@ -8645,8 +9037,9 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     const size_t flow_local_count=compiler->local_count;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
     int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
-    if(exit_types==nullptr||exit_sets==nullptr) {
-        free(exit_types);free(exit_sets);
+    int32_t *exit_tooling_sets=malloc(flow_reg_count*sizeof(int32_t));
+    if(exit_types==nullptr||exit_sets==nullptr||exit_tooling_sets==nullptr) {
+        free(exit_types);free(exit_sets);free(exit_tooling_sets);
         fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
         compiler->loop_captures_pending=outer_loop_captures_pending;
         return destination;
@@ -8659,17 +9052,18 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
         .flow_reg_count=flow_reg_count,
         .exit_types=exit_types,
         .exit_sets=exit_sets,
+        .exit_tooling_sets=exit_tooling_sets,
         .flow_local_count=flow_local_count,
     };
     /* The condition may be false before the first iteration, so the entry
      * state and Nil result are always one real exit path. */
-    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1);
+    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1,-1);
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
     compiler->current_loop=loop.previous;
     /* A completed body reaches the condition again and may then exit. One
      * conservative source-level join is sufficient for advisory metadata. */
-    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1);
+    merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1,-1);
     compiler->loop_captures_pending=outer_loop_captures_pending;
     emit_absolute_jump(compiler, loop_start);
     patch_jump(compiler, exit_jump, compiler->function->code_count);
@@ -8678,7 +9072,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
 
     if (compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after while expression");
-        free(exit_types);free(exit_sets);
+        free(exit_types);free(exit_sets);free(exit_tooling_sets);
         return 0;
     }
     const size_t join_offset=compiler->current.span.start;
@@ -8687,9 +9081,12 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
      * (`while true` with only return/raise exits). Without constant-condition
      * reachability analysis, keep that result unknown instead of claiming Nil
      * and rejecting an otherwise valid enclosing return annotation. */
-    if(loop.break_count==0) {loop.result_type=TYPE_UNKNOWN;loop.result_set=-1;}
+    if(loop.break_count==0) {
+        loop.result_type=TYPE_UNKNOWN;loop.result_set=-1;
+        loop.result_tooling_set=-1;
+    }
     finish_loop_flow(compiler,&loop,join_offset);
-    free(exit_types);free(exit_sets);
+    free(exit_types);free(exit_sets);free(exit_tooling_sets);
     return destination;
 }
 
@@ -8707,8 +9104,9 @@ static uint16_t parse_loop(Compiler *compiler) {
     const size_t flow_local_count=compiler->local_count;
     uint8_t *exit_types=malloc(flow_reg_count*sizeof(uint8_t));
     int32_t *exit_sets=malloc(flow_reg_count*sizeof(int32_t));
-    if(exit_types==nullptr||exit_sets==nullptr) {
-        free(exit_types);free(exit_sets);
+    int32_t *exit_tooling_sets=malloc(flow_reg_count*sizeof(int32_t));
+    if(exit_types==nullptr||exit_sets==nullptr||exit_tooling_sets==nullptr) {
+        free(exit_types);free(exit_sets);free(exit_tooling_sets);
         fail(compiler,compiler->previous.span,"out of memory compiling loop flow");
         compiler->loop_captures_pending=outer_loop_captures_pending;
         return destination;
@@ -8717,6 +9115,7 @@ static uint16_t parse_loop(Compiler *compiler) {
         .continue_target=body_start,.redo_target=body_start,
         .result_register=destination,.flow_reg_count=flow_reg_count,
         .exit_types=exit_types,.exit_sets=exit_sets,
+        .exit_tooling_sets=exit_tooling_sets,
         .flow_local_count=flow_local_count};
     compiler->current_loop=&loop;
     (void)compile_sequence(compiler);
@@ -8727,13 +9126,13 @@ static uint16_t parse_loop(Compiler *compiler) {
         patch_jump(compiler,loop.breaks[index],compiler->function->code_count);
     if(compiler->current.kind!=DIAMOND_TOKEN_END) {
         fail(compiler,compiler->current.span,"expected 'end' after loop");
-        free(exit_types);free(exit_sets);
+        free(exit_types);free(exit_sets);free(exit_tooling_sets);
         return destination;
     }
     const size_t join_offset=compiler->current.span.start;
     advance_token(compiler);
     finish_loop_flow(compiler,&loop,join_offset);
-    free(exit_types);free(exit_sets);return destination;
+    free(exit_types);free(exit_sets);free(exit_tooling_sets);return destination;
 }
 
 static uint16_t parse_prefix(Compiler *compiler) {
@@ -8991,10 +9390,12 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
 typedef struct CaseFlowJoin {
     uint8_t *types;
     int32_t *sets;
+    int32_t *tooling_sets;
     bool *varied;
     bool initialized;
     uint8_t result_type;
     int32_t result_set;
+    int32_t result_tooling_set;
     /* Bounded by DIAMOND_MAX_LOCALS (64), unlike types/sets/varied above,
      * so these travel inline with no malloc dance. */
     uint32_t alias[DIAMOND_MAX_LOCALS];
@@ -9013,6 +9414,46 @@ typedef struct CaseFlowJoin {
     int32_t new_sets[DIAMOND_MAX_LOCALS];
     uint32_t new_alias[DIAMOND_MAX_LOCALS];
 } CaseFlowJoin;
+
+/* Tracks whether every member of a `case` subject's known closed type is
+ * covered by some unguarded `when` branch, so reaching `end` with no
+ * `else` and an uncovered member is a compile error instead of silently
+ * returning Nil (see parse_case). `required_ids` is populated from either
+ * of two independent sources, never both at once:
+ *
+ * - an explicit multi-member union (compiler->known_type_sets[subject]
+ *   >=0) whose every member is either Nil or a concrete user class -- a
+ *   union containing any native scalar/container type, generic variable,
+ *   or interface member has no current `when` syntax that can prove
+ *   "this whole member is covered" (native type names aren't class-
+ *   pattern values -- see docs/core-syntax.md's Case/when section), so
+ *   such a case is left exactly as unchecked as it is today rather than
+ *   either inventing new pattern syntax or producing false positives;
+ * - a single (non-union) subject type naming a `sealed` class -- every
+ *   *direct* subclass of it (found via a linear scan of compiler->
+ *   program->classes[] for a matching `.superclass`), never recursed
+ *   further, since `when Circle` already matches Circle-or-any-of-its-
+ *   own-subclasses at runtime (CASE_MATCH) regardless of this feature.
+ *   Only meaningful because a sealed class can't be instantiated
+ *   directly (see the `.new`-dispatch site in src/compiler.c) -- with no
+ *   possible direct-Shape instance, every runtime value is provably one
+ *   of these direct subclasses (or deeper), so enumerating just them is
+ *   sound. Not composed with the union case above: a union containing a
+ *   sealed class as one of several members does not recursively expand
+ *   into that member's own subclasses.
+ *
+ * Deliberately conservative in one more way, for both sources: only a
+ * bare class-name/`nil` *scalar* `when` value marks a member covered,
+ * never an Array/Hash/Object structural pattern (even an empty `Class{}`
+ * class-only guard) and never a guarded `when ... if` clause -- see
+ * parse_case_branches' own comment at the point this is populated. */
+typedef struct CaseExhaustiveness {
+    bool active;
+    uint8_t required_ids[DIAMOND_MAX_UNION_TYPES];
+    uint8_t required_count;
+    bool covered[DIAMOND_MAX_UNION_TYPES];
+    DiamondSpan case_span;
+} CaseExhaustiveness;
 
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
@@ -9530,15 +9971,18 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         size_t flow_reg_count,size_t flow_local_count,uint16_t branch_result) {
     const uint8_t branch_result_type=compiler->known_types[branch_result];
     const int32_t branch_result_set=compiler->known_type_sets[branch_result];
+    const int32_t branch_result_tooling=compiler->tooling_type_sets[branch_result];
     if(!join->initialized) {
         for(size_t index=0;index<flow_reg_count;index++) {
             join->types[index]=compiler->known_types[index];
             join->sets[index]=compiler->known_type_sets[index];
+            join->tooling_sets[index]=compiler->tooling_type_sets[index];
         }
         for(size_t index=0;index<flow_local_count;index++)
             join->alias[index]=compiler->locals[index].alias_identity;
         merge_case_new_locals(compiler,join,flow_local_count);
         join->result_type=branch_result_type;join->result_set=branch_result_set;
+        join->result_tooling_set=branch_result_tooling;
         join->initialized=true;return;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
@@ -9547,6 +9991,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
         merge_flow_types(compiler,join->types[index],join->sets[index],
             compiler->known_types[index],compiler->known_type_sets[index],
             &join->types[index],&join->sets[index]);
+        join->tooling_sets[index]=merge_tooling_type_sets(compiler,
+            join->tooling_sets[index],compiler->tooling_type_sets[index]);
     }
     for(size_t index=0;index<flow_local_count;index++)
         join->alias[index]=merge_alias_identity(join->alias[index],
@@ -9554,6 +10000,8 @@ static void merge_case_branch(Compiler *compiler,CaseFlowJoin *join,
     merge_case_new_locals(compiler,join,flow_local_count);
     merge_flow_types(compiler,join->result_type,join->result_set,
         branch_result_type,branch_result_set,&join->result_type,&join->result_set);
+    join->result_tooling_set=merge_tooling_type_sets(compiler,
+        join->result_tooling_set,branch_result_tooling);
 }
 
 static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
@@ -9562,7 +10010,8 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=join->types[index];
         compiler->known_type_sets[index]=join->sets[index];
-        if(join->varied[index]&&register_is_local(compiler,(uint16_t)index))
+        compiler->tooling_type_sets[index]=join->tooling_sets[index];
+        if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,effective_start);
     }
     for(size_t index=0;index<flow_local_count;index++)
@@ -9572,16 +10021,15 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
         index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
         const size_t slot=index-flow_local_count;
         const uint16_t reg=compiler->locals[index].reg;
-        const uint8_t old_type=compiler->known_types[reg];
-        const int32_t old_set=compiler->known_type_sets[reg];
         compiler->known_types[reg]=join->new_types[slot];
         compiler->known_type_sets[reg]=join->new_sets[slot];
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=join->new_alias[slot];
-        if(old_type!=join->new_types[slot]||old_set!=join->new_sets[slot])
-            record_scope_type_fact(compiler,reg,effective_start);
+        record_scope_type_fact(compiler,reg,effective_start);
     }
     compiler->known_types[destination]=join->result_type;
     compiler->known_type_sets[destination]=join->result_set;
+    compiler->tooling_type_sets[destination]=join->result_tooling_set;
 }
 
 /* Compiles one `when`/`else`/`end` branch of a case expression and
@@ -9593,8 +10041,8 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * the whole chain, so every level's jump converges on that same address
  * without this function needing to collect and patch a jump list itself.
  *
- * `entry_types`/`entry_sets` (a snapshot of compiler->known_types/
- * known_type_sets taken once, in parse_case, before the first branch)
+ * `entry_types`/`entry_sets`/`entry_tooling` (snapshots of the three
+ * corresponding compiler fact arrays taken once, in parse_case, before the first branch)
  * gets restored at the top of every call -- a when-clause's values and
  * body are compiled as though no earlier when-clause's (also-compiled,
  * possibly-speculative) body actually ran, mirroring why parse_if resets
@@ -9603,12 +10051,14 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
  * unions parse_if uses; a missing else contributes the entry state and Nil. */
 static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         size_t flow_reg_count, const uint8_t *entry_types,
-        const int32_t *entry_sets, size_t flow_local_count,
+        const int32_t *entry_sets,const int32_t *entry_tooling,
+        size_t flow_local_count,
         const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
-        bool subjectless) {
+        bool subjectless,CaseExhaustiveness *exhaustiveness) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
+        compiler->tooling_type_sets[index]=entry_tooling[index];
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=entry_alias[index];
@@ -9625,6 +10075,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         const uint16_t reg=compiler->locals[index].reg;
         compiler->known_types[reg]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[reg]=-1;
+        compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=0;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
@@ -9645,6 +10096,17 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         return destination;
     }
     if(compiler->current.kind==DIAMOND_TOKEN_END) {
+        if(exhaustiveness->active) {
+            bool all_covered=true;
+            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
+                if(!exhaustiveness->covered[member]){all_covered=false;break;}
+            if(!all_covered) {
+                fail(compiler,exhaustiveness->case_span,
+                    "case is not exhaustive over its subject's known closed "
+                    "type -- add a branch for the missing type(s), or an 'else'");
+                return destination;
+            }
+        }
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
         compiler->known_types[destination]=DIAMOND_TYPE_NIL;
         compiler->known_type_sets[destination]=-1;
@@ -9669,6 +10131,11 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
      * implements Range inclusion, Regexp search, class/subclass matching,
      * and ordinary/custom equality fallback in one runtime operation. */
     const uint16_t match_reg=allocate_register(compiler);
+    /* Type ids this `when` clause covers unconditionally, for
+     * exhaustiveness -- only ever populated by the scalar (non-array-
+     * pattern) branch below, and only kept if this clause turns out to
+     * have no `if` guard (see the guard-handling block further down). */
+    uint8_t covered_ids[DIAMOND_MAX_UNION_TYPES]={0};size_t covered_id_count=0;
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
     CaseBinding bindings[64]={};size_t binding_count=0;
     DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
@@ -9747,9 +10214,18 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             const int pattern_class=
                 probe_case_pattern_class(compiler,&after_pattern);
             if(pattern_class>=0&&after_pattern!=DIAMOND_TOKEN_DOT&&
-               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE)
+               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE) {
                 value_reg=compile_case_pattern_class(compiler,pattern_class);
-            else value_reg=parse_expression(compiler);
+                if(covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                    covered_ids[covered_id_count++]=
+                        (uint8_t)(DIAMOND_TYPE_CLASS_BASE+pattern_class);
+            } else {
+                value_reg=parse_expression(compiler);
+                if(compiler->known_types[value_reg]==DIAMOND_TYPE_NIL&&
+                   compiler->known_type_sets[value_reg]<0&&
+                   covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                    covered_ids[covered_id_count++]=DIAMOND_TYPE_NIL;
+            }
             const uint16_t eq_reg=allocate_register(compiler);
             if(subjectless) {
                 emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);
@@ -9778,7 +10254,17 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,guard,0,2);
         emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,match_reg,0,2);
         patch_jump(compiler,skip_guard,compiler->function->code_count);
+        /* A guard can reject an otherwise-matching pattern at runtime, so
+         * a guarded `when` never proves a type is unconditionally
+         * covered -- see CaseExhaustiveness's own comment. */
+        covered_id_count=0;
     }
+    if(exhaustiveness->active)
+        for(size_t covered_index=0;covered_index<covered_id_count;covered_index++)
+            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
+                if(exhaustiveness->required_ids[member]==
+                        covered_ids[covered_index])
+                    exhaustiveness->covered[member]=true;
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
@@ -9789,8 +10275,9 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
     const size_t end_jump=emit_jump(compiler,DIAMOND_OP_JUMP,0);
     patch_jump(compiler,false_jump,compiler->function->code_count);
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
-        entry_alias,destination,join,subjectless);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,entry_tooling,
+        flow_local_count,
+        entry_alias,destination,join,subjectless,exhaustiveness);
     patch_jump(compiler,end_jump,compiler->function->code_count);
     return result;
 }
@@ -9803,6 +10290,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
  * Array/Hash binding patterns combine non-raising shape/key checks, INDEX_GET,
  * and CASE_MATCH, then commit their bindings only on the successful path. */
 static uint16_t parse_case(Compiler *compiler) {
+    const DiamondSpan case_span=compiler->previous.span;
     const bool subjectless=compiler->current.kind==DIAMOND_TOKEN_NEWLINE;
     uint16_t subject=0;
     if(subjectless) {
@@ -9813,6 +10301,81 @@ static uint16_t parse_case(Compiler *compiler) {
     } else {
         subject=parse_expression(compiler);
         skip_newlines(compiler);
+    }
+    /* Only ever active outside the discovery pass -- a forward-referenced
+     * class in the subject's own union type annotation may not be known
+     * yet during discovery (see resolve_type_name's own comment for the
+     * same, pre-existing concern), so checking here could fail() based on
+     * incomplete information even though the real, second pass -- which
+     * always runs with every declaration already known -- would not.
+     * fail() only remembers the first failure, so a false positive here
+     * would incorrectly abort compilation before the real pass ever gets
+     * a chance to see the complete picture. */
+    CaseExhaustiveness exhaustiveness={0};
+    /* A *genuine* multi-member union (`set->count>1`) is the only signal
+     * that activates the explicit-union path below -- a plain, single-
+     * type annotation (`shape: Shape`, no `|` at all) still gets
+     * represented as a `known_type_sets[subject]>=0` trivial one-member
+     * DiamondTypeSet internally (confirmed empirically: known_types[reg]
+     * held the real concrete class id, not TYPE_UNKNOWN, even while
+     * known_type_sets[reg] was also >=0), so `known_type_sets[subject]
+     * >=0` alone is NOT a reliable "this is a real union" test on its
+     * own -- checking `set->count>1` is what actually distinguishes the
+     * two, and is why this and the sealed-single-type branch below are
+     * both plain `if`s (never else-if): whichever one's own precise
+     * condition matches is the only one that can ever activate. */
+    if(!subjectless&&!compiler->discovery_pass&&compiler->known_type_sets[subject]>=0) {
+        const DiamondTypeSet *set=
+            &compiler->function->type_sets[(uint16_t)compiler->known_type_sets[subject]];
+        bool exhaustible=set->count>1;
+        for(uint8_t member=0;member<set->count&&exhaustible;member++) {
+            const uint8_t id=set->members[member].id;
+            if(id!=DIAMOND_TYPE_NIL&&
+               !(id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES))
+                exhaustible=false;
+        }
+        if(exhaustible) {
+            exhaustiveness.active=true;
+            exhaustiveness.required_count=set->count;
+            for(uint8_t member=0;member<set->count;member++)
+                exhaustiveness.required_ids[member]=set->members[member].id;
+            exhaustiveness.case_span=case_span;
+        }
+    }
+    if(!exhaustiveness.active&&!subjectless&&!compiler->discovery_pass&&
+       compiler->known_types[subject]>=DIAMOND_TYPE_CLASS_BASE&&
+       compiler->known_types[subject]<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES&&
+       compiler->program->classes[
+           compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE].sealed) {
+        /* A single (non-union) subject type naming a sealed class --
+         * every direct subclass is required, found by a plain linear
+         * scan since discovery has already registered every class in
+         * the whole (flat-compiled) program by the time the real pass
+         * reaches here. Sound specifically because a sealed class can't
+         * be instantiated directly (see the `.new`-dispatch site) -- no
+         * stray direct-Shape instance could ever fall through uncovered. */
+        uint8_t required_ids[DIAMOND_MAX_UNION_TYPES];
+        size_t direct_subclass_count=0;
+        for(size_t candidate=0;candidate<compiler->program->class_count;candidate++) {
+            if(compiler->program->classes[candidate].superclass!=
+                    compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE)
+                continue;
+            /* Counted unconditionally, past DIAMOND_MAX_UNION_TYPES too --
+             * a >8-direct-subclass hierarchy must be detected as such and
+             * left unchecked, not silently truncated to its first 8
+             * (which would be unsound: the check would then believe
+             * exactly those 8 were the whole set). */
+            if(direct_subclass_count<DIAMOND_MAX_UNION_TYPES)
+                required_ids[direct_subclass_count]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+candidate);
+            direct_subclass_count++;
+        }
+        if(direct_subclass_count>0&&direct_subclass_count<=DIAMOND_MAX_UNION_TYPES) {
+            exhaustiveness.active=true;
+            exhaustiveness.required_count=(uint8_t)direct_subclass_count;
+            for(size_t member=0;member<direct_subclass_count;member++)
+                exhaustiveness.required_ids[member]=required_ids[member];
+            exhaustiveness.case_span=case_span;
+        }
     }
     const uint16_t destination=allocate_register(compiler);
     const size_t flow_reg_count=compiler->next_register;
@@ -9826,40 +10389,48 @@ static uint16_t parse_case(Compiler *compiler) {
      * here otherwise. */
     uint8_t inline_entry_types[256],inline_join_types[256];
     int32_t inline_entry_sets[256],inline_join_sets[256];
+    int32_t inline_entry_tooling[256],inline_join_tooling[256];
     bool inline_varied[256]={};
     uint8_t *entry_types=inline_entry_types;int32_t *entry_sets=inline_entry_sets;
     uint8_t *join_types=inline_join_types;int32_t *join_sets=inline_join_sets;
+    int32_t *entry_tooling=inline_entry_tooling,*join_tooling=inline_join_tooling;
     bool *varied=inline_varied;
-    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr;bool *heap_varied=nullptr;
+    uint8_t *heap_types=nullptr;int32_t *heap_sets=nullptr,*heap_tooling=nullptr;
+    bool *heap_varied=nullptr;
     if(flow_reg_count>256) {
         heap_types=malloc(flow_reg_count*2*sizeof(uint8_t));
         heap_sets=malloc(flow_reg_count*2*sizeof(int32_t));
+        heap_tooling=malloc(flow_reg_count*2*sizeof(int32_t));
         heap_varied=calloc(flow_reg_count,sizeof(bool));
-        if(heap_types==nullptr||heap_sets==nullptr||heap_varied==nullptr) {
+        if(heap_types==nullptr||heap_sets==nullptr||heap_tooling==nullptr||
+           heap_varied==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling case expression");
-            free(heap_types);free(heap_sets);free(heap_varied);
+            free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
             return destination;
         }
         entry_types=heap_types;join_types=heap_types+flow_reg_count;
         entry_sets=heap_sets;join_sets=heap_sets+flow_reg_count;varied=heap_varied;
+        entry_tooling=heap_tooling;join_tooling=heap_tooling+flow_reg_count;
     }
     for(size_t index=0;index<flow_reg_count;index++) {
         entry_types[index]=compiler->known_types[index];
         entry_sets[index]=compiler->known_type_sets[index];
+        entry_tooling[index]=compiler->tooling_type_sets[index];
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
         fail(compiler,compiler->current.span,
              "expected 'when' after case expression");
-        free(heap_types);free(heap_sets);free(heap_varied);
+        free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
         return destination;
     }
-    CaseFlowJoin join={.types=join_types,.sets=join_sets,.varied=varied,
-        .result_type=TYPE_UNKNOWN,.result_set=-1};
+    CaseFlowJoin join={.types=join_types,.sets=join_sets,
+        .tooling_sets=join_tooling,.varied=varied,
+        .result_type=TYPE_UNKNOWN,.result_set=-1,.result_tooling_set=-1};
     const uint16_t result=parse_case_branches(
-        compiler,subject,flow_reg_count,entry_types,entry_sets,flow_local_count,
-        entry_alias,destination,&join,subjectless);
-    free(heap_types);free(heap_sets);free(heap_varied);
+        compiler,subject,flow_reg_count,entry_types,entry_sets,entry_tooling,
+        flow_local_count,entry_alias,destination,&join,subjectless,&exhaustiveness);
+    free(heap_types);free(heap_sets);free(heap_tooling);free(heap_varied);
     return result;
 }
 
@@ -10316,6 +10887,8 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
         compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+        compiler->current.kind == DIAMOND_TOKEN_SEALED ||
+        compiler->current.kind == DIAMOND_TOKEN_STRUCT ||
         compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
         compiler->current.kind == DIAMOND_TOKEN_MODULE) {
         return DIAMOND_TOKEN_EOF;
@@ -10548,6 +11121,60 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
     return destination;
 }
 
+/* If the most recently emitted plain CALL (tracked precisely at emission
+ * time by parse_call -- see compiler->last_plain_call_* fields' own
+ * comment for why this is sound and a byte-guessing alternative was not)
+ * is still exactly the last thing emitted for the function currently
+ * being compiled, its own destination is exactly `return_value_register`,
+ * and its own target is this same function (self-recursion), rewrites
+ * that CALL's opcode byte to DIAMOND_OP_TAIL_CALL in place -- see that
+ * opcode's own comment (src/vm.h) for the runtime side and the full
+ * eligibility rule. Called from every site about to emit a RETURN for an
+ * ordinary user function body (an explicit `return EXPR`, or a body's own
+ * trailing implicit return) -- harmless, silent no-op whenever nothing
+ * eligible was just emitted, so it's safe to call unconditionally rather
+ * than needing each call site to first prove its own context is eligible.
+ *
+ * Deliberately excludes: any call inside a begin/rescue/ensure block
+ * (compiler->begin_depth>0 -- a live handler's own jump target is an
+ * offset into the *current* chunk's bytecode, which reusing the same
+ * run_chunk invocation for "the next iteration" must never invalidate);
+ * a generic function's own self-call (compiler->function->type_variable_
+ * count>0 -- re-deriving per-call type-variable bindings for a looped-
+ * back call, the way run_chunk's own entry-time inference already does
+ * once per real call, is real, separate complexity not attempted here);
+ * and, structurally, anything that isn't a plain positional CALL to
+ * *this exact* function (a method/singleton call, a CALL_TYPED generic
+ * call, or a call to any other function, self-recursive or not, all use
+ * a different opcode, a different function_index, or never touch
+ * last_plain_call_* at all). */
+static void maybe_rewrite_self_tail_call(Compiler *compiler,
+        uint16_t return_value_register) {
+    if(compiler->begin_depth>0)return;
+    if(compiler->function->type_variable_count>0)return;
+    /* A variadic function's own overflow arguments (beyond its fixed
+     * arity) live in run_chunk's own `arguments`/`argument_count`
+     * parameters, read directly by DIAMOND_OP_COLLECT_VARIADIC -- values
+     * fixed at this *original* call's own entry, not something a tail
+     * call reusing the same run_chunk invocation could actually update.
+     * Excluding has_variadic entirely sidesteps that hazard, and as a
+     * side effect keeps call_argument_count bounded by DIAMOND_MAX_
+     * DECLARED_PARAMETERS for every function this can still rewrite
+     * (a non-variadic function's own arity is already capped there) --
+     * exactly what run_chunk's own TAIL_CALL handling sizes its
+     * argument-staging buffer to. */
+    if(compiler->function->has_variadic)return;
+    if(compiler->last_plain_call_function!=compiler->function)return;
+    if(compiler->last_plain_call_code_count!=compiler->function->code_count)
+        return;
+    if(compiler->last_plain_call_destination!=return_value_register)return;
+    const uint16_t function_index=compiler->last_plain_call_function_index;
+    if((size_t)function_index>=compiler->program->function_count)return;
+    if(compiler->program->functions[function_index]!=compiler->function)return;
+    compiler->function->code[compiler->last_plain_call_offset]=
+        DIAMOND_OP_TAIL_CALL;
+}
+
 static uint16_t compile_return(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     if(!compiler->in_function) {
@@ -10574,6 +11201,20 @@ static uint16_t compile_return(Compiler *compiler) {
     if(compiler->current_return_type>=0)
         emit_type_check(compiler,value,(uint8_t)compiler->current_return_type,
                         compiler->current_return_type_span);
+    /* See return_flow_seen's own comment (the Compiler struct) --
+     * compile_definition's inference reads this back once the whole body
+     * finishes compiling; harmless to keep accumulating even when an
+     * explicit `-> Type` annotation already makes that inference moot. */
+    if(!compiler->return_flow_seen) {
+        compiler->return_flow_type=compiler->known_types[value];
+        compiler->return_flow_set=compiler->known_type_sets[value];
+        compiler->return_flow_seen=true;
+    } else {
+        merge_flow_types(compiler,compiler->return_flow_type,compiler->return_flow_set,
+            compiler->known_types[value],compiler->known_type_sets[value],
+            &compiler->return_flow_type,&compiler->return_flow_set);
+    }
+    maybe_rewrite_self_tail_call(compiler,value);
     emit_instruction(compiler,DIAMOND_OP_RETURN,value,0,0,1);
     return value;
 }
@@ -10693,6 +11334,7 @@ static void record_scope_locals(Compiler *compiler,size_t start_index,
         recorded->reg=local->reg;
         recorded->known_type=compiler->known_types[local->reg];
         recorded->known_type_set=compiler->known_type_sets[local->reg];
+        recorded->tooling_type_set=compiler->tooling_type_sets[local->reg];
     }
 }
 
@@ -10704,11 +11346,13 @@ static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         &function->scope_type_facts[function->scope_type_fact_count++];
     *fact=(DiamondScopeTypeFact){.reg=reg,.effective_start=effective_start,
         .known_type=compiler->known_types[reg],
-        .known_type_set=compiler->known_type_sets[reg]};
+        .known_type_set=compiler->known_type_sets[reg],
+        .tooling_type_set=compiler->tooling_type_sets[reg]};
 }
 
 static uint16_t compile_begin(Compiler *compiler) {
     if(!consume_block_start(compiler))return 0;
+    compiler->begin_depth++;
     const size_t ensure_operand=compiler->function->code_count+1;
     emit_opcode(compiler,DIAMOND_OP_PUSH_ENSURE);
     emit_byte(compiler,0);emit_byte(compiler,0);
@@ -10859,6 +11503,7 @@ static uint16_t compile_begin(Compiler *compiler) {
     }
     advance_token(compiler);
     patch_jump(compiler,continuation_operand,compiler->function->code_count);
+    compiler->begin_depth--;
     return destination;
 }
 
@@ -10905,14 +11550,17 @@ static uint16_t compile_loop_control(Compiler *compiler) {
             return 0;
         }
         uint8_t break_type=DIAMOND_TYPE_NIL;int32_t break_set=-1;
+        int32_t break_tooling_set=-1;
         if(actual_value) {
             const uint16_t value=parse_expression(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,
                              compiler->current_loop->result_register,value,0,2);
             break_type=compiler->known_types[value];
             break_set=compiler->known_type_sets[value];
+            break_tooling_set=compiler->tooling_type_sets[value];
         }
-        merge_loop_exit(compiler,compiler->current_loop,break_type,break_set);
+        merge_loop_exit(compiler,compiler->current_loop,break_type,break_set,
+            break_tooling_set);
         compiler->current_loop->breaks[compiler->current_loop->break_count++]=
             emit_jump(compiler,DIAMOND_OP_JUMP,0);
     } else if(kind==DIAMOND_TOKEN_NEXT) {
@@ -10973,9 +11621,24 @@ static uint16_t compile_block(Compiler *compiler) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
-    function->owner_class=UINT8_MAX;
+    /* UINT8_MAX-2, compile_definition's own "self via capture" sentinel
+     * (see its own extensive comment on this exact value), when this
+     * block is written somewhere `self` already exists -- materialized
+     * into its own register 0 below, the same way a `closure name()
+     * ... end` (captures_self) already does; call_closure_helper
+     * (src/vm.c) already shifts real arguments to register 1+ for any
+     * owner_class!=UINT8_MAX callable, so reusing that exact sentinel
+     * here needs no further runtime changes at all. compiler->in_method
+     * is deliberately left untouched anywhere in this function (still
+     * whatever the enclosing function had) -- that's already why `self`
+     * was never a *compile-time* error inside a block written in a
+     * method; only *which* value ended up in register 0 was wrong
+     * before this fix (the block's own first real parameter, since
+     * nothing reserved register 0 for self at all). */
+    function->owner_class=compiler->in_method?UINT8_MAX-2:UINT8_MAX;
     function->nested=true;
     static const char block_name[]="<block>";
     for(size_t index=0;index<sizeof(block_name);index++)
@@ -10995,6 +11658,7 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
@@ -11002,6 +11666,16 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    /* See return_flow_seen's own comment (the Compiler struct): a
+     * `return` inside this block's own body belongs to the block, not
+     * whatever function is being compiled around it -- reset before
+     * compiling the block's body, restore the outer function's own
+     * accumulated state after, the same save/reset/restore every other
+     * per-function field on this list already gets. */
+    const bool outer_return_flow_seen=compiler->return_flow_seen;
+    const uint8_t outer_return_flow_type=compiler->return_flow_type;
+    const int32_t outer_return_flow_set=compiler->return_flow_set;
+    compiler->return_flow_seen=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
@@ -11018,29 +11692,54 @@ static uint16_t compile_block(Compiler *compiler) {
      * a block can appear after arbitrarily many registers have already
      * been allocated in the enclosing function body. */
     uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
+    int32_t inline_outer_tooling_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
     int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    int32_t *outer_tooling_type_sets=inline_outer_tooling_type_sets;
     uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
+    int32_t *heap_outer_tooling_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
             malloc((size_t)outer_next_register*sizeof(int32_t));
-        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+        heap_outer_tooling_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int32_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr||
+           heap_outer_tooling_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,"out of memory compiling block");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            free(heap_outer_tooling_type_sets);
             return 0;
         }
         outer_known_types=heap_outer_known_types;
         outer_known_type_sets=heap_outer_known_type_sets;
+        outer_tooling_type_sets=heap_outer_tooling_type_sets;
     }
     for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
-         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+         outer_known_type_sets[index]=compiler->known_type_sets[index];
+         outer_tooling_type_sets[index]=compiler->tooling_type_sets[index];}
     uint16_t captured_fact_registers[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
         captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
 
+    /* Copy self into a fresh register of the *enclosing* function and box
+     * that copy, exactly mirroring compile_definition's own captures_self
+     * handling (see its own comment for why a copy, not boxing register 0
+     * itself in place: every self/@ivar access elsewhere in the enclosing
+     * method hardcodes literal register 0 unconditionally, so boxing it
+     * directly would corrupt every one of those). Still in the enclosing
+     * function's own compiler state here -- compiler->function hasn't
+     * switched yet. */
+    uint16_t self_copy_register=0;
+    if(compiler->in_method) {
+        self_copy_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
+    }
+
     compiler->function = function;
+    compiler->begin_depth=0;
     uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
     if(contextual_return_set>=0&&
        (size_t)contextual_return_set<outer_function->type_set_count)
@@ -11065,6 +11764,26 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->capture_count=compiler->enclosing_local_count;
         for(size_t i=0;i<compiler->capture_count;i++)
             compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+    }
+    /* Materialize the captured self (see self_copy_register above) into
+     * this block's own register 0 -- guaranteed to land there since
+     * next_register was just reset to 0 above and nothing else has
+     * allocated from it yet, exactly mirroring compile_definition's own
+     * captures_self materialization (see its own comment). Every self/
+     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
+     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
+     * register 0 unconditionally, so this is what makes all of those work
+     * unmodified inside a block body too. */
+    if(function->owner_class==UINT8_MAX-2) {
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
+            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
     }
 
     /* `|x, y|` -- bare identifiers only, no type annotations, no default
@@ -11188,6 +11907,15 @@ static uint16_t compile_block(Compiler *compiler) {
                     if(cloned!=DIAMOND_NO_TYPE_SET)
                         compiler->known_type_sets[cell]=(int32_t)cloned;
                 }
+                const int32_t tooling_set=outer_tooling_type_sets[source];
+                if(tooling_set>=0&&
+                   (size_t)tooling_set<outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)tooling_set);
+                    if(cloned!=DIAMOND_NO_TYPE_SET)
+                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
+                }
             }
         }
     }
@@ -11240,14 +11968,18 @@ static uint16_t compile_block(Compiler *compiler) {
 
     uint8_t captured_fact_types[DIAMOND_MAX_LOCALS];
     int32_t captured_fact_sets[DIAMOND_MAX_LOCALS];
+    int32_t captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<outer_local_count;index++) {
         const uint16_t reg=captured_fact_registers[index];
         captured_fact_types[index]=reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:
             compiler->known_types[reg];
         captured_fact_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
             compiler->known_type_sets[reg];
+        captured_fact_tooling_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
+            compiler->tooling_type_sets[reg];
     }
     compiler->function = outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
         compiler->locals[index] = outer_locals[index];
@@ -11262,6 +11994,9 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
+    compiler->return_flow_seen=outer_return_flow_seen;
+    compiler->return_flow_type=outer_return_flow_type;
+    compiler->return_flow_set=outer_return_flow_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
@@ -11273,7 +12008,8 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<outer_next_register;index++)
         {compiler->known_types[index]=outer_known_types[index];
-         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+         compiler->known_type_sets[index]=outer_known_type_sets[index];
+         compiler->tooling_type_sets[index]=outer_tooling_type_sets[index];}
     for(size_t index=0;index<outer_local_count;index++) {
         if(captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
         const uint16_t source=outer_locals[index].reg;
@@ -11288,9 +12024,20 @@ static uint16_t compile_block(Compiler *compiler) {
             if(cloned!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[source]=(int32_t)cloned;
         }
+        const int32_t inner_tooling_set=captured_fact_tooling_sets[index];
+        compiler->tooling_type_sets[source]=-1;
+        if(inner_tooling_set>=0&&
+           (size_t)inner_tooling_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_tooling_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->tooling_type_sets[source]=(int32_t)cloned;
+        }
         record_scope_type_fact(compiler,source,compiler->current.span.start);
     }
     free(heap_outer_known_types);free(heap_outer_known_type_sets);
+    free(heap_outer_tooling_type_sets);
 
     /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
      * now that compiler->function/locals have been restored -- same
@@ -11428,6 +12175,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         return 0;
     }
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     /* current_class/current_module are compiler-wide "lexically inside a
@@ -11583,6 +12331,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
         compiler->current_block_register;
@@ -11590,6 +12339,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->current_block_type_set;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
+    /* See return_flow_seen's own comment (the Compiler struct): reset
+     * before compiling this def's own body, restore the outer function's
+     * (if any -- a top-level def has none live) accumulated state after,
+     * so a nested def's own returns never leak into an enclosing one's
+     * inference or vice versa. */
+    const bool outer_return_flow_seen=compiler->return_flow_seen;
+    const uint8_t outer_return_flow_type=compiler->return_flow_type;
+    const int32_t outer_return_flow_set=compiler->return_flow_set;
+    compiler->return_flow_seen=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
@@ -11610,25 +12368,34 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * own (unrelated, register-index-0-based) body happened to write into
      * those same slots after this function returns. */
     uint8_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
+    int32_t inline_outer_tooling_type_sets[256];
     uint8_t *outer_known_types=inline_outer_known_types;
     int32_t *outer_known_type_sets=inline_outer_known_type_sets;
+    int32_t *outer_tooling_type_sets=inline_outer_tooling_type_sets;
     uint8_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
+    int32_t *heap_outer_tooling_type_sets=nullptr;
     if(outer_next_register>256) {
         heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint8_t));
         heap_outer_known_type_sets=
             malloc((size_t)outer_next_register*sizeof(int32_t));
-        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr) {
+        heap_outer_tooling_type_sets=
+            malloc((size_t)outer_next_register*sizeof(int32_t));
+        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr||
+           heap_outer_tooling_type_sets==nullptr) {
             fail(compiler,compiler->previous.span,
                  "out of memory compiling function definition");
             free(heap_outer_known_types);free(heap_outer_known_type_sets);
+            free(heap_outer_tooling_type_sets);
             return 0;
         }
         outer_known_types=heap_outer_known_types;
         outer_known_type_sets=heap_outer_known_type_sets;
+        outer_tooling_type_sets=heap_outer_tooling_type_sets;
     }
     for(size_t index=0;index<outer_next_register;index++)
         {outer_known_types[index]=compiler->known_types[index];
-         outer_known_type_sets[index]=compiler->known_type_sets[index];}
+         outer_known_type_sets[index]=compiler->known_type_sets[index];
+         outer_tooling_type_sets[index]=compiler->tooling_type_sets[index];}
     uint16_t definition_captured_fact_registers[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
         definition_captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
@@ -11651,6 +12418,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
     }
     compiler->function = function;
+    compiler->begin_depth=0;
     compiler->has_current_block=false;
     compiler->current_block_register=0;
     compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
@@ -12082,6 +12850,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                     if(cloned!=DIAMOND_NO_TYPE_SET)
                         compiler->known_type_sets[cell]=(int32_t)cloned;
                 }
+                const int32_t tooling_set=outer_tooling_type_sets[source];
+                if(tooling_set>=0&&
+                   (size_t)tooling_set<outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)tooling_set);
+                    if(cloned!=DIAMOND_NO_TYPE_SET)
+                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
+                }
             }
         }
     }
@@ -12143,7 +12920,76 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         if (return_type >= 0 && !body_diverges) {
             emit_type_check(compiler,body_result,(uint8_t)return_type,
                             return_type_span);
+        } else if(return_type<0) {
+            /* No explicit `-> Type`: best-effort inference for lsp/
+             * receiver.c's call-chain resolution only (inferred_return_
+             * type_set, not return_type_set itself -- see that field's
+             * own comment in vm.h for why they're kept separate).
+             * Mirrors compile_block's own identical fallback for a
+             * block with no explicit return annotation. Combines two
+             * independent sources of "what this function can actually
+             * return": the body's own trailing value (skipped when it
+             * always raises/returns early -- body_diverges means
+             * body_result never actually produced anything real) and
+             * every explicit `return value` compile_return has
+             * accumulated along the way (return_flow_seen -- a function
+             * using return statements across more than one branch had no
+             * single inferable type before this, even though each
+             * individual return's own value has a perfectly well-known
+             * type at compile time; see return_flow_seen's own comment,
+             * the Compiler struct). Either source alone is used as-is;
+             * both together get unioned via merge_flow_types, the same
+             * control-flow-join primitive an if/case expression's own
+             * per-branch merge already uses (e.g. an unannotated
+             * function with a bare `if`/`case` as its own last statement
+             * already got this for free -- merge_flow_types already
+             * writes the merged set onto that expression's own
+             * destination register unconditionally, so body_result
+             * already carries it by the time this reads it; the real
+             * gap this closes is a function using return statements
+             * across separate branches instead, which body_result alone
+             * can never see). */
+            uint8_t inferred_type=TYPE_UNKNOWN;int32_t inferred_set=-1;
+            bool have_inference=false;
+            if(!body_diverges) {
+                inferred_type=compiler->known_types[body_result];
+                inferred_set=compiler->known_type_sets[body_result];
+                have_inference=inferred_set>=0||inferred_type!=TYPE_UNKNOWN;
+            }
+            if(compiler->return_flow_seen) {
+                if(have_inference)
+                    merge_flow_types(compiler,inferred_type,inferred_set,
+                        compiler->return_flow_type,compiler->return_flow_set,
+                        &inferred_type,&inferred_set);
+                else {
+                    inferred_type=compiler->return_flow_type;
+                    inferred_set=compiler->return_flow_set;
+                }
+                have_inference=true;
+            }
+            if(have_inference) {
+                if(inferred_set>=0) {
+                    function->inferred_return_type_set=(uint16_t)inferred_set;
+                } else if(inferred_type!=TYPE_UNKNOWN&&
+                          reserve_type_sets(compiler,1)) {
+                    const size_t return_set=function->type_set_count++;
+                    DiamondTypeSet *set=&function->type_sets[return_set];
+                    set->count=1;set->inferred=true;
+                    set->members[0]=(DiamondTypeMember){
+                        .id=inferred_type,
+                        .argument_set=DIAMOND_NO_TYPE_SET,
+                        .second_argument_set=DIAMOND_NO_TYPE_SET,
+                        .callable_arity=UINT8_MAX,
+                        .callable_return_set=DIAMOND_NO_TYPE_SET,
+                        .callable_parameters_typed=false};
+                    for(size_t parameter=0;parameter<16;parameter++)
+                        set->members[0].callable_parameter_sets[parameter]=
+                            DIAMOND_NO_TYPE_SET;
+                    function->inferred_return_type_set=(uint16_t)return_set;
+                }
+            }
         }
+        maybe_rewrite_self_tail_call(compiler,body_result);
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
         if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
             fail(compiler, compiler->current.span, "expected 'end' after function body");
@@ -12164,14 +13010,18 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     }
     uint8_t definition_captured_fact_types[DIAMOND_MAX_LOCALS];
     int32_t definition_captured_fact_sets[DIAMOND_MAX_LOCALS];
+    int32_t definition_captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<outer_local_count;index++) {
         const uint16_t reg=definition_captured_fact_registers[index];
         definition_captured_fact_types[index]=
             reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:compiler->known_types[reg];
         definition_captured_fact_sets[index]=
             reg==DIAMOND_NO_TYPE_SET?-1:compiler->known_type_sets[reg];
+        definition_captured_fact_tooling_sets[index]=
+            reg==DIAMOND_NO_TYPE_SET?-1:compiler->tooling_type_sets[reg];
     }
     compiler->function = outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count = outer_local_count;
     for (size_t index = 0; index < outer_local_count; index++) {
         compiler->locals[index] = outer_locals[index];
@@ -12186,6 +13036,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->current_block_type_set=outer_current_block_type_set;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
+    compiler->return_flow_seen=outer_return_flow_seen;
+    compiler->return_flow_type=outer_return_flow_type;
+    compiler->return_flow_set=outer_return_flow_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
@@ -12197,7 +13050,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->capture_registers[i]=outer_capture_registers[i];
     for(size_t index=0;index<outer_next_register;index++)
         {compiler->known_types[index]=outer_known_types[index];
-         compiler->known_type_sets[index]=outer_known_type_sets[index];}
+         compiler->known_type_sets[index]=outer_known_type_sets[index];
+         compiler->tooling_type_sets[index]=outer_tooling_type_sets[index];}
     for(size_t index=0;index<outer_local_count;index++) {
         if(definition_captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
         const uint16_t source=outer_locals[index].reg;
@@ -12212,9 +13066,21 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             if(cloned!=DIAMOND_NO_TYPE_SET)
                 compiler->known_type_sets[source]=(int32_t)cloned;
         }
+        const int32_t inner_tooling_set=
+            definition_captured_fact_tooling_sets[index];
+        compiler->tooling_type_sets[source]=-1;
+        if(inner_tooling_set>=0&&
+           (size_t)inner_tooling_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_tooling_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->tooling_type_sets[source]=(int32_t)cloned;
+        }
         record_scope_type_fact(compiler,source,compiler->current.span.start);
     }
     free(heap_outer_known_types);free(heap_outer_known_type_sets);
+    free(heap_outer_tooling_type_sets);
     if(compiler->current_class>=0&&!module_singleton&&
        !compiler->failed&&at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
@@ -12429,8 +13295,11 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     uint8_t field=UINT8_MAX;
     DiamondMethod *method=nullptr;
     char method_name[DIAMOND_MAX_FUNCTION_NAME];
-    (void)snprintf(method_name,sizeof method_name,"%s%s",field_name,
-                   writer?"=":predicate?"?":"");
+    memcpy(method_name,field_name,name.length);
+    size_t method_name_length=name.length;
+    if(writer)method_name[method_name_length++]='=';
+    else if(predicate)method_name[method_name_length++]='?';
+    method_name[method_name_length]='\0';
     if(compiler->current_class>=0) {
         DiamondClass *class=
             &compiler->program->classes[(size_t)compiler->current_class];
@@ -12493,6 +13362,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         (uint8_t)compiler->current_class:UINT8_MAX-1;
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
     if(type_set>=0) {
         function->type_set_count=compiler->function->type_set_count;
@@ -12986,6 +13856,7 @@ static void compile_delegate(Compiler *compiler) {
     const bool outer_in_method=compiler->in_method;
     const bool outer_in_singleton_method=compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const size_t outer_begin_depth=compiler->begin_depth;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
     const int outer_exception=compiler->current_exception;
@@ -13026,9 +13897,11 @@ static void compile_delegate(Compiler *compiler) {
     function->declaration_column=(uint32_t)keyword.column;
     function->declaration_start=keyword.start;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
 
     compiler->function=function;
+    compiler->begin_depth=0;
     compiler->local_count=0;
     compiler->next_register=0;
     compiler->current_method=method_name;
@@ -13147,6 +14020,7 @@ static void compile_delegate(Compiler *compiler) {
     }
 
     compiler->function=outer_function;
+    compiler->begin_depth=outer_begin_depth;
     compiler->local_count=outer_local_count;
     for(size_t index=0;index<outer_local_count;index++)
         compiler->locals[index]=outer_locals[index];
@@ -13179,122 +14053,18 @@ static void compile_delegate(Compiler *compiler) {
     method->is_protected=compiler->methods_protected;
 }
 
-static uint16_t compile_class(Compiler *compiler) {
-    advance_token(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler, compiler->current.span, "expected valid class name"); return 0;
-    }
-    DiamondSpan name=compiler->current.span;
-    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
-    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
-        fail(compiler,name,"class name is too long"); return 0;
-    }
-    const int existing_class=find_class_name(compiler,stored_name);
-    /* A class can always be reopened -- see compile_module's identical
-     * comment. Only a cross-kind collision stays a hard error. */
-    if(find_interface_name(compiler,stored_name)>=0||
-       find_module_name(compiler,stored_name)>=0) {
-        fail(compiler,name,"type name is already defined");return 0;
-    }
-    int index;
-    DiamondClass *class;
-    /* True once this class's superclass (real or "none") has already
-     * been decided by an earlier declaration *within this same compile
-     * pass* -- a later reopen's own `< Super` clause (if any) gets
-     * validated against that decision instead of overwriting it, so a
-     * reopen can't silently change what a class inherits from or stomp
-     * fields already copied from its superclass. False for a class's
-     * first declaration this pass (whether or not it states `< Super`)
-     * -- there's nothing yet to conflict with. */
-    bool superclass_decided;
-    if(existing_class>=0) {
-        index=existing_class;
-        class=&compiler->program->classes[(size_t)index];
-        if(class->declared_by_discovery) {
-            /* First time *this* compile pass touches a slot the *other*
-             * (already-finished) pass populated -- see diamond_compile's
-             * own comment on declared_by_discovery. Full zero, not just
-             * the counts: several registration sites (interface method
-             * arity in compile_interface, confirmed directly as the
-             * cause of a real bug here) accumulate straight into a
-             * slot's own fields trusting they start at zero, rather than
-             * assigning an absolute value -- resetting only the counts
-             * left the other pass's stale contents sitting in these
-             * arrays for a claimed slot to silently accumulate on top
-             * of. */
-            memset(class->methods,0,sizeof class->methods);
-            memset(class->singleton_methods,0,sizeof class->singleton_methods);
-            memset(class->fields,0,sizeof class->fields);
-            memset(class->field_type_status,0,sizeof class->field_type_status);
-            memset(class->field_known_class,0,sizeof class->field_known_class);
-            memset(class->class_variables,0,sizeof class->class_variables);
-            class->method_count=0;
-            class->singleton_method_count=0;
-            class->field_count=0;
-            class->class_variable_count=0;
-            class->superclass=UINT8_MAX;
-            class->declared_by_discovery=false;
-            superclass_decided=false;
-        } else {
-            /* Already owned by this pass (freshly created earlier in
-             * this same pass, or already reset just above) -- a genuine
-             * reopen within the current pass. Merge new content on top
-             * without resetting anything; the superclass this class
-             * already has (if any) was decided by its first declaration
-             * this pass. */
-            superclass_decided=true;
-        }
-    } else {
-        if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-            fail(compiler, name, "expected valid class name"); return 0;
-        }
-        index=(int)compiler->program->class_count++;
-        class=&compiler->program->classes[(size_t)index];
-        class->declared_by_discovery=false;
-        class->superclass=UINT8_MAX;
-        superclass_decided=false;
-    }
-    class->declaration_line=(uint32_t)name.line;
-    class->declaration_column=(uint32_t)name.column;
-    class->declaration_start=name.start;
-    (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
-    advance_token(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
-        }
-        const DiamondSpan superclass_span=compiler->current.span;
-        char superclass_name[DIAMOND_MAX_FUNCTION_NAME];
-        if(!consume_qualified_name(compiler,superclass_name,sizeof superclass_name)) {
-            fail(compiler,superclass_span,"superclass name is too long"); return 0;
-        }
-        const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
-        if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
-        if(!superclass_decided) {
-            class->superclass=(uint8_t)parent;
-            const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
-            class->field_count=parent_class->field_count;
-            for(size_t field=0;field<parent_class->field_count;field++) {
-                for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
-                    class->fields[field][ch]=parent_class->fields[field][ch];
-                class->field_type_status[field]=parent_class->field_type_status[field];
-                class->field_known_class[field]=parent_class->field_known_class[field];
-            }
-        } else if(class->superclass!=(uint8_t)parent) {
-            fail(compiler,superclass_span,
-                 "superclass mismatch for reopened class");return 0;
-        }
-        /* else: reopen restates the same superclass already on record --
-         * validated no-op; fields were already copied once, don't stomp
-         * whatever this class has accumulated on its own since then. */
-    }
-    if(!consume_block_start(compiler)) return 0;
-    const int outer=compiler->current_class; compiler->current_class=index;
-    const bool outer_private=compiler->methods_private;
-    const bool outer_protected=compiler->methods_protected;
-    compiler->methods_private=false;
-    compiler->methods_protected=false;
+/* The body of a `class`/`struct` block, from right after `compiler->
+ * current_class`/`methods_private`/`methods_protected` are set up
+ * through (not including) the closing `end` -- shared by compile_class
+ * and compile_struct (the latter calls this after registering its own
+ * generated readers/initialize/==/to_s, so a hand-written method here
+ * colliding with one of those already fails via compile_definition's/
+ * compile_attribute_named's own existing duplicate-name checks, with no
+ * struct-specific collision handling needed). Relies entirely on the
+ * caller having already set compiler->current_class/methods_private/
+ * methods_protected to the right values -- never reads `index` itself,
+ * only `class` (for `include`'s own field/method copy). */
+static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
            compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
@@ -13373,10 +14143,568 @@ static uint16_t compile_class(Compiler *compiler) {
         }
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE) skip_newlines(compiler);
     }
+}
+
+static uint16_t compile_class(Compiler *compiler) {
+    const bool this_declaration_sealed=compiler->current.kind==DIAMOND_TOKEN_SEALED;
+    advance_token(compiler);
+    if(this_declaration_sealed&&compiler->current.kind!=DIAMOND_TOKEN_CLASS) {
+        fail(compiler,compiler->current.span,"expected 'class' after 'sealed'");
+        return 0;
+    }
+    if(this_declaration_sealed)advance_token(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler, compiler->current.span, "expected valid class name"); return 0;
+    }
+    DiamondSpan name=compiler->current.span;
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
+        fail(compiler,name,"class name is too long"); return 0;
+    }
+    const int existing_class=find_class_name(compiler,stored_name);
+    /* A class can always be reopened -- see compile_module's identical
+     * comment. Only a cross-kind collision stays a hard error. */
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
+    int index;
+    DiamondClass *class;
+    /* True once this class's superclass (real or "none") has already
+     * been decided by an earlier declaration *within this same compile
+     * pass* -- a later reopen's own `< Super` clause (if any) gets
+     * validated against that decision instead of overwriting it, so a
+     * reopen can't silently change what a class inherits from or stomp
+     * fields already copied from its superclass. False for a class's
+     * first declaration this pass (whether or not it states `< Super`)
+     * -- there's nothing yet to conflict with. */
+    bool superclass_decided;
+    if(existing_class>=0) {
+        index=existing_class;
+        class=&compiler->program->classes[(size_t)index];
+        if(class->declared_by_discovery) {
+            /* First time *this* compile pass touches a slot the *other*
+             * (already-finished) pass populated -- see diamond_compile's
+             * own comment on declared_by_discovery. Full zero, not just
+             * the counts: several registration sites (interface method
+             * arity in compile_interface, confirmed directly as the
+             * cause of a real bug here) accumulate straight into a
+             * slot's own fields trusting they start at zero, rather than
+             * assigning an absolute value -- resetting only the counts
+             * left the other pass's stale contents sitting in these
+             * arrays for a claimed slot to silently accumulate on top
+             * of. */
+            memset(class->methods,0,sizeof class->methods);
+            memset(class->singleton_methods,0,sizeof class->singleton_methods);
+            memset(class->fields,0,sizeof class->fields);
+            memset(class->field_type_status,0,sizeof class->field_type_status);
+            memset(class->field_known_class,0,sizeof class->field_known_class);
+            memset(class->class_variables,0,sizeof class->class_variables);
+            class->method_count=0;
+            class->singleton_method_count=0;
+            class->field_count=0;
+            class->class_variable_count=0;
+            class->superclass=UINT8_MAX;
+            class->sealed=false;
+            class->declared_by_discovery=false;
+            superclass_decided=false;
+        } else {
+            /* Already owned by this pass (freshly created earlier in
+             * this same pass, or already reset just above) -- a genuine
+             * reopen within the current pass. Merge new content on top
+             * without resetting anything; the superclass this class
+             * already has (if any) was decided by its first declaration
+             * this pass. */
+            superclass_decided=true;
+        }
+    } else {
+        if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
+            fail(compiler, name, "expected valid class name"); return 0;
+        }
+        index=(int)compiler->program->class_count++;
+        class=&compiler->program->classes[(size_t)index];
+        /* Explicit reset, not reliance on this slot already being zero:
+         * see the declared_by_discovery branch's own identical reset
+         * just above, and compile_module's own copy of this comment.
+         * `program` isn't guaranteed freshly calloc'd/memset -- this
+         * exact slot can hold a *different*, unrelated class's own
+         * leftover methods/fields/class-variables from an earlier
+         * compile of a reused DiamondProgram (tests/run_cases.c's own
+         * batch loop). This is what makes diamond_program_init's own
+         * memset(program,0,...) safe to skip for `classes[]` -- see
+         * that function's own comment (src/compiler.c). */
+        memset(class->methods,0,sizeof class->methods);
+        memset(class->singleton_methods,0,sizeof class->singleton_methods);
+        memset(class->fields,0,sizeof class->fields);
+        memset(class->field_type_status,0,sizeof class->field_type_status);
+        memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->class_variables,0,sizeof class->class_variables);
+        class->method_count=0;
+        class->singleton_method_count=0;
+        class->field_count=0;
+        class->class_variable_count=0;
+        class->declared_by_discovery=false;
+        class->superclass=UINT8_MAX;
+        class->sealed=false;
+        superclass_decided=false;
+    }
+    /* A one-way ratchet, not a plain assignment: any declaration or
+     * reopening of this class that says `sealed` makes it sealed for
+     * good, within this compile pass -- a later reopen that omits the
+     * keyword doesn't silently unseal it. */
+    class->sealed=class->sealed||this_declaration_sealed;
+    class->declaration_line=(uint32_t)name.line;
+    class->declaration_column=(uint32_t)name.column;
+    class->declaration_start=name.start;
+    (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected superclass name after '<'"); return 0;
+        }
+        const DiamondSpan superclass_span=compiler->current.span;
+        char superclass_name[DIAMOND_MAX_FUNCTION_NAME];
+        if(!consume_qualified_name(compiler,superclass_name,sizeof superclass_name)) {
+            fail(compiler,superclass_span,"superclass name is too long"); return 0;
+        }
+        const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
+        if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
+        if(!superclass_decided) {
+            class->superclass=(uint8_t)parent;
+            const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
+            class->field_count=parent_class->field_count;
+            for(size_t field=0;field<parent_class->field_count;field++) {
+                for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
+                    class->fields[field][ch]=parent_class->fields[field][ch];
+                class->field_type_status[field]=parent_class->field_type_status[field];
+                class->field_known_class[field]=parent_class->field_known_class[field];
+            }
+        } else if(class->superclass!=(uint8_t)parent) {
+            fail(compiler,superclass_span,
+                 "superclass mismatch for reopened class");return 0;
+        }
+        /* else: reopen restates the same superclass already on record --
+         * validated no-op; fields were already copied once, don't stomp
+         * whatever this class has accumulated on its own since then. */
+    }
+    if(!consume_block_start(compiler)) return 0;
+    const int outer=compiler->current_class; compiler->current_class=index;
+    const bool outer_private=compiler->methods_private;
+    const bool outer_protected=compiler->methods_protected;
+    compiler->methods_private=false;
+    compiler->methods_protected=false;
+    compile_class_body(compiler,class);
     compiler->current_class=outer;
     compiler->methods_private=outer_private;
     compiler->methods_protected=outer_protected;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
+    const uint16_t result=allocate_register(compiler);
+    /* Sole writer; run_chunk's zero-init already covers this. */
+    return result;
+}
+
+/* Same shape as add_string_range/add_name_string just above, but for a
+ * literal C string this compile-time synthesis code built itself (e.g.
+ * "Point(x: ") rather than a span into the user's own source -- no
+ * escape processing needed, the caller already controls every byte. */
+static uint16_t add_literal_string(Compiler *compiler,const char *text,
+                                   DiamondSpan span) {
+    const size_t length=strlen(text);
+    if(compiler->function->string_count==DIAMOND_MAX_STRING_CONSTANTS||
+       length>DIAMOND_MAX_STRING_LENGTH) {
+        fail(compiler,span,"too many or oversized generated string literals");
+        return 0;
+    }
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,span,"out of memory growing function strings");return 0;
+    }
+    DiamondStringConstant *string=
+        &compiler->function->strings[compiler->function->string_count];
+    memcpy(string->chars,text,length);
+    string->length=length;string->chars[length]='\0';
+    return (uint16_t)compiler->function->string_count++;
+}
+
+/* Saved/restored around each of `struct`'s own three hand-emitted method
+ * bodies (initialize/==/to_s) -- the same "swap compiler->function,
+ * regenerate registers from 0, restore known_types/known_type_sets
+ * afterward" dance compile_definition's own (much larger) save/restore
+ * block performs whenever a nested `def` is compiled, narrowed to just
+ * the state this generator's own straight-line emit_instruction/
+ * allocate_register/emit_jump/patch_jump calls actually touch. Nothing
+ * else compile_definition also saves (locals, current_method, begin_
+ * depth, current_loop, etc.) is relevant here: this generator never
+ * parses an identifier, never calls compile_return/compile_begin, and
+ * never opens a block -- only compiler->function/next_register/
+ * known_types/known_type_sets are ever read or written by the plain
+ * emission helpers this uses. See compile_definition's own copy of the
+ * inline-then-heap-fallback comment for why the 256 cap needs a fallback
+ * rather than just being a fixed bound. */
+typedef struct StructMethodState {
+    DiamondFunction *outer_function;
+    uint16_t outer_next_register;
+    uint8_t inline_known_types[256];
+    int32_t inline_known_type_sets[256];
+    uint8_t *heap_known_types;
+    int32_t *heap_known_type_sets;
+} StructMethodState;
+
+static bool begin_struct_method(Compiler *compiler,DiamondFunction *function,
+                                StructMethodState *state) {
+    state->outer_function=compiler->function;
+    state->outer_next_register=compiler->next_register;
+    state->heap_known_types=nullptr;state->heap_known_type_sets=nullptr;
+    uint8_t *known_types=state->inline_known_types;
+    int32_t *known_type_sets=state->inline_known_type_sets;
+    if(compiler->next_register>256) {
+        state->heap_known_types=
+            malloc((size_t)compiler->next_register*sizeof(uint8_t));
+        state->heap_known_type_sets=
+            malloc((size_t)compiler->next_register*sizeof(int32_t));
+        if(state->heap_known_types==nullptr||state->heap_known_type_sets==nullptr) {
+            free(state->heap_known_types);free(state->heap_known_type_sets);
+            return false;
+        }
+        known_types=state->heap_known_types;
+        known_type_sets=state->heap_known_type_sets;
+    }
+    for(size_t index=0;index<compiler->next_register;index++) {
+        known_types[index]=compiler->known_types[index];
+        known_type_sets[index]=compiler->known_type_sets[index];
+    }
+    compiler->function=function;
+    compiler->next_register=0;
+    return true;
+}
+
+static void end_struct_method(Compiler *compiler,StructMethodState *state) {
+    compiler->function->register_count=compiler->next_register;
+    compiler->function=state->outer_function;
+    compiler->next_register=state->outer_next_register;
+    const uint8_t *known_types=state->heap_known_types?
+        state->heap_known_types:state->inline_known_types;
+    const int32_t *known_type_sets=state->heap_known_type_sets?
+        state->heap_known_type_sets:state->inline_known_type_sets;
+    for(size_t index=0;index<state->outer_next_register;index++) {
+        compiler->known_types[index]=known_types[index];
+        compiler->known_type_sets[index]=known_type_sets[index];
+    }
+    free(state->heap_known_types);free(state->heap_known_type_sets);
+}
+
+static void register_struct_method(Compiler *compiler,DiamondClass *class,
+        DiamondSpan name,const char *method_name,uint16_t function_index,
+        uint8_t caller_arity) {
+    if(class->method_count==DIAMOND_MAX_METHODS) {
+        fail(compiler,name,"too many methods");return;
+    }
+    DiamondMethod *method=&class->methods[class->method_count++];
+    (void)snprintf(method->name,sizeof method->name,"%s",method_name);
+    method->function_index=function_index;
+    method->arity=caller_arity;method->required_arity=caller_arity;
+}
+
+/* `struct Name(field: Type, ...) ... end` -- a compile-time-only data
+ * class: registers an ordinary DiamondClass (no runtime synthesis, see
+ * docs/roadmap.md's "Explicitly deferred" entry on that) with one field
+ * per declared member, then generates `initialize`/one reader per
+ * field/`==`/`to_s` exactly as if they'd been hand-written. Readers
+ * reuse compile_attribute_named verbatim (same as attr_reader); the
+ * other three are hand-emitted via begin_struct_method's swap since
+ * their bodies (a per-field GET_IVAR/SET_IVAR/EQUAL/IS_TYPE/TO_STRING
+ * chain) don't correspond to any parseable source text. Deliberately
+ * narrow for this first pass -- no superclass, no reopening, no
+ * additional body -- see docs/classes-and-modules.md's own "struct
+ * declarations" section for the reasoning. */
+static uint16_t compile_struct(Compiler *compiler) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected valid struct name");
+        return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
+        fail(compiler,name,"struct name is too long");return 0;
+    }
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
+    /* Registered *before* the field list parses (unlike compile_class's
+     * own superclass clause, which is likewise parsed only after this
+     * same registration) so a self-referential field type -- `struct
+     * Node(value: Int, next: Node)` -- can already resolve this class's
+     * own name via parse_type_annotation/resolve_type_name below. */
+    const int existing_class=find_class_name(compiler,stored_name);
+    int index;DiamondClass *class;
+    if(existing_class>=0) {
+        class=&compiler->program->classes[(size_t)existing_class];
+        if(!class->declared_by_discovery) {
+            fail(compiler,name,"struct is already defined");return 0;
+        }
+        index=existing_class;
+    } else {
+        if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
+            fail(compiler,name,"expected valid struct name");return 0;
+        }
+        index=(int)compiler->program->class_count++;
+        class=&compiler->program->classes[(size_t)index];
+    }
+    memset(class->methods,0,sizeof class->methods);
+    memset(class->singleton_methods,0,sizeof class->singleton_methods);
+    memset(class->fields,0,sizeof class->fields);
+    memset(class->field_type_status,0,sizeof class->field_type_status);
+    memset(class->field_known_class,0,sizeof class->field_known_class);
+    memset(class->class_variables,0,sizeof class->class_variables);
+    class->method_count=0;class->singleton_method_count=0;
+    class->field_count=0;class->class_variable_count=0;
+    class->declared_by_discovery=false;
+    class->superclass=UINT8_MAX;class->sealed=false;
+    class->declaration_line=(uint32_t)name.line;
+    class->declaration_column=(uint32_t)name.column;
+    class->declaration_start=name.start;
+    (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after struct name");
+        return 0;
+    }
+    advance_token(compiler);
+    DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
+    int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t field_count=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        while(!compiler->failed) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,"expected field name");break;
+            }
+            if(field_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
+                fail(compiler,compiler->current.span,"too many struct fields");break;
+            }
+            const DiamondSpan field_span=compiler->current.span;
+            char field_name[DIAMOND_MAX_FUNCTION_NAME];
+            if(field_span.length>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,field_span,"field name is too long");break;
+            }
+            for(size_t ch=0;ch<field_span.length;ch++)
+                field_name[ch]=compiler->source[field_span.start+ch];
+            field_name[field_span.length]='\0';
+            if(strcmp(field_name,"initialize")==0||strcmp(field_name,"==")==0||
+               strcmp(field_name,"to_s")==0) {
+                fail(compiler,field_span,
+                     "field name collides with a generated struct method");
+                break;
+            }
+            for(size_t existing=0;existing<class->field_count;existing++)
+                if(strcmp(class->fields[existing],field_name)==0) {
+                    fail(compiler,field_span,"duplicate struct field name");break;
+                }
+            if(compiler->failed)break;
+            advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,
+                     "expected ':' and a type after field name");break;
+            }
+            advance_token(compiler);
+            const int type_set=parse_type_annotation(compiler);
+            (void)snprintf(class->fields[class->field_count],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",field_name);
+            field_name_spans[field_count]=field_span;
+            field_type_sets[field_count]=type_set;
+            field_count++;class->field_count++;
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+        }
+    }
+    if(compiler->failed)return 0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after struct fields");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
+        fail(compiler,compiler->current.span,
+             "struct declarations cannot have a superclass");
+        return 0;
+    }
+    if(!consume_block_start(compiler))return 0;
+    const int outer_class=compiler->current_class;
+    compiler->current_class=index;
+    const bool outer_private=compiler->methods_private;
+    const bool outer_protected=compiler->methods_protected;
+    compiler->methods_private=false;compiler->methods_protected=false;
+    for(size_t field=0;field<field_count&&!compiler->failed;field++)
+        compile_attribute_named(compiler,false,false,
+            field_name_spans[field],field_type_sets[field]);
+    /* initialize(field0, field1, ...): one SET_IVAR per field, register
+     * 1+index holding that parameter by the ordinary calling convention
+     * (see compile_attribute_named's own identical comment on this). */
+    if(!compiler->failed) {
+        size_t init_function_index=0;
+        DiamondFunction *init=
+            compiler_add_function(compiler,&init_function_index);
+        if(init==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(init->name,sizeof init->name,"initialize");
+            init->owner_class=(uint8_t)index;
+            init->arity=(uint8_t)(field_count+1);
+            init->required_arity=init->arity;
+            init->return_type_set=DIAMOND_NO_TYPE_SET;
+            init->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                init->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            for(size_t field=0;field<field_count;field++)
+                (void)snprintf(init->parameter_names[field],
+                    DIAMOND_MAX_FUNCTION_NAME,"%s",class->fields[field]);
+            StructMethodState state;
+            if(!begin_struct_method(compiler,init,&state)) {
+                fail(compiler,name,"out of memory compiling initialize");
+            } else {
+                (void)allocate_register(compiler);
+                for(size_t field=0;field<field_count;field++) {
+                    const uint16_t value_register=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
+                        (uint16_t)field,value_register,3);
+                }
+                emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"initialize",
+                (uint16_t)init_function_index,(uint8_t)field_count);
+        }
+    }
+    /* ==(other): same-class check via IS_TYPE, then a short-circuit AND
+     * of one GET_IVAR+GET_IVAR+EQUAL+JUMP_IF_FALSE per field -- the same
+     * shape compile_begin's own rescue-type matching already uses. */
+    if(!compiler->failed) {
+        size_t eq_function_index=0;
+        DiamondFunction *eq=compiler_add_function(compiler,&eq_function_index);
+        if(eq==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(eq->name,sizeof eq->name,"==");
+            eq->owner_class=(uint8_t)index;
+            eq->arity=2;eq->required_arity=2;
+            eq->return_type_set=DIAMOND_NO_TYPE_SET;
+            eq->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                eq->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            (void)snprintf(eq->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,"other");
+            StructMethodState state;
+            if(!begin_struct_method(compiler,eq,&state)) {
+                fail(compiler,name,"out of memory compiling ==");
+            } else {
+                (void)allocate_register(compiler);
+                const uint16_t other=allocate_register(compiler);
+                const uint16_t type_ok=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
+                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
+                size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+1];
+                size_t mismatch_count=0;
+                mismatch_jumps[mismatch_count++]=
+                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
+                for(size_t field=0;field<field_count;field++) {
+                    const uint16_t left=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,left,0,
+                        (uint16_t)field,3);
+                    const uint16_t right=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,right,other,
+                        (uint16_t)field,3);
+                    const uint16_t equal=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_EQUAL,equal,left,right,3);
+                    mismatch_jumps[mismatch_count++]=
+                        emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,equal);
+                }
+                const uint16_t true_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_BOOL,true_result,true,0,2);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,true_result,0,0,1);
+                const size_t mismatch_target=compiler->function->code_count;
+                for(size_t jump=0;jump<mismatch_count;jump++)
+                    patch_jump(compiler,mismatch_jumps[jump],mismatch_target);
+                const uint16_t false_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_BOOL,false_result,false,0,2);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,false_result,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"==",
+                (uint16_t)eq_function_index,1);
+        }
+    }
+    /* to_s(): "ClassName(field0: v0, field1: v1)" -- a CONSTANT-free
+     * chain of STRING/GET_IVAR/TO_STRING/ADD, exactly the shape
+     * parse_string's own interpolation-joining loop already uses. */
+    if(!compiler->failed) {
+        size_t to_s_function_index=0;
+        DiamondFunction *to_s=compiler_add_function(compiler,&to_s_function_index);
+        if(to_s==nullptr) {
+            fail(compiler,name,"out of memory");
+        } else {
+            (void)snprintf(to_s->name,sizeof to_s->name,"to_s");
+            to_s->owner_class=(uint8_t)index;
+            to_s->arity=1;to_s->required_arity=1;
+            to_s->return_type_set=DIAMOND_NO_TYPE_SET;
+            to_s->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+                to_s->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+            StructMethodState state;
+            if(!begin_struct_method(compiler,to_s,&state)) {
+                fail(compiler,name,"out of memory compiling to_s");
+            } else {
+                (void)allocate_register(compiler);
+                char piece[DIAMOND_MAX_FUNCTION_NAME+4];
+                (void)snprintf(piece,sizeof piece,"%s(",stored_name);
+                uint16_t result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_STRING,result,
+                    add_literal_string(compiler,piece,name),0,2);
+                for(size_t field=0;field<field_count;field++) {
+                    (void)snprintf(piece,sizeof piece,field==0?"%s: ":", %s: ",
+                        class->fields[field]);
+                    const uint16_t prefix=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_STRING,prefix,
+                        add_literal_string(compiler,piece,name),0,2);
+                    const uint16_t joined=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,
+                        prefix,3);
+                    const uint16_t field_value=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,field_value,0,
+                        (uint16_t)field,3);
+                    const uint16_t stringified=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_TO_STRING,stringified,
+                        field_value,0,2);
+                    result=allocate_register(compiler);
+                    emit_instruction(compiler,DIAMOND_OP_ADD,result,joined,
+                        stringified,3);
+                }
+                const uint16_t suffix=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_STRING,suffix,
+                    add_literal_string(compiler,")",name),0,2);
+                const uint16_t final_result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ADD,final_result,result,
+                    suffix,3);
+                emit_instruction(compiler,DIAMOND_OP_RETURN,final_result,0,0,1);
+                end_struct_method(compiler,&state);
+            }
+            register_struct_method(compiler,class,name,"to_s",
+                (uint16_t)to_s_function_index,0);
+        }
+    }
+    /* A hand-written def/attr/include supplementing the generated
+     * members above -- see compile_class_body's own comment. A
+     * colliding name (a def or attr matching a generated reader/
+     * initialize/==/to_s) already fails via compile_definition's/
+     * compile_attribute_named's own existing duplicate-method checks,
+     * with nothing struct-specific needed here. */
+    if(!compiler->failed) compile_class_body(compiler,class);
+    if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
+    compiler->current_class=outer_class;
+    compiler->methods_private=outer_private;
+    compiler->methods_protected=outer_protected;
     const uint16_t result=allocate_register(compiler);
     /* Sole writer; run_chunk's zero-init already covers this. */
     return result;
@@ -13706,6 +15034,26 @@ static uint16_t compile_module(Compiler *compiler) {
         }
         index=(int)compiler->program->module_count++;
         module=&compiler->program->modules[(size_t)index];
+        /* Explicit reset, not reliance on this slot already being zero:
+         * `program` isn't guaranteed freshly calloc'd/memset -- a caller
+         * reusing one DiamondProgram across many compiles (tests/
+         * run_cases.c's own batch loop) can hand this exact slot back
+         * still holding a *different*, unrelated module's own leftover
+         * methods/fields/singleton-claim state from an earlier compile.
+         * Unlike the reopen branch above (which deliberately keeps
+         * singleton_methods/singleton_method_count -- see its own
+         * comment on why), a genuinely new slot has no same-pass history
+         * worth preserving, so everything resets here. This is what
+         * makes diamond_program_init's own memset(program,0,...) safe to
+         * skip for `modules[]` -- see that function's own comment
+         * (src/compiler.c) and CHANGELOG.md's "Performance". */
+        memset(module->methods,0,sizeof module->methods);
+        memset(module->singleton_methods,0,sizeof module->singleton_methods);
+        memset(module->fields,0,sizeof module->fields);
+        module->method_count=0;
+        module->singleton_method_count=0;
+        module->field_count=0;
+        module->next_singleton_claim=0;
         module->declared_by_discovery=false;
     }
     (void)snprintf(module->name,sizeof module->name,"%s",stored_name);
@@ -13835,8 +15183,11 @@ static uint16_t compile_module(Compiler *compiler) {
             (void)compile_definition(compiler,false);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
             (void)compile_module(compiler);
-        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS) {
+        } else if(compiler->current.kind==DIAMOND_TOKEN_CLASS||
+                  compiler->current.kind==DIAMOND_TOKEN_SEALED) {
             (void)compile_class(compiler);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_STRUCT) {
+            (void)compile_struct(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INTERFACE) {
             (void)compile_interface(compiler);
         } else {
@@ -13898,6 +15249,16 @@ static uint16_t compile_interface(Compiler *compiler) {
         interface->method_count=0;
         interface->declared_by_discovery=false;
     } else {
+        /* Explicit reset, not reliance on this slot already being zero:
+         * see compile_class's own identical comment. `program` isn't
+         * guaranteed freshly calloc'd/memset -- this exact slot can hold
+         * a *different*, unrelated interface's own leftover methods from
+         * an earlier compile of a reused DiamondProgram (tests/
+         * run_cases.c's own batch loop). This is what makes
+         * diamond_program_init's own memset(program,0,...) safe to skip
+         * for `interfaces[]` -- see that function's own comment. */
+        memset(interface->methods,0,sizeof interface->methods);
+        interface->method_count=0;
         interface->declared_by_discovery=compiler->discovery_pass;
     }
     interface->type_sets=compiler->program->entry.type_sets;
@@ -14088,6 +15449,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         const uint16_t local_register=compiler->locals[(size_t)local].reg;
         compiler->known_types[local_register]=compiler->known_types[value];
         compiler->known_type_sets[local_register]=compiler->known_type_sets[value];
+        compiler->tooling_type_sets[local_register]=compiler->tooling_type_sets[value];
         compiler->locals[(size_t)local].alias_identity=value_alias_identity;
         record_scope_type_fact(compiler,local_register,compiler->current.span.start);
         return value;
@@ -14112,6 +15474,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
+    compiler->tooling_type_sets[destination]=compiler->tooling_type_sets[value];
     for(size_t index=compiler->local_count;index>0;index--)
         if(compiler->locals[index-1].reg==destination) {
             compiler->locals[index-1].alias_identity=value_alias_identity;break;
@@ -14652,6 +16015,28 @@ static uint16_t compile_sequence(Compiler *compiler) {
     bool last_statement_diverges = false;
 
     while (!compiler->failed && !at_block_end(compiler)) {
+        if(compiler->debug_mode) {
+            /* emit_opcode (called by emit_breakpoint_check, by way of
+             * emit_instruction) always tags a freshly emitted instruction
+             * with compiler->previous.span -- the *last consumed* token,
+             * which at this exact point is still whatever ended the
+             * *previous* statement, not this statement's own line. Every
+             * other emit_debugger_pause/emit_breakpoint_check caller
+             * (parse_debugger_call) doesn't have this problem: it always
+             * runs after consuming its own call's tokens, so
+             * compiler->previous is already the right line. Patch the
+             * just-emitted opcode's own line/column table entry to this
+             * statement's real position afterward, rather than threading
+             * an explicit span through emit_opcode for every other caller
+             * just for this one. */
+            const DiamondSpan statement_span=compiler->current.span;
+            const size_t check_offset=compiler->function->code_count;
+            emit_breakpoint_check(compiler);
+            if(check_offset<compiler->function->code_count) {
+                compiler->function->lines[check_offset]=(uint32_t)statement_span.line;
+                compiler->function->columns[check_offset]=(uint32_t)statement_span.column;
+            }
+        }
         bool statement_is_raise = false;
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
@@ -14668,14 +16053,19 @@ static uint16_t compile_sequence(Compiler *compiler) {
             compiler->current.kind == DIAMOND_TOKEN_DEF ||
             compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
             compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+            compiler->current.kind == DIAMOND_TOKEN_SEALED ||
+            compiler->current.kind == DIAMOND_TOKEN_STRUCT ||
             compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
             compiler->current.kind == DIAMOND_TOKEN_MODULE;
         if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
             result = compile_definition(compiler,false);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLOSURE) {
             result = compile_definition(compiler,true);
-        } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS) {
+        } else if (compiler->current.kind == DIAMOND_TOKEN_CLASS ||
+                   compiler->current.kind == DIAMOND_TOKEN_SEALED) {
             result = compile_class(compiler);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_STRUCT) {
+            result = compile_struct(compiler);
         } else if (compiler->current.kind == DIAMOND_TOKEN_INTERFACE) {
             result = compile_interface(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
@@ -14772,6 +16162,10 @@ DiamondFunction *diamond_program_add_function(DiamondProgram *program) {
 }
 
 bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
+    /* See DiamondFunction.owns_combined_buffer's own comment (src/vm.h):
+     * a combined-allocated function's code/lines/columns are interior
+     * pointers into one shared block, never independently reallocable. */
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->code_capacity)return true;
     if(capacity>DIAMOND_MAX_CODE)return false;
     uint8_t *code=malloc(capacity*sizeof *code);
@@ -14793,6 +16187,7 @@ bool diamond_function_reserve_code(DiamondFunction *function,size_t capacity) {
 
 bool diamond_function_reserve_constants(DiamondFunction *function,
                                          size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->constant_capacity)return true;
     if(capacity>DIAMOND_MAX_CONSTANTS)return false;
     DiamondValue *constants=realloc(function->constants,
@@ -14803,6 +16198,7 @@ bool diamond_function_reserve_constants(DiamondFunction *function,
 }
 
 bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->string_capacity)return true;
     if(capacity>DIAMOND_MAX_STRING_CONSTANTS)return false;
     const size_t previous_capacity=function->string_capacity;
@@ -14816,6 +16212,7 @@ bool diamond_function_reserve_strings(DiamondFunction *function,size_t capacity)
 }
 
 bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacity) {
+    assert(!function->owns_combined_buffer);
     if(capacity<=function->type_set_capacity)return true;
     if(capacity>DIAMOND_MAX_TYPE_SETS)return false;
     const size_t previous_capacity=function->type_set_capacity;
@@ -14828,6 +16225,34 @@ bool diamond_function_reserve_type_sets(DiamondFunction *function,size_t capacit
     return true;
 }
 
+/* Rounds `offset` up to `alignof(max_align_t)` -- diamond_function_copy's
+ * own combined-buffer sub-arrays (code/lines/columns/constants/strings/
+ * type_sets, each a different element type/alignment) each start at
+ * such a boundary, the same margin malloc itself already guarantees for
+ * the block's own base address. A few bytes of padding per boundary
+ * (at most 5 boundaries) is nothing next to what this buys: one malloc
+ * instead of 6 per function copied. */
+static size_t align_up_max(size_t offset) {
+    const size_t alignment=alignof(max_align_t);
+    return (offset+alignment-1)&~(alignment-1);
+}
+
+/* Deep-copies `source` into `destination` (already-valid contents
+ * overwritten, not freed -- every caller passes a fresh/zeroed
+ * destination). Every dynamic array (code/lines/columns/constants/
+ * strings/type_sets) is copied into ONE combined malloc'd block instead
+ * of 6 separate ones, with `destination->code` as that block's real
+ * base pointer and the other 5 fields as interior pointers into the
+ * same allocation (see DiamondFunction.owns_combined_buffer's own
+ * comment, src/vm.h, for why this is safe and what it costs: the result
+ * can never be independently regrown, only freed as a whole). This
+ * matters wherever many functions get cloned per call --
+ * seed_program_from_template, clone_program_from_chunk (Thread.new),
+ * diamond_program_read_compiled -- since 1 malloc instead of 6 per
+ * function is the difference between a few hundred and a few thousand
+ * allocations for a prelude-sized template; measured directly against a
+ * cold process, not assumed (docs/roadmap.md's "Make programs start
+ * faster"). */
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
@@ -14836,82 +16261,123 @@ bool diamond_function_copy(DiamondFunction *destination,
     destination->constants=nullptr;destination->constant_capacity=0;
     destination->strings=nullptr;destination->string_capacity=0;
     destination->type_sets=nullptr;destination->type_set_capacity=0;
+    destination->owns_combined_buffer=false;
+    /* jit_code is executable memory tied to the SOURCE's own lifetime/
+     * process, never shared across a Thread.new/gremlin_serve clone --
+     * see docs/internal/jit-design.md's threading section. The clone
+     * starts back at "not yet compiled," exactly like a brand-new
+     * function; it will re-warm up and (if hot enough) re-compile
+     * independently in its own thread. */
+    destination->jit_code=nullptr;destination->jit_code_size=0;
+    destination->jit_call_count=0;destination->jit_ineligible=false;
+
+    size_t code_offset=0,lines_offset=0,columns_offset=0;
+    size_t constants_offset=0,strings_offset=0,type_sets_offset=0;
+    size_t size=0;
     if(source->code_count>0) {
-        destination->code=malloc(source->code_count*sizeof *destination->code);
-        destination->lines=malloc(source->code_count*sizeof *destination->lines);
-        destination->columns=malloc(source->code_count*sizeof *destination->columns);
+        code_offset=size;size+=source->code_count*sizeof *destination->code;
+        size=align_up_max(size);
+        lines_offset=size;size+=source->code_count*sizeof *destination->lines;
+        size=align_up_max(size);
+        columns_offset=size;size+=source->code_count*sizeof *destination->columns;
+        size=align_up_max(size);
     }
-    if(source->constant_count>0)
-        destination->constants=malloc(
-            source->constant_count*sizeof *destination->constants);
-    if(source->string_count>0)
-        destination->strings=malloc(
-            source->string_count*sizeof *destination->strings);
-    if(source->type_set_count>0)
-        destination->type_sets=malloc(
-            source->type_set_count*sizeof *destination->type_sets);
-    if((source->code_count>0&&(destination->code==nullptr||
-       destination->lines==nullptr||destination->columns==nullptr))||
-       (source->constant_count>0&&destination->constants==nullptr)||
-       (source->string_count>0&&destination->strings==nullptr)||
-       (source->type_set_count>0&&destination->type_sets==nullptr)) {
-        free(destination->code);free(destination->lines);
-        free(destination->columns);free(destination->constants);
-        free(destination->strings);
-        free(destination->type_sets);
-        destination->code=nullptr;destination->lines=nullptr;
-        destination->columns=nullptr;destination->constants=nullptr;
-        destination->strings=nullptr;destination->code_count=0;
-        destination->type_sets=nullptr;
-        destination->constant_count=0;destination->string_count=0;
-        return false;
+    if(source->constant_count>0) {
+        constants_offset=size;
+        size+=source->constant_count*sizeof *destination->constants;
+        size=align_up_max(size);
     }
+    if(source->string_count>0) {
+        strings_offset=size;
+        size+=source->string_count*sizeof *destination->strings;
+        size=align_up_max(size);
+    }
+    if(source->type_set_count>0) {
+        type_sets_offset=size;
+        size+=source->type_set_count*sizeof *destination->type_sets;
+    }
+    if(size==0)return true;
+
+    uint8_t *block=malloc(size);
+    if(block==nullptr)return false;
+
     if(source->code_count>0) {
+        destination->code=block+code_offset;
+        destination->lines=(uint32_t *)(void *)(block+lines_offset);
+        destination->columns=(uint32_t *)(void *)(block+columns_offset);
         memcpy(destination->code,source->code,
             source->code_count*sizeof *destination->code);
-        memcpy(destination->lines,source->lines,
+        /* source->lines/columns/constants/strings/type_sets may be
+         * misaligned views into a raw serialized buffer (see
+         * compiled_prelude.c's read_function) -- cast to void* so
+         * memcpy's copy doesn't get treated as a typed, alignment-
+         * requiring access by -fsanitize=alignment. memcpy itself never
+         * needs the alignment; only the C pointer *type* does. */
+        memcpy((void *)destination->lines,(const void *)source->lines,
             source->code_count*sizeof *destination->lines);
-        memcpy(destination->columns,source->columns,
+        memcpy((void *)destination->columns,(const void *)source->columns,
             source->code_count*sizeof *destination->columns);
+        destination->code_capacity=source->code_count;
     }
-    if(source->constant_count>0)
-        memcpy(destination->constants,source->constants,
+    if(source->constant_count>0) {
+        destination->constants=(DiamondValue *)(void *)(block+constants_offset);
+        memcpy((void *)destination->constants,(const void *)source->constants,
             source->constant_count*sizeof *destination->constants);
-    if(source->string_count>0)
-        memcpy(destination->strings,source->strings,
+        destination->constant_capacity=source->constant_count;
+    }
+    if(source->string_count>0) {
+        destination->strings=(DiamondStringConstant *)(void *)(block+strings_offset);
+        memcpy((void *)destination->strings,(const void *)source->strings,
             source->string_count*sizeof *destination->strings);
-    if(source->type_set_count>0)
-        memcpy(destination->type_sets,source->type_sets,
+        destination->string_capacity=source->string_count;
+    }
+    if(source->type_set_count>0) {
+        destination->type_sets=(DiamondTypeSet *)(void *)(block+type_sets_offset);
+        memcpy((void *)destination->type_sets,(const void *)source->type_sets,
             source->type_set_count*sizeof *destination->type_sets);
-    destination->code_capacity=source->code_count;
-    destination->constant_capacity=source->constant_count;
-    destination->string_capacity=source->string_count;
-    destination->type_set_capacity=source->type_set_count;
+        destination->type_set_capacity=source->type_set_count;
+    }
+    destination->owns_combined_buffer=true;
     return true;
+}
+
+/* Frees `function`'s own dynamic arrays (but not `function` itself --
+ * callers own that separately, see diamond_program_free below). A
+ * combined-allocated function (diamond_function_copy's own
+ * owns_combined_buffer, see its comment in src/vm.h) has only one real
+ * allocation, `code`; the other 5 fields are interior pointers into
+ * that same block and must never be passed to free() themselves. */
+static void diamond_function_free_arrays(DiamondFunction *function) {
+    if(function->owns_combined_buffer) {
+        free(function->code);
+    } else {
+        free(function->code);free(function->lines);free(function->columns);
+        free(function->constants);
+        free(function->strings);
+        free(function->type_sets);
+    }
+    function->code=nullptr;function->lines=nullptr;
+    function->columns=nullptr;function->code_count=0;
+    function->code_capacity=0;
+    function->constants=nullptr;function->constant_count=0;
+    function->constant_capacity=0;
+    function->strings=nullptr;function->string_count=0;
+    function->string_capacity=0;
+    function->type_sets=nullptr;function->type_set_count=0;
+    function->type_set_capacity=0;
+    function->owns_combined_buffer=false;
+    /* jit_code is executable memory (mmap), never one of the arrays above --
+     * see jit.h/docs/internal/jit-design.md. */
+    diamond_jit_free(function->jit_code,function->jit_code_size);
+    function->jit_code=nullptr;function->jit_code_size=0;
+    function->jit_call_count=0;function->jit_ineligible=false;
 }
 
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
-    free(program->entry.code);free(program->entry.lines);
-    free(program->entry.columns);free(program->entry.constants);
-    free(program->entry.strings);
-    free(program->entry.type_sets);
-    program->entry.code=nullptr;program->entry.lines=nullptr;
-    program->entry.columns=nullptr;program->entry.code_count=0;
-    program->entry.code_capacity=0;
-    program->entry.constants=nullptr;program->entry.constant_count=0;
-    program->entry.constant_capacity=0;
-    program->entry.strings=nullptr;program->entry.string_count=0;
-    program->entry.string_capacity=0;
-    program->entry.type_sets=nullptr;program->entry.type_set_count=0;
-    program->entry.type_set_capacity=0;
+    diamond_function_free_arrays(&program->entry);
     for(size_t index=0;index<program->function_count;index++) {
-        free(program->functions[index]->code);
-        free(program->functions[index]->lines);
-        free(program->functions[index]->columns);
-        free(program->functions[index]->constants);
-        free(program->functions[index]->strings);
-        free(program->functions[index]->type_sets);
+        diamond_function_free_arrays(program->functions[index]);
         free(program->functions[index]);
     }
     free(program->functions);
@@ -14920,15 +16386,57 @@ void diamond_program_free(DiamondProgram *program) {
     program->function_capacity=0;
 }
 
-void diamond_program_init(DiamondProgram *program) {
-    /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
-     * assignment materializes a full temporary DiamondProgram (3MB+) on this
-     * function's own stack frame regardless of where `program` itself points,
-     * which is unsafe for any caller running at nontrivial stack depth (e.g.
-     * a required package's manifest, compiled from inside expand()'s own
-     * recursive call chain, while the top-level program's own DiamondProgram
-     * is still live further up the stack in main.c's run_source). */
-    memset(program, 0, sizeof *program);
+/* The non-memset half of diamond_program_init: populate `program`'s
+ * builtin exception classes and entry.name. Requires `program` to
+ * already be all-zero -- diamond_program_init itself guarantees that
+ * via its own memset just before calling this; diamond_compile_impl's
+ * own `discovery` program (src/compiler.c) calls this directly instead,
+ * skipping that memset, because it's always a local `calloc(1, sizeof
+ * *discovery)` created fresh for exactly one compile call and never
+ * reused -- calloc's own zero-fill already satisfies this function's
+ * precondition, so diamond_program_init's memset would just be
+ * re-zeroing memory that was already zero. Confirmed to matter, not
+ * assumed: memset(program,0,sizeof *program) alone measured ~6.3ms
+ * (release build, cold process) purely from the first-touch page faults
+ * committing DiamondProgram's ~14.2MB, on every single diamond_compile/
+ * diamond_compile_incremental call regardless of source size -- see
+ * CHANGELOG.md's "Performance". Never call this
+ * directly on a `program` that might carry a previous compile's
+ * leftover data (tests/run_cases.c's own batch loop reuses one
+ * DiamondProgram across 1285+ calls) -- only diamond_program_init
+ * itself is safe there, since its memset is what actually wipes stale
+ * content in that case, not redundant waste. */
+/* Recomputes every class's own shapes[] (DiamondClass, src/vm.h) --
+ * self-referential (`shape->class` points back at the owning class)
+ * entries a fresh compile always gets for free from run_compile_pass's
+ * own tail, so anything that populates program->classes[] *without*
+ * running a real compile pass afterward needs to call this explicitly
+ * or every shape lookup reads stale/dangling `class` pointers instead.
+ * Two callers: diamond_program_init_fresh below (bootstrapping the
+ * built-in exception classes with no compile pass involved at all) and
+ * diamond_program_read_compiled (src/compiled_prelude.c) -- a
+ * deserialized program's own classes[] array lives at a different
+ * memory address than whatever program it was originally serialized
+ * from, so the raw shapes[] bytes the dump carries over point at the
+ * *wrong* classes[] array entirely; nothing else ever calls a compile
+ * pass over an already-fully-compiled deserialized program to fix that
+ * up implicitly the way diamond_compile_incremental against a template
+ * already does for the prelude's own template-seeded classes. Confirmed
+ * directly, not assumed: a user-defined class's own instance-variable
+ * reads returned Nil after an uncorrected write_compiled/read_compiled
+ * round-trip, since field access resolves through a shape whose
+ * `class` pointer no longer matched the class actually being read. */
+void diamond_program_recompute_shapes(DiamondProgram *program) {
+    for(size_t class_index=0;class_index<program->class_count;class_index++) {
+        DiamondClass *class=&program->classes[class_index];
+        for(size_t field_count=0;field_count<=class->field_count;field_count++) {
+            class->shapes[field_count]=(DiamondShape){
+                .class=class,.field_count=(uint8_t)field_count};
+        }
+    }
+}
+
+void diamond_program_init_fresh(DiamondProgram *program) {
     static const struct {
         const char *name;
         uint8_t superclass;
@@ -14951,30 +16459,97 @@ void diamond_program_init(DiamondProgram *program) {
         [DIAMOND_CLASS_POSTGRES_ERROR]={"PostgreSQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_MYSQL_ERROR]={"MySQLError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_NO_METHOD_ERROR]={"NoMethodError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_JSON_ERROR]={"JSONError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_SUPERVISOR_ERROR]={"SupervisorError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_SANDBOX_ERROR]={"SandboxError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_RESOURCE_LIMIT_ERROR]={"ResourceLimitError",DIAMOND_CLASS_STANDARD_ERROR},
+        [DIAMOND_CLASS_FROZEN_ERROR]={"FrozenError",DIAMOND_CLASS_STANDARD_ERROR},
     };
     program->range_class_index=UINT8_MAX;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
+    /* Explicit here too, not just class_count above: diamond_program_init
+     * (below) no longer memsets classes[]/interfaces[]/modules[] at all
+     * (see its own comment) -- these two are the only fields in that
+     * skipped region besides class_count that this function doesn't
+     * otherwise set unconditionally. */
+    program->interface_count=0;
+    program->module_count=0;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
         DiamondClass *class=&program->classes[index];
+        /* A builtin class can be reopened by user code (`class Exception
+         * ... end` adding a method is ordinary, allowed monkey-patching,
+         * same as any other class -- compile_class's own comment on
+         * "a class can always be reopened") -- so unlike the fields
+         * below this loop already always overwrites unconditionally,
+         * methods/singleton_methods/class_variables genuinely can be
+         * non-empty here already, left over from an earlier reopen *of a
+         * previous compile*, if `program` is being reused (tests/
+         * run_cases.c's own batch loop) rather than freshly calloc'd.
+         * Explicit full reset, matching compile_class's own reopen-
+         * branch reset of a claimed slot, for the same reason: nothing
+         * else ever clears a builtin class's own tables between
+         * compiles now that the big memset below is gone. */
+        memset(class->methods,0,sizeof class->methods);
+        memset(class->singleton_methods,0,sizeof class->singleton_methods);
+        memset(class->field_type_status,0,sizeof class->field_type_status);
+        memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->class_variables,0,sizeof class->class_variables);
+        class->method_count=0;
+        class->singleton_method_count=0;
+        class->class_variable_count=0;
+        class->declared_by_discovery=false;
         (void)snprintf(class->name,sizeof class->name,"%s",builtins[index].name);
         class->superclass=builtins[index].superclass;
         class->field_count=3;
         (void)snprintf(class->fields[0],DIAMOND_MAX_FUNCTION_NAME,"message");
         (void)snprintf(class->fields[1],DIAMOND_MAX_FUNCTION_NAME,"cause");
         (void)snprintf(class->fields[2],DIAMOND_MAX_FUNCTION_NAME,"backtrace");
-        /* diamond_compile only computes shapes for every class (built-in
-         * and user-declared) once compilation finishes -- done here too,
-         * scoped to just these built-ins, so a program that never gets
-         * that far (e.g. a ProgramBuilder that only ever calls this
-         * function, never diamond_compile) still has instantiable
-         * built-in exception classes from construction on, the same
-         * guarantee diamond_compile itself provides. */
-        for(size_t field_count=0;field_count<=class->field_count;field_count++) {
-            class->shapes[field_count]=(DiamondShape){
-                .class=class,.field_count=(uint8_t)field_count};
-        }
     }
+    /* diamond_compile only computes shapes for every class (built-in and
+     * user-declared) once compilation finishes -- done here too, so a
+     * program that never gets that far (e.g. a ProgramBuilder that only
+     * ever calls this function, never diamond_compile) still has
+     * instantiable built-in exception classes from construction on, the
+     * same guarantee diamond_compile itself provides. See diamond_
+     * program_recompute_shapes' own comment just above. */
+    diamond_program_recompute_shapes(program);
     snprintf(program->entry.name, sizeof(program->entry.name), "<main>");
+}
+
+void diamond_program_init(DiamondProgram *program) {
+    /* memset rather than `*program = (DiamondProgram){};`: a compound-literal
+     * assignment materializes a full temporary DiamondProgram (3MB+) on this
+     * function's own stack frame regardless of where `program` itself points,
+     * which is unsafe for any caller running at nontrivial stack depth (e.g.
+     * a required package's manifest, compiled from inside expand()'s own
+     * recursive call chain, while the top-level program's own DiamondProgram
+     * is still live further up the stack in main.c's run_source).
+     *
+     * Two memsets, not one covering the whole struct: `classes`/
+     * `interfaces`/`modules` (and the class_count/interface_count/
+     * module_count fields sitting between them) are deliberately
+     * skipped, since they're ~14.2MB of DiamondProgram's own ~14.2MB
+     * total size -- confirmed directly (`sizeof(DiamondProgram)`), and a
+     * full memset of that scale measured at several milliseconds per
+     * call, every single diamond_compile/diamond_compile_incremental
+     * call regardless of source size (see diamond_program_init_fresh's
+     * own comment and CHANGELOG.md's "Performance").
+     * This is provably safe now, not merely fast: every place that
+     * claims a genuinely new class/module/interface slot
+     * (compile_class/compile_module/compile_interface, src/compiler.c)
+     * explicitly resets that exact slot's own methods/fields/counts
+     * itself, rather than relying on ambient pre-zeroed memory --
+     * verified directly for each, not assumed, since `program` here
+     * might be a struct tests/run_cases.c's own batch loop is reusing
+     * across 1285+ compiles, not a fresh calloc. class_count/
+     * interface_count/module_count themselves are reset explicitly by
+     * diamond_program_init_fresh below (which also finishes resetting
+     * every builtin class's own methods/fields for the identical
+     * reuse-safety reason -- see its own comment). */
+    memset(program, 0, offsetof(DiamondProgram, classes));
+    memset(&program->namespace_constants, 0,
+        sizeof *program - offsetof(DiamondProgram, namespace_constants));
+    diamond_program_init_fresh(program);
 }
 
 DiamondResolvedLocation diamond_resolve_diagnostic_location(
@@ -15043,6 +16618,39 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
     return SIZE_MAX;
 }
 
+size_t diamond_combined_buffer_line(const char *combined,size_t offset) {
+    /* Not a flat newline count: diamond_lexer_next (src/lexer.c) resets
+     * its own line counter to 0 (so the *next* newline brings it to 1)
+     * whenever it scans exactly "#line 1" followed by a newline or EOF --
+     * the literal marker the loader (src/loader.c's own expand, "\n#line
+     * 1\n") writes immediately before every segment, including the
+     * top-level user source right after the prelude, not only before a
+     * `require`d file's own inlined text. Line numbers the compiler
+     * actually assigns (DiamondSpan.line, chunk->lines[]) are therefore
+     * per-*segment*, not a monotonic count across the whole combined
+     * buffer -- this walk has to recognize the identical marker the same
+     * way, or it disagrees with what DiamondSpan.line/chunk->lines[]
+     * will actually read for this exact byte position (and, downstream,
+     * whatever line a live setBreakpoints command names). Matches the
+     * lexer's own detection exactly: the marker
+     * fires regardless of what precedes it (the lexer's check runs
+     * unconditionally on every '#' reached while skipping whitespace/
+     * comments, not only right after a newline) -- true in practice here
+     * too, since "#line 1" never occurs except where the loader placed
+     * it. */
+    static constexpr char marker[]="#line 1";
+    static constexpr size_t marker_length=sizeof(marker)-1;
+    size_t line=1;
+    for(size_t index=0;index<offset&&combined[index]!='\0';index++) {
+        if(combined[index]=='#'&&
+           strncmp(combined+index,marker,marker_length)==0&&
+           (combined[index+marker_length]=='\n'||combined[index+marker_length]=='\0'))
+            line=0;
+        if(combined[index]=='\n')line++;
+    }
+    return line;
+}
+
 /* The actual compile, run twice by diamond_compile below -- once
  * (discovery_pass=true) into a throwaway DiamondProgram purely to
  * register every class/module/interface's name/fields/methods and every
@@ -15054,7 +16662,8 @@ size_t diamond_resolve_source_position(const char *path,const char *combined,
  * both passes need that same prologue against their own separate
  * program, so it stays there rather than duplicated in here. */
 static bool run_compile_pass(const char *source, DiamondProgram *program,
-                             DiamondDiagnostic *diagnostic, bool discovery_pass) {
+                             DiamondDiagnostic *diagnostic, bool discovery_pass,
+                             size_t function_claim_start, bool debug_mode) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -15069,6 +16678,10 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .current_retry_target = SIZE_MAX,
         .diagnostic = diagnostic,
         .discovery_pass = discovery_pass,
+        .next_function_claim = function_claim_start,
+        /* Never set for the discovery pass -- see the field's own
+         * comment in the Compiler struct. */
+        .debug_mode = discovery_pass?false:debug_mode,
     };
     diamond_lexer_init(&compiler.lexer, source);
     compiler.current = diamond_lexer_next(&compiler.lexer);
@@ -15084,12 +16697,9 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         record_scope_locals(&compiler,0,compiler.local_count,strlen(source));
         program->entry.body_end=strlen(source);
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
+        diamond_program_recompute_shapes(program);
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
             DiamondClass *class=&program->classes[class_index];
-            for(size_t field_count=0;field_count<=class->field_count;field_count++) {
-                class->shapes[field_count]=(DiamondShape){
-                    .class=class,.field_count=(uint8_t)field_count};
-            }
             /* Resolved by name, once, here -- never hardcoded, since a
              * conservative prelude that skips optional modules can shift
              * which index a *later*-defined class lands at (confirmed
@@ -15133,8 +16743,57 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * exactly as strict as before in both passes (see compile_class's own
  * comment on `claiming`): that needs the referenced class already fully
  * compiled, not just known by name, which this doesn't attempt to fix. */
-bool diamond_compile(const char *source, DiamondProgram *program,
-                     DiamondDiagnostic *diagnostic) {
+/* Seeds `destination` (just diamond_program_init'd, otherwise empty)
+ * with `template`'s already-fully-compiled classes/interfaces/modules/
+ * functions, so a later compile pass over *additional* source can
+ * reference them by name without ever re-parsing the source that
+ * declared them. Marked declared_by_discovery=false throughout (unlike
+ * the discovery-pass merge below, which marks its own fresh finds
+ * true): these entries are already real and finished, not pending
+ * slots for the upcoming pass to claim and refill -- compile_class/
+ * compile_module/compile_interface's own claiming checks (see their
+ * comments) read that flag to tell the two cases apart. Safe against
+ * every one of those claiming paths for the same reason: `destination`
+ * only ever gets compiled against source that doesn't redeclare any of
+ * template's own names, so compile_class et al. never even look these
+ * slots up except by an ordinary, successful by-name reference. */
+static bool seed_program_from_template(DiamondProgram *destination,
+                                       const DiamondProgram *template) {
+    /* Only template's own *used* prefix of each fixed-size table, not
+     * the whole DIAMOND_MAX_CLASSES=180/DIAMOND_MAX_INTERFACES=32/
+     * DIAMOND_MAX_MODULES=32-sized array (~14MB combined, dwarfing
+     * anything diamond_compile_incremental saves by skipping the
+     * template's own lex/parse/codegen -- measured directly, not
+     * assumed): `destination` was just diamond_program_init'd, whose own
+     * memset already leaves every slot past what's copied here in
+     * exactly the same all-zero state a full-array copy would have left
+     * them in anyway, since template's own unused suffix is zero too. */
+    memcpy(destination->classes,template->classes,
+        template->class_count*sizeof destination->classes[0]);
+    destination->class_count=template->class_count;
+    memcpy(destination->interfaces,template->interfaces,
+        template->interface_count*sizeof destination->interfaces[0]);
+    destination->interface_count=template->interface_count;
+    memcpy(destination->modules,template->modules,
+        template->module_count*sizeof destination->modules[0]);
+    destination->module_count=template->module_count;
+    destination->range_class_index=template->range_class_index;
+    for(size_t index=0;index<template->function_count;index++) {
+        DiamondFunction *copy=diamond_program_add_function(destination);
+        if(copy==nullptr)return false;
+        if(!diamond_function_copy(copy,template->functions[index]))return false;
+        copy->declared_by_discovery=false;
+    }
+    return true;
+}
+
+/* Shared by diamond_compile (template=nullptr, today's exact behavior)
+ * and diamond_compile_incremental (template!=nullptr): see each
+ * public wrapper's own comment for what `template` buys and costs. */
+static bool diamond_compile_impl(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 bool debug_mode,
+                                 DiamondDiagnostic *diagnostic) {
     /* Temporary: docs/roadmap.md's "make programs start faster" first
      * step ("measure startup and compile-time cost"). DIAMOND_TRACE_
      * COMPILE, same env-var-gated stderr convention as DIAMOND_TRACE_GC
@@ -15146,12 +16805,26 @@ bool diamond_compile(const char *source, DiamondProgram *program,
     const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
     diamond_program_free(program);
 
+    const size_t function_claim_start=
+        template!=nullptr?template->function_count:0;
+
     DiamondProgram *discovery = calloc(1, sizeof *discovery);
-    diamond_program_init(discovery);
+    /* diamond_program_init_fresh, not diamond_program_init: `discovery`
+     * is freshly calloc'd right above (already all-zero) and never reused
+     * across calls, so diamond_program_init's own memset would just
+     * re-zero memory calloc already zeroed -- see that function's own
+     * comment. */
+    diamond_program_init_fresh(discovery);
     discovery->allow_top_level_redefinition = allow_top_level_redefinition;
+    if(template!=nullptr&&!seed_program_from_template(discovery,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+        return false;
+    }
     DiamondDiagnostic discovery_diagnostic = {0};
     const bool discovered = run_compile_pass(
-        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true);
+        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
+        function_claim_start, false);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
@@ -15160,6 +16833,11 @@ bool diamond_compile(const char *source, DiamondProgram *program,
         *diagnostic = discovery_diagnostic;
         diamond_program_free(discovery);
         free(discovery);
+        return false;
+    }
+    if(template!=nullptr&&!seed_program_from_template(program,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
         return false;
     }
 
@@ -15172,19 +16850,43 @@ bool diamond_compile(const char *source, DiamondProgram *program,
      * ownership to transfer. compile_class/compile_module/
      * compile_interface's own claiming logic (see their comments) is
      * what makes the second pass treat every copied entry as its own
-     * pre-reserved slot instead of a duplicate declaration. */
-    memcpy(program->classes, discovery->classes, sizeof program->classes);
+     * pre-reserved slot instead of a duplicate declaration. Safe to
+     * copy the *entire* array unconditionally even when `template`
+     * already seeded a prefix of it into both `program` and `discovery`
+     * moments ago: that prefix is byte-identical in both (the same
+     * template, copied the same way), so re-copying it here is
+     * redundant, not wrong -- unlike the function loop just below,
+     * where "copy again" means "append a second time". */
+    /* Only discovery's own *used* prefix -- see seed_program_from_
+     * template's own identical comment just above on why a full
+     * DIAMOND_MAX_CLASSES/_INTERFACES/_MODULES-sized copy here would be
+     * both far more expensive and no more correct (program was just
+     * diamond_program_init'd, so its own unused suffix is already zero,
+     * matching discovery's own zeroed suffix exactly). This path runs on
+     * *every* diamond_compile/diamond_compile_incremental call, template
+     * or not -- unlike seed_program_from_template, which only runs when
+     * a template is given. */
+    memcpy(program->classes, discovery->classes,
+        discovery->class_count*sizeof program->classes[0]);
     program->class_count = discovery->class_count;
-    memcpy(program->interfaces, discovery->interfaces, sizeof program->interfaces);
+    memcpy(program->interfaces, discovery->interfaces,
+        discovery->interface_count*sizeof program->interfaces[0]);
     program->interface_count = discovery->interface_count;
-    memcpy(program->modules, discovery->modules, sizeof program->modules);
+    memcpy(program->modules, discovery->modules,
+        discovery->module_count*sizeof program->modules[0]);
     program->module_count = discovery->module_count;
 
     /* Reserve every compiler-created function at its discovery-pass index.
      * The real pass claims the slots in the same source order, preserving
-     * both early top-level calls and copied class/module method indices. */
+     * both early top-level calls and copied class/module method indices.
+     * Starts at function_claim_start (0 with no template), not 0
+     * unconditionally: `discovery`'s own [0, function_claim_start) range
+     * is template's own functions, already present in `program` via
+     * seed_program_from_template above -- re-copying them here would
+     * append duplicates rather than harmlessly overwrite, unlike the
+     * fixed-size class/interface/module arrays just above. */
     if(!allow_top_level_redefinition) {
-        for(size_t index=0;index<discovery->function_count;index++) {
+        for(size_t index=function_claim_start;index<discovery->function_count;index++) {
             const DiamondFunction *discovered_function=discovery->functions[index];
             DiamondFunction *reserved=diamond_program_add_function(program);
             if(reserved==nullptr) {
@@ -15215,17 +16917,23 @@ bool diamond_compile(const char *source, DiamondProgram *program,
      * DIAMOND_BUILTIN_CLASS_COUNT of them, registered identically by
      * both programs' own diamond_program_init and never re-declared by
      * user code) are skipped -- nothing ever "reopens" them through this
-     * path, so there's nothing to mark stale. */
-    for(size_t index=DIAMOND_BUILTIN_CLASS_COUNT;index<program->class_count;index++)
+     * path, so there's nothing to mark stale; with a template, its own
+     * classes/modules are skipped the same way and for the same reason
+     * (already real, never re-touched by a compile that never mentions
+     * their names). */
+    for(size_t index=template!=nullptr?template->class_count:DIAMOND_BUILTIN_CLASS_COUNT;
+        index<program->class_count;index++)
         program->classes[index].declared_by_discovery=true;
-    for(size_t index=0;index<program->module_count;index++)
+    for(size_t index=template!=nullptr?template->module_count:0;
+        index<program->module_count;index++)
         program->modules[index].declared_by_discovery=true;
 
     diamond_program_free(discovery);
     free(discovery);
 
     const bool compiled=run_compile_pass(
-        source,program,diagnostic,/*discovery_pass=*/false);
+        source,program,diagnostic,/*discovery_pass=*/false,function_claim_start,
+        debug_mode);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
@@ -15243,6 +16951,47 @@ bool diamond_compile(const char *source, DiamondProgram *program,
             strlen(source));
     }
     return compiled;
+}
+
+bool diamond_compile(const char *source, DiamondProgram *program,
+                     DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,nullptr,false,diagnostic);
+}
+
+/* Compiles `source` against a `template` program (itself the result of
+ * an earlier, ordinary diamond_compile call, e.g. over just the
+ * prelude) instead of from scratch: every one of template's classes,
+ * interfaces, modules, and top-level functions is available to
+ * `source` by name, exactly as if `source` had been compiled as
+ * template_source + source concatenated the way diamond_run_source
+ * (src/run_source.c) does today -- without re-lexing/re-parsing
+ * template_source, which is the actual cost being avoided (see
+ * docs/roadmap.md's "make programs start faster": the embedded prelude
+ * dominates every single invocation's compile time today).
+ *
+ * `template` itself is read-only here and never modified or freed --
+ * the caller owns its lifetime and can reuse the same compiled
+ * template across many calls to this function, which is the entire
+ * point. `program` is the same in/out parameter diamond_compile always
+ * takes (freed and reinitialized internally regardless of its prior
+ * state).
+ *
+ * `source` must not itself redeclare any name template already
+ * declares -- doing so hits the same "already defined" compile error
+ * template_source + source concatenated would have produced, not a
+ * silent divergence (see seed_program_from_template's own comment). It
+ * *can* freely reference and call into anything template declared, in
+ * either direction size doesn't matter here: template is always fully
+ * compiled before `source` is ever parsed. */
+bool diamond_compile_incremental(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,template,false,diagnostic);
+}
+
+bool diamond_compile_with_breakpoints(const char *source, DiamondProgram *program,
+                                      DiamondDiagnostic *diagnostic) {
+    return diamond_compile_impl(source,program,nullptr,true,diagnostic);
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

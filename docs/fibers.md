@@ -84,11 +84,11 @@ Diamond does not expose a built-in fiber scheduler. An application can keep
 fibers in an Array and decide which one to resume. The Gremlin HTTP server uses
 this approach with non-blocking sockets and `IO.poll`; see
 [`packages/gremlin`](../packages/gremlin/README.md) and the
-[non-blocking I/O guide](networking.md#non-blocking-sockets-tcpserverlistennonblocking-socket-iopoll).
+[non-blocking I/O guide](networking.md#non-blocking-sockets-tcpserverlisten_nonblocking-socket-iopoll).
 
 Because scheduling is cooperative, blocking I/O or CPU-heavy work inside one
 fiber blocks every fiber on that OS thread. Use non-blocking I/O with explicit
 yields, or move CPU work to a Thread.
 
 Implementation details and GC invariants are documented in
-[Concurrency internals](concurrency-internals.md).
+[Concurrency internals](internal/concurrency-internals.md).

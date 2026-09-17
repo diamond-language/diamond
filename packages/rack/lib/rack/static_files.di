@@ -59,12 +59,11 @@ class StaticFiles
       return nil
     end
     segments = relative.split("/")
-    index = 0
-    while index < segments.length()
-      if segments[index] == ".."
-        return nil
-      end
-      index = index + 1
+    has_traversal = segments.any?() do |segment|
+      segment == ".."
+    end
+    if has_traversal
+      return nil
     end
     relative
   end

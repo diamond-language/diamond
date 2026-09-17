@@ -183,52 +183,25 @@ module Arel
           assignment_index += 1
         end
       end
-      predicates = []
-      predicate_index = 0
-      while predicate_index < state[2].length()
-        predicates.push(replacements[index])
-        index += 1
-        predicate_index += 1
-      end
-      returning = []
-      returning_index = 0
-      while returning_index < state[3].length()
-        returning.push(replacements[index])
-        index += 1
-        returning_index += 1
-      end
-      ctes = []
-      cte_index = 0
-      while cte_index < state[5].length()
-        ctes.push(replacements[cte_index])
-        cte_index += 1
-      end
+      predicates = replacements.drop(index).take(state[2].length())
+      index += state[2].length()
+      returning = replacements.drop(index).take(state[3].length())
+      index += state[3].length()
+      # Every ctes run starts at replacements[0] regardless of statement
+      # kind (see each branch's own initial `index = state[N].length()`
+      # above) -- a prefix take, not an offset from the running `index`.
+      ctes = replacements.take(state[5].length())
       Update.new(table, assignments, predicates, returning, state[4], ctes)
     elsif node is Delete
       state = node.structure()
       index = state[4].length()
       table = replacements[index]
       index += 1
-      predicates = []
-      predicate_index = 0
-      while predicate_index < state[1].length()
-        predicates.push(replacements[index])
-        index += 1
-        predicate_index += 1
-      end
-      returning = []
-      returning_index = 0
-      while returning_index < state[2].length()
-        returning.push(replacements[index])
-        index += 1
-        returning_index += 1
-      end
-      ctes = []
-      cte_index = 0
-      while cte_index < state[4].length()
-        ctes.push(replacements[cte_index])
-        cte_index += 1
-      end
+      predicates = replacements.drop(index).take(state[1].length())
+      index += state[1].length()
+      returning = replacements.drop(index).take(state[2].length())
+      index += state[2].length()
+      ctes = replacements.take(state[4].length())
       Delete.new(table, predicates, returning, state[3], ctes)
     elsif node is Insert
       state = node.structure()
@@ -283,19 +256,9 @@ module Arel
           value_index += 1
         end
       end
-      returning = []
-      returning_index = 0
-      while returning_index < state[2].length()
-        returning.push(replacements[index])
-        index += 1
-        returning_index += 1
-      end
-      ctes = []
-      cte_index = 0
-      while cte_index < state[8].length()
-        ctes.push(replacements[cte_index])
-        cte_index += 1
-      end
+      returning = replacements.drop(index).take(state[2].length())
+      index += state[2].length()
+      ctes = replacements.take(state[8].length())
       Insert.new(table, rows, returning, state[3], source_query, conflict_target,
         state[6], conflict_assignments, ctes)
     else
@@ -307,67 +270,31 @@ module Arel
     if replacements.length() != self.children(node).length()
       raise ArgumentError.new("Query replacement child count mismatch")
     end
+    # Each child kind occupies a contiguous run of `replacements` in
+    # declaration order, starting right after the previous kind's own
+    # run -- `.drop(index).take(count)` reads that run directly instead
+    # of walking it index-by-index into a fresh array by hand.
     index = 0
-    ctes = []
-    part = 0
-    while part < node.ctes().length()
-      ctes.push(replacements[index + part])
-      part += 1
-    end
+    ctes = replacements.drop(index).take(node.ctes().length())
     index += node.ctes().length()
     source_query = nil
     unless node.source_query() == nil
       source_query = replacements[index]
       index += 1
     end
-    projections = []
-    part = 0
-    while part < node.projections().length()
-      projections.push(replacements[index + part])
-      part += 1
-    end
+    projections = replacements.drop(index).take(node.projections().length())
     index += node.projections().length()
-    joins = []
-    part = 0
-    while part < node.joins().length()
-      joins.push(replacements[index + part])
-      part += 1
-    end
+    joins = replacements.drop(index).take(node.joins().length())
     index += node.joins().length()
-    predicates = []
-    part = 0
-    while part < node.predicates().length()
-      predicates.push(replacements[index + part])
-      part += 1
-    end
+    predicates = replacements.drop(index).take(node.predicates().length())
     index += node.predicates().length()
-    groups = []
-    part = 0
-    while part < node.groups().length()
-      groups.push(replacements[index + part])
-      part += 1
-    end
+    groups = replacements.drop(index).take(node.groups().length())
     index += node.groups().length()
-    havings = []
-    part = 0
-    while part < node.havings().length()
-      havings.push(replacements[index + part])
-      part += 1
-    end
+    havings = replacements.drop(index).take(node.havings().length())
     index += node.havings().length()
-    orderings = []
-    part = 0
-    while part < node.orderings().length()
-      orderings.push(replacements[index + part])
-      part += 1
-    end
+    orderings = replacements.drop(index).take(node.orderings().length())
     index += node.orderings().length()
-    correlations = []
-    part = 0
-    while part < node.correlations().length()
-      correlations.push(replacements[index + part])
-      part += 1
-    end
+    correlations = replacements.drop(index).take(node.correlations().length())
     Query.new(node.table_name(), predicates, orderings, node.limit_value(),
       node.offset_value(), projections, node.quoted_identifiers(), node.bind_limits(),
       node.table_alias(), node.distinct_value(), groups, havings, joins, source_query,

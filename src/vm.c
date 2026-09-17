@@ -1,17 +1,32 @@
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 /* _GNU_SOURCE (a superset of _DEFAULT_SOURCE): only for pthread_getattr_np,
  * used to learn a thread's own native stack bounds for the ASan
  * fiber-switch annotations below. */
 #define _GNU_SOURCE
 
 #include "vm.h"
+#include "jit.h"
 #include "bignum.h"
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
 #include "prelude.h"
 
+/* <crypt.h> exists on glibc (libxcrypt) and musl (see BCrypt.hash's own
+ * comment below for what musl's version lacks), declaring crypt_r/
+ * struct crypt_data/CRYPT_GENSALT_* -- but not on FreeBSD, which declares
+ * plain crypt()/crypt_r() directly in <unistd.h> (already included below)
+ * instead, with no separate header at all. __has_include, not an
+ * __APPLE__/__FreeBSD__-style OS check (see docs/portability.md's own
+ * "What hasn't been found" on why this codebase avoids those): this is a
+ * feature test, and the same reasoning applies wherever else a libc omits
+ * this header. */
+#if __has_include(<crypt.h>)
 #include <crypt.h>
+#endif
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -40,6 +55,7 @@
 #include <libpq-fe.h>
 #include <mysql.h>
 #include <zlib.h>
+#include <netinet/in.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -153,6 +169,17 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
 enum { DIAMOND_MAX_CALL_DEPTH = 95 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
+/* How often run_chunk's own dispatch loop actually calls clock_gettime to
+ * check a configured DIAMOND_MAX_WALL_MILLISECONDS budget (docs/sandbox.md's
+ * own "Resource limits" section) -- masked against vm->instructions_executed
+ * rather than checked every dispatch, since the clock read itself (unlike
+ * the instruction-count comparison right next to it) is real, non-trivial
+ * cost. Bounds the worst-case overshoot past the configured budget to
+ * "however long this many opcodes take," negligible next to any
+ * millisecond-scale budget someone would actually configure. Must be a
+ * power of two minus one for the `&` mask below to work. */
+enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
+
 /* Card size for the generational GC's Array/Hash write barrier -- see
  * mark_card_dirty's own comment (below, near gc_write_barrier) for why
  * only these two kinds need index-granularity remembering. Declared
@@ -199,6 +226,49 @@ typedef struct DiamondFrame {
     const DiamondChunk *chunk;
     const size_t *instruction_offset;
 } DiamondFrame;
+
+/* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
+ * is private to this file, so jit.c can never construct or link one
+ * directly; it only ever reserves opaque bytes on its own native stack and
+ * calls these to manage them, the same "risky logic stays in real C, not
+ * hand-rolled machine code" pattern already used for SET_IVAR/INDEX_GET/
+ * CHECK_TYPE. diamond_jit_frame_size is called once per *compile* (not per
+ * generated call) so jit.c learns the exact byte count to reserve without
+ * a hardcoded constant that could silently drift out of sync with this
+ * struct's own layout -- unlike DIAMOND_JIT_MAX_REGISTERS (a bare enum,
+ * nothing to query), sizeof() on a real struct is exactly this available
+ * here. The extra trailing size_t past the frame itself is instruction_
+ * offset's own backing storage: that field is a *pointer* to a live value
+ * for the frame's whole lifetime (see its own struct comment above), not
+ * a copy, and a JIT'd function has no `ip`-like local of its own to point
+ * at -- this reserves one, initialized to 0 (a synthetic placeholder;
+ * this JIT compiles no begin/rescue and nothing it calls through these
+ * trampolines can itself raise, so no code path today ever reads it back
+ * for a real backtrace, but a future one might). */
+size_t diamond_jit_frame_size(void) {
+    return sizeof(DiamondFrame) + sizeof(size_t);
+}
+
+void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk) {
+    DiamondFrame *frame = (DiamondFrame *)frame_storage;
+    size_t *offset_storage = (size_t *)(frame + 1);
+    *offset_storage = 0;
+    *frame = (DiamondFrame){
+        .previous = vm->frames,
+        .registers = registers,
+        .pending = nullptr,
+        .register_count = register_count,
+        .chunk = chunk,
+        .instruction_offset = offset_storage,
+    };
+    vm->frames = frame;
+}
+
+void diamond_jit_frame_pop(DiamondVm *vm) {
+    DiamondFrame *frame = (DiamondFrame *)vm->frames;
+    vm->frames = frame->previous;
+}
 
 /* Native backing struct for DiamondThreadHandle (object.h) -- see
  * docs/threads.md. `child_vm`/`child_program` are this thread's own,
@@ -247,6 +317,159 @@ typedef struct DiamondThread {
     pthread_mutex_t join_lock;
 } DiamondThread;
 
+/* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
+ * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
+ * by exactly one DiamondThreadHandle), a DiamondChannel is genuinely
+ * shared: `refcount` counts every live DiamondChannelHandle referencing
+ * it, possibly across several independent VM heaps at once (a Channel
+ * passed as a Thread.new argument, sent through another Channel, or
+ * copied inside an Array/Hash/Instance all bump this via copy_value_
+ * into_vm's own DIAMOND_OBJECT_CHANNEL case) -- freed only once the last
+ * one is swept (free_channel_reference).
+ *
+ * `private_vm`/`private_program` exist purely as GC-managed storage for
+ * queued values, never to run bytecode: nothing ever calls run_chunk
+ * against private_vm. private_program is a clone_program_from_chunk
+ * clone of whatever program was ambient at Channel.new time (identical
+ * shape to how Thread.new clones one for a spawned thread's own use) --
+ * send() rebases an incoming value from the sender's own ambient classes
+ * into private_program's classes (via copy_value_into_vm, exactly like
+ * Thread.new's own argument copy); receive() rebases the other direction
+ * (exactly like Thread#join's own result copy). Every value queued is
+ * therefore always a value private_vm itself owns -- queue[] doubles as
+ * private_vm->extra_roots (see that field's own comment, src/vm.h) so
+ * private_vm's own collections can find them.
+ *
+ * `queue` is a flat, non-ring `malloc`'d DiamondValue[capacity] buffer:
+ * receive() takes queue[0] and memmoves the remainder down rather than
+ * tracking a separate head index -- simpler than ring-buffer index math,
+ * and keeps the extra_roots hook a trivial flat pointer+count. Expected
+ * capacities (tens to low thousands) make the memmove cost a non-issue.
+ *
+ * `lock` serializes every access to this struct, including every
+ * allocation on private_vm -- since private_vm is never touched by more
+ * than one OS thread at a time (always under this same lock), this
+ * satisfies the real invariant GC safety needs (see diamond_vm_collect's
+ * own contract) without needing private_vm to be pinned to one thread
+ * for its whole lifetime the way a spawned Thread's own child_vm is.
+ * `not_empty`/`not_full` are this codebase's first condition variables
+ * -- see send/receive's own dispatch comments (DIAMOND_OP_INVOKE) for
+ * the exact wait/signal protocol. */
+typedef struct DiamondChannel {
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty;
+    pthread_cond_t not_full;
+    DiamondVm *private_vm;
+    DiamondProgram *private_program;
+    DiamondValue *queue;
+    size_t capacity;
+    size_t count;
+    bool closed;
+    atomic_size_t refcount;
+} DiamondChannel;
+
+static void free_channel_reference(DiamondChannel *channel);
+
+/* A fixed cap on children per Supervisor, matching DIAMOND_MAX_THREADS/
+ * DIAMOND_MAX_ARGUMENTS's own fixed-array style rather than dynamic
+ * growth -- see docs/threads.md's Supervisors section. Each child still
+ * separately counts against the process-wide DIAMOND_MAX_THREADS budget
+ * (one real OS thread per child, for its entire supervised lifetime), so
+ * this cap exists to bound one DiamondSupervisor's own fixed-size
+ * children[] array, not as an independent resource budget. */
+enum { DIAMOND_MAX_SUPERVISOR_CHILDREN = 32 };
+
+typedef struct DiamondSupervisor DiamondSupervisor;
+
+/* One supervised worker slot. `program_template` is cloned exactly once,
+ * at add_child time (clone_program_from_chunk -- the same call Thread.new
+ * and Channel.new already make), and reused unmodified across every
+ * restart of this child: a program's functions/classes/interfaces tables
+ * never change once compiled, only the heap data a run against them
+ * produces, so there is no need to reclone on every crash the way
+ * Thread.new reclones per spawn (a supervised child, unlike a plain
+ * Thread, may be spawned/restarted arbitrarily many times over its
+ * lifetime -- cloning once amortizes that cost across all of them).
+ *
+ * `args_vm` exists purely as GC-managed storage for `args[]`, exactly
+ * Channel's own private_vm-for-storage trick (src/vm.c's DiamondChannel
+ * comment above) -- but write-once, never mutated again after add_child,
+ * since supervised args don't change across restarts. `args_vm->
+ * extra_roots` is pointed at `args` so args_vm's own occasional GC cycle
+ * (triggered only by add_child's own initial copy_value_into_vm calls)
+ * keeps them alive. Every restart re-copies from args_vm into that
+ * attempt's own fresh run_vm using program_template's classes on both
+ * sides -- args_vm and every run_vm are structurally identical clones of
+ * the same template, so this is always a same-layout rebase, never a
+ * cross-program adopt.
+ *
+ * `last_error`/`restart_count`/`done` are guarded by the
+ * owning DiamondSupervisor's own `lock` (not a per-child lock -- these
+ * fields are read rarely, from the one calling thread's own restart_
+ * count()/last_error()/alive?() calls, never on any hot path), and
+ * written from exactly one place: this child's own dedicated retry-loop
+ * OS thread (supervisor_child_entry_trampoline). */
+typedef struct DiamondSupervisorChild {
+    DiamondProgram *program_template;
+    uint16_t function_index;
+    DiamondVm *args_vm;
+    DiamondValue args[DIAMOND_MAX_ARGUMENTS];
+    uint8_t arg_count;
+    pthread_t handle;
+    DiamondSupervisor *supervisor;
+    size_t restart_count;
+    /* Same size as DiamondVm.error (src/vm.h) -- last_error is always
+     * populated by copying either run_vm->error or format_uncaught_
+     * exception_message's own output into it verbatim (supervisor_child_
+     * entry_trampoline), so matching that buffer's own size exactly
+     * avoids ever truncating it. */
+    char last_error[1024];
+    /* True once this child's retry loop has permanently stopped running
+     * -- either a clean, non-raising return (v1 never restarts on a
+     * normal return) or a crash noticed after stop() was called
+     * (supervisor_child_entry_trampoline checks stop_requested right
+     * after recording a crash, before the next attempt). alive?() is
+     * exactly !done. */
+    bool done;
+    /* Guards against a double pthread_join on this child's own `handle`
+     * (undefined behavior per POSIX) -- stop()/join()/free_supervisor_
+     * reference are three independent call sites that each join every
+     * child, and any combination of them may run against the same
+     * Supervisor over its lifetime (stop() then join(), join() called
+     * twice, ...). Set under `supervisor->lock` immediately before the
+     * actual (unlocked) pthread_join call, mirroring DiamondThread's own
+     * `joined` flag/join_lock pairing for the identical reason. */
+    bool joined;
+} DiamondSupervisorChild;
+
+/* Native backing struct for DiamondSupervisorHandle (object.h) -- see
+ * docs/threads.md's Supervisors section and docs/internal/concurrency-
+ * internals.md for the full design. Unlike DiamondThread (owned one-to-
+ * one) but like DiamondChannel (genuinely shared, refcounted), a
+ * Supervisor is refcounted for free-safety consistency even though --
+ * see docs/threads.md -- a Supervisor is deliberately not one of
+ * copy_value_into_vm's handled kinds, so in practice no second real OS
+ * thread can ever obtain a handle to the same Supervisor: `refcount`
+ * only ever reaches more than 1 via an ordinary same-heap copy (e.g.
+ * storing the same handle in two Array slots), never a cross-thread one.
+ *
+ * `lock` guards every mutable field below plus each child's own
+ * restart_count/last_error/done (DiamondSupervisorChild's
+ * own comment). `stop_requested` is a separate lock-free atomic,
+ * deliberately not behind `lock`, since every child's retry loop checks
+ * it on every single iteration (mirrors DiamondThread's own atomic
+ * `finished` -- a hot, lock-free poll is the whole point). */
+typedef struct DiamondSupervisor {
+    pthread_mutex_t lock;
+    atomic_bool stop_requested;
+    DiamondSupervisorChild children[DIAMOND_MAX_SUPERVISOR_CHILDREN];
+    size_t child_count;
+    bool stopped;
+    atomic_size_t refcount;
+} DiamondSupervisor;
+
+static void free_supervisor_reference(DiamondSupervisor *supervisor);
+
 static void mark_value(DiamondValue value, bool minor);
 static void mark_object(DiamondObject *object, bool minor);
 static void mark_frame_chain(void *frames, bool minor);
@@ -266,6 +489,13 @@ static void free_adopted_programs(void *list);
 static void free_thread(DiamondThread *thread);
 static void populate_default_argv_env(DiamondVm *vm);
 static void format_value_type(char *buffer, size_t capacity, DiamondValue value);
+static void format_uncaught_exception_message(DiamondVm *vm, DiamondValue exception);
+static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+                               DiamondProgram *source_program,
+                               const DiamondClass *rebase_source_classes,
+                               const DiamondClass *rebase_dest_classes,
+                               const DiamondChunk **adopted_owner,
+                               DiamondValue *out);
 static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
         DiamondValue right_value,const char *op_name);
 
@@ -505,6 +735,8 @@ static void mark_roots(DiamondVm *vm, bool minor) {
     if (vm->root_queue != nullptr)
         for (size_t index = 0; index < diamond_fiber_queue_count(vm->root_queue); index++)
             mark_fiber(diamond_fiber_queue_at(vm->root_queue, index),minor);
+    for(size_t index=0;index<vm->extra_root_count;index++)
+        mark_value(vm->extra_roots[index],minor);
     if (minor) mark_remembered_set(vm);
 }
 
@@ -616,6 +848,13 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_THREAD) {
             size=sizeof(DiamondThreadHandle);
             free_thread(((DiamondThreadHandle *)unreached)->thread);
+        } else if(unreached->kind==DIAMOND_OBJECT_CHANNEL) {
+            size=sizeof(DiamondChannelHandle);
+            free_channel_reference(((DiamondChannelHandle *)unreached)->channel);
+        } else if(unreached->kind==DIAMOND_OBJECT_SUPERVISOR) {
+            size=sizeof(DiamondSupervisorHandle);
+            free_supervisor_reference(
+                ((DiamondSupervisorHandle *)unreached)->supervisor);
         } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3) {
             size=sizeof(DiamondSqlite3Handle);
             sqlite3 *db=((DiamondSqlite3Handle *)unreached)->db;
@@ -753,6 +992,20 @@ static bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner) {
  * a handful of cards is negligible next to the container it shadows
  * (~625 bytes for a 40,000-entry Hash), not worth a second accounting
  * path for. Returns false only on allocation failure. */
+/* DiamondArray and DiamondHash lay out dirty_cards/dirty_card_capacity at
+ * different offsets (object.h) -- fine at runtime, since owner->kind
+ * always picks the matching branch below, but when this function gets
+ * inlined at -O3 into a call site where the concrete object is
+ * statically known to be one specific (smaller) allocation size, e.g.
+ * diamond_vm_set_argv's own Array-only construction, GCC's -Warray-bounds
+ * still evaluates the *other*, provably-unreachable-there branch's
+ * hash->dirty_cards/hash->capacity access against that size and reports
+ * a false positive. Confirmed false: the two branches are never
+ * conflated at runtime, only during this particular inlined analysis. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 static bool mark_card_dirty(DiamondObject *owner, size_t index) {
     uint8_t **dirty_cards;size_t *dirty_card_capacity,capacity;
     if(owner->kind==DIAMOND_OBJECT_ARRAY) {
@@ -782,6 +1035,9 @@ static bool mark_card_dirty(DiamondObject *owner, size_t index) {
     (*dirty_cards)[index/DIAMOND_GC_CARD_SIZE]=1;
     return true;
 }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 /* gc_write_barrier's own Array/Hash-specific sibling: same old-object/
  * remembered-set bookkeeping, plus marking the one card the write
@@ -902,19 +1158,139 @@ void diamond_vm_collect_minor(DiamondVm *vm) {
  * of needing to touch all 23 call sites again -- and now that place.
  * Minor checked first (cheaper, fires far more often); major checked
  * unconditionally after, in case a lot of the nursery just got promoted
- * and total live bytes are already past next_gc too. */
-void maybe_collect(DiamondVm *vm) {
+ * and total live bytes are already past next_gc too.
+ *
+ * Also the one place a configured DIAMOND_MAX_MEMORY_BYTES budget
+ * (docs/sandbox.md's own "Resource limits" section) is enforced -- exactly
+ * this comment's own "exactly one place to be added" reasoning, extended
+ * to a second kind of limit. Returns false (checked after both collection
+ * passes above already ran, giving them a real chance to free memory
+ * first) once live bytes are still over budget; every one of this
+ * function's own callers already has a `return nullptr`/`return false`
+ * OOM path one line below its own `malloc`/`calloc` check, and reuses that
+ * exact path here rather than a new error shape -- see this status's own
+ * comment in vm.h for why this deliberately reuses DIAMOND_VM_OUT_OF_
+ * MEMORY rather than a new status.
+ *
+ * Clears max_memory_bytes (disabling this check for the rest of the VM's
+ * lifetime) the *first* time it actually fires, for the same reason
+ * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS clear themselves
+ * in run_chunk's own dispatch loop: catch_runtime_error's own path to
+ * report this failure as a real, rescuable OutOfMemoryError itself calls
+ * allocate_instance/allocate_string, which would call straight back into
+ * this same function -- if bytes_allocated is still (deliberately) over
+ * budget, leaving the check armed would make it return false again there
+ * too, making the exception impossible to ever construct, let alone
+ * rescue. Once the budget has genuinely been exceeded once, further
+ * allocation needed just to report and unwind that fact is let through. */
+bool maybe_collect(DiamondVm *vm) {
     if(vm->stress_minor_gc||
        vm->bytes_allocated-vm->bytes_allocated_at_last_minor_gc>=vm->minor_gc_threshold_bytes)
         diamond_vm_collect_minor(vm);
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
+    if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes) {
+        vm->max_memory_bytes=0;
+        vm->memory_limit_tripped=true;
+        return false;
+    }
+    return true;
 }
+
+/* mysql_init() -- called per-connection from MySQL.open's dispatch --
+ * implicitly runs mysql_library_init() the first time it's ever called
+ * in the process if nothing already called it explicitly. That implicit
+ * path is documented by the MySQL/MariaDB client library as unsafe under
+ * concurrent first use: two threads racing their first MySQL.open at once
+ * can corrupt the client library's own one-time setup. Diamond threads are
+ * independent OS threads with isolated heaps (see docs/threads.md) that can
+ * each reach MySQL.open before any other thread has, so an explicit,
+ * pthread_once-guarded call here -- once per process, from every VM's own
+ * init, the same "once per VM, idempotent" shape as the SIGPIPE handling
+ * below -- removes the race instead of relying on the implicit path. */
+static pthread_once_t mysql_library_init_once = PTHREAD_ONCE_INIT;
+static void mysql_library_init_once_fn(void) { mysql_library_init(0,nullptr,nullptr); }
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
-        .minor_gc_threshold_bytes = 1048576};
+        .minor_gc_threshold_bytes = 1048576,.debug_fd=-1};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
+    /* Much higher than quickening_threshold's 1: an opcode rewrite is a
+     * single in-place byte write, while a JIT compile allocates and fills
+     * a whole executable-memory buffer -- worth doing only for a function
+     * that's actually going to be called a lot, not the first handful of
+     * calls. Unmeasured beyond "clearly should not be 1"; see
+     * docs/internal/jit-design.md. */
+    vm->jit_threshold = 50;
+    /* See DiamondVm.debug_fd's own comment (src/vm.h): read once here,
+     * not per-pause. An unparseable or negative value is treated the
+     * same as unset -- debugger_helper's ordinary stdout/stdin path --
+     * rather than failing VM init over a malformed env var. */
+    const char *debug_fd_env=getenv("DIAMOND_DEBUG_FD");
+    if(debug_fd_env!=nullptr) {
+        const long parsed=strtol(debug_fd_env,nullptr,10);
+        if(parsed>=0&&parsed<=INT_MAX)vm->debug_fd=(int)parsed;
+    }
+    /* DIAMOND_DEBUG_BREAKPOINTS (see DiamondVm.debug_active_lines's own
+     * comment above): the initial armed set, read directly here rather
+     * than threaded in as a parameter, matching debug_fd's own
+     * independent-per-VM env read just above. A live `setBreakpoints`
+     * command (docs/debugging.md) freely replaces this later -- this is
+     * only ever the *starting* point, and may legitimately be empty
+     * (comma-separated, same convention as every other DIAMOND_*-env-var
+     * list elsewhere in this codebase; malformed entries are skipped
+     * rather than failing VM init, matching debug_fd's own tolerance). */
+    const char *debug_breakpoints_env=getenv("DIAMOND_DEBUG_BREAKPOINTS");
+    if(debug_breakpoints_env!=nullptr) {
+        const char *cursor=debug_breakpoints_env;
+        while(*cursor!='\0'&&vm->debug_active_line_count<DIAMOND_MAX_ACTIVE_BREAKPOINTS) {
+            while(*cursor==' '||*cursor==',')cursor++;
+            if(*cursor=='\0')break;
+            char *end=nullptr;
+            const unsigned long long parsed=strtoull(cursor,&end,10);
+            if(end==cursor)break;
+            vm->debug_active_lines[vm->debug_active_line_count++]=(size_t)parsed;
+            cursor=end;
+        }
+    }
+    /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
+     * DiamondVm.max_instructions/max_wall_nanoseconds/max_memory_bytes's
+     * own comment (src/vm.h) explains why this is read once per VM here
+     * rather than a process-wide cache: every VM (this one, a spawned
+     * Thread's child_vm, a Supervisor child's run_vm, ProgramBuilder#run's
+     * own run_vm) independently reads the same real process environment
+     * at its own init, matching DIAMOND_SANDBOX's own propagation-free
+     * design. An unparseable, zero, or negative value is treated the same
+     * as unset (no limit), matching debug_fd's own convention just above. */
+    const char *max_instructions_env=getenv("DIAMOND_MAX_INSTRUCTIONS");
+    if(max_instructions_env!=nullptr&&max_instructions_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_instructions_env,&end,10);
+        if(end!=max_instructions_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->max_instructions=(size_t)parsed;
+    }
+    const char *max_wall_env=getenv("DIAMOND_MAX_WALL_MILLISECONDS");
+    if(max_wall_env!=nullptr&&max_wall_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_wall_env,&end,10);
+        if(end!=max_wall_env&&*end=='\0'&&parsed>0&&
+           parsed<=(unsigned long long)INT64_MAX/1000000ULL)
+            vm->max_wall_nanoseconds=(int64_t)parsed*1000000LL;
+    }
+    const char *max_memory_env=getenv("DIAMOND_MAX_MEMORY_BYTES");
+    if(max_memory_env!=nullptr&&max_memory_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(max_memory_env,&end,10);
+        if(end!=max_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->max_memory_bytes=(size_t)parsed;
+    }
+    vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0;
+    if(vm->max_wall_nanoseconds!=0) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC,&now);
+        vm->start_time_ns=(int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
+    }
+    pthread_once(&mysql_library_init_once,mysql_library_init_once_fn);
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
      * (not just cleanly closed) raises SIGPIPE, whose default disposition
      * is to kill the whole process outright -- surfaced by TLS in
@@ -990,6 +1366,11 @@ static void free_object_list(DiamondObject *object) {
             free(builder->program);
         } else if(object->kind==DIAMOND_OBJECT_THREAD) {
             free_thread(((DiamondThreadHandle *)object)->thread);
+        } else if(object->kind==DIAMOND_OBJECT_CHANNEL) {
+            free_channel_reference(((DiamondChannelHandle *)object)->channel);
+        } else if(object->kind==DIAMOND_OBJECT_SUPERVISOR) {
+            free_supervisor_reference(
+                ((DiamondSupervisorHandle *)object)->supervisor);
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
             /* _v2 -- see the matching branch in diamond_vm_collect_impl
@@ -1346,7 +1727,7 @@ DiamondFiberStatus diamond_fiber_scheduler_run_all(DiamondFiberQueue *queue) {
 
 static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondString *string = malloc(sizeof(DiamondString) + length + 1);
     if (string == nullptr) return nullptr;
     string->object = (DiamondObject){
@@ -1361,9 +1742,25 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
     return string;
 }
 
+/* JIT trampoline for DIAMOND_OP_STRING -- see jit.h's own comment. Mirrors
+ * that opcode's own interpreter case exactly (src/vm.c's dispatch loop):
+ * resolve the string constant, allocate via allocate_string (which calls
+ * maybe_collect unconditionally -- the actual reason this whole trampoline
+ * needs the caller to have already published a DiamondFrame, unlike
+ * SET_IVAR/INDEX_GET/CHECK_TYPE). */
+DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
+        uint16_t string_index, DiamondValue *out) {
+    if (string_index >= chunk->string_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondStringConstant *constant = &chunk->strings[string_index];
+    DiamondString *string = allocate_string(vm, constant->chars, constant->length);
+    if (string == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(string);
+    return DIAMOND_VM_OK;
+}
+
 static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
                                       size_t length) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSymbol *symbol = malloc(sizeof(DiamondSymbol) + length + 1);
     if (symbol == nullptr) return nullptr;
     symbol->object = (DiamondObject){
@@ -1380,7 +1777,7 @@ static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
 
 static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *class,
                                           const DiamondChunk *chunk) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     const size_t size=sizeof(DiamondInstance)+class->field_count*sizeof(DiamondValue);
     DiamondInstance *instance=malloc(size); if(instance==nullptr)return nullptr;
     instance->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_INSTANCE};
@@ -1392,7 +1789,7 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
 
 static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
                                     size_t count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
     DiamondArray *array=malloc(sizeof(DiamondArray)); if(array==nullptr)return nullptr;
@@ -1414,7 +1811,7 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
  * overflow either multiplication on a real -- if rare -- input rather
  * than just producing a huge-but-correct allocation request. */
 static DiamondTensor *allocate_tensor(DiamondVm *vm,size_t rows,size_t cols) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     if(rows!=0&&cols>SIZE_MAX/rows)return nullptr;
     const size_t element_count=rows*cols;
     if(element_count!=0&&sizeof(double)>SIZE_MAX/element_count)return nullptr;
@@ -2249,7 +2646,7 @@ static DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tenso
 }
 
 static DiamondHash *allocate_hash(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_HASH}};
     vm->young_objects=&hash->object;vm->bytes_allocated+=sizeof(DiamondHash);return hash;
@@ -2317,7 +2714,7 @@ void diamond_vm_set_argv(DiamondVm *vm, int argc, char *const *argv) {
 
 static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
     *closure=(DiamondClosure){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CLOSURE},
       .function_index=function_index,.capture_count=(uint8_t)count};
@@ -2326,14 +2723,14 @@ static DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
 }
 
 static DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondCell *cell=malloc(sizeof(DiamondCell));if(cell==nullptr)return nullptr;
     *cell=(DiamondCell){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CELL},.value=value};
     vm->young_objects=&cell->object;vm->bytes_allocated+=sizeof(DiamondCell);return cell;
 }
 
 static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fiber) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondFiberHandle *handle=malloc(sizeof(DiamondFiberHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFiberHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FIBER},.fiber=fiber};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFiberHandle);return handle;
@@ -2350,6 +2747,31 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
  * compete for the same real OS/memory resources. */
 enum { DIAMOND_MAX_THREADS = 64 };
 static atomic_size_t diamond_active_thread_count = 0;
+
+/* run_chunk's deliberately fixed-size interpreter frame is large (see the
+ * native-recursion-limit comment near the top of this file), so libc's
+ * pthread default is part of the VM's effective call-depth contract unless
+ * Diamond overrides it. glibc happens to inherit an 8 MiB default, while
+ * musl commonly supplies only about 128 KiB and Darwin 512 KiB: ordinary
+ * Thread.new code can exhaust the former, and the language-level recursion
+ * guard cannot fire before the latter's native stack is already gone.
+ *
+ * Keep language threads aligned with Diamond fibers and the stack size used
+ * to calibrate DIAMOND_MAX_CALL_DEPTH. Small native worker threads such as
+ * Tensor#matmul do not run the interpreter and intentionally keep their
+ * platform defaults. */
+enum { DIAMOND_VM_THREAD_STACK_SIZE = 8 * 1024 * 1024 };
+
+static int create_vm_thread(pthread_t *handle,
+        void *(*entry)(void *), void *argument) {
+    pthread_attr_t attributes;
+    int status=pthread_attr_init(&attributes);
+    if(status!=0)return status;
+    status=pthread_attr_setstacksize(&attributes,DIAMOND_VM_THREAD_STACK_SIZE);
+    if(status==0)status=pthread_create(handle,&attributes,entry,argument);
+    pthread_attr_destroy(&attributes);
+    return status;
+}
 
 /* Builds a fresh, independently-owned DiamondProgram whose
  * function records and classes[]/interfaces[] tables are a deep copy of
@@ -2368,7 +2790,12 @@ static atomic_size_t diamond_active_thread_count = 0;
 static DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
     DiamondProgram *clone=calloc(1,sizeof *clone);
     if(clone==nullptr)return nullptr;
-    diamond_program_init(clone);
+    /* _fresh, not diamond_program_init: `clone` is freshly calloc'd right
+     * above (already all-zero) and never reused across calls -- a new
+     * Thread.new spawn always gets its own brand-new clone -- so
+     * diamond_program_init's own memset would just re-zero memory
+     * calloc already zeroed. See its own comment (src/compiler.c). */
+    diamond_program_init_fresh(clone);
     if(chunk->type_set_count>0) {
         if(!diamond_function_reserve_type_sets(&clone->entry,
                 chunk->type_set_count)) {
@@ -2459,7 +2886,7 @@ static void *thread_entry_trampoline(void *argument) {
 }
 
 static DiamondThreadHandle *allocate_thread_handle(DiamondVm *vm,DiamondThread *thread) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondThreadHandle *handle=malloc(sizeof(DiamondThreadHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondThreadHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_THREAD},.thread=thread};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondThreadHandle);return handle;
@@ -2496,8 +2923,225 @@ static void free_thread(DiamondThread *thread) {
     atomic_fetch_sub(&diamond_active_thread_count,1);
 }
 
+static DiamondChannelHandle *allocate_channel_handle(DiamondVm *vm,DiamondChannel *channel) {
+    if (!maybe_collect(vm)) return nullptr;
+    DiamondChannelHandle *handle=malloc(sizeof(DiamondChannelHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondChannelHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CHANNEL},
+        .channel=channel};
+    vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondChannelHandle);
+    return handle;
+}
+
+/* Mirrors free_thread's own role, called from the same two sweep paths
+ * (diamond_vm_collect's cycle-based sweep, diamond_vm_free's whole-VM
+ * teardown) for a DIAMOND_OBJECT_CHANNEL handle -- except a DiamondChannel
+ * is refcounted (see its own comment) rather than owned one-to-one by a
+ * single handle, so this only actually tears anything down once the
+ * *last* referencing handle, across however many VM heaps ever held one,
+ * is swept. Safe by construction at that point: reachability is exactly
+ * what the GC just proved false for every one of those handles, so no
+ * thread can be mid-call (send/receive/close/...) against a channel whose
+ * last reference is about to disappear. `channel` may be nullptr (mirrors
+ * free_thread's own tolerance) so callers don't need their own guard. */
+static void free_channel_reference(DiamondChannel *channel) {
+    if(channel==nullptr)return;
+    if(atomic_fetch_sub(&channel->refcount,1)!=1)return;
+    pthread_mutex_destroy(&channel->lock);
+    pthread_cond_destroy(&channel->not_empty);
+    pthread_cond_destroy(&channel->not_full);
+    if(channel->private_vm!=nullptr) {
+        diamond_vm_free(channel->private_vm);
+        free(channel->private_vm);
+    }
+    diamond_program_free(channel->private_program);
+    free(channel->private_program);
+    free(channel->queue);
+    free(channel);
+}
+
+/* pthread_create's entry point for one supervised child -- unlike
+ * thread_entry_trampoline (a single run, one OS thread per Thread.new
+ * call), this loops for the child's *entire* supervised lifetime: a
+ * fresh DiamondVm/heap per attempt, freed at the end of every attempt
+ * whether it crashed or not, exactly the isolated-heap-per-run guarantee
+ * an ordinary Thread already gives a single spawn. A clean, non-raising
+ * return ends the loop for good (v1 restarts on crash only, never on a
+ * normal return -- see docs/threads.md); an uncaught exception or
+ * internal VM failure records the reason, bumps restart_count, and
+ * loops again after a fixed 20ms delay (a safety valve bounding CPU use
+ * from a child that crashes immediately every time, not a configurable
+ * backoff policy -- see docs/roadmap.md's "what's next" note) unless
+ * stop_requested has been set meanwhile. Builds its own synthetic
+ * DiamondChunk once, up front, exactly the shape thread_entry_
+ * trampoline's own local `child_chunk` already uses -- program_template
+ * never changes across restarts, so this doesn't need rebuilding per
+ * iteration the way thread_entry_trampoline's per-spawn one does. */
+static void *supervisor_child_entry_trampoline(void *argument) {
+    DiamondSupervisorChild *child=(DiamondSupervisorChild *)argument;
+    DiamondSupervisor *supervisor=child->supervisor;
+    const DiamondFunction *target_fn=
+        child->program_template->functions[child->function_index];
+    const DiamondChunk child_chunk={
+        .name=target_fn->name,.code=target_fn->code,
+        .lines=target_fn->lines,.columns=target_fn->columns,
+        .code_count=target_fn->code_count,
+        .constants=target_fn->constants,.constant_count=target_fn->constant_count,
+        .strings=target_fn->strings,.string_count=target_fn->string_count,
+        .type_sets=target_fn->type_sets,.type_set_count=target_fn->type_set_count,
+        .functions=child->program_template->functions,
+        .function_count=child->program_template->function_count,
+        .classes=child->program_template->classes,
+        .class_count=child->program_template->class_count,
+        .interfaces=child->program_template->interfaces,
+        .interface_count=child->program_template->interface_count,
+        .parameter_type_sets=target_fn->parameter_type_sets,
+        .type_variable_count=target_fn->type_variable_count,
+        .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+        .register_count=target_fn->register_count,
+        .has_variadic=target_fn->has_variadic,
+        .range_class_index=child->program_template->range_class_index};
+    for(;;) {
+        DiamondVm *run_vm=malloc(sizeof *run_vm);
+        if(run_vm==nullptr) {
+            /* System-level OOM allocating this attempt's own VM -- give up
+             * for good rather than spinning trying the same allocation
+             * again; still needs to flip alive?() to false and explain
+             * why, exactly like any other terminal outcome below. */
+            pthread_mutex_lock(&supervisor->lock);
+            snprintf(child->last_error,sizeof child->last_error,
+                "out of memory allocating supervised run state");
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            break;
+        }
+        diamond_vm_init(run_vm);
+        run_vm->range_class_index=child->program_template->range_class_index;
+        run_vm->root_chunk=&child_chunk;
+        /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
+         * NEW's own argument copy loop uses, for the identical reason: a
+         * later argument's copy_value_into_vm call can itself trigger a
+         * collection on run_vm before anything roots an earlier argument
+         * already copied into it this iteration. */
+        DiamondValue run_args[DIAMOND_MAX_ARGUMENTS]={};
+        bool copy_failed=false;
+        const size_t args_mark=run_vm->gc_protected_count;
+        for(uint8_t index=0;index<child->arg_count;index++) {
+            if(!copy_value_into_vm(run_vm,child->args[index],nullptr,
+                    child->program_template->classes,
+                    child->program_template->classes,nullptr,
+                    &run_args[index])||
+               !gc_protect(run_vm,run_args[index])) {
+                copy_failed=true;break;
+            }
+        }
+        gc_unprotect(run_vm,args_mark);
+        DiamondValue run_result=DIAMOND_NIL;
+        const DiamondVmStatus status=copy_failed?DIAMOND_VM_OUT_OF_MEMORY:
+            run_chunk(&child_chunk,run_vm,run_args,child->arg_count,0,
+                      nullptr,&run_result);
+        pthread_mutex_lock(&supervisor->lock);
+        if(status==DIAMOND_VM_OK) {
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            diamond_vm_free(run_vm);free(run_vm);
+            break;
+        }
+        child->restart_count++;
+        if(status==DIAMOND_VM_EXCEPTION) {
+            format_uncaught_exception_message(run_vm,run_vm->exception);
+            snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
+        } else {
+            const char *message=run_vm->error[0]!='\0'?run_vm->error:
+                diamond_vm_status_name(status);
+            snprintf(child->last_error,sizeof child->last_error,"%s",message);
+        }
+        pthread_mutex_unlock(&supervisor->lock);
+        diamond_vm_free(run_vm);free(run_vm);
+        if(atomic_load(&supervisor->stop_requested)) {
+            /* stop() (or free_supervisor_reference) already blocks
+             * joining this very thread once it returns, but alive?()
+             * must also flip to false right away -- otherwise a caller
+             * that checks alive?() right after stop() returns would
+             * still see a stale "true" for a child that stopped here
+             * rather than via a clean return. */
+            pthread_mutex_lock(&supervisor->lock);
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            break;
+        }
+        struct timespec delay={.tv_nsec=20*1000*1000};
+        nanosleep(&delay,nullptr);
+    }
+    atomic_fetch_sub(&diamond_active_thread_count,1);
+    return nullptr;
+}
+
+static DiamondSupervisorHandle *allocate_supervisor_handle(DiamondVm *vm,
+        DiamondSupervisor *supervisor) {
+    if (!maybe_collect(vm)) return nullptr;
+    DiamondSupervisorHandle *handle=malloc(sizeof(DiamondSupervisorHandle));
+    if(handle==nullptr)return nullptr;
+    *handle=(DiamondSupervisorHandle){
+        .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SUPERVISOR},
+        .supervisor=supervisor};
+    vm->young_objects=&handle->object;
+    vm->bytes_allocated+=sizeof(DiamondSupervisorHandle);
+    return handle;
+}
+
+/* Shared by Supervisor#stop, Supervisor#join, and free_supervisor_
+ * reference -- all three "join every child" call sites, any combination
+ * of which may run against the same Supervisor over its lifetime.
+ * pthread_join on an already-joined thread is undefined behavior (POSIX),
+ * so each child's own `joined` flag (checked and set under `lock`) makes
+ * the real pthread_join call idempotent regardless of how many times or
+ * which of the three callers reach a given child first. Deliberately
+ * does not touch stop_requested/stopped -- callers that need to actually
+ * stop future restarts (Supervisor#stop, free_supervisor_reference) set
+ * those themselves before calling this; Supervisor#join does not, so it
+ * blocks only on children that finish on their own. */
+static void supervisor_join_all_children(DiamondSupervisor *supervisor) {
+    for(size_t index=0;index<supervisor->child_count;index++) {
+        DiamondSupervisorChild *child=&supervisor->children[index];
+        pthread_mutex_lock(&supervisor->lock);
+        const bool already_joined=child->joined;
+        child->joined=true;
+        pthread_mutex_unlock(&supervisor->lock);
+        if(!already_joined)pthread_join(child->handle,nullptr);
+    }
+}
+
+/* Shared teardown for a DiamondSupervisor -- mirrors free_channel_
+ * reference's own role/refcount discipline (only the last referencing
+ * handle's sweep actually tears anything down), but additionally has to
+ * *stop* every child first: sets stop_requested (same flag Supervisor#
+ * stop sets) and blocks joining every child's OS thread (supervisor_
+ * join_all_children above, exactly what stop() itself does) before
+ * reclaiming any child's program_template/args_vm. A child mid-crash-
+ * loop still finishes its *current* attempt before noticing the flag --
+ * there is no cancellation anywhere in Diamond's concurrency model, same
+ * as free_thread's own block-join reasoning for an abandoned Thread. */
+static void free_supervisor_reference(DiamondSupervisor *supervisor) {
+    if(supervisor==nullptr)return;
+    if(atomic_fetch_sub(&supervisor->refcount,1)!=1)return;
+    atomic_store(&supervisor->stop_requested,true);
+    supervisor_join_all_children(supervisor);
+    for(size_t index=0;index<supervisor->child_count;index++) {
+        DiamondSupervisorChild *child=&supervisor->children[index];
+        if(child->args_vm!=nullptr) {
+            diamond_vm_free(child->args_vm);
+            free(child->args_vm);
+        }
+        diamond_program_free(child->program_template);
+        free(child->program_template);
+    }
+    pthread_mutex_destroy(&supervisor->lock);
+    free(supervisor);
+}
+
 static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondFileHandle *handle=malloc(sizeof(DiamondFileHandle));if(handle==nullptr)return nullptr;
     *handle=(DiamondFileHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_FILE},.stream=stream};
     vm->young_objects=&handle->object;vm->bytes_allocated+=sizeof(DiamondFileHandle);return handle;
@@ -2505,7 +3149,7 @@ static DiamondFileHandle *allocate_file_handle(DiamondVm *vm,FILE *stream) {
 
 static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
         bool nonblocking) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondListenerHandle *handle=malloc(sizeof(DiamondListenerHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondListenerHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_LISTENER},
@@ -2514,7 +3158,7 @@ static DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd,
 }
 
 static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSocketHandle *handle=malloc(sizeof(DiamondSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSocketHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SOCKET},.fd=fd};
@@ -2522,7 +3166,7 @@ static DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd) {
 }
 
 static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondUdpSocketHandle *handle=malloc(sizeof(DiamondUdpSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondUdpSocketHandle){
@@ -2531,7 +3175,7 @@ static DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd) 
 }
 
 static DiamondTlsSocketHandle *allocate_tls_socket_handle(DiamondVm *vm,SSL *ssl,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondTlsSocketHandle *handle=malloc(sizeof(DiamondTlsSocketHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondTlsSocketHandle){
@@ -2698,6 +3342,15 @@ static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
             const int candidate_fd=socket(candidate->ai_family,candidate->ai_socktype,
                                  candidate->ai_protocol);
             if(candidate_fd<0) {last_errno=errno;continue;}
+            /* Same IPV6_V6ONLY fix as tcp_listen_helper above, same reason:
+             * an IPv6-wildcard UDP bind needs this to also reach an IPv4
+             * .send() on FreeBSD/OpenBSD (net.inet6.ip6.v6only=1 by
+             * default there, unlike Linux). */
+            if(candidate->ai_family==AF_INET6) {
+                const int v6only_off=0;
+                (void)setsockopt(candidate_fd,IPPROTO_IPV6,IPV6_V6ONLY,
+                                  &v6only_off,sizeof v6only_off);
+            }
             if(bind(candidate_fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
                 fd=candidate_fd;break;
             }
@@ -3101,6 +3754,30 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
         const int yes=1;
         (void)setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
         if(reuse_port)(void)setsockopt(fd,SOL_SOCKET,SO_REUSEPORT,&yes,sizeof yes);
+        /* No explicit address was requested (AI_PASSIVE with a nullptr
+         * host above) -- the caller means "every interface", including an
+         * IPv4 client connecting to 127.0.0.1, and getaddrinfo's own
+         * candidate ordering commonly hands back the IPv6 wildcard (::)
+         * first. Linux's default net.ipv6.bindv6only=0 makes that already
+         * dual-stack (an IPv4 connection transparently reaches it) with no
+         * code needed here -- which is exactly why this was invisible until
+         * checked on a real BSD: FreeBSD (and OpenBSD) default
+         * net.inet6.ip6.v6only to 1, so the identical bind only accepts
+         * IPv6 there, and an IPv4 loopback connect gets ECONNREFUSED with
+         * nothing about the failure pointing at IPv6 at all (confirmed
+         * directly: tests/run.sh's TCP echo test, unchanged code, passes
+         * on Linux/musl and fails this way on FreeBSD 15.1). Disabling
+         * IPV6_V6ONLY unconditionally on the v6 candidate makes the
+         * explicit behavior match Linux's default everywhere, rather than
+         * leaving it to silently depend on a sysctl this code never
+         * chose. Best-effort: a kernel without IPv6/dual-stack support at
+         * all would fail this setsockopt, in which case bind() below is
+         * left to fail or succeed exactly as it would have anyway. */
+        if(candidate->ai_family==AF_INET6) {
+            const int v6only_off=0;
+            (void)setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY,
+                              &v6only_off,sizeof v6only_off);
+        }
         if(bind(fd,candidate->ai_addr,candidate->ai_addrlen)==0) {
             listening_fd=fd;break;
         }
@@ -3313,7 +3990,7 @@ static bool poll_register_fd(struct pollfd *fds,nfds_t *fd_count,size_t max_fds,
 }
 
 static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
     if(regexp==nullptr)return nullptr;
     *regexp=(DiamondRegexp){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_REGEXP},
@@ -3322,7 +3999,7 @@ static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compi
 }
 
 static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSqlite3Handle *handle=malloc(sizeof(DiamondSqlite3Handle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3Handle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_SQLITE3},
@@ -3332,7 +4009,7 @@ static DiamondSqlite3Handle *allocate_sqlite3_handle(DiamondVm *vm,sqlite3 *db) 
 
 static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
         DiamondVm *vm,sqlite3_stmt *stmt) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondSqlite3StatementHandle *handle=malloc(sizeof(DiamondSqlite3StatementHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondSqlite3StatementHandle){
@@ -3343,7 +4020,7 @@ static DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle(
 }
 
 static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *conn) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondPostgresHandle *handle=malloc(sizeof(DiamondPostgresHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondPostgresHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_POSTGRES},
@@ -3352,7 +4029,7 @@ static DiamondPostgresHandle *allocate_postgres_handle(DiamondVm *vm,PGconn *con
 }
 
 static DiamondMysqlHandle *allocate_mysql_handle(DiamondVm *vm,MYSQL *conn) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondMysqlHandle *handle=malloc(sizeof(DiamondMysqlHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondMysqlHandle){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_MYSQL},
@@ -3364,7 +4041,7 @@ enum { DIAMOND_TIME_LOCAL,DIAMOND_TIME_UTC,DIAMOND_TIME_FIXED_OFFSET };
 
 static DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode,
         int32_t utc_offset) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondTime *time=malloc(sizeof(DiamondTime));
     if(time==nullptr)return nullptr;
     *time=(DiamondTime){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_TIME},
@@ -3379,7 +4056,7 @@ static DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode,
  * draining a child process means several further allocations (the two
  * captured-output Strings) that can each trigger a GC. */
 static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessResult *result=malloc(sizeof(DiamondProcessResult));
     if(result==nullptr)return nullptr;
     *result=(DiamondProcessResult){
@@ -3391,7 +4068,7 @@ static DiamondProcessResult *allocate_process_result(DiamondVm *vm) {
 }
 
 static DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessStream *stream=malloc(sizeof(DiamondProcessStream));
     if(stream==nullptr)return nullptr;
     *stream=(DiamondProcessStream){
@@ -3410,7 +4087,7 @@ static DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd) {
  * allocated, for the same reason process_run_helper's stdout_value/
  * stderr_value writes need them. */
 static DiamondProcessHandle *allocate_process_handle(DiamondVm *vm,pid_t pid) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProcessHandle *handle=malloc(sizeof(DiamondProcessHandle));
     if(handle==nullptr)return nullptr;
     *handle=(DiamondProcessHandle){
@@ -3736,10 +4413,14 @@ static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *t
 /* Account for the program container here; dynamically added function records
  * are accounted for by ProgramBuilder#declare_function. */
 static DiamondProgramBuilder *allocate_program_builder(DiamondVm *vm) {
-    maybe_collect(vm);
+    if (!maybe_collect(vm)) return nullptr;
     DiamondProgram *built=calloc(1,sizeof *built);
     if(built==nullptr)return nullptr;
-    diamond_program_init(built);
+    /* _fresh, not diamond_program_init: `built` is freshly calloc'd right
+     * above and never reused -- each ProgramBuilder gets its own new
+     * DiamondProgram. See diamond_program_init_fresh's own comment
+     * (src/compiler.c). */
+    diamond_program_init_fresh(built);
     DiamondProgramBuilder *handle=malloc(sizeof(DiamondProgramBuilder));
     if(handle==nullptr){diamond_program_free(built);free(built);return nullptr;}
     *handle=(DiamondProgramBuilder){
@@ -4420,7 +5101,7 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         case DIAMOND_OBJECT_BIGNUM: {
             const DiamondBignum *source=(const DiamondBignum *)value.as.object;
-            maybe_collect(dest_vm);
+            if (!maybe_collect(dest_vm)) return false;
             const size_t size=
                 sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
             DiamondBignum *copy=malloc(size);
@@ -4452,6 +5133,25 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                 allocate_closure(dest_vm,source->function_index,nullptr,0);
             if(copy==nullptr)return false;
             copy->is_block=source->is_block;
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
+        /* A Channel needs neither rebasing nor adoption -- unlike Instance,
+         * nothing about it points into source_program's own tables, so
+         * this is the one kind both of copy_value_into_vm's modes accept
+         * identically (rebase mode: Thread.new/#join and Channel's own
+         * send/receive; adopt mode: ProgramBuilder#run). The channel
+         * itself is a genuinely shared, refcounted resource (see
+         * DiamondChannel's own comment) -- this bumps that refcount and
+         * hands dest_vm a fresh handle pointing at the *same* underlying
+         * channel, never a copy of its contents. */
+        case DIAMOND_OBJECT_CHANNEL: {
+            DiamondChannel *channel=((DiamondChannelHandle *)value.as.object)->channel;
+            atomic_fetch_add(&channel->refcount,1);
+            DiamondChannelHandle *copy=allocate_channel_handle(dest_vm,channel);
+            if(copy==nullptr) {
+                atomic_fetch_sub(&channel->refcount,1);
+                return false;
+            }
             *out=DIAMOND_OBJECT(copy);return true;
         }
         default: return false;
@@ -6436,6 +7136,31 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     return gc_write_barrier_index(vm,(DiamondObject *)hash,new_index);
 }
 
+/* JIT trampoline for DIAMOND_OP_HASH -- extracted from that case's own
+ * body (below) so the interpreter and the JIT share one implementation
+ * rather than risking the two drifting apart. Allocates via
+ * allocate_hash, which (like allocate_string) calls maybe_collect
+ * unconditionally -- a real GC safepoint, so any JIT'd function compiling
+ * this opcode must already have published a DiamondFrame. `count` is a
+ * compile-time-known immediate (baked into the bytecode by the compiler,
+ * exactly like DIAMOND_OP_STRING's own string_index), so the whole
+ * key/value-pair loop lives here in C rather than needing to be unrolled
+ * into generated machine code. */
+DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out) {
+    if ((size_t)base + (size_t)count * 2 > DIAMOND_REGISTER_COUNT)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondHash *hash = allocate_hash(vm);
+    if (hash == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(hash);
+    for (size_t i = 0; i < count; i++) {
+        if (!hash_set(vm, hash, registers[(size_t)base + i * 2],
+                      registers[(size_t)base + i * 2 + 1]))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    return DIAMOND_VM_OK;
+}
+
 static bool is_truthy(DiamondValue value) {
     return value.kind != DIAMOND_VALUE_NIL &&
            !(value.kind == DIAMOND_VALUE_BOOL && !value.as.boolean);
@@ -6611,6 +7336,44 @@ static DiamondVmStatus invoke_operator_method(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
+}
+
+/* JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case -- Phase 2e
+ * fix, extracted verbatim from that case's own real tail (src/vm.c's
+ * EQUAL/NOT_EQUAL case, right after this file's own INT fast path, which
+ * the JIT's own compile_equal_op already replicates directly in generated
+ * code and never routes through here). The Phase 2d version of this
+ * trampoline (diamond_jit_values_equal) called values_equal() directly for
+ * every non-fast-path case, silently skipping the "==" override check
+ * below for a DIAMOND_OBJECT_INSTANCE operand -- a real, shipped
+ * correctness bug (a class defining `def ==` would get identity
+ * comparison instead of its own override when compared via JIT'd EQUAL).
+ * This version checks the override first, exactly like the interpreter's
+ * own case does, and only falls back to values_equal when no override is
+ * found -- matching that case's own comment ("two instances of a class
+ * with no '==' compare by identity exactly as before this feature
+ * existed"). Unlike the old version, this can genuinely invoke arbitrary
+ * interpreted code (the override method), so it's status-bearing, not
+ * infallible -- compile_equal_op sets jc->has_called = true accordingly. */
+DiamondVmStatus diamond_jit_equal_general(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, bool negate, DiamondValue *out) {
+    if (left->kind == DIAMOND_VALUE_OBJECT &&
+        left->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)left->as.object, "==", 2, right, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            const bool overloaded_equal = is_truthy(op_result);
+            *out = DIAMOND_BOOL(negate ? !overloaded_equal : overloaded_equal);
+            return DIAMOND_VM_OK;
+        }
+    }
+    const bool equal = values_equal(*left, *right);
+    *out = DIAMOND_BOOL(negate ? !equal : equal);
+    return DIAMOND_VM_OK;
 }
 
 static bool case_numeric_compare(DiamondValue left,DiamondValue right,int *comparison) {
@@ -7019,6 +7782,7 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
         return DIAMOND_VM_ARITY_ERROR;
     }
     const DiamondString *password=(const DiamondString *)password_value.as.object;
+#ifdef CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY
     char salt[CRYPT_GENSALT_OUTPUT_SIZE];
     if(crypt_gensalt_rn("$2b$",(unsigned long)cost,nullptr,0,salt,sizeof salt)==nullptr) {
         (void)snprintf(vm->error,sizeof vm->error,"BCrypt.hash: failed to generate a salt");
@@ -7037,6 +7801,23 @@ static DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_va
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
+#else
+    /* No libxcrypt (CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY, defined by
+     * libxcrypt's own crypt.h, is this codebase's established way of
+     * detecting it -- see this function's own top comment) -- musl's
+     * <crypt.h>, for one, has crypt_r but neither this salt-generation
+     * convenience function nor bcrypt ($2b$) support in crypt_r itself
+     * at all (confirmed directly: crypt_r("x","$2b$04$...",&data)
+     * returns "*", libcrypt's own "unsupported algorithm" signal, on
+     * musl -- not a missing-symbol problem alone). See docs/roadmap.md's
+     * "Portability" for the full finding; a truly portable BCrypt would
+     * need to bundle its own implementation rather than delegate to the
+     * system crypt(3), which is real, separate work. */
+    (void)password;(void)cost;(void)out_result;
+    (void)snprintf(vm->error,sizeof vm->error,
+        "BCrypt.hash is not supported on this platform's crypt() implementation");
+    return DIAMOND_VM_PROGRAM_ERROR;
+#endif
 }
 
 /* BCrypt.verify(password, digest) -- re-hashes `password` against
@@ -7071,6 +7852,20 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
     }
     const DiamondString *password=(const DiamondString *)password_value.as.object;
     const DiamondString *digest=(const DiamondString *)digest_value.as.object;
+    /* struct crypt_data/crypt_r have no portable feature test the way
+     * <crypt.h>'s own __has_include above does -- confirmed directly,
+     * a real compile failure on macOS ("incomplete type 'struct
+     * crypt_data'"): unlike FreeBSD (which declares both in <unistd.h>
+     * with no <crypt.h> at all) and glibc/musl (both via <crypt.h>),
+     * macOS's libc provides neither the reentrant crypt_r nor
+     * struct crypt_data in any header. __APPLE__ here, not a header
+     * probe, is the one deliberate exception to this codebase's own
+     * "no OS-name branching" convention (docs/portability.md) -- every
+     * other platform gap so far had a real feature-test proxy; this one
+     * doesn't. Degrades the same documented way an unsupported
+     * algorithm already does on musl: BCrypt.verify never raises, an
+     * unrecognized digest is just reported as no match. */
+#if !defined(__APPLE__)
     struct crypt_data *data=calloc(1,sizeof *data);
     if(data==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     const char *computed=crypt_r(password->chars,digest->chars,data);
@@ -7081,6 +7876,10 @@ static DiamondVmStatus bcrypt_verify_helper(DiamondVm *vm,DiamondValue password_
             matches=CRYPTO_memcmp(computed,digest->chars,computed_length)==0;
     }
     free(data);
+#else
+    (void)password;(void)digest;
+    const bool matches=false;
+#endif
     *out_result=DIAMOND_BOOL(matches);
     return DIAMOND_VM_OK;
 }
@@ -7825,6 +8624,59 @@ static DiamondFieldCacheEntry *lookup_field_cached(
     return &cache->entries[entry];
 }
 
+/* JIT trampoline for DIAMOND_OP_SET_IVAR -- see jit.h's own comment for why
+ * this exists as a real C function generated code calls into rather than a
+ * hand-rolled native field write: shape transitions and the GC write
+ * barrier both need to stay exactly correct, and this is a direct copy of
+ * the interpreter's own DIAMOND_OP_SET_IVAR case (src/vm.c's opcode
+ * dispatch) with `site` threaded in from the caller instead of read off
+ * `chunk`/`instruction_offset`, since generated code has neither -- see
+ * this function's own caller in jit.c for what it passes instead (the
+ * function's own bytecode offset at JIT-compile time, giving the same
+ * per-occurrence cache-key stability an interpreted execution would have
+ * gotten from `&chunk->code[instruction_offset]`). */
+DiamondVmStatus diamond_jit_set_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, const DiamondValue *value) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondInstance *instance = (DiamondInstance *)receiver->as.object;
+    if (instance->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
+    if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, true);
+    if (instance->shape != cached->output_shape) {
+        instance->shape = cached->output_shape;
+        vm->shape_transitions++;
+    }
+    instance->fields[field] = *value;
+    if (!gc_write_barrier(vm, (DiamondObject *)instance)) return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
+/* JIT trampoline for DIAMOND_OP_GET_IVAR -- see diamond_jit_set_ivar's own
+ * comment just above for why this exists as a real C function rather than
+ * hand-rolled generated code: the field cache lookup is the same shared
+ * machinery either way. A direct copy of the interpreter's own
+ * DIAMOND_OP_GET_IVAR case (src/vm.c's opcode dispatch), with `site`
+ * threaded in from the caller (generated code has no `chunk`/
+ * instruction_offset to compute it from) exactly like diamond_jit_set_ivar.
+ * Unlike SET_IVAR, this can never allocate or invoke user code (no operator
+ * overload exists for plain field access), so its caller in jit.c needs
+ * neither a DiamondFrame nor jc->has_called. */
+DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
+        const DiamondValue *receiver, uint8_t field, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT ||
+        receiver->as.object->kind != DIAMOND_OBJECT_INSTANCE) {
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondInstance *instance = (const DiamondInstance *)receiver->as.object;
+    if (field >= instance->field_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFieldCacheEntry *cached = lookup_field_cached(vm, site, instance, field, false);
+    *out = cached->materialized ? instance->fields[field] : DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
+
 static int named_field_index(const DiamondInstance *instance,
                              const DiamondStringConstant *name) {
     for(size_t field=0;field<instance->class->field_count;field++)
@@ -8236,9 +9088,18 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         if(closure->foreign_chunk!=nullptr)return false;
         if(closure->function_index>=chunk->function_count)return false;
         const DiamondFunction *function=chunk->functions[closure->function_index];
+        /* function->arity/required_arity count an implicit self slot for
+         * some owner_class shapes (see diamond_function_self_offset's own
+         * comment, src/vm.h) -- a *value* satisfying Callable[N] only ever
+         * supplies N real, self-less arguments, so that offset must come
+         * out here before comparing against member.callable_arity. */
+        const uint8_t self_offset=diamond_function_self_offset(function);
+        const uint8_t declared_arity=(uint8_t)(function->arity-self_offset);
+        const uint8_t declared_required_arity=
+            (uint8_t)(function->required_arity-self_offset);
         if(member.callable_arity!=UINT8_MAX&&
-           (member.callable_arity<function->required_arity||
-            (member.callable_arity>function->arity&&!function->has_variadic)))
+           (member.callable_arity<declared_required_arity||
+            (member.callable_arity>declared_arity&&!function->has_variadic)))
             return false;
         if(member.callable_parameters_typed)
             for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
@@ -8336,6 +9197,17 @@ static bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
     for(size_t index=0;index<set->count;index++)
         if(value_matches_member(chunk,value,set->members[index],attach))return true;
     return false;
+}
+
+/* JIT trampoline for DIAMOND_OP_CHECK_TYPE -- see jit.h's own comment.
+ * value_matches_set's own structural/generic matching logic (interfaces,
+ * type variables, unions) is too deep to safely hand-roll in machine
+ * code; this is a thin wrapper translating its bool result into the
+ * DiamondVmStatus every other JIT trampoline already returns. */
+DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
+        const DiamondValue *value, uint16_t set_index) {
+    if (set_index >= chunk->type_set_count) return DIAMOND_VM_INVALID_BYTECODE;
+    return value_matches_set(chunk, *value, set_index, true) ? DIAMOND_VM_OK : DIAMOND_VM_TYPE_ERROR;
 }
 
 static bool array_value_satisfies_constraints(DiamondArray *array,
@@ -8450,6 +9322,200 @@ static bool hash_entry_satisfies_constraints(DiamondHash *hash,
     return true;
 }
 
+/* JIT trampoline for DIAMOND_OP_INDEX_GET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below) so the interpreter and the JIT
+ * share one implementation. Replaces Phase 2b's diamond_jit_hash_get,
+ * which only ever handled a Hash receiver, returning DIAMOND_VM_TYPE_ERROR
+ * for everything else -- accidentally safe before Phase 2d (every bailout
+ * retried via full interpretation, which correctly checks the `[]`
+ * override below), but a real latent correctness bug once a function's
+ * bailout target can be "propagate" (jc->has_called already true from an
+ * earlier call): a JIT'd INDEX_GET on an Instance with a real `[]`
+ * override, reached after such a call, would have incorrectly propagated
+ * TYPE_ERROR instead of invoking the override. This version handles
+ * Hash/String/Array/Instance-overload exactly like the real opcode, and
+ * -- because the Instance branch can genuinely invoke arbitrary code --
+ * is compiled with jc->has_called = true unconditionally, the same
+ * conservative, compile-time-only choice diamond_jit_equal_general's own
+ * compile_equal_op already makes. */
+DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, DiamondValue *out) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        const ptrdiff_t found = hash_find(hash, *index);
+        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        if (index->kind != DIAMOND_VALUE_INT) {
+            char actual[80];
+            format_value_type(actual, sizeof actual, *index);
+            snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int, got %s", actual);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *source = (const DiamondString *)receiver->as.object;
+        const int64_t char_index = index->as.integer;
+        if (char_index < 0 || (uint64_t)char_index >= source->length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "index %" PRId64 " out of bounds for String of length %zu",
+                     char_index, source->length);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        DiamondString *character = allocate_string(vm, source->chars + (size_t)char_index, 1);
+        if (character == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(character);
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]", 2, index, 1, &op_result, &found);
+        if (found) {
+            if (status != DIAMOND_VM_OK) return status;
+            *out = op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        DiamondArray *sliced = allocate_array(vm, &array->values[range_start], range_length);
+        if (sliced == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+        *out = DIAMOND_OBJECT(sliced);
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[] index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    *out = array->values[(size_t)array_index];
+    return DIAMOND_VM_OK;
+}
+
+/* JIT trampoline for DIAMOND_OP_INDEX_SET -- Phase 2e, extracted verbatim
+ * from that case's own real body (below), new in this phase (INDEX_SET
+ * was entirely unsupported before). Handles Hash/String/Instance-
+ * overload/Array exactly like the real opcode; the Instance branch can
+ * genuinely invoke arbitrary code, so this is compiled with jc->has_called
+ * = true unconditionally, same as diamond_jit_index_get/diamond_jit_
+ * equal_general. No `out` parameter -- INDEX_SET never writes a
+ * destination register (see the real case's own comment: `x[i] = v`
+ * already evaluates to `v` itself, computed before this opcode runs). */
+DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        const DiamondValue *index, const DiamondValue *source) {
+    if (receiver->kind != DIAMOND_VALUE_OBJECT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        DiamondHash *hash = (DiamondHash *)receiver->as.object;
+        if (hash->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
+        if (!hash_entry_satisfies_constraints(hash, *index, *source)) {
+            snprintf(vm->error, sizeof vm->error, "hash entry violates its type annotation");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if (!hash_set(vm, hash, *index, *source)) return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error, sizeof vm->error, "String does not support element assignment");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (receiver->as.object->kind == DIAMOND_OBJECT_INSTANCE) {
+        bool found = false;
+        DiamondValue op_result = DIAMOND_NIL;
+        const DiamondValue setter_arguments[2] = {*index, *source};
+        const DiamondVmStatus status = invoke_operator_method(vm, chunk, depth, site,
+            (const DiamondInstance *)receiver->as.object, "[]=", 3, setter_arguments, 2,
+            &op_result, &found);
+        if (found) return status;
+    }
+    if (receiver->as.object->kind != DIAMOND_OBJECT_ARRAY) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *receiver);
+        snprintf(vm->error, sizeof vm->error, "undefined method '[]=' for %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondArray *array = (DiamondArray *)receiver->as.object;
+    if (array->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
+    size_t range_start = 0, range_length = 0;
+    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+        &range_start, &range_length);
+    if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
+    if (range_result == 1) {
+        if (source->kind != DIAMOND_VALUE_OBJECT ||
+            source->as.object->kind != DIAMOND_OBJECT_ARRAY ||
+            ((DiamondArray *)source->as.object)->count != range_length) {
+            snprintf(vm->error, sizeof vm->error,
+                     "range assignment requires a replacement Array of exactly %zu element(s)",
+                     range_length);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondArray *replacement = (const DiamondArray *)source->as.object;
+        for (size_t i = 0; i < range_length; i++) {
+            if (!array_value_satisfies_constraints(array, replacement->values[i])) {
+                snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+        }
+        for (size_t i = 0; i < range_length; i++)
+            array->values[range_start + i] = replacement->values[i];
+        if (!gc_write_barrier_range(vm, (DiamondObject *)array, range_start, range_length))
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        return DIAMOND_VM_OK;
+    }
+    if (index->kind != DIAMOND_VALUE_INT) {
+        char actual[80];
+        format_value_type(actual, sizeof actual, *index);
+        snprintf(vm->error, sizeof vm->error, "Array#[]= index must be an Int or Range, got %s", actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t array_index = index->as.integer;
+    if (array_index < 0 || (uint64_t)array_index >= array->count) {
+        snprintf(vm->error, sizeof vm->error,
+                 "index %" PRId64 " out of bounds for Array of length %zu",
+                 array_index, array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    if (!array_value_satisfies_constraints(array, *source)) {
+        snprintf(vm->error, sizeof vm->error, "array element violates its type annotation");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    array->values[(size_t)array_index] = *source;
+    if (!gc_write_barrier_index(vm, (DiamondObject *)array, (size_t)array_index))
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    return DIAMOND_VM_OK;
+}
+
 static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
                             UnwindHandler *handlers,size_t *handler_count,
                             PendingUnwind *pending,DiamondValue *registers,
@@ -8474,7 +9540,24 @@ static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
     return false;
 }
 
-static uint8_t exception_class_for_status(DiamondVmStatus status) {
+/* DIAMOND_VM_OUT_OF_MEMORY deliberately has no case below (falls to
+ * `default: return UINT8_MAX`, meaning it can never match any rescue
+ * clause) -- a genuine host allocator failure is treated as unrecoverable
+ * by design: the collector has already tried and failed to free anything,
+ * and running more Diamond code to handle it (which itself needs to
+ * allocate, starting with the exception instance this function's own
+ * caller constructs) risks cascading rather than actually recovering.
+ * The one exception (so to speak): vm->memory_limit_tripped is set only
+ * by maybe_collect's own configured-budget check (src/vm.c, "Resource
+ * limits" section), never by a real malloc/calloc/realloc failure --
+ * when it's set, THIS specific OOM is known to be an artificial, self-
+ * imposed cap with plenty of real host memory still available, not a
+ * genuine crisis, so it's surfaced as the same catchable ResourceLimitError
+ * instruction-count/wall-clock budgets already use, rather than silently
+ * reusing the uncatchable path a real OOM deliberately takes. */
+static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus status) {
+    if(status==DIAMOND_VM_OUT_OF_MEMORY)
+        return vm->memory_limit_tripped?DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:UINT8_MAX;
     switch(status) {
         case DIAMOND_VM_TYPE_ERROR: return DIAMOND_CLASS_TYPE_ERROR;
         case DIAMOND_VM_INTEGER_OVERFLOW: return DIAMOND_CLASS_RANGE_ERROR;
@@ -8493,6 +9576,11 @@ static uint8_t exception_class_for_status(DiamondVmStatus status) {
         case DIAMOND_VM_POSTGRES_ERROR: return DIAMOND_CLASS_POSTGRES_ERROR;
         case DIAMOND_VM_MYSQL_ERROR: return DIAMOND_CLASS_MYSQL_ERROR;
         case DIAMOND_VM_NO_METHOD_ERROR: return DIAMOND_CLASS_NO_METHOD_ERROR;
+        case DIAMOND_VM_JSON_ERROR: return DIAMOND_CLASS_JSON_ERROR;
+        case DIAMOND_VM_SUPERVISOR_ERROR: return DIAMOND_CLASS_SUPERVISOR_ERROR;
+        case DIAMOND_VM_SANDBOX_ERROR: return DIAMOND_CLASS_SANDBOX_ERROR;
+        case DIAMOND_VM_RESOURCE_LIMIT_ERROR: return DIAMOND_CLASS_RESOURCE_LIMIT_ERROR;
+        case DIAMOND_VM_FROZEN_ERROR: return DIAMOND_CLASS_FROZEN_ERROR;
         default: return UINT8_MAX;
     }
 }
@@ -8501,7 +9589,7 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
                                 DiamondVmStatus status,UnwindHandler *handlers,
                                 size_t *handler_count,PendingUnwind *pending,
                                 DiamondValue *registers,size_t *ip) {
-    const uint8_t class_index=exception_class_for_status(status);
+    const uint8_t class_index=exception_class_for_status(vm,status);
     if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
     char message[sizeof vm->error];
     (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
@@ -8679,6 +9767,8 @@ static void format_value_type(char *buffer, size_t capacity,
         case DIAMOND_OBJECT_PROCESS_HANDLE: name="ProcessHandle"; break;
         case DIAMOND_OBJECT_PROCESS_STREAM: name="ProcessStream"; break;
         case DIAMOND_OBJECT_TENSOR: name="Tensor"; break;
+        case DIAMOND_OBJECT_CHANNEL: name="Channel"; break;
+        case DIAMOND_OBJECT_SUPERVISOR: name="Supervisor"; break;
         case DIAMOND_OBJECT_INSTANCE: {
             const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
             name=instance->class->name;
@@ -8741,6 +9831,434 @@ static bool builder_append(StringBuilder *builder,const char *chars,size_t lengt
     builder->length+=length;builder->chars[builder->length]='\0';return true;
 }
 
+/* Native recursive-descent JSON parser (RFC 8259), replacing lib/core/
+ * json_codec.di's own pure-Diamond JSONCodec#parse for JSON.parse's hot
+ * path -- confirmed directly at ~330ms/MB (interpreted bytecode walking
+ * a String one character/method-call at a time) against a real
+ * training-corpus-scale dataset (examples/transformer/lib/corpus.di's
+ * own comment). Semantics match JSONCodec#parse exactly: same grammar
+ * (no leading '+', no rejection of leading zeros -- neither did the
+ * version this replaces), same surrogate-pair combining, same result
+ * shape (String/Int/Float/Bool/nil/Array/Hash), same JSONError-on-
+ * malformed-input contract -- verified against every tests/cases/
+ * json_parse_*.di case. Diamond String is a raw byte buffer, not UTF-8-
+ * validated (see docs/design.md), so this parses bytes throughout;
+ * \uXXXX escapes are the one place UTF-8 encoding happens, matching
+ * json_codec.di's own utf8_encode exactly.
+ *
+ * GC safety: only *containers* (Array/Hash) are ever gc_protect'd, once
+ * each, for the life of the whole top-level parse (unprotected together,
+ * once, by the String#parse_json call site below) -- a leaf String/Int/
+ * Float/Bool/nil value is never protected individually, since every
+ * call site that receives one immediately either returns it straight up
+ * the recursion (no allocation in between) or pushes/sets it into an
+ * already-protected container with no allocation in between (array_push/
+ * hash_set's own growth uses realloc, never a GC-tracked allocate_*
+ * call, so neither can trigger a collection mid-push/set). The one real
+ * exception is an object's own key: it must survive its *value*'s
+ * parse, which can allocate arbitrarily many times before returning --
+ * json_parse_object roots it as a placeholder entry in the
+ * already-protected Hash first (nil needs no protection of its own),
+ * the same pattern DIAMOND_OP_IO_POLL's own Hash result and
+ * method_missing_helper's own args[]-building already use, overwritten
+ * once the real value is ready. */
+typedef struct JsonParser {
+    DiamondVm *vm;
+    const char *source;
+    size_t length;
+    size_t pos;
+    /* Unlike ordinary Diamond-level recursion (run_chunk's own `depth`,
+     * bounded by DIAMOND_MAX_CALL_DEPTH), array/object nesting here
+     * recurses directly in C with no depth accounting at all otherwise
+     * -- a real, not hypothetical, gap for a corpus-loading parser
+     * specifically: deeply nested real-world JSON would crash the whole
+     * process via a genuine C stack overflow instead of raising a clean
+     * SystemStackError the way every other unbounded-recursion path in
+     * this VM already does. Reuses DIAMOND_MAX_CALL_DEPTH itself rather
+     * than a separate constant: this parser's own per-level C stack
+     * frames are smaller than run_chunk's own (no register file, no
+     * opcode dispatch), so the same bound that's already empirically
+     * proven safe there is safe here too. */
+    size_t depth;
+} JsonParser;
+
+static void json_skip_whitespace(JsonParser *parser) {
+    while(parser->pos<parser->length) {
+        const char c=parser->source[parser->pos];
+        if(c!=' '&&c!='\t'&&c!='\n'&&c!='\r')break;
+        parser->pos++;
+    }
+}
+
+static bool json_utf8_append(StringBuilder *builder,int64_t codepoint) {
+    char bytes[4];size_t count;
+    if(codepoint<0x80) {
+        bytes[0]=(char)codepoint;count=1;
+    } else if(codepoint<0x800) {
+        bytes[0]=(char)(0xC0|(codepoint>>6));
+        bytes[1]=(char)(0x80|(codepoint&0x3F));count=2;
+    } else if(codepoint<0x10000) {
+        bytes[0]=(char)(0xE0|(codepoint>>12));
+        bytes[1]=(char)(0x80|((codepoint>>6)&0x3F));
+        bytes[2]=(char)(0x80|(codepoint&0x3F));count=3;
+    } else {
+        bytes[0]=(char)(0xF0|(codepoint>>18));
+        bytes[1]=(char)(0x80|((codepoint>>12)&0x3F));
+        bytes[2]=(char)(0x80|((codepoint>>6)&0x3F));
+        bytes[3]=(char)(0x80|(codepoint&0x3F));count=4;
+    }
+    return builder_append(builder,bytes,count);
+}
+
+static DiamondVmStatus json_hex4(JsonParser *parser,int *out) {
+    if(parser->pos+4>parser->length) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,"truncated unicode escape");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    int value=0;
+    for(size_t index=0;index<4;index++) {
+        const char ch=parser->source[parser->pos+index];
+        int digit;
+        if(ch>='0'&&ch<='9')digit=ch-'0';
+        else if(ch>='a'&&ch<='f')digit=ch-'a'+10;
+        else if(ch>='A'&&ch<='F')digit=ch-'A'+10;
+        else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid unicode escape hex digit");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        value=value*16+digit;
+    }
+    parser->pos+=4;
+    *out=value;
+    return DIAMOND_VM_OK;
+}
+
+/* Parser is positioned right after the "\u" of a unicode escape. Appends
+ * the decoded UTF-8 bytes to `builder` and advances past the whole
+ * escape -- a high surrogate (0xD800-0xDBFF) consumes a second \uXXXX
+ * low-surrogate escape too, combined per RFC 8259 into the single
+ * codepoint >= 0x10000 the pair represents. */
+static DiamondVmStatus json_unicode_escape(JsonParser *parser,StringBuilder *builder) {
+    int code=0;
+    DiamondVmStatus status=json_hex4(parser,&code);
+    if(status!=DIAMOND_VM_OK)return status;
+    if(code>=0xD800&&code<=0xDBFF) {
+        if(parser->pos+2>parser->length||parser->source[parser->pos]!='\\'||
+           parser->source[parser->pos+1]!='u') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "unpaired high surrogate in unicode escape");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        parser->pos+=2;
+        int low=0;
+        status=json_hex4(parser,&low);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(low<0xDC00||low>0xDFFF) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "high surrogate not followed by a low surrogate in unicode escape");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        const int64_t codepoint=0x10000+(((int64_t)code-0xD800)*0x400)+(low-0xDC00);
+        return json_utf8_append(builder,codepoint)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    if(code>=0xDC00&&code<=0xDFFF) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "unpaired low surrogate in unicode escape");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    return json_utf8_append(builder,code)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+}
+
+static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out);
+
+static DiamondVmStatus json_parse_string(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    StringBuilder builder={};
+    while(true) {
+        if(parser->pos>=parser->length) {
+            free(builder.chars);
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated string");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        const char ch=parser->source[parser->pos];
+        if(ch=='"') {
+            parser->pos++;
+            DiamondString *result=allocate_string(parser->vm,
+                builder.chars!=nullptr?builder.chars:"",builder.length);
+            free(builder.chars);
+            if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            *out=DIAMOND_OBJECT(result);
+            return DIAMOND_VM_OK;
+        }
+        if(ch=='\\') {
+            parser->pos++;
+            if(parser->pos>=parser->length) {
+                free(builder.chars);
+                snprintf(parser->vm->error,sizeof parser->vm->error,
+                    "unterminated escape sequence");
+                return DIAMOND_VM_JSON_ERROR;
+            }
+            const char escape=parser->source[parser->pos];
+            parser->pos++;
+            bool ok=true;
+            switch(escape) {
+                case '"':ok=builder_append(&builder,"\"",1);break;
+                case '\\':ok=builder_append(&builder,"\\",1);break;
+                case '/':ok=builder_append(&builder,"/",1);break;
+                case 'n':ok=builder_append(&builder,"\n",1);break;
+                case 'r':ok=builder_append(&builder,"\r",1);break;
+                case 't':ok=builder_append(&builder,"\t",1);break;
+                case 'b':{const char b=8;ok=builder_append(&builder,&b,1);break;}
+                case 'f':{const char f=12;ok=builder_append(&builder,&f,1);break;}
+                case 'u':{
+                    const DiamondVmStatus status=json_unicode_escape(parser,&builder);
+                    if(status!=DIAMOND_VM_OK){free(builder.chars);return status;}
+                    break;
+                }
+                default:
+                    free(builder.chars);
+                    snprintf(parser->vm->error,sizeof parser->vm->error,
+                        "invalid escape character");
+                    return DIAMOND_VM_JSON_ERROR;
+            }
+            if(!ok){free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
+        } else {
+            if(!builder_append(&builder,&ch,1)) {
+                free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            parser->pos++;
+        }
+    }
+}
+
+static DiamondVmStatus json_parse_number(JsonParser *parser,DiamondValue *out) {
+    const size_t start=parser->pos;
+    bool negative=false;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='-') {
+        negative=true;parser->pos++;
+    }
+    const size_t digit_start=parser->pos;
+    while(parser->pos<parser->length&&
+          parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+        parser->pos++;
+    if(parser->pos==digit_start) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "invalid number at position %zu",start);
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    bool is_float=false;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='.') {
+        is_float=true;parser->pos++;
+        const size_t fraction_start=parser->pos;
+        while(parser->pos<parser->length&&
+              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+            parser->pos++;
+        if(parser->pos==fraction_start) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid number at position %zu",start);
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+    if(parser->pos<parser->length&&
+       (parser->source[parser->pos]=='e'||parser->source[parser->pos]=='E')) {
+        is_float=true;parser->pos++;
+        if(parser->pos<parser->length&&
+           (parser->source[parser->pos]=='+'||parser->source[parser->pos]=='-'))
+            parser->pos++;
+        const size_t exponent_start=parser->pos;
+        while(parser->pos<parser->length&&
+              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
+            parser->pos++;
+        if(parser->pos==exponent_start) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "invalid number at position %zu",start);
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+    if(is_float) {
+        char *end=nullptr;
+        const double value=strtod(parser->source+start,&end);
+        *out=DIAMOND_FLOAT(value);
+        return DIAMOND_VM_OK;
+    }
+    int64_t value=0;bool overflowed=false;
+    for(size_t index=digit_start;index<parser->pos&&!overflowed;index++) {
+        int64_t widened=0;
+        if(ckd_mul(&widened,value,(int64_t)10)||
+           ckd_add(&value,widened,(int64_t)(parser->source[index]-'0')))
+            overflowed=true;
+    }
+    if(overflowed) {
+        const DiamondValue bignum_result=diamond_bignum_from_decimal_digits(
+            parser->vm,parser->source+digit_start,parser->pos-digit_start,negative);
+        if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=bignum_result;
+        return DIAMOND_VM_OK;
+    }
+    *out=DIAMOND_INT(negative?-value:value);
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus json_parse_literal(JsonParser *parser,const char *literal,
+        size_t literal_length,DiamondValue value,DiamondValue *out) {
+    if(parser->pos+literal_length>parser->length||
+       memcmp(parser->source+parser->pos,literal,literal_length)!=0) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,
+            "invalid literal at position %zu",parser->pos);
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    parser->pos+=literal_length;
+    *out=value;
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus json_parse_array_body(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    json_skip_whitespace(parser);
+    DiamondArray *array=allocate_array(parser->vm,nullptr,0);
+    if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!gc_protect(parser->vm,DIAMOND_OBJECT(array)))return DIAMOND_VM_OUT_OF_MEMORY;
+    if(parser->pos<parser->length&&parser->source[parser->pos]==']') {
+        parser->pos++;
+        *out=DIAMOND_OBJECT(array);
+        return DIAMOND_VM_OK;
+    }
+    while(true) {
+        DiamondValue element=DIAMOND_NIL;
+        const DiamondVmStatus status=json_parse_value(parser,&element);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!array_push(parser->vm,array,element))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated array");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        if(parser->source[parser->pos]==',') {
+            parser->pos++;
+            json_skip_whitespace(parser);
+        } else if(parser->source[parser->pos]==']') {
+            parser->pos++;
+            *out=DIAMOND_OBJECT(array);
+            return DIAMOND_VM_OK;
+        } else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ',' or ']' in array");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+}
+
+/* Depth-guards json_parse_array_body/json_parse_object_body -- see
+ * JsonParser's own `depth` field comment for why this exists at all.
+ * `parser->depth` counts *current* nesting (incremented on entry,
+ * decremented on every exit), not total containers seen, so a wide
+ * flat array/object never trips this regardless of its element count --
+ * only genuine nesting depth does. */
+static DiamondVmStatus json_parse_array(JsonParser *parser,DiamondValue *out) {
+    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
+    parser->depth++;
+    const DiamondVmStatus status=json_parse_array_body(parser,out);
+    parser->depth--;
+    return status;
+}
+
+static DiamondVmStatus json_parse_object_body(JsonParser *parser,DiamondValue *out) {
+    parser->pos++;
+    json_skip_whitespace(parser);
+    DiamondHash *hash=allocate_hash(parser->vm);
+    if(hash==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!gc_protect(parser->vm,DIAMOND_OBJECT(hash)))return DIAMOND_VM_OUT_OF_MEMORY;
+    if(parser->pos<parser->length&&parser->source[parser->pos]=='}') {
+        parser->pos++;
+        *out=DIAMOND_OBJECT(hash);
+        return DIAMOND_VM_OK;
+    }
+    while(true) {
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length||parser->source[parser->pos]!='"') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected string key in object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        DiamondValue key=DIAMOND_NIL;
+        DiamondVmStatus status=json_parse_string(parser,&key);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!hash_set(parser->vm,hash,key,DIAMOND_NIL))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length||parser->source[parser->pos]!=':') {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ':' after object key");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        parser->pos++;
+        json_skip_whitespace(parser);
+        DiamondValue value=DIAMOND_NIL;
+        status=json_parse_value(parser,&value);
+        if(status!=DIAMOND_VM_OK)return status;
+        if(!hash_set(parser->vm,hash,key,value))return DIAMOND_VM_OUT_OF_MEMORY;
+        json_skip_whitespace(parser);
+        if(parser->pos>=parser->length) {
+            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+        if(parser->source[parser->pos]==',') {
+            parser->pos++;
+        } else if(parser->source[parser->pos]=='}') {
+            parser->pos++;
+            *out=DIAMOND_OBJECT(hash);
+            return DIAMOND_VM_OK;
+        } else {
+            snprintf(parser->vm->error,sizeof parser->vm->error,
+                "expected ',' or '}' in object");
+            return DIAMOND_VM_JSON_ERROR;
+        }
+    }
+}
+
+static DiamondVmStatus json_parse_object(JsonParser *parser,DiamondValue *out) {
+    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
+    parser->depth++;
+    const DiamondVmStatus status=json_parse_object_body(parser,out);
+    parser->depth--;
+    return status;
+}
+
+static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out) {
+    json_skip_whitespace(parser);
+    if(parser->pos>=parser->length) {
+        snprintf(parser->vm->error,sizeof parser->vm->error,"unexpected end of input");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    const char ch=parser->source[parser->pos];
+    if(ch=='{')return json_parse_object(parser,out);
+    if(ch=='[')return json_parse_array(parser,out);
+    if(ch=='"')return json_parse_string(parser,out);
+    if(ch=='t')return json_parse_literal(parser,"true",4,DIAMOND_BOOL(true),out);
+    if(ch=='f')return json_parse_literal(parser,"false",5,DIAMOND_BOOL(false),out);
+    if(ch=='n')return json_parse_literal(parser,"null",4,DIAMOND_NIL,out);
+    if(ch=='-'||(ch>='0'&&ch<='9'))return json_parse_number(parser,out);
+    snprintf(parser->vm->error,sizeof parser->vm->error,
+        "unexpected character at position %zu",parser->pos);
+    return DIAMOND_VM_JSON_ERROR;
+}
+
+/* Top-level entry: one value, then trailing-content rejection, matching
+ * JSONCodec#parse's own "parsed = parse_value(...); pos =
+ * skip_whitespace(...); pos != length -> error" shape exactly. */
+static DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
+        size_t length,DiamondValue *out) {
+    JsonParser parser={.vm=vm,.source=source,.length=length,.pos=0};
+    const DiamondVmStatus status=json_parse_value(&parser,out);
+    if(status!=DIAMOND_VM_OK)return status;
+    json_skip_whitespace(&parser);
+    if(parser.pos!=parser.length) {
+        snprintf(vm->error,sizeof vm->error,"trailing content after JSON value");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Breaks a Time's epoch into calendar fields. UTC and fixed offsets use
  * gmtime_r (the latter after shifting the epoch); process-local time uses
  * localtime_r and therefore remains DST-aware and system-tzdata-backed.
@@ -8759,6 +10277,51 @@ static bool time_struct_tm(const DiamondTime *target,struct tm *out) {
     if(gmtime_r(&seconds,out)==nullptr)return false;
     if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET)out->tm_gmtoff=target->utc_offset;
     return true;
+}
+
+/* strftime's %z conversion for a FIXED_OFFSET Time depends on the
+ * platform's libc trusting the tm_gmtoff time_struct_tm just hand-
+ * patched into a gmtime_r-produced struct, above. glibc does; Darwin's
+ * libc doesn't -- confirmed directly on test-macos-ci's own CI run: a
+ * +05:30 and a -08:00 fixed offset both came back "+0000", the same
+ * value gmtime_r's own untouched tm_gmtoff would give, meaning Darwin's
+ * %z isn't reading the field back at all. Substituting the directive
+ * ourselves before the format string ever reaches the real strftime
+ * sidesteps the platform discrepancy instead of depending on it -- every
+ * other directive (including %Z, not exercised by any current caller)
+ * still goes through libc unchanged. UTC and Local modes need no
+ * equivalent: UTC's real offset is genuinely zero, so gmtime_r's own
+ * untouched tm_gmtoff already happens to be correct everywhere, and
+ * Local's tm_gmtoff comes from the OS's own localtime_r rather than a
+ * hand-patched struct, so whatever the platform's strftime does with it
+ * is by definition correct for that platform. */
+static char *substitute_fixed_offset_z(const char *format,int64_t offset) {
+    char zone[8];
+    const int64_t absolute=offset<0?-offset:offset;
+    const int written=snprintf(zone,sizeof zone,"%c%02" PRId64 "%02" PRId64,
+        offset<0?'-':'+',absolute/3600,(absolute%3600)/60);
+    if(written<0||(size_t)written>=sizeof zone)return nullptr;
+    const size_t zone_length=(size_t)written;
+    size_t out_length=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%'){out_length+=2;index+=2;continue;}
+        if(format[index]=='%'&&format[index+1]=='z'){out_length+=zone_length;index+=2;continue;}
+        out_length++;index++;
+    }
+    char *result=malloc(out_length+1);
+    if(result==nullptr)return nullptr;
+    size_t out=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%') {
+            result[out++]='%';result[out++]='%';index+=2;continue;
+        }
+        if(format[index]=='%'&&format[index+1]=='z') {
+            memcpy(result+out,zone,zone_length);out+=zone_length;index+=2;continue;
+        }
+        result[out++]=format[index++];
+    }
+    result[out]='\0';
+    return result;
 }
 
 /* Parses the deliberately narrow fixed-offset spelling accepted by
@@ -9084,7 +10647,14 @@ static bool format_time_default(const DiamondTime *target,StringBuilder *builder
     char buffer[64];
     const char *format=target->zone_mode==DIAMOND_TIME_UTC?
         "%Y-%m-%d %H:%M:%S UTC":"%Y-%m-%d %H:%M:%S %z";
+    char *substituted=nullptr;
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+        substituted=substitute_fixed_offset_z(format,target->utc_offset);
+        if(substituted==nullptr)return false;
+        format=substituted;
+    }
     const size_t length=strftime(buffer,sizeof buffer,format,&parts);
+    free(substituted);
     if(length==0)return false;
     return builder_append(builder,buffer,length);
 }
@@ -10168,6 +11738,118 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
  * out (like call_closure_helper/forward_to_top_level_helper above) so the
  * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
  * run_chunk's own case blocks, times three. */
+
+/* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
+ * call site that invokes a DiamondFunction with an already-assembled
+ * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
+ * helper just below this (which DIAMOND_OP_NEW/SUPER/INVOKE_TYPED's
+ * ordinary instance dispatch all route through) -- neither goes through
+ * the other, so both need their own tier-up/dispatch check rather than
+ * sharing one call site. Tries the compiled path first if the function is
+ * warm enough to have been compiled, falling back to run_chunk for
+ * anything not (yet) compiled or that bails at runtime. `function` came
+ * from a chunk's own functions[] table, declared const the same way a
+ * quickened opcode's own `chunk->code` is -- this is the same "logically
+ * mutable cache metadata behind a const pointer" pattern already used
+ * throughout this file for self-modifying bytecode, not a new one. */
+/* Clang's UBSan `function` check assumes every indirect-call target was
+ * emitted by Clang and probes its private 8-byte type signature immediately
+ * before the target address. A Diamond JIT target is the first byte of an
+ * mmap'd executable region and deliberately has no compiler-owned prefix, so
+ * that probe reads the unmapped guard page at jit_code-8 and segfaults before
+ * the generated function can run. The JIT ABI is declared by DiamondJitFn and
+ * emitted in one place (jit.c); exempt only this dispatcher's indirect call
+ * from that inapplicable check while retaining ASan and every other UBSan
+ * check throughout the function and its C trampolines. */
+#if defined(__clang__)
+__attribute__((no_sanitize("function")))
+#endif
+static DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    /* Phase 2d: this is the ONE place both the compiled and interpreted
+     * dispatch paths funnel through, so it's also the one place that can
+     * enforce DIAMOND_MAX_CALL_DEPTH uniformly. Before Phase 2d, a
+     * compiled function could never itself make a further call, so a
+     * missing check here was harmless (run_chunk's own entry check caught
+     * every call that ever reached it). Now that a compiled function can
+     * invoke SUPER, which can reach an arbitrarily deep chain of further
+     * calls, a sequence of hops that happen to all be compiled would
+     * otherwise never touch run_chunk's own check at all -- a real latent
+     * gap, not a theoretical one, that this closes for every call site
+     * uniformly (not just the ones this phase adds). */
+    if (depth + 1 >= DIAMOND_MAX_CALL_DEPTH) {
+        return DIAMOND_VM_STACK_OVERFLOW;
+    }
+    if (vm->jit && !function->jit_ineligible) {
+        DiamondFunction *mutable_function = (DiamondFunction *)function;
+        if (mutable_function->jit_code == nullptr) {
+            mutable_function->jit_call_count++;
+            if (mutable_function->jit_call_count >= vm->jit_threshold) {
+                size_t jit_code_size = 0;
+                void *compiled = diamond_jit_try_compile(function, &jit_code_size);
+                if (compiled != nullptr) {
+                    mutable_function->jit_code = compiled;
+                    mutable_function->jit_code_size = jit_code_size;
+                    vm->jit_compiled_functions++;
+                } else {
+                    mutable_function->jit_ineligible = true;
+                }
+            }
+        }
+        if (mutable_function->jit_code != nullptr) {
+            DiamondValue jit_registers[DIAMOND_JIT_MAX_REGISTERS];
+            const size_t jit_register_count = function->register_count == 0
+                ? DIAMOND_JIT_MAX_REGISTERS : function->register_count;
+            memset(jit_registers, 0, jit_register_count * sizeof(DiamondValue));
+            const size_t copy_count = argument_count < jit_register_count
+                ? argument_count : jit_register_count;
+            for (size_t index = 0; index < copy_count; index++) jit_registers[index] = arguments[index];
+            DiamondValue jit_result = DIAMOND_NIL;
+            /* ISO C has no portable object-pointer-to-function-pointer
+             * conversion, but POSIX explicitly requires it to work on any
+             * platform with dlsym (the same cast dlsym's own callers
+             * need) -- unavoidable for calling into mmap'd JIT code, not
+             * a real portability gap on any platform this VM targets. */
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wpedantic"
+            #endif
+            const DiamondJitFn jit_fn = (DiamondJitFn)mutable_function->jit_code;
+            #if defined(__GNUC__)
+            #pragma GCC diagnostic pop
+            #endif
+            /* Phase 2d: DiamondJitFn's own return convention is now 3-way,
+             * not a plain bool -- see jit.h's own comment. DIAMOND_VM_OK
+             * (0) means success (*result written); DIAMOND_JIT_RETRY means
+             * the existing "discard this attempt, fall back to run_chunk"
+             * behavior every phase before this one relied on exclusively;
+             * anything else is a real DiamondVmStatus (most notably
+             * DIAMOND_VM_EXCEPTION from a SUPER call that itself raised)
+             * that must be returned exactly as-is -- NOT retried, since a
+             * real, already-executed side effect (the SUPER call) may be
+             * why this status exists at all, and re-running the whole
+             * function from scratch would invoke it a second time. */
+            const uint8_t jit_status = jit_fn(vm, jit_registers, &jit_result,
+                    argument_count, chunk_to_interpret, depth + 1);
+            if (jit_status == DIAMOND_VM_OK) {
+                *result = jit_result;
+                return DIAMOND_VM_OK;
+            }
+            if (jit_status != DIAMOND_JIT_RETRY) {
+                vm->jit_hard_propagations++;
+                return (DiamondVmStatus)jit_status;
+            }
+            vm->jit_bailouts++;
+            /* falls through to the ordinary interpreted call below --
+             * always fully correct regardless of why the compiled
+             * attempt bailed. */
+        }
+    }
+    return run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
+}
+
 static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -10219,7 +11901,69 @@ static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-    return run_chunk(&child,vm,args,total_args,depth+1,nullptr,result);
+    return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
+}
+
+/* JIT trampoline for DIAMOND_OP_SUPER -- extracted from that case's own
+ * body (below) so the interpreter and the JIT share one implementation
+ * rather than risking the two drifting apart, exactly like DIAMOND_OP_
+ * HASH's own diamond_jit_new_hash just above. Unlike every other
+ * trampoline in this file, this one's own failure can be a *real,
+ * already-happened* outcome -- an uncaught exception genuinely raised
+ * somewhere inside the superclass method this calls, surfacing here as
+ * DIAMOND_VM_EXCEPTION exactly the way invoke_resolved_method_helper's
+ * own return already works for the interpreter -- not just an internal
+ * condition safe to retry from scratch. jit.c's own compiler is written
+ * to treat this trampoline's failure specially because of that (see
+ * jc->has_called in jit.c): every bail site from the moment this compiles
+ * onward propagates its exact returned status directly rather than
+ * discarding the whole compiled attempt and re-running the function,
+ * which -- now that a real call with real side effects can have already
+ * happened -- would risk invoking this same super() call a second time. */
+DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
+        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out) {
+    if ((size_t)owner_index >= chunk->class_count ||
+        (size_t)name >= chunk->string_count ||
+        registers[0].kind != DIAMOND_VALUE_OBJECT ||
+        registers[0].as.object->kind != DIAMOND_OBJECT_INSTANCE)
+        return DIAMOND_VM_TYPE_ERROR;
+    const DiamondClass *owner = &chunk->classes[owner_index];
+    if (owner->superclass == UINT8_MAX) return DIAMOND_VM_TYPE_ERROR;
+    const DiamondStringConstant *method_name = &chunk->strings[name];
+    const DiamondMethod *method = lookup_method(chunk,
+        &chunk->classes[owner->superclass], method_name->chars, method_name->length);
+    if (method == nullptr) {
+        /* No user-defined method anywhere up the superclass chain -- if
+         * this is super(...) from an overridden initialize() reaching for
+         * the built-in Exception constructor, apply that same behavior
+         * here instead of treating the built-in as missing. */
+        bool reaches_exception = false;
+        const DiamondClass *ancestor = &chunk->classes[owner->superclass];
+        while (ancestor != nullptr) {
+            if (ancestor == &chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                reaches_exception = true;
+                break;
+            }
+            ancestor = ancestor->superclass == UINT8_MAX ? nullptr :
+                &chunk->classes[ancestor->superclass];
+        }
+        if (reaches_exception && method_name->length == 10 &&
+            memcmp(method_name->chars, "initialize", 10) == 0) {
+            if (argc > 2) return DIAMOND_VM_ARITY_ERROR;
+            DiamondInstance *self = (DiamondInstance *)registers[0].as.object;
+            if (argc > 0 && self->field_count > 0) self->fields[0] = registers[base];
+            if (argc > 1 && self->field_count > 1) self->fields[1] = registers[(size_t)base + 1];
+            if (!gc_write_barrier(vm, (DiamondObject *)self)) return DIAMOND_VM_OUT_OF_MEMORY;
+            *out = DIAMOND_NIL;
+            return DIAMOND_VM_OK;
+        }
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if (argc < method->required_arity || (argc > method->arity && !method->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    return invoke_resolved_method_helper(vm, chunk, method, registers[0], registers, base, argc,
+        false, 0, nullptr, chunk, depth, out);
 }
 
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
@@ -12031,18 +13775,26 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
             snprintf(vm->error,sizeof vm->error,"Time value out of range");
             return DIAMOND_VM_TYPE_ERROR;
         }
+        const char *format_chars=format->chars;
+        char *substituted=nullptr;
+        if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+            substituted=substitute_fixed_offset_z(format_chars,target->utc_offset);
+            if(substituted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            format_chars=substituted;
+        }
         char stack_buffer[256];
-        size_t length=strftime(stack_buffer,sizeof stack_buffer,format->chars,&parts);
+        size_t length=strftime(stack_buffer,sizeof stack_buffer,format_chars,&parts);
         const char *result_chars=stack_buffer;
         char *heap_buffer=nullptr;
         if(length==0) {
             heap_buffer=malloc(4096);
-            if(heap_buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            length=strftime(heap_buffer,4096,format->chars,&parts);
+            if(heap_buffer==nullptr){free(substituted);return DIAMOND_VM_OUT_OF_MEMORY;}
+            length=strftime(heap_buffer,4096,format_chars,&parts);
             result_chars=heap_buffer;
         }
         DiamondString *string=allocate_string(vm,result_chars,length);
         free(heap_buffer);
+        free(substituted);
         if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(string);
         return DIAMOND_VM_OK;
@@ -12748,23 +14500,343 @@ static DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
     return DIAMOND_VM_TYPE_ERROR;
 }
 
-/* debugger()/breakpoint()'s runtime half -- see parse_debugger_call's own
- * comment in compiler.c for the compile-time half (name, register) pairs
- * come from. Prints "chunk:line:column" matching the exact format
- * RECORD_ERROR/raise_capture_backtrace_helper already use elsewhere in
- * this file, then each local's name and stringified value (unwrapping a
+/* Writes `length` bytes of `data` to `fd`, retrying on a short write and
+ * on EINTR. Returns false on any other write error or on a peer that's
+ * gone (write returning 0 forever isn't a real possibility for a pipe,
+ * but is treated as failure rather than looping if it ever happened). */
+static bool debug_pipe_write_all(int fd,const char *data,size_t length) {
+    size_t written=0;
+    while(written<length) {
+        const ssize_t result=write(fd,data+written,length-written);
+        if(result<0) { if(errno==EINTR)continue; return false; }
+        if(result==0)return false;
+        written+=(size_t)result;
+    }
+    return true;
+}
+
+static bool debug_pipe_read_exact(int fd,char *data,size_t length) {
+    size_t total=0;
+    while(total<length) {
+        const ssize_t result=read(fd,data+total,length-total);
+        if(result<0) { if(errno==EINTR)continue; return false; }
+        if(result==0)return false; /* EOF: the DAP client/dap process is gone. */
+        total+=(size_t)result;
+    }
+    return true;
+}
+
+/* Reads one \r\n-terminated header line (without the terminator) off
+ * `fd`, one byte at a time -- mirrors lsp/rpc.c's read_header_line, but
+ * over a raw fd instead of a FILE*, and without linking lsp/rpc.c/json.c
+ * into the core VM (see debugger_structured_helper's own comment on
+ * why). Returns false on EOF, a read error, or a line too long for
+ * `capacity`. */
+static bool debug_pipe_read_header_line(int fd,char *buffer,size_t capacity) {
+    size_t length=0;
+    while(true) {
+        char next=0;
+        if(!debug_pipe_read_exact(fd,&next,1))return false;
+        if(next=='\n') {
+            if(length>0&&buffer[length-1]=='\r')length--;
+            buffer[length]='\0';
+            return true;
+        }
+        if(length+1>=capacity)return false;
+        buffer[length++]=next;
+    }
+}
+
+typedef enum DiamondDebugCommandKind {
+    DIAMOND_DEBUG_COMMAND_NONE,
+    DIAMOND_DEBUG_COMMAND_CONTINUE,
+    DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS,
+    /* Real stepping (docs/debugging.md's own "Stepping" section) --
+     * named after DAP's own request names directly (`next` is DAP's own
+     * step-over request), so dap/main.c's handlers need no translation
+     * table: they just write the same literal command string here
+     * expects. Only ever meaningful from within debugger_structured_
+     * helper's own pause/resume loop (a real DAP client only ever sends
+     * these against an already-stopped debuggee, unlike setBreakpoints,
+     * which legitimately arrives while running too). */
+    DIAMOND_DEBUG_COMMAND_NEXT,
+    DIAMOND_DEBUG_COMMAND_STEP_IN,
+    DIAMOND_DEBUG_COMMAND_STEP_OUT,
+} DiamondDebugCommandKind;
+
+/* Hand-scans exactly the fixed command shapes dap/main.c ever sends over
+ * the debug control channel -- not a JSON parser (see
+ * debugger_structured_helper's own comment on why the core VM doesn't
+ * link one): `{"command":"continue"}`, `{"command":"setBreakpoints",
+ * "lines":[1,2,3]}`, and the stepping commands `{"command":"next"}`/
+ * `"stepIn"`/`"stepOut"` (no other fields). Plain substring/number
+ * scanning is safe here specifically because this wire format is
+ * internal (dap/main.c is the only possible sender, never exposed to a
+ * DAP client's own, genuinely untrusted JSON) and fixed-shape -- no
+ * nesting, no escaping, and no whitespace variance beyond what's scanned
+ * for explicitly. `body` must be nul-terminated (debug_pipe_read_
+ * command's own caller already needs to null-terminate it to bound the
+ * scan); `lines`/`line_count` are left untouched for anything but
+ * DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS. A `lines` array longer than
+ * `capacity` still reports the real total in `*line_count` (matching
+ * add_string_range's own "count what's there, cap what's stored"
+ * convention elsewhere in this codebase) -- the caller only ever copies
+ * min(*line_count,capacity) entries out. */
+static DiamondDebugCommandKind parse_debug_command(const char *body,
+        size_t *lines,size_t *line_count,size_t capacity) {
+    if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
+        size_t count=0;
+        const char *lines_key=strstr(body,"\"lines\"");
+        const char *cursor=lines_key!=nullptr?strchr(lines_key,'['):nullptr;
+        if(cursor!=nullptr) {
+            cursor++;
+            while(*cursor!='\0'&&*cursor!=']') {
+                while(*cursor==' '||*cursor==',')cursor++;
+                if(*cursor=='\0'||*cursor==']')break;
+                char *end=nullptr;
+                const unsigned long long parsed=strtoull(cursor,&end,10);
+                if(end==cursor)break;
+                if(count<capacity)lines[count]=(size_t)parsed;
+                count++;
+                cursor=end;
+            }
+        }
+        *line_count=count<capacity?count:capacity;
+        return DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS;
+    }
+    if(strstr(body,"\"continue\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_CONTINUE;
+    if(strstr(body,"\"next\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_NEXT;
+    if(strstr(body,"\"stepIn\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    if(strstr(body,"\"stepOut\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_OUT;
+    return DIAMOND_DEBUG_COMMAND_NONE;
+}
+
+/* Blocks reading one Content-Length-framed command off `fd`. v1 only
+ * ever discarded the body here (exactly one command shape existed,
+ * `{"command":"continue"}`, so there was nothing to branch on) -- live
+ * breakpoints (docs/debugging.md) added a second shape, so the body now
+ * gets copied into a bounded stack buffer and handed to
+ * parse_debug_command instead. A command larger than the buffer is
+ * still fully drained (so the pipe lands correctly at the *next* frame
+ * boundary either way) but reports DIAMOND_DEBUG_COMMAND_NONE -- best-
+ * effort, matching every other malformed-input case here. Returns false
+ * on any framing/read problem, in which case `*kind` is left at
+ * DIAMOND_DEBUG_COMMAND_NONE; the caller treats that the same as an
+ * ordinary "continue" (see its own comment). */
+static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
+        size_t *lines,size_t *line_count,size_t capacity) {
+    *kind=DIAMOND_DEBUG_COMMAND_NONE;
+    *line_count=0;
+    long content_length=-1;
+    char line[256];
+    while(true) {
+        if(!debug_pipe_read_header_line(fd,line,sizeof line))return false;
+        if(line[0]=='\0')break;
+        static constexpr char prefix[]="Content-Length:";
+        static constexpr size_t prefix_length=sizeof(prefix)-1;
+        if(strncmp(line,prefix,prefix_length)==0) {
+            const char *value=line+prefix_length;
+            while(*value==' ')value++;
+            content_length=strtol(value,nullptr,10);
+        }
+    }
+    if(content_length<0)return false;
+    char body[4096];
+    const size_t body_capacity=sizeof body-1;
+    const size_t body_length=
+        (size_t)content_length<body_capacity?(size_t)content_length:body_capacity;
+    if(!debug_pipe_read_exact(fd,body,body_length))return false;
+    body[body_length]='\0';
+    char discard[256];
+    size_t remaining=(size_t)content_length-body_length;
+    while(remaining>0) {
+        const size_t next=remaining<sizeof discard?remaining:sizeof discard;
+        if(!debug_pipe_read_exact(fd,discard,next))return false;
+        remaining-=next;
+    }
+    if(body_length==(size_t)content_length)
+        *kind=parse_debug_command(body,lines,line_count,capacity);
+    return true;
+}
+
+/* Appends `chars`/`length` to `buffer` as one double-quoted, escaped JSON
+ * string literal -- same escaping rules (and the same six named escapes
+ * plus \u00XX for every other control character) as lsp/json.c's own
+ * writer_append_string_literal, reimplemented independently here rather
+ * than shared: see debugger_structured_helper's own comment for why the
+ * core VM doesn't link lsp/json.c at all. */
+static bool debug_json_append_escaped_string(GrowBuffer *buffer,
+        const char *chars,size_t length) {
+    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\""))return false;
+    for(size_t index=0;index<length;index++) {
+        const unsigned char c=(unsigned char)chars[index];
+        switch(c) {
+            case '"':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\""))return false;break;
+            case '\\':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\\"))return false;break;
+            case '\b':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\b"))return false;break;
+            case '\f':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\f"))return false;break;
+            case '\n':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\n"))return false;break;
+            case '\r':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\r"))return false;break;
+            case '\t':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\t"))return false;break;
+            default:
+                if(c<0x20) {
+                    char escape[8];
+                    const int written=snprintf(escape,sizeof escape,"\\u%04x",c);
+                    if(written<0||!grow_buffer_append(buffer,escape,(size_t)written))
+                        return false;
+                } else if(!grow_buffer_append(buffer,(const char *)&chars[index],1)) {
+                    return false;
+                }
+        }
+    }
+    return GROW_BUFFER_APPEND_LITERAL(buffer,"\"");
+}
+
+/* DIAMOND_OP_DEBUGGER/DIAMOND_OP_BREAKPOINT_CHECK's shared structured,
+ * DAP-facing pause path -- see DiamondVm.debug_fd's own comment (src/
+ * vm.h) for when debugger_helper takes this branch instead of its
+ * ordinary print-to-stdout/getchar() path. Hand-formats a JSON "paused"
+ * payload (`{"event":"paused","reason":"breakpoint"|"step","stack":
+ * [{"name","line","column"},...],"locals":[{"name","value"},...]}`) --
+ * `reason` lets dap/main.c's own `stopped` event distinguish a real
+ * breakpoint from a step for the DAP client's own UI (docs/debugging.md's
+ * "Stepping" section) -- with snprintf/GrowBuffer rather than linking
+ * lsp/json.c into the core VM/`diamond` binary -- dap/main.c (which
+ * already links lsp/json.c and lsp/rpc.c for its own DAP-client-facing
+ * transport) is the one side of this pipe that ever needs a real JSON
+ * parser; the VM only ever produces this one payload shape and only ever
+ * reads back a small, fixed set of command shapes (see
+ * parse_debug_command), so it never needs to parse general JSON at all.
+ * Content-Length-frames the payload onto vm->debug_fd the same way
+ * lsp/rpc.c's rpc_write_message frames a message onto a FILE*, then
+ * blocks reading commands back in a loop -- exactly where the ordinary
+ * path calls getchar() -- applying any `setBreakpoints` in place
+ * (letting a user edit breakpoints *while stopped*, the more common
+ * real workflow, before resuming) and only returning once a `continue`
+ * arrives. vm->frames (walked the same way raise_capture_backtrace_
+ * helper already does) gives the full call stack with zero new state;
+ * only the innermost, paused frame gets locals attached (see docs/
+ * debugging.md's own "outer frames have no locals" note -- no per-chunk
+ * local-debug table exists for any frame but the exact call site's own
+ * baked-in operand list this opcode already carries). A write or read
+ * failure here (the DAP client vanished, the pipe broke) ends the loop
+ * the same as a clean "continue": best-effort, not a reason to fail the
+ * debuggee's own execution over a detached debugger. */
+static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,size_t depth,size_t instruction_offset,
+        DiamondValue *registers,const uint16_t *name_indices,
+        const uint16_t *local_registers,uint8_t local_count,const char *reason) {
+    (void)instruction_offset;
+    GrowBuffer body={};
+    bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"reason\":");
+    if(ok)ok=debug_json_append_escaped_string(&body,reason,strlen(reason));
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,",\"stack\":[");
+    size_t frame_index=0;
+    for(const DiamondFrame *frame=vm->frames;ok&&frame!=nullptr;
+            frame=frame->previous,frame_index++) {
+        if(frame_index>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+        if(frame->chunk==nullptr||frame->instruction_offset==nullptr)continue;
+        const char *frame_name=frame->chunk->name!=nullptr?frame->chunk->name:"<chunk>";
+        const size_t offset=*frame->instruction_offset;
+        const bool in_bounds=offset<frame->chunk->code_count;
+        const uint32_t frame_line=in_bounds&&frame->chunk->lines!=nullptr?
+            frame->chunk->lines[offset]:0;
+        const uint32_t frame_column=in_bounds&&frame->chunk->columns!=nullptr?
+            frame->chunk->columns[offset]:0;
+        ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,frame_name,strlen(frame_name));
+        char numbers[64];
+        const int written=snprintf(numbers,sizeof numbers,
+            ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
+        if(ok&&written>0)ok=grow_buffer_append(&body,numbers,(size_t)written);
+        else if(written<0)ok=false;
+    }
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"locals\":[");
+    size_t locals_emitted=0;
+    for(size_t index=0;ok&&index<local_count;index++) {
+        if((size_t)name_indices[index]>=chunk->string_count)continue;
+        if(locals_emitted>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+        const DiamondStringConstant *name=&chunk->strings[name_indices[index]];
+        DiamondValue value=registers[local_registers[index]];
+        if(value.kind==DIAMOND_VALUE_OBJECT&&
+           value.as.object->kind==DIAMOND_OBJECT_CELL)
+            value=((DiamondCell *)value.as.object)->value;
+        DiamondValue stringified=DIAMOND_NIL;
+        const DiamondVmStatus status=stringify_value(vm,chunk,depth,value,&stringified);
+        if(status!=DIAMOND_VM_OK) { free(body.data);return status; }
+        const DiamondString *text=(const DiamondString *)stringified.as.object;
+        ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,name->chars,name->length);
+        if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,",\"value\":");
+        if(ok)ok=debug_json_append_escaped_string(&body,text->chars,text->length);
+        if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"}");
+        locals_emitted++;
+    }
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"]}");
+    if(!ok) { free(body.data);return DIAMOND_VM_OUT_OF_MEMORY; }
+    char header[64];
+    const int header_length=snprintf(header,sizeof header,
+        "Content-Length: %zu\r\n\r\n",body.length);
+    if(header_length>0&&debug_pipe_write_all(vm->debug_fd,header,(size_t)header_length))
+        debug_pipe_write_all(vm->debug_fd,body.data,body.length);
+    free(body.data);
+    while(true) {
+        DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
+        size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+        if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
+                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+            break;
+        if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
+            memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+            vm->debug_active_line_count=line_count;
+            continue;
+        }
+        /* next/stepIn/stepOut (docs/debugging.md's own "Stepping"
+         * section): arm the target depth from `depth`, this exact
+         * pause's own already-known run_chunk recursion depth -- no
+         * argument needs to travel from dap/main.c at all -- then resume
+         * the same way `continue` does. DIAMOND_OP_BREAKPOINT_CHECK's own
+         * case (further down this file) is what actually consumes this
+         * on the next qualifying checkpoint hit. */
+        if(kind==DIAMOND_DEBUG_COMMAND_NEXT)vm->debug_step_mode=DIAMOND_STEP_OVER;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN)vm->debug_step_mode=DIAMOND_STEP_IN;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_OUT)vm->debug_step_mode=DIAMOND_STEP_OUT;
+        if(vm->debug_step_mode!=DIAMOND_STEP_NONE)vm->debug_step_target_depth=depth;
+        break;
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* The shared runtime pause helper for both DIAMOND_OP_DEBUGGER (an
+ * explicit debugger()/breakpoint() call, always unconditional -- see
+ * parse_debugger_call's own comment in compiler.c for the compile-time
+ * half (name, register) pairs come from) and an armed
+ * DIAMOND_OP_BREAKPOINT_CHECK. `reason` ("breakpoint" or "step") is
+ * purely for the DAP-facing structured payload below -- see its own
+ * comment. Under DIAMOND_DEBUG_FD (see DiamondVm.debug_fd's own
+ * comment, src/vm.h), delegates to debugger_structured_helper's DAP-
+ * facing pause instead of this ordinary path. Otherwise prints
+ * "chunk:line:column" matching the exact format RECORD_ERROR/
+ * raise_capture_backtrace_helper already use elsewhere in this file,
+ * then each local's name and stringified value (unwrapping a
  * captured local's Cell box first -- BOX_LOCAL replaces a captured
  * local's own register contents with a DiamondCell wrapper in place, so
  * this checks the *runtime* value kind rather than trusting any
  * compile-time "captured" bookkeeping passed through), then blocks on
- * one line of stdin. Kept as its own helper (not inlined into
- * DIAMOND_OP_DEBUGGER's own case block) both for this file's usual
- * stack-frame-budget reasons and because it may recurse into run_chunk
- * itself once per local, through stringify_value calling a user-defined
- * to_s. */
+ * one line of stdin -- `reason` is unused on this plain path, which has
+ * no stepping concept at all (a DAP control channel is what stepping
+ * commands travel over, and this path only ever runs without one). Kept
+ * as its own helper (not inlined into DIAMOND_OP_DEBUGGER's own case
+ * block) both for this file's usual stack-frame-budget reasons and
+ * because it may recurse into run_chunk itself once per local, through
+ * stringify_value calling a user-defined to_s. */
 static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,size_t instruction_offset,DiamondValue *registers,
-        const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count) {
+        const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count,
+        const char *reason) {
+    if(vm->debug_fd>=0)
+        return debugger_structured_helper(vm,chunk,depth,instruction_offset,
+            registers,name_indices,local_registers,local_count,reason);
     const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
     const bool in_bounds=instruction_offset<chunk->code_count;
     const uint32_t line=in_bounds&&chunk->lines!=nullptr?
@@ -13017,6 +15089,40 @@ static DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
     *merged=values;*merged_count=count;return DIAMOND_VM_OK;
 }
 
+/* Sandbox per-capability granularity (docs/sandbox.md's own "Per-capability
+ * granularity" section) -- VM_SANDBOX_GUARD's own second argument. Reads
+ * DIAMOND_SANDBOX_ALLOW fresh on every call, exactly like VM_SANDBOX_GUARD
+ * itself reads DIAMOND_SANDBOX fresh every time (see that macro's own
+ * comment for why: every execution path -- top-level, a spawned Thread's
+ * child_vm, a Supervisor child's run_vm, ProgramBuilder#run's own run_vm --
+ * independently reads the same real process environment, so nothing needs
+ * to propagate from a parent VM to a child one). `category` is always a
+ * plain string literal from a VM_SANDBOX_GUARD call site, never a dynamic
+ * value. Matches whole, comma-separated tokens only (surrounding spaces
+ * trimmed) -- never a substring match, so a future longer category name
+ * can never accidentally match a shorter one contained within it. Absent
+ * or empty DIAMOND_SANDBOX_ALLOW (the common case: DIAMOND_SANDBOX=1 alone,
+ * meaning "deny everything") returns false for every category, unchanged
+ * from sandbox mode's original all-or-nothing behavior. */
+static bool sandbox_category_allowed(const char *category) {
+    const char *allow = getenv("DIAMOND_SANDBOX_ALLOW");
+    if (allow == nullptr) return false;
+    const size_t category_length = strlen(category);
+    const char *cursor = allow;
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == ',') cursor++;
+        const char *token_start = cursor;
+        while (*cursor != '\0' && *cursor != ',') cursor++;
+        const char *token_end = cursor;
+        while (token_end > token_start && token_end[-1] == ' ') token_end--;
+        const size_t token_length = (size_t)(token_end - token_start);
+        if (token_length == category_length &&
+            memcmp(token_start, category, category_length) == 0)
+            return true;
+    }
+    return false;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -13172,6 +15278,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         VM_RETURN(DIAMOND_VM_TYPE_ERROR);                                 \
     } while (false)
 
+/* One line, at the top of every opcode case that opens a real filesystem/
+ * network/subprocess resource (File.open, TCPSocket.connect, Process.run,
+ * ...), before any side effect -- see docs/sandbox.md for the full deny
+ * list and why this checks getenv directly rather than a cached global or
+ * a per-DiamondVm field: every execution path (the top-level program, a
+ * spawned Thread's child_vm, a Supervisor child's per-attempt run_vm, a
+ * ProgramBuilder#run's own run_vm) reads the same real process
+ * environment, so nothing needs to propagate a flag from a parent VM to a
+ * child one -- the one propagation mistake that would actually matter for
+ * a security feature like this. `capability_name_` is a plain string
+ * literal (a Diamond-facing name, e.g. "File.open"), not a dynamic value.
+ *
+ * `category_` (docs/sandbox.md's own "Per-capability granularity" section)
+ * is one of "filesystem"/"network"/"database"/"subprocess", also always a
+ * plain string literal -- sandbox_category_allowed (just above this
+ * function) checks it against DIAMOND_SANDBOX_ALLOW, an opt-in allow-list
+ * consulted only once DIAMOND_SANDBOX is already denying everything.
+ * Deliberately an allow-list, not a deny-list: an unrecognized or
+ * misspelled category name in DIAMOND_SANDBOX_ALLOW simply never matches,
+ * leaving that capability denied (fails safe) -- the equivalent mistake in
+ * a deny-list design would silently fail open instead. */
+#define VM_SANDBOX_GUARD(capability_name_, category_)                     \
+    do {                                                                  \
+        if (getenv("DIAMOND_SANDBOX") != nullptr &&                      \
+            !sandbox_category_allowed(category_)) {                       \
+            snprintf(vm->error,sizeof vm->error,                          \
+                "sandbox denies %s",(capability_name_));                  \
+            VM_RETURN(DIAMOND_VM_SANDBOX_ERROR);                          \
+        }                                                                 \
+    } while (false)
+
 #define VM_PROPAGATE(status_)                                      \
     if ((status_) != DIAMOND_VM_OK) {                              \
         if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
@@ -13239,6 +15376,54 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         READ_BYTE(instruction);
         if (instruction < DIAMOND_OP_COUNT)
             vm->opcode_counts[instruction]++;
+        /* Cheap steady-state cost (one boolean read, false unless either
+         * DIAMOND_MAX_INSTRUCTIONS or DIAMOND_MAX_WALL_MILLISECONDS is
+         * configured) for docs/sandbox.md's own "Resource limits" --
+         * same shape as diamond_any_signal_pending's own check just above.
+         * The instruction-count comparison itself is cheap enough to run
+         * every dispatch when active; the wall-clock check is additionally
+         * masked (see DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK's own
+         * comment) since clock_gettime is the genuinely non-trivial part.
+         *
+         * Both branches clear resource_limits_active (and the two budgets
+         * themselves) *before* VM_RETURN -- unlike DIAMOND_MAX_CALL_DEPTH,
+         * whose own `depth` parameter naturally shrinks as the call stack
+         * unwinds (so a rescue clause in a shallower, already-returned-to
+         * frame never re-trips it), instructions_executed only ever grows
+         * and elapsed wall-clock time only ever increases: leaving either
+         * budget "armed" after it first fires would re-trip this exact
+         * check on the *very next* instruction dispatched -- including
+         * every instruction needed to run a matching `rescue`/`ensure`
+         * clause's own body -- so a program that correctly catches
+         * ResourceLimitError could still never finish handling it. Once
+         * either budget has genuinely been exceeded once, the VM has
+         * already committed to reporting that outcome; letting the
+         * program's own exception handling run to a normal conclusion
+         * afterward (with no further limit interference) is the whole
+         * point of it being a catchable exception rather than an abrupt
+         * kill. */
+        if (vm->resource_limits_active) {
+            vm->instructions_executed++;
+            if (vm->max_instructions != 0 &&
+                vm->instructions_executed > vm->max_instructions) {
+                vm->max_instructions = 0;
+                vm->max_wall_nanoseconds = 0;
+                vm->resource_limits_active = false;
+                VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+            }
+            if (vm->max_wall_nanoseconds != 0 &&
+                (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                const int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
+                if (now_ns - vm->start_time_ns > vm->max_wall_nanoseconds) {
+                    vm->max_instructions = 0;
+                    vm->max_wall_nanoseconds = 0;
+                    vm->resource_limits_active = false;
+                    VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+                }
+            }
+        }
 
         switch ((DiamondOpCode)instruction) {
             case DIAMOND_OP_CONSTANT: {
@@ -13945,24 +16130,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * falls through to values_equal unchanged, so two
                  * instances of a class with no "==" compare by identity
                  * exactly as before this feature existed. */
-                if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
+                {
                     const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "==",2,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        const bool overloaded_equal=is_truthy(op_result);
-                        registers[destination]=DIAMOND_BOOL(
-                            opcode==DIAMOND_OP_EQUAL?overloaded_equal:!overloaded_equal);
-                        break;
-                    }
+                    DiamondValue general_result=DIAMOND_NIL;
+                    const DiamondVmStatus status=diamond_jit_equal_general(vm,chunk,depth,
+                        site,&registers[left],&registers[right],
+                        opcode==DIAMOND_OP_NOT_EQUAL,&general_result);
+                    VM_PROPAGATE(status);
+                    registers[destination]=general_result;
                 }
-                const bool equal = values_equal(registers[left], registers[right]);
-                registers[destination] = DIAMOND_BOOL(
-                    opcode == DIAMOND_OP_EQUAL ? equal : !equal);
                 break;
             }
             case DIAMOND_OP_LESS:
@@ -14291,11 +16467,58 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .has_variadic=function->has_variadic,
                 };
                 DiamondValue call_result = DIAMOND_NIL;
-                const DiamondVmStatus status = run_chunk(
-                    &called_chunk, vm, &registers[argument_base],
-                    call_argument_count, depth + 1, nullptr, &call_result);
+                const DiamondVmStatus status = jit_call_or_interpret(vm, function,
+                    &called_chunk, &registers[argument_base], call_argument_count,
+                    depth, nullptr, &call_result);
                 VM_PROPAGATE(status);
                 registers[destination] = call_result;
+                break;
+            }
+            case DIAMOND_OP_TAIL_CALL: {
+                /* Only ever produced by the compiler rewriting an
+                 * already-validated self-recursive CALL in tail position
+                 * (see maybe_rewrite_self_tail_call, src/compiler.c) --
+                 * `function_index`/`destination` are intentionally unread:
+                 * the target is always *this* function (chunk/registers/
+                 * frame/depth all stay exactly as they are, since a self-
+                 * call can never need a different one of any of them),
+                 * and a value that would have been returned here was
+                 * already checked byte-for-byte to be the immediately
+                 * preceding CALL's own destination, needing no separate
+                 * confirmation at run time. Bounds/arity were already
+                 * enforced when that CALL itself first compiled; the only
+                 * new check needed here is argument_base/count staying in
+                 * range, the same defensive validation CALL's own case
+                 * applies, in case this was ever hand-built directly
+                 * (ProgramBuilder exposes raw opcode numbers). */
+                uint16_t destination = 0, function_index = 0, argument_base = 0;
+                uint8_t call_argument_count = 0;
+                READ_SHORT(destination); /* unused, see above */
+                READ_SHORT(function_index); /* unused, see above */
+                READ_SHORT(argument_base);
+                READ_BYTE(call_argument_count);
+                (void)destination;
+                (void)function_index;
+                if ((size_t)argument_base + call_argument_count >
+                        DIAMOND_REGISTER_COUNT ||
+                    call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS) {
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                /* Captured into a small local buffer *before* zeroing
+                 * registers[] below -- argument_base is ordinary bytecode
+                 * addressing the same register file being cleared, unlike
+                 * a real CALL's own `arguments` (always a genuinely
+                 * separate C array, the caller's own registers one C
+                 * stack frame up). */
+                DiamondValue tail_arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
+                for (size_t index = 0; index < call_argument_count; index++)
+                    tail_arguments[index] = registers[argument_base + index];
+                memset(registers, 0, live_register_count * sizeof(DiamondValue));
+                const size_t copied = (size_t)call_argument_count < live_register_count
+                    ? (size_t)call_argument_count : live_register_count;
+                for (size_t index = 0; index < copied; index++)
+                    registers[index] = tail_arguments[index];
+                ip = 0;
                 break;
             }
             case DIAMOND_OP_CALL_TYPED: {
@@ -15500,6 +17723,41 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                         registers[dest]=DIAMOND_OBJECT(copy);break;
                     }
+                    /* freeze/frozen? -- defined for exactly the same
+                     * receiver set dup_defined already names. For a
+                     * primitive or an already-immutable String/Symbol,
+                     * mirrors dup's own "already immutable, return self/
+                     * true unchanged" precedent (see that block's own
+                     * comment) rather than raising "undefined method" --
+                     * freeze() is a harmless no-op, frozen?() is always
+                     * true. Array/Hash get the real, effectful check:
+                     * every native mutation they support (push, pop,
+                     * `[]=`, and everything built from those -- see
+                     * docs/classes-and-modules.md's "freeze / frozen?"
+                     * section) tests object.frozen before proceeding. */
+                    if(dup_defined&&method_name->length==6&&
+                       memcmp(method_name->chars,"freeze",6)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[recv].kind==DIAMOND_VALUE_OBJECT) {
+                            const DiamondObjectKind freeze_kind=
+                                registers[recv].as.object->kind;
+                            if(freeze_kind==DIAMOND_OBJECT_ARRAY||
+                               freeze_kind==DIAMOND_OBJECT_HASH)
+                                registers[recv].as.object->frozen=true;
+                        }
+                        registers[dest]=registers[recv];break;
+                    }
+                    if(dup_defined&&method_name->length==7&&
+                       memcmp(method_name->chars,"frozen?",7)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const bool is_frozen=registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                            registers[recv].as.object->kind==DIAMOND_OBJECT_STRING||
+                            registers[recv].as.object->kind==DIAMOND_OBJECT_SYMBOL||
+                            registers[recv].as.object->frozen;
+                        registers[dest]=DIAMOND_BOOL(is_frozen);break;
+                    }
                 }
                 if(registers[recv].kind==DIAMOND_VALUE_INT||
                    registers[recv].kind==DIAMOND_VALUE_FLOAT) {
@@ -15963,8 +18221,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"tr",2)==0;
                         const bool format_method=method_name->length==6&&
                             memcmp(method_name->chars,"format",6)==0;
+                        const bool parse_json_method=method_name->length==10&&
+                            memcmp(method_name->chars,"parse_json",10)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        if(parse_json_method) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            const size_t protect_mark=vm->gc_protected_count;
+                            DiamondValue parsed=DIAMOND_NIL;
+                            const DiamondVmStatus parse_status=json_parse_document(
+                                vm,source->chars,source->length,&parsed);
+                            gc_unprotect(vm,protect_mark);
+                            VM_PROPAGATE(parse_status);
+                            registers[dest]=parsed;break;
+                        }
                         if(gsub_method||sub_method) {
                             if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
@@ -16503,6 +18773,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"pop",3)==0;
                     if(push_method) {
                         if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(array->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                         if(!array_value_satisfies_constraints(array,registers[base])) {
                             snprintf(vm->error,sizeof vm->error,
                                      "array element violates its type annotation");
@@ -16514,6 +18785,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(pop_method) {
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(array->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                         registers[dest]=array->count==0?DIAMOND_NIL:
                             array->values[--array->count];break;
                     }
@@ -16723,6 +18995,367 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_EXCEPTION);
                     }
                     registers[dest]=target_thread->result;break;
+                }
+                if(receiver_kind==DIAMOND_OBJECT_CHANNEL) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondChannel *target_channel=
+                        ((DiamondChannelHandle *)registers[recv].as.object)->channel;
+                    const bool send_method=method_name->length==4&&
+                        memcmp(method_name->chars,"send",4)==0;
+                    const bool receive_method=method_name->length==7&&
+                        memcmp(method_name->chars,"receive",7)==0;
+                    const bool try_send_method=method_name->length==8&&
+                        memcmp(method_name->chars,"try_send",8)==0;
+                    const bool try_receive_method=method_name->length==11&&
+                        memcmp(method_name->chars,"try_receive",11)==0;
+                    const bool close_method=method_name->length==5&&
+                        memcmp(method_name->chars,"close",5)==0;
+                    const bool closed_method=method_name->length==7&&
+                        memcmp(method_name->chars,"closed?",7)==0;
+                    const bool size_method=method_name->length==4&&
+                        memcmp(method_name->chars,"size",4)==0;
+                    if(!send_method&&!receive_method&&!try_send_method&&
+                       !try_receive_method&&!close_method&&!closed_method&&!size_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Channel");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(close_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        /* Idempotent (docs/threads.md), matching Ruby's own
+                         * Thread::Queue#close -- a second close() is a no-op,
+                         * not an error. */
+                        if(!target_channel->closed) {
+                            target_channel->closed=true;
+                            pthread_cond_broadcast(&target_channel->not_empty);
+                            pthread_cond_broadcast(&target_channel->not_full);
+                        }
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    if(closed_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        const bool is_closed=target_channel->closed;
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_BOOL(is_closed);break;
+                    }
+                    if(size_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_channel->lock);
+                        const size_t current_size=target_channel->count;
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_INT((int64_t)current_size);break;
+                    }
+                    if(send_method||try_send_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondValue value_to_send=registers[base];
+                        pthread_mutex_lock(&target_channel->lock);
+                        while(target_channel->count==target_channel->capacity&&
+                              !target_channel->closed) {
+                            if(try_send_method) {
+                                pthread_mutex_unlock(&target_channel->lock);
+                                snprintf(vm->error,sizeof vm->error,
+                                    "channel send would block");
+                                VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                            }
+                            pthread_cond_wait(&target_channel->not_full,
+                                &target_channel->lock);
+                        }
+                        if(target_channel->closed) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,"channel is closed");
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        /* Rebase from this sender's own ambient classes into
+                         * the channel's own private (permanent, never-run)
+                         * program -- identical call shape to DIAMOND_OP_
+                         * THREAD_NEW's own argument copy above, just into a
+                         * standing home instead of a freshly spawned child.
+                         * extra_root_count kept current across the mutation
+                         * below so a collection triggered by this very copy
+                         * (on private_vm, still holding `lock`) can find
+                         * every already-queued value. */
+                        DiamondValue copied=DIAMOND_NIL;
+                        target_channel->private_vm->extra_root_count=
+                            target_channel->count;
+                        const bool copy_ok=copy_value_into_vm(
+                            target_channel->private_vm,value_to_send,nullptr,
+                            chunk->classes,target_channel->private_program->classes,
+                            nullptr,&copied);
+                        if(!copy_ok) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "Channel#send argument does not support this type");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        target_channel->queue[target_channel->count++]=copied;
+                        target_channel->private_vm->extra_root_count=
+                            target_channel->count;
+                        pthread_cond_signal(&target_channel->not_empty);
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* Only receive_method/try_receive_method left, per the
+                     * exhaustive unknown-method check above -- same "fall
+                     * through to whichever's left" shape Socket#read/#write
+                     * already uses just below. */
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    pthread_mutex_lock(&target_channel->lock);
+                    while(target_channel->count==0&&!target_channel->closed) {
+                        if(try_receive_method) {
+                            pthread_mutex_unlock(&target_channel->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "channel receive would block");
+                            VM_RETURN(DIAMOND_VM_WOULD_BLOCK);
+                        }
+                        pthread_cond_wait(&target_channel->not_empty,
+                            &target_channel->lock);
+                    }
+                    if(target_channel->count==0) {
+                        /* Closed and drained: nil means "nothing ever
+                         * again," distinct from WouldBlockError's "nothing
+                         * right now" above -- the identical EOF-as-nil-vs-
+                         * WouldBlockError distinction File#read/Socket#read
+                         * already draw (see their own comments). */
+                        pthread_mutex_unlock(&target_channel->lock);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* Rebase the other direction: out of the channel's own
+                     * private program, into this receiver's own ambient
+                     * classes -- identical call shape to Thread#join's own
+                     * result copy above. Allocates on `vm` (this receiver's
+                     * own real VM), never on private_vm, so private_vm's
+                     * own extra_root_count needs no update for this call --
+                     * only for the queue-mutation just below. */
+                    DiamondValue copied=DIAMOND_NIL;
+                    const bool copy_ok=copy_value_into_vm(vm,
+                        target_channel->queue[0],nullptr,
+                        target_channel->private_program->classes,chunk->classes,
+                        nullptr,&copied);
+                    if(!copy_ok) {
+                        pthread_mutex_unlock(&target_channel->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Channel#receive result does not support this type");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    memmove(target_channel->queue,target_channel->queue+1,
+                        (target_channel->count-1)*sizeof *target_channel->queue);
+                    target_channel->count--;
+                    target_channel->private_vm->extra_root_count=
+                        target_channel->count;
+                    pthread_cond_signal(&target_channel->not_full);
+                    pthread_mutex_unlock(&target_channel->lock);
+                    registers[dest]=copied;break;
+                }
+                if(receiver_kind==DIAMOND_OBJECT_SUPERVISOR) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    DiamondSupervisor *target_supervisor=
+                        ((DiamondSupervisorHandle *)registers[recv].as.object)->supervisor;
+                    const bool add_child_method=method_name->length==9&&
+                        memcmp(method_name->chars,"add_child",9)==0;
+                    const bool stop_method=method_name->length==4&&
+                        memcmp(method_name->chars,"stop",4)==0;
+                    const bool join_method=method_name->length==4&&
+                        memcmp(method_name->chars,"join",4)==0;
+                    const bool child_count_method=method_name->length==11&&
+                        memcmp(method_name->chars,"child_count",11)==0;
+                    const bool restart_count_method=method_name->length==13&&
+                        memcmp(method_name->chars,"restart_count",13)==0;
+                    const bool last_error_method=method_name->length==10&&
+                        memcmp(method_name->chars,"last_error",10)==0;
+                    const bool alive_method=method_name->length==6&&
+                        memcmp(method_name->chars,"alive?",6)==0;
+                    if(!add_child_method&&!stop_method&&!join_method&&
+                       !child_count_method&&!restart_count_method&&
+                       !last_error_method&&!alive_method) {
+                        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+                            (int)method_name->length,method_name->chars,"Supervisor");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(child_count_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        pthread_mutex_lock(&target_supervisor->lock);
+                        const size_t current_count=target_supervisor->child_count;
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        registers[dest]=DIAMOND_INT((int64_t)current_count);break;
+                    }
+                    if(restart_count_method||last_error_method||alive_method) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "Supervisor child index must be an Int");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const int64_t requested_index=registers[base].as.integer;
+                        pthread_mutex_lock(&target_supervisor->lock);
+                        if(requested_index<0||
+                           (size_t)requested_index>=target_supervisor->child_count) {
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            snprintf(vm->error,sizeof vm->error,
+                                "Supervisor child index %" PRId64 " out of range",
+                                requested_index);
+                            VM_RETURN(DIAMOND_VM_INDEX_ERROR);
+                        }
+                        DiamondSupervisorChild *target_child=
+                            &target_supervisor->children[(size_t)requested_index];
+                        if(restart_count_method) {
+                            const size_t current_restarts=target_child->restart_count;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            registers[dest]=DIAMOND_INT((int64_t)current_restarts);break;
+                        }
+                        if(alive_method) {
+                            const bool still_alive=!target_child->done;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            registers[dest]=DIAMOND_BOOL(still_alive);break;
+                        }
+                        /* last_error_method: nil until the first crash. Copy
+                         * the message out before unlocking rather than
+                         * allocating (a potential GC on `vm`, unrelated to
+                         * target_supervisor) while still holding the lock. */
+                        char last_error_copy[sizeof target_child->last_error];
+                        const bool has_error=target_child->last_error[0]!='\0';
+                        if(has_error)
+                            snprintf(last_error_copy,sizeof last_error_copy,
+                                "%s",target_child->last_error);
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        if(!has_error) {registers[dest]=DIAMOND_NIL;break;}
+                        DiamondString *message=allocate_string(vm,last_error_copy,
+                            strlen(last_error_copy));
+                        if(message==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(message);break;
+                    }
+                    if(stop_method||join_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(stop_method) {
+                            pthread_mutex_lock(&target_supervisor->lock);
+                            target_supervisor->stopped=true;
+                            pthread_mutex_unlock(&target_supervisor->lock);
+                            atomic_store(&target_supervisor->stop_requested,true);
+                        }
+                        /* No cancellation anywhere in Diamond's concurrency
+                         * model (same as Thread) -- a child mid-crash-loop
+                         * still finishes its *current* attempt before
+                         * noticing stop_requested. join() blocks the same
+                         * way but without ever setting stop_requested, so
+                         * it only returns once every child finishes on its
+                         * own (see docs/threads.md). */
+                        supervisor_join_all_children(target_supervisor);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
+                    /* add_child_method, per the exhaustive unknown-method
+                     * check above. Mirrors DIAMOND_OP_THREAD_NEW's own body
+                     * almost exactly (see its own comments) -- the real
+                     * differences are storing into a fixed children[] slot
+                     * instead of a fresh handle, cloning program_template
+                     * once for the child's entire restart lifetime rather
+                     * than per spawn, and copying args into args_vm (GC
+                     * storage only, mirrors Channel's private_vm) instead of
+                     * directly into a to-be-run child_vm. */
+                    if(argc<1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    pthread_mutex_lock(&target_supervisor->lock);
+                    if(target_supervisor->stopped) {
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor#add_child called after stop()");
+                        VM_RETURN(DIAMOND_VM_SUPERVISOR_ERROR);
+                    }
+                    if(target_supervisor->child_count>=DIAMOND_MAX_SUPERVISOR_CHILDREN) {
+                        pthread_mutex_unlock(&target_supervisor->lock);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor has reached its maximum of %d children",
+                            DIAMOND_MAX_SUPERVISOR_CHILDREN);
+                        VM_RETURN(DIAMOND_VM_SUPERVISOR_ERROR);
+                    }
+                    const size_t new_index=target_supervisor->child_count;
+                    pthread_mutex_unlock(&target_supervisor->lock);
+                    if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "too many concurrently active threads");
+                        VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                    }
+                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child's first argument must be a Callable value");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    const DiamondClosure *callable=
+                        (const DiamondClosure *)registers[base].as.object;
+                    if(callable->capture_count!=0) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child's callable must not capture any local state");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if(callable->foreign_chunk!=nullptr) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "a compile_method callable can only be passed to define_method");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    if((size_t)callable->function_index>=chunk->function_count)
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    const DiamondFunction *target_fn=
+                        chunk->functions[callable->function_index];
+                    const uint8_t forwarded_argc=(uint8_t)(argc-1);
+                    if(forwarded_argc<target_fn->required_arity||
+                       (forwarded_argc>target_fn->arity&&!target_fn->has_variadic))
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    DiamondProgram *program_template=clone_program_from_chunk(chunk);
+                    if(program_template==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondVm *args_vm=malloc(sizeof *args_vm);
+                    if(args_vm==nullptr) {
+                        diamond_program_free(program_template);free(program_template);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    diamond_vm_init(args_vm);
+                    DiamondSupervisorChild *new_child=
+                        &target_supervisor->children[new_index];
+                    new_child->supervisor=target_supervisor;
+                    new_child->program_template=program_template;
+                    new_child->args_vm=args_vm;
+                    new_child->function_index=callable->function_index;
+                    new_child->arg_count=forwarded_argc;
+                    bool copy_failed=false;
+                    const size_t args_mark=args_vm->gc_protected_count;
+                    for(uint8_t index=0;index<forwarded_argc;index++) {
+                        if(!copy_value_into_vm(args_vm,
+                                registers[(size_t)base+1+index],nullptr,
+                                chunk->classes,program_template->classes,
+                                nullptr,&new_child->args[index])||
+                           !gc_protect(args_vm,new_child->args[index])) {
+                            copy_failed=true;break;
+                        }
+                    }
+                    gc_unprotect(args_vm,args_mark);
+                    if(copy_failed) {
+                        diamond_vm_free(args_vm);free(args_vm);
+                        diamond_program_free(program_template);free(program_template);
+                        /* memset, not a `(DiamondSupervisorChild){}`
+                         * compound literal -- see DIAMOND_OP_SUPERVISOR_
+                         * NEW's own comment on why that matters even for
+                         * a single child-sized (not full Supervisor-sized)
+                         * temporary inside this same recursive run_chunk. */
+                        memset(new_child,0,sizeof *new_child);
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.add_child argument does not support this type");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    args_vm->extra_roots=new_child->args;
+                    args_vm->extra_root_count=forwarded_argc;
+                    if(create_vm_thread(&new_child->handle,
+                            supervisor_child_entry_trampoline,new_child)!=0) {
+                        diamond_vm_free(args_vm);free(args_vm);
+                        diamond_program_free(program_template);free(program_template);
+                        memset(new_child,0,sizeof *new_child);
+                        snprintf(vm->error,sizeof vm->error,"failed to create thread");
+                        VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                    }
+                    atomic_fetch_add(&diamond_active_thread_count,1);
+                    pthread_mutex_lock(&target_supervisor->lock);
+                    target_supervisor->child_count=new_index+1;
+                    pthread_mutex_unlock(&target_supervisor->lock);
+                    registers[dest]=DIAMOND_INT((int64_t)new_index);break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
@@ -17153,12 +19786,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * any of it), so this fix aligns the *validation* with
                      * the read family without changing send/receive
                      * semantics. */
-                    char *buffer=malloc(want==0?1:want);
+                    /* recv_len (never 0) is what's actually requested from
+                     * recvfrom -- FreeBSD leaves source_addr untouched
+                     * (ss_family stays the {0} initializer's AF_UNSPEC) on
+                     * a genuinely zero-length recvfrom, later failing
+                     * getnameinfo below with EAI_FAMILY ("Address family
+                     * not recognized"); confirmed directly, a real
+                     * receive(0) call on a real FreeBSD 15.1 box. Linux has
+                     * no such requirement (a zero-length recvfrom there
+                     * still populates the source address correctly), which
+                     * is why this was invisible before. `want` itself
+                     * (0 for a genuine receive(0) call) stays the source of
+                     * truth for how many bytes of the datagram to actually
+                     * surface as `data` below -- recvfrom always consumes/
+                     * discards the whole queued datagram regardless of how
+                     * much of it fits in the buffer, so asking for 1 byte
+                     * here changes nothing about receive(0)'s own
+                     * documented "consumes without copying" contract; it
+                     * only obtains the source address FreeBSD would
+                     * otherwise skip. */
+                    const size_t recv_len=want==0?1:want;
+                    char *buffer=malloc(recv_len);
                     if(buffer==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     struct sockaddr_storage source_addr={0};
                     socklen_t source_addr_len=sizeof source_addr;
                     errno=0;
-                    ssize_t received=recvfrom(udp_handle->fd,buffer,want,0,
+                    ssize_t received=recvfrom(udp_handle->fd,buffer,recv_len,0,
                         (struct sockaddr *)&source_addr,&source_addr_len);
                     /* Same reasoning as blocking accept()/IO.poll above:
                      * a UDP server loop's own .receive() can block
@@ -17221,7 +19874,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),DIAMOND_NIL)) {
                         free(buffer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     }
-                    DiamondString *data_string=allocate_string(vm,buffer,(size_t)received);
+                    /* want, not recv_len/received: a genuine receive(0)
+                     * reports zero bytes of data regardless of the 1 byte
+                     * recv_len above may have actually copied into buffer
+                     * to get FreeBSD to populate source_addr -- see that
+                     * comment. */
+                    const size_t reported_length=want==0?0:(size_t)received;
+                    DiamondString *data_string=allocate_string(vm,buffer,reported_length);
                     free(buffer);
                     if(data_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     if(!hash_set(vm,receive_result,DIAMOND_OBJECT(data_key),
@@ -17554,6 +20213,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     copy->shape=instance->shape;
                     registers[dest]=DIAMOND_OBJECT(copy);break;
                 }
+                if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
+                   lookup_method(owner,instance->class,"freeze",6)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    instance->object.frozen=true;
+                    registers[dest]=registers[recv];break;
+                }
+                if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
+                   lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
+                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    registers[dest]=DIAMOND_BOOL(instance->object.frozen);break;
+                }
                 if(method_name->length==11&&
                    memcmp(method_name->chars,"respond_to?",11)==0&&
                    lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
@@ -17687,94 +20359,67 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,base=0,name=0;uint8_t owner_index=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(owner_index);READ_SHORT(name);
                 READ_SHORT(base); READ_BYTE(argc);
-                if((size_t)owner_index>=chunk->class_count ||
-                   (size_t)name>=chunk->string_count ||
-                   registers[0].kind!=DIAMOND_VALUE_OBJECT ||
-                   registers[0].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                const DiamondClass *owner=&chunk->classes[owner_index];
-                if(owner->superclass==UINT8_MAX) VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                const DiamondStringConstant *method_name=&chunk->strings[name];
-                const DiamondMethod *method=lookup_method(chunk,
-                    &chunk->classes[owner->superclass],method_name->chars,
-                    method_name->length);
-                if(method==nullptr) {
-                    /* No user-defined method anywhere up the superclass
-                     * chain -- if this is super(...) from an overridden
-                     * initialize() reaching for the built-in Exception
-                     * constructor (message/cause field assignment,
-                     * otherwise synthesized inline by NEW's own
-                     * exception_class branch for a class that never
-                     * overrides initialize), apply that same behavior
-                     * here instead of treating the built-in as missing. */
-                    bool reaches_exception=false;
-                    const DiamondClass *ancestor=&chunk->classes[owner->superclass];
-                    while(ancestor!=nullptr) {
-                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
-                            reaches_exception=true;break;
-                        }
-                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-                            &chunk->classes[ancestor->superclass];
-                    }
-                    if(reaches_exception&&method_name->length==10&&
-                       memcmp(method_name->chars,"initialize",10)==0) {
-                        if(argc>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        DiamondInstance *self=
-                            (DiamondInstance *)registers[0].as.object;
-                        if(argc>0&&self->field_count>0)
-                            self->fields[0]=registers[base];
-                        if(argc>1&&self->field_count>1)
-                            self->fields[1]=registers[(size_t)base+1];
-                        if(!gc_write_barrier(vm,(DiamondObject *)self))
-                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[dest]=DIAMOND_NIL;
-                        break;
-                    }
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(argc<method->required_arity||
-                   (argc>method->arity && !method->has_variadic))
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus status=invoke_resolved_method_helper(vm,
-                    chunk,method,registers[0],registers,base,argc,false,0,
-                    nullptr,chunk,depth,&call_result);
+                const DiamondVmStatus status=diamond_jit_super_call(vm,chunk,
+                    owner_index,name,registers,base,argc,depth,&call_result);
                 VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
             }
             case DIAMOND_OP_GET_IVAR: {
+                /* A thin wrapper around diamond_jit_get_ivar -- the same
+                 * function src/jit.c's own ivar-read codegen calls --
+                 * mirroring DIAMOND_OP_SET_IVAR's own treatment just below.
+                 * As there, the field_operand bounds check happens here,
+                 * before narrowing to the trampoline's own uint8_t, since a
+                 * hand-built (ProgramBuilder) field_operand wider than 255
+                 * must be rejected as invalid rather than silently
+                 * truncated into some other, smaller, valid-looking field
+                 * index. */
                 const uint8_t *site=&chunk->code[instruction_offset];
                 uint16_t dest=0,recv=0,field_operand=0;
                 READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(field_operand);
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                if(field_operand>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint8_t field=(uint8_t)field_operand;
-                const DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,false);
-                registers[dest]=cached->materialized
-                    ? instance->fields[field] : DIAMOND_NIL;break;
+                if(field_operand>=
+                   ((DiamondInstance *)registers[recv].as.object)->field_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondVmStatus get_ivar_status=diamond_jit_get_ivar(vm,site,
+                    &registers[recv],(uint8_t)field_operand,&registers[dest]);
+                VM_PROPAGATE(get_ivar_status);
+                break;
             }
             case DIAMOND_OP_SET_IVAR: {
+                /* A thin wrapper around diamond_jit_set_ivar -- the same
+                 * function src/jit.c's own ivar-write codegen calls --
+                 * rather than a second, independent copy of its real
+                 * logic. This case used to duplicate that whole body
+                 * verbatim (shape-transition tracking, the actual field
+                 * write, the GC write barrier); freeze checking is what
+                 * made the drift a real, user-visible bug rather than
+                 * just untidy: adding it to only one of the two copies
+                 * would have made freezing silently not apply to ivar
+                 * writes in JIT-compiled methods while still applying
+                 * under plain interpretation. Only the two checks that
+                 * must happen *before* narrowing field_operand to the
+                 * trampoline's own uint8_t stay here -- a hand-built
+                 * (ProgramBuilder) field_operand wider than 255 must be
+                 * rejected as invalid before truncating it, not silently
+                 * wrap into some other, smaller, valid-looking field
+                 * index. */
                 const uint8_t *site=&chunk->code[instruction_offset];
                 uint16_t recv=0,field_operand=0,source=0;
                 READ_SHORT(recv);READ_SHORT(field_operand);READ_SHORT(source);
-                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
+                if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                if(field_operand>=instance->field_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint8_t field=(uint8_t)field_operand;
-                const DiamondFieldCacheEntry *cached=lookup_field_cached(
-                    vm,site,instance,field,true);
-                if(instance->shape!=cached->output_shape) {
-                    instance->shape=cached->output_shape;
-                    vm->shape_transitions++;
-                }
-                instance->fields[field]=registers[source];
-                if(!gc_write_barrier(vm,(DiamondObject *)instance))
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                if(field_operand>=
+                   ((DiamondInstance *)registers[recv].as.object)->field_count)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const DiamondVmStatus set_ivar_status=diamond_jit_set_ivar(vm,site,
+                    &registers[recv],(uint8_t)field_operand,&registers[source]);
+                VM_PROPAGATE(set_ivar_status);
                 break;
             }
             case DIAMOND_OP_GET_IVAR_NAME:
@@ -17799,6 +20444,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondFieldCacheEntry *cached=lookup_field_cached(
                     vm,site,instance,field,write);
                 if(write) {
+                    if(instance->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
                     if(instance->shape!=cached->output_shape) {
                         instance->shape=cached->output_shape;
                         vm->shape_transitions++;
@@ -18141,6 +20787,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_PROCESS_RUN: {
                 uint16_t destination=0,argv_register=0;
                 READ_SHORT(destination);READ_SHORT(argv_register);
+                VM_SANDBOX_GUARD("Process.run", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     snprintf(vm->error,sizeof vm->error,
@@ -18161,6 +20808,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_PROCESS_SPAWN: {
                 uint16_t destination=0,argv_register=0;
                 READ_SHORT(destination);READ_SHORT(argv_register);
+                VM_SANDBOX_GUARD("Process.spawn", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
                     snprintf(vm->error,sizeof vm->error,
@@ -18319,8 +20967,78 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     READ_SHORT(local_registers[index]);
                 }
                 const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                    instruction_offset,registers,name_indices,local_registers,local_count);
+                    instruction_offset,registers,name_indices,local_registers,local_count,
+                    "breakpoint");
                 VM_PROPAGATE(debugger_status);
+                registers[destination]=DIAMOND_NIL;
+                break;
+            }
+            case DIAMOND_OP_BREAKPOINT_CHECK: {
+                uint16_t destination=0;uint8_t local_count=0;
+                READ_SHORT(destination);READ_BYTE(local_count);
+                uint16_t name_indices[DIAMOND_MAX_LOCALS];
+                uint16_t local_registers[DIAMOND_MAX_LOCALS];
+                for(size_t index=0;index<local_count;index++) {
+                    READ_SHORT(name_indices[index]);
+                    READ_SHORT(local_registers[index]);
+                }
+                /* Non-blocking: a live `setBreakpoints` sent while this
+                 * program is running (not currently paused at any
+                 * breakpoint) has nobody else reading vm->debug_fd to
+                 * receive it -- see DiamondVm.debug_active_lines's own
+                 * comment (src/vm.h) and docs/debugging.md's "live
+                 * breakpoints" section for why this has to happen right
+                 * here, at every statement, rather than via a background
+                 * thread. Applies every currently-buffered command
+                 * (there could be more than one queued up) before
+                 * deciding whether *this* statement's own line is armed. */
+                if(vm->debug_fd>=0) {
+                    struct pollfd poll_fd={.fd=vm->debug_fd,.events=POLLIN};
+                    while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
+                        DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
+                        size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+                        if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
+                                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+                            break;
+                        if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
+                            memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+                            vm->debug_active_line_count=line_count;
+                        }
+                        poll_fd.revents=0;
+                    }
+                }
+                const bool in_bounds=instruction_offset<chunk->code_count;
+                const uint32_t statement_line=in_bounds&&chunk->lines!=nullptr?
+                    chunk->lines[instruction_offset]:0;
+                bool armed=false;
+                for(size_t index=0;index<vm->debug_active_line_count;index++)
+                    if(vm->debug_active_lines[index]==(size_t)statement_line) { armed=true; break; }
+                /* Real stepping (docs/debugging.md's own "Stepping"
+                 * section): an armed breakpoint line always wins/pauses
+                 * regardless (checked above, unconditionally) -- this is
+                 * only a fallback for when that check didn't already
+                 * decide to pause. See DiamondVm.debug_step_mode's own
+                 * comment (src/vm.h) for the full semantics; `depth` is
+                 * this exact run_chunk invocation's own already-tracked
+                 * recursion depth, needing no new state to read. */
+                bool stepped=false;
+                if(!armed&&vm->debug_step_mode!=DIAMOND_STEP_NONE) {
+                    switch(vm->debug_step_mode) {
+                        case DIAMOND_STEP_IN: stepped=true; break;
+                        case DIAMOND_STEP_OVER:
+                            stepped=depth<=vm->debug_step_target_depth; break;
+                        case DIAMOND_STEP_OUT:
+                            stepped=depth<vm->debug_step_target_depth; break;
+                        default: break;
+                    }
+                }
+                if(armed||stepped) {
+                    vm->debug_step_mode=DIAMOND_STEP_NONE;
+                    const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
+                        instruction_offset,registers,name_indices,local_registers,local_count,
+                        armed?"breakpoint":"step");
+                    VM_PROPAGATE(debugger_status);
+                }
                 registers[destination]=DIAMOND_NIL;
                 break;
             }
@@ -18352,234 +21070,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INDEX_GET: {
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_SHORT(destination);READ_SHORT(receiver);READ_SHORT(index_register);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    const ptrdiff_t found=hash_find(hash,registers[index_register]);
-                    registers[destination]=found<0 ? DIAMOND_NIL
-                        : hash->entries[(size_t)found].value;
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                        char actual[80];
-                        format_value_type(actual,sizeof actual,registers[index_register]);
-                        snprintf(vm->error,sizeof vm->error,
-                            "String#[] index must be an Int, got %s",actual);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondString *source=
-                        (const DiamondString *)registers[receiver].as.object;
-                    const int64_t index=registers[index_register].as.integer;
-                    if(index<0 || (uint64_t)index>=source->length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "index %" PRId64 " out of bounds for String of length %zu",
-                                 index,source->length);
-                        VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                    }
-                    DiamondString *character=
-                        allocate_string(vm,source->chars+(size_t)index,1);
-                    if(character==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(character);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]` overloading (docs/syntax.md's "Operator
-                     * overloading" section) -- receiver-based only, no
-                     * coercion, no Range/slice special-casing the way
-                     * Array gets below: whatever's between the brackets
-                     * (an Int, a Range instance, anything) is passed to
-                     * the receiver's own `[]` method verbatim, same rule
-                     * every other overloadable operator already follows.
-                     * Not found falls through to the same TypeError any
-                     * non-overloading Instance already got before this
-                     * feature existed. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]",2,&registers[index_register],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    DiamondArray *sliced=
-                        allocate_array(vm,&array->values[range_start],range_length);
-                    if(sliced==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=DIAMOND_OBJECT(sliced);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[] index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                registers[destination]=array->values[(size_t)index];
+                const uint8_t *site=chunk->code+instruction_offset;
+                DiamondValue indexed=DIAMOND_NIL;
+                const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&indexed);
+                VM_PROPAGATE(status);
+                registers[destination]=indexed;
                 break;
             }
             case DIAMOND_OP_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_SHORT(receiver);READ_SHORT(index_register);READ_SHORT(source);
-                if(registers[receiver].kind!=DIAMOND_VALUE_OBJECT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_HASH) {
-                    DiamondHash *hash=(DiamondHash *)registers[receiver].as.object;
-                    if(!hash_entry_satisfies_constraints(hash,
-                       registers[index_register],registers[source])) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "hash entry violates its type annotation");
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    if(!hash_set(vm,hash,registers[index_register],registers[source]))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "String does not support element assignment");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(registers[receiver].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    /* `[]=` overloading, mirroring DIAMOND_OP_INDEX_GET's
-                     * own `[]` branch above -- index then value, verbatim,
-                     * no coercion. `x[i] = v` already evaluates to `v`
-                     * itself (compile_index_assignment's own return
-                     * value, computed before this opcode ever runs, not
-                     * a destination register this opcode writes), so the
-                     * setter method's own return value is simply
-                     * discarded here, matching Ruby's own `[]=`
-                     * semantics -- only `status` matters, for error
-                     * propagation. Not found falls through to the same
-                     * TypeError any non-overloading Instance already got. */
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondValue setter_arguments[2]=
-                        {registers[index_register],registers[source]};
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[receiver].as.object,
-                        "[]=",3,setter_arguments,2,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        break;
-                    }
-                }
-                if(registers[receiver].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[receiver]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '[]=' for %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondArray *array=(DiamondArray *)registers[receiver].as.object;
-                size_t range_start=0,range_length=0;
-                const int range_result=resolve_array_range(vm,chunk,
-                    registers[index_register],array->count,&range_start,&range_length);
-                if(range_result==0)VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                if(range_result==1) {
-                    /* Deliberately no grow/shrink splice in this first
-                     * version (docs/roadmap.md) -- the replacement must
-                     * be an Array of exactly the range's own (already
-                     * clamped) length. Every replacement value is
-                     * checked against the array's own type constraints
-                     * *before* writing any of them back, so a
-                     * constraint violation partway through leaves the
-                     * array completely untouched, not half-mutated. */
-                    if(registers[source].kind!=DIAMOND_VALUE_OBJECT||
-                       registers[source].as.object->kind!=DIAMOND_OBJECT_ARRAY||
-                       ((DiamondArray *)registers[source].as.object)->count!=range_length) {
-                        snprintf(vm->error,sizeof vm->error,
-                                 "range assignment requires a replacement Array of "
-                                 "exactly %zu element(s)",range_length);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    const DiamondArray *replacement=
-                        (const DiamondArray *)registers[source].as.object;
-                    for(size_t i=0;i<range_length;i++) {
-                        if(!array_value_satisfies_constraints(array,replacement->values[i])) {
-                            snprintf(vm->error,sizeof vm->error,
-                                     "array element violates its type annotation");
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        }
-                    }
-                    for(size_t i=0;i<range_length;i++)
-                        array->values[range_start+i]=replacement->values[i];
-                    if(!gc_write_barrier_range(vm,(DiamondObject *)array,
-                            range_start,range_length))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    break;
-                }
-                if(registers[index_register].kind!=DIAMOND_VALUE_INT) {
-                    char actual[80];
-                    format_value_type(actual,sizeof actual,registers[index_register]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "Array#[]= index must be an Int or Range, got %s",actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t index=registers[index_register].as.integer;
-                if(index<0 || (uint64_t)index>=array->count) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "index %" PRId64 " out of bounds for Array of length %zu",
-                             index,array->count);
-                    VM_RETURN(DIAMOND_VM_INDEX_ERROR);
-                }
-                if(!array_value_satisfies_constraints(array,registers[source])) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "array element violates its type annotation");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                array->values[(size_t)index]=registers[source];
-                if(!gc_write_barrier_index(vm,(DiamondObject *)array,(size_t)index))
-                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                const uint8_t *site=chunk->code+instruction_offset;
+                const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
+                    &registers[receiver],&registers[index_register],&registers[source]);
+                VM_PROPAGATE(status);
                 break;
             }
             case DIAMOND_OP_HASH: {
                 uint16_t destination=0,base=0,count=0;
                 READ_SHORT(destination);READ_SHORT(base);READ_SHORT(count);
-                if((size_t)base+(size_t)count*2>DIAMOND_REGISTER_COUNT)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondHash *hash=allocate_hash(vm);
-                if(hash==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination]=DIAMOND_OBJECT(hash);
-                for(size_t i=0;i<count;i++) {
-                    if(!hash_set(vm,hash,registers[(size_t)base+i*2],
-                                 registers[(size_t)base+i*2+1]))
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                }
+                DiamondValue built=DIAMOND_NIL;
+                const DiamondVmStatus hash_status=
+                    diamond_jit_new_hash(vm,registers,base,count,&built);
+                VM_PROPAGATE(hash_status);
+                registers[destination]=built;
                 break;
             }
             case DIAMOND_OP_NOT: {
@@ -19034,6 +21549,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_FILE_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
+                VM_SANDBOX_GUARD("File.open", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[mode_reg].kind!=DIAMOND_VALUE_OBJECT||
@@ -19062,6 +21578,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_FILE_DELETE: {
                 uint16_t dest=0,path_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);
+                VM_SANDBOX_GUARD("File.delete", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,"File.delete argument must be a String value");
@@ -19084,6 +21601,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_DIR_ENTRIES: {
                 uint16_t dest=0,path_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);
+                VM_SANDBOX_GUARD("Dir.entries", "filesystem");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,"Dir.entries argument must be a String value");
@@ -19179,8 +21697,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     case DIAMOND_FILE_PATH_ABSOLUTE:
                         path_result=DIAMOND_BOOL(path->length>0&&path->chars[0]=='/');break;
                     case DIAMOND_FILE_PATH_EXPAND:
+                        VM_SANDBOX_GUARD("File.expand_path", "filesystem");
                         path_status=file_path_expand_helper(vm,path,second,&path_result);break;
                     case DIAMOND_FILE_PATH_DIRECTORY: {
+                        VM_SANDBOX_GUARD("File.directory?", "filesystem");
                         struct stat path_stat;
                         const bool is_directory=
                             stat(path->chars,&path_stat)==0&&S_ISDIR(path_stat.st_mode);
@@ -19214,6 +21734,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_SQLITE3_OPEN: {
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
+                VM_SANDBOX_GUARD("SQLite3.open", "database");
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -19237,6 +21758,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_POSTGRES_OPEN: {
                 uint16_t dest=0,conninfo_reg=0;
                 READ_SHORT(dest);READ_SHORT(conninfo_reg);
+                VM_SANDBOX_GUARD("PostgreSQL.open", "database");
                 if(registers[conninfo_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[conninfo_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -19273,6 +21795,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     port_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(user_reg);
                 READ_SHORT(password_reg);READ_SHORT(database_reg);READ_SHORT(port_reg);
+                VM_SANDBOX_GUARD("MySQL.open", "database");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -19464,7 +21987,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "Thread.new argument does not support this type");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                new_thread->spawned=pthread_create(&new_thread->handle,nullptr,
+                new_thread->spawned=create_vm_thread(&new_thread->handle,
                     thread_entry_trampoline,new_thread)==0;
                 if(!new_thread->spawned) {
                     free_thread(new_thread);
@@ -19481,10 +22004,107 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)thread_handle};
                 break;
             }
+            case DIAMOND_OP_CHANNEL_NEW: {
+                uint16_t dest=0,capacity_reg=0;
+                READ_SHORT(dest);READ_SHORT(capacity_reg);
+                if(registers[capacity_reg].kind!=DIAMOND_VALUE_INT||
+                   registers[capacity_reg].as.integer<1||
+                   registers[capacity_reg].as.integer>1000000) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.new's argument must be an Int capacity between "
+                        "1 and 1,000,000");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const size_t capacity=(size_t)registers[capacity_reg].as.integer;
+                /* Same clone_program_from_chunk call DIAMOND_OP_THREAD_NEW
+                 * above already uses -- see DiamondChannel's own comment for
+                 * why the channel needs its own permanent copy of these
+                 * tables rather than borrowing the ambient chunk's. */
+                DiamondProgram *private_program=clone_program_from_chunk(chunk);
+                if(private_program==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondVm *private_vm=malloc(sizeof *private_vm);
+                if(private_vm==nullptr) {
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                diamond_vm_init(private_vm);
+                DiamondValue *queue=calloc(capacity,sizeof *queue);
+                if(queue==nullptr) {
+                    diamond_vm_free(private_vm);free(private_vm);
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                DiamondChannel *new_channel=malloc(sizeof *new_channel);
+                if(new_channel==nullptr) {
+                    free(queue);
+                    diamond_vm_free(private_vm);free(private_vm);
+                    diamond_program_free(private_program);free(private_program);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                *new_channel=(DiamondChannel){.private_vm=private_vm,
+                    .private_program=private_program,.queue=queue,
+                    .capacity=capacity};
+                atomic_init(&new_channel->refcount,1);
+                pthread_mutex_init(&new_channel->lock,nullptr);
+                pthread_cond_init(&new_channel->not_empty,nullptr);
+                pthread_cond_init(&new_channel->not_full,nullptr);
+                /* See DiamondVm.extra_roots' own comment: private_vm never
+                 * runs bytecode of its own, so its only root set is
+                 * whatever's actually queued -- extra_root_count starts at
+                 * 0 (nothing queued yet) and is kept current by send/
+                 * receive, both of which already hold `lock` before
+                 * touching private_vm at all. */
+                private_vm->extra_roots=queue;
+                DiamondChannelHandle *new_handle=
+                    allocate_channel_handle(vm,new_channel);
+                if(new_handle==nullptr) {
+                    free_channel_reference(new_channel);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)new_handle};
+                break;
+            }
+            case DIAMOND_OP_SUPERVISOR_NEW: {
+                /* Zero-arg constructor, same shape as DIAMOND_OP_PROGRAM_
+                 * BUILDER_NEW above -- v1 has no configurable policy
+                 * (restart delay/child cap are fixed constants, see
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment), so
+                 * there's nothing for Supervisor.new() to take yet. */
+                uint16_t dest=0;
+                READ_SHORT(dest);
+                /* calloc, never a `(DiamondSupervisor){}` compound literal --
+                 * see DiamondSupervisor's own comment: with children[]'s
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN*DIAMOND_MAX_ARGUMENTS-sized
+                 * footprint, a compound literal here would be a large
+                 * automatic-storage temporary that an unoptimized build
+                 * allocates unconditionally on run_chunk's OWN stack frame
+                 * (regardless of which opcode case actually runs), inflating
+                 * every recursive run_chunk call enough to blow the C stack
+                 * long before DIAMOND_MAX_CALL_DEPTH's own counter check
+                 * could catch it -- exactly the DiamondProgram calloc
+                 * convention this codebase already uses for its own large
+                 * fixed structs, for the identical reason. */
+                DiamondSupervisor *new_supervisor=calloc(1,sizeof *new_supervisor);
+                if(new_supervisor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                atomic_init(&new_supervisor->refcount,1);
+                atomic_init(&new_supervisor->stop_requested,false);
+                pthread_mutex_init(&new_supervisor->lock,nullptr);
+                DiamondSupervisorHandle *new_handle=
+                    allocate_supervisor_handle(vm,new_supervisor);
+                if(new_handle==nullptr) {
+                    free_supervisor_reference(new_supervisor);
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
+                    .as.object=(DiamondObject *)new_handle};
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT: {
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
+                VM_SANDBOX_GUARD("TCPSocket.connect", "network");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[port_reg].kind!=DIAMOND_VALUE_INT) {
@@ -19522,6 +22142,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
                 uint16_t dest=0,port_reg=0,reuse_port_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(reuse_port_reg);
+                VM_SANDBOX_GUARD("TCPServer.listen", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "TCPServer.listen argument must be an Int port");
@@ -19545,6 +22166,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_UDP_BIND: {
                 uint16_t dest=0,port_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);
+                VM_SANDBOX_GUARD("UDPSocket.bind", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "UDPSocket.bind argument must be an Int port");
@@ -19561,6 +22183,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_UDP_OPEN: {
                 uint16_t dest=0;
                 READ_SHORT(dest);
+                VM_SANDBOX_GUARD("UDPSocket.open", "network");
                 DiamondUdpSocketHandle *udp_handle=nullptr;
                 const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,&udp_handle);
                 VM_PROPAGATE(udp_status);
@@ -19625,6 +22248,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
+                VM_SANDBOX_GUARD("TLSSocket.connect", "network");
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
                    registers[port_reg].kind!=DIAMOND_VALUE_INT) {
@@ -19824,6 +22448,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,port_reg=0,cert_reg=0,key_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(cert_reg);READ_SHORT(key_reg);
                 READ_SHORT(options_reg);
+                VM_SANDBOX_GUARD("TLSServer.listen", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT||
                    registers[cert_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[cert_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
@@ -20198,6 +22823,16 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "mysql error";
         case DIAMOND_VM_NO_METHOD_ERROR:
             return "undefined method";
+        case DIAMOND_VM_JSON_ERROR:
+            return "json error";
+        case DIAMOND_VM_SUPERVISOR_ERROR:
+            return "supervisor error";
+        case DIAMOND_VM_SANDBOX_ERROR:
+            return "sandbox error";
+        case DIAMOND_VM_RESOURCE_LIMIT_ERROR:
+            return "resource limit exceeded";
+        case DIAMOND_VM_FROZEN_ERROR:
+            return "frozen object cannot be modified";
     }
     return "unknown VM status";
 }

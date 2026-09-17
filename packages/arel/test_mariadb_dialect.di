@@ -28,6 +28,25 @@ def run_tests()
 
   def open_db(conn) = MySQL.open(conn[0], conn[1], conn[2], conn[3], conn[4])
 
+  def test_error_cleanup(conn)
+    db = open_db(conn)
+    invalid = false
+    begin
+      db.execute("SELECT * FROM definitely_missing_mariadb_cleanup_table")
+    rescue error: MySQLError
+      invalid = true
+    end
+    db.close()
+    closed = false
+    begin
+      db.execute("SELECT 1")
+    rescue error: MySQLError
+      closed = true
+    end
+    Minitest.assert_equal(true, invalid)
+    Minitest.assert_equal(true, closed)
+  end
+
   def test_select_where_join_order(conn, visitor)
     db = open_db(conn)
     db.execute("DROP TABLE IF EXISTS md_books")
@@ -279,6 +298,9 @@ def run_tests()
   end
 
   suite = Minitest.new()
+  suite.test("invalid query and closed connection cleanup") do
+    test_error_cleanup(conn)
+  end
   suite.test("select/where/join/order") do
     test_select_where_join_order(conn, visitor)
   end

@@ -42,13 +42,7 @@ class RedisConnection
       if self.resp3?()
         return reply
       end
-      pairs = []
-      index = 0
-      while index < reply.length()
-        pairs.push([reply[index], reply[index + 1].to_f()])
-        index += 2
-      end
-      pairs
+      self.pair_with_scores(reply)
     else
       self.command("ZRANGE", key, start, stop)
     end
@@ -64,15 +58,23 @@ class RedisConnection
       if self.resp3?()
         return reply
       end
-      pairs = []
-      index = 0
-      while index < reply.length()
-        pairs.push([reply[index], reply[index + 1].to_f()])
-        index += 2
-      end
-      pairs
+      self.pair_with_scores(reply)
     else
       self.command("ZRANGEBYSCORE", key, min, max)
     end
   end
+
+  private
+
+  # Redis's own RESP2 WITHSCORES reply is a flat [member1, score1,
+  # member2, score2, ...] Array -- re-paired into [member, score: Float]
+  # tuples, shared by every WITHSCORES-capable command above (see
+  # #zrange's own comment on why RESP3 needs none of this).
+  def pair_with_scores(reply: Array) -> Array
+    reply.each_slice(2).map() do |pair|
+      [pair[0], pair[1].to_f()]
+    end
+  end
+
+  public
 end

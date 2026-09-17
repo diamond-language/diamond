@@ -11,15 +11,430 @@ env:
   ASAN_OPTIONS: detect_leaks=0
 
 jobs:
+  # Full matrix across both distros this project is known to be deployed on
+  # (Fedora dev machine, Ubuntu 26.04 production) and both supported
+  # compilers (GCC, and Clang -- previously exercised only incidentally via
+  # the fuzz targets, never actually built/tested as a real CC=clang build
+  # until a firsthand Ubuntu 26.04 + Clang pass surfaced three real bugs:
+  # see CHANGELOG.md). fail-fast: false so one combination's failure
+  # doesn't hide results from the other three.
   test-all:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    container: fedora:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        os:
+          - name: fedora
+            container: fedora:latest
+          - name: ubuntu
+            container: ubuntu:26.04
+    # options: --init: without a real init process reaping them, orphaned
+    # zombie children from other tests accumulate for the rest of the job
+    # -- confirmed directly (Process.spawn's own zombie-reaping test false-
+    # failed on both Ubuntu jobs the first time this matrix ran in real CI:
+    # "Process.spawn left zombie processes behind after GC sweep" against
+    # zombies from an *earlier*, unrelated test, not its own).
+    container:
+      image: ${{ matrix.os.container }}
+      options: --init
     steps:
-      - name: Install dependencies
-        run: dnf install -y gcc clang make git diffutils findutils compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl
+      # Diagnostic for the still-unexplained test-sanitize flake (fails
+      # silently, roughly half of real runs, on both distros/compilers,
+      # never once locally on a real non-container Linux box) -- ASan's
+      # shadow-memory mapping is sensitive to host-kernel ASLR entropy
+      # (mmap_rnd_bits), and this container shares whatever kernel the
+      # actual GitHub Actions runner VM boots, not anything pinned by
+      # the fedora:latest/ubuntu:26.04 image itself. Confirmed the local
+      # baseline to compare this against directly: a real (non-container)
+      # Fedora 44 desktop reports mmap_rnd_bits=28, ptrace_scope=0.
+      - name: Diagnostic environment facts (test-sanitize flake investigation)
+        run: |
+          echo "=== uname ==="; uname -a
+          echo "=== mmap_rnd_bits ==="; cat /proc/sys/vm/mmap_rnd_bits 2>&1 || echo "(unreadable)"
+          echo "=== mmap_rnd_compat_bits ==="; cat /proc/sys/vm/mmap_rnd_compat_bits 2>&1 || echo "(unreadable)"
+          echo "=== randomize_va_space ==="; cat /proc/sys/kernel/randomize_va_space 2>&1 || echo "(unreadable)"
+          echo "=== ptrace_scope ==="; cat /proc/sys/kernel/yama/ptrace_scope 2>&1 || echo "(not present)"
+          echo "=== ulimits ==="; ulimit -a
+          echo "=== cgroup fs type ==="; stat -fc %T /sys/fs/cgroup 2>&1 || echo "(unreadable)"
+          echo "=== cgroup ==="; cat /proc/self/cgroup 2>&1
+          echo "=== nproc/mem ==="; nproc; free -h 2>&1 || cat /proc/meminfo 2>&1 | head -3
+          echo "=== id ==="; id
+      - name: Install dependencies (Fedora)
+        if: matrix.os.name == 'fedora'
+        run: dnf install -y gcc clang make git diffutils findutils ripgrep compiler-rt libasan libubsan libtsan openssl-devel sqlite-devel libpq-devel mariadb-connector-c-devel libxcrypt-devel bc nmap-ncat openssl
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os.name == 'ubuntu'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: make test-all
-        run: make test-all
+        run: make CC=${{ matrix.cc }} test-all
+
+  # Native Linux arm64 coverage. The baseline has passed repeatedly, so this
+  # now includes the same focused API/compiler/fiber/tooling targets used by
+  # the other portability jobs and a representative package slice covering
+  # configuration, HTTP/TLS, threaded serving, middleware, and GraphQL.
+  # ASan/UBSan has its own job below because its instrumented build alone nearly
+  # exhausts this job's 30-minute budget. The container stays Ubuntu 26.04 so
+  # its compiler and dependency versions match the existing Ubuntu leg; the
+  # runner is the genuinely different part (arm64 hardware).
+  test-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu arm64)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+      # The shipped JIT is intentionally x86-64-only. Its environment-driven
+      # cases are kept in the main matrix; arm64 validates the portable
+      # interpreter and does not pretend to exercise unavailable machine code.
+      - name: Exclude x86-64 JIT cases
+        run: |
+          mkdir -p /tmp/excluded-cases
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
+      - name: make test (Ubuntu arm64)
+        run: make CC=gcc test
+      - name: Focused test targets (Ubuntu arm64)
+        run: |
+          make CC=gcc test-api
+          make CC=gcc test-incremental-compile
+          make CC=gcc test-compiled-prelude
+          make CC=gcc test-fibers
+          make CC=gcc test-fiber-run
+          make CC=gcc test-lsp
+          make CC=gcc test-repl
+      - name: Selected package targets (Ubuntu arm64)
+        run: |
+          make CC=gcc test-database-config-package
+          make CC=gcc test-http-package
+          make CC=gcc test-gremlin-package
+          make CC=gcc test-rack-package
+          make CC=gcc test-graphql-package
+
+  # Keep the expensive instrumented build independent from test-arm64: the
+  # first native attempt passed that job's baseline/focused coverage and then
+  # reached its 30-minute timeout while this target was still running.
+  test-arm64-sanitize:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu arm64)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+      - name: Exclude x86-64 JIT cases
+        run: |
+          mkdir -p /tmp/excluded-cases
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
+      - name: ASan and UBSan (Ubuntu arm64)
+        run: make CC=gcc test-sanitize
+
+  # A third, genuinely different target -- musl, not just another distro
+  # (fedora/ubuntu above are both glibc). Its own job, not another
+  # matrix.os entry above: needs a different package manager, an extra
+  # link dependency (-lucontext), GCC only (never validated against
+  # musl+Clang), and a narrower set of test targets -- test-all itself
+  # runs sanitizer/tsan builds and every package-specific test (database,
+  # HTTP, GraphQL, ...) that this validation has not actually checked
+  # against musl, so claiming that coverage here would be dishonest, not
+  # just broader. See docs/portability.md for the full inventory of what
+  # building and testing against musl actually required.
+  test-musl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: alpine:edge
+      options: --init # see test-all's own identical comment above
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Alpine)
+        run: |
+          apk update
+          apk add --no-cache gcc musl-dev make git diffutils findutils \
+            ripgrep bc netcat-openbsd openssl openssl-dev sqlite-dev \
+            libpq-dev mariadb-connector-c-dev zlib-dev libucontext \
+            libucontext-dev tzdata bash coreutils procps sed gawk
+      # BCrypt.hash has no bcrypt algorithm to call into on musl at all
+      # (docs/portability.md) -- a real, documented libc limitation, not
+      # a bug, so every case exercising it is excluded here rather than
+      # left to fail the corpus run (tests/run_cases.c's own case loop
+      # stops at the first failure -- `grep -rl 'BCrypt\.' tests/cases/
+      # *.di` is what actually found both of these, not trial and error
+      # one case at a time). Moved aside rather than deleted only so the
+      # exclusion is visibly reversible in this step's own log; the
+      # container itself is discarded once the job ends either way.
+      - name: Exclude the known BCrypt/musl limitation
+        run: |
+          mkdir -p /tmp/excluded-cases
+          mv tests/cases/active_record_secure_password.di \
+             tests/cases/active_record_secure_password.expected \
+             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.expected \
+             /tmp/excluded-cases/
+      # The JIT is validated only on glibc x86-64. Keep musl's baseline on
+      # the portable interpreter until a libc-independent backend contract is
+      # established; its prior crash was inside JIT-enabled fixtures.
+      - name: Exclude glibc-only JIT cases
+        run: |
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
+      - name: make test (musl)
+        run: DIAMOND_CASE_RUNNER=subprocess make CC=gcc LDLIBS_EXTRA=-lucontext test
+      - name: Focused test targets (musl)
+        run: |
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-api
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-incremental-compile
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-compiled-prelude
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-fibers
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-fiber-run
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-lsp
+          make CC=gcc LDLIBS_EXTRA=-lucontext test-repl
+
+  # A fourth genuinely different target -- a real BSD kernel/libc, not a
+  # Linux one at all. Confirmed viable first via a one-off diagnostic VM
+  # boot before writing this (docs/portability.md's "FreeBSD/OpenBSD"
+  # section): ucontext/makecontext/swapcontext, crypt(3) bcrypt, and -ldl
+  # all work natively here, and the base install already ships
+  # nproc/timeout/bc (OpenBSD, checked the same way, is not attempted --
+  # it has no <ucontext.h> at all, a Fiber-implementation gap, not a CI
+  # one). CC=clang, not gcc: FreeBSD's base `cc` already is Clang 19, so
+  # this avoids an extra ports build just to get gcc. Narrower target set
+  # than test-all, same reasoning as test-musl's own comment above: this
+  # validation hasn't touched sanitizer/tsan builds or the package-
+  # specific suites (database, HTTP, GraphQL, ...) against FreeBSD, so
+  # claiming that coverage here would be dishonest.
+  test-freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: FreeBSD build and test
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y gmake bash ripgrep gsed sqlite3 openssl postgresql16-client mariadb-connector-c
+          # FreeBSD's base `make` is BSD make (pmake), not GNU Make -- this
+          # Makefile uses GNU-only syntax throughout (ifeq, $(wildcard ...),
+          # $(shell ...)), so it needs invoking as `gmake` specifically, the
+          # standard FreeBSD convention (`make` itself stays bound to the
+          # base BSD one). Confirmed directly: the first real run here
+          # failed immediately with pmake's own "Invalid character" parse
+          # errors on every GNU Make construct in the file.
+          # CPPFLAGS_EXTRA/LDFLAGS_EXTRA are each one quoted argument per
+          # invocation below, not a $VAR-expanded, word-split string: both
+          # carry two paths -- mariadb-connector-c's FreeBSD port namespaces
+          # its own mysql.h under /usr/local/include/mariadb/ and
+          # libmariadb.so under /usr/local/lib/mariadb/, on top of the
+          # plain /usr/local prefix everything else (sqlite3, libpq) needs
+          # (confirmed directly via a diagnostic `find` in an earlier
+          # iteration -- same split Debian/Ubuntu's libmariadb-dev needs on
+          # Linux, see Makefile's own CPPFLAGS comment). An unquoted
+          # multi-word value here would fall apart into separate shell
+          # words, one of which (a bare -I.../mariadb or -L.../mariadb has
+          # no `=`) make would misparse as its own flag rather than part of
+          # the variable.
+          # tests/collection_relay_contracts.sh (run by tests/run.sh) uses a
+          # GNU sed extension (a :label/n/p/b loop) FreeBSD's base BSD sed
+          # rejects outright ("unexpected EOF (pending }'s)") -- confirmed
+          # directly, same category as musl/Alpine's own documented BusyBox
+          # sed finding (docs/portability.md). FreeBSD's own GNU sed port
+          # installs as `gsed`, not a `sed` override, and /usr/local/bin
+          # sits *after* /usr/bin in FreeBSD's default PATH -- so a plain
+          # package install wouldn't shadow the base sed the way Alpine's
+          # apk package does. Prepending an explicit symlink directory is
+          # deterministic either way, not dependent on that PATH ordering.
+          # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
+          # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY (src/vm.c) to generate a
+          # fresh salt -- both declared only in libxcrypt's own <crypt.h>,
+          # which doesn't exist on FreeBSD at all (see the __has_include
+          # guard added for FreeBSD earlier), so bcrypt_hash_helper always
+          # takes its #else "not supported on this platform" branch here,
+          # exactly like musl (a different missing piece -- musl has
+          # <crypt.h> but not bcrypt algorithm support in crypt_r itself --
+          # same observable gap). BCrypt.verify is unaffected (no salt
+          # generation involved, just crypt_r against an existing digest --
+          # confirmed genuinely native and correct on FreeBSD via the
+          # earlier diagnostic probe). Same two cases test-musl's own job
+          # already excludes, same reason category, confirmed directly by
+          # a real failing run here: "expected exit code 0, got: 70".
+          # math_exp_log(_tanh).di: exp(1.0)/exp(log(5.0)) differ from
+          # glibc's own libm in the last representable bit on FreeBSD's
+          # libm (2.7182818284590455 vs 2.718281828459045, 5.0 vs
+          # 4.999999999999999) -- confirmed directly by a real failing
+          # run here. Not a bug in either library: IEEE 754 only mandates
+          # correctly-rounded results for +-*/sqrt, not transcendental
+          # functions like exp/log, so two conforming libm
+          # implementations legitimately disagreeing in the last ULP is
+          # expected, not a portability gap to fix.
+          run: |
+            set -e
+            mkdir -p /tmp/excluded-cases
+            mv tests/cases/active_record_secure_password.di \
+               tests/cases/active_record_secure_password.expected \
+               tests/cases/bcrypt.di \
+               tests/cases/bcrypt.expected \
+               tests/cases/math_exp_log.di \
+               tests/cases/math_exp_log.expected \
+               tests/cases/math_exp_log_tanh.di \
+               tests/cases/math_exp_log_tanh.expected \
+               /tmp/excluded-cases/
+            # The native JIT backend is intentionally limited to glibc
+            # x86-64; keep this interpreter-only target aligned with musl
+            # and macOS instead of asserting JIT-only expected output.
+            for env_file in tests/cases/*.env; do
+              grep -q '^DIAMOND_JIT=' "$env_file" || continue
+              base="${env_file%.env}"
+              for suffix in env di expected expected_contains flags dic; do
+                file="$base.$suffix"
+                if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+              done
+            done
+            mkdir -p /tmp/gnubin
+            ln -sf "$(which gsed)" /tmp/gnubin/sed
+            export PATH="/tmp/gnubin:$PATH"
+            DIAMOND_CASE_RUNNER=subprocess gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-api
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-incremental-compile
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-compiled-prelude
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fibers
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-fiber-run
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-lsp
+            gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb' test-repl
+
+  # A fifth genuinely different target -- macOS/Darwin, not a Linux or
+  # BSD kernel/libc at all. Confirmed viable first via real hardware
+  # (docs/portability.md's "macOS/Darwin" section): src/vm.c already
+  # compiles clean there (the _XOPEN_SOURCE/__BSD_VISIBLE/
+  # _DARWIN_C_SOURCE fixes), and the test harness's own GNU-coreutils
+  # dependencies (timeout, nproc, $EPOCHREALTIME needing bash 5+, GNU
+  # sed) are addressed here the same way FreeBSD's gsed already is:
+  # install the real GNU tools via Homebrew and shadow them onto PATH
+  # under their normal names, rather than rewriting every call site.
+  # nproc itself no longer matters (tests/run.sh now uses the POSIX-
+  # portable getconf _NPROCESSORS_ONLN instead). CC=clang: macOS has no
+  # system gcc at all (the `gcc` binary there is just a symlink to
+  # clang). Narrower target set than test-all, same reasoning as
+  # test-musl/test-freebsd's own comments: this hasn't validated
+  # sanitizer/tsan builds or package-specific suites against macOS
+  # either.
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Homebrew)
+        run: brew install coreutils gnu-sed bash ripgrep openssl@3 sqlite postgresql@16 mariadb-connector-c
+      # BCrypt.hash needs libxcrypt's crypt_gensalt_rn/
+      # CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY, unavailable with no
+      # <crypt.h> at all on macOS (same as FreeBSD, confirmed directly) --
+      # bcrypt_hash_helper's #else "not supported" branch is the only one
+      # macOS can take. Same two cases test-freebsd/test-musl already
+      # exclude.
+      - name: Exclude the known BCrypt limitation
+        run: |
+          mkdir -p /tmp/excluded-cases
+          mv tests/cases/active_record_secure_password.di \
+             tests/cases/active_record_secure_password.expected \
+             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.expected \
+             /tmp/excluded-cases/
+      - name: Exclude glibc-only JIT cases
+        run: |
+          mkdir -p /tmp/excluded-cases
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
+      # Homebrew's coreutils/gnu-sed formulae ship their GNU tools under
+      # g-prefixed names (gtimeout, gsed, ...) precisely so they don't
+      # silently shadow the BSD ones system-wide -- each also ships a
+      # `libexec/gnubin` directory of unprefixed symlinks for exactly
+      # this "opt in for this one job" case (Homebrew's own documented
+      # convention). bash needs its own real bin dir prepended too:
+      # unlike FreeBSD/OpenBSD's pkg/pkg_add (confirmed installing a
+      # newer bash there is enough on its own), this macOS runner image
+      # doesn't put Homebrew's bin dir ahead of the system one by
+      # default, so $EPOCHREALTIME (bash 5+ only) would still resolve to
+      # macOS's stock pre-GPLv3 bash 3.2 otherwise.
+      - name: Prepend GNU coreutils/sed and a real bash onto PATH
+        run: |
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix gnu-sed)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+      # CPPFLAGS_EXTRA/LDFLAGS_EXTRA carry each keg-only Homebrew
+      # package's own include/lib path (OpenSSL/sqlite/libpq directly,
+      # MariaDB Connector's mysql.h/libmariadb.dylib both further
+      # namespaced under its own include/mariadb the same way FreeBSD's
+      # port is) -- see Makefile's own CPPFLAGS comment for the Linux
+      # distro version of this same split. LDLIBS_CRYPT= (empty): macOS's
+      # libSystem provides crypt() directly with no matching libcrypt
+      # .dylib to link against, confirmed directly ("library 'crypt' not
+      # found") -- LDLIBS_DL stays default, -ldl links fine on macOS
+      # despite an earlier version of this comment (and
+      # docs/portability.md) wrongly assuming otherwise from general
+      # knowledge rather than a real check.
+      - name: make test (macOS)
+        run: |
+          CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
+          LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
+          DIAMOND_CASE_RUNNER=subprocess make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test
+      - name: Focused test targets (macOS)
+        run: |
+          CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb"
+          LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-api
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-incremental-compile
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-compiled-prelude
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-fibers
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-fiber-run
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-lsp
+          make CC=clang LDLIBS_CRYPT= CPPFLAGS_EXTRA="$CPPFLAGS_EXTRA" LDFLAGS_EXTRA="$LDFLAGS_EXTRA" test-repl

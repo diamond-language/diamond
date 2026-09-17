@@ -61,6 +61,56 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+### `compile_method`
+
+`ClassName.compile_method(name, params, body_source, bound_values)` closes
+the one gap `define_method` leaves: its callable normally has to be an
+already-compiled nested `def`, physically written in the source, so there's
+no way to build a method body from a runtime string. `compile_method` does
+that -- it compiles `body_source` as if it were a method on `ClassName` and
+returns a `Callable` ready to hand to `define_method`, the same as the
+factory idiom above:
+
+```ruby
+class Greeter
+  attr_accessor name: String
+
+  def initialize(name: String)
+    @name = name
+  end
+end
+
+callable = Greeter.compile_method("greeting", ["prefix"], "prefix + self.name()", {})
+Greeter.define_method("greeting", callable)
+
+Greeter.new("Ada").greeting("Hello, ")  # => "Hello, Ada"
+```
+
+`params` is a plain list of parameter names (`String`s) -- no types,
+defaults, splats, or block parameters. `body_source` can reference `self`,
+call other methods on it, and read/write the class's *existing* `@fields`,
+but it can't grow the class's field layout: referencing a field the class
+doesn't already have fails with `ArgumentError` before anything is
+installed, as does a syntax error in `body_source`. It also can't name
+another class directly (`body_source` compiles in its own isolated
+program, which doesn't know any class but `ClassName` exists) or close over
+the calling scope's locals -- `bound_values`, a `Hash` of already-evaluated
+values (capped at 8 entries), is how you thread those in instead; they're
+spliced on as trailing parameters the installed method's own callers never
+supply:
+
+```ruby
+callable = Other.compile_method("boxed_label", [], "formatter.wrap(self.label())",
+  {"formatter": formatter})
+```
+
+Out of scope for now: `self.`-owned singleton methods (instance methods
+only) and any sandboxing -- `body_source` runs as ordinary compiled
+bytecode with full language access, the same trust level Ruby's own
+`class_eval`/`define_method` assume. Meant for programmer-authored
+metaprogramming (see `packages/active_record`'s `has_many`), not for
+compiling untrusted input.
+
 ### `closure name() ... end`
 
 A plain nested `def`, as above, is built for exactly one job: a detached
@@ -187,7 +237,7 @@ obtain one; a bare class name as a `case`/`when` pattern (`when Dog`,
 [core syntax](core-syntax.md)) is the other. Neither is a general
 expression -- there is still no way to store a class in a variable
 outside those two positions, pass one as an ordinary argument, or name
-one dynamically by a computed string (see docs/design.md's
+one dynamically by a computed string (see docs/internal/design.md's
 `DIAMOND_VALUE_CLASS` section, and docs/roadmap.md's "Explicitly
 deferred" section for why that stays out of scope).
 
@@ -299,7 +349,7 @@ inside the declaring class hierarchy. Private methods remain restricted to
 the current implicit/self receiver. `respond_to?` reports public and protected
 methods, but not private methods.
 
-### tap / dup / respond_to? / public_send
+### tap / dup / freeze / frozen? / respond_to? / public_send
 
 ```ruby
 class Point
@@ -320,6 +370,11 @@ p1.public_send(:x)     # => 1
 [1, 2, 3].tap() do |arr|
   puts(arr.length())   # side effect, doesn't change the chain
 end.push(4)             # => [1, 2, 3, 4]
+
+point = Point.new(3, 4)
+point.freeze()
+point.frozen?()         # => true
+point.dup().frozen?()   # => false -- dup never carries freeze over
 ```
 
 `tap` yields the receiver to a block and returns the receiver itself
@@ -334,6 +389,45 @@ and primitives — native resource-backed types (`Regexp`, `Time`, `File`,
 `Socket`, ...) don't support it, since "shallow copy" isn't a
 well-defined operation for those. A class that defines its own `dup`
 always wins over this default.
+
+`freeze()` marks an `Array`, `Hash`, or `Instance` immutable and returns
+the receiver (chainable); `frozen?()` reports whether it's marked. Every
+native mutation those three kinds support -- `Array#push`/`#pop`, `[]=`
+on an `Array` or `Hash` (single index or a range), and an instance
+variable write -- raises a rescuable `FrozenError` instead of proceeding
+once the receiver is frozen:
+
+```ruby
+values = [1, 2, 3].freeze()
+begin
+  values.push(4)
+rescue error: FrozenError
+  puts(error.message())  # => "frozen object cannot be modified"
+end
+```
+
+Every other Array/Hash method Diamond has is either already read-only
+(`length`, `each`, `[]`, `slice`, `keys`, ...) or -- like `delete_at`,
+built from `[]=` and `pop` in the standard library -- raises the same
+way by hitting one of those two primitives internally; there's no
+separate list of "mutating methods" to keep in sync, since Diamond's own
+`Array`/`Hash` have no in-place `!`-suffixed methods at all (`sort`,
+`reverse`, `uniq`, and friends already return a new collection, same as
+Ruby's own non-`!` forms). `freeze`/`frozen?` mirror `dup`'s own
+"already immutable" precedent for a primitive or an already-immutable
+`String`/`Symbol`: `freeze()` is a harmless no-op, `frozen?()` is always
+`true` -- never an "undefined method" error, matching how `5.dup()`
+already works today. Not defined for native resource-backed types
+(`Regexp`, `Time`, `File`, `Socket`, ...), the same set `dup` itself
+excludes. A class that defines its own `freeze`/`frozen?` always wins
+over this default, exactly like `dup`.
+
+`dup` **never** carries a source's frozen status to the copy -- a
+`dup` of a frozen value is itself unfrozen and freely mutable, the same
+distinction Ruby draws between `dup` and `clone`. Freezing is also
+**shallow**: freezing a `Hash`/`Array`/`Instance` only marks that one
+value -- a `Hash` it merely holds a reference to (in a value, or an
+ivar) stays exactly as mutable as it was.
 
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
@@ -354,6 +448,182 @@ methods are rejected even when `public_send` itself is called from within the
 target's class hierarchy. Diamond intentionally provides no visibility-
 bypassing `send` counterpart. A user class may define its own `public_send`;
 that method takes priority over the universal behavior.
+
+### `method_missing`
+
+```ruby
+class Ghost
+  def method_missing(name, args)
+    "called #{name} with #{args.length()} args"
+  end
+end
+
+g = Ghost.new()
+g.anything()        # => "called anything with 0 args"
+```
+
+`def method_missing(name, args)` on a class is consulted whenever ordinary
+instance-method dispatch finds no method by that name anywhere on the
+receiver's class or its ancestors -- `name` is the attempted method as a
+`Symbol`, `args` an `Array` of the call's own arguments (the receiver
+itself isn't included). A real method of that name always wins first, on
+any ancestor, so `method_missing` can never intercept a call to something
+the class actually defines. Without one, a dispatch miss raises
+`NoMethodError`, same as before this feature existed; if `method_missing`
+itself doesn't take exactly two required parameters, a miss raises
+`ArgumentError` instead. It's found via ordinary inherited lookup, so one
+defined on a superclass covers every subclass too. Scoped to this one
+dispatch site only -- not operator overloading, `to_s`, `super`, or
+`self.`-singleton calls, each of which already has its own fallback.
+
+## Sealed classes
+
+```ruby
+sealed class Shape
+end
+class Circle < Shape
+  def initialize(radius: Int)
+    @radius = radius
+  end
+end
+class Square < Shape
+  def initialize(side: Int)
+    @side = side
+  end
+end
+```
+
+`sealed class Name ... end` marks a class an author intends as a closed,
+fixed set of subclasses -- an algebraic sum type built from ordinary
+classes rather than an explicit `A | B` union annotation. It composes
+normally with an explicit superclass, generics, and interfaces; `sealed`
+only ever sets one flag, nothing else about class-header parsing changes.
+Reopening (see above) is a one-way ratchet -- a class sealed by any one
+of its declarations stays sealed even if a later reopening omits the
+keyword, never the other way around.
+
+**Two effects, both narrow:**
+
+- `Shape.new(...)` is a compile error (`cannot instantiate a sealed class
+  directly`) -- only a subclass can be constructed. This is what makes
+  the second effect below sound: with no possible direct-`Shape`
+  instance, every runtime value handed to something typed `shape: Shape`
+  is provably one of its subclasses.
+- A `case` subject whose plain (non-union) type names a sealed class
+  becomes eligible for [exhaustiveness checking](core-syntax.md#exhaustiveness-checking)
+  over that class's own direct subclasses, the same way an explicit
+  `Circle | Square` union already is -- see that section for exactly
+  which `when` forms count as coverage, and for the two conditions
+  (zero or more than 8 direct subclasses) that leave a sealed hierarchy
+  unchecked instead of erroring.
+
+**Deliberately not a module/file-boundary enforcement mechanism, unlike
+Kotlin's or Rust's own sealed/closed types** -- and this isn't a smaller
+version of that feature, it's a different one for a real architectural
+reason. Diamond's own compiled source has no per-file or per-module
+boundary that survives past `require` expansion at all (the top-level
+[README](../README.md)'s own pipeline: `source -> require expansion ->
+lexer -> Pratt compiler` splices every required file's text into one flat
+buffer before lexing begins), and there is no separate/incremental
+compilation model either --
+every program is compiled fresh, as one flat unit, every single run. The
+classic justification for sealed types elsewhere (a consumer, compiled
+*separately* and *later*, could otherwise add a subclass a library's own
+exhaustive `case` never accounted for) simply doesn't apply here: there is
+no "later, separately compiled" consumer to guard against. Whatever
+subclasses exist when a program is compiled are, by construction, the
+complete set for that one compile -- `sealed` is an explicit, opt-in
+author promise plus the one restriction needed to make matching just the
+direct subclasses sound, not a barrier against some external boundary
+that doesn't exist in this language.
+
+## `struct` declarations
+
+```ruby
+struct Point(x: Int, y: Int)
+end
+
+p1 = Point.new(1, 2)
+p2 = Point.new(x: 1, y: 2)
+p1.x()               # 1
+p1 == p2              # true
+p1.to_s()             # "Point(x: 1, y: 2)"
+```
+
+`struct Name(field: Type, ...) ... end` declares an ordinary class (no
+runtime class synthesis -- see [roadmap.md](roadmap.md)'s "Explicitly
+deferred" section on why that approach was ruled out) with one field per
+declared member, and generates four methods for it automatically:
+
+- `initialize` -- assigns each argument to its matching field, in order.
+  `Point.new(1, 2)` and the keyword form `Point.new(x: 1, y: 2)` both
+  work, the same as a hand-written `def initialize(x: Int, y: Int)`.
+- One reader per field (`x`, `y` above) -- exactly what `attr_reader`
+  would generate, including the declared field type.
+- `==(other)` -- `true` only when `other` is the same class (checked
+  first; comparing against an unrelated type, or a different class
+  entirely, is `false`, never a raised error) *and* every field is
+  `==` to its counterpart.
+- `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
+  `name: value.to_s()`, comma-separated.
+
+A struct composes normally with everything else: `.freeze()`/
+`.frozen?()` work on an instance like any other
+([tap / dup / freeze / frozen? / respond_to? / public_send](#tap--dup--freeze--frozen--respond_to--public_send)),
+a struct's own class can appear in a `Type | Type` union and participate
+in [exhaustiveness checking](core-syntax.md#exhaustiveness-checking) the
+same way any other class does, and a field's declared type may refer to
+the struct's own name (`struct Node(value: Int, rest: Node | Nil)`) --
+the class is registered before its field list is parsed specifically so
+this resolves.
+
+**A struct's own body can supplement the generated methods** -- ordinary
+`def`/`attr`/`attr_reader`/`attr_writer`/`attr_accessor`/`attr_predicate`/
+`include`/`private`/`protected`/`public`/`alias_method`/`delegate` lines
+between the field list and `end`, exactly as a `class` body accepts:
+
+```ruby
+module Greetable
+  def greet() = "hi, #{self.name_for_greeting()}"
+end
+
+struct Point(x: Int, y: Int)
+  include Greetable
+
+  def name_for_greeting() = "point"
+
+  def distance_squared_to(other)
+    dx = @x - other.x()
+    dy = @y - other.y()
+    dx * dx + dy * dy
+  end
+end
+```
+
+A hand-written member can only *add*, not override: `def to_s`/`def ==`/
+`def initialize`, or a `def`/`attr` matching a field's own generated
+reader name, is a compile error ("duplicate or excessive method
+definition" / "attribute method is already defined") -- the same error
+an ordinary `class` already gives for defining the same method twice,
+since a struct's generated methods are registered before its own body
+compiles and nothing distinguishes how a method got its name.
+
+**Deliberately narrow for this first pass:**
+
+- **No superclass.** `struct Point(x: Int) < Base` is a compile error --
+  keeps the generated `==` and field list from needing to reason about
+  inherited fields at all. (Nothing stops an ordinary `class` from
+  subclassing a struct's class the normal way; a struct simply can't
+  declare one of its own.)
+- **No reopening.** A second `struct Point(...)` for an already-declared
+  name is a compile error, unlike a plain `class`. Regenerating
+  `initialize`/`==`/`to_s` for a redeclared field list has no obviously
+  correct semantics, so it's simply disallowed rather than guessed at.
+- **Field types are required.** `struct Point(x, y)` (no `: Type`) is a
+  compile error -- this is what lets the generated readers carry a real
+  return type and keeps `==`/`to_s` simple.
+- A field cannot be named `initialize`, `==`, or `to_s` (it would
+  collide with one of the four generated methods).
 
 ## Operator overloading
 
@@ -454,6 +724,18 @@ Any other left operand (a `String`, an `Instance`, ...) is a `TypeError`
 this way; each would need its own dedicated VM-level support, same as
 `Time` and `<<` did.
 
+`>>`/`&`/`|`/`^` are `Int`-only bitwise operators sharing `<<`'s own
+scope cut: no bignum support, not user-overloadable, no quickening.
+`>>` is arithmetic (sign-extending, matching Ruby's `Integer#>>` —
+`-8 >> 1` is `-4`); a shift amount (either direction) outside `0..63`
+raises `RangeError`. `&`/`|`/`^` are ordinary bitwise and/or/xor;
+either operand not an `Int` is `TypeError`. All four share `<<`'s own
+precedence tier (no separate tier per bitwise op). `&`/`|` also have
+unrelated meanings elsewhere in the grammar (`&block` parameter-
+forwarding, `do |x| ... end` block params, `TypeError | NoMethodError`
+rescue-clause union types) — none of those go through general
+expression parsing, so there's no ambiguity with the operator form.
+
 ### `<=>` and `Comparable`
 
 ```ruby
@@ -475,10 +757,18 @@ Box.new(15).clamp(Box.new(1), Box.new(10)).size()  # => 10
 defined ordering — never a raised error on its own, unlike every other
 comparison operator. Built in for `Int`/`Float` (including
 arbitrary-precision `Int`s and mixed `Int`/`Float` operands; `NaN` on
-either side is `Nil`, matching `Float::NAN <=> 1` in Ruby) and for any
+either side is `Nil`, matching `Float::NAN <=> 1` in Ruby), for
+`String` (byte-lexicographic, the same ordering as C's `strcmp`/
+Ruby's own `String#<=>` — not UTF-8/locale-aware, matching `String`
+being a raw byte buffer everywhere else in the language), and for any
 `Instance` whose class defines its own `<=>` method — anything else
-(`String`, `Time`, an `Instance` with no `<=>`, ...) is `Nil` too, not
-`TypeError`.
+(`Time`, an `Instance` with no `<=>`, a `String`/`Int` pair with
+mismatched types, ...) is `Nil` too, not `TypeError`. `String` also has
+native `<`/`<=`/`>`/`>=` built directly on the same byte comparison
+(not derived through `Comparable`, since `String` is a native type with
+no instance methods for `include` to reach) — `["banana", "apple",
+"cherry"].sort_by() do |s| s end` works directly, with no need to
+extract a sortable key first.
 
 `include Comparable` derives `<`, `<=`, `>`, `>=`, `==`, `between?`, and
 `clamp` from that one `<=>` method — the same "several methods derived

@@ -22,12 +22,17 @@
  * (zero subprocess cost) in place of spawning `diamond` per case. */
 
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 
+#include "prelude.h"
 #include "run_source.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +42,23 @@
 
 enum { PATH_BUFFER_SIZE = 4096 };
 
+/* snprintf wrapper that reports truncation as a genuine failure instead
+ * of silently formatting a shortened path -- PATH_BUFFER_SIZE (4096)
+ * comfortably covers any real cases_dir/output_dir/case name this tool
+ * is ever invoked with, so truncation here would only mean something
+ * is already very wrong; still cheap to catch outright here rather than
+ * let a caller silently operate on the wrong path and fail somewhere
+ * else with a much less obvious error (also what lets the compiler see
+ * every one of these format calls as checked, not a potential
+ * -Wformat-truncation). */
+static bool format_path(char *buffer, size_t size, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(buffer, size, format, args);
+    va_end(args);
+    return written >= 0 && (size_t)written < size;
+}
+
 /* Every DIAMOND_* environment variable diamond_run_source or the VM it
  * drives ever reads (src/run_source.c, src/vm.h) -- cleared before each
  * case so one case's own .env file, or anything already set in the
@@ -45,12 +67,15 @@ enum { PATH_BUFFER_SIZE = 4096 };
  * get for free by spawning a fresh process per case) has to be
  * reproduced by hand now that every case shares one process. */
 static const char *const DIAMOND_ENV_VARS[] = {
-    "DIAMOND_STRESS_GC", "DIAMOND_QUICKEN", "DIAMOND_QUICKEN_THRESHOLD",
+    "DIAMOND_STRESS_GC", "DIAMOND_STRESS_MINOR_GC", "DIAMOND_QUICKEN", "DIAMOND_QUICKEN_THRESHOLD",
     "DIAMOND_IC_MONO_THRESHOLD", "DIAMOND_REPEAT", "DIAMOND_INVALIDATE_IC_EACH_RUN",
     "DIAMOND_TRACE_IC_EACH_RUN", "DIAMOND_TRACE_IC", "DIAMOND_TRACE_IC_SITES",
     "DIAMOND_TRACE_IC_FAST", "DIAMOND_TRACE_IC_PROBES", "DIAMOND_TRACE_IC_REWRITES",
     "DIAMOND_TRACE_IC_POLICY", "DIAMOND_TRACE_SHAPES", "DIAMOND_TRACE_FIELDS",
     "DIAMOND_TRACE_OPCODES", "DIAMOND_TRACE_QUICKEN", "DIAMOND_FORCE_REPL",
+    "DIAMOND_SANDBOX", "DIAMOND_SANDBOX_ALLOW", "DIAMOND_NO_CACHE", "DIAMOND_TRACE_CACHE",
+    "DIAMOND_MAX_INSTRUCTIONS", "DIAMOND_MAX_WALL_MILLISECONDS", "DIAMOND_MAX_MEMORY_BYTES",
+    "DIAMOND_JIT", "DIAMOND_JIT_THRESHOLD", "DIAMOND_TRACE_JIT",
 };
 static constexpr size_t DIAMOND_ENV_VAR_COUNT =
     sizeof(DIAMOND_ENV_VARS) / sizeof(DIAMOND_ENV_VARS[0]);
@@ -193,9 +218,12 @@ static void restore_fd(int target, int saved) {
  * just against these files instead of a fresh process's own output. */
 static bool run_one_case(const char *cases_dir, const char *output_dir, const char *name) {
     char di_path[PATH_BUFFER_SIZE], env_path[PATH_BUFFER_SIZE], flags_path[PATH_BUFFER_SIZE];
-    snprintf(di_path, sizeof di_path, "%s/%s.di", cases_dir, name);
-    snprintf(env_path, sizeof env_path, "%s/%s.env", cases_dir, name);
-    snprintf(flags_path, sizeof flags_path, "%s/%s.flags", cases_dir, name);
+    if (!format_path(di_path, sizeof di_path, "%s/%s.di", cases_dir, name) ||
+        !format_path(env_path, sizeof env_path, "%s/%s.env", cases_dir, name) ||
+        !format_path(flags_path, sizeof flags_path, "%s/%s.flags", cases_dir, name)) {
+        fprintf(stderr, "run_cases: path too long for case %s\n", name);
+        return false;
+    }
 
     for (size_t index = 0; index < DIAMOND_ENV_VAR_COUNT; index++)
         unsetenv(DIAMOND_ENV_VARS[index]);
@@ -208,6 +236,47 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
     if (source == nullptr) {
         fprintf(stderr, "run_cases: cannot read %s\n", di_path);
         return false;
+    }
+
+    /* The prelude, compiled exactly once for the whole run and reused
+     * as a diamond_compile_incremental template by every case below --
+     * see compiler.c's own doc comment on that function. Every case
+     * gets the same JSON-inclusive prelude regardless of whether its
+     * own source needs JSON: cheap (a handful of otherwise-unused
+     * functions/one otherwise-unused class), and building two
+     * templates (with/without JSON) to save that would need per-case
+     * template selection for no measured benefit. This is the actual
+     * point of this whole file's own top-of-file rationale (run every
+     * case in one process instead of spawning a fresh `diamond`): the
+     * corpus was already paying to re-lex/re-parse the ~24-36KB prelude
+     * on all ~1285 cases before this, not just process-spawn overhead. */
+    static DiamondProgram *prelude_template = nullptr;
+    if (prelude_template == nullptr) {
+        prelude_template = calloc(1,sizeof *prelude_template);
+        if (prelude_template == nullptr) {
+            fprintf(stderr, "run_cases: out of memory allocating prelude template\n");
+            free(source);
+            return false;
+        }
+        const size_t prelude_length = diamond_prelude_length(true);
+        char *prelude_source = malloc(prelude_length + 1);
+        if (prelude_source == nullptr) {
+            fprintf(stderr, "run_cases: out of memory building prelude template source\n");
+            free(source);
+            return false;
+        }
+        diamond_prelude_write(prelude_source, true);
+        prelude_source[prelude_length] = '\0';
+        DiamondDiagnostic template_diagnostic;
+        const bool template_compiled =
+            diamond_compile(prelude_source, prelude_template, &template_diagnostic);
+        free(prelude_source);
+        if (!template_compiled) {
+            fprintf(stderr, "run_cases: prelude template failed to compile: %s\n",
+                template_diagnostic.message);
+            free(source);
+            return false;
+        }
     }
 
     /* One zero-initialized DiamondProgram reused for every case. Compilation
@@ -224,8 +293,12 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
     }
 
     char stdout_path[PATH_BUFFER_SIZE], stderr_path[PATH_BUFFER_SIZE];
-    snprintf(stdout_path, sizeof stdout_path, "%s/%s.stdout", output_dir, name);
-    snprintf(stderr_path, sizeof stderr_path, "%s/%s.stderr", output_dir, name);
+    if (!format_path(stdout_path, sizeof stdout_path, "%s/%s.stdout", output_dir, name) ||
+        !format_path(stderr_path, sizeof stderr_path, "%s/%s.stderr", output_dir, name)) {
+        fprintf(stderr, "run_cases: path too long for case %s\n", name);
+        free(source);
+        return false;
+    }
 
     const int saved_stdout = redirect_fd(STDOUT_FILENO, stdout_path);
     const int saved_stderr = redirect_fd(STDERR_FILENO, stderr_path);
@@ -237,7 +310,8 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
         return false;
     }
 
-    const int exit_code = diamond_run_source_with_program(di_path, source, dump_bytecode, program, 0, nullptr);
+    const int exit_code = diamond_run_source_with_template(
+        di_path, source, dump_bytecode, program, prelude_template, 0, nullptr);
     free(source);
 
     restore_fd(STDOUT_FILENO, saved_stdout);
@@ -254,8 +328,8 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
             memcpy(combined, stdout_content, stdout_length);
             memcpy(combined + stdout_length, stderr_content, stderr_length);
             char combined_path[PATH_BUFFER_SIZE];
-            snprintf(combined_path, sizeof combined_path, "%s/%s.combined", output_dir, name);
-            ok = write_whole_file(combined_path, combined, stdout_length + stderr_length);
+            ok = format_path(combined_path, sizeof combined_path, "%s/%s.combined", output_dir, name) &&
+                write_whole_file(combined_path, combined, stdout_length + stderr_length);
         }
         free(combined);
     }
@@ -267,9 +341,9 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
     }
 
     char exitcode_path[PATH_BUFFER_SIZE], exitcode_text[16];
-    snprintf(exitcode_path, sizeof exitcode_path, "%s/%s.exitcode", output_dir, name);
     const int written = snprintf(exitcode_text, sizeof exitcode_text, "%d", exit_code);
     if (written < 0 || (size_t)written >= sizeof exitcode_text ||
+        !format_path(exitcode_path, sizeof exitcode_path, "%s/%s.exitcode", output_dir, name) ||
         !write_whole_file(exitcode_path, exitcode_text, (size_t)written)) {
         fprintf(stderr, "run_cases: cannot write exit code for %s\n", name);
         return false;
@@ -290,11 +364,11 @@ static bool should_run_case(const char *cases_dir, const char *name) {
     };
     for (size_t index = 0; index < sizeof(suffixes) / sizeof(suffixes[0]); index++) {
         char path[PATH_BUFFER_SIZE];
-        snprintf(path, sizeof path, "%s/%s%s", cases_dir, name, suffixes[index]);
-        if (file_exists(path)) return true;
+        if (format_path(path, sizeof path, "%s/%s%s", cases_dir, name, suffixes[index]) &&
+            file_exists(path)) return true;
     }
     char source_path[PATH_BUFFER_SIZE];
-    snprintf(source_path, sizeof source_path, "%s/%s.di", cases_dir, name);
+    if (!format_path(source_path, sizeof source_path, "%s/%s.di", cases_dir, name)) return false;
     char *source=read_whole_file(source_path,nullptr);
     if(source==nullptr)return false;
     const bool uses_exit_status=strstr(source,"suite.run!()")!=nullptr;

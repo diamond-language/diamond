@@ -227,6 +227,7 @@ class Lexer
     end
     if code == ">".ord()
       return self.make_token(:greater_equal) if self.match?("=".ord())
+      return self.make_token(:greater_greater) if self.match?(">".ord())
       return self.make_token(:greater)
     end
     self.make_token(:error)
@@ -297,6 +298,8 @@ class Lexer
     return :def if self.text_equals?("def")
     return :closure if self.text_equals?("closure")
     return :class if self.text_equals?("class")
+    return :sealed if self.text_equals?("sealed")
+    return :struct if self.text_equals?("struct")
     return :interface if self.text_equals?("interface")
     return :module if self.text_equals?("module")
     return :include if self.text_equals?("include")

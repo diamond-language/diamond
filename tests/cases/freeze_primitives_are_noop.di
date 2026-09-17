@@ -1,0 +1,5 @@
+puts(5.freeze().frozen?())
+puts("x".frozen?())
+puts(nil.frozen?())
+puts(true.frozen?())
+puts(3.14.frozen?())

@@ -31,16 +31,11 @@ module ActiveRecord
         table.column(@owner_key).in_list(foreign_key_values)).to_a(db, @repository.visitor())
       mapper = @repository.mapper()
       grouped = {}
-      index = 0
-      while index < foreign_key_values.length()
-        grouped[foreign_key_values[index]] = nil
-        index += 1
+      foreign_key_values.each() do |value|
+        grouped[value] = nil
       end
-      row_index = 0
-      while row_index < rows.length()
-        row = rows[row_index]
+      rows.each() do |row|
         grouped[row[@owner_key]] = mapper(row)
-        row_index += 1
       end
       grouped
     end

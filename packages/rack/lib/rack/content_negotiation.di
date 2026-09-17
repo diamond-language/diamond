@@ -62,22 +62,17 @@ class ContentNegotiation
   # any leading substring, so "application/*" can't accidentally match
   # "text/xml" the way a plain start_with? on the raw string might).
   def self.format_for_media_range(media_type, available_formats)
-    index = 0
-    while index < available_formats.length()
-      format = available_formats[index]
+    available_formats.find() do |format|
       mime = ContentNegotiation.mime_type_for(format)
       if media_type == mime || media_type == "*/*"
-        return format
-      end
-      if media_type.end_with?("/*")
+        true
+      elsif media_type.end_with?("/*")
         wanted_type = media_type.slice(0, media_type.length() - 1)
-        if mime.start_with?(wanted_type)
-          return format
-        end
+        mime.start_with?(wanted_type)
+      else
+        false
       end
-      index += 1
     end
-    nil
   end
 
   # Parses an Accept header into the single best-matching available
@@ -89,25 +84,21 @@ class ContentNegotiation
     ranges = accept_header.split(",")
     best_format = nil
     best_q = -1.0
-    index = 0
-    while index < ranges.length()
-      parts = ranges[index].strip().split(";")
+    ranges.each() do |range|
+      parts = range.strip().split(";")
       media_type = parts[0].strip()
       q = 1.0
-      part_index = 1
-      while part_index < parts.length()
-        param = parts[part_index].strip()
+      parts.drop(1).each() do |raw_param|
+        param = raw_param.strip()
         if param.start_with?("q=")
           q = param.slice(2, param.length() - 2).to_f()
         end
-        part_index += 1
       end
       format = ContentNegotiation.format_for_media_range(media_type, available_formats)
       if format != nil && q > best_q
         best_format = format
         best_q = q
       end
-      index += 1
     end
     if best_format == nil then default_format else best_format end
   end
@@ -137,13 +128,7 @@ class ContentNegotiation
     if builder == nil
       return [406, {"Content-Type": "text/plain"}, "not acceptable"]
     end
-    headers = {"Content-Type": ContentNegotiation.mime_type_for(format)}
-    extra_keys = extra_headers.keys()
-    key_index = 0
-    while key_index < extra_keys.length()
-      headers[extra_keys[key_index]] = extra_headers[extra_keys[key_index]]
-      key_index += 1
-    end
+    headers = {"Content-Type": ContentNegotiation.mime_type_for(format)}.merge(extra_headers)
     [status, headers, builder()]
   end
 end

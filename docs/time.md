@@ -120,6 +120,12 @@ t.yday()  # 1..366
 t.strftime("%Y-%m-%d %H:%M:%S %z")
 ```
 
+`%z` on a fixed-offset Time is the one exception: Diamond substitutes it
+itself before the format string ever reaches the system implementation,
+rather than relying on the platform to honor the offset, since not every
+`strftime(3)` does (confirmed on Darwin). Every other directive, `%Z`
+included, still delegates straight through.
+
 `to_s()` and interpolation use Diamond's default human-readable format.
 `to_i()` returns truncated epoch seconds; `to_f()` returns the fractional
 epoch.

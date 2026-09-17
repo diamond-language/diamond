@@ -104,19 +104,24 @@ end
 # caller opts into, not how many parts actually showed up). "files"
 # maps a file field's name to {"filename", "content_type", "data"} (the
 # raw uploaded bytes, "content_type" defaulting to
-# "application/octet-stream" when the part didn't send its own). Files
-# don't get this same array treatment -- see this function's own
-# "no nested multipart/mixed part" note below for why multiple files
-# under one field name stays out of scope.
+# "application/octet-stream" when the part didn't send its own) --
+# except a name ending in "[]" (e.g. a real `<input type="file"
+# multiple name="screenshots[]">`), which gets the exact same array
+# treatment "fields" does: the "[]"-stripped key maps to an Array of
+# every file part seen for that name, in submission order, and a
+# single such part still becomes a one-element Array. This is each
+# individual part carrying repeated `name="x[]"` Content-Disposition
+# headers (what every real browser sends for a multi-file input), not a
+# nested multipart/mixed part wrapping several files inside one part --
+# that second, rarer shape (a single part whose own body is itself a
+# multipart/mixed document) stays out of scope.
 #
 # A malformed body (the boundary never actually appears, or a part is
 # missing its own blank-line header/content separator, or a part has no
 # Content-Disposition name at all) fails the *whole* parse -- returns
 # nil rather than partially succeeding, so a caller always gets either a
 # fully-parsed request or a clean "reject this" signal, never a
-# half-populated Hash to reason about. No support for a nested
-# multipart/mixed part (multiple files under one field name) -- out of
-# scope, not needed for one file per named field.
+# half-populated Hash to reason about.
 def multipart_parse(request)
   boundary = multipart_boundary(request["headers"]["content-type"])
   if boundary == nil
@@ -166,7 +171,18 @@ def multipart_parse(request)
     else
       content_type = headers["content_type"]
       content_type = if content_type == nil then "application/octet-stream" else content_type end
-      files[name] = {"filename": filename, "content_type": content_type, "data": content}
+      file = {"filename": filename, "content_type": content_type, "data": content}
+      if name.end_with?("[]")
+        array_name = name.slice(0, name.length() - 2)
+        existing = files[array_name]
+        if existing == nil
+          files[array_name] = [file]
+        else
+          existing.push(file)
+        end
+      else
+        files[name] = file
+      end
     end
     index = index + 1
   end

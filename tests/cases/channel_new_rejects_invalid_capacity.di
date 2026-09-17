@@ -1,0 +1,1 @@
+Channel.new(0)

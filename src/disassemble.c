@@ -1,3 +1,9 @@
+/* See bignum.c's own identical comment: needed transitively for vm.h's
+ * <ucontext.h> use, only under musl (docs/roadmap.md's "Portability"). */
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 #include "disassemble.h"
 #include <stdlib.h>
 
@@ -490,6 +496,26 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 const size_t function_index=
                     ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
                 fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "CALL",
+                        checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
+                        function_index,
+                        checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
+                            chunk->code[offset + 7], &valid),
+                        chunk->code[offset + 7]);
+                if (function_index >= chunk->function_count) {
+                    valid = false;
+                }
+                offset += 8;
+                break;
+            }
+            case DIAMOND_OP_TAIL_CALL: {
+                if (!require_bytes(stream, chunk, offset, 8)) {
+                    valid = false;
+                    offset = chunk->code_count;
+                    break;
+                }
+                const size_t function_index=
+                    ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
+                fprintf(stream, "%-18s r%u, f%zu, r%u, %u args\n", "TAIL_CALL",
                         checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid),
                         function_index,
                         checked_register_range(chunk, stream, read_operand(chunk, offset + 5),
@@ -1242,6 +1268,29 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 const size_t total=4+(size_t)local_count*4;
                 if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, %u locals\n","DEBUGGER",dest,local_count);
+                for(size_t index=0;index<local_count;index++) {
+                    const size_t entry_offset=offset+4+index*4;
+                    const uint16_t name_index=read_operand(chunk,entry_offset);
+                    const uint16_t local_register=checked_register(chunk,stream,
+                        read_operand(chunk,entry_offset+2),&valid);
+                    const char *local_name="?";size_t local_name_length=1;
+                    if((size_t)name_index<chunk->string_count) {
+                        local_name=chunk->strings[name_index].chars;
+                        local_name_length=chunk->strings[name_index].length;
+                    }
+                    fprintf(stream,"                     %.*s -> r%u\n",
+                        (int)local_name_length,local_name,local_register);
+                }
+                offset+=total;break;
+            }
+            case DIAMOND_OP_BREAKPOINT_CHECK: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                const uint16_t dest=checked_register(chunk,stream,
+                    read_operand(chunk,offset+1),&valid);
+                const uint8_t local_count=chunk->code[offset+3];
+                const size_t total=4+(size_t)local_count*4;
+                if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
+                fprintf(stream,"%-18s r%u, %u locals\n","BREAKPOINT_CHECK",dest,local_count);
                 for(size_t index=0;index<local_count;index++) {
                     const size_t entry_offset=offset+4+index*4;
                     const uint16_t name_index=read_operand(chunk,entry_offset);

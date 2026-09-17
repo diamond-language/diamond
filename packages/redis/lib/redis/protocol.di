@@ -43,13 +43,11 @@ end
 def redis_encode_command(args)
   sb = StringBuilder.new()
   sb.append("*#{args.length()}\r\n")
-  index = 0
-  while index < args.length()
-    arg = "#{args[index]}"
+  args.each() do |raw_arg|
+    arg = "#{raw_arg}"
     sb.append("$#{arg.length()}\r\n")
     sb.append(arg)
     sb.append("\r\n")
-    index += 1
   end
   sb.to_s()
 end
@@ -77,6 +75,20 @@ def redis_read_length_prefixed_body(conn, length)
   data = redis_read_exact(conn, length)
   conn.gets() # the body's own trailing CRLF
   data
+end
+
+# `count` further complete RESP values, read back-to-back off `conn` --
+# the shared shape behind RESP's own Array (`*`), RESP3 Set (`~`), and
+# RESP3 Push (`>`) reply types below, which differ only in what the
+# resulting Array *means*, never in how it's read off the wire.
+def redis_read_n_values(conn, count)
+  values = []
+  index = 0
+  while index < count
+    values.push(redis_read_reply(conn))
+    index += 1
+  end
+  values
 end
 
 # Reads and decodes exactly one RESP reply -- recursively, for every
@@ -117,13 +129,7 @@ def redis_read_reply(conn)
     if count == -1
       nil
     else
-      values = []
-      index = 0
-      while index < count
-        values.push(redis_read_reply(conn))
-        index += 1
-      end
-      values
+      redis_read_n_values(conn, count)
     end
   elsif reply_type == "_"
     # RESP3 Null: the whole reply is just the two-byte type+CRLF
@@ -200,14 +206,7 @@ def redis_read_reply(conn)
     # RESP3 Set: wire-identical to Array, semantically a set (no
     # duplicate elements) -- decoded as a plain Diamond Array, since
     # Diamond has no separate Set type for this to become instead.
-    count = rest.to_i()
-    values = []
-    index = 0
-    while index < count
-      values.push(redis_read_reply(conn))
-      index += 1
-    end
-    values
+    redis_read_n_values(conn, rest.to_i())
   elsif reply_type == ">"
     # RESP3 Push: wire-identical to Array, semantically an unsolicited
     # out-of-band message (pub/sub messages, client-side caching
@@ -221,14 +220,7 @@ def redis_read_reply(conn)
     # comment: nothing in this package ever triggers that in practice,
     # since SUBSCRIBE only ever runs on a dedicated RedisSubscriber
     # connection, never an ordinary one.
-    count = rest.to_i()
-    values = []
-    index = 0
-    while index < count
-      values.push(redis_read_reply(conn))
-      index += 1
-    end
-    values
+    redis_read_n_values(conn, rest.to_i())
   else
     raise IOError.new("unrecognized RESP reply type '#{reply_type}'")
   end

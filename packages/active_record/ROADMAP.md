@@ -25,7 +25,7 @@ resolved at the language level (still worth understanding, since it
 still shapes what an association reader looks like here):
 
 - **Resolved**: `ClassName.compile_method(name, params, body_source,
-  bound_values)` (`docs/design.md`'s "Runtime method synthesis" section)
+  bound_values)` (`docs/internal/design.md`'s "Runtime method synthesis" section)
   compiles a method body from a runtime source string and returns a
   `Callable` for `ClassName.define_method` to install -- the piece that
   was missing before, since `define_method` alone could only expose an
@@ -54,7 +54,7 @@ still shapes what an association reader looks like here):
   directly (`Book` above, say) -- that's what `bound_values` is for,
   since the synthesized method body compiles as its own separate,
   isolated program with no knowledge of the real program's other
-  classes. See `docs/design.md` for exactly why.
+  classes. See `docs/internal/design.md` for exactly why.
 
 Writer-call assignment sugar landed: `receiver.attr = expr` now desugars
 at parse time (inside `parse_invoke`, `src/compiler.c`) into the
@@ -171,7 +171,7 @@ what this still doesn't do (no `has_many :sym`-style macros -- see
 - `has_many :sym`/`belongs_to :sym`/`validates ... `-style *declarative*
   macros -- no longer blocked at the language level (`compile_method`
   resolved the general metaprogramming gap this used to cite, see
-  `docs/design.md`'s "Runtime method synthesis" section), but a
+  `docs/internal/design.md`'s "Runtime method synthesis" section), but a
   deliberate choice made again this session: validations landed as
   composable plain-function building blocks instead (`README.md`'s
   "Validators" section) -- closer to how `mapper`/`before_save` already

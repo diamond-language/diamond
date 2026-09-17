@@ -74,6 +74,8 @@ typedef enum DiamondObjectKind : uint8_t {
     DIAMOND_OBJECT_PROCESS_HANDLE,
     DIAMOND_OBJECT_PROCESS_STREAM,
     DIAMOND_OBJECT_TENSOR,
+    DIAMOND_OBJECT_CHANNEL,
+    DIAMOND_OBJECT_SUPERVISOR,
 } DiamondObjectKind;
 
 typedef struct DiamondObject {
@@ -99,6 +101,19 @@ typedef struct DiamondObject {
      * deliberately never gets cleared except when the object itself
      * dies. Meaningless (always false) for a young object. */
     bool remembered;
+    /* Set only by Array#freeze/Hash#freeze/Instance#freeze -- never
+     * copied by `dup` (a fresh allocate_array/allocate_hash always
+     * starts false), matching Ruby's own dup-vs-clone distinction: a
+     * duplicate of a frozen value is itself unfrozen. Checked before
+     * every native mutation these three kinds support (array_push,
+     * Array#pop, diamond_jit_index_set's Array/Hash branches,
+     * diamond_jit_set_ivar, DIAMOND_OP_SET_IVAR_NAME's write branch --
+     * see docs/classes-and-modules.md's own "freeze / frozen?" section
+     * for the exact, small, hand-verified mutation surface this covers).
+     * Meaningless (always false, never checked) for every other object
+     * kind -- native resources and already-immutable String/Symbol have
+     * no mutating operations this would ever need to guard. */
+    bool frozen;
 } DiamondObject;
 
 typedef struct DiamondString {
@@ -350,6 +365,40 @@ typedef struct DiamondThreadHandle {
     DiamondObject object;
     DiamondThread *thread;
 } DiamondThreadHandle;
+
+/* Same thin-handle/heavy-struct split as DiamondThreadHandle/DiamondThread
+ * just above, for the same reason (pthread mutex/condvar fields, defined
+ * in src/vm.c where pthread.h is already reachable) -- but unlike every
+ * other native handle in this file, a Channel's underlying DiamondChannel
+ * is genuinely *shared*: one live per referencing DiamondChannelHandle,
+ * possibly across several independent VM heaps at once (passed as a
+ * Thread.new argument, sent through another Channel, stored in a
+ * copied-by-value Array/Hash/Instance), refcounted rather than owned
+ * one-to-one the way a DiamondThread/DiamondSocketHandle/etc. always is.
+ * See docs/threads.md's own Channels section and
+ * docs/internal/concurrency-internals.md for the full design. */
+typedef struct DiamondChannel DiamondChannel;
+
+typedef struct DiamondChannelHandle {
+    DiamondObject object;
+    DiamondChannel *channel;
+} DiamondChannelHandle;
+
+/* Same thin-handle/heavy-struct split, refcounted like DiamondChannelHandle/
+ * DiamondChannel just above (a DiamondSupervisor owns real OS threads and
+ * pthread synchronization state that must outlive any single handle's own
+ * GC lifetime bookkeeping) -- but see docs/threads.md's Supervisors section
+ * for why a Supervisor never actually ends up with more than one live
+ * handle in practice: it is deliberately not one of copy_value_into_vm's
+ * handled kinds, so it can never cross a Thread.new/Channel boundary the
+ * way a Channel itself can. DiamondSupervisor is defined in src/vm.c,
+ * alongside DiamondThread/DiamondChannel. */
+typedef struct DiamondSupervisor DiamondSupervisor;
+
+typedef struct DiamondSupervisorHandle {
+    DiamondObject object;
+    DiamondSupervisor *supervisor;
+} DiamondSupervisorHandle;
 
 typedef struct DiamondFileHandle {
     DiamondObject object;

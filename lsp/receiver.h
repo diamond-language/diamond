@@ -16,10 +16,25 @@
  * `if`/`unless`/ternary join (`x: Dog | Cat`, or
  * `x = flag ? Dog.new() : Cat.new()`, DiamondScopeLocal.known_type_set), an instance variable
  * whose assignments all agree on one class, or a call chain whose top-level
- * function/method links have explicit class return annotations. `Class.new()`
- * is intrinsically an instance of Class; all other links use the declared
- * DiamondFunction.return_type_set. Every class-kind union member is returned
- * as a candidate. Unknown/conflicting ivars and unannotated call returns
+ * function/method links have explicit class return annotations. Grouping
+ * parentheses around any supported receiver form are ignored. Repeated
+ * indexing from a local typed as a nested `Array` resolves its eventual class;
+ * the same is true for a structurally known non-generic top-level, singleton,
+ * or single-class instance-method call result, plus a generic call whose class
+ * bindings can be inferred from bare type-variable parameters or supplied
+ * explicitly as plain class names or nested class-element `Array` shapes.
+ * Inference also descends through matching parameterized shapes such as
+ * `Array[T]`/`Array[Pet | Leaf]` and
+ * `Hash[String, T]`/`Hash[String, Pet | Leaf]`.
+ * Union receivers can supply an indexed method result when every candidate has
+ * an equivalent non-generic structural array return.
+ * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
+ * Class; all other links use the declared
+ * DiamondFunction.return_type_set. Direct generic call chains substitute
+ * explicit bindings when each binding is a class union, optionally nested in
+ * `Array`, or infer a class-union binding from a bare type-variable parameter.
+ * Every class-kind
+ * union member is returned as a candidate. Unknown/conflicting ivars and unannotated call returns
  * deliberately return 0 so callers fall back to their existing behavior.
  *
  * `source` is the raw, un-prelude-bundled open-document text (matching

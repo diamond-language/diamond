@@ -15,8 +15,13 @@ count=0
 # A real on-disk directory for the require-resolution cases below --
 # `require` only resolves against an actual directory, so unlike every
 # other case in this script (which use a uri that was never a real path
-# at all), these need one.
-work="$(mktemp -d)"
+# at all), these need one. realpath'd the same way diamond_lsp already is
+# above: a `require`d file's own path (unlike main.di's own uri, echoed
+# straight back from what this script sent) is resolved by the compiler's
+# loader, which canonicalizes it -- on a system where the raw mktemp
+# path is itself a symlink (macOS's /var -> /private/var), comparing
+# against the un-resolved path here would silently never match.
+work="$(realpath "$(mktemp -d)")"
 trap 'rm -rf "$work"' EXIT
 cat > "$work/helper.di" <<'EOF'
 def greet(name)
@@ -200,6 +205,444 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$main_uri"'"}}}'
+read_message >/dev/null
+
+# --- an unannotated factory pulled in through require keeps its inferred,
+# tooling-only return type when its result is first assigned to a local. ---
+
+cat > "$work/receiver_dependency.di" <<'EOF'
+class ImportedPet
+  def bark()
+    1
+  end
+end
+
+class ImportedLeaf
+  def ping()
+    2
+  end
+end
+
+class ImportedBranch
+  def leaf()
+    ImportedLeaf.new()
+  end
+end
+
+class ImportedFactory
+  def self.build()
+    ImportedBranch.new()
+  end
+end
+
+def build_imported_pet()
+  ImportedPet.new()
+end
+
+def build_imported_pets()
+  [ImportedPet.new()]
+end
+
+class UnionProduct
+  def ping()
+    3
+  end
+end
+
+class UnionLeft
+  def product(value)
+    UnionProduct.new()
+  end
+end
+
+class UnionRight
+  def product(value)
+    UnionProduct.new()
+  end
+end
+
+class UnionUnknown
+  def product(value)
+    value
+  end
+end
+
+def build_union_receiver(flag)
+  flag ? UnionLeft.new() : UnionRight.new()
+end
+
+def build_unknown_union_receiver(flag)
+  flag ? UnionLeft.new() : UnionUnknown.new()
+end
+
+def generic_identity[T](value: T)
+  value
+end
+
+def generic_array[T](value: T) -> Array[T]
+  [value]
+end
+
+def generic_array_identity[T](values: Array[T]) -> Array[T]
+  values
+end
+
+class GenericFactory
+  def echo[T](value: T)
+    value
+  end
+end
+
+class GenericSingletonFactory
+  def self.echo[T](value: T)
+    value
+  end
+end
+
+class ImportedArrayFactory
+  def pets()
+    [ImportedPet.new()]
+  end
+
+  def self.pets()
+    [ImportedPet.new()]
+  end
+end
+
+
+class GenericArrayFactory
+  def self.wrap[T](value: T) -> Array[T]
+    [value]
+  end
+end
+
+
+class UnionArrayLeft
+  def pets()
+    [ImportedPet.new()]
+  end
+end
+
+class UnionArrayRight
+  def pets()
+    [ImportedPet.new()]
+  end
+end
+
+
+class UnionArrayOther
+  def pets()
+    [ImportedLeaf.new()]
+  end
+end
+
+def build_union_array_receiver(flag)
+  flag ? UnionArrayLeft.new() : UnionArrayRight.new()
+end
+
+def build_conflicting_union_array_receiver(flag)
+  flag ? UnionArrayLeft.new() : UnionArrayOther.new()
+end
+EOF
+receiver_import_uri="file://$work/receiver_import.di"
+receiver_dependency_uri="file://$work/receiver_dependency.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\n  branch = ImportedFactory.build()\n  leaf = branch.leaf()\n  leaf.ping()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":122,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":123,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def bark()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":124,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":3,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
+# The same tooling-only propagation works for an unannotated singleton
+# method result, then recursively for an unannotated instance method called
+# through the assigned receiver.
+send '{"jsonrpc":"2.0","id":125,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":5,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":126,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":127,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def ping()"'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":128,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"},"position":{"line":6,"character":8}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+[[ "$response" == *'"start":{"line":7,"character":6}'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_import_uri"'"}}}'
+read_message >/dev/null
+
+# Tooling-only inferred receiver facts survive a conditional that leaves the
+# local untouched, but conflicting assignments across the two runtime paths
+# clear the fact instead of keeping whichever branch compiled last.
+receiver_flow_uri="file://$work/receiver_flow.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'","text":"require \"receiver_dependency\"\ndef preserve_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    puts(1)\n  end\n  pet.bark()\nend\n\ndef discard_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    pet = ImportedFactory.build()\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":129,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"},"position":{"line":6,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":149,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"},"position":{"line":14,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'"}}}'
+read_message >/dev/null
+
+# Separate branches can independently clone the same inferred receiver graph.
+# The join compares graph structure, not the otherwise unrelated table indices.
+receiver_equivalent_flow_uri="file://$work/receiver_equivalent_flow.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'","text":"require \"receiver_dependency\"\ndef equivalent_branch_receiver(flag)\n  if flag\n    pet = build_imported_pet()\n  else\n    pet = build_imported_pet()\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":163,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'"},"position":{"line":7,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'"}}}'
+read_message >/dev/null
+
+# Grouping parentheses preserve both a local receiver and a recursively
+# resolved call-result receiver instead of being mistaken for call syntax.
+receiver_parenthesized_uri="file://$work/receiver_parenthesized.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_parenthesized_uri"'","text":"require \"receiver_dependency\"\ndef parenthesized_receivers()\n  pet = build_imported_pet()\n  (pet).bark()\n  (build_imported_pet()).bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '166 3 8' '167 4 25'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_parenthesized_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_parenthesized_uri"'"}}}'
+read_message >/dev/null
+
+# A class-typed Array local carries its element set through one indexing step.
+receiver_index_uri="file://$work/receiver_index.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend\n\ndef indexed_explicit_generic_receivers()\n  generic_array[ImportedPet](ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap[ImportedPet](ImportedPet.new())[0].bark()\nend\n\ndef indexed_nested_generic_receiver(pets: Array[ImportedPet])\n  generic_array_identity(pets)[0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":172,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":2,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+for request in '176 19 20' '177 20 33'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+for request in '178 24 38' '179 25 49'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+for request in '180 29 51' '181 30 62'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","id":182,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":34,"character":34}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":175,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":14,"character":27}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":173,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":6,"character":14}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":174,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"},"position":{"line":10,"character":15}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"}}}'
+read_message >/dev/null
+
+# Explicit generic bindings can carry a nested Array shape; indexing consumes
+# that shape until the final class receiver is exposed.
+receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'","text":"require \"receiver_dependency\"\ndef parameterized_binding_receiver()\n  generic_identity[Array[ImportedPet]]([ImportedPet.new()])[0].bark()\n  generic_identity[Array[Array[ImportedPet]]]([[ImportedPet.new()]])[0][0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":183,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"},"position":{"line":2,"character":63}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":184,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"},"position":{"line":3,"character":75}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"}}}'
+read_message >/dev/null
+
+# Every arm of a union receiver may feed indexing when its method has the same
+# structural array return graph.
+receiver_union_array_uri="file://$work/receiver_union_array.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'","text":"require \"receiver_dependency\"\ndef union_array_receiver()\n  factory = build_union_array_receiver(true)\n  factory.pets()[0].bark()\nend\n\ndef conflicting_union_array_receiver()\n  factory = build_conflicting_union_array_receiver(true)\n  factory.pets()[0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":185,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"},"position":{"line":3,"character":20}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":186,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"},"position":{"line":8,"character":20}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"}}}'
+read_message >/dev/null
+
+# Case joins apply the same rule across every when/else path.
+receiver_case_uri="file://$work/receiver_case.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_case_uri"'","text":"require \"receiver_dependency\"\ndef preserve_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    puts(1)\n  else\n    puts(2)\n  end\n  pet.bark()\nend\n\ndef discard_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    pet = ImportedFactory.build()\n  else\n    puts(2)\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":152,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"},"position":{"line":9,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":153,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"},"position":{"line":20,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_case_uri"'"}}}'
+read_message >/dev/null
+
+# Loop exits include the zero-iteration path and every break. An unchanged
+# receiver survives; a body assignment that only some exits observe clears it.
+receiver_loop_uri="file://$work/receiver_loop.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'","text":"require \"receiver_dependency\"\ndef preserve_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    break\n  end\n  pet.bark()\nend\n\ndef discard_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    pet = ImportedFactory.build()\n    break\n  end\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":154,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"},"position":{"line":6,"character":6}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":155,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"},"position":{"line":15,"character":6}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'"}}}'
+read_message >/dev/null
+
+# An inferred union receiver can feed an assigned method result when every
+# class arm has a usable inferred return. One unknown arm invalidates the
+# whole result rather than letting the known arm win.
+receiver_union_uri="file://$work/receiver_union.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_uri"'","text":"require \"receiver_dependency\"\ndef compatible_union_result()\n  source = build_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend\n\ndef unknown_union_result()\n  source = build_unknown_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":156,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"},"position":{"line":4,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":157,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"},"position":{"line":10,"character":10}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_uri"'"}}}'
+read_message >/dev/null
+
+# Generic calls substitute fully resolved type-variable bindings into the
+# unannotated callee's inferred return, without promoting it to a real
+# compile-time return contract.
+receiver_generic_uri="file://$work/receiver_generic.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'","text":"require \"receiver_dependency\"\ndef generic_results()\n  inferred = generic_identity(ImportedPet.new())\n  inferred.bark()\n  explicit = generic_identity[ImportedLeaf](ImportedLeaf.new())\n  explicit.ping()\n  factory = GenericFactory.new()\n  from_method = factory.echo(ImportedPet.new())\n  from_method.bark()\n  from_singleton = GenericSingletonFactory.echo(ImportedPet.new())\n  from_singleton.bark()\n  explicit_singleton = GenericSingletonFactory.echo[ImportedLeaf](ImportedLeaf.new())\n  explicit_singleton.ping()\n  generic_identity[ImportedPet](ImportedPet.new()).bark()\n  GenericSingletonFactory.echo[ImportedLeaf](ImportedLeaf.new()).ping()\n  generic_identity(ImportedPet.new()).bark()\n  GenericSingletonFactory.echo(ImportedLeaf.new()).ping()\nend"}}}'
+read_message >/dev/null
+
+for request in '158 3 11 bark' '159 5 11 ping' '160 8 14 bark' \
+               '164 10 17 bark' '165 12 21 ping' '168 13 51 bark' \
+               '169 14 65 ping' '170 15 38 bark' '171 16 51 ping'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *"\"label\":\"$4\",\"kind\":3"* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'"}}}'
+read_message >/dev/null
+
+# Declaring a nested function boxes its enclosing locals. Loading an inferred
+# receiver back through GET_CELL and assigning it again must retain the
+# tooling-only fact in the new local.
+receiver_capture_uri="file://$work/receiver_capture.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'","text":"require \"receiver_dependency\"\ndef captured_result()\n  pet = build_imported_pet()\n  def observe_pet()\n    pet\n  end\n  copy = pet\n  copy.bark()\nend\n\ndef block_captured_result()\n  pet = build_imported_pet()\n  [1].each() do |value|\n    pet\n  end\n  copy = pet\n  copy.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":161,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"},"position":{"line":7,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":162,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"},"position":{"line":16,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'"}}}'
 read_message >/dev/null
 
 # --- hover resolves a top-level function name, at its own declaration
@@ -591,10 +1034,11 @@ read_message >/dev/null
 
 # --- explicitly typed call results can themselves be receivers, recursively.
 # Cover top-level functions, singleton factories, constructors, several links,
-# and a union return. An inferred/unannotated function remains conservative. ---
+# a union return, and an unannotated single-expression body (inferred). A
+# non-class arm in an explicit union remains conservative. ---
 
 chained_uri="file:///chained_receiver.di"
-chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend'
+chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend\ndef choose_with_returns(flag)\n  if flag\n    return Branch.new()\n  end\n  return AlternateBranch.new()\nend\ndef inspect2()\n  choose_with_returns(true).leaf().ping()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$chained_uri"'","text":"'"$chained_source"'"}}}'
 read_message >/dev/null
 
@@ -635,17 +1079,44 @@ response="$(read_message)"
 [[ "$response" == *'"label":"ping","kind":3'* ]]
 count=$((count + 1))
 
-# No source annotation means no call-result type claim, even when the body
-# happens to return a constructor at runtime.
+# No source annotation, but the body is a single unambiguous
+# `Branch.new()` -- compile_definition's own inference (src/compiler.c,
+# mirroring compile_block's identical fallback) now populates
+# inferred_return_type_set for exactly this case, so the call-chain
+# resolves the same as an explicitly-annotated one; lsp/receiver.c's own
+# function_return_classes only consults it when there's no explicit
+# `-> Type` (which always wins when present).
 send '{"jsonrpc":"2.0","id":137,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":38,"character":17}}}'
 response="$(read_message)"
-[[ "$response" != *'"label":"leaf","kind":3'* ]]
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":139,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":38,"character":18}}}'
+response="$(read_message)"
+[[ "$response" == *'"value":"def leaf() -> Leaf"'* ]]
 count=$((count + 1))
 
 # A non-class arm in a declared union is equally unsafe for method lookup.
 send '{"jsonrpc":"2.0","id":138,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":39,"character":21}}}'
 response="$(read_message)"
 [[ "$response" != *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+# No source annotation, and the body uses `return` across two separate
+# branches instead of a bare trailing expression -- compile_return's own
+# return_flow accumulation (src/compiler.c) unions every explicit `return
+# value`'s own type into inferred_return_type_set, closing the real gap
+# a bare-trailing-if/case expression didn't have (that already got a
+# union for free via merge_flow_types writing straight onto its own
+# destination register -- see request id 137's own comment above).
+send '{"jsonrpc":"2.0","id":150,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":51,"character":28}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"leaf","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":151,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$chained_uri"'"},"position":{"line":51,"character":35}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"ping","kind":3'* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$chained_uri"'"}}}'

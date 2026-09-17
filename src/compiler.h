@@ -53,7 +53,28 @@ typedef struct DiamondDiagnostic {
  * ProgramBuilder native bridge (src/vm.c), which needs the same baseline
  * without going through the parser at all. See docs/roadmap.md. */
 void diamond_program_init(DiamondProgram *program);
+/* Same as diamond_program_init, but skips its memset -- ONLY safe when
+ * `program` is already all-zero (a freshly calloc'd DiamondProgram
+ * calloc's own zero-fill already guarantees this; anything else, e.g.
+ * a struct diamond_program_free was just called on for reuse, does
+ * NOT and must go through diamond_program_init instead). See
+ * diamond_program_init_builtins's own comment (src/compiler.c) for
+ * measurements: that memset alone costs several milliseconds per call
+ * purely from first-touch page faults across DiamondProgram's ~14MB,
+ * paid for nothing when the memory was already zero. */
+void diamond_program_init_fresh(DiamondProgram *program);
 void diamond_program_free(DiamondProgram *program);
+/* Recomputes every class's own shapes[] (self-referential `shape->class`
+ * back-pointers) in `program`. A fresh compile always gets this for free
+ * from run_compile_pass's own tail (src/compiler.c); anything that
+ * populates program->classes[] without running a real compile pass
+ * afterward -- diamond_program_init_fresh's own built-in exception
+ * classes, or diamond_program_read_compiled (src/compiled_prelude.c)
+ * deserializing an already-fully-compiled program into a fresh
+ * DiamondProgram at a different memory address -- must call this
+ * explicitly or every shape lookup reads stale/dangling `class`
+ * pointers instead. */
+void diamond_program_recompute_shapes(DiamondProgram *program);
 /* Appends one zeroed, independently allocated function record, growing the
  * stable pointer table geometrically without moving existing records. */
 DiamondFunction *diamond_program_add_function(DiamondProgram *program);
@@ -65,6 +86,30 @@ bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source);
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic);
+/* See its own doc comment in compiler.c: compiles `source` against an
+ * already-compiled `template` program (e.g. the prelude alone) without
+ * re-parsing whatever produced `template`. */
+bool diamond_compile_incremental(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 DiamondDiagnostic *diagnostic);
+/* Same as diamond_compile, but additionally emits a
+ * DIAMOND_OP_BREAKPOINT_CHECK (see emit_breakpoint_check in compiler.c)
+ * at the start of *every* statement -- the compile-time half of the live
+ * step-debugger's editor-breakpoint mechanism (docs/debugging.md's "live
+ * breakpoints" section; the DAP server, dap/main.c, drives it). Unlike
+ * v1's DIAMOND_OP_DEBUGGER (which was baked in only at a fixed,
+ * compile-time-selected set of lines and always paused unconditionally),
+ * this opcode always checks the *runtime*, freely mutable
+ * DiamondVm.debug_active_lines set (src/vm.h) before deciding whether to
+ * actually pause -- so the caller no longer needs to know in advance
+ * which lines will ever matter: a debugger can add or remove a
+ * breakpoint against an already-running process with no recompile at
+ * all. A blank line/comment/mid-expression continuation still has no
+ * statement of its own to attach a check to, matching how an editor
+ * already snaps a gutter breakpoint to the nearest valid line for most
+ * languages. */
+bool diamond_compile_with_breakpoints(const char *source, DiamondProgram *program,
+                                      DiamondDiagnostic *diagnostic);
 DiamondChunk diamond_program_chunk(const DiamondProgram *program);
 
 typedef struct DiamondResolvedLocation {
@@ -119,5 +164,23 @@ DiamondResolvedLocation diamond_resolve_diagnostic_location(
 size_t diamond_resolve_source_position(const char *path, const char *combined,
     const DiamondSourceBundle *bundle, size_t user_offset,
     size_t line, size_t column);
+
+/* The inverse direction diamond_resolve_source_position doesn't provide:
+ * given `offset`, a byte offset into `combined` (the same fully expanded
+ * buffer, in the same terms diamond_resolve_source_position's own return
+ * value and DiamondSpan.line/chunk->lines[] are already expressed in),
+ * returns the 1-based line diamond_compile itself would assign a token
+ * at that exact position. *Not* a flat newline count from the start of
+ * `combined`: the lexer resets its own line counter at every "#line 1"
+ * marker the loader writes ahead of each segment (the top-level user
+ * source right after the prelude, and every `require`d file's own
+ * inlined text) -- see the implementation's own comment for why this
+ * has to recognize that same marker to agree with what the compiler
+ * will actually see. Exists for a DAP server (dap/main.c) translating a
+ * resolved breakpoint position into the same combined-buffer line-number
+ * space DIAMOND_DEBUG_BREAKPOINTS and a live `setBreakpoints` control-
+ * channel message both expect (see DiamondVm.debug_active_lines, src/
+ * vm.h, and docs/debugging.md). */
+size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 
 #endif

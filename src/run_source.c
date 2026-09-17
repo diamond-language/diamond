@@ -1,7 +1,12 @@
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
 
 #include "run_source.h"
 
+#include "compiled_prelude.h"
+#include "compiled_prelude_data.h"
 #include "compiler.h"
 #include "disassemble.h"
 #include "loader.h"
@@ -9,12 +14,49 @@
 #include "value.h"
 #include "vm.h"
 
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
+
+/* Sibling-file bytecode cache (see docs/caching.md): SHA-256 of the fully
+ * require-expanded bundle.source, and a ".dic" path derived from `name`.
+ * `-e` (name is always the literal string "-e" regardless of what code
+ * was actually passed, per main.c's own dispatch) and any path with no
+ * stable on-disk identity get no cache path at all -- diamond_run_source
+ * checks for exactly this nullptr before ever trying to read or write
+ * one. */
+static void diamond_hash_source(const char *source, uint8_t out[32]) {
+    unsigned int digest_length = 0;
+    EVP_Digest(source, strlen(source), out, &digest_length, EVP_sha256(), nullptr);
+}
+
+/* `app.di` -> `app.dic` (matches Python's own classic foo.py -> foo.pyc
+ * sibling-cache convention -- append, don't replace, so the source's own
+ * extension stays legible in the cache file's name); anything not ending
+ * in ".di" just gets ".dic" appended wholesale. Returns nullptr for `-e`
+ * (no real file to sit a cache file next to) or on allocation failure --
+ * both are treated identically by every caller: no cache path means no
+ * caching for this run, silently. */
+static char *diamond_cache_path_for(const char *name) {
+    if (strcmp(name, "-e") == 0) return nullptr;
+    const size_t name_length = strlen(name);
+    const bool has_di_extension = name_length >= 3 &&
+        strcmp(name + name_length - 3, ".di") == 0;
+    char *path = malloc(name_length + 5);
+    if (path == nullptr) return nullptr;
+    memcpy(path, name, name_length);
+    if (has_di_extension) {
+        path[name_length] = 'c';
+        path[name_length + 1] = '\0';
+    } else {
+        memcpy(path + name_length, ".dic", 5);
+    }
+    return path;
+}
 
 /* DIAMOND_TRACE_STARTUP=1 reports where process time actually goes,
  * following the DIAMOND_TRACE_GC pattern below (also seconds via
@@ -47,45 +89,25 @@ static void print_diagnostic(const char *name, const char *source,
     fputs("^\n", stderr);
 }
 
-int diamond_run_source_with_program(const char *name, const char *source,
-        bool dump_bytecode, DiamondProgram *program,
-        int script_argc, char *const *script_argv) {
-    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
-    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
-    DiamondSourceBundle bundle;char load_error[768];
-    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
-        fprintf(stderr,"diamond: %s\n",load_error);return 74;
-    }
-    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
-    const bool include_json=diamond_prelude_needs_json(bundle.source);
-    const size_t prelude_length=diamond_prelude_length(include_json);
-    const size_t source_length=strlen(bundle.source);
-    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
-        fprintf(stderr,"diamond: expanded source is too large\n");
-        diamond_source_bundle_free(&bundle);
-        return 74;
-    }
-    char *combined=malloc(prelude_length+reset_length+source_length+1);
-    if(combined==nullptr) {
-        fprintf(stderr,"diamond: out of memory building expanded source\n");
-        diamond_source_bundle_free(&bundle);
-        return 74;
-    }
-    size_t offset=diamond_prelude_write(combined,include_json);
-    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
-    memcpy(combined+offset,bundle.source,source_length+1);
-    DiamondDiagnostic diagnostic;
-    diamond_program_free(program);
-    if (!diamond_compile(combined, program, &diagnostic)) {
-        print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
-        free(combined);
-        diamond_source_bundle_free(&bundle);
-        return 65;
-    }
-    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
-
-    DiamondChunk chunk = diamond_program_chunk(program);
+/* Everything shared by diamond_run_source_with_program and
+ * diamond_run_source_with_template once compilation has already
+ * succeeded: run `chunk`, apply every DIAMOND_*-env-var-driven
+ * tracing/stress knob, print the result, and report DIAMOND_TRACE_
+ * STARTUP's own summary line -- identical either way, since neither
+ * the VM nor any of those knobs know or care how `chunk`'s program got
+ * compiled. `owned_buffer` (freed here, may be nullptr) is
+ * diamond_run_source_with_program's own concatenated prelude+user
+ * text; diamond_run_source_with_template has no equivalent allocation
+ * of its own to free, since diamond_compile_incremental compiles
+ * `bundle`'s own source directly. `prelude_bytes`/`user_bytes` feed
+ * only the trace line's own byte breakdown -- diamond_run_source_
+ * with_template passes 0/total, having reprocessed no prelude text at
+ * all rather than some nonzero-but-not-actually-recompiled amount. */
+static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_bytecode,
+        int script_argc, char *const *script_argv,
+        bool trace_startup, double start_time, double loaded_time, double compiled_time,
+        size_t total_bytes, size_t prelude_bytes, size_t user_bytes,
+        char *owned_buffer, DiamondSourceBundle *bundle) {
     chunk.name = name;
     if (dump_bytecode) {
         (void)diamond_disassemble(stdout, name, &chunk);
@@ -103,6 +125,25 @@ int diamond_run_source_with_program(const char *name, const char *source,
         if (end != quickening_threshold && *end == '\0' && parsed > 0 &&
             parsed <= SIZE_MAX) {
             vm.quickening_threshold = (size_t)parsed;
+        }
+    }
+    /* jit.c emits x86-64 machine code by design. Keep the runtime switch
+     * harmless on other architectures: an environment variable must never
+     * turn an unsupported backend into an illegal-instruction crash. The
+     * interpreter remains the portable execution path until another native
+     * backend exists. */
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
+    vm.jit = getenv("DIAMOND_JIT") != nullptr;
+#else
+    vm.jit = false;
+#endif
+    const char *jit_threshold = getenv("DIAMOND_JIT_THRESHOLD");
+    if (jit_threshold != nullptr && jit_threshold[0] != '\0') {
+        char *end = nullptr;
+        const unsigned long long parsed = strtoull(jit_threshold, &end, 10);
+        if (end != jit_threshold && *end == '\0' && parsed > 0 &&
+            parsed <= SIZE_MAX) {
+            vm.jit_threshold = (size_t)parsed;
         }
     }
     const char *mono_threshold = getenv("DIAMOND_IC_MONO_THRESHOLD");
@@ -139,8 +180,8 @@ int diamond_run_source_with_program(const char *name, const char *source,
         fprintf(stderr, "%s: runtime error: %s\n", name,
                 detail != nullptr ? detail : diamond_vm_status_name(status));
         diamond_vm_free(&vm);
-        free(combined);
-        diamond_source_bundle_free(&bundle);
+        free(owned_buffer);
+        diamond_source_bundle_free(bundle);
         return 70;
     }
 
@@ -149,6 +190,10 @@ int diamond_run_source_with_program(const char *name, const char *source,
     if (getenv("DIAMOND_TRACE_IC") != nullptr) {
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);
+    }
+    if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
+        fprintf(stderr,"jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
+                vm.jit_compiled_functions,vm.jit_bailouts,vm.jit_hard_propagations);
     }
     if (getenv("DIAMOND_TRACE_IC_SITES") != nullptr) {
         for (size_t index=0;index<DIAMOND_INLINE_CACHE_COUNT;index++) {
@@ -193,29 +238,178 @@ int diamond_run_source_with_program(const char *name, const char *source,
             "startup: load %.6fs, compile %.6fs (%zu bytes: %zu prelude + "
             "%zu user), run %.6fs, total %.6fs\n",
             loaded_time-start_time,compiled_time-loaded_time,
-            prelude_length+reset_length+source_length,prelude_length,
-            source_length,run_time-compiled_time,run_time-start_time);
+            total_bytes,prelude_bytes,user_bytes,run_time-compiled_time,run_time-start_time);
     }
     diamond_vm_free(&vm);
-    free(combined);
-    diamond_source_bundle_free(&bundle);
+    free(owned_buffer);
+    diamond_source_bundle_free(bundle);
     return 0;
+}
+
+/* The compile+run half of diamond_run_source_with_program, split out so
+ * diamond_run_source (the CLI's own auto-dispatch entry point) can load
+ * `bundle` exactly once and then pick this or
+ * run_source_from_bundle_template below, rather than loading it twice
+ * (once to decide, once inside whichever *_with_program/_with_template
+ * call it made) -- loading involves real file I/O for every required
+ * package, so doing it twice would cost real startup time, not just
+ * style. */
+static int run_source_from_bundle_program(const char *name, DiamondSourceBundle *bundle,
+        bool dump_bytecode, DiamondProgram *program,
+        int script_argc, char *const *script_argv,
+        bool trace_startup, double start_time, double loaded_time,
+        const char *cache_path, const uint8_t *source_hash) {
+    const bool include_json=diamond_prelude_needs_json(bundle->source);
+    const size_t prelude_length=diamond_prelude_length(include_json);
+    const size_t source_length=strlen(bundle->source);
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    if(source_length > SIZE_MAX - prelude_length - reset_length - 1) {
+        fprintf(stderr,"diamond: expanded source is too large\n");
+        diamond_source_bundle_free(bundle);
+        return 74;
+    }
+    char *combined=malloc(prelude_length+reset_length+source_length+1);
+    if(combined==nullptr) {
+        fprintf(stderr,"diamond: out of memory building expanded source\n");
+        diamond_source_bundle_free(bundle);
+        return 74;
+    }
+    size_t offset=diamond_prelude_write(combined,include_json);
+    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+    memcpy(combined+offset,bundle->source,source_length+1);
+    DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
+    if (!diamond_compile_with_breakpoints(combined, program, &diagnostic)) {
+        print_diagnostic(name,combined,diagnostic,bundle,prelude_length+reset_length);
+        free(combined);
+        diamond_source_bundle_free(bundle);
+        return 65;
+    }
+    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    if (cache_path != nullptr) {
+        diamond_program_write_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: wrote %s\n", cache_path);
+    }
+
+    return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+        script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+        prelude_length+reset_length+source_length, prelude_length, source_length,
+        combined, bundle);
+}
+
+int diamond_run_source_with_program(const char *name, const char *source,
+        bool dump_bytecode, DiamondProgram *program,
+        int script_argc, char *const *script_argv) {
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+    }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    return run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
+        script_argc,script_argv,trace_startup,start_time,loaded_time,
+        nullptr,nullptr);
+}
+
+/* See run_source_from_bundle_program's own comment -- the same split,
+ * for diamond_run_source_with_template. */
+static int run_source_from_bundle_template(const char *name, DiamondSourceBundle *bundle,
+        bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+        int script_argc, char *const *script_argv,
+        bool trace_startup, double start_time, double loaded_time,
+        const char *cache_path, const uint8_t *source_hash) {
+    const size_t source_length=strlen(bundle->source);
+    DiamondDiagnostic diagnostic;
+    diamond_program_free(program);
+    if (!diamond_compile_incremental(bundle->source, program, template, &diagnostic)) {
+        print_diagnostic(name,bundle->source,diagnostic,bundle,0);
+        diamond_source_bundle_free(bundle);
+        return 65;
+    }
+    const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    if (cache_path != nullptr) {
+        diamond_program_write_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: wrote %s\n", cache_path);
+    }
+
+    return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+        script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+        source_length, 0, source_length,
+        nullptr, bundle);
+}
+
+int diamond_run_source_with_template(const char *name, const char *source,
+        bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+        int script_argc, char *const *script_argv) {
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);return 74;
+    }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    return run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
+        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,nullptr);
+}
+
+/* Builds a fresh, independently-owned DiamondProgram from the build-time
+ * #embed'd compiled prelude (src/compiled_prelude_data.c) -- the
+ * diamond_program_read_compiled deserialize is what replaces a live
+ * lex/parse/codegen of the prelude source on every `diamond` CLI
+ * invocation (see CHANGELOG.md's "Performance").
+ * diamond_program_init_fresh, not diamond_program_init: `template` is
+ * freshly calloc'd right here and never reused, so the ordinary
+ * function's own memset would just re-zero memory calloc already
+ * zeroed (see that function's own comment, src/compiler.c) --
+ * read_compiled immediately overwrites every field that matters anyway.
+ * Returns nullptr (never asserts/aborts) if the embedded blob somehow
+ * fails to deserialize -- should never happen for a buffer this same
+ * build's own `make` just generated, but diamond_run_source below falls
+ * back to an ordinary live compile rather than trust that blindly. */
+static DiamondProgram *build_embedded_prelude_template(void) {
+    DiamondProgram *template=calloc(1,sizeof *template);
+    if (template==nullptr) return nullptr;
+    diamond_program_init_fresh(template);
+    if (!diamond_program_read_compiled(diamond_compiled_prelude_data(),
+            diamond_compiled_prelude_size(), template)) {
+        diamond_program_free(template);
+        free(template);
+        return nullptr;
+    }
+    return template;
 }
 
 /* The ordinary entry point (used by the CLI and everything else that
  * only ever runs one program per process): allocates a fresh
- * DiamondProgram and frees it when done. Its function records now grow on
- * demand, but the remaining self-hosting-scale tables still make this worth
- * heap-allocating rather than
- * putting it on the stack, mirroring loader.c's own diamond_load_
- * program (which already heap-allocates one for a required package's
- * manifest for the same reason). A caller running *many* programs in
- * one process (tests/run_cases.c, the batch test runner) should call
- * diamond_run_source_with_program directly instead, with one
- * DiamondProgram reused across every call -- diamond_compile always
- * re-initializes it from scratch via diamond_program_init before
- * compiling, so reuse is safe, and it avoids paying this malloc/free's
- * allocation and initialization cost hundreds of times over. */
+ * DiamondProgram and frees it when done. Loads `bundle` exactly once,
+ * then picks one of two compile strategies depending on whether the
+ * require-expanded source needs JSON:
+ *
+ *   - the common case (no JSON) builds a template from the build-time
+ *     embedded, already-compiled prelude (see
+ *     build_embedded_prelude_template above) and compiles the user
+ *     source alone via diamond_compile_incremental against it, skipping
+ *     the prelude's own lex/parse/codegen entirely;
+ *   - a program that needs JSON (diamond_prelude_needs_json), or the one
+ *     where the embedded blob somehow fails to deserialize, falls back
+ *     to the exact same live diamond_compile-over-prelude+source path
+ *     this function always used before the embedded template existed --
+ *     zero behavior change for that case, since the embedded template
+ *     is always built with JSON included (tools/gen_compiled_prelude.c)
+ *     and would otherwise make a name declared only by lib/core/json.di
+ *     collide with a same-named top-level class/def in a program that
+ *     never even mentions JSON.
+ *
+ * A caller running *many* programs in one process (tests/run_cases.c,
+ * the batch test runner) should call diamond_run_source_with_program or
+ * diamond_run_source_with_template directly instead, with one
+ * DiamondProgram/template reused across every call -- diamond_compile(_
+ * incremental) always re-initializes `program` from scratch before
+ * compiling, so reuse is safe, and it avoids paying this function's own
+ * per-call template-deserialize cost hundreds of times over. */
 int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
         int script_argc, char *const *script_argv) {
     DiamondProgram *program=calloc(1,sizeof *program);
@@ -223,9 +417,151 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
         fprintf(stderr,"diamond: out of memory allocating program\n");
         return 74;
     }
-    const int status=diamond_run_source_with_program(name,source,dump_bytecode,program,
-        script_argc,script_argv);
+    const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
+    const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);
+        free(program);
+        return 74;
+    }
+    const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
+
+    /* A debug session always takes the ordinary live prelude+source
+     * compile below, never the embedded-template fast path:
+     * diamond_compile_with_breakpoints only has a no-template overload
+     * (see its own doc comment, compiler.h), and a debug launch isn't
+     * the startup-time-sensitive case this optimization exists for --
+     * see build_embedded_prelude_template's own comment. dap/main.c's
+     * own breakpoint-position resolution (setBreakpoints) assumes this
+     * exact combined-buffer layout (prelude+reset+bundle source, the
+     * same one run_source_from_bundle_program builds below) whenever it
+     * launches a debuggee, so the two sides must keep agreeing on which
+     * path runs -- forcing it here, unconditionally, is what keeps that
+     * true regardless of diamond_prelude_needs_json.
+     *
+     * Triggered by DIAMOND_DEBUG_BREAKPOINTS *or* DIAMOND_DEBUG_FD being
+     * present, not just the former: a DAP session that starts with zero
+     * breakpoints selected (attach and run first, decide where to break
+     * later -- a real, common workflow) still needs every statement
+     * instrumented with DIAMOND_OP_BREAKPOINT_CHECK, or there would be
+     * nothing for a later live `setBreakpoints` command to arm at all --
+     * see DiamondVm.debug_active_lines's own comment (src/vm.h) and
+     * docs/debugging.md's "live breakpoints" section. dap/main.c already
+     * sets DIAMOND_DEBUG_FD unconditionally for every spawned child, so
+     * this reaches every real DAP session regardless of its initial
+     * breakpoint set; DIAMOND_DEBUG_BREAKPOINTS alone (no DAP client at
+     * all) remains supported too, for direct manual testing. */
+    const bool debug_mode = getenv("DIAMOND_DEBUG_BREAKPOINTS")!=nullptr ||
+        getenv("DIAMOND_DEBUG_FD")!=nullptr;
+
+    /* Bytecode cache (docs/caching.md): only for this auto-dispatch entry
+     * point, never diamond_run_source_with_program/_with_template (those
+     * two are for a caller -- tests/run_cases.c -- running many programs
+     * against one already-loaded template in one process, where a
+     * per-run disk cache buys nothing and risks masking the very
+     * regressions that harness exists to catch). Skipped entirely for
+     * `-e` (diamond_cache_path_for's own nullptr return), a debug
+     * session (must not interfere with dap/main.c's own combined-buffer
+     * assumptions, same reason the embedded-template fast path above is
+     * already skipped for one), and whenever DIAMOND_NO_CACHE is set. */
+    char *cache_path = (!debug_mode && getenv("DIAMOND_NO_CACHE")==nullptr) ?
+        diamond_cache_path_for(name) : nullptr;
+    uint8_t source_hash[32];
+    bool used_cache = false;
+    if (cache_path != nullptr) {
+        diamond_hash_source(bundle.source, source_hash);
+        used_cache = diamond_program_read_cache_file(cache_path, source_hash, program);
+        if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
+            fprintf(stderr, "cache: %s %s\n", used_cache ? "hit" : "miss", cache_path);
+    }
+
+    int status;
+    if (used_cache) {
+        const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
+        const size_t user_bytes=strlen(bundle.source);
+        status=run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
+            script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
+            user_bytes, 0, user_bytes, nullptr, &bundle);
+    } else {
+        DiamondProgram *template=nullptr;
+        if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
+            template=build_embedded_prelude_template();
+
+        if (template != nullptr) {
+            status=run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
+                script_argc,script_argv,trace_startup,start_time,loaded_time,
+                cache_path,source_hash);
+            diamond_program_free(template);
+            free(template);
+        } else {
+            status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
+                script_argc,script_argv,trace_startup,start_time,loaded_time,
+                cache_path,source_hash);
+        }
+    }
+    free(cache_path);
     diamond_program_free(program);
     free(program);
     return status;
+}
+
+/* Compiles `source` the same way diamond_run_source's own auto-dispatch
+ * does (the embedded-prelude-template fast path when the require-
+ * expanded source doesn't need JSON, the ordinary live prelude+source
+ * compile otherwise) -- for a caller (diamond build, src/main.c) that
+ * wants the finished DiamondProgram itself, not a running result. A
+ * deliberately separate function rather than a refactor of
+ * diamond_run_source into a shared "compile" half: that function's own
+ * run_compiled_chunk call needs `combined`/`bundle`/the prelude-vs-user
+ * byte breakdown for DIAMOND_TRACE_STARTUP's own reporting, none of
+ * which a caller that never runs anything needs -- reusing the same
+ * underlying helpers (diamond_load_program, build_embedded_prelude_
+ * template, diamond_prelude_needs_json/length/write, diamond_compile(_
+ * incremental)) keeps the two paths behaviorally identical without
+ * risking diamond_run_source's own already-proven shape. Prints its own
+ * diagnostic on a load/compile failure (print_diagnostic, the same
+ * function run_source_from_bundle_program/_template already call
+ * internally) and returns false -- the caller doesn't need its own
+ * diagnostic-formatting path at all. No debug-breakpoint support (see
+ * diamond_compile_with_breakpoints): a standalone AOT binary has no
+ * DAP client to pause for. */
+bool diamond_compile_source(const char *name, const char *source, DiamondProgram *program) {
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);
+        return false;
+    }
+    DiamondProgram *template=nullptr;
+    if(!diamond_prelude_needs_json(bundle.source))
+        template=build_embedded_prelude_template();
+
+    bool ok;
+    diamond_program_free(program);
+    if(template!=nullptr) {
+        DiamondDiagnostic diagnostic;
+        ok=diamond_compile_incremental(bundle.source,program,template,&diagnostic);
+        if(!ok)print_diagnostic(name,bundle.source,diagnostic,&bundle,0);
+        diamond_program_free(template);free(template);
+    } else {
+        const bool include_json=diamond_prelude_needs_json(bundle.source);
+        const size_t prelude_length=diamond_prelude_length(include_json);
+        const size_t source_length=strlen(bundle.source);
+        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+        char *combined=malloc(prelude_length+reset_length+source_length+1);
+        if(combined==nullptr) {
+            fprintf(stderr,"diamond: out of memory building expanded source\n");
+            diamond_source_bundle_free(&bundle);
+            return false;
+        }
+        size_t offset=diamond_prelude_write(combined,include_json);
+        memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+        memcpy(combined+offset,bundle.source,source_length+1);
+        DiamondDiagnostic diagnostic;
+        ok=diamond_compile(combined,program,&diagnostic);
+        if(!ok)print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
+        free(combined);
+    }
+    diamond_source_bundle_free(&bundle);
+    return ok;
 }

@@ -31,13 +31,9 @@ module ActiveRecord
       query = query.project([target_table.star()])
       rows = query.to_a(db, @target_repository.visitor())
       mapper = @target_repository.mapper()
-      mapped = []
-      index = 0
-      while index < rows.length()
-        mapped.push(mapper(rows[index]))
-        index += 1
+      rows.map() do |row|
+        mapper(row)
       end
-      mapped
     end
 
     # Batch form of #all -- one join query for every owner_id instead of
@@ -58,16 +54,11 @@ module ActiveRecord
       rows = query.to_a(db, @target_repository.visitor())
       mapper = @target_repository.mapper()
       grouped = {}
-      index = 0
-      while index < owner_ids.length()
-        grouped[owner_ids[index]] = []
-        index += 1
+      owner_ids.each() do |owner_id|
+        grouped[owner_id] = []
       end
-      row_index = 0
-      while row_index < rows.length()
-        row = rows[row_index]
+      rows.each() do |row|
         grouped[row[@join_owner_key]].push(mapper(row))
-        row_index += 1
       end
       grouped
     end

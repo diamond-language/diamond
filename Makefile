@@ -1,10 +1,26 @@
+# diamond_run_source's own auto-dispatch (src/run_source.c) caches
+# compiled bytecode next to a script's real on-disk path by default (see
+# docs/caching.md) -- every test-* target here eventually runs the real
+# `diamond` binary against tests/cases/*.di (directly from a shell
+# script, not just through build/run_cases's own diamond_run_source_
+# with_template, which never touches the cache at all regardless). A
+# .dic file left behind in tests/cases/ from one test run could silently
+# serve stale bytecode to a *later* run whose compiler changed in some
+# way the cache's own build fingerprint doesn't happen to catch --
+# exactly the kind of regression this whole test suite exists to catch,
+# so every recipe below always compiles fresh. Harmless for non-test
+# targets (build/link steps never execute the resulting `diamond` binary
+# at all).
+export DIAMOND_NO_CACHE := 1
+
 CC := gcc
 REGINOLD_DIR := reginold
 REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # -I/usr/include/mysql(/mysql): mariadb_config --cflags's own include path
-# for MariaDB Connector/C (libmysqlclient-API-compatible) -- mysql.h isn't
-# installed directly under /usr/include, so an explicit -I is required to
-# find it, on every distro tested so far.
+# for MariaDB Connector/C (libmysqlclient-API-compatible) on Fedora, where
+# libmariadb-devel installs mysql.h under /usr/include/mysql. Debian/Ubuntu's
+# libmariadb-dev instead installs it under /usr/include/mariadb (confirmed
+# against a real Ubuntu 26.04 container) -- hence the third -I below.
 # -I/usr/include/postgresql: libpq-fe.h's location is itself distro-
 # dependent, confirmed the hard way deploying to a real Ubuntu box after
 # every prior build/test of this project happened on Fedora -- Fedora's
@@ -12,18 +28,105 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # was previously believed unnecessary, per this comment's own prior
 # wording), but Debian/Ubuntu's libpq-dev installs it under
 # /usr/include/postgresql instead. Harmless to add unconditionally on
-# distros where it's not needed -- gcc silently ignores a nonexistent -I
-# path -- so there's no reason to special-case this per platform.
+# distros where it's not needed -- gcc/clang silently ignore a nonexistent
+# -I path -- so there's no reason to special-case any of these per platform.
 # -Ilsp: src/repl.c includes lsp/completion.h/json.h directly for
 # Tab-completion (see REPL_COMPLETION_SOURCES below) -- global rather
 # than scoped to just that one file's own compile step, since no
 # src/*.h/lsp/*.h basename collision exists to make that a risk.
+# CPPFLAGS_EXTRA: empty by default, appended below -- same pattern as
+# LDLIBS_EXTRA's own comment further down. Its one real use today: macOS's
+# Homebrew keeps OpenSSL/libpq/MariaDB Connector keg-only (not symlinked
+# into a default search path the way Fedora/Ubuntu's package managers
+# install headers), so those need their Homebrew prefixes passed in
+# explicitly rather than hardcoded here alongside the Linux-distro paths
+# below -- Homebrew's own prefix differs by CPU architecture (/opt/homebrew
+# on Apple Silicon, /usr/local on Intel), so it can't be a fixed path either.
+CPPFLAGS_EXTRA :=
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
-	-I/usr/include/postgresql
+	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA)
+# -fPIE: explicit, not left to the compiler's own default. Fedora/Ubuntu's
+# gcc default to a consistent compile/link PIE pairing either way, so this
+# was invisible there, but Alpine's musl-targeting gcc defaults to `-pie`
+# at link time without defaulting `-fPIE` at compile time -- an object
+# compiled under that mismatched default fails to link at all ("relocation
+# R_X86_64_32 against `.rodata' can not be used when making a PIE object").
+# Forcing -fPIE here makes every object agree regardless of a given
+# toolchain's own default pairing; gcc's own driver adds the matching
+# `-pie` at link time once it sees PIE-compiled objects, no separate
+# LDFLAGS needed. See docs/roadmap.md's "Portability".
 CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
-	-Wstrict-prototypes -Werror=implicit-function-declaration
-CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
+	-Wstrict-prototypes -Werror=implicit-function-declaration -fPIE
+# CC=clang needs debug's own optimization level bumped from -O0 to -O1,
+# GCC doesn't -- see CFLAGS_SANITIZE's own -O1-vs-O0 comment below for the
+# same underlying cause (run_chunk's giant per-opcode-case local set not
+# getting stack-slot-coalesced at -O0). Measured via -fstack-usage: GCC's
+# plain -O0 run_chunk frame is 60,176 bytes, comfortably clear of the
+# depth(5000)/DIAMOND_MAX_CALL_DEPTH=95 guard the comment below describes
+# tripping under GCC's *ASan-instrumented* -O0 build (105,680 bytes/frame)
+# -- but Clang's plain, non-sanitized -O0 frame for the same function is
+# 143,064 bytes, worse than that ASan case, and segfaults past the OS
+# stack limit around 58 native frames, well before the depth-95 guard can
+# trip. Clang's -O1 measures 23,144 bytes/frame (smaller than even GCC's
+# -O0), so only Clang's `debug` build trades away full -O0 variable
+# visibility under a debugger; GCC's is unaffected.
+#
+# Both CFLAGS_DEBUG and CFLAGS_RELEASE below add -march=native on x86_64:
+# with no distro packaging story yet, whoever builds this builds it for
+# themselves, on the machine that's going to run it -- so there's no
+# "built on a faster machine, copied to a different one" case to protect
+# by default, for a debug build any more than a release one. That
+# distinction matters because -native is not just "some missed
+# vectorization on newer CPUs" the way a bytecode VM's non-numeric hot
+# path might suggest -- measured directly (bench/int_arithmetic.di, this
+# repo's own bignum.c, which a plain `-march=x86-64` baseline denies
+# BMI2/ADX): ~3.9s/iter generic vs ~0.5s/iter native, a ~7x difference,
+# not a rounding error. Multi-precision arithmetic leans on BMI2
+# (mulx)/ADX (adcx/adox) far more than "AVX/FMA" alone suggests.
+#
+# Practical minimum supported configuration: x86-64-v3 (AVX2/BMI2/FMA/
+# LZCNT/MOVBE -- roughly 2013 Intel Haswell or 2015 AMD Excavator
+# onward). Below that, the ~7x arithmetic falloff above isn't worth
+# specifically supporting -- but this is a stated policy, not enforced
+# in code: no compile-time or runtime check exists for it, and
+# -march=native already clears this floor on any real CPU still in
+# service, so there's nothing to enforce in the common case. Building
+# for genuinely older hardware by overriding CFLAGS_DEBUG/CFLAGS_RELEASE
+# yourself is possible; it's just unsupported.
+#
+# Anything that deliberately builds on one machine to run the binary
+# on a *different* one -- applications/skindicate.dia's own
+# build_ubuntu.sh cross-build script is the current real example --
+# must override CFLAGS_RELEASE itself rather than rely on the -native
+# default, e.g. `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
+# release`: x86-64-v3 is a named, standardized ISA tier, not one
+# specific CPU's exact feature set -- it recovers the same ~7x win as
+# native for this workload (confirmed directly) without native's "tied
+# to whichever machine happened to compile it" risk of an
+# illegal-instruction crash on a different CPU.
+#
+# -march=native is itself an x86-only flag -- both gcc and clang reject it
+# outright targeting arm64 ("unsupported argument"), which every current
+# GitHub-hosted `macos-*` runner is by default (Apple Silicon). Guarded by
+# UNAME_M rather than assumed, so this stays correct on an arm64 Linux box
+# too, not just macOS. (aarch64's own equivalent, -mcpu=native, is a
+# separate, unmeasured decision -- not made here.)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
+ifeq ($(findstring clang,$(CC)),clang)
+CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG -march=native
+else
+CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG -march=native
+endif
 CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
+else
+ifeq ($(findstring clang,$(CC)),clang)
+CFLAGS_DEBUG := -O1 -g3 -DDIAMOND_DEBUG
+else
+CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
+endif
+CFLAGS_RELEASE := -O3 -DNDEBUG
+endif
 # -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line
 # function whose giant opcode switch declares its own locals (registers,
 # per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
@@ -39,8 +142,9 @@ CFLAGS_RELEASE := -O3 -DNDEBUG -march=native
 # smaller) while keeping ASan/UBSan instrumentation and frame pointers
 # (-fno-omit-frame-pointer) fully intact for readable backtraces; some
 # locals may show "optimized out" under gdb, an accepted tradeoff scoped
-# to this diagnostic build only -- `debug` stays -O0 for full
-# variable visibility.
+# to this diagnostic build only -- GCC's `debug` stays -O0 for full
+# variable visibility (Clang's own `debug` build needs the same -O1
+# bump for a different reason -- see CFLAGS_DEBUG above).
 CFLAGS_SANITIZE := -O1 -g3 -DDIAMOND_DEBUG -fsanitize=address,undefined \
 	-fno-omit-frame-pointer
 LDFLAGS_SANITIZE := -fsanitize=address,undefined
@@ -49,7 +153,42 @@ LDFLAGS_SANITIZE := -fsanitize=address,undefined
 # addition to CFLAGS_SANITIZE -- see docs/threads.md and tests/tsan_test.sh.
 CFLAGS_TSAN := $(CFLAGS_DEBUG) -fsanitize=thread
 LDFLAGS_TSAN := -fsanitize=thread
-LDLIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz
+# LDLIBS_EXTRA: empty by default, appended into LDLIBS below so every
+# target that already links against $(LDLIBS) (there's no separate list
+# to keep in sync) picks up a platform-specific addition without any
+# other change. Its one real use today: `make LDLIBS_EXTRA=-lucontext`
+# on musl (Alpine), whose shipped libc.so declares ucontext_t/
+# swapcontext/getcontext/makecontext in its headers but doesn't
+# implement them at all -- libucontext (`apk add libucontext-dev`)
+# provides all four under their standard names. Never needed on
+# glibc (Fedora/Ubuntu), which implements them natively -- see
+# docs/portability.md.
+LDLIBS_EXTRA :=
+# LDLIBS_DL/LDLIBS_CRYPT: default to Linux's real separate libraries, but
+# each is its own overridable variable (not folded into the fixed list
+# below) because macOS's libSystem provides both dlopen/dlsym and crypt()
+# directly with no matching libdl.dylib/libcrypt.dylib to link against --
+# `-ldl`/`-lcrypt` fail there with "library not found", unlike a merely
+# redundant -I path, so these need to be droppable (`make LDLIBS_DL=
+# LDLIBS_CRYPT=`), not just appended to.
+LDLIBS_DL := -ldl
+LDLIBS_CRYPT := -lcrypt
+# LDFLAGS_EXTRA: same _EXTRA pattern as CPPFLAGS_EXTRA above, for the
+# matching -L search path macOS's keg-only Homebrew and FreeBSD's ports
+# OpenSSL/libpq/MariaDB Connector both need alongside CPPFLAGS_EXTRA's -I
+# one (confirmed necessary on FreeBSD directly: linking failed with
+# "unable to find library -lsqlite3/-lpq/-lmariadb", all three ports-
+# installed under /usr/local/lib, not a default linker search path).
+# Prepended into LDLIBS itself, not left as a separate $(LDFLAGS) most
+# recipes below don't even reference -- only the final `diamond` binary
+# and the API test binaries link with $(LDFLAGS); every tool/test target
+# (gen_compiled_prelude and everything past it) links with $(LDLIBS)
+# alone, so that's the one variable guaranteed to reach all of them.
+# -L flags ahead of the -l flags that need them is all linker ordering
+# requires; where they physically appear in $(LDLIBS) doesn't matter.
+LDFLAGS_EXTRA :=
+LDFLAGS := $(LDFLAGS_EXTRA)
+LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -84,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-repl test-repl-completion fuzz test-fuzz clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -122,7 +261,7 @@ $(BUILD_DIR)/lsp-%.o: lsp/%.c
 # built, and needs run_cases to match (see docs/roadmap.md for why this
 # exists: running every tests/cases/*.di case in this one process
 # instead of tests/run.sh spawning a fresh `diamond` per case).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB)
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -132,8 +271,23 @@ test: debug
 test-release: release
 	bash tests/run.sh
 
+# $${VAR:-default}, not a bare VAR=value prefix: a bare prefix always
+# wins over anything the caller already exported, which used to
+# silently defeat CI's own ASAN_OPTIONS=detect_leaks=0 (see ci.yml) --
+# set globally there specifically because LeakSanitizer's ptrace-based
+# scan is unreliable under GitHub's container runners. Worth fixing on
+# its own merits regardless of the retry loop below: falls back to
+# detect_leaks=1 only when the caller hasn't set ASAN_OPTIONS at all,
+# preserving real leak detection for a local `make test-sanitize`.
+#
+# The retry remains for runner-level flakes outside the corpus (network probes
+# and timing checks) which can still fail transiently in hosted CI.
 test-sanitize: sanitize
-	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 bash tests/run.sh
+	for attempt in 1 2; do \
+		ASAN_OPTIONS="$${ASAN_OPTIONS:-detect_leaks=1}" UBSAN_OPTIONS="$${UBSAN_OPTIONS:-print_stacktrace=1}" bash tests/run.sh && exit 0; \
+		if [ "$$attempt" = "1" ]; then echo "test-sanitize: attempt 1 failed; retrying once (see this target's own comment)" >&2; fi; \
+	done; \
+	exit 1
 
 test-tsan: tsan
 	bash tests/tsan_test.sh
@@ -147,14 +301,75 @@ test-tsan: tsan
 # that would otherwise see repl.c's unused-by-them references to it.
 API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 
-$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB)
+# Build-time embedded prelude snapshot (docs/roadmap.md's "Make programs
+# start faster"): src/compiled_prelude_data.c's own #embed points at
+# this generated .bin, not a checked-in source file, so (unlike
+# src/prelude.c's lib/*.di #embeds) nothing here is tracked by a `.c`
+# file's own mtime -- every target below that compiles
+# src/compiled_prelude_data.c as one of $(API_SOURCES) needs
+# $(PRELUDE_BIN) listed as an explicit (order-only) prerequisite of its
+# own, or a clean build would try to #embed a file that doesn't exist
+# yet. GEN_PRELUDE_SOURCES excludes compiled_prelude_data.c itself from
+# the generator's own link: gen_compiled_prelude doesn't need the
+# embedded blob (it's what *produces* it), and linking it back in would
+# make $(PRELUDE_BIN) depend on its own prior output. src/run_source.c
+# is excluded too -- its own diamond_run_source now calls
+# diamond_compiled_prelude_data/_size (src/compiled_prelude_data.c), so
+# linking it here would reintroduce the same cycle one level removed;
+# nothing the generator needs (diamond_compile,
+# diamond_program_write_compiled, diamond_prelude_*) lives in
+# run_source.c anyway.
+PRELUDE_BIN := $(BUILD_DIR)/compiled_prelude.bin
+GEN_PRELUDE_SOURCES := $(filter-out src/compiled_prelude_data.c src/run_source.c,$(API_SOURCES))
+
+$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) $(REGINOLD_LIB)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_PRELUDE_SOURCES) $< $(LDLIBS) -o $@
+
+$(PRELUDE_BIN): $(BUILD_DIR)/gen_compiled_prelude
+	$(BUILD_DIR)/gen_compiled_prelude $@
+
+# Normal (not order-only) prerequisite: -MMD -MP's own generated .d file
+# for this object (once it exists) already tracks $(PRELUDE_BIN) as a
+# dependency via its #embed, exactly like every other src/%.o already
+# tracks its own #include'd headers -- this line only matters for the
+# very first build, before that .d file exists yet.
+$(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+$(BUILD_DIR)/compiled_prelude_test: tests/compiled_prelude_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+
+test-compiled-prelude: $(BUILD_DIR)/compiled_prelude_test
+	$(BUILD_DIR)/compiled_prelude_test
+
+$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
 
-$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB)
+# tools/semver.c is deliberately standalone -- no Diamond compiler/VM
+# dependency at all (see its own header comment), so this doesn't link
+# $(API_SOURCES)/$(REGINOLD_LIB) the way every other tools/tests target
+# above does. -Itools (not folded into the global CPPFLAGS) is scoped to
+# just this one rule since nothing else needs tools/semver.h.
+$(BUILD_DIR)/semver_test: tests/semver_test.c tools/semver.c tools/semver.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Itools $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tools/semver.c $< -o $@
+
+test-semver: $(BUILD_DIR)/semver_test
+	$(BUILD_DIR)/semver_test
+
+$(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+
+test-incremental-compile: $(BUILD_DIR)/incremental_compile_test
+	$(BUILD_DIR)/incremental_compile_test
+
+$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -162,7 +377,7 @@ test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
 
 $(BUILD_DIR)/repl_completion_test: tests/repl_completion_test.c src/repl.c \
-		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB)
+		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/repl.c $(API_SOURCES) \
 		$(REPL_COMPLETION_SOURCES) $< $(LDLIBS) -o $@
@@ -174,7 +389,7 @@ test-fiber-guards: test-fibers
 
 test-fiber-context: test-fibers
 
-$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
 
@@ -199,9 +414,9 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-$(BUILD_DIR)/facet: tools/facet.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/facet: tools/facet.c tools/semver.c tools/semver.h $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) tools/semver.c $< $(LDLIBS) -o $@
 
 facet: $(BUILD_DIR)/facet
 
@@ -268,19 +483,70 @@ test-active-tagging-package: $(TARGET)
 test-active-discussion-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/active_discussion/test.sh
 
+test-jobs-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/jobs/test.sh
+
 test-pheint-application: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash applications/pheint.dia/test.sh
 
 LSP_SOURCES := $(wildcard lsp/*.c)
 
-$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(LSP_SOURCES) $(LDLIBS) -o $@
 
 lsp: $(BUILD_DIR)/diamond-lsp
 
-test-lsp: $(BUILD_DIR)/diamond-lsp
+$(BUILD_DIR)/receiver_test: tests/receiver_test.c lsp/receiver.c lsp/compile_buffer.c \
+		$(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) \
+		lsp/receiver.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
+
+test-receiver: $(BUILD_DIR)/receiver_test
+	$(BUILD_DIR)/receiver_test
+
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test
+	$(BUILD_DIR)/receiver_test
 	bash tests/lsp_test.sh
+
+DAP_SOURCES := $(wildcard dap/*.c)
+# Only json.c/rpc.c, not the rest of $(LSP_SOURCES): diamond-dap needs the
+# same Content-Length-framed JSON transport diamond-lsp uses (both for its
+# DAP-client-facing stdio and for the VM control-channel socket, see
+# dap/main.c's own top comment), but none of the LSP-specific document/
+# completion/hover/etc. handlers, and definitely not lsp/main.c's own
+# main() (which would collide with this binary's own).
+DAP_JSON_SOURCES := lsp/json.c lsp/rpc.c
+
+$(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(DAP_JSON_SOURCES) $(DAP_SOURCES) $(LDLIBS) -o $@
+
+dap: $(BUILD_DIR)/diamond-dap
+
+test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/dap_test.sh
+
+# `diamond build` (src/main.c's own "build" subcommand) invokes this to
+# link a user's already-compiled program into a standalone executable --
+# AOT_EMBED is a generated .c file (following src/compiled_prelude_
+# data.c's own #embed-plus-accessor-function shape, see tools/aot_
+# runtime_main.c's own top comment) that diamond build writes to a temp
+# path per invocation, never checked in. $(API_SOURCES) from raw source
+# (not precompiled .o), same as diamond-lsp/diamond-dap just above --
+# already the proven pattern for "link a standalone binary against the
+# same sources diamond itself uses, minus main.c/repl.c" in this
+# Makefile, not something new here. -O2/-g0: this is a release artifact
+# someone else runs, not a debug build of Diamond itself.
+AOT_EMBED ?=
+AOT_OUTPUT ?= $(BUILD_DIR)/a.out
+
+.PHONY: aot-build
+aot-build:
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) -O2 -g0 \
+	    $(AOT_EMBED) tools/aot_runtime_main.c $(API_SOURCES) \
+	    $(REGINOLD_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
 
 test-repl: debug
 	bash tests/repl_test.sh
@@ -288,11 +554,21 @@ test-repl: debug
 test-exit: debug
 	bash tests/exit_test.sh
 
-$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
+test-cache: debug
+	# The Makefile-wide DIAMOND_NO_CACHE=1 export above exists specifically
+	# to protect every *other* test target from this feature -- this one
+	# is the exception, since it exercises the caching itself and needs it
+	# genuinely enabled. env -u, not DIAMOND_NO_CACHE= : an empty value is
+	# still a "set" env var as far as getenv() is concerned (see src/run_
+	# source.c's own presence-only check), so only actually unsetting it
+	# turns caching back on for this one recipe.
+	env -u DIAMOND_NO_CACHE bash tests/cache_test.sh
+
+$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
-$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
 
@@ -330,6 +606,9 @@ test-all:
 	$(MAKE) clean
 	$(MAKE) test-tsan
 	$(MAKE) test-api
+	$(MAKE) test-semver
+	$(MAKE) test-incremental-compile
+	$(MAKE) test-compiled-prelude
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-guards
 	$(MAKE) test-fiber-run
@@ -360,11 +639,14 @@ test-all:
 	$(MAKE) test-active-social-package
 	$(MAKE) test-active-tagging-package
 	$(MAKE) test-active-discussion-package
+	$(MAKE) test-jobs-package
 	$(MAKE) test-pheint-application
 	$(MAKE) test-lsp
+	$(MAKE) test-dap
 	$(MAKE) test-repl
 	$(MAKE) test-repl-completion
 	$(MAKE) test-exit
+	$(MAKE) test-cache
 	$(MAKE) test-fuzz
 	$(MAKE) test-self-host-smoke
 

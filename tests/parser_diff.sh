@@ -61,10 +61,16 @@ trap - EXIT
 
 echo "require-depth differential case passed"
 
+# DIAMOND_MAX_LOADED_FILES (src/loader.h) -- 400 as of the packages/
+# websocket work; this fixture needs to exceed whatever that constant
+# currently is, not just this test's own memory of an old value. See
+# tests/run.sh's own identical fixture and comment -- this is that same
+# check's self-hosted-differential sibling, which drifted out of sync
+# with it (still using the old 128) when the constant was raised.
 files_dir="$(mktemp -d)"
 trap 'rm -rf "$files_dir"' EXIT
 : >"$files_dir/main.di"
-for file_index in $(seq 0 127); do
+for file_index in $(seq 0 407); do
     printf '42\n' >"$files_dir/f$file_index.di"
     printf 'require "f%s"\n' "$file_index" >>"$files_dir/main.di"
 done

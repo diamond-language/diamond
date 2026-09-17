@@ -34,7 +34,6 @@ module ActiveAuth
     attr_accessor account_id, token: String, csrf_token: String, user_agent, ip_address, expires_at
 
     def self.duration_seconds() = 2592000 # 30 days
-    def self.token_prefix() = "sha256:"
     def self.default_cookie_name() = "session_token"
 
     def initialize(attributes: Hash = {})
@@ -55,8 +54,6 @@ module ActiveAuth
       @@repository = repository
     end
 
-    def self.fingerprint(raw: String) -> String = "#{Session.token_prefix()}#{Digest.sha256(raw)}"
-
     def expired?() -> Bool = @expires_at <= Time.now().to_i()
 
     def account(db) = self.belongs_to(Account.repository()).get(db, @account_id)
@@ -66,7 +63,7 @@ module ActiveAuth
     # nothing else ever sees it again.
     def self.issue(db, account_id, user_agent = nil, ip_address = nil)
       raw = SecureRandom.hex(32)
-      session = Session.new({"account_id": account_id, "token": Session.fingerprint(raw),
+      session = Session.new({"account_id": account_id, "token": TokenSupport.fingerprint(raw),
         "csrf_token": SecureRandom.hex(32), "user_agent": user_agent, "ip_address": ip_address,
         "expires_at": Time.now().to_i() + Session.duration_seconds()})
       session.save(db)
@@ -78,11 +75,11 @@ module ActiveAuth
     # non-expired session -- matching the Ruby original's own three
     # guard conditions in `self.from_token`.
     def self.from_token(db, raw)
-      if raw == nil || raw == "" || raw.length() >= 7 && raw.slice(0, 7) == Session.token_prefix()
+      if TokenSupport.rejected_lookup?(raw)
         return nil
       end
       table = Arel.table("sessions")
-      predicate = table.column("token").in_list([Session.fingerprint(raw), raw]).and_also(
+      predicate = table.column("token").in_list([TokenSupport.fingerprint(raw), raw]).and_also(
         table.column("expires_at").gt(Time.now().to_i()))
       rows = Arel.from(table).where(predicate).take(1).to_a(db)
       if rows.length() == 0 then nil else build_session(rows[0]) end

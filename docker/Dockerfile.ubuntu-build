@@ -1,0 +1,26 @@
+# Ubuntu 26.04 build environment for cross-building a `diamond build`
+# (docs/deployment.md) AOT binary somewhere that isn't Ubuntu itself
+# (Fedora, in particular) so the *link* target is Ubuntu 26.04's own
+# glibc/OpenSSL/SQLite3/libpq/MariaDB Connector versions, not the build
+# machine's -- see docs/deployment.md's own "cross-building for a
+# different target distro" section for why this matters (glibc is
+# backward- but not forward-compatible, so a binary built on a newer
+# glibc than the deploy target simply won't run there).
+#
+# Deliberately no source baked in here at all -- this image is just the
+# OS plus the exact toolchain/library packages README.md's own "On
+# Ubuntu" section already documents, built once and reused for every
+# cross-build. The actual source (whatever's currently checked out,
+# including uncommitted changes) is bind-mounted in and copied into the
+# container's own writable layer at *run* time by whatever script uses
+# this image (see skindicate.dia/build_ubuntu.sh for the reference
+# shape) -- never baked into the image itself, so this Dockerfile never
+# needs rebuilding just because source changed.
+FROM ubuntu:26.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git ca-certificates \
+    libssl-dev libsqlite3-dev libpq-dev \
+    libmariadb-dev libmariadb-dev-compat \
+    libcrypt-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*

@@ -3,7 +3,8 @@
 Syntax highlighting for `.di` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
 built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
 from or dependent on any other language's grammar — plus live diagnostics
-from `diamond-lsp` (`lsp/`, `docs/lsp.md`). No compiled code, no
+from `diamond-lsp` (`lsp/`, `docs/lsp.md`) and gutter-breakpoint debugging
+via `diamond-dap` (`dap/`, `docs/debugging.md`). No compiled code, no
 `node_modules`, no build step: `package.json` + `language-configuration.json`
 + the grammar file + `extension.js` are the entire extension. `extension.js`
 is a small hand-rolled LSP client (spawns `diamond-lsp`, frames
@@ -11,7 +12,10 @@ is a small hand-rolled LSP client (spawns `diamond-lsp`, frames
 than a dependency on `vscode-languageclient` — matching `lsp/`'s own
 from-scratch, zero-external-dependency convention, and meaning there's
 nothing to `npm install` on either side: VS Code's extension host already
-bundles Node.
+bundles Node. The debugger integration needs even less of its own code:
+`diamond-dap` already speaks real DAP, so the extension only registers a
+`DebugAdapterDescriptorFactory` telling VS Code which binary to spawn —
+VS Code's own built-in debug UI and protocol handling do the rest.
 
 ## Diagnostics, hover, go-to-definition, outline, completion, and
 ## workspace symbol search
@@ -46,6 +50,31 @@ error notification with the attempted path; server stderr and lifecycle
 events are logged to the "Diamond Language Server" output channel. The
 `Diamond: Restart Language Server` command restarts it without reloading
 the whole window — useful after rebuilding `diamond-lsp`.
+
+## Debugging (`dap/`)
+
+1. Build the debug adapter: `make dap` (from the repo root). This produces
+   `build/diamond-dap`, plus make sure `build/diamond` itself (or whatever
+   `diamond` binary you want debuggee programs actually run under) is
+   built and either on `PATH` or set via `DIAMOND_BIN` in your own shell
+   profile -- `diamond-dap` execvp's it to run each debuggee.
+2. Either put `diamond-dap` on your `PATH`, or set `diamond.debugAdapterPath`
+   in VS Code settings to its absolute path, the same way
+   `diamond.languageServerPath` works for the language server above.
+3. Open a `.di` file, set a gutter breakpoint on any line with a real
+   statement on it, then Run & Debug ("Debug Diamond File" from the
+   dropdown, or F5). Diamond has no live breakpoint/stepping support yet
+   (see `docs/debugging.md`): every breakpoint is compiled in up front,
+   so changing one means stopping and restarting the session, and
+   Continue is the only resume command -- there is no step-over/into/out.
+   The Debug Console shows the debuggee's own stdout/stderr; the Variables
+   pane shows locals only for the innermost, currently-paused frame (an
+   outer call-stack frame shows no locals in v1).
+4. A `launch.json` entry needs `"type": "diamond"`, `"request": "launch"`,
+   and `"program"` (an absolute path, `${file}` for whichever `.di` file is
+   focused); `"args"` and `"cwd"` are optional. The debug adapter fills in
+   a minimal one via `initialConfigurations` if you Run & Debug with no
+   `launch.json` at all yet.
 
 ## `.div` templates (`packages/div`)
 

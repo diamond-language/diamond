@@ -77,9 +77,14 @@ already uses). `.execute`/`.query`/`.prepare`/`.last_insert_row_id`/
 methods use:
 
 - `.execute(sql)` / `.execute(sql, params)` prepares and runs one
-  statement, discarding any rows it produces, and returns the number of
-  rows it changed (`sqlite3_changes`) as an `Int` — the useful return
-  value for `INSERT`/`UPDATE`/`DELETE`/DDL.
+  statement and returns the number of rows it changed (`sqlite3_changes`)
+  as an `Int` — the useful return value for `INSERT`/`UPDATE`/`DELETE`/DDL.
+  A query-shaped statement (a `SELECT`, or anything else that produces a
+  result set) raises `TypeError` instead of silently discarding its rows
+  and returning an unrelated leftover change-count — use `.query` for
+  those. `PRAGMA` set-statements (`journal_mode`, `busy_timeout`, ...)
+  are exempt, since SQLite legitimately echoes their new value back as a
+  one-row result even though they're a settings change, not a read.
 - `.query(sql)` / `.query(sql, params)` prepares and runs one statement,
   collecting every row into `Array[Hash]` (column name → typed value).
 - `.prepare(sql)` compiles `sql` once and returns a reusable `Statement`
@@ -339,7 +344,11 @@ An Arel dialect visitor for MySQL now exists --
 `Arel::MySQLVisitor` (`packages/arel/lib/arel/mysql_visitor.di`), verified against a
 live MySQL 8 server (`packages/arel/README.md`,
 `packages/arel/ROADMAP.md`) -- reusing this driver unchanged, since it
-was never MariaDB-specific at the native layer. Still out of scope for
+was never MariaDB-specific at the native layer. MariaDB gets its own
+`Arel::MariaDBVisitor` (`packages/arel/lib/arel/mariadb_visitor.di`),
+not a `MySQLVisitor` alias: it diverges enough (MariaDB-only `RETURNING`,
+different upsert and pagination rendering) to need real per-statement
+overrides, verified against a live MariaDB 11 server. Still out of scope for
 this driver, deliberately, for the same reasons `PostgreSQL`'s own scope
 cuts are: connection pooling and `unix_socket`/`CLIENT_MULTI_STATEMENTS`
 connection options.

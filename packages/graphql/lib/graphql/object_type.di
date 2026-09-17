@@ -32,15 +32,9 @@ module GraphQL
     # nil if this type has no field by that name -- the executor's own
     # field-lookup-by-selection-name uses this.
     def field_named(field_name)
-      index = 0
-      found = nil
-      while index < @fields.length() && found == nil
-        if @fields[index].name() == field_name
-          found = @fields[index]
-        end
-        index += 1
+      @fields.find() do |field|
+        field.name() == field_name
       end
-      found
     end
   end
 

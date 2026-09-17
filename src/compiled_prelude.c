@@ -1,0 +1,582 @@
+/* Serializes/deserializes an already-compiled DiamondProgram as a flat,
+ * same-build-only binary blob -- not a portable format (no versioning,
+ * no endianness handling, struct layouts dumped exactly as this build's
+ * own compiler laid them out), the same way an object file isn't
+ * portable across a different compiler/architecture either. Generated
+ * by tools/gen_compiled_prelude.c (a build-time-only tool, never linked
+ * into `diamond` itself) and consumed by src/compiled_prelude_data.c's
+ * `#embed`ded bytes, both compiled by the exact same `make` invocation
+ * -- there is no cross-version compatibility question to answer here,
+ * only "does this build's own writer and this build's own reader agree,"
+ * which is automatic by construction.
+ *
+ * Why a raw dump of DiamondFunction/DiamondClass/DiamondInterface/
+ * DiamondModule is safe at all, despite those structs containing
+ * pointers: every dynamic array pointer (DiamondFunction.code/lines/
+ * columns/constants/strings/type_sets) is written and read back as its
+ * own explicit, length-prefixed byte range right after the owning
+ * struct -- diamond_program_read_compiled reconstructs each one via
+ * diamond_function_copy (the same deep-copy clone_program_from_chunk,
+ * src/vm.c, already uses for Thread.new's own cross-heap program clone),
+ * never by trusting a raw pointer value read from the file.
+ *
+ * classes[]/interfaces[]/modules[] are each written field-by-field
+ * (write_class/write_module/write_interface below) rather than as a
+ * single fixed-size struct dump: DiamondClass/DiamondModule's own
+ * methods[DIAMOND_MAX_METHODS=256]/singleton_methods[256] arrays (and
+ * DiamondInterface's own methods[256]) are sized for a program far
+ * larger than the prelude ever populates, so writing only the actual
+ * method_count/singleton_method_count entries (same "count before the
+ * variable-length tail" shape as write_function's own dynamic arrays
+ * above) is what keeps this format from ballooning back out to
+ * something close to raw sizeof(DiamondProgram). DiamondMethod itself
+ * has two pointers (source_chunk/bound_values),
+ * but per its own comment (src/vm.h) both are non-null *only* for a
+ * method installed at runtime via ClassName.compile_method/
+ * .define_method, which the prelude's own source never does to itself
+ * -- checked directly below (assert_methods_are_plain), not assumed.
+ * DiamondClass.shapes[].class (a self-referential pointer) is never
+ * written -- the raw bytes a write/read round-trip would carry over
+ * point at the *original* program's own classes[] array, not `out`'s;
+ * diamond_program_read_compiled's own tail calls diamond_program_
+ * recompute_shapes (src/compiler.h) explicitly instead of relying on a
+ * later compile pass to fix it up the way an ordinary diamond_compile(_
+ * incremental) call's own run_compile_pass tail already does for a
+ * freshly-compiled program (template-seeded classes included) -- a
+ * caller that only ever deserializes an already-fully-compiled program,
+ * never compiling anything further against it, has no such later pass
+ * to rely on. Confirmed directly, not assumed: a user-defined class's
+ * own instance-variable reads returned Nil without this. */
+
+/* See bignum.c's own identical comment: needed transitively for vm.h's
+ * <ucontext.h> use (via compiler.h), only under musl (docs/roadmap.md's
+ * "Portability"). */
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
+#include "compiled_prelude.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static bool write_all(FILE *file, const void *data, size_t size) {
+    return size == 0 || fwrite(data, 1, size, file) == size;
+}
+
+static bool write_function(FILE *file, const DiamondFunction *function) {
+    if (!write_all(file, function, sizeof *function)) return false;
+    if (!write_all(file, function->code, function->code_count * sizeof *function->code)) return false;
+    if (!write_all(file, function->lines, function->code_count * sizeof *function->lines)) return false;
+    if (!write_all(file, function->columns, function->code_count * sizeof *function->columns)) return false;
+    if (!write_all(file, function->constants, function->constant_count * sizeof *function->constants)) return false;
+    if (!write_all(file, function->strings, function->string_count * sizeof *function->strings)) return false;
+    if (!write_all(file, function->type_sets, function->type_set_count * sizeof *function->type_sets)) return false;
+    return true;
+}
+
+/* See this file's own top comment on exactly why this must always hold
+ * for a program compiled from plain source (never through
+ * ClassName.compile_method/.define_method) -- an assertion, not
+ * something the format works around, since a program where it doesn't
+ * hold isn't safe to dump this way at all. */
+static void assert_methods_are_plain(const DiamondMethod *methods, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        assert(methods[index].source_chunk == nullptr);
+        assert(methods[index].bound_values == nullptr);
+        assert(methods[index].bound_value_count == 0);
+    }
+    (void)methods; (void)count; /* silence unused-parameter in an NDEBUG build */
+}
+
+/* Writes only the *used* prefix of a class's own methods[]/
+ * singleton_methods[]/fields[]/class_variables[] (each up to
+ * DIAMOND_MAX_METHODS=256 or DIAMOND_MAX_FIELDS=64 slots, almost all
+ * unused for any one class) -- see this file's own top comment. shapes[]
+ * is never written: always safely recomputed on the read side before
+ * anything reads it. */
+static bool write_class(FILE *file, const DiamondClass *class) {
+    if (!write_all(file, class->name, sizeof class->name)) return false;
+    if (!write_all(file, &class->declaration_line, sizeof class->declaration_line)) return false;
+    if (!write_all(file, &class->declaration_column, sizeof class->declaration_column)) return false;
+    if (!write_all(file, &class->declaration_start, sizeof class->declaration_start)) return false;
+    if (!write_all(file, &class->superclass, sizeof class->superclass)) return false;
+
+    const uint64_t method_count = (uint64_t)class->method_count;
+    const uint64_t singleton_method_count = (uint64_t)class->singleton_method_count;
+    if (!write_all(file, &method_count, sizeof method_count)) return false;
+    if (!write_all(file, &singleton_method_count, sizeof singleton_method_count)) return false;
+    if (!write_all(file, class->methods, (size_t)method_count * sizeof class->methods[0])) return false;
+    if (!write_all(file, class->singleton_methods,
+            (size_t)singleton_method_count * sizeof class->singleton_methods[0])) return false;
+
+    const uint64_t field_count = (uint64_t)class->field_count;
+    if (!write_all(file, &field_count, sizeof field_count)) return false;
+    if (!write_all(file, class->fields, (size_t)field_count * sizeof class->fields[0])) return false;
+    if (!write_all(file, class->field_type_status, (size_t)field_count * sizeof class->field_type_status[0])) return false;
+    if (!write_all(file, class->field_known_class, (size_t)field_count * sizeof class->field_known_class[0])) return false;
+
+    const uint64_t class_variable_count = (uint64_t)class->class_variable_count;
+    if (!write_all(file, &class_variable_count, sizeof class_variable_count)) return false;
+    if (!write_all(file, class->class_variables,
+            (size_t)class_variable_count * sizeof class->class_variables[0])) return false;
+
+    if (!write_all(file, &class->declared_by_discovery, sizeof class->declared_by_discovery)) return false;
+    return true;
+}
+
+/* Same trimming as write_class, for DiamondModule's own methods[]/
+ * singleton_methods[]/fields[]. */
+static bool write_module(FILE *file, const DiamondModule *module) {
+    if (!write_all(file, module->name, sizeof module->name)) return false;
+    if (!write_all(file, &module->declaration_line, sizeof module->declaration_line)) return false;
+    if (!write_all(file, &module->declaration_column, sizeof module->declaration_column)) return false;
+    if (!write_all(file, &module->declaration_start, sizeof module->declaration_start)) return false;
+
+    const uint64_t method_count = (uint64_t)module->method_count;
+    const uint64_t singleton_method_count = (uint64_t)module->singleton_method_count;
+    if (!write_all(file, &method_count, sizeof method_count)) return false;
+    if (!write_all(file, &singleton_method_count, sizeof singleton_method_count)) return false;
+    if (!write_all(file, module->methods, (size_t)method_count * sizeof module->methods[0])) return false;
+    if (!write_all(file, module->singleton_methods,
+            (size_t)singleton_method_count * sizeof module->singleton_methods[0])) return false;
+
+    if (!write_all(file, &module->next_singleton_claim, sizeof module->next_singleton_claim)) return false;
+
+    const uint64_t field_count = (uint64_t)module->field_count;
+    if (!write_all(file, &field_count, sizeof field_count)) return false;
+    if (!write_all(file, module->fields, (size_t)field_count * sizeof module->fields[0])) return false;
+
+    if (!write_all(file, &module->declared_by_discovery, sizeof module->declared_by_discovery)) return false;
+    return true;
+}
+
+/* Same trimming as write_class, for DiamondInterface's own methods[].
+ * type_sets is a pointer -- never written, fixed up on the read side
+ * exactly like diamond_program_read_compiled's own tail already does
+ * for a whole-array dump. */
+static bool write_interface(FILE *file, const DiamondInterface *interface) {
+    if (!write_all(file, interface->name, sizeof interface->name)) return false;
+    if (!write_all(file, &interface->declaration_line, sizeof interface->declaration_line)) return false;
+    if (!write_all(file, &interface->declaration_column, sizeof interface->declaration_column)) return false;
+    if (!write_all(file, &interface->declaration_start, sizeof interface->declaration_start)) return false;
+
+    const uint64_t method_count = (uint64_t)interface->method_count;
+    if (!write_all(file, &method_count, sizeof method_count)) return false;
+    if (!write_all(file, interface->methods, (size_t)method_count * sizeof interface->methods[0])) return false;
+
+    if (!write_all(file, &interface->declared_by_discovery, sizeof interface->declared_by_discovery)) return false;
+    return true;
+}
+
+bool diamond_program_write_compiled(const DiamondProgram *program, FILE *file) {
+    if (!write_function(file, &program->entry)) return false;
+
+    const uint64_t function_count = (uint64_t)program->function_count;
+    if (!write_all(file, &function_count, sizeof function_count)) return false;
+    for (size_t index = 0; index < program->function_count; index++)
+        if (!write_function(file, program->functions[index])) return false;
+
+    for (size_t index = 0; index < program->class_count; index++) {
+        assert_methods_are_plain(program->classes[index].methods,
+            program->classes[index].method_count);
+        assert_methods_are_plain(program->classes[index].singleton_methods,
+            program->classes[index].singleton_method_count);
+    }
+    for (size_t index = 0; index < program->module_count; index++) {
+        assert_methods_are_plain(program->modules[index].methods,
+            program->modules[index].method_count);
+        assert_methods_are_plain(program->modules[index].singleton_methods,
+            program->modules[index].singleton_method_count);
+    }
+
+    /* Counts before arrays, not after: only the *used* prefix of each
+     * fixed-size table is written (class_count entries out of
+     * DIAMOND_MAX_CLASSES=180, not all 180 -- the prelude only ever
+     * populates ~23), so the reader needs each count in hand before it
+     * knows how many bytes to expect. The unused suffix doesn't need
+     * writing at all: diamond_program_init/calloc already zero it on
+     * the reading side, exactly matching what an unused slot already
+     * looks like in a freshly compiled program. Shrinks the serialized
+     * form from a full ~14MB DiamondProgram-shaped dump (dominated by
+     * 180-slot method tables sized for a program far larger than the
+     * prelude) down to roughly what's actually declared. */
+    const uint64_t class_count = (uint64_t)program->class_count;
+    const uint64_t interface_count = (uint64_t)program->interface_count;
+    const uint64_t module_count = (uint64_t)program->module_count;
+    const uint64_t namespace_constant_count = (uint64_t)program->namespace_constant_count;
+    if (!write_all(file, &class_count, sizeof class_count)) return false;
+    if (!write_all(file, &interface_count, sizeof interface_count)) return false;
+    if (!write_all(file, &module_count, sizeof module_count)) return false;
+    if (!write_all(file, &namespace_constant_count, sizeof namespace_constant_count)) return false;
+
+    for (size_t index = 0; index < program->class_count; index++)
+        if (!write_class(file, &program->classes[index])) return false;
+    for (size_t index = 0; index < program->interface_count; index++)
+        if (!write_interface(file, &program->interfaces[index])) return false;
+    for (size_t index = 0; index < program->module_count; index++)
+        if (!write_module(file, &program->modules[index])) return false;
+    if (!write_all(file, program->namespace_constants,
+            program->namespace_constant_count * sizeof program->namespace_constants[0])) return false;
+    if (!write_all(file, &program->range_class_index, sizeof program->range_class_index)) return false;
+
+    return true;
+}
+
+/* Advances *cursor past `size` bytes and returns a pointer to where they
+ * started, or nullptr if `size` bytes aren't actually left in [*cursor,
+ * end) -- every call site below treats that as a malformed-buffer
+ * failure, never a crash, even though a buffer this project's own build
+ * just generated should never actually be short. */
+static const uint8_t *take(const uint8_t **cursor, const uint8_t *end, size_t size) {
+    if (size > (size_t)(end - *cursor)) return nullptr;
+    const uint8_t *start = *cursor;
+    *cursor += size;
+    return start;
+}
+
+/* Reconstructs one real, independently heap-owned DiamondFunction into
+ * `destination` by building a temporary, non-owning "view"
+ * DiamondFunction whose pointer fields point directly into `*cursor`
+ * (valid only for the duration of this call), then deep-copying it via
+ * diamond_function_copy -- the exact same clone clone_program_from_chunk
+ * (src/vm.c) already trusts for this. */
+static bool read_function(const uint8_t **cursor, const uint8_t *end,
+        DiamondFunction *destination) {
+    const uint8_t *raw = take(cursor, end, sizeof(DiamondFunction));
+    if (raw == nullptr) return false;
+    DiamondFunction view;
+    memcpy(&view, raw, sizeof view);
+    const uint8_t *code = take(cursor, end, view.code_count * sizeof *view.code);
+    const uint8_t *lines_bytes = take(cursor, end, view.code_count * sizeof *view.lines);
+    const uint8_t *columns_bytes = take(cursor, end, view.code_count * sizeof *view.columns);
+    const uint8_t *constants_bytes = take(cursor, end, view.constant_count * sizeof *view.constants);
+    const uint8_t *strings_bytes = take(cursor, end, view.string_count * sizeof *view.strings);
+    const uint8_t *type_sets_bytes = take(cursor, end, view.type_set_count * sizeof *view.type_sets);
+    if ((view.code_count > 0 && (code == nullptr || lines_bytes == nullptr || columns_bytes == nullptr)) ||
+        (view.constant_count > 0 && constants_bytes == nullptr) ||
+        (view.string_count > 0 && strings_bytes == nullptr) ||
+        (view.type_set_count > 0 && type_sets_bytes == nullptr))
+        return false;
+    view.code = (uint8_t *)code;
+    view.lines = (uint32_t *)(const void *)lines_bytes;
+    view.columns = (uint32_t *)(const void *)columns_bytes;
+    view.constants = (DiamondValue *)(const void *)constants_bytes;
+    view.strings = (DiamondStringConstant *)(const void *)strings_bytes;
+    view.type_sets = (DiamondTypeSet *)(const void *)type_sets_bytes;
+    return diamond_function_copy(destination, &view);
+}
+
+static bool read_u64(const uint8_t **cursor, const uint8_t *end, uint64_t *out) {
+    const uint8_t *raw = take(cursor, end, sizeof *out);
+    if (raw == nullptr) return false;
+    memcpy(out, raw, sizeof *out);
+    return true;
+}
+
+/* Bounds-checked cursor read of exactly `size` bytes into `dest` --
+ * every read_class/read_module/read_interface field below goes through
+ * this instead of repeating take()+memcpy() by hand. */
+static bool read_bytes(const uint8_t **cursor, const uint8_t *end, void *dest, size_t size) {
+    const uint8_t *raw = take(cursor, end, size);
+    if (raw == nullptr) return false;
+    if (size > 0) memcpy(dest, raw, size);
+    return true;
+}
+
+/* Inverse of write_class: rejects an oversized method_count/field_count/
+ * class_variable_count up front (this build's own DIAMOND_MAX_METHODS/
+ * DIAMOND_MAX_FIELDS budget) rather than overflowing `out`'s own
+ * fixed-size arrays -- same defensive posture as
+ * diamond_program_read_compiled's own class_count/interface_count/
+ * module_count checks below. */
+static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass *out) {
+    memset(out, 0, sizeof *out);
+    if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
+    if (!read_bytes(cursor, end, &out->superclass, sizeof out->superclass)) return false;
+
+    uint64_t method_count = 0, singleton_method_count = 0;
+    if (!read_u64(cursor, end, &method_count)) return false;
+    if (!read_u64(cursor, end, &singleton_method_count)) return false;
+    if (method_count > DIAMOND_MAX_METHODS || singleton_method_count > DIAMOND_MAX_METHODS) return false;
+    out->method_count = (size_t)method_count;
+    out->singleton_method_count = (size_t)singleton_method_count;
+    if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
+    if (!read_bytes(cursor, end, out->singleton_methods,
+            (size_t)singleton_method_count * sizeof out->singleton_methods[0])) return false;
+
+    uint64_t field_count = 0;
+    if (!read_u64(cursor, end, &field_count)) return false;
+    if (field_count > DIAMOND_MAX_FIELDS) return false;
+    out->field_count = (size_t)field_count;
+    if (!read_bytes(cursor, end, out->fields, (size_t)field_count * sizeof out->fields[0])) return false;
+    if (!read_bytes(cursor, end, out->field_type_status, (size_t)field_count * sizeof out->field_type_status[0])) return false;
+    if (!read_bytes(cursor, end, out->field_known_class, (size_t)field_count * sizeof out->field_known_class[0])) return false;
+
+    uint64_t class_variable_count = 0;
+    if (!read_u64(cursor, end, &class_variable_count)) return false;
+    if (class_variable_count > DIAMOND_MAX_FIELDS) return false;
+    out->class_variable_count = (size_t)class_variable_count;
+    if (!read_bytes(cursor, end, out->class_variables,
+            (size_t)class_variable_count * sizeof out->class_variables[0])) return false;
+
+    if (!read_bytes(cursor, end, &out->declared_by_discovery, sizeof out->declared_by_discovery)) return false;
+    return true;
+}
+
+static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModule *out) {
+    memset(out, 0, sizeof *out);
+    if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
+
+    uint64_t method_count = 0, singleton_method_count = 0;
+    if (!read_u64(cursor, end, &method_count)) return false;
+    if (!read_u64(cursor, end, &singleton_method_count)) return false;
+    if (method_count > DIAMOND_MAX_METHODS || singleton_method_count > DIAMOND_MAX_METHODS) return false;
+    out->method_count = (size_t)method_count;
+    out->singleton_method_count = (size_t)singleton_method_count;
+    if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
+    if (!read_bytes(cursor, end, out->singleton_methods,
+            (size_t)singleton_method_count * sizeof out->singleton_methods[0])) return false;
+
+    if (!read_bytes(cursor, end, &out->next_singleton_claim, sizeof out->next_singleton_claim)) return false;
+
+    uint64_t field_count = 0;
+    if (!read_u64(cursor, end, &field_count)) return false;
+    if (field_count > DIAMOND_MAX_FIELDS) return false;
+    out->field_count = (size_t)field_count;
+    if (!read_bytes(cursor, end, out->fields, (size_t)field_count * sizeof out->fields[0])) return false;
+
+    if (!read_bytes(cursor, end, &out->declared_by_discovery, sizeof out->declared_by_discovery)) return false;
+    return true;
+}
+
+/* type_sets is left nullptr here -- diamond_program_read_compiled's own
+ * tail fixes it up for every interface afterward, same as it always has. */
+static bool read_interface(const uint8_t **cursor, const uint8_t *end, DiamondInterface *out) {
+    memset(out, 0, sizeof *out);
+    if (!read_bytes(cursor, end, out->name, sizeof out->name)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_line, sizeof out->declaration_line)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_column, sizeof out->declaration_column)) return false;
+    if (!read_bytes(cursor, end, &out->declaration_start, sizeof out->declaration_start)) return false;
+
+    uint64_t method_count = 0;
+    if (!read_u64(cursor, end, &method_count)) return false;
+    if (method_count > DIAMOND_MAX_METHODS) return false;
+    out->method_count = (size_t)method_count;
+    if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
+
+    if (!read_bytes(cursor, end, &out->declared_by_discovery, sizeof out->declared_by_discovery)) return false;
+    return true;
+}
+
+bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProgram *out) {
+    const uint8_t *cursor = data;
+    const uint8_t *end = data + size;
+
+    if (!read_function(&cursor, end, &out->entry)) return false;
+
+    uint64_t function_count = 0;
+    if (!read_u64(&cursor, end, &function_count)) return false;
+    for (uint64_t index = 0; index < function_count; index++) {
+        DiamondFunction *slot = diamond_program_add_function(out);
+        if (slot == nullptr) return false;
+        if (!read_function(&cursor, end, slot)) return false;
+    }
+
+    /* Counts before arrays -- see diamond_program_write_compiled's own
+     * comment: only the used prefix of each fixed-size table was
+     * written, so the exact byte count to read next isn't known until
+     * these are. */
+    uint64_t class_count = 0, interface_count = 0, module_count = 0, namespace_constant_count = 0;
+    if (!read_u64(&cursor, end, &class_count)) return false;
+    if (!read_u64(&cursor, end, &interface_count)) return false;
+    if (!read_u64(&cursor, end, &module_count)) return false;
+    if (!read_u64(&cursor, end, &namespace_constant_count)) return false;
+    if (class_count > DIAMOND_MAX_CLASSES || interface_count > DIAMOND_MAX_INTERFACES ||
+        module_count > DIAMOND_MAX_MODULES || namespace_constant_count > DIAMOND_MAX_NAMESPACE_CONSTANTS)
+        return false;
+
+    out->class_count = (size_t)class_count;
+    out->interface_count = (size_t)interface_count;
+    out->module_count = (size_t)module_count;
+    out->namespace_constant_count = (size_t)namespace_constant_count;
+
+    for (uint64_t index = 0; index < class_count; index++)
+        if (!read_class(&cursor, end, &out->classes[index])) return false;
+    for (uint64_t index = 0; index < interface_count; index++)
+        if (!read_interface(&cursor, end, &out->interfaces[index])) return false;
+    for (uint64_t index = 0; index < module_count; index++)
+        if (!read_module(&cursor, end, &out->modules[index])) return false;
+
+    if (!read_bytes(&cursor, end, out->namespace_constants,
+            (size_t)namespace_constant_count * sizeof out->namespace_constants[0])) return false;
+    if (!read_bytes(&cursor, end, &out->range_class_index, sizeof out->range_class_index)) return false;
+
+    /* Every class's own shapes[] (self-referential `shape->class`
+     * back-pointers) must be recomputed here, not left as whatever the
+     * raw classes[] dump carried over: those pointers were computed
+     * against the *original* program's own classes[] array, at a
+     * different memory address than `out`'s -- confirmed directly, not
+     * assumed (a user-defined class's own instance-variable reads
+     * returned Nil without this, since field access resolves through a
+     * shape whose `class` pointer no longer matched the class actually
+     * being read). run_compile_pass's own tail (src/compiler.c) recomputes
+     * this for free after an ordinary compile, but nothing runs a compile
+     * pass over an already-fully-compiled deserialized program the way
+     * diamond_compile_incremental against a template does for the
+     * prelude's own template-seeded classes -- see diamond_program_
+     * recompute_shapes' own comment (src/compiler.h). interfaces[].
+     * type_sets is fixed up the same way diamond_compile's own tail
+     * already does after an ordinary compile, for the same reason: it's
+     * read before any compile pass could otherwise fix it up (a lookup
+     * could reference an interface by name without redeclaring it). */
+    diamond_program_recompute_shapes(out);
+    for (size_t index = 0; index < out->interface_count; index++)
+        out->interfaces[index].type_sets = out->entry.type_sets;
+
+    return true;
+}
+
+/* Deliberately not char[8] (no room for a null terminator, only every
+ * on-disk-magic-length reference below actually needs) -- newer GCC's
+ * -Wunterminated-string-initialization flags that even though it's
+ * valid ISO C, so this stays a plain, ordinarily-terminated string
+ * constant and DIAMOND_CACHE_MAGIC_LENGTH is the one place the "how many
+ * bytes actually go on disk" fact lives. */
+static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
+enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
+enum { DIAMOND_CACHE_FORMAT_VERSION = 1 };
+
+DiamondCacheFingerprint diamond_cache_fingerprint(void) {
+    return (DiamondCacheFingerprint){
+        .format_version=DIAMOND_CACHE_FORMAT_VERSION,
+        .function_size=(uint32_t)sizeof(DiamondFunction),
+        .class_size=(uint32_t)sizeof(DiamondClass),
+        .interface_size=(uint32_t)sizeof(DiamondInterface),
+        .module_size=(uint32_t)sizeof(DiamondModule),
+        .opcode_count=(uint32_t)DIAMOND_OP_COUNT,
+        .builtin_class_count=(uint32_t)DIAMOND_BUILTIN_CLASS_COUNT,
+        .max_classes=(uint32_t)DIAMOND_MAX_CLASSES,
+        .max_methods=(uint32_t)DIAMOND_MAX_METHODS,
+    };
+}
+
+/* Field-by-field, not a raw struct write -- same reason write_class/
+ * write_module/write_interface above already avoid that (no padding-
+ * layout ambiguity to worry about, but consistent with this file's own
+ * established style throughout). */
+static bool write_cache_fingerprint(FILE *file, const DiamondCacheFingerprint *fingerprint) {
+    if (!write_all(file, &fingerprint->format_version, sizeof fingerprint->format_version)) return false;
+    if (!write_all(file, &fingerprint->function_size, sizeof fingerprint->function_size)) return false;
+    if (!write_all(file, &fingerprint->class_size, sizeof fingerprint->class_size)) return false;
+    if (!write_all(file, &fingerprint->interface_size, sizeof fingerprint->interface_size)) return false;
+    if (!write_all(file, &fingerprint->module_size, sizeof fingerprint->module_size)) return false;
+    if (!write_all(file, &fingerprint->opcode_count, sizeof fingerprint->opcode_count)) return false;
+    if (!write_all(file, &fingerprint->builtin_class_count, sizeof fingerprint->builtin_class_count)) return false;
+    if (!write_all(file, &fingerprint->max_classes, sizeof fingerprint->max_classes)) return false;
+    if (!write_all(file, &fingerprint->max_methods, sizeof fingerprint->max_methods)) return false;
+    return true;
+}
+
+static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
+        DiamondCacheFingerprint *out) {
+    if (!read_bytes(cursor, end, &out->format_version, sizeof out->format_version)) return false;
+    if (!read_bytes(cursor, end, &out->function_size, sizeof out->function_size)) return false;
+    if (!read_bytes(cursor, end, &out->class_size, sizeof out->class_size)) return false;
+    if (!read_bytes(cursor, end, &out->interface_size, sizeof out->interface_size)) return false;
+    if (!read_bytes(cursor, end, &out->module_size, sizeof out->module_size)) return false;
+    if (!read_bytes(cursor, end, &out->opcode_count, sizeof out->opcode_count)) return false;
+    if (!read_bytes(cursor, end, &out->builtin_class_count, sizeof out->builtin_class_count)) return false;
+    if (!read_bytes(cursor, end, &out->max_classes, sizeof out->max_classes)) return false;
+    if (!read_bytes(cursor, end, &out->max_methods, sizeof out->max_methods)) return false;
+    return true;
+}
+
+bool diamond_program_read_cache_file(const char *path,
+        const uint8_t source_hash[32], DiamondProgram *program) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return false; }
+    const long file_size = ftell(file);
+    if (file_size < 0) { fclose(file); return false; }
+    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return false; }
+    uint8_t *buffer = malloc((size_t)file_size);
+    if (buffer == nullptr) { fclose(file); return false; }
+    const size_t read_count = fread(buffer, 1, (size_t)file_size, file);
+    fclose(file);
+    if (read_count != (size_t)file_size) { free(buffer); return false; }
+
+    const uint8_t *cursor = buffer;
+    const uint8_t *end = buffer + (size_t)file_size;
+    const uint8_t *magic = take(&cursor, end, DIAMOND_CACHE_MAGIC_LENGTH);
+    if (magic == nullptr || memcmp(magic, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) != 0) {
+        free(buffer);
+        return false;
+    }
+    DiamondCacheFingerprint stored_fingerprint;
+    if (!read_cache_fingerprint(&cursor, end, &stored_fingerprint)) {
+        free(buffer);
+        return false;
+    }
+    const DiamondCacheFingerprint current_fingerprint = diamond_cache_fingerprint();
+    if (memcmp(&stored_fingerprint, &current_fingerprint, sizeof stored_fingerprint) != 0) {
+        free(buffer);
+        return false;
+    }
+    const uint8_t *stored_hash = take(&cursor, end, 32);
+    if (stored_hash == nullptr || memcmp(stored_hash, source_hash, 32) != 0) {
+        free(buffer);
+        return false;
+    }
+    const bool ok = diamond_program_read_compiled(cursor, (size_t)(end - cursor), program);
+    free(buffer);
+    return ok;
+}
+
+void diamond_program_write_cache_file(const char *path,
+        const uint8_t source_hash[32], const DiamondProgram *program) {
+    const size_t path_length = strlen(path);
+    /* mkstemp needs its own writable buffer ending in a literal
+     * "XXXXXX" (it overwrites those six characters in place), in the
+     * same directory as `path` -- rename() is only atomic within one
+     * directory/filesystem. Mirrors src/main.c's own write_compiled_
+     * program_to_temp (diamond build) doing the identical "unique temp
+     * file next to the real destination" thing for the identical
+     * concurrent-writer-safety reason. */
+    char *temp_path = malloc(path_length + 8);
+    if (temp_path == nullptr) return;
+    memcpy(temp_path, path, path_length);
+    memcpy(temp_path + path_length, ".XXXXXX", 8);
+    const int fd = mkstemp(temp_path);
+    if (fd < 0) {
+        free(temp_path);
+        return;
+    }
+    FILE *file = fdopen(fd, "wb");
+    if (file == nullptr) {
+        close(fd);
+        unlink(temp_path);
+        free(temp_path);
+        return;
+    }
+    const DiamondCacheFingerprint fingerprint = diamond_cache_fingerprint();
+    bool ok = write_all(file, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) &&
+        write_cache_fingerprint(file, &fingerprint) &&
+        write_all(file, source_hash, 32) &&
+        diamond_program_write_compiled(program, file);
+    if (fclose(file) != 0) ok = false;
+    if (ok) {
+        if (rename(temp_path, path) != 0) unlink(temp_path);
+    } else {
+        unlink(temp_path);
+    }
+    free(temp_path);
+}

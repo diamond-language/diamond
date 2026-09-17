@@ -201,6 +201,37 @@ HMAC(k, b)` iff `a == b`, so it reuses the native `HMAC.sha256`/
 `HMAC.verify` (`docs/syntax.md`) with a fixed, non-secret key purely to
 get their constant-time comparison for free.
 
+## `Flash` — a message that survives exactly one redirect
+
+```ruby
+def create(request, context, params)
+  # ... save the record ...
+  Flash.set(request, "notice", "Skin created")
+  Dials::Response.redirect(skin_path(skin.id()), "created")
+end
+
+def index(request, context, params)
+  notice = Flash.get(request, "notice")   # nil on every request except
+  ...                                      # the one right after create's
+end                                        # own redirect
+```
+
+The Rails `flash[:notice]` idiom: `Flash.set` stashes a value that's
+readable on the *next* request only, then gone — the shape you want for
+a message that should survive a redirect (the browser's own follow-up
+`GET`) but not still be showing up if the user reloads that page later.
+Built entirely on `CookieSession`'s own `request["session"]` (two
+reserved sub-keys plus a one-request rotation `CookieSession.call` does
+before `forward` runs) — no separate cookie, no new middleware to add to
+the chain. `Flash.all(request)` returns every message set on the
+previous request as a plain `Hash`, for a layout that wants to render
+whatever's there without knowing key names ahead of time.
+
+Setting and reading a key within the *same* request (no redirect in
+between) reads back `nil` — matching Rails' own `flash[:x] = y` (not
+`flash.now[:x] = y`, which this package doesn't implement, since nothing
+in this codebase has needed it yet).
+
 ## What's deliberately out of scope
 
 - **Cookie signing/verification for arbitrary structured data beyond one

@@ -487,6 +487,25 @@ require "./migrate/20260102093000_create_books"
 ActiveRecord::Migrator.run(db, [create_authors_migration(), create_books_migration()])
 ```
 
+### Generating a migration file
+
+`bin/generate_migration.di` writes a new, correctly-shaped migration
+file for you -- one less thing to get right by hand each time:
+
+```sh
+diamond packages/active_record/bin/generate_migration.di db/migrate create_authors
+# created db/migrate/20260906143022_create_authors.di
+```
+
+The first argument is the directory to write into (your project's own
+`db/migrate/`, matching the layout above); the second is the migration's
+own name, reused for its generated `_up`/`_down`/`_migration` function
+names. The version prefix is the current UTC time (`YYYYMMDDHHMMSS`) --
+purely for sorting migrations chronologically at a glance, since
+`Migrator` itself never sorts or compares version strings (see above).
+Fill in the generated file's two `db.execute("...")` stubs and add one
+`require` line for it to your project's own `db/migrate.di`.
+
 ## Concurrency and connections
 
 `packages/gremlin`'s `threads: N` already gives each worker its own
@@ -522,7 +541,7 @@ directly rather than assumed:
 - Diamond classes have fixed, compile-time method tables, and there is
   still no `has_many :books`-style *class-body macro* that would expand
   into a real method by itself -- but `ClassName.compile_method` (see
-  `docs/design.md`'s "Runtime method synthesis" section) can now compile
+  `docs/internal/design.md`'s "Runtime method synthesis" section) can now compile
   a method body from a runtime string and, together with
   `ClassName.define_method`, attach it to an already-loaded class. A
   model that wants a synthesized association reader writes ordinary
@@ -535,7 +554,7 @@ directly rather than assumed:
   method calling `self.foo()` correctly reaches a subclass's override).
   `def self.x` class methods originally couldn't do this at all -- `self`
   wasn't even accessible inside one -- but this has since been fixed at
-  the language level (see `docs/syntax.md`/`docs/design.md`): `self`
+  the language level (see `docs/syntax.md`/`docs/internal/design.md`): `self`
   inside a class-owned singleton method now holds the actual receiver
   class, and `self.foo(...)` there dispatches virtually the same way an
   instance method's `self.foo()` already did. This is what lets `Model`
@@ -731,7 +750,7 @@ def profile(db) = self.has_one(Profile.repository(), "author_id").get(db, self.i
 
 The one-liner above is still the simplest way to write an association
 reader, and is what most models should reach for. `ClassName.compile_method`
-(`docs/design.md`'s "Runtime method synthesis" section) offers a second,
+(`docs/internal/design.md`'s "Runtime method synthesis" section) offers a second,
 *synthesized* way to build the same shape of method from `self.configure`
 instead of a hand-written `def` -- useful mainly when a model wants to
 build several similar readers programmatically rather than writing one
@@ -744,7 +763,7 @@ class Author < ActiveRecord::Model
     @@repository = repository
     # body_source can't name Book directly -- it compiles as its own
     # isolated program with no knowledge of the real one's other
-    # classes (see docs/design.md) -- so Book.repository() is evaluated
+    # classes (see docs/internal/design.md) -- so Book.repository() is evaluated
     # here, in this method's own real compile, and threaded in via
     # bound_values instead.
     callable = Author.compile_method("books", ["db"],

@@ -34,21 +34,16 @@ module GraphQL
     end
 
     def self.visit_arguments(arguments, visited)
-      index = 0
-      while index < arguments.length()
-        self.visit(arguments[index].type(), visited)
-        index += 1
+      arguments.each() do |argument|
+        self.visit(argument.type(), visited)
       end
       nil
     end
 
     def self.visit_fields(fields, visited)
-      index = 0
-      while index < fields.length()
-        field = fields[index]
+      fields.each() do |field|
         self.visit(field.type(), visited)
         self.visit_arguments(field.arguments(), visited)
-        index += 1
       end
       nil
     end
@@ -70,26 +65,17 @@ module GraphQL
       kind = named.kind()
       if kind == "OBJECT"
         self.visit_fields(named.fields(), visited)
-        interfaces = named.interfaces()
-        index = 0
-        while index < interfaces.length()
-          self.visit(interfaces[index], visited)
-          index += 1
+        named.interfaces().each() do |iface|
+          self.visit(iface, visited)
         end
       elsif kind == "INTERFACE"
         self.visit_fields(named.fields(), visited)
-        implementors = named.implementors()
-        index = 0
-        while index < implementors.length()
-          self.visit(implementors[index], visited)
-          index += 1
+        named.implementors().each() do |implementor|
+          self.visit(implementor, visited)
         end
       elsif kind == "UNION"
-        possible = named.possible_types()
-        index = 0
-        while index < possible.length()
-          self.visit(possible[index], visited)
-          index += 1
+        named.possible_types().each() do |possible_type|
+          self.visit(possible_type, visited)
         end
       elsif kind == "INPUT_OBJECT"
         self.visit_arguments(named.arguments(), visited)

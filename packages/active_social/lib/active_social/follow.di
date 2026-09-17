@@ -63,18 +63,12 @@ module ActiveSocial
 
     # The ids of every persona `persona_id` follows.
     def self.following(db, persona_id) -> Array
-      rows = Follow.where({"follower_id": persona_id}).to_a(db)
-      ids = []
-      rows.each() do |row| ids.push(row.followed_id()) end
-      ids
+      Follow.where({"follower_id": persona_id}).to_a(db).map() do |row| row.followed_id() end
     end
 
     # The ids of every persona following `persona_id`.
     def self.followers(db, persona_id) -> Array
-      rows = Follow.where({"followed_id": persona_id}).to_a(db)
-      ids = []
-      rows.each() do |row| ids.push(row.follower_id()) end
-      ids
+      Follow.where({"followed_id": persona_id}).to_a(db).map() do |row| row.follower_id() end
     end
 
     def self.following_count(db, persona_id) -> Int = Follow.following(db, persona_id).length()

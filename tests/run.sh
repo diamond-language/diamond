@@ -1,19 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Permanent, not a one-off: a `set -e` death inside this script is almost
+# always inside a `$(...)` command substitution whose own stderr got
+# captured into a shell variable rather than printed, so the real cause
+# is otherwise invisible in a CI log (confirmed directly chasing a real
+# self-hosted-parser regression, and separately an as-yet-unexplained
+# test-sanitize flake on GitHub's own runners that has never reproduced
+# locally -- see docs/roadmap.md/CHANGELOG.md). Zero cost on any passing
+# run: fires only at the exact point `set -e` was already about to abort.
+trap 'echo "DIAGNOSTIC: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 bash tests/collection_relay_contracts.sh
+
+# Every bespoke check below invokes the real `diamond` binary directly
+# (unlike the generic tests/cases/*.di corpus loop further down, which
+# runs through build/run_cases -- diamond_run_source_with_template,
+# structurally never touching the bytecode cache at all, see src/
+# run_source.h). diamond_run_source's own auto-dispatch *does* cache by
+# default, and a .dic file left behind in tests/cases/ from one of these
+# direct invocations could silently mask a real compiler regression on a
+# later run (see docs/caching.md) -- this is exactly the test suite's own
+# job to catch, so every invocation in this file must always compile
+# fresh.
+export DIAMOND_NO_CACHE=1
 
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"
 
 actual="$($diamond --version)"
-[[ "$actual" == "diamond 0.2.0-dev" ]] || {
+[[ "$actual" == "diamond 0.4.0" ]] || {
     echo "unexpected version output: $actual" >&2
     exit 1
 }
 
-[[ "$($diamond -v)" == "diamond 0.2.0-dev" ]] || {
+[[ "$($diamond -v)" == "diamond 0.4.0" ]] || {
     echo "unexpected short version output" >&2
     exit 1
 }
@@ -1363,7 +1384,19 @@ actual="$($diamond -e $'begin\n TCPSocket.connect("127.0.0.1", 1)\nrescue error:
 
 socket_port=18734
 server_out="$(mktemp)"
+# `puts("ready")` + poll, not the client's own blind connect-retry loop
+# this replaced: a tight, unbounded (well, 2000-attempt) retry loop with
+# no backoff races the server's own listen() startup with no margin
+# accounting for a slower environment -- confirmed the hard way as a
+# real, intermittent CI-only failure (this exact command timing out on
+# GitHub's own runners under the sanitize build specifically, never
+# reproducing locally), caught only once a permanent ERR trap in this
+# script's own preamble finally surfaced which command was actually
+# failing. Every sibling network test in this file (UDP, the Signal.trap
+# test) already uses this same ready-poll idiom for the identical race;
+# this one predated that pattern and never got updated to match.
 timeout 10 "$diamond" -e "$(printf 'server = TCPServer.listen(%d)
+puts("ready")
 conn = server.accept()
 msg = conn.gets()
 conn.write("echo: #{msg}\\n")
@@ -1371,19 +1404,11 @@ conn.close()
 server.close()
 0' "$socket_port")" >"$server_out" 2>&1 &
 socket_server_pid=$!
-client_src="$(printf 'c = nil
-attempts = 0
-while c == nil
- c = begin
-  TCPSocket.connect("127.0.0.1", %d)
- rescue error: IOError
-  attempts = attempts + 1
-  if attempts > 2000
-   raise "giving up"
-  end
-  nil
- end
-end
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$server_out" && break
+    sleep 0.05
+done
+client_src="$(printf 'c = TCPSocket.connect("127.0.0.1", %d)
 c.write("hello\\n")
 response = c.gets()
 c.close()
@@ -1391,7 +1416,7 @@ response' "$socket_port")"
 client_out="$(mktemp)"
 timeout 10 "$diamond" -e "$client_src" >"$client_out" 2>&1
 wait "$socket_server_pid"
-[[ "$(cat "$server_out")" == "0" ]]
+[[ "$(tail -n1 "$server_out")" == "0" ]]
 [[ "$(cat "$client_out")" == "echo: hello" ]]
 rm -f "$server_out" "$client_out"
 
@@ -1956,7 +1981,20 @@ kill -INT "$signal_pid"
 sleep 0.3
 exec 3<>"/dev/tcp/127.0.0.1/$signal_port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
-wait "$signal_pid"
+# `|| true`, not a bare `wait`: $signal_pid is `timeout`'s own PID (the
+# subshell above execs into it), and GNU coreutils' timeout transparently
+# relays a signal it receives to its child, then exits with the child's
+# real exit status once the child (diamond, having trapped and survived
+# the signal) finishes normally -- status 0 here. Ubuntu 26.04's default
+# `timeout` is uutils-coreutils (a distro-picked alternative to GNU
+# coreutils, confirmed via `timeout --version`), which relays the signal
+# identically but then reports the relayed signal's own 128+signal status
+# regardless of the child's real outcome -- confirmed directly: the exact
+# same diamond process, run without the `timeout` wrapper at all, always
+# reports the correct `wait` status of 0. Real correctness is verified by
+# $actual below either way, so `wait`'s own status here is deliberately
+# not load-bearing.
+wait "$signal_pid" || true
 actual="$(cat "$signal_out")"
 [[ "$actual" == $'ready\ncaught INT\naccepted\nnil' ]]
 rm -f "$signal_out"
@@ -2863,7 +2901,12 @@ puts_actual="$(DIAMOND_STRESS_GC=1 $diamond -e $'x = 9223372036854775807 + 1\npu
 # nproc/cgroup quota when it's available, since it's the signal that
 # actually determines whether two CPU-bound threads have independent
 # execution resources to run concurrently on.
-cpu_budget="$(nproc)"
+# getconf _NPROCESSORS_ONLN, not nproc: POSIX-portable, confirmed
+# working identically on every platform this suite has actually been
+# run on (Linux glibc/musl, FreeBSD, macOS) -- nproc itself is a GNU
+# coreutils command, absent from macOS's base install entirely (present
+# on FreeBSD's, so this was invisible until macOS was checked).
+cpu_budget="$(getconf _NPROCESSORS_ONLN)"
 if [[ -r /sys/fs/cgroup/cpu.max ]]; then
     read -r cfs_quota cfs_period < /sys/fs/cgroup/cpu.max
     if [[ "$cfs_quota" != "max" ]]; then
@@ -2876,26 +2919,40 @@ elif [[ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us && -r /sys/fs/cgroup/cpu/cpu.cfs_
         cpu_budget="$(echo "$cfs_quota / $cfs_period" | bc -l)"
     fi
 fi
-physical_cores="$(awk -F: '/physical id/{p=$2} /^core id/{print p","$2}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
+# -r /proc/cpuinfo, not just 2>/dev/null on the awk call: awk exits
+# nonzero (2 on FreeBSD's own awk, confirmed directly) when a filename
+# argument -- not stdin -- doesn't exist at all, which pipefail (this
+# script's own preamble) turns into the whole pipeline failing, not
+# empty output the `-gt 0` check below could absorb gracefully. No
+# /proc filesystem exists on FreeBSD (or any BSD) by default at all, so
+# this physical-core refinement is Linux-only by construction; skipping
+# it there just leaves cpu_budget at its nproc/cgroup value from above.
+physical_cores=0
+if [[ -r /proc/cpuinfo ]]; then
+    physical_cores="$(awk -F: '/physical id/{p=$2} /^core id/{print p","$2}' /proc/cpuinfo | sort -u | wc -l)"
+fi
 if [[ "$physical_cores" -gt 0 ]]; then
     cpu_budget="$physical_cores"
 fi
-echo "DIAG: nproc=$(nproc) physical_cores=$physical_cores cpu_budget=$cpu_budget" >&2
+echo "DIAG: nproc=$(getconf _NPROCESSORS_ONLN) physical_cores=$physical_cores cpu_budget=$cpu_budget" >&2
 
 # Real-parallelism proof for Thread: two threads each doing genuine
 # CPU-bound work (not sleep -- sleep would pass even under the old
 # single-native-thread Fiber cooperative scheduler if it yielded during
 # the sleep, so this has to be work an isolated pthread actually executes
-# concurrently to prove anything) should finish in wall-clock time much
-# closer to *one* of them than to their sum. Diamond has no Time/clock
+# concurrently to prove anything) should finish in wall-clock time well
+# below the same two spins run sequentially. Diamond has no Time/clock
 # builtin, so this times the whole `diamond` subprocess from bash itself
 # (via $EPOCHREALTIME) rather than measuring inside the language -- the
 # same reason the Signal.trap tests above are subprocess/bash-timed
 # instead of assertions inside the .di source. A generous tolerance band
-# (< 1.6x one spin()'s own solo time, not a tight bound) keeps this from
-# flaking under CI/sandbox scheduling noise while still failing hard if
-# Thread.new secretly ran things serially (which would show up as
-# parallel time roughly 2x the serial unit instead). 20,000,000
+# (< 0.8x the directly measured two-spin serial time, not an inferred
+# multiple of one noisy sample) keeps this from flaking under CI/sandbox
+# scheduling noise while still failing hard if Thread.new secretly ran
+# things serially (both measurements would then take roughly the same
+# time). A second timing pair is tried only when the first misses the
+# threshold, so a transient scheduling interruption does not rerun this
+# entire test suite. 20,000,000
 # iterations is deliberately picked to keep the *fastest* build variant
 # (release, -O3) comfortably above a second of serial work --
 # thread-spawn/join overhead and OS scheduling jitter are both roughly
@@ -2915,31 +2972,48 @@ spin_program='def spin()
   end
   i
 end'
-start="$EPOCHREALTIME"
-serial_out="$("$diamond" -e "$spin_program
+measure_parallelism() {
+    local start end
+    start="$EPOCHREALTIME"
+    serial_out="$("$diamond" -e "$spin_program
+puts(spin())
 puts(spin())")"
-end="$EPOCHREALTIME"
-serial_time="$(echo "$end - $start" | bc)"
+    end="$EPOCHREALTIME"
+    serial_time="$(echo "$end - $start" | bc)"
 
-start="$EPOCHREALTIME"
-parallel_out="$("$diamond" -e "$spin_program
+    start="$EPOCHREALTIME"
+    parallel_out="$("$diamond" -e "$spin_program
 t1 = Thread.new(spin)
 t2 = Thread.new(spin)
 puts(t1.join())
 puts(t2.join())")"
-end="$EPOCHREALTIME"
-parallel_time="$(echo "$end - $start" | bc)"
+    end="$EPOCHREALTIME"
+    parallel_time="$(echo "$end - $start" | bc)"
 
-if [[ "$serial_out" != $'20000000\nnil' || "$parallel_out" != $'20000000\n20000000\nnil' ]]; then
-    echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
-    echo "  serial:   $serial_out" >&2
-    echo "  parallel: $parallel_out" >&2
-    exit 1
-fi
+    if [[ "$serial_out" != $'20000000\n20000000\nnil' || "$parallel_out" != $'20000000\n20000000\nnil' ]]; then
+        echo "FAIL: Thread real-parallelism proof (unexpected output)" >&2
+        echo "  serial:   $serial_out" >&2
+        echo "  parallel: $parallel_out" >&2
+        exit 1
+    fi
+}
+
+measure_parallelism
 if (( $(echo "$cpu_budget >= 2" | bc -l) )); then
-    if ! (( $(echo "$parallel_time < $serial_time * 1.6" | bc -l) )); then
+    parallelism_proved=0
+    for attempt in 1 2; do
+        if (( $(echo "$parallel_time < $serial_time * 0.8" | bc -l) )); then
+            parallelism_proved=1
+            break
+        fi
+        if [[ "$attempt" == "1" ]]; then
+            echo "NOTE: Thread real-parallelism timing attempt 1 was inconclusive (serial ${serial_time}s, parallel ${parallel_time}s); retrying once" >&2
+            measure_parallelism
+        fi
+    done
+    if [[ "$parallelism_proved" == "0" ]]; then
         echo "FAIL: Thread real-parallelism proof (not actually parallel)" >&2
-        echo "  serial time (1 spin):    ${serial_time}s" >&2
+        echo "  serial time (2 spins):   ${serial_time}s" >&2
         echo "  parallel time (2 spins): ${parallel_time}s" >&2
         exit 1
     fi
@@ -2989,7 +3063,59 @@ fi
 # .combined/.exitcode files it wrote per case with bash's own $(<file), which
 # strips a trailing newline the same way $(cat ...) used to.
 case_output_dir="build/case_output"
-"$run_cases_abs" tests/cases "$case_output_dir"
+if [[ "${DIAMOND_CASE_RUNNER:-batch}" == "subprocess" ]]; then
+    # Portability diagnostic/fallback: some non-glibc targets have exposed
+    # crashes only when many cases share run_cases' prelude/program state.
+    # Keep the exact same output-file contract while restoring the old
+    # one-process-per-case isolation so a platform run can distinguish runner
+    # state reuse from a genuine VM failure.
+    rm -rf "$case_output_dir"
+    mkdir -p "$case_output_dir"
+    for case_file in tests/cases/*.di; do
+        case_name="${case_file%.di}"
+        case_base="$(basename "$case_name")"
+        if [[ ! -f "$case_name.expected" && ! -f "$case_name.expected_error" &&
+              ! -f "$case_name.expected_contains" && ! -f "$case_name.expected_lastline" &&
+              ! -f "$case_name.flags" && ! -f "$case_name.env" ]]; then
+            if ! grep -q 'suite.run!()' "$case_file"; then continue; fi
+        fi
+        env_args=()
+        if [[ -f "$case_name.env" ]]; then
+            while IFS= read -r env_line; do
+                [[ -n "$env_line" ]] && env_args+=("$env_line")
+            done < "$case_name.env"
+        fi
+        flag_args=()
+        if [[ -f "$case_name.flags" ]]; then
+            while IFS= read -r flag_line; do
+                [[ -n "$flag_line" ]] && flag_args+=("$flag_line")
+            done < "$case_name.flags"
+        fi
+        for var in DIAMOND_STRESS_GC DIAMOND_STRESS_MINOR_GC DIAMOND_QUICKEN \
+            DIAMOND_QUICKEN_THRESHOLD DIAMOND_IC_MONO_THRESHOLD DIAMOND_REPEAT \
+            DIAMOND_INVALIDATE_IC_EACH_RUN DIAMOND_TRACE_IC_EACH_RUN DIAMOND_TRACE_IC \
+            DIAMOND_TRACE_IC_SITES DIAMOND_TRACE_IC_FAST DIAMOND_TRACE_IC_PROBES \
+            DIAMOND_TRACE_IC_REWRITES DIAMOND_TRACE_IC_POLICY DIAMOND_TRACE_SHAPES \
+            DIAMOND_TRACE_FIELDS DIAMOND_TRACE_OPCODES DIAMOND_TRACE_QUICKEN \
+            DIAMOND_FORCE_REPL DIAMOND_SANDBOX DIAMOND_SANDBOX_ALLOW DIAMOND_NO_CACHE \
+            DIAMOND_TRACE_CACHE DIAMOND_MAX_INSTRUCTIONS DIAMOND_MAX_WALL_MILLISECONDS \
+            DIAMOND_MAX_MEMORY_BYTES DIAMOND_JIT DIAMOND_JIT_THRESHOLD DIAMOND_TRACE_JIT; do
+            unset "$var"
+        done
+        if env "${env_args[@]}" "$diamond_abs" "${flag_args[@]}" "$case_file" \
+            >"$case_output_dir/$case_base.stdout" \
+            2>"$case_output_dir/$case_base.stderr"; then
+            exit_code=0
+        else
+            exit_code=$?
+        fi
+        cat "$case_output_dir/$case_base.stdout" "$case_output_dir/$case_base.stderr" \
+            >"$case_output_dir/$case_base.combined"
+        printf '%s' "$exit_code" >"$case_output_dir/$case_base.exitcode"
+    done
+else
+    "$run_cases_abs" tests/cases "$case_output_dir"
+fi
 
 case_count=0
 for case_file in tests/cases/*.di; do
