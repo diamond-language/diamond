@@ -230,16 +230,38 @@ all: debug
 debug: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_DEBUG)
 debug: $(TARGET) $(BUILD_DIR)/run_cases
 
-sanitize: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_SANITIZE)
-sanitize: LDFLAGS := $(LDFLAGS_SANITIZE)
-sanitize: clean $(TARGET) $(BUILD_DIR)/run_cases
+# sanitize/tsan/release each need a real `clean` before they build --
+# switching CFLAGS between variants (debug/sanitize/tsan/release) on the
+# same build/%.o paths means a stale object from a *different* variant
+# could otherwise get silently relinked instead of rebuilt. Listing
+# `clean` as an ordinary prerequisite alongside $(TARGET)/run_cases (as
+# these three used to) does NOT guarantee that ordering under `-j`:
+# make's parallel scheduler is free to run sibling prerequisites of the
+# same target concurrently whenever nothing in the dependency graph
+# orders one before another, so `rm -rf $(BUILD_DIR)` could -- and,
+# confirmed directly under `-j$(nproc)`, did -- run concurrently with
+# gcc already compiling into that same directory (surfacing as spurious
+# "No such file or directory" on files gcc had only just finished
+# writing). A synchronous `$(MAKE) clean` in the recipe body, followed
+# by a second $(MAKE) for the actual build, forces `clean` to fully
+# finish first while still letting that second invocation parallelize
+# its own compile steps under -j exactly as before (a recursive
+# $(MAKE) shares the parent's jobserver, same as $(REGINOLD_LIB)'s own
+# recipe above already relies on).
+sanitize:
+	$(MAKE) clean
+	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_SANITIZE)" LDFLAGS="$(LDFLAGS_SANITIZE)"
 
-tsan: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_TSAN)
-tsan: LDFLAGS := $(LDFLAGS_TSAN)
-tsan: clean $(TARGET) $(BUILD_DIR)/run_cases
+tsan:
+	$(MAKE) clean
+	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_TSAN)" LDFLAGS="$(LDFLAGS_TSAN)"
 
-release: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_RELEASE)
-release: clean $(TARGET) $(BUILD_DIR)/run_cases
+release:
+	$(MAKE) clean
+	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE)"
 
 $(REGINOLD_LIB):
 	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
@@ -254,16 +276,6 @@ $(BUILD_DIR)/%.o: src/%.c
 $(BUILD_DIR)/lsp-%.o: lsp/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
-
-# Built with whichever variant (debug/sanitize/release) is currently
-# active, same as $(TARGET) itself -- tests/run.sh's own file-based case
-# loop runs whatever `make test`/`test-release`/`test-sanitize` just
-# built, and needs run_cases to match (see docs/roadmap.md for why this
-# exists: running every tests/cases/*.di case in this one process
-# instead of tests/run.sh spawning a fresh `diamond` per case).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB) | $(PRELUDE_BIN)
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
 test: debug
 	bash tests/run.sh
@@ -335,6 +347,28 @@ $(PRELUDE_BIN): $(BUILD_DIR)/gen_compiled_prelude
 # tracks its own #include'd headers -- this line only matters for the
 # very first build, before that .d file exists yet.
 $(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+# Built with whichever variant (debug/sanitize/release) is currently
+# active, same as $(TARGET) itself -- tests/run.sh's own file-based case
+# loop runs whatever `make test`/`test-release`/`test-sanitize` just
+# built, and needs run_cases to match (see docs/roadmap.md for why this
+# exists: running every tests/cases/*.di case in this one process
+# instead of tests/run.sh spawning a fresh `diamond` per case). Placed
+# here, after $(PRELUDE_BIN)'s own definition above, not up by
+# $(TARGET)'s own rule where it used to sit -- a prerequisite list
+# (everything right of the `:`, order-only included) is macro-expanded
+# the moment make *parses* this line, not lazily at build time the way
+# a recipe body's own $(...) references are. `$(PRELUDE_BIN)` used up
+# there, before its `:=` definition existed yet, silently expanded to
+# nothing -- a real, confirmed bug: it left this order-only prerequisite
+# empty, so nothing stopped make from starting this recipe before
+# $(PRELUDE_BIN) was ready under `-j` (surfacing as a spurious
+# "compiled_prelude.bin: No such file or directory" on an otherwise
+# clean build -- reproduced directly under `-j$(nproc)`, gone once this
+# rule moved below the real definition).
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 
 $(BUILD_DIR)/compiled_prelude_test: tests/compiled_prelude_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
