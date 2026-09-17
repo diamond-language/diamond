@@ -695,10 +695,12 @@ build and test matrix, not another compiler-only check: fibers, dynamic
 loading, atomics, alignment, endianness assumptions, and subprocess behavior
 need to execute on the target architecture. The next concrete step is an
 arm64 CI runner (or a real arm64 VM) with the standard `make test` baseline
-before widening it to sanitizer, LSP, or package-specific suites. No local
-arm64 emulator/toolchain is available in the current development environment,
-so this remains an explicitly unvalidated target rather than a speculative
-cross-build claim.
+before widening it to sanitizer, LSP, or package-specific suites. CI now has
+that baseline job (`test-arm64`); it remains intentionally narrow until its
+first green run establishes that the hosted runner and Ubuntu image are
+available. No local arm64 emulator/toolchain is available in the current
+development environment, so this remains an explicitly unvalidated target
+here rather than a speculative cross-build claim.
 
 ### Stable public boundaries
 

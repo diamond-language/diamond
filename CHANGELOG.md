@@ -67,6 +67,9 @@ authoritative fine-grained record.
   build-and-test runner before Diamond can claim non-x86_64 coverage; a
   compiler-only cross-build is not sufficient for fibers, atomics, loading,
   and subprocess behavior.
+- Added a deliberately narrow native Ubuntu arm64 CI job (`test-arm64`) that
+  runs the baseline `make test` corpus before sanitizer, LSP, or package
+  coverage is expanded.
 - Restored self-hosted lexer parity for the `sealed` and `struct` keywords;
   the native/self-hosted lexer differential suite now covers all 1,438 lexer
   cases without unknown-token fallbacks, and the parser differential suite
