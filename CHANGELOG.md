@@ -63,6 +63,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Restored self-hosted lexer parity for the `sealed` and `struct` keywords;
+  the native/self-hosted lexer differential suite now covers all 1,438 lexer
+  cases without unknown-token fallbacks, and the parser differential suite
+  remains green at 253 positive plus 126 negative cases.
 - Extended receiver-aware generic call chains to explicit union bindings:
   `identity[Pet | Leaf](value).method()` now exposes both possible receiver
   classes to hover, definition, and completion, including after indexing a
