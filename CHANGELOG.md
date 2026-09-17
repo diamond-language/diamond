@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.5.0
+
 ### Concurrency
 
 - Added `Channel`, a bounded, thread-safe mailbox: `Channel.new(capacity)`,
@@ -375,6 +377,26 @@ authoritative fine-grained record.
   to ~52-58ms. No behavior change -- `dirty_attributes.di` and every
   other `@attributes` reader/writer in `model.di` work identically
   against either copy.
+- Added native in-place elementwise/shape `Tensor` mutators and their
+  backward passes (`#add!`/`#scale!`/`#add_bias!`/`#row_softmax!`/
+  `#gelu!`/`#column_sums`/`#columns`/`#add_columns!`/`#clone`/
+  `#softmax_backward`/`#gelu_backward`/`#layernorm_forward`/
+  `#layernorm_backward`), driven by a real training loop's own measured
+  bottleneck (see docs/collections.md's `Tensor` paragraph and
+  `examples/transformer` below).
+
+### Applications and examples
+
+- Added `examples/transformer`, a from-scratch GPT-style decoder-only
+  transformer on `Tensor`: multi-head causal self-attention, LayerNorm,
+  GELU feed-forward, reverse-mode autograd checked against numerical
+  gradients (`gradcheck.di`), SGD training, JSON checkpointing, a
+  byte-level tokenizer/corpus pipeline for real text data, and greedy
+  generation. Deliberately narrow (see its own README's "Scope" section:
+  plain SGD, no batching, `Tensor`'s own 2D-only shape worked around via
+  column-slicing rather than a real reshape) -- it exists to give
+  `Tensor`'s "before committing to a fuller API surface" question
+  (docs/collections.md) a real answer to point at.
 
 ## 0.4.0
 
@@ -504,13 +526,6 @@ authoritative fine-grained record.
 - Added `Tensor`, a native dense row-major `Float` matrix with a threaded,
   k-blocked `matmul`, plus `exp`/`log`/`tanh` math functions and
   `File.directory?`.
-- Added native in-place elementwise/shape `Tensor` mutators and their
-  backward passes (`#add!`/`#scale!`/`#add_bias!`/`#row_softmax!`/
-  `#gelu!`/`#column_sums`/`#columns`/`#add_columns!`/`#clone`/
-  `#softmax_backward`/`#gelu_backward`/`#layernorm_forward`/
-  `#layernorm_backward`), driven by a real training loop's own measured
-  bottleneck (see docs/collections.md's `Tensor` paragraph and
-  `examples/transformer`).
 
 ### Core library
 
@@ -636,16 +651,6 @@ authoritative fine-grained record.
   environment configuration, audit logging, and seeded data.
 - Added `applications/skindicate.dia`, an application with authentication,
   moderation/administration workflows, persistence, views, and smoke coverage.
-- Added `examples/transformer`, a from-scratch GPT-style decoder-only
-  transformer on `Tensor`: multi-head causal self-attention, LayerNorm,
-  GELU feed-forward, reverse-mode autograd checked against numerical
-  gradients (`gradcheck.di`), SGD training, JSON checkpointing, a
-  byte-level tokenizer/corpus pipeline for real text data, and greedy
-  generation. Deliberately narrow (see its own README's "Scope" section:
-  plain SGD, no batching, `Tensor`'s own 2D-only shape worked around via
-  column-slicing rather than a real reshape) -- it exists to give
-  `Tensor`'s "before committing to a fuller API surface" question
-  (docs/collections.md) a real answer to point at.
 
 ## 0.1.0 foundation
 
