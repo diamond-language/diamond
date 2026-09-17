@@ -28,6 +28,15 @@
  * are persistent roles, so encoding is fully general instead.
  */
 
+/* vm.h reaches <ucontext.h>; expose its POSIX declarations consistently on
+ * musl and Darwin before any project header can process libc feature guards.
+ * This translation unit is easy to miss because the JIT itself is x86-64,
+ * but it is still compiled on every supported target. */
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
+#define __BSD_VISIBLE 1
+#define _DARWIN_C_SOURCE
+
 #include "jit.h"
 
 #include <stdlib.h>
