@@ -73,6 +73,9 @@ read_until() {
 }
 
 coproc DAP { "$dap"; }
+# Bash unsets a named coprocess's PID variable after noticing that it exited;
+# preserve it now so a fast clean shutdown cannot race the later wait under -u.
+dap_pid="$DAP_PID"
 
 # --- initialize advertises configurationDone support ---
 
@@ -189,7 +192,7 @@ count=$((count + 1))
 send '{"seq":13,"type":"request","command":"disconnect"}'
 read_until '"command":"disconnect"' >/dev/null
 count=$((count + 1))
-wait "$DAP_PID"
+wait "$dap_pid"
 count=$((count + 1))
 
 # --- a fresh session that starts with ZERO breakpoints selected before
@@ -214,6 +217,7 @@ puts(result)
 EOF
 
 coproc DAP2 { "$dap"; }
+dap2_pid="$DAP2_PID"
 
 send2() {
     local body="$1"
@@ -305,7 +309,7 @@ count=$((count + 1))
 send2 '{"seq":9,"type":"request","command":"disconnect"}'
 read_until2 '"command":"disconnect"' >/dev/null
 count=$((count + 1))
-wait "$DAP2_PID"
+wait "$dap2_pid"
 count=$((count + 1))
 
 # --- real stepping: next/stepIn/stepOut, chained through one continuous
@@ -331,6 +335,7 @@ puts(result)
 EOF
 
 coproc DAP3 { "$dap"; }
+dap3_pid="$DAP3_PID"
 
 send3() {
     local body="$1"
@@ -458,7 +463,7 @@ count=$((count + 1))
 send3 '{"seq":13,"type":"request","command":"disconnect"}'
 read_until3 '"command":"disconnect"' >/dev/null
 count=$((count + 1))
-wait "$DAP3_PID"
+wait "$dap3_pid"
 count=$((count + 1))
 
 echo "$count dap tests passed"
