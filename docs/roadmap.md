@@ -702,11 +702,12 @@ available. No local arm64 emulator/toolchain is available in the current
 development environment, so this remains an explicitly unvalidated target
 here rather than a speculative cross-build claim.
 
-The arm64 job excludes the x86-64-only JIT cases while still compiling the JIT
-source and exercising the interpreter. Setting `DIAMOND_JIT` on another
-architecture now safely leaves JIT disabled instead of executing incompatible
-machine code; adding a native arm64 backend remains a separate performance
-project, not a prerequisite for interpreter portability.
+The arm64, musl, and macOS jobs exclude the JIT cases while still compiling
+the JIT source and exercising the interpreter. The current JIT is validated
+only on glibc x86-64: setting `DIAMOND_JIT` elsewhere safely leaves it
+disabled instead of executing an unvalidated machine-code/ABI combination.
+Adding portable native backends remains a separate performance project, not a
+prerequisite for interpreter portability.
 
 ### Stable public boundaries
 

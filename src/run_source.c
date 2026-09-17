@@ -132,7 +132,7 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
      * turn an unsupported backend into an illegal-instruction crash. The
      * interpreter remains the portable execution path until another native
      * backend exists. */
-#if defined(__x86_64__) || defined(_M_X64)
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
     vm.jit = getenv("DIAMOND_JIT") != nullptr;
 #else
     vm.jit = false;
