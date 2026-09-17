@@ -1636,5 +1636,13 @@ bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
  * Channel, Supervisor, Time, ...) that src/vm.c's copy already covered,
  * found the hard way while writing bench/tensor_matmul.di. */
 void diamond_format_value_type(char *buffer, size_t capacity, DiamondValue value);
+/* Writes a Time value's default string representation ("2026-08-30
+ * 12:30:00 UTC", "... +0000", or a fixed-offset zone) into `buffer`,
+ * returning the length written, 0 on failure. Exported so src/value.c's
+ * diamond_value_fprint can share the exact same formatting #to_s and
+ * puts/string-interpolation already use, rather than falling back to
+ * the generic "#<Time>" diamond_format_value_type would otherwise give
+ * it. */
+size_t diamond_format_time_default(const DiamondTime *target, char *buffer, size_t capacity);
 
 #endif

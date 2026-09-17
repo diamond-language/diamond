@@ -10640,23 +10640,39 @@ static DiamondVmStatus time_boundary_helper(DiamondVm *vm,const DiamondTime *tar
     *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
 }
 
-/* Shared by #to_s and puts/string-interpolation's own stringify path
- * (see builder_format_value/stringify_value) -- one formatting
- * implementation, not two. */
-static bool format_time_default(const DiamondTime *target,StringBuilder *builder) {
+/* Writes `target`'s default string representation ("2026-08-30
+ * 12:30:00 UTC" / "... +0000" / a fixed-offset zone) into `buffer`,
+ * returning the length written, or 0 on failure (an invalid struct tm,
+ * or `capacity` too small for strftime's own output). Exported (vm.h)
+ * so src/value.c's diamond_value_fprint -- the CLI's own top-level-
+ * result auto-print -- can share this instead of falling back to the
+ * generic "#<Time>" placeholder diamond_format_value_type gives every
+ * other unhandled kind: a real, if less severe, instance of the exact
+ * "#<Closure>" duplication bug just fixed (see CHANGELOG's Unreleased
+ * entry) -- value.c's own Time case was simply missing before this,
+ * not just misnamed. */
+size_t diamond_format_time_default(const DiamondTime *target,char *buffer,size_t capacity) {
     struct tm parts;
-    if(!time_struct_tm(target,&parts))return false;
-    char buffer[64];
+    if(!time_struct_tm(target,&parts))return 0;
     const char *format=target->zone_mode==DIAMOND_TIME_UTC?
         "%Y-%m-%d %H:%M:%S UTC":"%Y-%m-%d %H:%M:%S %z";
     char *substituted=nullptr;
     if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
         substituted=substitute_fixed_offset_z(format,target->utc_offset);
-        if(substituted==nullptr)return false;
+        if(substituted==nullptr)return 0;
         format=substituted;
     }
-    const size_t length=strftime(buffer,sizeof buffer,format,&parts);
+    const size_t length=strftime(buffer,capacity,format,&parts);
     free(substituted);
+    return length;
+}
+
+/* Shared by #to_s and puts/string-interpolation's own stringify path
+ * (see builder_format_value/stringify_value) -- one formatting
+ * implementation, not two. */
+static bool format_time_default(const DiamondTime *target,StringBuilder *builder) {
+    char buffer[64];
+    const size_t length=diamond_format_time_default(target,buffer,sizeof buffer);
     if(length==0)return false;
     return builder_append(builder,buffer,length);
 }

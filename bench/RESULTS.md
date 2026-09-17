@@ -619,3 +619,13 @@ the same "two duplicated implementations silently drift" failure shape
 this project has hit before (`DIAMOND_OP_SET_IVAR`'s interpreter case
 versus the JIT's own trampoline, `freeze`/`frozen?`'s own addition).
 Regression test: `tests/cases/native_resource_default_to_s.di`.
+
+**Follow-up**: `diamond_format_value_type` alone left `Time` printing
+the generic `#<Time>` placeholder from the CLI's own top-level-result
+auto-print, rather than an actually-wrong label -- `src/value.c` had no
+`Time` case at all there (unlike `puts`/interpolation, which already
+formatted it correctly via `src/vm.c`'s own `format_time_default`).
+Fixed by extracting that formatting into a buffer-based
+`diamond_format_time_default` and exporting it too, so both paths
+share the exact same real date formatting instead of one lacking it.
+`tests/cases/time_stringify.di` now exercises both paths directly.

@@ -145,14 +145,26 @@ void diamond_value_fprint(FILE *stream, DiamondValue value) {
                 }
             } else if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE) {
                 fputs("#<Closure>",stream);
+            } else if(value.as.object->kind==DIAMOND_OBJECT_TIME) {
+                /* Real formatting, not just a correctly-named placeholder
+                 * -- shares #to_s/puts/string-interpolation's own exact
+                 * diamond_format_time_default (src/vm.c) rather than
+                 * falling through to the generic "#<Time>" the branch
+                 * below would otherwise give it. */
+                const DiamondTime *time=(const DiamondTime *)value.as.object;
+                char formatted[64];
+                const size_t length=
+                    diamond_format_time_default(time,formatted,sizeof formatted);
+                if(length>0)fwrite(formatted,1,length,stream);
+                else fputs("#<Time>",stream);
             } else {
-                /* Every other object kind (Fiber, File, Thread, Time,
-                 * Tensor, Channel, Supervisor, Regexp, SQLite3, ...) used
-                 * to fall through to this same hardcoded "#<Closure>"
-                 * literal -- wrong for everything but a real Closure.
-                 * diamond_format_value_type (src/vm.c, exported via vm.h)
-                 * is the one canonical per-kind name table already used
-                 * for type-error messages; reused here instead of
+                /* Every other object kind (Fiber, File, Thread, Tensor,
+                 * Channel, Supervisor, Regexp, SQLite3, ...) used to fall
+                 * through to a hardcoded "#<Closure>" literal -- wrong
+                 * for everything but a real Closure. diamond_format_
+                 * value_type (src/vm.c, exported via vm.h) is the one
+                 * canonical per-kind name table already used for
+                 * type-error messages; reused here instead of
                  * hand-duplicating a second copy that could (and did)
                  * silently miss a kind the other one already covers. */
                 char kind_name[80];

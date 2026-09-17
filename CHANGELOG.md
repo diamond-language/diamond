@@ -19,7 +19,13 @@ authoritative fine-grained record.
   share one canonical per-kind name table
   (`diamond_format_value_type`, exported from `src/vm.c` via `vm.h`)
   instead of two independently hand-maintained copies. Found writing a
-  `Tensor#matmul` benchmark.
+  `Tensor#matmul` benchmark. `Time` needed a second fix beyond the
+  shared name table: the CLI's own auto-print had no `Time` case at
+  all (unlike `puts`/interpolation, which already formatted it
+  correctly), so it printed the generic `#<Time>` placeholder instead
+  of a real date -- `diamond_format_time_default` (`src/vm.c`) is now
+  exported too, so both paths share the exact same formatting instead
+  of one of them lacking it.
 
 ## 0.5.2
 
