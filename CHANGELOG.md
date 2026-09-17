@@ -70,6 +70,9 @@ authoritative fine-grained record.
 - Added a deliberately narrow native Ubuntu arm64 CI job (`test-arm64`) that
   runs the baseline `make test` corpus before sanitizer, LSP, or package
   coverage is expanded.
+- Made `DIAMOND_JIT` a safe no-op on non-x86-64 builds; the portable
+  interpreter now remains in control instead of attempting incompatible JIT
+  machine code. The arm64 CI baseline excludes only the JIT-specific cases.
 - Restored self-hosted lexer parity for the `sealed` and `struct` keywords;
   the native/self-hosted lexer differential suite now covers all 1,438 lexer
   cases without unknown-token fallbacks, and the parser differential suite
