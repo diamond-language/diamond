@@ -1,3 +1,22 @@
+/* DiamondFiber is part of this header's public data model and contains
+ * ucontext_t by value, so every translation unit including vm.h needs the
+ * feature-test contract required by <ucontext.h> -- not only vm.c itself.
+ * Darwin diagnoses the missing _XOPEN_SOURCE explicitly; musl's libucontext
+ * headers otherwise leave ucontext_t undeclared. Keep these before every
+ * system header this file includes, as feature-test macros require. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#ifndef __BSD_VISIBLE
+#define __BSD_VISIBLE 1
+#endif
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#endif
+
 #ifndef DIAMOND_VM_H
 #define DIAMOND_VM_H
 
