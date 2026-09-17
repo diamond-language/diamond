@@ -689,18 +689,15 @@ Areas worth considering:
 
 ### Non-x86_64 architecture validation: what's next
 
-All currently validated targets are x86_64 except the existing macOS arm64
-job. The remaining native-portability gap is a Linux arm64 run of the actual
-build and test matrix, not another compiler-only check: fibers, dynamic
-loading, atomics, alignment, endianness assumptions, and subprocess behavior
-need to execute on the target architecture. The next concrete step is an
-arm64 CI runner (or a real arm64 VM) with the standard `make test` baseline
-before widening it to sanitizer, LSP, or package-specific suites. CI now has
-that baseline job (`test-arm64`); it remains intentionally narrow until its
-first green run establishes that the hosted runner and Ubuntu image are
-available. No local arm64 emulator/toolchain is available in the current
-development environment, so this remains an explicitly unvalidated target
-here rather than a speculative cross-build claim.
+Native Linux arm64 CI now runs the standard `make test` baseline plus focused
+API, incremental-compile, compiled-prelude, fiber, LSP, and REPL targets on a
+real GitHub-hosted arm64 runner (`test-arm64`). That closes the original
+compiler-only portability gap: fibers, dynamic loading, atomics, alignment,
+endianness assumptions, subprocess behavior, and editor tooling all execute on
+the target architecture on every push. The job remains intentionally narrower
+than `test-all`; sanitizer/tsan builds and package-specific suites have not yet
+been validated on Linux arm64 and should be widened only as separate measured
+increments.
 
 The arm64, musl, and macOS jobs exclude the JIT cases while still compiling
 the JIT source and exercising the interpreter. The current JIT is validated
