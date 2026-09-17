@@ -9469,6 +9469,15 @@ typedef struct CaseArrayNode {
     uint16_t subject_register;
     uint8_t children[16];
     uint8_t child_count;
+    /* CASE_OBJECT_GROUP only: the resolved class index (find_class_
+     * qualified_or_scoped's own result, cast down the same way
+     * DIAMOND_OP_LOAD_CLASS's own emitted operand already is) --
+     * value_register only holds a runtime Class *value*, not this raw
+     * index, and exhaustiveness coverage (an empty `Class{}` guard
+     * covering that class the same way a bare `when Class` does) needs
+     * the index itself, not something to reconstruct from a register at
+     * compile time. Left 0 (meaningless) for every other node kind. */
+    uint8_t class_index;
 } CaseArrayNode;
 
 static bool span_is_underscore(const Compiler *compiler,DiamondSpan span) {
@@ -9638,6 +9647,7 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         if(object_class>=0&&
            object_probe.current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
             node->kind=CASE_OBJECT_GROUP;
+            node->class_index=(uint8_t)object_class;
             node->value_register=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
             emit_register(compiler,node->value_register);
@@ -10204,6 +10214,28 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         }
         for(size_t success=0;success<success_count;success++)
             patch_jump(compiler,success_jumps[success],compiler->function->code_count);
+        /* Exhaustiveness: an empty `Class{}` object pattern -- no reader
+         * fields at all -- matches any instance of that class exactly
+         * the way a bare scalar `when Class` already does (docs/core-
+         * syntax.md's own case/when semantics: empty `Class{}` is "any
+         * Class instance"), so it can soundly count as covering that
+         * union/sealed-hierarchy member the same way. Scoped narrowly on
+         * purpose, matching docs/roadmap.md's own "keep the initial
+         * change small" stance: only a *single* pattern (no `,`-joined
+         * alternatives -- success_count==1 means the loop above never
+         * looped a second time) whose whole top-level shape is exactly
+         * one empty object group, never a nested or non-empty one (a
+         * non-empty `Circle{radius: r}` only matches a subset of
+         * Circle, and covered_ids has no representation for "matches
+         * some Circles" short of the class id itself). A trailing `if`
+         * guard already zeroes covered_id_count further down regardless
+         * of how it got populated, so a guarded `when Circle{} if ...`
+         * still correctly never counts. */
+        if(success_count==1&&array_nodes[array_root].kind==CASE_OBJECT_GROUP&&
+           array_nodes[array_root].child_count==0&&
+           covered_id_count<DIAMOND_MAX_UNION_TYPES)
+            covered_ids[covered_id_count++]=(uint8_t)
+                (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
     } else {
         bool first_value=true;size_t skip_jump=0;
         for(;;) {

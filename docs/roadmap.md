@@ -160,14 +160,22 @@ opens up, none attempted yet, none committed:
   "this `when`'s named class is the sealed base itself" as a genuinely
   different, third coverage rule, not just reusing the existing exact-id
   match;
-- **structural (Array/Hash/Object) pattern coverage** -- an empty `Circle{}`
-  class-only guard already means "any Circle instance" per docs/core-
-  syntax.md's own case/when semantics, so it could soundly count as covering
-  the `Circle` member the same way a bare `when Circle` does; a *non-empty*
-  object/array/hash pattern (`Circle{radius: r}`) cannot, since it only
-  matches a subset of the type. Not attempted here -- the current pass
-  deliberately never inspects the array/object-pattern branch at all, to
-  keep the initial change small and easy to verify;
+- ~~structural (Array/Hash/Object) pattern coverage~~ -- **closed for
+  Object patterns** (2026-09, `CaseArrayNode` in `src/compiler.c`): a
+  *single*, top-level, *empty* `Circle{}` class-only guard (no `,`-joined
+  alternatives, no reader fields) now counts as covering the `Circle`
+  member the same way a bare `when Circle` already did, for both an
+  explicit union and a sealed hierarchy (same shared `covered_ids`/
+  `exhaustiveness->covered` commit path either way, so no separate change
+  needed per shape). A *non-empty* pattern (`Circle{radius: r}`) still
+  correctly doesn't count -- it only matches a subset of `Circle` --
+  and neither does an empty `Circle{}` nested inside something else
+  (`[Circle{}, x]`'s own top-level shape is an Array pattern, not an
+  Object one). Array/Hash patterns don't get an analogous rule: unlike
+  an Object pattern, they never name a class at all, so there's no
+  class id for an "empty `[]`/`{}` covers this member" fact to attach
+  to in the first place -- not a narrower cut of the same idea, a
+  question that doesn't apply to them;
 - **naming the missing member(s) in the compile error** -- Diamond's
   compiler diagnostics are static string literals throughout
   (`DiamondDiagnostic.message` is a raw, non-owning `const char *`, and the

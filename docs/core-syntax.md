@@ -257,13 +257,24 @@ own specific shape of subject:
   sealed class as one of several members does not recursively expand
   into that member's own subclasses either — only the union's own
   explicit members are required in that case.
-- **Only a bare class-name or `nil` *scalar* `when` value counts as
-  covering a member** — an Array/Hash/Object structural pattern (even
-  an empty `Circle{}` class-only guard) never does, and neither does a
-  guarded `when Circle if ...` clause (the guard could reject the match
-  at runtime, so the type isn't unconditionally covered). Comma-
-  separated values in one `when` (`when Circle, Square`) each count
-  independently. Applies identically to both forms.
+- **A bare class-name or `nil` *scalar* `when` value counts as covering
+  a member, and so does a single, top-level, empty `Circle{}` object
+  pattern** — an empty `Circle{}` is already "any `Circle` instance" per
+  this same section's own case/when semantics, so it covers `Circle` the
+  same way a bare `when Circle` does. A *non-empty* object pattern
+  (`Circle{radius: r}`) does not, since it only matches a subset of
+  `Circle`; neither does an Array/Hash pattern (they never name a class
+  at all, so there's no member for them to cover), an empty `Circle{}`
+  nested inside something else (`[Circle{}, x]`'s own top-level shape is
+  an Array pattern), one of several comma-separated alternatives in a
+  single `when` (`when Circle{}, Square{}` — conservative, not
+  incorrect: this would soundly cover both, but isn't credited), or a
+  guarded `when Circle if ...`/`when Circle{} if ...` clause (the guard
+  could reject the match at runtime, so the type isn't unconditionally
+  covered). Comma-separated *scalar* values in one `when`
+  (`when Circle, Square`) each still count independently — the
+  alternatives restriction above is specific to structural patterns.
+  Applies identically to both forms.
 - **A superclass `when` does not cover a subclass member** — for
   `shape: Circle | Square` (both `< Shape`), `when Shape` does not
   count as covering either `Circle` or `Square`; each member needs its

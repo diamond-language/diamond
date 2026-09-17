@@ -183,10 +183,13 @@ authoritative fine-grained record.
   (non-sealed -- see below) class, or a union containing any native scalar/
   container type, interface, or generic type variable, is left exactly as
   unchecked as before (no `when` syntax can prove a whole native type is
-  covered today); only a bare class-name/`nil` scalar `when` value counts
-  as coverage, never a structural Array/Hash/Object pattern, a guarded
-  `when ... if` clause, or a superclass covering a subclass union member.
-  See docs/core-syntax.md's "Exhaustiveness checking" section.
+  covered today); a bare class-name/`nil` scalar `when` value counts as
+  coverage, and so does a single, top-level, empty `Circle{}` object
+  pattern (added later -- see below), but never a non-empty or nested
+  structural pattern, an Array/Hash pattern, several comma-separated
+  structural alternatives in one `when`, a guarded `when ... if` clause,
+  or a superclass covering a subclass union member. See docs/core-syntax.md's
+  "Exhaustiveness checking" section.
 - Added `sealed class Name ... end`: an opt-in author promise that a class
   hierarchy is closed, not an enforcement mechanism against some external
   boundary (Diamond has no per-file/module compile boundary that survives
@@ -198,6 +201,16 @@ authoritative fine-grained record.
   that class's own direct subclasses -- a zero- or more-than-8-subclass
   sealed class stays unchecked either way, matching the same member-count
   ceiling every union already has.
+- Fixed a real exhaustiveness-checking false positive: a single, top-level,
+  empty `Circle{}` object pattern (no reader fields, no `,`-joined
+  alternatives) previously never counted as covering `Circle`, so a `case`
+  whose every arm used one was wrongly rejected as non-exhaustive even
+  though it demonstrably covered every member -- forcing a spurious `else`
+  or a drop back to a bare `when Circle` just to satisfy the checker. Now
+  credited the same way a bare `when Circle` already was, for both an
+  explicit union and a sealed hierarchy; a non-empty or nested pattern
+  still correctly doesn't count, since it only matches a subset of the
+  type.
 - Added self-recursive tail-call optimization: a function's own tail call
   to itself (the entire value of a `return`, or a body's own trailing
   expression, nothing done to the result afterward) now runs in constant
