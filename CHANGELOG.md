@@ -6,6 +6,20 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.5.2
+
+### Documentation
+
+- Rewrote README.md into a compact, comparison-focused introduction (what's
+  familiar coming from Ruby, what actually differs) instead of an exhaustive
+  feature/build-matrix dump. The system-dependency install commands,
+  loopback-network and sanitizer/ptrace test notes, and self-hosting corpus
+  note it previously carried moved into CONTRIBUTING.md's own "Build and
+  test" section instead -- CONTRIBUTING.md already pointed contributors at
+  README.md for exactly this detail, so nothing here is lost, just
+  relocated to where a contributor (rather than a first-time reader) looks
+  for it.
+
 ## 0.5.1
 
 ### Tooling

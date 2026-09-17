@@ -17,7 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "0.5.1";
+static constexpr char DIAMOND_VERSION[] = "0.5.2";
 
 static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
