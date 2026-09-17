@@ -48,6 +48,9 @@ authoritative fine-grained record.
 - Added combined major/minor-GC stress coverage for SQLite prepared-statement
   reuse/closure and statements that outlive their closed connection; both
   ownership paths continue to pass.
+- Revalidated live database integration against throwaway PostgreSQL 16,
+  MariaDB 11, and MySQL 8 containers: each Arel dialect suite passed all
+  12 tests with no cleanup or driver error failures.
 
 ### Tooling
 

@@ -533,6 +533,10 @@ SQLite resource cleanup is now stress-tested under both major and minor GC for
 prepared-statement reuse/closure and a statement that outlives its closed
 connection.
 
+Live-driver validation also passed in 2026-09 against throwaway PostgreSQL 16,
+MariaDB 11, and MySQL 8 containers: all three existing Arel dialect suites
+passed 12/12 tests.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database
