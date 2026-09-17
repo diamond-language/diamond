@@ -529,6 +529,10 @@ connect/listen/handshake and pipe-setup paths close transient descriptors, while
 rooted TLS handles retain sole ownership for later sweep cleanup; the existing
 timeout and failure cases passed without an ownership defect.
 
+SQLite resource cleanup is now stress-tested under both major and minor GC for
+prepared-statement reuse/closure and a statement that outlives its closed
+connection.
+
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database

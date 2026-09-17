@@ -45,6 +45,9 @@ authoritative fine-grained record.
   double-close symptoms.
 - Revalidated the native and LSP suites with the locally installed Fedora
   Clang 22 toolchain: 1543 language cases and 277 LSP cases passed.
+- Added combined major/minor-GC stress coverage for SQLite prepared-statement
+  reuse/closure and statements that outlive their closed connection; both
+  ownership paths continue to pass.
 
 ### Tooling
 
