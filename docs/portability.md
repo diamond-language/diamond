@@ -51,8 +51,14 @@ enough POSIX-adjacent surface area to matter here.
   there is a symlink to clang), no sanitizer/tsan builds, no package-
   specific tests validated against macOS either.
 
-Not yet validated: a non-x86_64 architecture, and OpenBSD (blocked on a
-real gap, not just an unwritten CI job -- see below). Portability claims
+Language-level pthreads explicitly request an 8 MiB stack on every platform.
+That matches the stack against which the interpreter recursion guard is
+calibrated instead of inheriting libc-dependent defaults (roughly 128 KiB on
+musl and 512 KiB on Darwin), which are too small for `run_chunk`'s fixed native
+frame and can fault before Diamond can report `SystemStackError`.
+
+OpenBSD remains unvalidated (blocked on a real gap, not just an unwritten CI
+job -- see below). Portability claims
 should not extend past what's actually been checked -- see
 docs/roadmap.md's "Explicitly deferred". See "macOS/Darwin" and
 "FreeBSD/OpenBSD" below for what each platform's own job required.

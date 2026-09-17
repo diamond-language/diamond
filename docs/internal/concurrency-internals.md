@@ -134,6 +134,15 @@ one that created it) ever calls its own methods; the mutex below exists to
 protect against that `Supervisor`'s *own* child retry-loop threads, not
 against concurrent callers.
 
+Both these workers and ordinary `Thread.new` workers are created through
+`create_vm_thread`, which requests an 8 MiB native stack. This is part of the
+interpreter contract rather than a performance preference: `run_chunk` has a
+large fixed C frame and its recursion guard is calibrated against that stack
+size. Platform pthread defaults vary from roughly 128 KiB on musl to 512 KiB
+on Darwin and otherwise allow valid calls (or the guard itself) to lose a race
+with a native stack fault. Non-VM workers such as Tensor matrix multiplication
+retain the platform default because they do not execute `run_chunk`.
+
 **Where a restarted attempt's arguments live.** `add_child`'s arguments
 need to survive arbitrarily many restarts, each with its own fresh,
 isolated heap -- so each child gets a private `args_vm`, the identical

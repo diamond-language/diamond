@@ -2302,6 +2302,31 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
 enum { DIAMOND_MAX_THREADS = 64 };
 static atomic_size_t diamond_active_thread_count = 0;
 
+/* run_chunk's deliberately fixed-size interpreter frame is large (see the
+ * native-recursion-limit comment near the top of this file), so libc's
+ * pthread default is part of the VM's effective call-depth contract unless
+ * Diamond overrides it. glibc happens to inherit an 8 MiB default, while
+ * musl commonly supplies only about 128 KiB and Darwin 512 KiB: ordinary
+ * Thread.new code can exhaust the former, and the language-level recursion
+ * guard cannot fire before the latter's native stack is already gone.
+ *
+ * Keep language threads aligned with Diamond fibers and the stack size used
+ * to calibrate DIAMOND_MAX_CALL_DEPTH. Small native worker threads such as
+ * Tensor#matmul do not run the interpreter and intentionally keep their
+ * platform defaults. */
+enum { DIAMOND_VM_THREAD_STACK_SIZE = 8 * 1024 * 1024 };
+
+static int create_vm_thread(pthread_t *handle,
+        void *(*entry)(void *), void *argument) {
+    pthread_attr_t attributes;
+    int status=pthread_attr_init(&attributes);
+    if(status!=0)return status;
+    status=pthread_attr_setstacksize(&attributes,DIAMOND_VM_THREAD_STACK_SIZE);
+    if(status==0)status=pthread_create(handle,&attributes,entry,argument);
+    pthread_attr_destroy(&attributes);
+    return status;
+}
+
 /* Builds a fresh, independently-owned DiamondProgram whose
  * function records and classes[]/interfaces[] tables are a deep copy of
  * whatever program `chunk` is a view into -- see docs/threads.md. Used by
@@ -18860,7 +18885,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     args_vm->extra_roots=new_child->args;
                     args_vm->extra_root_count=forwarded_argc;
-                    if(pthread_create(&new_child->handle,nullptr,
+                    if(create_vm_thread(&new_child->handle,
                             supervisor_child_entry_trampoline,new_child)!=0) {
                         diamond_vm_free(args_vm);free(args_vm);
                         diamond_program_free(program_template);free(program_template);
@@ -21504,7 +21529,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "Thread.new argument does not support this type");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                new_thread->spawned=pthread_create(&new_thread->handle,nullptr,
+                new_thread->spawned=create_vm_thread(&new_thread->handle,
                     thread_entry_trampoline,new_thread)==0;
                 if(!new_thread->spawned) {
                     free_thread(new_thread);

@@ -271,6 +271,17 @@ jobs:
                tests/cases/math_exp_log_tanh.di \
                tests/cases/math_exp_log_tanh.expected \
                /tmp/excluded-cases/
+            # The native JIT backend is intentionally limited to glibc
+            # x86-64; keep this interpreter-only target aligned with musl
+            # and macOS instead of asserting JIT-only expected output.
+            for env_file in tests/cases/*.env; do
+              grep -q '^DIAMOND_JIT=' "$env_file" || continue
+              base="${env_file%.env}"
+              for suffix in env di expected expected_contains flags dic; do
+                file="$base.$suffix"
+                if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+              done
+            done
             mkdir -p /tmp/gnubin
             ln -sf "$(which gsed)" /tmp/gnubin/sed
             export PATH="/tmp/gnubin:$PATH"

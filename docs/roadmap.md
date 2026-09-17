@@ -736,19 +736,19 @@ specific bootstrap or language-design goal.
 
 ### Portability
 
-CI covers Fedora, Ubuntu 26.04, Alpine (musl), FreeBSD, and macOS/Darwin --
-three libcs and three kernels, not just five distros -- across GCC and (for
-the two glibc targets) Clang (`.github/workflows/ci.yml`, `test-all`/
-`test-musl`/`test-freebsd`/`test-macos` jobs). Full inventory of every OS/
+CI covers Fedora, Ubuntu 26.04, Alpine (musl), FreeBSD, macOS/Darwin, and
+native Linux arm64 -- three libcs, three kernels, and two architectures --
+across GCC and (for the two glibc x86-64 targets) Clang
+(`.github/workflows/ci.yml`, `test-all`/`test-musl`/`test-freebsd`/
+`test-macos`/`test-arm64` jobs). Full inventory of every OS/
 libc/kernel/toolchain assumption checked, fixed, or found absent:
 docs/portability.md.
 
-Remaining, genuinely open: no non-x86_64 architecture has been validated,
-and OpenBSD is blocked on a real gap (no `<ucontext.h>` at all, a Fiber-
-implementation limitation, not an unwritten CI job) -- see
-docs/portability.md's "FreeBSD/OpenBSD" section. Debian itself is also
-untested (Ubuntu is the glibc target CI actually runs). The musl/FreeBSD/
-macOS jobs are each narrower than the two-glibc-distro one on purpose
+Remaining, genuinely open: OpenBSD is blocked on a real gap (no
+`<ucontext.h>` at all, a Fiber-implementation limitation, not an unwritten
+CI job) -- see docs/portability.md's "FreeBSD/OpenBSD" section. Debian
+itself is also untested (Ubuntu is the glibc target CI actually runs). The
+musl/FreeBSD/macOS/arm64 jobs are each narrower than the two-glibc-distro one on purpose
 (GCC-only for musl, Clang-only for FreeBSD/macOS, no sanitizer/tsan
 builds, no package-specific tests) -- widening any of them needs that
 coverage actually checked first, not just enabled.
