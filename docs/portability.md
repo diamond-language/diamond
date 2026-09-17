@@ -18,10 +18,11 @@ enough POSIX-adjacent surface area to matter here.
 - **Ubuntu 26.04, GCC, arm64 (glibc)** -- CI runs `make test` on native
   GitHub-hosted arm64 hardware plus focused API, incremental-compile,
   compiled-prelude, fiber, LSP, and REPL targets (`test-arm64` job, same
-  workflow) on every push. The x86-64-only JIT fixtures are excluded, while
-  the portable interpreter and JIT-disabled fallback still compile and run.
-  Narrower than `test-all`: no sanitizer/tsan builds or package-specific
-  suites have been validated on Linux arm64 yet.
+  workflow), plus the full ASan/UBSan native suite in its own
+  `test-arm64-sanitize` job, on every push. The x86-64-only JIT fixtures are
+  excluded, while the portable interpreter and JIT-disabled fallback still
+  compile and run. Narrower than `test-all`: TSan and package-specific suites
+  have not been validated on Linux arm64 yet.
 - **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
   of focused targets (`test-musl` job, same workflow) on every push. 1283
   of 1285 `tests/cases/*.di` corpus cases pass; the two known failures

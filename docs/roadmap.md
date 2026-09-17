@@ -694,9 +694,12 @@ API, incremental-compile, compiled-prelude, fiber, LSP, and REPL targets on a
 real GitHub-hosted arm64 runner (`test-arm64`). That closes the original
 compiler-only portability gap: fibers, dynamic loading, atomics, alignment,
 endianness assumptions, subprocess behavior, and editor tooling all execute on
-the target architecture on every push. The job remains intentionally narrower
-than `test-all`; sanitizer/tsan builds and package-specific suites have not yet
-been validated on Linux arm64 and should be widened only as separate measured
+the target architecture on every push. A separate `test-arm64-sanitize` job
+also runs the full ASan/UBSan suite natively; it is kept separate because its
+24-minute instrumented build and run nearly exhausted the baseline job's
+30-minute budget on the first combined attempt. Coverage remains intentionally
+narrower than `test-all`: TSan and package-specific suites have not yet been
+validated on Linux arm64 and should be widened only as separate measured
 increments.
 
 The arm64, musl, and macOS jobs exclude the JIT cases while still compiling
@@ -737,7 +740,7 @@ CI covers Fedora, Ubuntu 26.04, Alpine (musl), FreeBSD, macOS/Darwin, and
 native Linux arm64 -- three libcs, three kernels, and two architectures --
 across GCC and (for the two glibc x86-64 targets) Clang
 (`.github/workflows/ci.yml`, `test-all`/`test-musl`/`test-freebsd`/
-`test-macos`/`test-arm64` jobs). Full inventory of every OS/
+`test-macos`/`test-arm64`/`test-arm64-sanitize` jobs). Full inventory of every OS/
 libc/kernel/toolchain assumption checked, fixed, or found absent:
 docs/portability.md.
 
@@ -745,9 +748,10 @@ Remaining, genuinely open: OpenBSD is blocked on a real gap (no
 `<ucontext.h>` at all, a Fiber-implementation limitation, not an unwritten
 CI job) -- see docs/portability.md's "FreeBSD/OpenBSD" section. Debian
 itself is also untested (Ubuntu is the glibc target CI actually runs). The
-musl/FreeBSD/macOS/arm64 jobs are each narrower than the two-glibc-distro one on purpose
-(GCC-only for musl, Clang-only for FreeBSD/macOS, no sanitizer/tsan
-builds, no package-specific tests) -- widening any of them needs that
+musl/FreeBSD/macOS/arm64 jobs are each narrower than the two-glibc-distro one
+on purpose (GCC-only for musl/arm64, Clang-only for FreeBSD/macOS, no
+sanitizers on musl/FreeBSD/macOS, no TSan on arm64, and no package-specific
+tests on any of these narrower targets) -- widening any of them needs that
 coverage actually checked first, not just enabled.
 
 ## Explicitly deferred
