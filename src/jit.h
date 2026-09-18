@@ -324,4 +324,28 @@ DiamondVmStatus diamond_jit_compare_slow(DiamondVm *vm, const DiamondChunk *chun
         size_t depth, const uint8_t *site, const DiamondValue *left,
         const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out);
 
+/* Phase 4. JIT trampolines for DIAMOND_OP_INVOKE's `dup`/`freeze`/
+ * `frozen?` pseudo-methods -- full extractions of that opcode's own
+ * real, receiver-kind-agnostic handling of them (src/vm.c, shared with
+ * the interpreter's own case so the two can never drift apart), checked
+ * before any per-type or Instance method dispatch. None of the three
+ * can ever invoke arbitrary user code (no operator-override equivalent
+ * for any of them) or, for `freeze`/`frozen?`, ever allocate -- only
+ * `dup`'s own Array/Hash branches can (compile_invoke_universal in
+ * jit.c sets jc->needs_frame accordingly, only when compiling `dup`).
+ * A receiver that isn't Array/Hash/String/Symbol/a primitive (an
+ * Instance, or any other Object kind) returns a plain nonzero
+ * DiamondVmStatus -- the JIT's own caller only ever compiles a call to
+ * one of these while jc->has_called is still false (see compile_body's
+ * own DIAMOND_OP_INVOKE case for why), so that nonzero status always
+ * resolves to a safe retry via the whole function's ordinary bailout
+ * mechanism, discarding this attempt and falling back to full
+ * interpretation exactly as if the JIT had never been tried. */
+DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out);
+DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out);
+DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out);
+
 #endif

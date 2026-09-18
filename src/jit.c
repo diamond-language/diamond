@@ -1209,6 +1209,55 @@ static void compile_body(JitCompiler *jc) {
                 emit_ret(buf);
                 break;
             }
+            case DIAMOND_OP_INVOKE: {
+                /* Phase 4: deliberately narrow -- only the three
+                 * receiver-kind-agnostic pseudo-methods `dup`/`freeze`/
+                 * `frozen?` (checked by the interpreter's own case before
+                 * any per-type or Instance dispatch, src/vm.c) are
+                 * supported; INVOKE_MONO/INVOKE_TYPED are not attempted
+                 * at all (this call shape never produces either), and
+                 * every other INVOKE -- every native per-type method,
+                 * all Instance method dispatch, `tap`, `public_send`,
+                 * any other name, nonzero argc -- bails the whole
+                 * function, the same structural treatment as any other
+                 * still-unsupported construct. None of the three can
+                 * ever invoke arbitrary user code, so this never sets
+                 * jc->has_called -- but by the same token, a call to one
+                 * of them is only ever safe to compile while has_called
+                 * is still false (see jit.h's own comment on
+                 * diamond_jit_dup/freeze/frozen for why the "not
+                 * dup_defined at runtime" fallback depends on that). */
+                uint16_t dest = 0, recv = 0, name = 0, base = 0;
+                uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                    !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
+                (void)base; /* argc == 0 required below, so no arguments to read */
+                if (jc->has_called || argc != 0 || name >= fn->string_count) {
+                    jc->bailed = true; return;
+                }
+                const DiamondStringConstant *method_name = &fn->strings[name];
+                void *trampoline = nullptr;
+                if (method_name->length == 3 && memcmp(method_name->chars, "dup", 3) == 0) {
+                    trampoline = (void *)(uintptr_t)diamond_jit_dup;
+                    jc->needs_frame = true;
+                } else if (method_name->length == 6 &&
+                           memcmp(method_name->chars, "freeze", 6) == 0) {
+                    trampoline = (void *)(uintptr_t)diamond_jit_freeze;
+                } else if (method_name->length == 7 &&
+                           memcmp(method_name->chars, "frozen?", 7) == 0) {
+                    trampoline = (void *)(uintptr_t)diamond_jit_frozen;
+                } else {
+                    jc->bailed = true; return;
+                }
+                JitBuffer *buf = &jc->buf;
+                emit_mov_rr(buf, REG_RDI, JIT_VM);
+                emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+                emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+                emit_call_trampoline(buf, trampoline);
+                emit_bail_if_al_nonzero(jc);
+                break;
+            }
             default:
                 jc->bailed = true;
                 return;

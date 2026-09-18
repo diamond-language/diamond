@@ -48,6 +48,23 @@ class HydratedUser
   end
 end
 
+# `ActiveRecord::Model#initialize`'s own *current* shape
+# (packages/active_record/lib/active_record/model.di) -- rewritten
+# 2026-09-15 (docs/internal/jit-design.md's "skindicate ORM hydration
+# hotspot" note) from a `keys()`-loop to the native `#dup`, ~20x faster on
+# its own. Unlike HydratedUser above, this one IS fully JIT-eligible as of
+# Phase 4 (docs/internal/jit-design.md): `attributes.dup()` compiles via
+# the new diamond_jit_dup trampoline, and nothing before it in this body
+# sets jc->has_called (no comparison, no other call), so the whole
+# `initialize` compiles end to end -- verified via `DIAMOND_TRACE_JIT`.
+class HydratedModel
+  def initialize(attributes: Hash = {})
+    @attributes = attributes.dup()
+    @association_cache = {}
+  end
+  def attribute(name) = @attributes[name]
+end
+
 def run()
   total = 0
   batch = 0
@@ -63,4 +80,22 @@ def run()
   end
   total
 end
+
+def run_dup()
+  total = 0
+  batch = 0
+  while batch < 100
+    index = 0
+    while index < 100
+      row = {"email": "user#{index}@example.com", "username": "user#{index}", "role": "user", "is_seed": false}
+      user = HydratedModel.new(row)
+      total = total + user.attribute("username").length()
+      index = index + 1
+    end
+    batch = batch + 1
+  end
+  total
+end
+
 run()
+run_dup()

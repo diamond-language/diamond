@@ -459,6 +459,129 @@ of methods that read/write ivars and do int arithmetic/comparisons
 *after* a call has already run (rather than only before) is newly
 reachable.
 
+### Phase 4: `dup`/`freeze`/`frozen?` support -- reaches `Model#initialize` as it exists today, without attempting generic `INVOKE`
+
+Investigated what closing the last gap ("generic `DIAMOND_OP_INVOKE`")
+would actually take. Two findings from reading the real code (not
+assuming from this document's own prior wording) substantially reframed
+the task before any codegen was written:
+
+1. **`DIAMOND_OP_INVOKE`'s real case body is ~2740 lines**
+   (`src/vm.c:17652-20392` as of this phase), not one extractable case
+   like `EQUAL`/`INDEX_GET` were -- it covers the full native-method
+   dispatch table for every builtin type (String/Array/Hash/Symbol/Int/
+   Float/Time/Regexp/File/Socket/SQLite3/Postgres/MySQL/Process/Thread/
+   Channel/Supervisor/...) plus Instance method dispatch with inline
+   caching. "Generic `INVOKE` support" as a single phase was never a
+   realistic scope; this document's own earlier wording undersold that.
+2. **The real motivating target had already changed.** `packages/
+   active_record/lib/active_record/model.di`'s `Model#initialize` no
+   longer loops over `attributes.keys()`/`.length()` the way Phase 2d/2e's
+   own notes describe -- the 2026-09-15 ORM hydration hotspot fix (already
+   on record) rewrote it to `@attributes = attributes.dup()`, ~20x faster
+   on its own terms. Confirmed via `--dump-bytecode` that its *entire*
+   current body is `ARGUMENT_PROVIDED`, `JUMP_IF_TRUE`, `HASH`, `MOVE`,
+   `CHECK_TYPE`, one `INVOKE` (`.dup()`), `SET_IVAR` x2, `HASH`, `RETURN`
+   -- every opcode already JIT-supported except that single `INVOKE`.
+   Also confirmed the real call site (`skindicate.dia/lib/models/
+   user.di`: `User.new(row)`) compiles to plain `DIAMOND_OP_NEW`, not
+   `NEW_KEYWORDS` (which bypasses JIT dispatch entirely via a synthetic
+   `run_chunk` call rather than `jit_call_or_interpret`) -- so a JIT'd
+   `initialize` really would be reached by real construction.
+
+So the actual next step wasn't "generic `INVOKE`" -- it was the small,
+well-bounded slice already sitting at the very top of that giant case:
+`dup`/`tap`/`freeze`/`frozen?`/`public_send`, a receiver-kind-agnostic
+block checked before any per-type or Instance dispatch
+(`src/vm.c:17664-17796` as of Phase 3). Of those five, `dup`/`freeze`/
+`frozen?` are pure, deterministic, native-kind-based dispatch that can
+**never** invoke arbitrary user code (no operator-override equivalent) --
+`tap`/`public_send` do (a Closure call, or dispatch by a *runtime*
+string), real SUPER-level complexity not needed for this target and not
+attempted.
+
+**Implementation**: three shared functions in `src/vm.c` --
+`diamond_jit_dup`/`diamond_jit_freeze`/`diamond_jit_frozen(DiamondVm *vm,
+const DiamondValue *receiver, DiamondValue *out) -> DiamondVmStatus`,
+verbatim extractions of the interpreter's own former inline blocks, with
+the `dup_defined` gate (Array/Hash/String/Symbol, or any non-Object
+primitive) folded directly into each function -- a receiver that doesn't
+qualify (an Instance, or any other Object kind) returns a plain nonzero
+status. The interpreter's own three `DIAMOND_OP_INVOKE` blocks are now
+thin wrappers around these, matching the anti-duplication discipline
+Phase 2e/2g already established. A new `compile_body` case for
+`DIAMOND_OP_INVOKE` only (`INVOKE_MONO`/`INVOKE_TYPED` deliberately
+excluded -- this call shape never produces either) recognizes exactly
+these three method names with `argc == 0`, compiling a direct 3-register
+trampoline call (`vm`/`&registers[recv]`/`&registers[dest]`, no stack
+args -- simpler than every prior trampoline here) followed by
+`emit_bail_if_al_nonzero`. `jc->needs_frame = true` only when compiling
+`dup` (the only one that can allocate, via `allocate_array`/
+`allocate_hash`). None of the three ever sets `jc->has_called` (they can
+never invoke arbitrary code) -- **but, by the same reasoning that makes
+that safe, compiling one at all requires `jc->has_called` to already be
+false**, since a receiver that turns out not to be `dup_defined` at
+runtime can only be handled by a safe *retry*, never a *propagate*.
+Anything else -- wrong name, nonzero `argc`, or reached once `has_called`
+is already true -- bails the whole function, the same structural
+treatment as any other unsupported construct.
+
+**A real, sharper-than-expected consequence of that last point, found
+empirically**: Phase 3 made `ADD_INT`/`SUBTRACT_INT`/`MULTIPLY_INT`/
+`DIVIDE_INT`/`LESS_INT` set `jc->has_called = true` unconditionally the
+moment any of them compile at all (their own Instance-operator-override
+branch is the reason, see Phase 3 above) -- which means **any loop
+condition using an ordinary integer comparison** (`while index < n`,
+`LESS_INT`) already sets `has_called` before a `dup`/`freeze`/`frozen?`
+call reached later in the same function, and that call is then correctly
+rejected by this phase's own gate. Confirmed directly: a `dup()` call
+placed *after* a `while index < 3` loop condition in the same function
+does not compile, while the exact same call placed under a plain `if`
+(no loop, no preceding comparison) does. `Model#initialize` itself is
+unaffected -- its own body has no comparison or other call before its one
+`.dup()` -- but this means the practical reach of Phase 4 is narrower
+than "any dup/freeze/frozen? call, JIT-wide": specifically, one reached
+after any arithmetic comparison, `EQUAL`, `INDEX_GET`/`SET`, or `SUPER`
+earlier in the same function will not compile. Not fixed here -- doing so
+would need the same kind of resumable-fallback redesign Phase 3 already
+gave arithmetic, generalized to `dup`/`freeze`/`frozen?`'s own "not
+`dup_defined`" case, which is a real but small follow-on, not attempted
+in this phase.
+
+**Verified**: `Model#initialize`'s exact current shape now compiles
+(`DIAMOND_TRACE_JIT=1` showing `jit: 1 compiled function(s)` where it
+showed `0` before this phase, confirmed by checking out the pre-Phase-4
+tree and rerunning the identical program) --
+`tests/cases/jit_invoke_dup.di` also confirms `dup` produces a real,
+independent copy (mutating the original Hash after construction doesn't
+affect the constructed instance). `dup`/`freeze`/`frozen?` verified
+correct across every `dup_defined` receiver kind (Int, String, Array,
+Hash) under `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`
+(`tests/cases/jit_dup_freeze_frozen_kinds.di`). The "not `dup_defined` at
+runtime" fallback verified directly: a `dup()` call compiled against an
+Instance receiver correctly reports one runtime bailout and falls back
+to full, correct interpretation rather than mishandling it
+(`tests/cases/jit_dup_instance_fallback.di`). Full suite (1551 cases)
+green under debug, ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1
+DIAMOND_STRESS_GC=1` -- the sharpest available check for `dup`'s own
+allocation, since its live registers (the Hash argument, in particular)
+must survive a collection forced on every allocation.
+
+**Honest end-to-end measurement**: `bench/object_hydration.di` gained a
+new `HydratedModel`/`run_dup()` pair mirroring `Model#initialize`'s exact
+current shape (the pre-existing `HydratedUser`/`run()` benchmark is
+unchanged -- it still demonstrates a *different*, still-open gap:
+string-literal Hash keys compiling to a fresh `DIAMOND_OP_STRING`
+construction per call, unrelated to this phase). Direct A/B release-build
+timing (isolated `run_dup()` alone, `DIAMOND_JIT_THRESHOLD=1`): ~330-345ms
+interpreted vs. ~300-320ms JIT'd, a real but modest ~8-10% end-to-end win
+-- most of the per-call cost is inside `diamond_jit_dup`'s own Hash-copy
+work either way (same cost whether reached via the interpreter or a
+trampoline call), matching the exact pattern Phase 2c's own
+`object_hydration.di` measurement (~2-3%) and Phase 2b's
+`hash_ivar_construct.di` (~4-8%) already established: this JIT tier
+removes bytecode dispatch overhead, not the underlying native work.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

@@ -1,0 +1,15 @@
+def dup_int(x) = x.dup()
+def dup_string(s) = s.dup()
+def dup_array(a) = a.dup()
+def dup_hash(h) = h.dup()
+def freeze_array(a) = a.freeze()
+def frozen_array(a) = a.frozen?()
+
+puts(dup_int(5))
+puts(dup_string("hi"))
+puts(dup_array([1, 2, 3]))
+puts(dup_hash({"a": 1}))
+fa = [1, 2, 3]
+freeze_array(fa)
+puts(frozen_array(fa))
+puts(frozen_array([9]))

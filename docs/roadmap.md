@@ -684,22 +684,38 @@ unconditionally JIT-ineligible for three independent reasons:
   get_ivar.*`), though `Model#initialize`-shaped code specifically still
   isn't (see below -- its loop body's real `INDEX_GET`/`INDEX_SET` calls
   are the remaining blocker, not ivar access);
-- generic `DIAMOND_OP_INVOKE` (dynamic dispatch by name, used for
-  *every* `.method()` call regardless of receiver type, not a
-  dedicated per-native-method opcode) still has no case at all --
-  confirmed by isolating a `.length()`-calling method's own JIT attempt
-  from an unrelated `initialize` method's own successful one in the
-  same program. The one gap left of the original three.
+- ~~generic `DIAMOND_OP_INVOKE`~~ -- **partially closed, and reframed**
+  (2026-09, `docs/internal/jit-design.md`'s own "Phase 4"). Reading the
+  real case body found it's ~2740 lines (`src/vm.c`, the full native-
+  method dispatch table for every builtin type plus Instance dispatch
+  with inline caching), not one extractable case -- "generic `INVOKE`
+  support" was never a realistically scoped single phase, and this
+  roadmap's own prior wording undersold that. Separately, the real
+  motivating target had already changed: `Model#initialize`
+  (`packages/active_record/lib/active_record/model.di`) no longer loops
+  over `.keys()`/`.length()` -- the 2026-09-15 ORM hydration hotspot fix
+  already on record rewrote it to `attributes.dup()`. JIT support for
+  just the three receiver-kind-agnostic pseudo-methods `dup`/`freeze`/
+  `frozen?` (never able to invoke arbitrary user code, unlike every
+  other `INVOKE` shape) closes that gap for `Model#initialize` *as it
+  exists today* -- verified via `DIAMOND_TRACE_JIT` showing it compile
+  where it didn't before, and a real, if modest, ~8-10% end-to-end
+  timing win on an updated `bench/object_hydration.di`
+  (`tests/cases/jit_invoke_dup.*`). Every other `INVOKE` shape --
+  every native per-type method (`.keys()`/`.length()`/...), all Instance
+  method dispatch, `tap`, `public_send` -- remains completely
+  unattempted, and is now understood to be a dramatically larger,
+  separately-scoped undertaking than "one more trampoline."
 
-Generic `INVOKE` alone is now sufficient to block the whole function
-(the same unconditional, whole-function `default: jc->bailed = true`
-every unrecognized opcode already hits) -- `Model#initialize` still
-calls `.keys()`, so it still doesn't reach JIT eligibility, but a
-narrower class of methods (reads/writes ivars, indexes a Hash/Array,
-and does int arithmetic/comparisons, all without ever calling a
-`.method()`) now does, which wasn't true before Phase 3. A general
-tracing or method JIT covering arbitrary call graphs remains further
-out still, an open research direction rather than a committed feature.
+`Model#initialize` as it exists today is now fully JIT-eligible end to
+end -- the original three-gap picture (`has_called`, `GET_IVAR`, generic
+`INVOKE`) is closed for that specific function's own current shape. A
+future rewrite of `Model#initialize` that reintroduces a `.keys()`-style
+loop, or any method calling a native per-type method or another
+user-defined method, is not covered by any of this -- true generic
+method dispatch from JIT'd code remains an open, unattempted, and now
+much better-understood-in-scope research direction, not a committed
+feature.
 
 Before extending past the current narrow slice:
 

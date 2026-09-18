@@ -15391,6 +15391,85 @@ static bool sandbox_category_allowed(const char *category) {
     return false;
 }
 
+/* Phase 4 (docs/internal/jit-design.md). Shared implementation for
+ * DIAMOND_OP_INVOKE's `dup`/`freeze`/`frozen?` pseudo-methods --
+ * receiver-kind-agnostic native operations checked before any per-type
+ * or Instance method dispatch (see that opcode's own comment on
+ * interception order), extracted so the interpreter and the JIT
+ * (src/jit.c's compile_body, own DIAMOND_OP_INVOKE case) share one
+ * implementation rather than two independently maintained copies. None
+ * of the three can ever invoke arbitrary user code (no operator-override
+ * equivalent for any of them, unlike EQUAL/INDEX_GET), so compiling one
+ * of these never needs jc->has_called = true. `dup_defined` (Array/Hash/
+ * String/Symbol, or any non-Object primitive) is folded directly into
+ * each function rather than left to a caller to check first: a receiver
+ * that doesn't qualify (an Instance, or any other Object kind --
+ * Time/Regexp/File/...) returns a plain nonzero DiamondVmStatus, safe to
+ * treat as "not handled here, fall back" by any caller that only ever
+ * reaches these before jc->has_called could be true (see compile_body's
+ * own comment for why that's guaranteed). */
+DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=*receiver;return DIAMOND_VM_OK;}
+    const DiamondObjectKind dup_kind=receiver->as.object->kind;
+    if(dup_kind==DIAMOND_OBJECT_STRING||dup_kind==DIAMOND_OBJECT_SYMBOL) {
+        /* Both are immutable in this VM (every String/Symbol-producing
+         * operation returns a new object rather than mutating in place),
+         * so a distinct copy would be observably identical -- returning
+         * the same object is correct, not just an optimization. */
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    if(dup_kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *source=(const DiamondArray *)receiver->as.object;
+        DiamondArray *copy=allocate_array(vm,source->values,source->count);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        /* constraints[]/constraint_count deliberately NOT copied -- see
+         * this same rationale preserved from the interpreter's own former
+         * inline copy of this logic (docs/internal/jit-design.md's
+         * Phase 4). */
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
+    if(dup_kind==DIAMOND_OBJECT_HASH) {
+        const DiamondHash *source=(const DiamondHash *)receiver->as.object;
+        DiamondHash *copy=allocate_hash(vm);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<source->count;index++)
+            if(!hash_set(vm,copy,source->entries[index].key,source->entries[index].value))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
+
+DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    (void)vm; /* unused -- kept for a calling convention uniform with diamond_jit_dup */
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=*receiver;return DIAMOND_VM_OK;}
+    const DiamondObjectKind freeze_kind=receiver->as.object->kind;
+    if(freeze_kind==DIAMOND_OBJECT_STRING||freeze_kind==DIAMOND_OBJECT_SYMBOL) {
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    if(freeze_kind==DIAMOND_OBJECT_ARRAY||freeze_kind==DIAMOND_OBJECT_HASH) {
+        receiver->as.object->frozen=true;
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
+
+DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    (void)vm; /* unused -- kept for a calling convention uniform with diamond_jit_dup */
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;}
+    const DiamondObjectKind kind=receiver->as.object->kind;
+    if(kind==DIAMOND_OBJECT_STRING||kind==DIAMOND_OBJECT_SYMBOL) {
+        *out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;
+    }
+    if(kind==DIAMOND_OBJECT_ARRAY||kind==DIAMOND_OBJECT_HASH) {
+        *out=DIAMOND_BOOL(receiver->as.object->frozen);return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -17720,43 +17799,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                        memcmp(method_name->chars,"dup",3)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        if(registers[recv].kind!=DIAMOND_VALUE_OBJECT) {
-                            registers[dest]=registers[recv];break;
-                        }
-                        const DiamondObjectKind dup_kind=registers[recv].as.object->kind;
-                        if(dup_kind==DIAMOND_OBJECT_STRING||dup_kind==DIAMOND_OBJECT_SYMBOL) {
-                            /* Both are immutable in this VM (every String/
-                             * Symbol-producing operation returns a new
-                             * object rather than mutating in place), so a
-                             * distinct copy would be observably identical
-                             * -- returning the same object is correct, not
-                             * just an optimization. */
-                            registers[dest]=registers[recv];break;
-                        }
-                        if(dup_kind==DIAMOND_OBJECT_ARRAY) {
-                            const DiamondArray *source=
-                                (const DiamondArray *)registers[recv].as.object;
-                            DiamondArray *copy=allocate_array(vm,source->values,source->count);
-                            if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                            /* constraints[]/constraint_count deliberately NOT
-                             * copied -- allocate_array already zero-inits
-                             * constraint_count, and that array is a lazily
-                             * populated match-result cache (vm.c's own
-                             * type-check-against-annotation sites), not an
-                             * authoritative type tag; the copy just starts
-                             * with a cold cache, refilled the same way the
-                             * original's was. */
-                            registers[dest]=DIAMOND_OBJECT(copy);break;
-                        }
-                        const DiamondHash *source=
-                            (const DiamondHash *)registers[recv].as.object;
-                        DiamondHash *copy=allocate_hash(vm);
-                        if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        for(size_t index=0;index<source->count;index++)
-                            if(!hash_set(vm,copy,source->entries[index].key,
-                                         source->entries[index].value))
-                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[dest]=DIAMOND_OBJECT(copy);break;
+                        const DiamondVmStatus dup_status=
+                            diamond_jit_dup(vm,&registers[recv],&registers[dest]);
+                        VM_PROPAGATE(dup_status);break;
                     }
                     /* freeze/frozen? -- defined for exactly the same
                      * receiver set dup_defined already names. For a
@@ -17774,24 +17819,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                        memcmp(method_name->chars,"freeze",6)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        if(registers[recv].kind==DIAMOND_VALUE_OBJECT) {
-                            const DiamondObjectKind freeze_kind=
-                                registers[recv].as.object->kind;
-                            if(freeze_kind==DIAMOND_OBJECT_ARRAY||
-                               freeze_kind==DIAMOND_OBJECT_HASH)
-                                registers[recv].as.object->frozen=true;
-                        }
-                        registers[dest]=registers[recv];break;
+                        const DiamondVmStatus freeze_status=
+                            diamond_jit_freeze(vm,&registers[recv],&registers[dest]);
+                        VM_PROPAGATE(freeze_status);break;
                     }
                     if(dup_defined&&method_name->length==7&&
                        memcmp(method_name->chars,"frozen?",7)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        const bool is_frozen=registers[recv].kind!=DIAMOND_VALUE_OBJECT||
-                            registers[recv].as.object->kind==DIAMOND_OBJECT_STRING||
-                            registers[recv].as.object->kind==DIAMOND_OBJECT_SYMBOL||
-                            registers[recv].as.object->frozen;
-                        registers[dest]=DIAMOND_BOOL(is_frozen);break;
+                        const DiamondVmStatus frozen_status=
+                            diamond_jit_frozen(vm,&registers[recv],&registers[dest]);
+                        VM_PROPAGATE(frozen_status);break;
                     }
                 }
                 if(registers[recv].kind==DIAMOND_VALUE_INT||
