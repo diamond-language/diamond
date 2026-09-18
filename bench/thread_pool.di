@@ -3,7 +3,10 @@
 # directory's own supervisor_pool.di compares Supervisor's steady-state
 # (nothing ever crashes) overhead against. Exercises Thread.new/join
 # spawn-and-teardown cost, not raw arithmetic throughput (int_arithmetic.di
-# already covers that in-process).
+# already covers that in-process). 5 workers, not more -- keeps this
+# benchmark comfortably inside typical dev-machine headroom (leaves
+# other cores free, doesn't contend for cache with everything else
+# running locally) without changing what's actually being measured.
 def worker(n)
   total = 0
   i = 0
@@ -17,7 +20,7 @@ end
 def run()
   threads = []
   index = 0
-  while index < 16
+  while index < 5
     threads.push(Thread.new(worker, 50000))
     index = index + 1
   end

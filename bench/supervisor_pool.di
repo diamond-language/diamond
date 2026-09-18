@@ -4,7 +4,8 @@
 # return ends a supervised child for good, no restart path exercised
 # here; see docs/threads.md's Supervisors section). Compare this file's
 # per-iteration time against thread_pool.di's own to see the steady-
-# state overhead, if any.
+# state overhead, if any. Same 5-worker cap as thread_pool.di, for the
+# same reason -- keep the pair directly comparable.
 def worker(n)
   total = 0
   i = 0
@@ -18,7 +19,7 @@ end
 def run()
   sup = Supervisor.new()
   index = 0
-  while index < 16
+  while index < 5
     sup.add_child(worker, 50000)
     index = index + 1
   end

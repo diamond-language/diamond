@@ -629,3 +629,73 @@ Fixed by extracting that formatting into a buffer-based
 `diamond_format_time_default` and exporting it too, so both paths
 share the exact same real date formatting instead of one lacking it.
 `tests/cases/time_stringify.di` now exercises both paths directly.
+
+## Addition: three new workloads for JIT Phase 3/4 and self-recursive TCO (2026-09-18)
+
+Self-recursive tail-call optimization and the two most recent JIT
+phases (`has_called` no longer blocking int arithmetic/comparison;
+`dup`/`freeze`/`frozen?` support) had no dedicated `bench/*.di`
+coverage -- `object_hydration.di`'s `run_dup()` exercises Phase 4
+incidentally inside an ActiveRecord-shaped benchmark, but nothing
+isolated either JIT phase on its own, and TCO had no workload at all.
+
+- `tail_call_optimization.di` -- a qualifying self-recursive tail call
+  (explicit `return` guard clause, `return selfcall(...)` as the
+  function's own trailing statement -- see docs/callables.md) 3,000,000
+  levels deep. Opcode trace confirms `TAIL_CALL` (not plain `CALL`)
+  for all 3,000,000 occurrences -- direct proof the optimization is
+  active, not just "didn't crash": ordinary recursion this deep would
+  overflow `DIAMOND_MAX_CALL_DEPTH` (95) almost immediately.
+- `jit_arith_after_call.di` -- a Hash `INDEX_GET` (sets `jc->has_called`)
+  followed by a provably-`Int` loop counter's own `LESS_INT`/`ADD_INT`
+  in the same function -- the exact shape Phase 3 closed
+  (`tests/cases/jit_int_arith_after_index_get.di`'s own sized-for-
+  timing sibling). Before Phase 3 this function was permanently
+  JIT-ineligible (0 compiled functions, no matter how hot); now it
+  compiles and measurably helps.
+- `jit_dup.di` -- isolates just `dup` (Phase 4) in its own function,
+  called repeatedly from a separate driver loop (the same shape
+  `Model#initialize` is actually reached: many separate calls, not one
+  call in a hot internal loop -- a `dup` call *inside* a loop condition
+  never compiles at all, since the loop's own `LESS_INT` already sets
+  `has_called` first; see `docs/internal/jit-design.md`'s Phase 4 note).
+
+Neither JIT benchmark is part of the automatic default-vs-quicken sweep
+below (`DIAMOND_JIT` is a separate opt-in tier) -- measured by hand,
+same `make release` binary, `DIAMOND_JIT` toggled purely via env var:
+
+| Benchmark | Interpreted | JIT'd | Speedup |
+|---|---:|---:|---:|
+| `jit_arith_after_call` (`DIAMOND_JIT_THRESHOLD=1`, single call) | ~0.283s | ~0.17-0.23s | ~1.3-1.7x |
+| `jit_dup` (default threshold, 500,000 calls) | ~0.171s | ~0.137s | ~1.25x |
+
+`jit_arith_after_call`'s own win is real but noisier and more modest
+than the ~2.9-3x `int_arithmetic.di` gets (a debug-build comparison of
+this same file showed a misleadingly large ~7x, the same debug-baseline
+distortion `bench/RESULTS.md`'s own Phase 2 section already warns
+about) -- this function does far less arithmetic per iteration relative
+to its `INDEX_GET`/`STRING`-key-allocation overhead than `int_
+arithmetic.di` does, so bytecode-dispatch removal buys proportionally
+less. `jit_dup`'s own ~25% win is consistent with, if a little higher
+than, Phase 4's own `object_hydration.di` measurement (~8-10% end to
+end) -- expected, since this file isolates `dup` alone rather than
+diluting it with `run()`'s own un-JIT'd Hash-literal-construction and
+`.length()`/`.attribute()` calls the way `object_hydration.di`'s
+`run_dup()` does.
+
+`tail_call_optimization` and both JIT files also ran in the default
+sweep below for their own interpreted-baseline numbers (repeat=15,
+repeat=15, repeat=30 respectively) -- see the table.
+
+**`thread_pool.di`/`supervisor_pool.di` also changed this session**:
+capped from 16 workers down to 5, at the user's own request (headroom
+for other work on the same dev machine, less cache pressure from
+running a benchmark locally). Re-measured at the new worker count
+(same `make release` binary, default pass): `thread_pool` ~0.0375s,
+`supervisor_pool` ~0.0405s per 5-worker iteration -- supervision now
+reads about 8% slower rather than the previous ~3.6% at 16 workers,
+but both absolute numbers are small enough (real OS thread spawn/join
+dominating either way) that this delta is within the kind of run-to-run
+noise a 5-thread, sub-50ms measurement is naturally more sensitive to
+than the old 16-thread one was, not evidence supervision itself got
+proportionally more expensive.

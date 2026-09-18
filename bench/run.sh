@@ -46,6 +46,9 @@ declare -A REPEATS=(
     [regexp_match]=15
     [freeze_mutation_check]=10
     [struct_field_access]=15
+    [tail_call_optimization]=15
+    [jit_arith_after_call]=15
+    [jit_dup]=30
 )
 
 run_pass() {
