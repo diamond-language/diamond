@@ -734,3 +734,34 @@ reading the code, not just inferred from timing" was `BASELINE.md`'s
 own phrasing for the *original*, now-superseded finding). `git log`
 on the function in question settled this in under a minute and should
 have been the first move, not an afterthought.
+
+## Follow-up: closing the loop -- generic arithmetic JIT support (2026-09-18, same day)
+
+The real reason `hash_ops.di`'s `run()` never JIT-compiled turned out to
+have nothing to do with Hash at all: `total = total + values[index]` is
+generic `ADD` (a Hash's values have no static type), and the JIT had zero
+cases for any generic arithmetic/comparison opcode -- only the runtime-
+quickened `_INT` forms, and not even all of those (`LESS_EQUAL_INT`/
+`GREATER_INT`/`GREATER_EQUAL_INT` were never added). Closed this session
+(`docs/internal/jit-design.md`'s own "Phase 5") -- both `hash_ops.di` and
+`int_arithmetic_dynamic.di` (the file that originally named the typed-
+vs-untyped gap) now compile and measurably help:
+
+| Benchmark | Interpreted | JIT'd | Speedup |
+|---|---:|---:|---:|
+| `hash_ops` (`DIAMOND_JIT_THRESHOLD=1`) | ~0.057s | ~0.038s | ~1.5x |
+| `int_arithmetic_dynamic` (`DIAMOND_JIT_THRESHOLD=1`) | ~1.07s | ~0.51s | ~2.1x |
+
+`int_arithmetic_dynamic`'s own win closes most (though not all) of the
+~2.8x gap this file's own comment names against `int_arithmetic.di` --
+the remainder is inherent to the runtime kind check every generic-opcode
+call site now pays that a statically-proven-`Int` `_INT` site's fast
+path skips.
+
+A real, already-deployed bug (not related to Hash or this fix's own
+correctness, found empirically while testing it) was also caught and
+fixed in the same phase -- see `docs/internal/jit-design.md`'s own Phase
+5 section for the full account. Worth noting here too since it's the
+kind of thing a benchmark-driven investigation is well-positioned to
+surface: chasing a modest perceived slowness turned up a real crash bug
+already live in production, not just the perf question originally asked.

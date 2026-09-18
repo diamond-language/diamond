@@ -314,10 +314,21 @@ static void emit_idiv(JitBuffer *buf, int reg) {
     emit_u8(buf, (uint8_t)(0xC0 | (7 << 3) | (reg & 7))); /* /7 = IDIV */
 }
 
-/* setl al */
-static void emit_setl_al(JitBuffer *buf) {
+/* Phase 5: setcc al, condition byte generic -- mirrors emit_jcc_
+ * placeholder's own generic-condition convention. Replaces the
+ * originally-separate, LESS_INT-only emit_setl_al now that compile_
+ * binary_int_op's own comparison branch covers all four orderings
+ * (LESS/LESS_EQUAL/GREATER/GREATER_EQUAL) and both the generic and
+ * _INT form of each. */
+enum {
+    SETCC_L = 0x9C,
+    SETCC_GE = 0x9D,
+    SETCC_LE = 0x9E,
+    SETCC_G = 0x9F,
+};
+static void emit_setcc_al(JitBuffer *buf, uint8_t condition) {
     emit_u8(buf, 0x0F);
-    emit_u8(buf, 0x9C);
+    emit_u8(buf, condition);
     emit_u8(buf, 0xC0);
 }
 
@@ -442,16 +453,34 @@ static void emit_epilogue(JitCompiler *jc) {
  * needed again on this exit path except JIT_VM (for the call itself), and
  * emit_pop_persistent_registers' own pops restore each register's real
  * (caller's) value from the stack regardless of what's briefly stored in
- * it here. Only ever reached when jc->has_called is true, which is only
- * ever set alongside jc->needs_frame (SUPER sets both), so a frame is
- * always present here to pop. */
+ * it here.
+ *
+ * Bug fixed here (found empirically, a real SIGSEGV, not by inspection):
+ * this function used to pop a DiamondFrame unconditionally, on the belief
+ * that "jc->has_called is only ever set alongside jc->needs_frame (SUPER
+ * sets both)". That was already false the moment compile_equal_op's
+ * general case (Phase 2e) started setting has_called without needs_frame
+ * (EQUAL's own override branch never allocates), and every one of Phase
+ * 3/5's arithmetic/comparison opcodes does the exact same thing -- so a
+ * function whose only has_called-setting opcode is one of those, followed
+ * by a *different* opcode (SET_IVAR, INDEX_GET/SET, ...) that genuinely
+ * needs to propagate, reaches this stub with no frame ever having been
+ * pushed. Calling diamond_jit_frame_pop anyway pops whatever frame
+ * actually is on top of vm->frames -- the caller's, not this function's
+ * own (nonexistent) one -- corrupting the frame chain, not a crash at this
+ * call site itself but on some later, unrelated frame operation. Guarded
+ * behind jc->needs_frame now, exactly like emit_epilogue's own success/
+ * retry exit already correctly does -- see tests/cases/jit_propagate_
+ * without_frame.di, which reproduces this exact shape. */
 static void emit_epilogue_propagate(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
-    emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
-    emit_mov_rr(buf, REG_RDI, JIT_VM);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
-    emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
-    emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    if (jc->needs_frame) {
+        emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
+        emit_mov_rr(buf, REG_RDI, JIT_VM);
+        emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
+        emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
+        emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    }
     emit_pop_persistent_registers(buf);
 }
 
@@ -641,13 +670,35 @@ static void emit_compare_slow_call(JitCompiler *jc, size_t instruction_start, ui
  * propagates a real status -- the same "call a trampoline, never retry"
  * shape every other call-capable opcode here already uses. Because the
  * Instance-override branch inside either trampoline can genuinely invoke
- * arbitrary user code, compiling any of these five opcodes at all sets
+ * arbitrary user code, compiling any of these opcodes at all sets
  * jc->has_called = true unconditionally -- the same conservative,
  * compile-time-only choice compile_equal_op already makes, regardless of
  * whether a given occurrence's actual runtime operands ever reach that
  * branch. Every local bail jump below targets the shared slow-call block
  * emitted once per occurrence, patched via patch_rel32_to_here exactly
- * like compile_equal_op's own kinds_differ/general-case branches. */
+ * like compile_equal_op's own kinds_differ/general-case branches.
+ *
+ * Phase 5: also compiles the *generic* (non-`_INT`) forms of every one
+ * of these opcodes -- ADD/SUBTRACT/MULTIPLY/DIVIDE/LESS/LESS_EQUAL/
+ * GREATER/GREATER_EQUAL -- plus the three `_INT` comparison forms that
+ * were never added even for the typed case (LESS_EQUAL_INT/GREATER_INT/
+ * GREATER_EQUAL_INT). This needed no new trampoline or vm.c change at
+ * all: emit_arith_slow_call/emit_compare_slow_call already forward
+ * whatever opcode was actually compiled, and int_arith_slow/compare_
+ * int_slow (src/vm.c, Phase 3) already handle being called with an
+ * already-generic opcode correctly -- they only attempt the deopt-to-
+ * generic bytecode rewrite when the opcode passed in actually *is* one
+ * of the `_INT` forms (`generic != opcode`), skipping that step and
+ * dispatching directly otherwise. The fast native path's own kind check
+ * (emit_check_kind_int_or_jump: "is this DIAMOND_VALUE_INT") is already
+ * exactly as correct for a generic opcode as for an `_INT` one -- a
+ * generic ADD with two plain Int operands is exactly as safe to add
+ * natively as ADD_INT's own confirmed-Int case, and the slow call
+ * handles every other kind (String, Float, Instance, Time, bignum)
+ * either way. This is why a value the compiler could never prove `Int`
+ * at compile time (an untyped parameter, a Hash/Array element) no
+ * longer disables the JIT for its entire containing function the moment
+ * it's used in arithmetic. */
 static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
                                    uint16_t left, uint16_t right, DiamondOpCode op) {
     JitBuffer *buf = &jc->buf;
@@ -656,11 +707,18 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
     size_t slow_jump_count = 0;
     slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, left, REG_RAX);
     slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, right, REG_RAX);
-    if (op == DIAMOND_OP_LESS_INT) {
+    if (op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT ||
+        op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT ||
+        op == DIAMOND_OP_GREATER || op == DIAMOND_OP_GREATER_INT ||
+        op == DIAMOND_OP_GREATER_EQUAL || op == DIAMOND_OP_GREATER_EQUAL_INT) {
+        const uint8_t condition =
+            (op == DIAMOND_OP_LESS || op == DIAMOND_OP_LESS_INT) ? SETCC_L :
+            (op == DIAMOND_OP_LESS_EQUAL || op == DIAMOND_OP_LESS_EQUAL_INT) ? SETCC_LE :
+            (op == DIAMOND_OP_GREATER || op == DIAMOND_OP_GREATER_INT) ? SETCC_G : SETCC_GE;
         emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
         emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
         emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
-        emit_setl_al(buf);
+        emit_setcc_al(buf, condition);
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
         emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
         size_t done = emit_jmp_placeholder(buf);
@@ -669,7 +727,7 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
         patch_rel32_to_here(buf, done);
         return;
     }
-    if (op == DIAMOND_OP_DIVIDE_INT) {
+    if (op == DIAMOND_OP_DIVIDE_INT || op == DIAMOND_OP_DIVIDE) {
         emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
         emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
         emit_test_r64(buf, REG_RCX, REG_RCX);
@@ -695,9 +753,9 @@ static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uin
     }
     emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
     emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
-    if (op == DIAMOND_OP_ADD_INT) {
+    if (op == DIAMOND_OP_ADD_INT || op == DIAMOND_OP_ADD) {
         emit_alu_rr(buf, ALU_ADD, REG_RAX, REG_RCX);
-    } else if (op == DIAMOND_OP_SUBTRACT_INT) {
+    } else if (op == DIAMOND_OP_SUBTRACT_INT || op == DIAMOND_OP_SUBTRACT) {
         emit_alu_rr(buf, ALU_SUB, REG_RAX, REG_RCX);
     } else {
         emit_imul_rr(buf, REG_RAX, REG_RCX);
@@ -1042,7 +1100,24 @@ static void compile_body(JitCompiler *jc) {
             case DIAMOND_OP_SUBTRACT_INT:
             case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT:
-            case DIAMOND_OP_LESS_INT: {
+            case DIAMOND_OP_LESS_INT:
+            /* Phase 5: the generic (non-_INT) forms, and the three _INT
+             * comparison forms that were never added even for the typed
+             * case -- see compile_binary_int_op's own updated comment.
+             * Every one of these opcodes shares the identical dest/left/
+             * right decode shape (confirmed against src/vm.c's own
+             * interpreter case for this opcode family). */
+            case DIAMOND_OP_ADD:
+            case DIAMOND_OP_SUBTRACT:
+            case DIAMOND_OP_MULTIPLY:
+            case DIAMOND_OP_DIVIDE:
+            case DIAMOND_OP_LESS:
+            case DIAMOND_OP_LESS_EQUAL:
+            case DIAMOND_OP_LESS_EQUAL_INT:
+            case DIAMOND_OP_GREATER:
+            case DIAMOND_OP_GREATER_INT:
+            case DIAMOND_OP_GREATER_EQUAL:
+            case DIAMOND_OP_GREATER_EQUAL_INT: {
                 /* Phase 3: no longer rejected once jc->has_called is
                  * already true -- see compile_binary_int_op's own comment
                  * for why their edge cases (overflow, division by zero,

@@ -717,6 +717,31 @@ method dispatch from JIT'd code remains an open, unattempted, and now
 much better-understood-in-scope research direction, not a committed
 feature.
 
+**Generic (non-`_INT`) arithmetic/comparison now compiles too** (2026-09,
+`docs/internal/jit-design.md`'s own "Phase 5") -- found while
+investigating why a Hash-lookup-and-sum workload never JIT-compiled at
+all: one generic `ADD`/`SUBTRACT`/`MULTIPLY`/`DIVIDE`/`LESS`/
+`LESS_EQUAL`/`GREATER`/`GREATER_EQUAL` anywhere in a function (any value
+the compiler can't statically prove `Int` -- an untyped parameter, a
+Hash/Array element) used to bail the *entire function* out of JIT
+eligibility, with zero prior support for the generic forms at all. Turned
+out to need no new trampoline: Phase 3's own slow-path functions already
+handled being called with a generic opcode correctly. Real, measured
+wins: `bench/int_arithmetic_dynamic.di` (the file that first named the
+typed-vs-untyped gap) ~2.1x faster JIT'd, closing most of its own ~2.8x
+gap against the fully-typed `int_arithmetic.di`; `bench/hash_ops.di`
+~1.5x. **Also found, empirically, a real bug already live in production**:
+`emit_epilogue_propagate` unconditionally popped a `DiamondFrame` on the
+belief that a compiled function's own `has_called` flag implied a frame
+had been pushed -- false since Phase 2e, not just Phase 5 -- corrupting
+`vm->frames` (a real segfault, reproduced directly on the pre-Phase-5
+commit already deployed to skindicate.dia) whenever a `has_called`-
+without-`needs_frame` opcode was followed by a genuinely error-
+propagating one, called repeatedly. Fixed alongside this phase; see
+`docs/internal/jit-design.md`'s own Phase 5 section for the full
+timeline and why it went unnoticed through every prior phase's own
+verification pass.
+
 Before extending past the current narrow slice:
 
 - identify hot workloads that remain VM-bound after existing

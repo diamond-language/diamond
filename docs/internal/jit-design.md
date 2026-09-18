@@ -582,6 +582,108 @@ trampoline call), matching the exact pattern Phase 2c's own
 `hash_ivar_construct.di` (~4-8%) already established: this JIT tier
 removes bytecode dispatch overhead, not the underlying native work.
 
+### Phase 5: generic (non-`_INT`) arithmetic/comparison, and a real pre-existing bug found along the way
+
+Investigating "why is `bench/hash_ops.di` slow" (`Hash` itself turned out
+not to be -- see `bench/RESULTS.md`'s own correction) found the real
+answer: `total = total + values[index]` never JIT-compiled at all, at any
+threshold, because a Hash's values have no static type, so that `ADD` can
+never be proven `Int` and stays generic -- and `src/jit.c` had **zero
+cases for any generic arithmetic or comparison opcode** at all (`ADD`/
+`SUBTRACT`/`MULTIPLY`/`DIVIDE`/`LESS`/`LESS_EQUAL`/`GREATER`/
+`GREATER_EQUAL`), only their runtime-quickened `_INT` forms -- and even
+then, only `ADD_INT`/`SUBTRACT_INT`/`MULTIPLY_INT`/`DIVIDE_INT`/
+`LESS_INT`; `LESS_EQUAL_INT`/`GREATER_INT`/`GREATER_EQUAL_INT` were never
+added either. One generic opcode anywhere in a function's body bails the
+*entire function* out of JIT eligibility. This is the exact same root
+cause as `int_arithmetic_dynamic.di`'s own ~2.8x gap against
+`int_arithmetic.di`: any value the compiler can't statically prove `Int`
+(an untyped parameter, a Hash/Array element) used in arithmetic anywhere
+disables the JIT for its whole containing function.
+
+Far more tractable than it looked: Phase 3's shared slow-path functions,
+`int_arith_slow`/`compare_int_slow` (`src/vm.c`), already accept *either*
+a generic or an `_INT` opcode -- they only attempt the deopt-to-generic
+bytecode rewrite when the opcode passed in actually *is* one of the
+`_INT` forms; called with an already-generic opcode, they skip that step
+and dispatch directly. Confirmed by re-reading both functions before
+writing any code: **zero `src/vm.c` changes were needed**. The fast
+native path's own kind check (`emit_check_kind_int_or_jump`: "is this
+`DIAMOND_VALUE_INT`") was already exactly as correct for a generic
+opcode as for an `_INT` one. The whole change was in `src/jit.c`: a new
+`emit_setcc_al` (generalizing the previously `LESS_INT`-only
+`emit_setl_al` to also cover `SETLE`/`SETG`/`SETGE`), extending
+`compile_binary_int_op`'s three branches to recognize both the generic
+and `_INT` form of each opcode, and 11 new `case` labels in
+`compile_body`'s switch routing them all through the same codegen. No
+change to `jc->has_called = true` (already set unconditionally, already
+correctly covering every new opcode too).
+
+**A real, already-deployed bug found empirically while testing this, not
+by inspection**: `tests/run.sh`'s full suite segfaulted inside
+`diamond_jit_frame_pop`. Root cause: `emit_epilogue_propagate`'s own
+comment claimed "`jc->has_called` is only ever set alongside
+`jc->needs_frame` (SUPER sets both)" and unconditionally popped a
+`DiamondFrame` on that belief. That was already false as of Phase 2e --
+`compile_equal_op`'s general case sets `has_called` without `needs_frame`
+(`EQUAL`'s override branch never allocates) -- and every one of Phase
+3/5's arithmetic/comparison opcodes does the same. A function whose only
+`has_called`-setting opcode is one of those, followed by a *different*
+opcode (`SET_IVAR`, `INDEX_GET`/`SET`, ...) that genuinely needs to
+propagate a real error, reaches `emit_epilogue_propagate` with no frame
+ever having been pushed -- popping one anyway pops whatever's actually on
+top of `vm->frames` (the caller's, or an even-more-outer one), corrupting
+the frame chain. Not a crash at that call site itself, but on some later,
+unrelated frame operation once the corruption is actually observed --
+which is why this shipped unnoticed through Phase 3/4's own full
+verification passes (ASan/UBSan and `DIAMOND_STRESS_GC` included) and
+reached production: nothing in that testing repeated the exact "call a
+function combining a has_called-without-needs_frame opcode with a later
+genuinely-propagating one" shape enough times in one process for the
+corruption to actually surface as an observable crash. Confirmed
+directly: **the identical crash reproduces on the already-deployed
+pre-Phase-5 commit** using only `EQUAL` (Phase 2e, no Phase 5 code
+involved at all) followed by a `SET_IVAR` on a frozen instance, called
+repeatedly in a loop -- Phase 5 didn't introduce this bug, it just
+happened to be the first work that tripped over it while testing.
+
+Fixed by guarding `emit_epilogue_propagate`'s own frame-pop behind
+`jc->needs_frame`, exactly mirroring `emit_epilogue`'s own success/retry
+exit, which already had this guard correctly. Regression test:
+`tests/cases/jit_propagate_without_frame.di` (the `EQUAL`-only
+reproduction, deliberately independent of any Phase 5 opcode, to prove
+the fix addresses the real, general defect rather than papering over one
+specific new trigger). Also fixed: `tests/cases/jit_ineligible_function_
+falls_back.di` used `value * 2` (untyped parameter) as its own "still
+correctly falls back to interpretation" example -- Phase 5 made that
+construct JIT-eligible, so it no longer demonstrated what the test's own
+name promised; replaced with a genuinely still-unsupported construct
+(a user-defined Instance method call, since generic `INVOKE` remains
+entirely unattempted).
+
+**Verified**: full suite (1552 cases) green under debug, ASan/UBSan, and
+`DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1` (the sharpest
+available check for a frame/GC-root defect, which is exactly the class
+of bug this phase found and fixed). Correctness spot-checked directly
+across the fast native-Int path, bignum overflow, String concatenation,
+Float mixing, an Instance operator override (`+`/`<`), division by zero,
+and the three previously-entirely-unsupported `_INT` comparison forms
+reached via `DIAMOND_QUICKEN` -- all correct. `bench/hash_ops.di` and
+`bench/int_arithmetic_dynamic.di` (release build, `DIAMOND_JIT_
+THRESHOLD=1`): `hash_ops` ~0.057s interpreted -> ~0.038s JIT'd (~1.5x);
+`int_arithmetic_dynamic` ~1.07s -> ~0.51s (~2.1x), closing most of its
+own ~2.8x gap against the fully-typed `int_arithmetic.di`.
+
+**Still doesn't reach every function**: a value the JIT itself can't
+prove is Int at *runtime* either (a real String, Instance, Float, ...)
+still correctly falls to the slow trampoline every time, at real
+per-call cost -- this phase closes the "provably-untyped-but-actually-
+always-Int" gap, not the genuinely-polymorphic-arithmetic case, which
+was never slow to begin with (it already needed the generic dispatch
+either way). Generic `INVOKE` (native per-type methods, Instance method
+dispatch, `tap`/`public_send`) remains completely unattempted -- see
+Phase 4's own note on its real ~2740-line scope.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
