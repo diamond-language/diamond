@@ -28,6 +28,41 @@ authoritative fine-grained record.
   guess when it isn't confident, never no edits vs. a guessed one.
   See docs/lsp.md.
 
+### Performance
+
+- Fixed a real, already-deployed crash under `DIAMOND_JIT=1`: a compiled
+  function combining a call-capable opcode that doesn't need a
+  `DiamondFrame` (`EQUAL`'s own general case, or any arithmetic/
+  comparison opcode) with a *later* opcode that genuinely needs to
+  propagate a real error (e.g. writing to a frozen instance) could
+  corrupt the VM's own internal frame chain and eventually segfault --
+  traced to `emit_epilogue_propagate` unconditionally popping a
+  `DiamondFrame` that this specific call shape never actually pushed.
+  Reproduces back to `EQUAL`'s own general case (2026-09-13); unrelated
+  to and predates the arithmetic work below. See docs/internal/
+  jit-design.md's "Phase 5".
+- JIT (`DIAMOND_JIT=1`) no longer rejects compiling `ADD_INT`/
+  `SUBTRACT_INT`/`MULTIPLY_INT`/`DIVIDE_INT`/`LESS_INT` once an earlier
+  call-capable opcode has already run in the same function -- their own
+  overflow/division-by-zero/non-`Int`-operand edge cases now resume via
+  a dedicated trampoline instead of needing to discard and retry the
+  whole function. See docs/internal/jit-design.md's "Phase 3".
+- JIT now also compiles generic (non-`_INT`) `ADD`/`SUBTRACT`/
+  `MULTIPLY`/`DIVIDE`/`LESS`/`LESS_EQUAL`/`GREATER`/`GREATER_EQUAL` --
+  previously any value the compiler couldn't statically prove `Int` (an
+  untyped parameter, a Hash/Array element) used in arithmetic anywhere
+  disabled the JIT for its entire containing function. Real, measured
+  wins: `bench/int_arithmetic_dynamic.di` ~2.1x faster JIT'd,
+  `bench/hash_ops.di` ~1.5x. See docs/internal/jit-design.md's "Phase 5".
+- JIT now compiles `.dup()`/`.freeze()`/`.frozen?()` -- none of the three
+  can invoke arbitrary user code, so this needed no new safety
+  mechanism -- on `Array`/`Hash`/`String`/`Symbol`/primitive receivers,
+  and (a follow-on) on an Instance receiver too as long as its class
+  doesn't override that method itself. Closes the last of three gaps
+  that had kept skindicate's own `Model#initialize` (as of its current,
+  `.dup()`-based shape) permanently JIT-ineligible. See docs/internal/
+  jit-design.md's "Phase 4" and "Phase 6".
+
 ### Language
 
 - Fixed `puts`/string interpolation/the CLI's own top-level-result

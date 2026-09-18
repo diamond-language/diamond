@@ -637,126 +637,43 @@ Measured, real wins on `bench/RESULTS.md`'s own benchmarks (release build):
 ~2.9-3x on `int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
 `object_hydration.di`.
 
-**It never reached its original motivating target, and the real reason
-turned out to be three separate gaps, not one.** The actual goal was
-skindicate's own `Model#initialize`-shaped row hydration. Landed one
-narrow, real, independently-useful piece (2026-09, `docs/internal/jit-
-design.md`'s own "Phase 2f"): `.length()`/`.to_i()`/`.ord()`/etc. now
-publish their known fixed scalar return type at compile time (reusing
-`DIAMOND_NATIVE_METHODS`, a table already built for interface
-conformance checking), so a `.length()`-bounded comparison gets
-`LESS_INT` from its very first execution under the plain interpreter,
-with no dependence on `DIAMOND_QUICKEN` ever kicking in -- corrected
-2026-09-15 to also cover a plain `String`/`Array`/`Hash` receiver with
-no registered type set (originally only fired for Array/Hash, which
-always get one for unrelated element-tracking reasons; a bare `String`
-local never did), see `docs/internal/jit-design.md`'s own Phase 2f
-correction note. **This is an
-interpreter-level win only, confirmed not to move JIT eligibility at
-all** -- investigated end to end, empirically, not just by re-reading
-the opcode whitelist: `Model#initialize`-shaped code remains
-unconditionally JIT-ineligible for three independent reasons:
+`Model#initialize` (skindicate's own original motivating target, as of
+its current `.dup()`-based shape) is now fully JIT-eligible end to end,
+and the typed-vs-untyped arithmetic gap the JIT's own coverage used to
+leave open is now mostly closed too. Full detail and phase-by-phase
+history: `docs/internal/jit-design.md`; user-facing summary:
+`CHANGELOG.md`'s own "Performance" section.
 
-- ~~`jc->has_called`'s own compile-time-only, monotonic nature~~ --
-  **closed** (2026-09, `docs/internal/jit-design.md`'s own "Phase 3"):
-  the real blocker wasn't the flag itself, it was that `ADD_INT`/
-  `SUBTRACT_INT`/`MULTIPLY_INT`/`DIVIDE_INT`/`LESS_INT`'s own edge cases
-  (a non-Int operand, overflow, division by zero, `INT64_MIN`/`-1`) had
-  no *resumable* fallback -- their only option was "discard and retry
-  the whole function," unsafe once a call had already run. New shared
-  trampolines (`diamond_jit_arith_slow`/`diamond_jit_compare_slow`,
-  extracted from the interpreter's own case bodies, `src/vm.c`) give
-  them the same "call a trampoline, never retry" shape every other
-  call-capable opcode here already has, so they no longer need
-  `has_called` to be false at all -- verified against the exact shape
-  named below (a Hash `INDEX_GET` followed by a loop counter's own
-  `ADD_INT`/`LESS_INT`, `tests/cases/jit_int_arith_after_index_get.*`),
-  which failed to compile before this change and compiles cleanly
-  after;
-- ~~`DIAMOND_OP_GET_IVAR` has no case in the JIT's own compile-time
-  opcode scan at all~~ -- **closed** (2026-09, `docs/internal/jit-
-  design.md`'s own "Phase 2g"): a new `diamond_jit_get_ivar` trampoline,
-  mirroring `SET_IVAR`'s own existing one exactly (same field-cache
-  lookup, no `has_called`/frame needed -- plain field access can never
-  invoke user code or allocate). A method that only reads/writes its
-  own ivars plus does int arithmetic is now fully JIT-eligible where it
-  wasn't before (verified via `DIAMOND_TRACE_JIT`, `tests/cases/jit_
-  get_ivar.*`), though `Model#initialize`-shaped code specifically still
-  isn't (see below -- its loop body's real `INDEX_GET`/`INDEX_SET` calls
-  are the remaining blocker, not ivar access);
-- ~~generic `DIAMOND_OP_INVOKE`~~ -- **partially closed, and reframed**
-  (2026-09, `docs/internal/jit-design.md`'s own "Phase 4"). Reading the
-  real case body found it's ~2740 lines (`src/vm.c`, the full native-
-  method dispatch table for every builtin type plus Instance dispatch
-  with inline caching), not one extractable case -- "generic `INVOKE`
-  support" was never a realistically scoped single phase, and this
-  roadmap's own prior wording undersold that. Separately, the real
-  motivating target had already changed: `Model#initialize`
-  (`packages/active_record/lib/active_record/model.di`) no longer loops
-  over `.keys()`/`.length()` -- the 2026-09-15 ORM hydration hotspot fix
-  already on record rewrote it to `attributes.dup()`. JIT support for
-  just the three receiver-kind-agnostic pseudo-methods `dup`/`freeze`/
-  `frozen?` (never able to invoke arbitrary user code, unlike every
-  other `INVOKE` shape) closes that gap for `Model#initialize` *as it
-  exists today* -- verified via `DIAMOND_TRACE_JIT` showing it compile
-  where it didn't before, and a real, if modest, ~8-10% end-to-end
-  timing win on an updated `bench/object_hydration.di`
-  (`tests/cases/jit_invoke_dup.*`). Every other `INVOKE` shape --
-  every native per-type method (`.keys()`/`.length()`/...), all Instance
-  method dispatch, `tap`, `public_send` -- remains completely
-  unattempted, and is now understood to be a dramatically larger,
-  separately-scoped undertaking than "one more trampoline."
+Still open:
 
-`Model#initialize` as it exists today is now fully JIT-eligible end to
-end -- the original three-gap picture (`has_called`, `GET_IVAR`, generic
-`INVOKE`) is closed for that specific function's own current shape. A
-future rewrite of `Model#initialize` that reintroduces a `.keys()`-style
-loop, or any method calling a native per-type method or another
-user-defined method, is not covered by any of this -- true generic
-method dispatch from JIT'd code remains an open, unattempted, and now
-much better-understood-in-scope research direction, not a committed
-feature.
-
-**Generic (non-`_INT`) arithmetic/comparison now compiles too** (2026-09,
-`docs/internal/jit-design.md`'s own "Phase 5") -- found while
-investigating why a Hash-lookup-and-sum workload never JIT-compiled at
-all: one generic `ADD`/`SUBTRACT`/`MULTIPLY`/`DIVIDE`/`LESS`/
-`LESS_EQUAL`/`GREATER`/`GREATER_EQUAL` anywhere in a function (any value
-the compiler can't statically prove `Int` -- an untyped parameter, a
-Hash/Array element) used to bail the *entire function* out of JIT
-eligibility, with zero prior support for the generic forms at all. Turned
-out to need no new trampoline: Phase 3's own slow-path functions already
-handled being called with a generic opcode correctly. Real, measured
-wins: `bench/int_arithmetic_dynamic.di` (the file that first named the
-typed-vs-untyped gap) ~2.1x faster JIT'd, closing most of its own ~2.8x
-gap against the fully-typed `int_arithmetic.di`; `bench/hash_ops.di`
-~1.5x. **Also found, empirically, a real bug already live in production**:
-`emit_epilogue_propagate` unconditionally popped a `DiamondFrame` on the
-belief that a compiled function's own `has_called` flag implied a frame
-had been pushed -- false since Phase 2e, not just Phase 5 -- corrupting
-`vm->frames` (a real segfault, reproduced directly on the pre-Phase-5
-commit already deployed to skindicate.dia) whenever a `has_called`-
-without-`needs_frame` opcode was followed by a genuinely error-
-propagating one, called repeatedly. Fixed alongside this phase; see
-`docs/internal/jit-design.md`'s own Phase 5 section for the full
-timeline and why it went unnoticed through every prior phase's own
-verification pass.
-
-**`dup`/`freeze`/`frozen?` now also run on an Instance with no override**
-(2026-09, `docs/internal/jit-design.md`'s own "Phase 6") -- a small
-follow-on to Phase 4's own documented limitation. Previously *any*
-Instance receiver fell back to full interpretation every time; now only
-a class that actually defines its own `dup`/`freeze`/`frozen?` does
-(checked via a pure, deterministic `lookup_method` call, never arbitrary
-code) -- needed zero `src/jit.c` changes, purely a `src/vm.c` trampoline
-extension.
+- generic `DIAMOND_OP_INVOKE` -- every native per-type method
+  (`.keys()`/`.length()`/...), all Instance method dispatch, `tap`,
+  `public_send`. The real case body is ~2740 lines (`src/vm.c`, the full
+  native-method dispatch table for every builtin type plus Instance
+  dispatch with inline caching) -- a dramatically larger, separately-
+  scoped undertaking than any single phase so far, not "one more
+  trampoline." A future rewrite of `Model#initialize` that reintroduces
+  a `.keys()`-style loop, or any method calling a native per-type method
+  or another user-defined method, is not covered by anything landed yet;
+- a value the JIT can't prove is `Int` at *runtime* either (a real
+  String, Instance, Float, ...) still correctly falls to the slow
+  trampoline every time, at real per-call cost -- expected, not a gap;
+- `dup`/`freeze`/`frozen?`/generic arithmetic reached *after* an earlier
+  call-capable opcode in the same function, where the receiver turns out
+  not to be the expected shape at runtime, still can't resume mid-
+  function -- narrower than it sounds (a `dup` call *inside* a loop
+  condition never compiles at all, since the loop's own comparison
+  already used up the one safe "discard and retry" attempt) but a real,
+  documented boundary. Closing it fully needs the same kind of
+  resumable-fallback design Phase 3 already gave arithmetic, generalized
+  further -- not attempted.
 
 Before extending past the current narrow slice:
 
 - identify hot workloads that remain VM-bound after existing
-  specialization *and* after the current JIT's own whitelist (a
-  workload similar to `Model#initialize` needs all three gaps above
-  closed together, not just one);
+  specialization *and* after the current JIT's own whitelist -- most
+  realistic candidates now hinge on generic `INVOKE` specifically, the
+  one gap still open above;
 - define deoptimization and GC-root contracts for anything that compiles a
   call, allocation, or exception path the current slice deliberately avoids;
 - require benchmark evidence large enough to justify the added complexity,
