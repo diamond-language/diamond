@@ -9,7 +9,7 @@ a more valuable runtime, language, or tooling question.
 
 ## Current priorities
 
-### Step debugger v2: what's next, if anything
+### Step debugger v2
 
 Both halves landed this cycle (docs/debugging.md): live, no-restart
 breakpoints via a new `DIAMOND_OP_BREAKPOINT_CHECK` emitted at every
@@ -43,7 +43,7 @@ live breakpoints or stepping. Also see docs/debugging.md's own
 call doesn't increment the depth counter stepping compares against, so
 step-over/out can't fully distinguish it from staying in the same call).
 
-### `struct` declarations: what's next, if anything
+### `struct` declarations
 
 `struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md,
 landed this cycle) is deliberately narrow -- see that section's own list
@@ -73,7 +73,7 @@ yet, none committed:
   known, and not fixed without a real driving need -- Ruby's own naive
   `==` implementations have the identical wrinkle.
 
-### freeze / frozen?: what's next, if anything
+### freeze / frozen?
 
 `freeze`/`frozen?` (docs/classes-and-modules.md, landed this cycle) is
 deliberately shallow -- freezing a `Hash`/`Array`/`Instance` marks only
@@ -98,7 +98,7 @@ attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### Tail-call optimization: what's next, if anything
+### Tail-call optimization
 
 Self-recursive tail-call optimization (docs/callables.md, landed this
 cycle) covers only a function's own tail call to itself -- deliberately
@@ -140,7 +140,7 @@ committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### Case/when exhaustiveness checking: what's next, if anything
+### Case/when exhaustiveness checking
 
 Exhaustiveness checking (docs/core-syntax.md, landed this cycle) now covers
 two independent closed-type shapes: an explicit union made entirely of
@@ -187,7 +187,7 @@ opens up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### Channel: what's next, if anything
+### Channel
 
 `Channel` (docs/threads.md, landed this cycle) is a bounded mailbox --
 `send`/`receive`/`try_send`/`try_receive`/`close`. Real possibilities this
@@ -205,7 +205,7 @@ opens up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### `Supervisor`: what's next, if anything
+### `Supervisor`
 
 `Supervisor` (docs/threads.md, landed this cycle) is a flat, `one_for_one`-
 only restart-on-crash primitive -- `add_child`/`stop`/`join`/`restart_count`/
@@ -235,7 +235,7 @@ remain, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### `diamond build`: what's next, if anything
+### `diamond build`
 
 `diamond build` (docs/deployment.md, landed this cycle) produces a
 standalone native executable via the same serialize/deserialize mechanism
@@ -259,7 +259,7 @@ up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### Sandbox mode: what's next, if anything
+### Sandbox mode
 
 Sandbox mode (docs/sandbox.md, landed this cycle) is a coarse, all-or-nothing switch --
 `DIAMOND_SANDBOX`/`diamond --sandbox` deny every native call that opens a real
@@ -286,7 +286,7 @@ Real possibilities this opens up, none attempted yet, none committed:
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.
 
-### Bytecode caching: what's next, if anything
+### Bytecode caching
 
 Bytecode caching (docs/caching.md, landed this cycle) caches a compiled program in a
 `.dic` sibling file next to the source, keyed on a SHA-256 hash of the fully
@@ -423,6 +423,11 @@ compile is unaffected, and cross-file precision within one document's own
 one compiled unit; Diamond's `require` model has no way to reference a
 class that isn't).
 
+`textDocument/rename` (also lsp/references.c) reuses that same
+`find_workspace_occurrences` scan to rewrite every occurrence together as
+one `WorkspaceEdit`, rather than adding a second, independent workspace
+walk.
+
 Unannotated call chains (`def make_branch() = Branch.new()` used as
 `make_branch().leaf()`) are now resolved too: `compile_definition` (src/
 compiler.c) infers a function's own return type from its body_result the
@@ -484,6 +489,31 @@ Next steps:
 - explore incremental compilation only after the compiler has a reusable unit
   boundary that makes incremental synchronization worthwhile;
 - keep editor results conservative when a receiver cannot be proven.
+
+### LSP formatting
+
+`textDocument/formatting` (docs/lsp.md, landed this cycle) normalizes each
+physical line's own leading indentation and trims trailing whitespace,
+tracking nesting depth from the same token stream every other LSP handler
+here already uses -- deliberately not a full AST-based pretty-printer or
+reflow engine, since the native compiler retains no AST to reflow against
+at all (see "Compiler representation" below). Real possibilities this
+opens up, none attempted yet, none committed:
+
+- **operator/comma spacing normalization** -- consistent spacing around
+  binary operators, after commas, etc. Would need its own token-adjacency
+  heuristic, independent of the indentation-depth tracking this landed
+  with;
+- **blank-line collapsing** -- capping runs of consecutive blank lines.
+  Left alone this pass as a purely cosmetic judgment call with no single
+  correct answer the way indentation depth has;
+- **`textDocument/rangeFormatting`** -- formatting a selection rather than
+  a whole document. The same line-by-line depth algorithm would need a
+  starting depth handed in from outside the selection, which nothing
+  currently tracks.
+
+Revisit only with a real driving need, not speculatively -- same bar
+docs/roadmap.md already holds every other research direction to.
 
 ### Harden the end-user runtime surface
 
@@ -695,7 +725,7 @@ Areas worth considering:
 - explicit metaprogramming operations with inspectable behavior;
 - better ways to express common typed callback and data-shaping patterns.
 
-### Non-x86_64 architecture validation: what's next
+### Non-x86_64 architecture validation
 
 Native Linux arm64 CI now runs the standard `make test` baseline plus focused
 API, incremental-compile, compiled-prelude, fiber, LSP, and REPL targets on a
