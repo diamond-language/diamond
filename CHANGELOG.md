@@ -62,6 +62,13 @@ authoritative fine-grained record.
   that had kept skindicate's own `Model#initialize` (as of its current,
   `.dup()`-based shape) permanently JIT-ineligible. See docs/internal/
   jit-design.md's "Phase 4" and "Phase 6".
+- JIT now compiles `self.method()` dynamic dispatch for any method name
+  (not just `dup`/`freeze`/`frozen?`), including a real override -- until
+  now, any dynamic method call anywhere in a function's body, including
+  a plain `self.other_method()`, bailed that whole function out of JIT
+  eligibility. Real, measured win: ~35% faster on a `self.method()`-in-
+  a-loop shape (`bench/jit_invoke_self.di`). Any receiver other than
+  `self` remains unsupported. See docs/internal/jit-design.md's "Phase 7".
 
 ### Language
 

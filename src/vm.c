@@ -12234,6 +12234,254 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         false, 0, nullptr, chunk, depth, out);
 }
 
+/* Forward declaration: public_send_helper's own real definition (below,
+ * near DIAMOND_OP_INVOKE's interpreter case) comes later in this file than
+ * diamond_jit_invoke_instance's own first use of it -- every other helper
+ * this function calls is already declared by this point. */
+static DiamondVmStatus public_send_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,DiamondValue receiver,
+        const DiamondValue *arguments,size_t argument_count,size_t depth,
+        DiamondValue *result);
+
+/* JIT trampoline for DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED dispatch on
+ * an Instance receiver -- extracted from that case's own body (run_chunk,
+ * below) so the interpreter and the JIT share one implementation, exactly
+ * like DIAMOND_OP_SUPER's own diamond_jit_super_call just above. Kept
+ * receiver-position-general (recv is a real parameter, not hardcoded to
+ * register 0) so the interpreter's own case can still call this for any
+ * receiver register -- only jit.c's own compile_invoke_self restricts
+ * itself at compile time to recv==0 in a function with a genuine class
+ * owner_class (see that function's own comment for why that's a sound
+ * compile-time guarantee, not an assumption -- and why this trampoline
+ * still keeps its own defensive registers[recv] runtime check regardless,
+ * matching diamond_jit_super_call's own belt-and-suspenders precedent
+ * rather than skipping it). `site` replaces instruction_offset, mirroring
+ * diamond_jit_get_ivar's own `site` parameter -- the self-rewriting
+ * INVOKE->INVOKE_MONO quickening logic below is preserved, not dropped, so
+ * a JIT'd self.method() call keeps the same monomorphic inline caching
+ * interpreted code gets. Macro-free by necessity (VM_RETURN/VM_PROPAGATE
+ * are only valid inside run_chunk's own scope -- see their own
+ * definitions): every VM_RETURN(status) below is a plain `return status`,
+ * every VM_PROPAGATE(status) a plain status check, exactly like diamond_
+ * jit_super_call's own style just above. */
+DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
+        const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
+        uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
+        uint8_t type_argument_count, const uint16_t *type_arguments,
+        size_t depth, DiamondValue *out) {
+    if ((size_t)name>=chunk->string_count) return DIAMOND_VM_TYPE_ERROR;
+    const DiamondStringConstant *method_name=&chunk->strings[name];
+    if(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+       registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE) {
+        char actual[80];
+        diamond_format_value_type(actual,sizeof actual,registers[recv]);
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,actual);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    /* tap/dup/freeze/frozen?/respond_to?/public_send -- universal methods,
+     * gated on lookup_method coming back empty first: a class CAN
+     * legitimately define its own dup/tap/respond_to?, and that user
+     * definition must win, mirroring run_chunk's own non-Instance-receiver
+     * interception just above this case (dup_defined) for why interception
+     * order matters here but not there. */
+    if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
+       lookup_method(owner,instance->class,"tap",3)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+            return DIAMOND_VM_TYPE_ERROR;
+        DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+        /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+        if(called->foreign_chunk!=nullptr) {
+            snprintf(vm->error,sizeof vm->error,
+                "a compile_method callable can only be passed to define_method");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(called->function_index>=chunk->function_count)
+            return DIAMOND_VM_INVALID_BYTECODE;
+        const DiamondFunction *fn=chunk->functions[called->function_index];
+        DiamondValue tap_argument[1]={registers[recv]};
+        DiamondValue tap_result=DIAMOND_NIL;
+        const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
+            called,tap_argument,0,1,depth,&tap_result);
+        if(tap_status!=DIAMOND_VM_OK) return tap_status;
+        *out=registers[recv];return DIAMOND_VM_OK;
+    }
+    if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
+       lookup_method(owner,instance->class,"dup",3)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return diamond_jit_dup(vm,&registers[recv],out);
+    }
+    if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
+       lookup_method(owner,instance->class,"freeze",6)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return diamond_jit_freeze(vm,&registers[recv],out);
+    }
+    if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
+       lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return diamond_jit_frozen(vm,&registers[recv],out);
+    }
+    if(method_name->length==11&&
+       memcmp(method_name->chars,"respond_to?",11)==0&&
+       lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
+            return DIAMOND_VM_TYPE_ERROR;
+        const DiamondSymbol *probe=(const DiamondSymbol *)registers[base].as.object;
+        const DiamondMethod *probed=lookup_method(owner,instance->class,
+            probe->chars,probe->length);
+        *out=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
+        return DIAMOND_VM_OK;
+    }
+    if(method_name->length==11&&
+       memcmp(method_name->chars,"public_send",11)==0&&
+       lookup_method(owner,instance->class,"public_send",11)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondValue sent=DIAMOND_NIL;
+        const DiamondVmStatus send_status=public_send_helper(vm,chunk,
+            registers[recv],&registers[base],argc,depth,&sent);
+        if(send_status!=DIAMOND_VM_OK) return send_status;
+        *out=sent;return DIAMOND_VM_OK;
+    }
+    bool exception_instance=false;
+    const DiamondClass *ancestor=instance->class;
+    while(ancestor!=nullptr) {
+        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]) {
+            exception_instance=true;break;
+        }
+        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+            &owner->classes[ancestor->superclass];
+    }
+    if(exception_instance&&method_name->length==7&&
+       memcmp(method_name->chars,"message",7)==0) {
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        *out=instance->field_count>0?instance->fields[0]:DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    if(exception_instance&&method_name->length==5&&
+       memcmp(method_name->chars,"cause",5)==0) {
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        *out=instance->field_count>1?instance->fields[1]:DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    if(exception_instance&&method_name->length==9&&
+       memcmp(method_name->chars,"backtrace",9)==0) {
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        *out=instance->field_count>2?instance->fields[2]:DIAMOND_NIL;
+        return DIAMOND_VM_OK;
+    }
+    const size_t cache_slot=((size_t)(uintptr_t)site>>2)%
+        DIAMOND_INLINE_CACHE_COUNT;
+    DiamondMethodCache *cache=&vm->method_caches[cache_slot];
+    const DiamondMethod *method=nullptr;
+    if (instruction==DIAMOND_OP_INVOKE_MONO &&
+        cache->site==site && cache->entry_count==1 &&
+        cache->entries[0].receiver_class==instance->class) {
+        method=cache->entries[0].method;
+        vm->inline_cache_hits++;
+        vm->monomorphic_dispatches++;
+    } else {
+        if (instruction==DIAMOND_OP_INVOKE_MONO) {
+            *(uint8_t *)(void *)site=(uint8_t)DIAMOND_OP_INVOKE;
+        }
+        method=lookup_method_cached(vm,owner,site,instance->class,
+            method_name->chars,method_name->length);
+        if (instruction==DIAMOND_OP_INVOKE &&
+            cache->entry_count==1 &&
+            cache->hits>=vm->monomorphic_threshold) {
+            if(record_rewritten_site(vm,site)) {
+                *(uint8_t *)(void *)site=(uint8_t)DIAMOND_OP_INVOKE_MONO;
+                vm->direct_dispatch_rewrites++;
+            }
+        }
+    }
+    if(method==nullptr) {
+        DiamondValue missing_result=DIAMOND_NIL;
+        bool missing_found=false;
+        const DiamondVmStatus missing_status=method_missing_helper(vm,owner,
+            instance,method_name->chars,method_name->length,
+            &registers[base],argc,depth,&missing_result,&missing_found);
+        if(missing_found) {
+            if(missing_status!=DIAMOND_VM_OK) return missing_status;
+            *out=missing_result;return DIAMOND_VM_OK;
+        }
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method '%.*s' for an instance of %s",
+            (int)method_name->length,method_name->chars,instance->class->name);
+        return DIAMOND_VM_NO_METHOD_ERROR;
+    }
+    if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
+        snprintf(vm->error,sizeof vm->error,
+            "private method '%.*s' called with an explicit receiver",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(method->is_protected) {
+        const DiamondClass *declaring=method_declaring_class(
+            owner,instance->class,method);
+        const bool has_method_self=chunk->parameter_offset==1&&
+            registers[0].kind==DIAMOND_VALUE_OBJECT&&
+            registers[0].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+        const DiamondClass *caller_class=has_method_self?
+            ((DiamondInstance *)registers[0].as.object)->class:nullptr;
+        if(declaring==nullptr||caller_class==nullptr||
+           !class_is_a(owner,caller_class,declaring)) {
+            snprintf(vm->error,sizeof vm->error,
+                "protected method '%.*s' called outside its class hierarchy",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    if(argc<method->required_arity||
+       (argc>method->arity && !method->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    return invoke_resolved_method_helper(vm,owner,
+        method,registers[recv],registers,base,argc,
+        instruction==DIAMOND_OP_INVOKE_TYPED,
+        type_argument_count,type_arguments,chunk,depth,out);
+}
+
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *fn,
         const DiamondClosure *called,const DiamondArray *spread,size_t depth,
@@ -20262,206 +20510,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(invoke_status);
                     registers[dest]=invoke_result;break;
                 }
-                if(receiver_kind!=DIAMOND_OBJECT_INSTANCE) {
-                    char actual[80];
-                    diamond_format_value_type(actual,sizeof actual,registers[recv]);
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '%.*s' for %s",
-                        (int)method_name->length,method_name->chars,actual);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;
-                const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
-                /* tap/dup/respond_to?/public_send -- universal methods the
-                 * non-Instance branch above already handles, but gated on
-                 * `lookup_method` coming back empty first: unlike a native
-                 * type, a class CAN legitimately define its own `dup` (for
-                 * real deep-copy semantics) or `tap`/`respond_to?`, and
-                 * that user definition must win -- checked the same way
-                 * Ruby's own method resolution order would put a class's
-                 * own method ahead of an inherited Kernel one. */
-                if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
-                   lookup_method(owner,instance->class,"tap",3)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-                       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
-                    /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
-                    if(called->foreign_chunk!=nullptr) {
-                        snprintf(vm->error,sizeof vm->error,
-                            "a compile_method callable can only be passed to define_method");
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                    if(called->function_index>=chunk->function_count)
-                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                    const DiamondFunction *fn=chunk->functions[called->function_index];
-                    DiamondValue tap_argument[1]={registers[recv]};
-                    DiamondValue tap_result=DIAMOND_NIL;
-                    const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
-                        called,tap_argument,0,1,depth,&tap_result);
-                    VM_PROPAGATE(tap_status);
-                    registers[dest]=registers[recv];break;
-                }
-                /* Phase 6: diamond_jit_dup/freeze/frozen (src/vm.c, near
-                 * run_chunk's own definition) already re-check lookup_method
-                 * themselves -- the gate here is still needed to decide
-                 * whether to intercept at this point at all (a real
-                 * override must fall through to ordinary method dispatch
-                 * below instead), but once that's confirmed, this is a thin
-                 * wrapper around the exact same shared function the JIT
-                 * calls, not a second, independently maintained copy. */
-                if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
-                   lookup_method(owner,instance->class,"dup",3)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    const DiamondVmStatus dup_status=
-                        diamond_jit_dup(vm,&registers[recv],&registers[dest]);
-                    VM_PROPAGATE(dup_status);break;
-                }
-                if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
-                   lookup_method(owner,instance->class,"freeze",6)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    const DiamondVmStatus freeze_status=
-                        diamond_jit_freeze(vm,&registers[recv],&registers[dest]);
-                    VM_PROPAGATE(freeze_status);break;
-                }
-                if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
-                   lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    const DiamondVmStatus frozen_status=
-                        diamond_jit_frozen(vm,&registers[recv],&registers[dest]);
-                    VM_PROPAGATE(frozen_status);break;
-                }
-                if(method_name->length==11&&
-                   memcmp(method_name->chars,"respond_to?",11)==0&&
-                   lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-                       registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    const DiamondSymbol *probe=(const DiamondSymbol *)registers[base].as.object;
-                    const DiamondMethod *probed=lookup_method(owner,instance->class,
-                        probe->chars,probe->length);
-                    registers[dest]=DIAMOND_BOOL(probed!=nullptr&&!probed->is_private);
-                    break;
-                }
-                if(method_name->length==11&&
-                   memcmp(method_name->chars,"public_send",11)==0&&
-                   lookup_method(owner,instance->class,"public_send",11)==nullptr) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    DiamondValue sent=DIAMOND_NIL;
-                    const DiamondVmStatus send_status=public_send_helper(vm,chunk,
-                        registers[recv],&registers[base],argc,depth,&sent);
-                    VM_PROPAGATE(send_status);
-                    registers[dest]=sent;break;
-                }
-                bool exception_instance=false;
-                const DiamondClass *ancestor=instance->class;
-                while(ancestor!=nullptr) {
-                    if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]) {
-                        exception_instance=true;break;
-                    }
-                    ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-                        &owner->classes[ancestor->superclass];
-                }
-                if(exception_instance&&method_name->length==7&&
-                   memcmp(method_name->chars,"message",7)==0) {
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    registers[dest]=instance->field_count>0?
-                        instance->fields[0]:DIAMOND_NIL;break;
-                }
-                if(exception_instance&&method_name->length==5&&
-                   memcmp(method_name->chars,"cause",5)==0) {
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    registers[dest]=instance->field_count>1?
-                        instance->fields[1]:DIAMOND_NIL;break;
-                }
-                if(exception_instance&&method_name->length==9&&
-                   memcmp(method_name->chars,"backtrace",9)==0) {
-                    if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    registers[dest]=instance->field_count>2?
-                        instance->fields[2]:DIAMOND_NIL;break;
-                }
+                /* A thin wrapper around diamond_jit_invoke_instance -- the
+                 * same function src/jit.c's own compile_invoke_self calls
+                 * for the recv==0 self-dispatch case, mirroring DIAMOND_OP_
+                 * SUPER's own treatment just below and GET_IVAR/SET_IVAR's
+                 * own treatment further down. `receiver_kind` (computed
+                 * further up this case for the native-type checks above)
+                 * isn't reused here -- the extracted function does its own
+                 * unconditional registers[recv] kind check first, correct
+                 * regardless of whether a primitive receiver fell through
+                 * every earlier native-type block above without matching
+                 * any of them. */
                 const uint8_t *site=chunk->code+instruction_offset;
-                const size_t cache_slot=((size_t)(uintptr_t)site>>2)%
-                    DIAMOND_INLINE_CACHE_COUNT;
-                DiamondMethodCache *cache=&vm->method_caches[cache_slot];
-                const DiamondMethod *method=nullptr;
-                if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO &&
-                    cache->site==site && cache->entry_count==1 &&
-                    cache->entries[0].receiver_class==instance->class) {
-                    method=cache->entries[0].method;
-                    vm->inline_cache_hits++;
-                    vm->monomorphic_dispatches++;
-                } else {
-                    if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_MONO) {
-                        uint8_t *code=(uint8_t *)(void *)chunk->code;
-                        code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE;
-                    }
-                    method=lookup_method_cached(vm,owner,site,instance->class,
-                        method_name->chars,method_name->length);
-                    if ((DiamondOpCode)instruction==DIAMOND_OP_INVOKE &&
-                        cache->entry_count==1 &&
-                        cache->hits>=vm->monomorphic_threshold) {
-                        if(record_rewritten_site(vm,site)) {
-                            uint8_t *code=(uint8_t *)(void *)chunk->code;
-                            code[instruction_offset]=(uint8_t)DIAMOND_OP_INVOKE_MONO;
-                            vm->direct_dispatch_rewrites++;
-                        }
-                    }
-                }
-                if(method==nullptr) {
-                    DiamondValue missing_result=DIAMOND_NIL;
-                    bool missing_found=false;
-                    const DiamondVmStatus missing_status=method_missing_helper(vm,owner,
-                        instance,method_name->chars,method_name->length,
-                        &registers[base],argc,depth,&missing_result,&missing_found);
-                    if(missing_found) {
-                        VM_PROPAGATE(missing_status);
-                        registers[dest]=missing_result;
-                        break;
-                    }
-                    snprintf(vm->error,sizeof vm->error,
-                        "undefined method '%.*s' for an instance of %s",
-                        (int)method_name->length,method_name->chars,instance->class->name);
-                    VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
-                }
-                if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "private method '%.*s' called with an explicit receiver",
-                        (int)method_name->length,method_name->chars);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if(method->is_protected) {
-                    const DiamondClass *declaring=method_declaring_class(
-                        owner,instance->class,method);
-                    const bool has_method_self=chunk->parameter_offset==1&&
-                        registers[0].kind==DIAMOND_VALUE_OBJECT&&
-                        registers[0].as.object->kind==DIAMOND_OBJECT_INSTANCE;
-                    const DiamondClass *caller_class=has_method_self?
-                        ((DiamondInstance *)registers[0].as.object)->class:nullptr;
-                    if(declaring==nullptr||caller_class==nullptr||
-                       !class_is_a(owner,caller_class,declaring)) {
-                        snprintf(vm->error,sizeof vm->error,
-                            "protected method '%.*s' called outside its class hierarchy",
-                            (int)method_name->length,method_name->chars);
-                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                    }
-                }
-                if(argc<method->required_arity||
-                   (argc>method->arity && !method->has_variadic))
-                    VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 DiamondValue call_result=DIAMOND_NIL;
-                const DiamondVmStatus s=invoke_resolved_method_helper(vm,owner,
-                    method,registers[recv],registers,base,argc,
-                    (DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED,
-                    type_argument_count,type_arguments,chunk,depth,&call_result);
-                VM_PROPAGATE(s);
+                const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,
+                    site,(DiamondOpCode)instruction,registers,recv,name,base,argc,
+                    type_argument_count,type_arguments,depth,&call_result);
+                VM_PROPAGATE(status);
                 registers[dest]=call_result;
                 break;
             }

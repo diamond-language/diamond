@@ -765,3 +765,22 @@ fixed in the same phase -- see `docs/internal/jit-design.md`'s own Phase
 kind of thing a benchmark-driven investigation is well-positioned to
 surface: chasing a modest perceived slowness turned up a real crash bug
 already live in production, not just the perf question originally asked.
+
+## `self.method()` dispatch -- JIT Phase 7 (2026-09-18, same day)
+
+Generic `DIAMOND_OP_INVOKE` had been the one named-but-untouched JIT gap
+since Phase 2g: any dynamic method call, including a plain
+`self.other_method()`, bailed the whole containing function out of JIT
+eligibility. Closed for the `self`-receiver case (`docs/internal/
+jit-design.md`'s own "Phase 7") -- a real, ordinary loop calling a method
+on `self` every iteration now compiles the *entire* loop, not just an
+isolated call:
+
+| Benchmark | Interpreted | JIT'd | Speedup |
+|---|---:|---:|---:|
+| `jit_invoke_self` (`self.method()` in a 3M-iteration loop) | ~0.75s | ~0.49s | ~1.53x |
+
+Any receiver other than `self` remains unsupported -- see
+`docs/internal/jit-design.md`'s Phase 7 section for exactly why that's a
+real, not-yet-buildable boundary (no compile-time proof of receiver type,
+no runtime deopt mechanism to guard and fall back mid-function).

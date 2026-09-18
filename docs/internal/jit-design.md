@@ -733,6 +733,116 @@ exactly one runtime bailout. Full suite (1553 cases) green under debug,
 ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1
 DIAMOND_STRESS_GC=1`.
 
+### Phase 7: `self.method()` dynamic dispatch -- a real, narrow slice of generic `INVOKE`
+
+"Generic `DIAMOND_OP_INVOKE` support" had been the one named-but-untouched
+gap since Phase 2g: any dynamic method call anywhere in a function's body
+-- including a plain `self.other_method()`, the single most ordinary
+shape of method call there is -- bailed the whole containing function out
+of JIT eligibility. The honest reason nobody had attempted it: the
+interpreter's `DIAMOND_OP_INVOKE`/`INVOKE_MONO`/`INVOKE_TYPED` case
+(`src/vm.c`) is one monolithic ~2695-line block covering every receiver
+kind's native method surface (`Int`/`Float`/`String`/`Array`/`Hash`/
+`Symbol`/`Time`/`Regexp`/.../`Instance`), never extracted into a callable
+helper the way arithmetic's slow path was in Phase 3. Attempting the
+whole thing in one phase was correctly ruled out twice before (Phase 4's
+own reframing, and a paused 2026-09-15 research pass).
+
+That 2026-09-15 pass had already found the right *shape* of narrow slice
+-- `self.method()` only -- and got it "approved-pending," paused before
+implementation for lack of a motivating workload. Reviving it here found
+a real error in its own reasoning, caught during re-verification before
+any code was written: its core justification ("the JIT only ever
+compiles functions with `owner_class` set, so `registers[0]` is
+guaranteed an Instance, no runtime check needed") is false as stated --
+`diamond_jit_try_compile` has zero `owner_class` gating, and
+`jit_call_or_interpret` tier-up-compiles *any* `DiamondFunction*`
+uniformly, methods and plain functions alike. Skipping the runtime check
+on that basis would have been a real, shipped bug.
+
+The actual sound invariant is narrower but still solid: `invoke_resolved_
+method_helper` (`src/vm.c`) unconditionally sets `args[0] = self_value`
+for *every* real method call, and that function is the *only* way a
+function with a real `owner_class` (a genuine class index, not the
+`UINT8_MAX`/`UINT8_MAX-1`/`UINT8_MAX-2` plain-function/module-method/
+closure sentinels) is ever entered. So for a genuine class method,
+`recv==0` really is always an Instance -- not because of anything about
+*which functions the JIT compiles*, but because of *how a real method is
+always called*. This phase's own trampoline keeps a cheap defensive
+runtime check regardless (matching `diamond_jit_super_call`'s own
+existing belt-and-suspenders precedent), so an error in this reasoning
+would fail safe as a plain `TYPE_ERROR`, never a crash -- the compile-time
+gate is an eligibility decision, not the only thing standing between this
+code and memory corruption.
+
+**Implementation**, mirroring `DIAMOND_OP_SUPER`'s already-shipped shape
+exactly: `diamond_jit_invoke_instance` (`src/vm.c`) is a full extraction
+of the interpreter's own Instance-dispatch tail -- the `tap`/`dup`/
+`freeze`/`frozen?`/`respond_to?`/`public_send` universal-method
+interception (gated on `lookup_method` first, so a real override wins,
+same as Phase 6 relies on), exception-instance `message`/`cause`/
+`backtrace`, the `INVOKE`<->`INVOKE_MONO` inline-cache check and
+self-rewrite, `method_missing` fallback, visibility checks, and the final
+`invoke_resolved_method_helper` call -- moved verbatim, not rewritten.
+Kept receiver-position-general (`recv` is a real parameter) so the
+interpreter's own case, which still needs to handle any receiver
+register and `INVOKE_TYPED`, calls it unchanged; only `src/jit.c`'s new
+`compile_invoke_self` restricts itself to `recv==0` in a function whose
+`owner_class` proves the invariant above. The interpreter's own case is
+now a five-line thin wrapper, exactly like `DIAMOND_OP_SUPER`'s.
+
+`compile_invoke_self` sets both `jc->needs_frame` and `jc->has_called`
+unconditionally (a real method call can invoke arbitrary user code and
+allocate), mirroring `compile_super_call`'s identical justification, and
+emits a 13-argument trampoline call using the same push-in-reverse-order
+stack-argument convention `compile_super_call` established, just with 4
+more stack slots. `DIAMOND_OP_INVOKE_TYPED` has deliberately no case at
+all (falls to `compile_body`'s own `default:` bail), matching
+`diamond_jit_super_call`'s own long-standing restriction for `SUPER` --
+the shared trampoline still supports it for the interpreter's sake via a
+real `type_argument_count`/`type_arguments`, the JIT-side caller just
+never supplies anything but the "no type arguments" constants.
+
+Phase 4/6's own narrower dup/freeze/frozen? trampoline call (still the
+only path for a *non-self* receiver) needed to merge into the same
+switch case rather than duplicate it, since C forbids two `case` labels
+for one opcode value: the `recv==0`-eligible self path is tried first
+(a strict superset for that receiver -- any method name, not just three,
+and correctly dispatches through a real override instead of always
+retrying), falling through to the original Phase 4/6 logic unchanged
+for everything else. Confirmed this is a genuine no-op for the existing
+Phase 4/6 test corpus: an un-overridden `dup`/`freeze`/`frozen?` call
+never actually reaches `INVOKE_MONO` at the bytecode level in the first
+place (it's intercepted before the interpreter's own inline-cache logic
+that would rewrite it), so the merge changes no observable behavior for
+any pre-existing test.
+
+**Out of scope, explicitly**: any non-`self` receiver (no compile-time
+proof exists without a runtime guard/deopt mechanism this JIT doesn't
+have yet -- see "Deopt trigger" below for why a runtime type-dispatch
+branch mid-JIT-function isn't buildable today); `DIAMOND_OP_INVOKE_TYPED`;
+module-method (`UINT8_MAX-1`) and closure (`UINT8_MAX-2`) `owner_class`
+self-calls (conservative on purpose -- these may carry the same
+guarantee but weren't independently verified this phase); the ~2500-line
+native-type method surface (still bails the whole containing function,
+same as always).
+
+Verified: new `tests/cases/jit_invoke_self*` cases covering a
+`self.other_method()` call in a loop now compiling (confirmed against a
+real pre-change bailout via `git stash`: 2 compiled functions before, 4
+after, on the exact same file), `self.dup()`/`self.tap{}`/`self.freeze`/
+`self.frozen?`/`self.respond_to?`/`self.public_send` all still correct
+post-extraction (confirming "extract the whole tail verbatim" was
+right), `self.dup()` through a real override now compiling with zero
+bailouts (previously always fell back to interpretation for that one
+call), a same-function non-self receiver call confirming the containing
+function still correctly bails as a whole, and `self.method[Type]()`
+still bailing. Full suite (1557 cases) green under debug, ASan/UBSan, and
+`DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`. Real,
+measured win: `bench/jit_invoke_self.di` (a `self.method()` call inside
+a hot loop, the whole loop now compiling with zero bailouts) ~35% faster
+JIT'd (0.75s -> 0.49s, release build, stable across repeated runs).
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

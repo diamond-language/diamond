@@ -630,12 +630,14 @@ opt-in quickening. A first, deliberately narrow baseline JIT now exists
 (`src/jit.c`/`src/jit.h`, opt-in via `DIAMOND_JIT=1`, see
 [`docs/internal/jit-design.md`](internal/jit-design.md) for the full design
 and phase history) -- it compiles call/argument/self-passing, primitive
-arithmetic and comparisons, `SUPER`, and Hash/String/Array-backed ivar and
-index access, each via a hand-verified trampoline extracted from the real
-interpreter's own opcode body rather than a general codegen pipeline.
-Measured, real wins on `bench/RESULTS.md`'s own benchmarks (release build):
-~2.9-3x on `int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
-`object_hydration.di`.
+arithmetic and comparisons, `SUPER`, Hash/String/Array-backed ivar and index
+access, and `self.method()` dynamic dispatch (any method name), each via a
+hand-verified trampoline extracted from the real interpreter's own opcode
+body rather than a general codegen pipeline. Measured, real wins on
+`bench/RESULTS.md`'s own benchmarks (release build): ~2.9-3x on
+`int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
+`object_hydration.di`, ~35% on a `self.method()`-in-a-loop shape
+(`bench/jit_invoke_self.di`).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -646,15 +648,16 @@ history: `docs/internal/jit-design.md`; user-facing summary:
 
 Still open:
 
-- generic `DIAMOND_OP_INVOKE` -- every native per-type method
-  (`.keys()`/`.length()`/...), all Instance method dispatch, `tap`,
-  `public_send`. The real case body is ~2740 lines (`src/vm.c`, the full
-  native-method dispatch table for every builtin type plus Instance
-  dispatch with inline caching) -- a dramatically larger, separately-
-  scoped undertaking than any single phase so far, not "one more
-  trampoline." A future rewrite of `Model#initialize` that reintroduces
-  a `.keys()`-style loop, or any method calling a native per-type method
-  or another user-defined method, is not covered by anything landed yet;
+- generic `DIAMOND_OP_INVOKE` beyond `self` -- every native per-type method
+  (`.keys()`/`.length()`/...), and Instance method dispatch on any receiver
+  *other* than `self` (no compile-time proof exists that a non-self
+  register holds an Instance, and there's no runtime deopt mechanism yet to
+  guard and fall back mid-function -- see "Deopt trigger" below), plus
+  `tap`/`public_send`. The real case body is ~2500 lines of native-type
+  dispatch alone (`src/vm.c`) -- a dramatically larger, separately-scoped
+  undertaking than any single phase so far, not "one more trampoline." A
+  method calling a native per-type method, or calling another method on a
+  non-self receiver, is not covered by anything landed yet;
 - a value the JIT can't prove is `Int` at *runtime* either (a real
   String, Instance, Float, ...) still correctly falls to the slow
   trampoline every time, at real per-call cost -- expected, not a gap;

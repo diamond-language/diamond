@@ -1042,6 +1042,71 @@ static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_ind
     emit_bail_if_al_nonzero(jc);
 }
 
+/* self.method()-shaped DIAMOND_OP_INVOKE/INVOKE_MONO -- calls diamond_jit_
+ * invoke_instance with recv/type_argument_count/type_arguments always 0/0/
+ * nullptr. This function's own caller (compile_body's DIAMOND_OP_INVOKE
+ * case) only ever reaches here when the decoded recv operand is exactly 0
+ * AND jc->function->owner_class proves register 0 is always the receiver
+ * for THIS function (a real class index, not the UINT8_MAX/UINT8_MAX-1/
+ * UINT8_MAX-2 plain-function/module-method/closure sentinels -- see that
+ * case's own comment for the invariant this relies on: every function with
+ * a real owner_class is only ever entered via invoke_resolved_method_
+ * helper, which unconditionally sets args[0] to the receiver). DIAMOND_OP_
+ * INVOKE_TYPED is never compiled at all (no case for it below -- falls
+ * through to compile_body's own default: bail), so type_argument_count/
+ * type_arguments are always the "no type arguments" constants here; the
+ * interpreter's own case still passes real values through diamond_jit_
+ * invoke_instance for that opcode, since this trampoline is shared.
+ * Sets both jc->needs_frame (invoke_resolved_method_helper/method_missing_
+ * helper/tap's own closure call can all allocate/trigger GC arbitrarily
+ * deep inside whatever they call) and jc->has_called (a real method call
+ * with real side effects), mirroring compile_super_call's own identical
+ * justification exactly. `site` is computed the same compile-time-known
+ * way compile_get_ivar's own does: jc->function->code + instruction_start. */
+static void compile_invoke_self(JitCompiler *jc, size_t instruction_start,
+                                 uint16_t dest, uint16_t name, uint16_t base,
+                                 uint8_t argc, bool monomorphic) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    /* diamond_jit_invoke_instance takes 13 arguments -- SysV passes the
+     * first 6 (vm, chunk, site, instruction, registers, recv) in RDI/RSI/
+     * RDX/RCX/R8/R9, and the remaining 7 (name, base, argc, type_argument_
+     * count, type_arguments, depth, out) on the stack, in that order, at
+     * [rsp+0]/[rsp+8]/.../[rsp+48] at the moment of the call -- mirrors
+     * compile_super_call's own push-in-reverse-order convention exactly,
+     * just with 4 more stack slots (7 real args here vs. 3 there). 8
+     * pushes (64 bytes, 1 pad) keeps this function's own 16-byte call-
+     * alignment invariant, same reasoning as compile_super_call's own
+     * comment. */
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);                 /* alignment pad, unused */
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);                 /* out -> [rsp+48] */
+    emit_push(buf, JIT_DEPTH);               /* depth -> [rsp+40] */
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);                 /* type_arguments (nullptr) -> [rsp+32] */
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);                 /* type_argument_count (0) -> [rsp+24] */
+    emit_mov_imm64(buf, REG_RAX, argc);
+    emit_push(buf, REG_RAX);                 /* argc -> [rsp+16] */
+    emit_mov_imm64(buf, REG_RAX, base);
+    emit_push(buf, REG_RAX);                 /* base -> [rsp+8] */
+    emit_mov_imm64(buf, REG_RAX, name);
+    emit_push(buf, REG_RAX);                 /* name -> [rsp+0] */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_imm64(buf, REG_RDX,
+        (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_mov_imm64(buf, REG_RCX,
+        monomorphic ? DIAMOND_OP_INVOKE_MONO : DIAMOND_OP_INVOKE);
+    emit_mov_rr(buf, REG_R8, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_R9, 0); /* recv -- always self, register 0 */
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_invoke_instance);
+    emit_add_rsp_imm32(buf, 64); /* reclaim the 8 pushed stack slots */
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* Returns false (jc->bailed set) the moment anything outside the supported
  * whitelist is found -- the caller must then discard the whole attempt. */
 static void compile_body(JitCompiler *jc) {
@@ -1284,31 +1349,55 @@ static void compile_body(JitCompiler *jc) {
                 emit_ret(buf);
                 break;
             }
-            case DIAMOND_OP_INVOKE: {
-                /* Phase 4: deliberately narrow -- only the three
-                 * receiver-kind-agnostic pseudo-methods `dup`/`freeze`/
-                 * `frozen?` (checked by the interpreter's own case before
-                 * any per-type or Instance dispatch, src/vm.c) are
-                 * supported; INVOKE_MONO/INVOKE_TYPED are not attempted
-                 * at all (this call shape never produces either), and
-                 * every other INVOKE -- every native per-type method,
-                 * all Instance method dispatch, `tap`, `public_send`,
-                 * any other name, nonzero argc -- bails the whole
-                 * function, the same structural treatment as any other
-                 * still-unsupported construct. None of the three can
-                 * ever invoke arbitrary user code, so this never sets
-                 * jc->has_called -- but by the same token, a call to one
-                 * of them is only ever safe to compile while has_called
-                 * is still false (see jit.h's own comment on
-                 * diamond_jit_dup/freeze/frozen for why the "not
-                 * dup_defined at runtime" fallback depends on that). */
+            /* Merges two independently-scoped compile-time strategies for
+             * this one opcode pair:
+             *  1. Phase 7 (self.method(), any name): when recv==0 in a
+             *     function whose owner_class proves register 0 is always
+             *     the receiver (a real class index, not the UINT8_MAX/
+             *     UINT8_MAX-1/UINT8_MAX-2 plain-function/module-method/
+             *     closure sentinels -- see compile_invoke_self's own
+             *     comment for the invariant this relies on), tried first
+             *     since it's a strict superset of strategy 2 for that
+             *     receiver -- any method name, not just dup/freeze/
+             *     frozen?, and correctly dispatches to a real override via
+             *     the same lookup_method-gated logic the interpreter
+             *     itself uses, unlike strategy 2 below.
+             *  2. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
+             *     non-self): only the three receiver-kind-agnostic
+             *     pseudo-methods, requires argc==0 and !jc->has_called.
+             *     None of the three can ever invoke arbitrary user code,
+             *     so this never sets jc->has_called itself -- but by the
+             *     same token, a call to one of them is only ever safe to
+             *     compile while has_called is still false (see jit.h's own
+             *     comment on diamond_jit_dup/freeze/frozen). Bytecode-
+             *     guaranteed to always be plain DIAMOND_OP_INVOKE, never
+             *     _MONO: an un-overridden dup/freeze/frozen? call is
+             *     intercepted by the interpreter's own case before it ever
+             *     reaches the inline-cache/quickening logic that would
+             *     rewrite it, so this strategy never needs to handle
+             *     _MONO at all.
+             * Every other INVOKE -- every native per-type method, non-self
+             * Instance dispatch to any other method name, `tap`,
+             * `public_send`, DIAMOND_OP_INVOKE_TYPED (no case for it at
+             * all, falls to default: below) -- bails the whole function,
+             * the same structural treatment as any other still-unsupported
+             * construct. */
+            case DIAMOND_OP_INVOKE:
+            case DIAMOND_OP_INVOKE_MONO: {
                 uint16_t dest = 0, recv = 0, name = 0, base = 0;
                 uint8_t argc = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                (void)base; /* argc == 0 required below, so no arguments to read */
-                if (jc->has_called || argc != 0 || name >= fn->string_count) {
+                if (recv == 0 && jc->function->owner_class != UINT8_MAX &&
+                    jc->function->owner_class != (uint8_t)(UINT8_MAX - 1) &&
+                    jc->function->owner_class != (uint8_t)(UINT8_MAX - 2)) {
+                    compile_invoke_self(jc, instruction_start, dest, name, base, argc,
+                                         opcode == DIAMOND_OP_INVOKE_MONO);
+                    break;
+                }
+                if (opcode == DIAMOND_OP_INVOKE_MONO || jc->has_called ||
+                    argc != 0 || name >= fn->string_count) {
                     jc->bailed = true; return;
                 }
                 const DiamondStringConstant *method_name = &fn->strings[name];

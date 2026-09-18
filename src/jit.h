@@ -348,4 +348,37 @@ DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
 DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out);
 
+/* Phase 7. JIT trampoline for DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED's
+ * Instance-receiver dispatch tail -- a full extraction of that case's own
+ * real handling (src/vm.c, shared with the interpreter's own case so the
+ * two can never drift apart): the tap/dup/freeze/frozen?/respond_to?/
+ * public_send universal-method interception (gated on lookup_method first,
+ * so a real override wins), exception-instance message/cause/backtrace,
+ * the INVOKE<->INVOKE_MONO inline-cache check and self-rewrite, method_
+ * missing fallback, visibility checks, and the final invoke_resolved_
+ * method_helper call. Kept receiver-position-general (`recv` is a real
+ * parameter) for the interpreter's sake -- jit.c's own compile_invoke_self
+ * only ever calls this with recv==0, restricted at compile time to a
+ * function whose own owner_class proves register 0 is always the receiver
+ * (see that function's comment for why). This trampoline still keeps its
+ * own unconditional registers[recv] kind check regardless (matching
+ * diamond_jit_super_call's own belt-and-suspenders precedent), so an error
+ * in that compile-time reasoning fails safe as a plain DIAMOND_VM_TYPE_
+ * ERROR, never a crash. `site` is this occurrence's own bytecode address,
+ * the same per-occurrence method-cache/quickening key every other
+ * overload-checking trampoline here already uses. `instruction` is the
+ * real decoded opcode (INVOKE/INVOKE_MONO/INVOKE_TYPED) -- unlike a plain
+ * monomorphic bool, this also lets `type_argument_count`/`type_arguments`
+ * (needed for the INVOKE_TYPED case, which the JIT itself never compiles --
+ * see compile_invoke_self's own comment) resolve to the correct `typed`
+ * flag for invoke_resolved_method_helper. Can invoke arbitrary user code
+ * and allocate (a real method call, method_missing, tap's closure call),
+ * so its JIT-side caller sets both jc->needs_frame and jc->has_called
+ * unconditionally, exactly like diamond_jit_super_call's own treatment. */
+DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
+        const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
+        uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
+        uint8_t type_argument_count, const uint16_t *type_arguments,
+        size_t depth, DiamondValue *out);
+
 #endif
