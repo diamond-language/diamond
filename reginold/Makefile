@@ -16,7 +16,20 @@ UNICODE_DIR = $(ONIGMO_DIR)/enc/unicode/17.0.0
 # when making a PIE object" (confirmed against a real Ubuntu 26.04
 # container). -fPIC fixes it on both, so it's unconditional rather than
 # distro-gated.
-CFLAGS = -Wall -Wextra -std=c11 -g -fPIC
+#
+# `override`: the top-level Makefile's sanitize/tsan/release targets
+# invoke $(MAKE) recursively with CFLAGS/LDFLAGS passed the same way a
+# command-line override is, which propagates into this sub-make's own
+# invocation too (GNU Make's normal MAKEFLAGS behavior) and would
+# otherwise silently replace this line, building libreginold.a with
+# -fsanitize=... instrumentation that build/gen_compiled_prelude (always
+# built with plain debug flags, see top-level Makefile) can't link
+# against. `override` makes reginold's own flags immune to that, which
+# only restores the isolation this file always relied on -- the pre-fix
+# top-level Makefile used target-specific variables instead of a
+# command-line-style override, so this propagation never used to happen,
+# but that was incidental, not a deliberate protection.
+override CFLAGS = -Wall -Wextra -std=c11 -g -fPIC
 
 # ONIGMO_CFLAGS is INTERNAL to reginold's build only.
 # It is never needed by consumers — they include only reginold.h,
