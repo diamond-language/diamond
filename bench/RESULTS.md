@@ -699,3 +699,38 @@ dominating either way) that this delta is within the kind of run-to-run
 noise a 5-thread, sub-50ms measurement is naturally more sensitive to
 than the old 16-thread one was, not evidence supervision itself got
 proportionally more expensive.
+
+## Correction: `hash_ops.di`'s own comment was stale, not a live finding (2026-09-18)
+
+Reviewing this session's full sweep with the user, `hash_ops.di`'s own
+comment ("hash_find is a genuine O(n) linear scan... not a real hash
+table") looked like the standout actionable finding -- until checking
+`git log` on `hash_find` itself before acting on it. `Hash` was
+rewritten to a real open-addressing hash table on 2026-08-07
+(`15d8d868`, "Replace Hash's O(n) linear scan with a real hash table")
+-- over a month before this session. `hash_ops.di`'s own comment and
+5,000-entry sizing (deliberately small to avoid an O(n^2) insert phase)
+were simply never updated afterward. Confirmed directly: 100x more
+entries (5,000 -> 500,000) cost only ~10x more total time for
+insert+lookup, not the ~10,000x a real linear scan would produce --
+the signature of O(1) average-case lookups, not O(n). Fixed the stale
+comment and rescaled the benchmark to 200,000 entries (repeat=40) now
+that there's no O(n^2) blowup to size around: ~89ns/op, matching the
+old 5,000-entry number (~86ns/op, within noise) at 40x the data --
+direct confirmation the O(1) cost holds at scale, not just a small
+sample. `bench/BASELINE.md`'s own near-identical claim was left
+untouched -- it's an explicitly dated snapshot ("branched from main @
+`0bafbc4`"), and that commit genuinely predates the hash-table fix
+(confirmed via `git merge-base --is-ancestor`), so the claim was
+accurate when written and rewriting a dated historical record to
+reflect later truth would defeat its own stated purpose as a frozen
+reference point.
+
+**Lesson for next time, stated plainly rather than filed away**: a
+benchmark file's own doc comment is not a substitute for reading the
+current implementation before recommending work based on it, even
+when the comment reads as confident and specific ("confirmed by
+reading the code, not just inferred from timing" was `BASELINE.md`'s
+own phrasing for the *original*, now-superseded finding). `git log`
+on the function in question settled this in under a minute and should
+have been the first move, not an afterthought.
