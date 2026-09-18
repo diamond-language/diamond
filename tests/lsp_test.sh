@@ -2080,6 +2080,56 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$spread_generic_uri"'"}}}'
 read_message >/dev/null
 
+# --- textDocument/formatting: indentation/trailing-whitespace normalization
+# only (lsp/formatting.c) -- deliberately not a full AST-based pretty-printer
+# (the native compiler retains no AST at all, see docs/roadmap.md's
+# "Compiler representation"), tracking nesting from the same token stream
+# every other lsp/ handler already uses. This source combines every
+# genuinely tricky construct found wrong while building it against this
+# repo's own real corpus: a `loop do ... end` (do is optional/absorbed
+# syntax, not a second nested block), a named `closure ... end` (shares
+# `def`'s own grammar, easy to miss as a keyword entirely), an `if` used
+# as a value inside a call argument (block-form despite not starting its
+# own line -- the naive "first token of the line" rule alone missed this),
+# an interface's own signature-only `def greet() -> String` (no body, no
+# `end` of its own), `value.class()` (the one keyword the compiler itself
+# allows as a method name right after a dot), and an endless
+# `def self.make() -> Widget = Widget.new()` (a return type before the
+# `=`, which used to make the endless-detection scan run straight past the
+# header looking for any `=` anywhere later in the file) ---
+
+fmt_ok_uri="file:///fmt_ok.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_ok_uri"'","text":"interface Greetable\n  def greet() -> String\nend\n\nclass Widget\n  def process(items)\n    loop do\n      break if items.length() == 0\n    end\n    closure helper(x)\n      x + 1\n    end\n    value = if items.length() > 0 then items[0] else 0 end\n    kind = value.class()\n    result = helper(value)\n    result\n  end\n  def self.make() -> Widget = Widget.new()\nend"}}}'
+read_message >/dev/null
+
+# Already correctly indented -- every tricky construct above balances
+# clean, so this is an empty edit list, not a bailout (json_null would
+# mean the balance check gave up; [] means it stayed confident and found
+# nothing to fix).
+send '{"jsonrpc":"2.0","id":179,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_ok_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":179,"result":[]}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_ok_uri"'"}}}'
+read_message >/dev/null
+
+# The exact same source, with the closure body under-indented (4 spaces
+# instead of the 6 its own nesting -- inside process(), inside the
+# closure -- needs) -- confirms a real fix gets proposed for these
+# constructs, not just a false "already fine" on them.
+fmt_broken_uri="file:///fmt_broken.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_broken_uri"'","text":"interface Greetable\n  def greet() -> String\nend\n\nclass Widget\n  def process(items)\n    loop do\n      break if items.length() == 0\n    end\n    closure helper(x)\n    x + 1\n    end\n    value = if items.length() > 0 then items[0] else 0 end\n    kind = value.class()\n    result = helper(value)\n    result\n  end\n  def self.make() -> Widget = Widget.new()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":180,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_broken_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":180,"result":[{"range":{"start":{"line":10,"character":0},"end":{"line":10,"character":4}},"newText":"      "}]}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_broken_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

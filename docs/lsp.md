@@ -25,8 +25,8 @@ search over a real (if scoped) lexical symbol table:
   `hoverProvider: true`, `definitionProvider: true`,
   `documentSymbolProvider: true`, `completionProvider: {}` (no
   `triggerCharacters` — see completion below for why none are needed),
-  `workspaceSymbolProvider: true`, `referencesProvider: true`, and
-  `renameProvider: true`. Also
+  `workspaceSymbolProvider: true`, `referencesProvider: true`,
+  `renameProvider: true`, and `documentFormattingProvider: true`. Also
   reads `workspaceFolders[0]`/
   `rootUri` from the request's own params (the one place this server
   reads anything from `initialize`'s params at all) to know what
@@ -282,6 +282,43 @@ search over a real (if scoped) lexical symbol table:
   a client without it just lets the user type a name unconditionally
   and calls `rename` anyway, which still correctly returns `null` when
   the position isn't renameable.
+- `textDocument/formatting` (`lsp/formatting.c`) normalizes every
+  physical line's own leading indentation to `depth * 2` spaces and
+  trims trailing whitespace -- deliberately not a full AST-based
+  pretty-printer: the native compiler retains no AST at all (`docs/
+  roadmap.md`'s "Compiler representation"), so a real structural
+  formatter would need a whole new tree-building parser kept in sync
+  with the real grammar, a materially bigger undertaking than tracking
+  nesting from the same token stream every other handler here already
+  uses. `depth` counts open `def`/`class`/`module`/`interface`/
+  `struct`/`begin`/`case`/`loop`/`do` blocks, block-form
+  `if`/`unless`/`while`/`until` (never a postfix modifier --
+  determined by whether the keyword is the first token on its own
+  line or immediately preceded by something other than a value-end
+  token, e.g. an assignment, an open bracket, or a comma; a value-end
+  token directly before it means postfix instead, `return 1 if n <=
+  1`), and open brackets. `else`/`elsif`/`when`/`rescue`/`ensure` and
+  a line's own leading closers dedent that one line without changing
+  the running depth used for subsequent lines. Three shapes get their
+  own handling: an endless `def name(...) -> Type = expr` (or
+  `closure`, which shares `def`'s exact grammar) needs no `end` at
+  all; `loop`/`while`/`until`'s own optional trailing `do` is absorbed
+  syntax for the same one level, not a second nested block
+  (`src/compiler.c`'s `consume_loop_start`); and a `def` signature
+  with no body at all is legal exactly inside an `interface`'s own
+  body. `value.class()` is the one keyword the compiler itself accepts
+  as a method name right after a dot (`src/compiler.c`'s own
+  `parse_invoke`), so it's excluded from opening a level there too.
+  Verified against every real (non-test-fixture) `*.di` file in this
+  repository -- 309 files, zero bailouts, each proposed change
+  manually spot-checked. Returns `json_null()` rather than a guess
+  when the source contains a lexer error or the tracked depth doesn't
+  balance to exactly zero by EOF -- a real grammar shape this pass
+  doesn't yet model should mean no edits, not a corrupted one. No
+  range formatting, no on-type formatting, and no reflowing a long
+  line, reordering anything, or normalizing operator/argument spacing
+  (`a+b` stays `a+b`) -- see `lsp/formatting.h`'s own doc comment for
+  the full contract.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;

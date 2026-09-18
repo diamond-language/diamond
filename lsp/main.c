@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "document.h"
 #include "document_symbol.h"
+#include "formatting.h"
 #include "hover.h"
 #include "json.h"
 #include "references.h"
@@ -190,6 +191,7 @@ static void handle_initialize(const JsonValue *id,const JsonValue *params,
     json_object_set(capabilities,"workspaceSymbolProvider",json_bool(true));
     json_object_set(capabilities,"referencesProvider",json_bool(true));
     json_object_set(capabilities,"renameProvider",json_bool(true));
+    json_object_set(capabilities,"documentFormattingProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
@@ -359,6 +361,33 @@ static void handle_rename(DocumentTable *documents,const char *workspace_root,
     send_response(id,result);
 }
 
+static void handle_formatting(DocumentTable *documents,const JsonValue *id,
+        const JsonValue *params) {
+    const JsonValue *text_document=json_object_get(params,"textDocument");
+    const char *uri=nullptr;
+    size_t uri_length=0;
+    char uri_copy[1024];
+    if(!json_as_string(json_object_get(text_document,"uri"),&uri,&uri_length)||
+       uri_length>=sizeof uri_copy) {
+        send_response(id,json_null());
+        return;
+    }
+    memcpy(uri_copy,uri,uri_length);
+    uri_copy[uri_length]='\0';
+    size_t text_length=0;
+    const char *text=document_get_text(documents,uri_copy,&text_length);
+    if(text==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    JsonValue *result=formatting_compute(text,text_length);
+    if(result==nullptr) {
+        send_response(id,json_null());
+        return;
+    }
+    send_response(id,result);
+}
+
 static void handle_did_open(DocumentTable *documents,DependencyTable *dependencies,
         const JsonValue *params) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
@@ -471,6 +500,8 @@ int main(void) {
             handle_references(documents,workspace_root,id,params);
         } else if(strcmp(method,"textDocument/rename")==0) {
             handle_rename(documents,workspace_root,id,params);
+        } else if(strcmp(method,"textDocument/formatting")==0) {
+            handle_formatting(documents,id,params);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

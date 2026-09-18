@@ -6,6 +6,28 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Added `textDocument/formatting` to the Language Server: normalizes
+  every physical line's own leading indentation to a consistent
+  2-space-per-level and trims trailing whitespace, tracking nesting
+  from the same token stream every other handler here already uses --
+  deliberately not a full AST-based pretty-printer (the native
+  compiler retains no AST at all). Verified against every real
+  (non-test-fixture) `*.di` file in this repository (309 files, zero
+  bailouts) before trusting it; found and fixed five real grammar
+  gaps along the way (an endless `def name(...) -> Type = expr` whose
+  return-type scan could run straight past the header looking for any
+  `=` anywhere later in the file; `loop`/`while`/`until`'s own
+  optional trailing `do` double-counted as a second nested block
+  instead of the same one; the `closure name(...) ... end` keyword
+  missing from block-tracking entirely; `if`/`unless`/`while`/`until`
+  used as a value inside a call argument misclassified as a postfix
+  modifier; and an interface's own signature-only `def` expecting a
+  matching `end` that never comes). Returns `null` rather than a
+  guess when it isn't confident, never no edits vs. a guessed one.
+  See docs/lsp.md.
+
 ### Language
 
 - Fixed `puts`/string interpolation/the CLI's own top-level-result
