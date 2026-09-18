@@ -261,6 +261,14 @@ decided -- a materially bigger design change than anything in Phases
 2-2e, since it would replace the core exception-safety mechanism Phase 2d
 built rather than extend it.
 
+**Resolved differently in Phase 3, below, without either of those two
+options**: the actual blocker wasn't the *flag*, it was that these
+opcodes' own edge cases had no resumable fallback at all -- once they
+got one (a trampoline, exactly like every other call-capable opcode
+already has), they stopped needing `jc->has_called` to be false in the
+first place, so neither a runtime-checked flag nor whole-program type
+inference turned out to be necessary.
+
 ### Phase 2f: compile-time Int return type for native scalar methods -- a real, narrower win, *not* a JIT-eligibility fix
 
 Investigated whether the local-type-inference half of the paragraph
@@ -363,6 +371,93 @@ true before -- a real, if narrow, class of methods (simple accessors,
 counters, accumulators) -- but nothing that also calls another method
 or does Hash/Array indexing is any closer than the Phase 2f picture
 already described.
+
+### Phase 3: `has_called` no longer blocks integer arithmetic/comparison -- closes a second of the three gaps above
+
+Investigated whether reaching `Model#initialize`-shaped code needed a
+genuinely new mechanism -- a runtime-checked replacement for
+`jc->has_called`'s compile-time-only, monotonic flag, or full mid-function
+deoptimization -- as the Phase 2e status note above speculated. It didn't.
+
+The real crux, found by reading `ADD_INT`/`SUBTRACT_INT`/`MULTIPLY_INT`/
+`DIVIDE_INT`/`LESS_INT`'s full interpreter case bodies for the first time
+(previous phases only read enough to build the fast native path): these
+opcodes are **self-modifying** the same way method dispatch is
+(`vm->quickening` rewrites a generic `ADD`/`LESS`/etc. to its `_INT` form
+in place after enough int-int observations, and deopts back to generic on
+a later non-Int operand), and their overflow/div-by-zero/`INT64_MIN`
+cases call real bignum-promotion logic (`diamond_bignum_add`, ...), not a
+fixed-width error. Before this phase, none of that had anywhere safe to
+go once a call had already run: retrying would re-invoke it, and
+"propagate" only forwards an already-real `DiamondVmStatus` from a
+trampoline call that already happened -- there was no trampoline on the
+fast native-arithmetic path at all, so there was nothing to propagate.
+A runtime-checked flag alone would not have fixed this: the actual gap
+was that these opcodes' edge cases had no *resumable* fallback, the same
+shape every other call-capable opcode here already has.
+
+**The fix**: extract the *entire* real slow-path body for each opcode
+family into a shared function -- `int_arith_slow` (`ADD`/`SUBTRACT`/
+`MULTIPLY`/`DIVIDE` and their `_INT` forms) and `compare_int_slow`
+(`LESS`/`LESS_EQUAL`/`GREATER`/`GREATER_EQUAL` and their `_INT` forms),
+both in `src/vm.c` -- covering the deopt-to-generic bytecode rewrite,
+bignum promotion, Float/String/Instance-override/Time dispatch, and
+(for arithmetic) division-by-zero/`INT64_MIN`, reusing `add_fallback`
+for `ADD`'s own dispatch rather than duplicating its String-concat/Time-
+offset cases. `run_chunk`'s own case for each opcode family is now a
+thin wrapper: a fast, purely-native path for two confirmed-int,
+non-overflowing operands (unchanged), falling through to the shared
+function for everything else -- the same anti-duplication discipline
+Phase 2e established for `EQUAL`/`INDEX_GET`. Two new JIT trampolines,
+`diamond_jit_arith_slow`/`diamond_jit_compare_slow` (`src/jit.h`),
+wrap these same functions for `compile_binary_int_op` (`src/jit.c`):
+every bail condition (a non-Int operand, overflow, division by zero,
+`INT64_MIN`/`-1`) now calls the matching trampoline and either continues
+inline with the written result or bails via the trampoline's own real
+status -- the same "call a trampoline, never retry" shape `SET_IVAR`/
+`GET_IVAR`/`INDEX_GET`/`SET`/`EQUAL` already use. Since this never needs
+"retry the whole function" any more, the outright compile-time rejection
+`if (jc->has_called) { jc->bailed = true; return; }` is gone: these five
+opcodes compile whether or not a call has already run. Because the
+trampolines' own Instance-operator-override branch can genuinely invoke
+arbitrary user code, compiling any of them at all still sets
+`jc->has_called = true` unconditionally -- the same conservative,
+compile-time-only choice `compile_equal_op` already makes.
+
+Verified empirically against the exact shape the Phase 2f/2g notes
+above named as still blocked: a Hash argument's `INDEX_GET` (sets
+`jc->has_called`) followed by a provably-Int loop counter's own
+`ADD_INT`/`LESS_INT` failed to compile before this change (`jit: 0
+compiled function(s)`, confirmed by checking out the pre-Phase-3 tree
+and rerunning the identical program) and compiles cleanly after
+(`tests/cases/jit_int_arith_after_index_get.*`, asserting `jit: 1
+compiled function(s)`). A second case
+(`tests/cases/jit_arith_overflow_after_index_get.*`) confirms the
+bignum-promotion path itself computes correctly when reached through
+the new trampoline *after* `has_called` is already true, under both
+plain `DIAMOND_JIT=1` and `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1` (the Hash
+argument stays correctly published across the allocating bignum-promote
+call). Full suite (1548 cases) green under debug, under ASan/UBSan, and
+under `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`
+(compiles every eligible function immediately, forces a collection on
+every allocation) -- no missed GC root, no regression on Phase 2/2b/2c/
+2d/2e's existing benchmarks. Extensive pre-existing interpreter coverage
+for these exact deopt/bignum/division/operator-override paths (`tests/
+cases/add_int_deopt_*`, `operator_deopt_gap_*`, `spaceship_bignum.di`,
+...) passed unchanged throughout, giving strong confidence the
+extraction preserved the interpreter's own behavior exactly rather than
+introducing subtle drift.
+
+**Still does not reach `Model#initialize`-shaped code on its own**:
+generic `DIAMOND_OP_INVOKE` (dynamic dispatch by name, used for every
+`.method()` call regardless of receiver type) still has no case in
+`compile_body` at all -- the one remaining gap of the original three,
+and the only one left. A method that also calls `.keys()`/`.length()`-
+style native methods, or any user method, is no closer to JIT-eligible
+than the Phase 2f/2g picture already described; only the narrower class
+of methods that read/write ivars and do int arithmetic/comparisons
+*after* a call has already run (rather than only before) is newly
+reachable.
 
 ## Why the interop seam is already clean
 

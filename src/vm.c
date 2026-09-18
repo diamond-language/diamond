@@ -7688,6 +7688,239 @@ static bool time_comparison_fallback(DiamondValue left_value,DiamondValue right_
     return true;
 }
 
+/* Phase 3 (docs/internal/jit-design.md). Shared slow path for ADD_INT/
+ * SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT and their generic (non-_INT)
+ * counterparts -- covers everything the fast, purely-native path in both
+ * run_chunk's own case and the JIT (src/jit.c's compile_binary_int_op)
+ * can't handle inline: a non-plain-int operand (deopts an _INT opcode
+ * back to its generic form first, exactly like this always did, then
+ * dispatches through the same fallback logic every generic ADD/SUBTRACT/
+ * MULTIPLY/DIVIDE already used) and genuine Int-Int overflow or DIVIDE's
+ * own zero/INT64_MIN edge cases, which promote to Diamond's real bignum
+ * representation rather than erroring. `opcode` may be any of the seven
+ * opcodes this covers (generic or _INT); only ever called once the
+ * caller has already ruled out the fast, non-overflowing, both-plain-Int
+ * path. Reuses add_fallback for ADD's own generic dispatch (String
+ * concat, Instance `+`, Time offset) rather than duplicating it -- the
+ * same anti-duplication discipline established in Phase 2e after the
+ * EQUAL/INDEX_GET trampolines shipped with their own, subtly incomplete
+ * copies of logic that already lived elsewhere. */
+static DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, size_t instruction_offset, DiamondOpCode opcode,
+        DiamondValue left_value, DiamondValue right_value, DiamondValue *out_result) {
+    const bool kind_mismatch=left_value.kind!=DIAMOND_VALUE_INT||
+        right_value.kind!=DIAMOND_VALUE_INT;
+    DiamondOpCode generic=opcode;
+    if(opcode==DIAMOND_OP_ADD_INT)generic=DIAMOND_OP_ADD;
+    else if(opcode==DIAMOND_OP_SUBTRACT_INT)generic=DIAMOND_OP_SUBTRACT;
+    else if(opcode==DIAMOND_OP_MULTIPLY_INT)generic=DIAMOND_OP_MULTIPLY;
+    else if(opcode==DIAMOND_OP_DIVIDE_INT)generic=DIAMOND_OP_DIVIDE;
+    if(kind_mismatch&&generic!=opcode) {
+        uint8_t *code=(uint8_t *)(void *)chunk->code;
+        code[instruction_offset]=(uint8_t)generic;
+        vm->deoptimized_sites++;
+    }
+    if(kind_mismatch) {
+        if(generic==DIAMOND_OP_ADD)
+            return add_fallback(vm,chunk,depth,instruction_offset,left_value,right_value,out_result);
+        if(is_int_value(left_value)&&is_int_value(right_value)&&
+           (value_is_bignum(left_value)||value_is_bignum(right_value))) {
+            DiamondIntView left_view, right_view;
+            diamond_int_view(left_value,&left_view);
+            diamond_int_view(right_value,&right_view);
+            DiamondValue bignum_result;
+            if(generic==DIAMOND_OP_SUBTRACT)
+                bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
+            else if(generic==DIAMOND_OP_MULTIPLY)
+                bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
+            else {
+                DiamondIntView zero_view;
+                diamond_int_view_int64(0,&zero_view);
+                if(diamond_bignum_compare(right_view,zero_view)==0)
+                    return DIAMOND_VM_DIVISION_BY_ZERO;
+                bignum_result=diamond_bignum_divide_truncated(vm,left_view,right_view);
+            }
+            if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+            *out_result=bignum_result;
+            return DIAMOND_VM_OK;
+        }
+        if((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT)&&
+           (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT)&&
+           (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+            const double left_real=left_value.kind==DIAMOND_VALUE_FLOAT?
+                left_value.as.real:(double)left_value.as.integer;
+            const double right_real=right_value.kind==DIAMOND_VALUE_FLOAT?
+                right_value.as.real:(double)right_value.as.integer;
+            double float_result=0;
+            if(generic==DIAMOND_OP_SUBTRACT)float_result=left_real-right_real;
+            else if(generic==DIAMOND_OP_MULTIPLY)float_result=left_real*right_real;
+            else float_result=left_real/right_real;
+            *out_result=DIAMOND_FLOAT(float_result);
+            return DIAMOND_VM_OK;
+        }
+        const char *name=generic==DIAMOND_OP_SUBTRACT?"-":
+            generic==DIAMOND_OP_MULTIPLY?"*":"/";
+        if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+           left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+            bool found=false;DiamondValue op_result=DIAMOND_NIL;
+            const uint8_t *site=chunk->code+instruction_offset;
+            const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
+                (const DiamondInstance *)left_value.as.object,name,strlen(name),
+                &right_value,1,&op_result,&found);
+            if(found) {
+                if(status!=DIAMOND_VM_OK)return status;
+                *out_result=op_result;
+                return DIAMOND_VM_OK;
+            }
+        }
+        if(generic==DIAMOND_OP_SUBTRACT) {
+            const DiamondVmStatus time_status=
+                time_subtract_fallback(vm,left_value,right_value,out_result);
+            if(time_status!=DIAMOND_VM_TYPE_ERROR)return time_status;
+        }
+        format_operator_type_error(vm,left_value,right_value,name);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    /* Both operands confirmed plain (non-bignum) Int -- reached only for
+     * a genuine overflow (ADD/SUBTRACT/MULTIPLY) or DIVIDE's own zero/
+     * INT64_MIN edge cases; the caller already ruled out the fast,
+     * non-overflowing native path before calling here. */
+    const int64_t left_int=left_value.as.integer;
+    const int64_t right_int=right_value.as.integer;
+    if(generic==DIAMOND_OP_DIVIDE) {
+        if(right_int==0)return DIAMOND_VM_DIVISION_BY_ZERO;
+        if(left_int==INT64_MIN&&right_int==-1) {
+            /* -INT64_MIN doesn't fit int64_t; promote instead of
+             * erroring, matching every other overflow site here. */
+            DiamondIntView left_view;
+            diamond_int_view(left_value,&left_view);
+            const DiamondValue bignum_result=diamond_bignum_negate(vm,left_view);
+            if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+            *out_result=bignum_result;
+            return DIAMOND_VM_OK;
+        }
+        *out_result=DIAMOND_INT(left_int/right_int);
+        return DIAMOND_VM_OK;
+    }
+    DiamondIntView left_view, right_view;
+    diamond_int_view(left_value,&left_view);
+    diamond_int_view(right_value,&right_view);
+    DiamondValue bignum_result;
+    if(generic==DIAMOND_OP_ADD)bignum_result=diamond_bignum_add(vm,left_view,right_view);
+    else if(generic==DIAMOND_OP_SUBTRACT)bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
+    else bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
+    if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=bignum_result;
+    return DIAMOND_VM_OK;
+}
+
+/* Phase 3. Shared slow path for LESS/LESS_EQUAL/GREATER/GREATER_EQUAL and
+ * their _INT forms -- mirrors int_arith_slow's own shape exactly, except
+ * comparisons never overflow, so the only reason this is ever called at
+ * all is a non-plain-int operand (which, for an _INT form, always deopts
+ * the opcode back to its generic counterpart first, matching this
+ * always did before this extraction). */
+static DiamondVmStatus compare_int_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, size_t instruction_offset, DiamondOpCode opcode,
+        DiamondValue left_value, DiamondValue right_value, DiamondValue *out_result) {
+    DiamondOpCode generic=opcode;
+    if(opcode==DIAMOND_OP_LESS_INT)generic=DIAMOND_OP_LESS;
+    else if(opcode==DIAMOND_OP_LESS_EQUAL_INT)generic=DIAMOND_OP_LESS_EQUAL;
+    else if(opcode==DIAMOND_OP_GREATER_INT)generic=DIAMOND_OP_GREATER;
+    else if(opcode==DIAMOND_OP_GREATER_EQUAL_INT)generic=DIAMOND_OP_GREATER_EQUAL;
+    if(generic!=opcode) {
+        uint8_t *code=(uint8_t *)(void *)chunk->code;
+        code[instruction_offset]=(uint8_t)generic;
+        vm->deoptimized_sites++;
+    }
+    if(is_int_value(left_value)&&is_int_value(right_value)&&
+       (value_is_bignum(left_value)||value_is_bignum(right_value))) {
+        DiamondIntView left_view, right_view;
+        diamond_int_view(left_value,&left_view);
+        diamond_int_view(right_value,&right_view);
+        const int comparison=diamond_bignum_compare(left_view,right_view);
+        bool bignum_comparison=false;
+        if(generic==DIAMOND_OP_LESS)bignum_comparison=comparison<0;
+        else if(generic==DIAMOND_OP_LESS_EQUAL)bignum_comparison=comparison<=0;
+        else if(generic==DIAMOND_OP_GREATER)bignum_comparison=comparison>0;
+        else bignum_comparison=comparison>=0;
+        *out_result=DIAMOND_BOOL(bignum_comparison);
+        return DIAMOND_VM_OK;
+    }
+    if((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT)&&
+       (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT)&&
+       (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+        const double left_real=left_value.kind==DIAMOND_VALUE_FLOAT?
+            left_value.as.real:(double)left_value.as.integer;
+        const double right_real=right_value.kind==DIAMOND_VALUE_FLOAT?
+            right_value.as.real:(double)right_value.as.integer;
+        bool float_comparison=false;
+        if(generic==DIAMOND_OP_LESS)float_comparison=left_real<right_real;
+        else if(generic==DIAMOND_OP_LESS_EQUAL)float_comparison=left_real<=right_real;
+        else if(generic==DIAMOND_OP_GREATER)float_comparison=left_real>right_real;
+        else float_comparison=left_real>=right_real;
+        *out_result=DIAMOND_BOOL(float_comparison);
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&left_value.as.object->kind==DIAMOND_OBJECT_STRING&&
+       right_value.kind==DIAMOND_VALUE_OBJECT&&right_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        const int comparison=diamond_string_compare(
+            (const DiamondString *)left_value.as.object,(const DiamondString *)right_value.as.object);
+        bool string_comparison=false;
+        if(generic==DIAMOND_OP_LESS)string_comparison=comparison<0;
+        else if(generic==DIAMOND_OP_LESS_EQUAL)string_comparison=comparison<=0;
+        else if(generic==DIAMOND_OP_GREATER)string_comparison=comparison>0;
+        else string_comparison=comparison>=0;
+        *out_result=DIAMOND_BOOL(string_comparison);
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        const char *name=generic==DIAMOND_OP_LESS?"<":
+            generic==DIAMOND_OP_LESS_EQUAL?"<=":
+            generic==DIAMOND_OP_GREATER?">":">=";
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,site,
+            (const DiamondInstance *)left_value.as.object,name,strlen(name),
+            &right_value,1,&op_result,&found);
+        if(found) {
+            if(status!=DIAMOND_VM_OK)return status;
+            *out_result=DIAMOND_BOOL(is_truthy(op_result));
+            return DIAMOND_VM_OK;
+        }
+    }
+    if(time_comparison_fallback(left_value,right_value,generic,out_result))
+        return DIAMOND_VM_OK;
+    {
+        const char *name=generic==DIAMOND_OP_LESS?"<":
+            generic==DIAMOND_OP_LESS_EQUAL?"<=":
+            generic==DIAMOND_OP_GREATER?">":">=";
+        format_operator_type_error(vm,left_value,right_value,name);
+    }
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* Phase 3. JIT trampolines wrapping int_arith_slow/compare_int_slow above
+ * for compile_binary_int_op (src/jit.c) -- see that function's own
+ * comment for why compiling ADD_INT/SUBTRACT_INT/MULTIPLY_INT/
+ * DIVIDE_INT/LESS_INT no longer needs jc->has_called to already be false.
+ * `site` is this occurrence's own bytecode address (jc->function->code +
+ * instruction_start), the same per-occurrence convention every other
+ * overload-checking trampoline here already uses; converted back to an
+ * offset via pointer subtraction since the shared helpers key off
+ * chunk->code + instruction_offset the same way run_chunk's own case
+ * does. */
+DiamondVmStatus diamond_jit_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out) {
+    return int_arith_slow(vm,chunk,depth,(size_t)(site-chunk->code),opcode,*left,*right,out);
+}
+DiamondVmStatus diamond_jit_compare_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out) {
+    return compare_int_slow(vm,chunk,depth,(size_t)(site-chunk->code),opcode,*left,*right,out);
+}
+
 /* Time.now()/Time.utc_now()'s shared body, and Time.at(epoch)'s --
  * pulled out of run_chunk's own TIME_NOW/TIME_AT cases for the same
  * stack-frame-budget reason as time_subtract_fallback/
@@ -15706,187 +15939,45 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
-                if (opcode == DIAMOND_OP_ADD_INT &&
-                    (registers[left].kind != DIAMOND_VALUE_INT ||
-                     registers[right].kind != DIAMOND_VALUE_INT)) {
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
-                    code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD;
-                    vm->deoptimized_sites++;
-                    /* Retargets the opcode but, unlike a real fresh
-                     * dispatch of the now-generic ADD, has to run ADD's
-                     * own fallback logic on this instruction directly --
-                     * see add_fallback's own comment for why this is a
-                     * shared helper rather than duplicated here (it used
-                     * to be, and the duplicate silently lacked the mixed-
-                     * Int/Float case). */
-                    DiamondValue add_result=DIAMOND_NIL;
-                    const DiamondVmStatus add_status=add_fallback(vm,chunk,depth,
-                        instruction_offset,registers[left],registers[right],&add_result);
-                    VM_PROPAGATE(add_status);
-                    registers[destination]=add_result;
-                    break;
-                }
-                /* SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT never had a deopt
-                 * branch at all before bignums existed: the only way an
-                 * already-observed-Int operand's kind could stop being
-                 * DIAMOND_VALUE_INT was a genuine type violation, so
-                 * falling straight to the type-error path below was
-                 * correct. Once an Int can legitimately become a bignum
-                 * mid-execution that's no longer true -- mirror ADD_INT's
-                 * deopt (no string special-case needed here, since only
-                 * ADD supports string concatenation). Retargets and falls
-                 * through rather than returning, so the bignum check just
-                 * below gets a chance at it. */
-                if ((opcode==DIAMOND_OP_SUBTRACT_INT||
-                     opcode==DIAMOND_OP_MULTIPLY_INT||
-                     opcode==DIAMOND_OP_DIVIDE_INT) &&
-                    (registers[left].kind!=DIAMOND_VALUE_INT||
-                     registers[right].kind!=DIAMOND_VALUE_INT)) {
-                    const DiamondOpCode generic=opcode==DIAMOND_OP_SUBTRACT_INT
-                        ?DIAMOND_OP_SUBTRACT
-                        :opcode==DIAMOND_OP_MULTIPLY_INT
-                            ?DIAMOND_OP_MULTIPLY:DIAMOND_OP_DIVIDE;
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
-                    code[instruction_offset]=(uint8_t)generic;
-                    opcode=generic;
-                    vm->deoptimized_sites++;
-                }
-                /* Scoped to the three generic (non-_INT) opcodes only - the
-                 * _INT forms, once past the deopt check above, always have
-                 * both operands confirmed DIAMOND_VALUE_INT by this point. */
-                if ((opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
-                     opcode==DIAMOND_OP_DIVIDE) &&
-                    is_int_value(registers[left])&&is_int_value(registers[right])&&
-                    (value_is_bignum(registers[left])||
-                     value_is_bignum(registers[right]))) {
-                    DiamondIntView left_view, right_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    DiamondValue bignum_result;
-                    if(opcode==DIAMOND_OP_SUBTRACT)
-                        bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
-                    else if(opcode==DIAMOND_OP_MULTIPLY)
-                        bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
-                    else {
-                        DiamondIntView zero_view;
-                        diamond_int_view_int64(0,&zero_view);
-                        if(diamond_bignum_compare(right_view,zero_view)==0)
-                            VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
-                        bignum_result=
-                            diamond_bignum_divide_truncated(vm,left_view,right_view);
-                    }
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=bignum_result;
-                    break;
-                }
-                if ((opcode==DIAMOND_OP_SUBTRACT||opcode==DIAMOND_OP_MULTIPLY||
-                     opcode==DIAMOND_OP_DIVIDE) &&
-                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[left].kind==DIAMOND_VALUE_INT) &&
-                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_INT) &&
-                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    double float_result=0;
-                    if(opcode==DIAMOND_OP_SUBTRACT)float_result=left_real-right_real;
-                    else if(opcode==DIAMOND_OP_MULTIPLY)float_result=left_real*right_real;
-                    /* DIVIDE: IEEE-754 double/0.0 naturally yields
-                     * +-Infinity/NaN, no UB and no check needed, unlike Int. */
-                    else float_result=left_real/right_real;
-                    registers[destination]=DIAMOND_FLOAT(float_result);
-                    break;
-                }
-                if (registers[left].kind != DIAMOND_VALUE_INT ||
-                    registers[right].kind != DIAMOND_VALUE_INT) {
-                    /* Reached by SUBTRACT/MULTIPLY/DIVIDE (generic, or
-                     * retargeted here from their _INT deopt above) with a
-                     * non-Int left operand -- ADD_INT can't reach this
-                     * point with a non-Int operand, since its own deopt
-                     * branch above already handles (and returns for) that
-                     * case, so it's never a candidate for "+" dispatch
-                     * here. */
-                    const char *name=opcode==DIAMOND_OP_SUBTRACT?"-":
-                        opcode==DIAMOND_OP_MULTIPLY?"*":"/";
-                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                        const uint8_t *site=chunk->code+instruction_offset;
-                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
-                            depth,site,(const DiamondInstance *)registers[left].as.object,
-                            name,strlen(name),&registers[right],1,&op_result,&found);
-                        if(found) {
-                            VM_PROPAGATE(status);
-                            registers[destination]=op_result;
-                            break;
-                        }
-                    }
-                    /* Time never supports * or /, so MULTIPLY/DIVIDE with
-                     * a Time operand correctly fall through to the
-                     * TypeError below (time_subtract_fallback itself
-                     * doesn't check opcode -- gated here instead). */
-                    if (opcode==DIAMOND_OP_SUBTRACT) {
-                        const DiamondVmStatus time_status=time_subtract_fallback(vm,
-                            registers[left],registers[right],&registers[destination]);
-                        if(time_status!=DIAMOND_VM_TYPE_ERROR){VM_PROPAGATE(time_status);break;}
-                    }
-                    format_operator_type_error(vm,registers[left],registers[right],name);
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t left_value = registers[left].as.integer;
-                const int64_t right_value = registers[right].as.integer;
-                int64_t result_value = 0;
-                bool overflow = false;
-                if (opcode == DIAMOND_OP_ADD_INT) {
-                    overflow = ckd_add(&result_value, left_value, right_value);
-                } else if (opcode == DIAMOND_OP_SUBTRACT_INT ||
-                           opcode == DIAMOND_OP_SUBTRACT) {
-                    overflow = ckd_sub(&result_value, left_value, right_value);
-                } else if (opcode == DIAMOND_OP_MULTIPLY_INT ||
-                           opcode == DIAMOND_OP_MULTIPLY) {
-                    overflow = ckd_mul(&result_value, left_value, right_value);
-                } else {
-                    if (right_value == 0) {
-                        VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
-                    }
-                    if (left_value == INT64_MIN && right_value == -1) {
-                        /* -INT64_MIN doesn't fit int64_t; promote
-                         * instead of erroring, matching every other
-                         * overflow site here (negating left_value's
-                         * bignum view flips its sign to positive,
-                         * which is exactly -INT64_MIN = 2^63). */
-                        DiamondIntView left_view;
-                        diamond_int_view(registers[left],&left_view);
-                        const DiamondValue bignum_result=
-                            diamond_bignum_negate(vm,left_view);
-                        if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[destination]=bignum_result;
+                /* Fast path: one of the seven opcodes above with both
+                 * operands already confirmed plain (non-bignum) Int and
+                 * no overflow/zero/INT64_MIN edge case -- everything
+                 * else (a mismatched or bignum operand, or a genuine
+                 * overflow/div-zero/INT64_MIN case) goes through the
+                 * shared slow path below (Phase 3, docs/internal/
+                 * jit-design.md), shared with the JIT's own compile_
+                 * binary_int_op (src/jit.c) so the two can never drift
+                 * apart -- the same standing rule Phase 2e already
+                 * established for EQUAL/INDEX_GET/SET. */
+                if ((opcode==DIAMOND_OP_ADD_INT||opcode==DIAMOND_OP_SUBTRACT_INT||
+                     opcode==DIAMOND_OP_MULTIPLY_INT||opcode==DIAMOND_OP_DIVIDE_INT)&&
+                    registers[left].kind==DIAMOND_VALUE_INT&&
+                    registers[right].kind==DIAMOND_VALUE_INT) {
+                    const int64_t left_value=registers[left].as.integer;
+                    const int64_t right_value=registers[right].as.integer;
+                    int64_t result_value=0;
+                    bool overflow=false;
+                    if(opcode==DIAMOND_OP_ADD_INT)
+                        overflow=ckd_add(&result_value,left_value,right_value);
+                    else if(opcode==DIAMOND_OP_SUBTRACT_INT)
+                        overflow=ckd_sub(&result_value,left_value,right_value);
+                    else if(opcode==DIAMOND_OP_MULTIPLY_INT)
+                        overflow=ckd_mul(&result_value,left_value,right_value);
+                    if(opcode!=DIAMOND_OP_DIVIDE_INT&&!overflow) {
+                        registers[destination]=DIAMOND_INT(result_value);
                         break;
                     }
-                    result_value = left_value / right_value;
+                    if(opcode==DIAMOND_OP_DIVIDE_INT&&right_value!=0&&
+                       !(left_value==INT64_MIN&&right_value==-1)) {
+                        registers[destination]=DIAMOND_INT(left_value/right_value);
+                        break;
+                    }
                 }
-                if (overflow) {
-                    DiamondIntView left_view, right_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    DiamondValue bignum_result;
-                    if(opcode==DIAMOND_OP_ADD_INT)
-                        bignum_result=diamond_bignum_add(vm,left_view,right_view);
-                    else if(opcode==DIAMOND_OP_SUBTRACT_INT||opcode==DIAMOND_OP_SUBTRACT)
-                        bignum_result=diamond_bignum_subtract(vm,left_view,right_view);
-                    else
-                        bignum_result=diamond_bignum_multiply(vm,left_view,right_view);
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=bignum_result;
-                    break;
-                }
-                registers[destination] = DIAMOND_INT(result_value);
+                DiamondValue slow_result=DIAMOND_NIL;
+                const DiamondVmStatus slow_status=int_arith_slow(vm,chunk,depth,
+                    instruction_offset,opcode,registers[left],registers[right],&slow_result);
+                VM_PROPAGATE(slow_status);
+                registers[destination]=slow_result;
                 break;
             }
             case DIAMOND_OP_SHIFT_LEFT: {
@@ -16211,127 +16302,36 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
-                /* Same reasoning as SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT:
-                 * these four _INT comparisons never had a deopt branch
-                 * before bignums existed (a non-Int operand was always a
-                 * genuine type error). Mirror the arithmetic block's fix. */
+                /* Fast path: both operands already confirmed plain
+                 * (non-bignum) Int, generic or _INT form alike -- a
+                 * comparison never overflows, so a mismatched or bignum
+                 * operand is the only reason to fall through to the
+                 * shared slow path below (Phase 3, docs/internal/
+                 * jit-design.md), shared with the JIT's own compile_
+                 * binary_int_op (src/jit.c). */
                 if ((opcode==DIAMOND_OP_LESS_INT||opcode==DIAMOND_OP_LESS_EQUAL_INT||
-                     opcode==DIAMOND_OP_GREATER_INT||
-                     opcode==DIAMOND_OP_GREATER_EQUAL_INT) &&
-                    (registers[left].kind!=DIAMOND_VALUE_INT||
-                     registers[right].kind!=DIAMOND_VALUE_INT)) {
-                    const DiamondOpCode generic=opcode==DIAMOND_OP_LESS_INT
-                        ?DIAMOND_OP_LESS
-                        :opcode==DIAMOND_OP_LESS_EQUAL_INT
-                            ?DIAMOND_OP_LESS_EQUAL
-                            :opcode==DIAMOND_OP_GREATER_INT
-                                ?DIAMOND_OP_GREATER:DIAMOND_OP_GREATER_EQUAL;
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
-                    code[instruction_offset]=(uint8_t)generic;
-                    opcode=generic;
-                    vm->deoptimized_sites++;
-                }
-                if ((opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
-                     opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL) &&
-                    is_int_value(registers[left])&&is_int_value(registers[right])&&
-                    (value_is_bignum(registers[left])||
-                     value_is_bignum(registers[right]))) {
-                    DiamondIntView left_view, right_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    const int comparison=diamond_bignum_compare(left_view,right_view);
-                    bool bignum_comparison=false;
-                    if(opcode==DIAMOND_OP_LESS)bignum_comparison=comparison<0;
-                    else if(opcode==DIAMOND_OP_LESS_EQUAL)bignum_comparison=comparison<=0;
-                    else if(opcode==DIAMOND_OP_GREATER)bignum_comparison=comparison>0;
-                    else bignum_comparison=comparison>=0;
-                    registers[destination]=DIAMOND_BOOL(bignum_comparison);
+                     opcode==DIAMOND_OP_GREATER_INT||opcode==DIAMOND_OP_GREATER_EQUAL_INT||
+                     opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
+                     opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL)&&
+                    registers[left].kind==DIAMOND_VALUE_INT&&
+                    registers[right].kind==DIAMOND_VALUE_INT) {
+                    const int64_t a=registers[left].as.integer;
+                    const int64_t b=registers[right].as.integer;
+                    bool comparison=false;
+                    if(opcode==DIAMOND_OP_LESS_INT||opcode==DIAMOND_OP_LESS)comparison=a<b;
+                    else if(opcode==DIAMOND_OP_LESS_EQUAL_INT||opcode==DIAMOND_OP_LESS_EQUAL)
+                        comparison=a<=b;
+                    else if(opcode==DIAMOND_OP_GREATER_INT||opcode==DIAMOND_OP_GREATER)
+                        comparison=a>b;
+                    else comparison=a>=b;
+                    registers[destination]=DIAMOND_BOOL(comparison);
                     break;
                 }
-                /* Scoped to the four generic (non-_INT) opcodes only, same
-                 * reasoning as the arithmetic block: the _INT forms, once
-                 * past the deopt check above, always have both operands
-                 * confirmed DIAMOND_VALUE_INT by this point. */
-                if ((opcode==DIAMOND_OP_LESS||opcode==DIAMOND_OP_LESS_EQUAL||
-                     opcode==DIAMOND_OP_GREATER||opcode==DIAMOND_OP_GREATER_EQUAL) &&
-                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[left].kind==DIAMOND_VALUE_INT) &&
-                    (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_INT) &&
-                    (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                     registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    bool float_comparison=false;
-                    if(opcode==DIAMOND_OP_LESS)float_comparison=left_real<right_real;
-                    else if(opcode==DIAMOND_OP_LESS_EQUAL)
-                        float_comparison=left_real<=right_real;
-                    else if(opcode==DIAMOND_OP_GREATER)
-                        float_comparison=left_real>right_real;
-                    else float_comparison=left_real>=right_real;
-                    registers[destination]=DIAMOND_BOOL(float_comparison);
-                    break;
-                }
-                if (registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                    registers[left].as.object->kind==DIAMOND_OBJECT_STRING&&
-                    registers[right].kind==DIAMOND_VALUE_OBJECT&&
-                    registers[right].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    const int comparison=diamond_string_compare(
-                        (const DiamondString *)registers[left].as.object,
-                        (const DiamondString *)registers[right].as.object);
-                    bool string_comparison=false;
-                    if(opcode==DIAMOND_OP_LESS)string_comparison=comparison<0;
-                    else if(opcode==DIAMOND_OP_LESS_EQUAL)string_comparison=comparison<=0;
-                    else if(opcode==DIAMOND_OP_GREATER)string_comparison=comparison>0;
-                    else string_comparison=comparison>=0;
-                    registers[destination]=DIAMOND_BOOL(string_comparison);
-                    break;
-                }
-                if (registers[left].kind != DIAMOND_VALUE_INT ||
-                    registers[right].kind != DIAMOND_VALUE_INT) {
-                    /* By this point opcode is guaranteed one of the four
-                     * generic (non-_INT) comparisons, same reasoning as
-                     * EQUAL/NOT_EQUAL above. */
-                    if (registers[left].kind==DIAMOND_VALUE_OBJECT &&
-                        registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                        const char *name=opcode==DIAMOND_OP_LESS?"<":
-                            opcode==DIAMOND_OP_LESS_EQUAL?"<=":
-                            opcode==DIAMOND_OP_GREATER?">":">=";
-                        bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                        const uint8_t *site=chunk->code+instruction_offset;
-                        const DiamondVmStatus status=invoke_operator_method(vm,chunk,
-                            depth,site,(const DiamondInstance *)registers[left].as.object,
-                            name,strlen(name),&registers[right],1,&op_result,&found);
-                        if(found) {
-                            VM_PROPAGATE(status);
-                            registers[destination]=DIAMOND_BOOL(is_truthy(op_result));
-                            break;
-                        }
-                    }
-                    if(time_comparison_fallback(registers[left],registers[right],
-                            opcode,&registers[destination]))break;
-                    {
-                        const char *name=opcode==DIAMOND_OP_LESS?"<":
-                            opcode==DIAMOND_OP_LESS_EQUAL?"<=":
-                            opcode==DIAMOND_OP_GREATER?">":">=";
-                        format_operator_type_error(vm,registers[left],registers[right],name);
-                    }
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                const int64_t a = registers[left].as.integer;
-                const int64_t b = registers[right].as.integer;
-                bool comparison = false;
-                if (opcode == DIAMOND_OP_LESS_INT || opcode == DIAMOND_OP_LESS)
-                    comparison = a < b;
-                if (opcode == DIAMOND_OP_LESS_EQUAL_INT ||
-                    opcode == DIAMOND_OP_LESS_EQUAL) comparison = a <= b;
-                if (opcode == DIAMOND_OP_GREATER_INT ||
-                    opcode == DIAMOND_OP_GREATER) comparison = a > b;
-                if (opcode == DIAMOND_OP_GREATER_EQUAL_INT ||
-                    opcode == DIAMOND_OP_GREATER_EQUAL) comparison = a >= b;
-                registers[destination] = DIAMOND_BOOL(comparison);
+                DiamondValue slow_result=DIAMOND_NIL;
+                const DiamondVmStatus slow_status=compare_int_slow(vm,chunk,depth,
+                    instruction_offset,opcode,registers[left],registers[right],&slow_result);
+                VM_PROPAGATE(slow_status);
+                registers[destination]=slow_result;
                 break;
             }
             /* `<=>` -- unlike LESS/GREATER/EQUAL above, the result is an

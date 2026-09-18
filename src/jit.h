@@ -287,4 +287,41 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out);
 
+/* Phase 3. JIT trampolines for ADD_INT/SUBTRACT_INT/MULTIPLY_INT/
+ * DIVIDE_INT (diamond_jit_arith_slow) and LESS_INT/LESS_EQUAL_INT/
+ * GREATER_INT/GREATER_EQUAL_INT (diamond_jit_compare_slow) -- full
+ * extractions of those opcode families' own real slow-path handling
+ * (src/vm.c's int_arith_slow/compare_int_slow, shared with the
+ * interpreter's own case so the two can never drift apart), covering
+ * everything compile_binary_int_op's fast, purely-native path in
+ * src/jit.c can't: a non-plain-int operand (deopts the opcode back to
+ * its generic form first, exactly like the interpreter's own case
+ * already did) and, for the arithmetic family, genuine Int-Int overflow
+ * or DIVIDE_INT's own zero/INT64_MIN edge cases, all of which promote to
+ * Diamond's real bignum representation rather than erroring.
+ *
+ * Before this phase, compiling any of these five opcodes was rejected
+ * outright at compile time once jc->has_called was already true (see
+ * jc->has_called's own comment in jit.c) -- their only edge-case handling
+ * was "discard this attempt and retry the whole function," unsafe once a
+ * real call with side effects had already run. Since their edge cases now
+ * go through these trampolines instead (compute the fully correct answer
+ * and either continue inline or propagate a real status, the same shape
+ * SET_IVAR/GET_IVAR/INDEX_GET/SET/EQUAL already use), they no longer
+ * depend on retry at all -- see compile_binary_int_op's own updated
+ * comment in jit.c. Because the Instance-operator-overload branch inside
+ * either trampoline can genuinely invoke arbitrary user code, compiling
+ * any of these five opcodes at all sets jc->has_called = true
+ * unconditionally, the same conservative, compile-time-only choice
+ * compile_equal_op already makes. `site` is this occurrence's own
+ * bytecode address (jc->function->code + instruction_start), the same
+ * per-occurrence convention every other overload-checking trampoline here
+ * already uses. */
+DiamondVmStatus diamond_jit_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out);
+DiamondVmStatus diamond_jit_compare_slow(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *left,
+        const DiamondValue *right, DiamondOpCode opcode, DiamondValue *out);
+
 #endif

@@ -461,6 +461,7 @@ static void emit_epilogue_propagate(JitCompiler *jc) {
  * point is reached (still within the same instruction's own stencil, so
  * this is never deferred to the cross-function patch list). */
 enum {
+    JCC_O = 0x80,
     JCC_E = 0x84,
     JCC_NE = 0x85,
 };
@@ -541,14 +542,16 @@ static int32_t reg_disp(size_t index, int32_t field_offset) {
 static const int32_t KIND_OFF = offsetof(DiamondValue, kind);
 static const int32_t AS_OFF = offsetof(DiamondValue, as);
 
-static void emit_check_kind_int_or_bail(JitCompiler *jc, uint16_t reg_index, int scratch) {
+/* Phase 3: unlike the removed emit_check_kind_int_or_bail, this jumps to a
+ * LOCAL, not-yet-known target within the same opcode's own stencil (the
+ * slow-path trampoline call compile_binary_int_op emits further down),
+ * patched via patch_rel32_to_here once that target's address is known --
+ * the same local-jump convention compile_equal_op's own kind checks
+ * already use, not the deferred cross-function patch list. */
+static size_t emit_check_kind_int_or_jump(JitCompiler *jc, uint16_t reg_index, int scratch) {
     emit_load_byte_zx(&jc->buf, scratch, JIT_REGISTERS_BASE, reg_disp(reg_index, KIND_OFF));
     emit_cmp_imm32_32(&jc->buf, scratch, DIAMOND_VALUE_INT);
-    emit_u8(&jc->buf, 0x0F);
-    emit_u8(&jc->buf, JCC_NE);
-    size_t field = jc->buf.length;
-    emit_u32_le(&jc->buf, 0);
-    record_global_patch(jc, field, BAILOUT_RETRY_SENTINEL);
+    return emit_jcc_placeholder(&jc->buf, JCC_NE);
 }
 
 /* Jumps to the appropriate shared bailout stub (see bailout_target) the
@@ -576,47 +579,122 @@ static bool decode_u16(const DiamondFunction *fn, size_t *pc, uint16_t *out) {
     return true;
 }
 
-static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
-                                   uint16_t right, DiamondOpCode op) {
+/* Phase 3: shared tail for every edge case compile_binary_int_op's
+ * arithmetic branches (ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT) can
+ * hit -- a non-plain-int operand, overflow, or DIVIDE_INT's own zero/
+ * INT64_MIN cases -- calling diamond_jit_arith_slow (src/vm.c) to
+ * recompute the fully correct answer (bignum promotion, Float/String/
+ * Instance-override/Time handling, the same deopt-to-generic bytecode
+ * rewrite the interpreter's own case already does) and either write it
+ * into registers[dest] and let generated code continue, or bail with the
+ * trampoline's own real status via emit_bail_if_al_nonzero. 8 arguments;
+ * the last two (opcode, out) go on the stack per the SysV ABI's own
+ * overflow convention, pushed in reverse (out, then opcode) -- the same
+ * shape compile_equal_op's own trampoline call already uses. */
+static void emit_arith_slow_call(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                  uint16_t left, uint16_t right, DiamondOpCode op) {
     JitBuffer *buf = &jc->buf;
-    emit_check_kind_int_or_bail(jc, left, REG_RAX);
-    emit_check_kind_int_or_bail(jc, right, REG_RAX);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_imm64(buf, REG_RAX, (uint64_t)(unsigned)op);
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
+    emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_arith_slow);
+    emit_add_rsp_imm32(buf, 16);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* Same shape as emit_arith_slow_call, for compile_binary_int_op's
+ * LESS_INT branch, calling diamond_jit_compare_slow instead -- comparisons
+ * never overflow, so a non-plain-int operand is the only edge case here. */
+static void emit_compare_slow_call(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                    uint16_t left, uint16_t right, DiamondOpCode op) {
+    JitBuffer *buf = &jc->buf;
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_imm64(buf, REG_RAX, (uint64_t)(unsigned)op);
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
+    emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_compare_slow);
+    emit_add_rsp_imm32(buf, 16);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* Phase 3: ADD_INT/SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT/LESS_INT no
+ * longer reject compiling once jc->has_called is already true (see
+ * compile_body's own switch case) -- every edge case that previously had
+ * nowhere safe to go but "discard and retry the whole function" (a
+ * non-Int operand, arithmetic overflow, division by zero, INT64_MIN/-1)
+ * now calls a dedicated slow-path trampoline instead (emit_arith_slow_
+ * call/emit_compare_slow_call above), which recomputes the correct
+ * result from scratch and either lets generated code continue or
+ * propagates a real status -- the same "call a trampoline, never retry"
+ * shape every other call-capable opcode here already uses. Because the
+ * Instance-override branch inside either trampoline can genuinely invoke
+ * arbitrary user code, compiling any of these five opcodes at all sets
+ * jc->has_called = true unconditionally -- the same conservative,
+ * compile-time-only choice compile_equal_op already makes, regardless of
+ * whether a given occurrence's actual runtime operands ever reach that
+ * branch. Every local bail jump below targets the shared slow-call block
+ * emitted once per occurrence, patched via patch_rel32_to_here exactly
+ * like compile_equal_op's own kinds_differ/general-case branches. */
+static void compile_binary_int_op(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                   uint16_t left, uint16_t right, DiamondOpCode op) {
+    JitBuffer *buf = &jc->buf;
+    jc->has_called = true;
+    size_t slow_jumps[4];
+    size_t slow_jump_count = 0;
+    slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, left, REG_RAX);
+    slow_jumps[slow_jump_count++] = emit_check_kind_int_or_jump(jc, right, REG_RAX);
+    if (op == DIAMOND_OP_LESS_INT) {
+        emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
+        emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
+        emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
+        emit_setl_al(buf);
+        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+        emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+        size_t done = emit_jmp_placeholder(buf);
+        for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
+        emit_compare_slow_call(jc, instruction_start, dest, left, right, op);
+        patch_rel32_to_here(buf, done);
+        return;
+    }
     if (op == DIAMOND_OP_DIVIDE_INT) {
         emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
         emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
         emit_test_r64(buf, REG_RCX, REG_RCX);
-        emit_u8(buf, 0x0F);
-        emit_u8(buf, JCC_E);
-        size_t jz_field = jc->buf.length;
-        emit_u32_le(buf, 0);
-        record_global_patch(jc, jz_field, BAILOUT_RETRY_SENTINEL);
-        /* left==INT64_MIN && right==-1 -> bail (bignum negate territory) */
+        slow_jumps[slow_jump_count++] = emit_jcc_placeholder(buf, JCC_E);
+        /* left==INT64_MIN && right==-1 -> slow call (bignum negate) */
         emit_cmp_imm8(buf, REG_RCX, -1);
         size_t skip = emit_jcc_placeholder(buf, JCC_NE);
         emit_mov_imm64(buf, REG_RDX, (uint64_t)INT64_MIN);
         emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RDX);
         size_t jne_ok = emit_jcc_placeholder(buf, JCC_NE);
-        emit_u8(buf, 0xE9);
-        size_t bail_field = jc->buf.length;
-        emit_u32_le(buf, 0);
-        record_global_patch(jc, bail_field, BAILOUT_RETRY_SENTINEL);
+        slow_jumps[slow_jump_count++] = emit_jmp_placeholder(buf);
         patch_rel32_to_here(buf, jne_ok);
         patch_rel32_to_here(buf, skip);
         emit_cqo(buf);
         emit_idiv(buf, REG_RCX);
         emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
         emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+        size_t done = emit_jmp_placeholder(buf);
+        for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
+        emit_arith_slow_call(jc, instruction_start, dest, left, right, op);
+        patch_rel32_to_here(buf, done);
         return;
     }
     emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(left, AS_OFF));
     emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(right, AS_OFF));
-    if (op == DIAMOND_OP_LESS_INT) {
-        emit_alu_rr(buf, ALU_CMP, REG_RAX, REG_RCX);
-        emit_setl_al(buf);
-        emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
-        emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-        return;
-    }
     if (op == DIAMOND_OP_ADD_INT) {
         emit_alu_rr(buf, ALU_ADD, REG_RAX, REG_RCX);
     } else if (op == DIAMOND_OP_SUBTRACT_INT) {
@@ -624,13 +702,13 @@ static void compile_binary_int_op(JitCompiler *jc, uint16_t dest, uint16_t left,
     } else {
         emit_imul_rr(buf, REG_RAX, REG_RCX);
     }
-    emit_u8(buf, 0x0F);
-    emit_u8(buf, 0x80); /* JO */
-    size_t jo_field = jc->buf.length;
-    emit_u32_le(buf, 0);
-    record_global_patch(jc, jo_field, BAILOUT_RETRY_SENTINEL);
+    slow_jumps[slow_jump_count++] = emit_jcc_placeholder(buf, JCC_O);
     emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
     emit_store_r64(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+    size_t done = emit_jmp_placeholder(buf);
+    for (size_t i = 0; i < slow_jump_count; i++) patch_rel32_to_here(buf, slow_jumps[i]);
+    emit_arith_slow_call(jc, instruction_start, dest, left, right, op);
+    patch_rel32_to_here(buf, done);
 }
 
 /* EQUAL/NOT_EQUAL. A fast CPU-comparison path handles both operands NIL,
@@ -965,23 +1043,15 @@ static void compile_body(JitCompiler *jc) {
             case DIAMOND_OP_MULTIPLY_INT:
             case DIAMOND_OP_DIVIDE_INT:
             case DIAMOND_OP_LESS_INT: {
-                /* Phase 2d: these opcodes' own bailout paths (overflow,
-                 * division by zero, INT64_MIN/-1, non-INT operand) have no
-                 * real DiamondVmStatus to hand back -- they need the
-                 * interpreter's own bignum-promotion/raise logic, not just
-                 * a status to propagate. Once a call has already run
-                 * (jc->has_called), bailing here can only mean "discard
-                 * and retry," which is no longer safe (see jc->has_called's
-                 * own comment) -- so a function containing one of these
-                 * opcodes after a call is rejected outright at compile
-                 * time, the same structural treatment as any unsupported
-                 * opcode. Confirmed harmless for skindicate's real
-                 * User#initialize: it contains no arithmetic at all. */
-                if (jc->has_called) { jc->bailed = true; return; }
+                /* Phase 3: no longer rejected once jc->has_called is
+                 * already true -- see compile_binary_int_op's own comment
+                 * for why their edge cases (overflow, division by zero,
+                 * INT64_MIN/-1, non-INT operand) no longer depend on
+                 * "discard and retry the whole function" at all. */
                 uint16_t dest = 0, left = 0, right = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
                     !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                compile_binary_int_op(jc, dest, left, right, opcode);
+                compile_binary_int_op(jc, instruction_start, dest, left, right, opcode);
                 break;
             }
             case DIAMOND_OP_EQUAL:
