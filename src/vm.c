@@ -15438,6 +15438,29 @@ DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
                 return DIAMOND_VM_OUT_OF_MEMORY;
         *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
     }
+    if(dup_kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: an Instance's own `dup`/`freeze`/`frozen?` (src/vm.c's
+         * real INVOKE case) is only ever intercepted here when its class
+         * does NOT define its own same-named method -- lookup_method is a
+         * pure, deterministic table lookup, never arbitrary code, so
+         * folding that same check into this trampoline doesn't need
+         * jc->has_called (already true unconditionally for other reasons)
+         * to mean anything new. A class that *does* override dup/freeze/
+         * frozen? still correctly falls back to full interpretation (the
+         * "not dup_defined" return below), which then reaches real
+         * Instance method dispatch -- this trampoline never attempts
+         * that itself. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"dup",3)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
+        DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<instance->field_count;index++)
+            copy->fields[index]=instance->fields[index];
+        copy->shape=instance->shape;
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
 
@@ -15453,18 +15476,36 @@ DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
         receiver->as.object->frozen=true;
         *out=*receiver;return DIAMOND_VM_OK;
     }
+    if(freeze_kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: see diamond_jit_dup's own comment on why folding the
+         * lookup_method check in here is safe. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"freeze",6)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
+        receiver->as.object->frozen=true;
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
 
 DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out) {
-    (void)vm; /* unused -- kept for a calling convention uniform with diamond_jit_dup */
     if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;}
     const DiamondObjectKind kind=receiver->as.object->kind;
     if(kind==DIAMOND_OBJECT_STRING||kind==DIAMOND_OBJECT_SYMBOL) {
         *out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;
     }
     if(kind==DIAMOND_OBJECT_ARRAY||kind==DIAMOND_OBJECT_HASH) {
+        *out=DIAMOND_BOOL(receiver->as.object->frozen);return DIAMOND_VM_OK;
+    }
+    if(kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: see diamond_jit_dup's own comment on why folding the
+         * lookup_method check in here is safe. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"frozen?",7)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
         *out=DIAMOND_BOOL(receiver->as.object->frozen);return DIAMOND_VM_OK;
     }
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
@@ -20263,41 +20304,37 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(tap_status);
                     registers[dest]=registers[recv];break;
                 }
+                /* Phase 6: diamond_jit_dup/freeze/frozen (src/vm.c, near
+                 * run_chunk's own definition) already re-check lookup_method
+                 * themselves -- the gate here is still needed to decide
+                 * whether to intercept at this point at all (a real
+                 * override must fall through to ordinary method dispatch
+                 * below instead), but once that's confirmed, this is a thin
+                 * wrapper around the exact same shared function the JIT
+                 * calls, not a second, independently maintained copy. */
                 if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
                    lookup_method(owner,instance->class,"dup",3)==nullptr) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
-                    if(copy==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    for(size_t index=0;index<instance->field_count;index++)
-                        copy->fields[index]=instance->fields[index];
-                    /* allocate_instance always starts a fresh instance at
-                     * shapes[0] (no fields considered materialized yet) --
-                     * GET_IVAR treats a field as nil whenever its index
-                     * isn't below shape->field_count, regardless of what's
-                     * actually sitting in fields[] (lookup_field_cached's
-                     * own `materialized` flag). Without also copying the
-                     * source's current shape, every field on the copy read
-                     * back as nil despite the values above being copied
-                     * correctly -- confirmed directly, not assumed: the
-                     * very first `.dup()` smoke test on a two-ivar class
-                     * hit exactly this. shapes[] lives on the (shared)
-                     * class, so aliasing the pointer is safe. */
-                    copy->shape=instance->shape;
-                    registers[dest]=DIAMOND_OBJECT(copy);break;
+                    const DiamondVmStatus dup_status=
+                        diamond_jit_dup(vm,&registers[recv],&registers[dest]);
+                    VM_PROPAGATE(dup_status);break;
                 }
                 if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
                    lookup_method(owner,instance->class,"freeze",6)==nullptr) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    instance->object.frozen=true;
-                    registers[dest]=registers[recv];break;
+                    const DiamondVmStatus freeze_status=
+                        diamond_jit_freeze(vm,&registers[recv],&registers[dest]);
+                    VM_PROPAGATE(freeze_status);break;
                 }
                 if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
                    lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    registers[dest]=DIAMOND_BOOL(instance->object.frozen);break;
+                    const DiamondVmStatus frozen_status=
+                        diamond_jit_frozen(vm,&registers[recv],&registers[dest]);
+                    VM_PROPAGATE(frozen_status);break;
                 }
                 if(method_name->length==11&&
                    memcmp(method_name->chars,"respond_to?",11)==0&&

@@ -742,6 +742,15 @@ propagating one, called repeatedly. Fixed alongside this phase; see
 timeline and why it went unnoticed through every prior phase's own
 verification pass.
 
+**`dup`/`freeze`/`frozen?` now also run on an Instance with no override**
+(2026-09, `docs/internal/jit-design.md`'s own "Phase 6") -- a small
+follow-on to Phase 4's own documented limitation. Previously *any*
+Instance receiver fell back to full interpretation every time; now only
+a class that actually defines its own `dup`/`freeze`/`frozen?` does
+(checked via a pure, deterministic `lookup_method` call, never arbitrary
+code) -- needed zero `src/jit.c` changes, purely a `src/vm.c` trampoline
+extension.
+
 Before extending past the current narrow slice:
 
 - identify hot workloads that remain VM-bound after existing

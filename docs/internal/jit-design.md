@@ -684,6 +684,55 @@ either way). Generic `INVOKE` (native per-type methods, Instance method
 dispatch, `tap`/`public_send`) remains completely unattempted -- see
 Phase 4's own note on its real ~2740-line scope.
 
+### Phase 6: `dup`/`freeze`/`frozen?` on an Instance, the common (no-override) case
+
+A small, deliberately narrow follow-on to Phase 4's own documented
+limitation: `dup`/`freeze`/`frozen?` previously only ever ran their JIT
+trampoline for a non-Instance receiver (Array/Hash/String/Symbol/
+primitive) -- any Instance receiver fell back to full interpretation via
+the "not `dup_defined`" retry path, *every single time*, since the
+trampolines had no way to know whether that Instance's own class defined
+a same-named override.
+
+Reading the interpreter's real Instance-specific `dup`/`freeze`/`frozen?`
+handling (`src/vm.c`, reached only via a separate code path from the
+Array/Hash/primitive one Phase 4 already covered) found this case is
+actually just as simple and safe once a real user override is ruled out
+first: `lookup_method(owner, instance->class, name, length)` is a pure,
+deterministic table lookup -- never arbitrary code -- and when it comes
+back empty, the real behavior is exactly the same shape as the non-
+Instance case (`dup`: allocate a field-for-field copy, including the
+source's current shape; `freeze`/`frozen?`: read or set the one flag).
+Only when a class *does* define its own override does this need real
+method dispatch, which remains entirely unattempted, same as before.
+
+Extended `diamond_jit_dup`/`diamond_jit_freeze`/`diamond_jit_frozen`
+(`src/vm.c`) with an Instance branch doing exactly this: check
+`lookup_method` first, return the existing "not eligible, fall back"
+status if an override exists, otherwise perform the real default
+behavior directly. **Zero `src/jit.c` changes** -- the JIT-generated code
+already calls these same trampolines unconditionally and already treats
+any nonzero status generically as "not eligible, retry," so widening what
+the trampoline itself can handle needed no new codegen at all. The
+interpreter's own separate Instance-specific block was refactored to call
+these same functions too (removing the now-duplicated inline copy of the
+same logic), matching the anti-duplication discipline established since
+Phase 2e.
+
+Verified directly: a `Widget` instance with no override now compiles
+`dup`/`freeze`/`frozen?` calls with zero bailouts and produces a real,
+independent copy (mutating the copy doesn't affect the original) --
+`tests/cases/jit_instance_dup_freeze_frozen.di`, including under
+`DIAMOND_STRESS_GC=1` (the sharpest check for `allocate_instance`'s own
+GC-root publishing in this exact path). A class that *does* override
+`dup` (`tests/cases/jit_dup_instance_fallback.di`, updated -- it
+previously demonstrated the old "any Instance always falls back"
+behavior, which this phase specifically changes) still correctly falls
+back to real interpretation and calls the real override, confirmed via
+exactly one runtime bailout. Full suite (1553 cases) green under debug,
+ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1
+DIAMOND_STRESS_GC=1`.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
