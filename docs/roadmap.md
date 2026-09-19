@@ -631,13 +631,16 @@ opt-in quickening. A first, deliberately narrow baseline JIT now exists
 [`docs/internal/jit-design.md`](internal/jit-design.md) for the full design
 and phase history) -- it compiles call/argument/self-passing, primitive
 arithmetic and comparisons, `SUPER`, Hash/String/Array-backed ivar and index
-access, and `self.method()` dynamic dispatch (any method name), each via a
-hand-verified trampoline extracted from the real interpreter's own opcode
-body rather than a general codegen pipeline. Measured, real wins on
-`bench/RESULTS.md`'s own benchmarks (release build): ~2.9-3x on
-`int_arithmetic.di`, ~6-8% on `hash_ivar_construct.di`, ~4-8% on
-`object_hydration.di`, ~35% on a `self.method()`-in-a-loop shape
-(`bench/jit_invoke_self.di`).
+access, `self.method()` dynamic dispatch (any method name), and
+`other.method()` dispatch when `other` is a declared, never-reassigned
+parameter with a single concrete class type, each via a hand-verified
+trampoline extracted from the real interpreter's own opcode body rather than
+a general codegen pipeline. Measured, real wins on `bench/RESULTS.md`'s own
+benchmarks (release build): ~2.9-3x on `int_arithmetic.di`, ~6-8% on
+`hash_ivar_construct.di`, ~4-8% on `object_hydration.di`, ~35% on a
+`self.method()`-in-a-loop shape (`bench/jit_invoke_self.di`), ~38% on a
+typed-parameter-`.method()`-in-a-loop shape
+(`bench/jit_invoke_typed_param.di`).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -648,21 +651,22 @@ history: `docs/internal/jit-design.md`; user-facing summary:
 
 Still open:
 
-- generic `DIAMOND_OP_INVOKE` beyond `self` -- every native per-type method
-  (`.keys()`/`.length()`/...), and Instance method dispatch on any receiver
-  *other* than `self`, plus `tap`/`public_send`. Researched post-Phase-7
-  (`docs/internal/jit-design.md`'s "Phase 8," research only, not
-  implemented): the *correctness* half is actually already solved --
-  extending `self`'s own trampoline to any receiver, gated on the existing
-  `has_called`-false-means-safe-retry rule, needs no new deopt design at
-  all. What actually blocks it is a *performance* risk with no cheap fix:
-  a receiver that's typically NOT an Instance would retry-bail on every
-  call forever (strictly worse than today's clean "never compiled"), and
-  avoiding that needs the JIT to know a register's likely type at compile
-  time -- `src/jit.c` has zero access to any static type information
-  today. That's the real prerequisite, not "one more trampoline" and not
-  a deopt mechanism. The ~2500-line native-type dispatch surface itself
-  remains separately unattempted regardless;
+- generic `DIAMOND_OP_INVOKE` beyond `self`/typed-parameter receivers --
+  every native per-type method (`.keys()`/`.length()`/...), plus
+  `tap`/`public_send`, plus Instance method dispatch on a receiver that
+  isn't a declared parameter at all (a local assigned from `.new()`, a
+  prior call's own return value, an ivar load, ...). Phase 9
+  (`docs/internal/jit-design.md`) closed the typed-parameter slice: Phase
+  8's own "`src/jit.c` has zero access to any static type information"
+  finding turned out to be only half true -- `parameter_type_sets` was
+  already sitting on `DiamondFunction`, unread. The remaining gap is
+  narrower than Phase 8 framed it: the LSP's own per-register type-fact
+  table (`DiamondScopeTypeFact`) is keyed by source byte offset, not
+  bytecode PC, so it isn't usable from `src/jit.c` as-is -- closing the
+  non-parameter-receiver gap needs that mapping solved (or an equivalent
+  new mechanism), not a generic "thread type info into the JIT" effort
+  (that part's done for parameters). The ~2500-line native-type dispatch
+  surface itself remains separately unattempted regardless;
 - a value the JIT can't prove is `Int` at *runtime* either (a real
   String, Instance, Float, ...) still correctly falls to the slow
   trampoline every time, at real per-call cost -- expected, not a gap;
@@ -680,16 +684,20 @@ Before extending past the current narrow slice:
 
 - identify hot workloads that remain VM-bound after existing
   specialization *and* after the current JIT's own whitelist -- most
-  realistic candidates now hinge on generic `INVOKE` specifically, the
-  one gap still open above (skindicate's own current bottleneck, per a
-  post-Phase-7 re-profile, is exactly this shape: ActiveRecord/Arel's own
-  non-`self` Instance method calls, not templating or SQL -- see
-  `docs/internal/jit-design.md`'s Phase 8 section);
-- for non-`self` `INVOKE` specifically: thread static type information
-  from the compiler into the JIT first (`src/jit.c` has none today) --
-  the actual, identified prerequisite (Phase 8's research), not a new
+  realistic candidates now hinge on the remaining non-parameter-receiver
+  `INVOKE` gap above (skindicate's own current bottleneck, per a
+  post-Phase-7 re-profile, is largely this shape: ActiveRecord/Arel's own
+  non-`self` Instance method calls flowing through locals and return
+  values, not through typed parameters -- Phase 9 closes the typed-
+  parameter slice of it, not the whole thing; re-profiling to measure the
+  real-world delta is itself unstarted -- see `docs/internal/jit-
+  design.md`'s Phase 8 and Phase 9 sections);
+- for the remaining non-parameter-receiver gap specifically: solve the
+  byte-offset-to-bytecode-PC mapping needed to make the LSP's own
+  per-register type-fact table (`DiamondScopeTypeFact`) usable from
+  `src/jit.c`, or build an equivalent new mechanism -- not a new
   deopt/GC-root design, which the existing `has_called`-gated retry
-  already covers;
+  already covers (confirmed twice now, Phase 8 and Phase 9 alike);
 - require benchmark evidence large enough to justify the added complexity,
   the same bar the current slice was itself held to.
 

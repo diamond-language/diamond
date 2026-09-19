@@ -919,6 +919,141 @@ tell you whether the regression risk bites in practice was identified but
 deliberately not chased further here, to avoid scope creep past "scope this
 out").
 
+### Phase 9: `INVOKE` for typed, never-reassigned parameters -- Phase 8's "zero type info" corrected, and closed
+
+Re-checking Phase 8's own "`src/jit.c` has zero access to any static type
+information" claim (prompted by "continue JIT work" with no new profiling
+input) found it's only half true. `DiamondFunction` (`src/vm.h`) already
+carries `parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS]` and
+`type_sets`/`type_set_count` -- the compiler populates these for every
+explicitly-typed parameter today, for free, with no compiler changes
+needed. Real, hot skindicate/arel code already uses this: e.g.
+`packages/arel/lib/arel/visitor.di`'s `render_attribute(attribute:
+Arel::Attribute)`, `render_table(table: Arel::Table)`, `render_join(join:
+Arel::Join, params: Array)` -- exactly inside Phase 8's own identified hot
+path. So the real gap wasn't "no type info exists" -- it was "the JIT never
+read the type info that was already there." Phase 8's search for
+`scope_type_fact_count` references was accurate as far as it went (that
+LSP-only, byte-offset-keyed table genuinely isn't usable from `src/jit.c`
+without solving a separate PC-to-source-offset mapping problem, still
+unsolved -- see "Out of scope" below), but `parameter_type_sets` was sitting
+right there on the same struct the whole time, unexamined.
+
+This phase closes a real, narrow, **provably correct** slice on top of that
+correction: `other.method()` where `other` is a declared parameter whose
+static type is a single concrete class, and which the function body never
+reassigns. Deliberately much safer than "any non-self receiver" (Phase 8's
+own framing): no runtime type dispatch, no deopt, no new GC-root design --
+the compile-time proof is either present or the function falls back to full
+interpretation exactly as before, so it can never regress an existing
+working function the way Phase 8 warned a blanket `!jc->has_called`-gated
+extension could.
+
+**Compile-time type proof.** `parameter_is_single_class` (`src/jit.c`)
+converts a receiver register back to its declared-parameter index and
+checks `fn->type_sets[fn->parameter_type_sets[index]]` decodes to exactly
+one member whose id lands in `[DIAMOND_TYPE_CLASS_BASE,
+DIAMOND_TYPE_VARIABLE_BASE)` -- the same encoding `lsp/receiver.c`'s own
+`decode_class_type` already trusts. No `DiamondChunk`/class-table access is
+needed: the range check alone already proves "this is definitely some
+Instance" (the compiler only ever writes a real, already-resolved class's
+own id here), and `diamond_jit_invoke_instance` (Phase 7) dispatches by the
+*runtime* instance's own class regardless, so knowing *which* compile-time
+class doesn't matter. A union type_set (`count != 1`) is rejected
+unconditionally, including a nilable `other: Box | Nil` (Diamond has no
+`Type?` sugar -- nilability is spelled as a union with `Nil`) -- correct,
+since a nil receiver must still raise through the interpreter, not hit this
+Instance-only trampoline.
+
+The register-to-parameter-index conversion needs a real offset, found by
+reading `compile_definition`'s own parameter-register allocation
+(`src/compiler.c`) rather than assumed: register 0 is reserved for `self`
+first (`self_offset = 1`) for any function that's a direct class/module
+member, a direct class singleton member, or nested directly inside a
+singleton method, or that captures self as a closure -- **not** simply
+"`owner_class != UINT8_MAX`", which was this phase's own first (wrong)
+draft. A genuinely self-less function (a plain top-level `def`, `self_
+offset = 0`) allocates its first parameter directly into register 0 -- and
+an early draft of the `compile_body` wiring added a blanket `recv != 0`
+guard before trying this path, which silently excluded that legitimate
+`self_offset == 0`/`recv == 0` case entirely. Caught immediately by the
+plan's own "verify against real compiled bytecode, don't assume" step
+(`bench/jit_invoke_typed_param.di`-shaped test: `DIAMOND_TRACE_JIT` showed
+2 compiled instead of the expected 3) -- removed the guard; `parameter_is_
+single_class`'s own `recv_register < self_offset` bounds check already
+correctly rejects every case where register 0 actually means self, so the
+extra guard added no real safety, only a bug.
+
+**"Never reassigned" proof.** A new, bounded, JIT-local pre-scan --
+`parameter_never_reassigned` (`src/jit.c`) -- walks a function's whole
+bytecode once, decoding each opcode exactly as `compile_body`'s own switch
+does, checking whether it writes the receiver's register. Deliberately
+**not** a reuse of `DiamondScopeTypeFact.effective_start` (the LSP's own
+per-register type-fact table): that field is keyed by source byte offset,
+not bytecode PC, and no table maps one to the other on `DiamondFunction`
+today -- solving that mapping was judged more work than a dedicated scanner
+for a narrower payoff, so it's still unsolved (see "Out of scope"). The
+scanner is deliberately **whole-body, position-insensitive** (rejects a
+register reassigned anywhere, even strictly *after* the call site in
+question) rather than flow-sensitive -- simpler, and strictly safe-or-equal
+versus the alternative. It's also deliberately **fail-safe by
+construction**: `compile_body`'s own switch handles a small, closed set of
+~26 opcodes today (anything else already bails the whole function before
+this scan is ever reached), and the scanner mirrors that same set
+case-for-case; any opcode not explicitly recognized as "writes no
+register" or "writes register named by its own known `dest` field" is
+treated as writing the target register, so a future opcode added to one
+switch and not the other can only cause a missed optimization, never a
+wrong one.
+
+**Verified**: `git stash`-compared before/after on a minimal
+`Runner.go(box: Box, n)`-shaped script confirmed the delta (2 -> 3
+compiled functions, 0 bailouts either way -- a function that never becomes
+JIT-eligible in the first place isn't a "bailout" in `DIAMOND_TRACE_JIT`'s
+own sense, matching Phase 7's own `jit_invoke_self_mixed_receiver.di`
+precedent). New `tests/cases/jit_invoke_typed_param*` cases cover: the
+basic compiling case (including the `self_offset == 0` plain-function
+path specifically, the case the `recv != 0` bug above hid), a reassigned
+parameter still correctly bailing, a union (`Box | Nil`) parameter still
+bailing, an interface-typed parameter still bailing (no single concrete
+class exists), a real override dispatched correctly through a base-typed
+parameter (not incorrectly devirtualized), and a plain untyped parameter
+still bailing. Full bar: debug suite (1563/1563), ASan/UBSan
+(1563/1563), and the JIT+`DIAMOND_STRESS_GC` combination run directly
+against each new case (all still correct) -- an initial run showed 2
+compiled instead of 3 for the basic case under `DIAMOND_STRESS_GC`, which
+looked like a real GC interaction at first; tracked down via added
+`fprintf` tracing to `jc.bailed`/`jc.buf.failed` at every stage, and it
+vanished entirely on a from-scratch clean rebuild (10/10 consistent both
+ways afterward) -- a stale/mismatched `build/` artifact left over from an
+earlier, unrelated `make test-sanitize`/`make` interleaving in this same
+session, not a real bug; worth recording since it cost real investigation
+time before the cause was found. Release A/B benchmark
+(`bench/jit_invoke_typed_param.di`, a hot loop calling a method on a typed
+parameter): ~0.55s interpreted vs. ~0.34s JIT'd, a consistent ~38% win
+across repeated runs, comparable in magnitude to Phase 7's own ~35%.
+
+**Out of scope (explicit)**:
+- Non-parameter receivers (a local assigned from `.new()`, a prior call's
+  return value, etc.) -- would need the `scope_type_facts`
+  byte-offset-to-bytecode-PC mapping problem solved first, or an
+  equivalent new mechanism. Still unsolved, still the real remaining gap
+  for "generic non-self `INVOKE`."
+- A `recv` register reassigned anywhere in the function, even to another
+  instance of the exact same class, or only *after* the call site in
+  question -- `parameter_never_reassigned` rejects unconditionally, no
+  flow-sensitive narrowing attempted.
+- `DIAMOND_OP_INVOKE_TYPED` -- same restriction as Phase 7, still bails.
+
+This closes the specific hot-path shape Phase 8's own skindicate profiling
+named (`Arel::Visitor`'s own `render_*` methods, which take explicitly
+typed `Arel::Attribute`/`Arel::Table`/`Arel::Join` parameters) but not the
+diffuse remainder of `uploaders_for`/`platforms_for`'s own ~11.5ms/~10ms
+(per [[project_skindicate_hotspot_profile]]), most of which flows through
+untyped locals and return values, not typed parameters -- re-profiling
+skindicate's own `/` route to measure the real-world delta was left for a
+follow-up, not done as part of this phase.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

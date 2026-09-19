@@ -69,6 +69,15 @@ authoritative fine-grained record.
   eligibility. Real, measured win: ~35% faster on a `self.method()`-in-
   a-loop shape (`bench/jit_invoke_self.di`). Any receiver other than
   `self` remains unsupported. See docs/internal/jit-design.md's "Phase 7".
+- JIT now also compiles `other.method()` dynamic dispatch when `other` is
+  a declared parameter with a single, explicitly-annotated concrete class
+  type that the function body never reassigns -- a real, provably-safe
+  slice of non-`self` dispatch, closing part of the one gap Phase 7 left
+  open. Real, measured win: ~38% faster on a typed-parameter-method-in-
+  a-loop shape (`bench/jit_invoke_typed_param.di`). A union/nilable type,
+  a reassigned parameter, an untyped parameter, and any non-parameter
+  receiver (a local, a prior call's return value) remain unsupported. See
+  docs/internal/jit-design.md's "Phase 9".
 
 ### Language
 
