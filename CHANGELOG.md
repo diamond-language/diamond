@@ -99,6 +99,15 @@ authoritative fine-grained record.
   workload -- a real, legitimate allocation removed, but request time
   there is dominated by other costs, so don't expect this alone to move
   a request-latency number.
+- `Visitor#render` no longer calls `.map()`/`.each()` at all for an empty
+  `GROUP BY`/`HAVING`/`ORDER BY`/`JOIN` clause (the common case for a
+  simple query) -- previously always built a closure and dispatched the
+  iteration method even with zero elements to visit. Measured via an
+  isolated microbenchmark (`bench/arel_render.di`, 20000 renders of a
+  two-predicate query, no DB/HTTP/template noise): a real but modest
+  ~1-2% win, on top of the (separately negligible) `SQLiteVisitor`-reuse
+  fix above -- confirms this workload's cost is genuinely spread across
+  many small interpreted calls, not concentrated in any one fixable spot.
 
 ### Language
 

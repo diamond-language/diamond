@@ -306,8 +306,10 @@ module Arel
         visitor.render_expression(projection, params)
       end
       table_sql = self.render_source(query, params)
-      query.joins().each() do |join|
-        table_sql += " " + visitor.render_join(join, params)
+      if query.joins().length() > 0
+        query.joins().each() do |join|
+          table_sql += " " + visitor.render_join(join, params)
+        end
       end
       sql = sql + "SELECT "
       if query.distinct_value()
@@ -322,24 +324,24 @@ module Arel
         sql = sql + " WHERE " + predicates.join(" AND ")
       end
 
-      groups = query.groups().map() do |group|
-        visitor.render_expression(group, params)
-      end
-      if groups.length() > 0
+      if query.groups().length() > 0
+        groups = query.groups().map() do |group|
+          visitor.render_expression(group, params)
+        end
         sql = sql + " GROUP BY " + groups.join(", ")
       end
 
-      havings = query.havings().map() do |having|
-        visitor.render_expression(having, params)
-      end
-      if havings.length() > 0
+      if query.havings().length() > 0
+        havings = query.havings().map() do |having|
+          visitor.render_expression(having, params)
+        end
         sql = sql + " HAVING " + havings.join(" AND ")
       end
 
-      orderings = query.orderings().map() do |ordering|
-        visitor.render_expression(ordering, params)
-      end
-      if orderings.length() > 0
+      if query.orderings().length() > 0
+        orderings = query.orderings().map() do |ordering|
+          visitor.render_expression(ordering, params)
+        end
         sql = sql + " ORDER BY " + orderings.join(", ")
       end
 
