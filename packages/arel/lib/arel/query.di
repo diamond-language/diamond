@@ -237,10 +237,32 @@ module Arel
     end
     def offset(n: Int) = self.skip(n)
     def render_with(visitor) = visitor.render(self)
+    # Every real caller in this codebase either passes an explicit
+    # dialect visitor (PostgreSQL/MySQL/MariaDB -- only ever constructed
+    # directly in their own dialect test suites, never wired into
+    # ActiveRecord::Repository's own dispatch) or omits `visitor`
+    # entirely, meaning this default path is *always* SQLite in
+    # practice. `SQLiteVisitor` carries no instance state of its own
+    # (checked directly: sqlite_visitor.di declares no `@` fields), and
+    # `Visitor#render`'s only stateful field, `@query`, is already saved
+    # and restored around every render (its own `begin...ensure`,
+    # visitor.di) specifically so the same instance can safely render
+    # nested subqueries recursively -- so reusing one instance across
+    # separate top-level calls is exactly as safe as the recursion this
+    # class already relies on, not a new assumption. Was allocating a
+    # fresh SQLiteVisitor on every single default to_sql call before this
+    # -- the hottest path in any app that never passes its own visitor
+    # (skindicate.dia's own `uploaders_for`/`platforms_for`/`screenshots_
+    # for`, every one of them). `@@default_visitor` is a per-thread class
+    # variable like any other in this codebase (Thread.new clones a
+    # separate heap; each thread's own copy lazily initializes once).
     def to_sql(visitor = nil)
       renderer = visitor
       if renderer == nil
-        renderer = SQLiteVisitor.new()
+        if @@default_visitor == nil
+          @@default_visitor = SQLiteVisitor.new()
+        end
+        renderer = @@default_visitor
       end
       self.render_with(renderer)
     end

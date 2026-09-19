@@ -86,6 +86,19 @@ authoritative fine-grained record.
   of non-`self` dispatch alongside Phase 9's own typed-parameter case.
   Keyword/spread construction (`SomeClass.new(field: value)`) remains
   unsupported. See docs/internal/jit-design.md's "Phase 10".
+- `Arel::Query#to_sql` no longer allocates a fresh `SQLiteVisitor` on
+  every call when the caller doesn't pass its own visitor (the common
+  case for every SQLite-backed app) -- `SQLiteVisitor` carries no
+  instance state of its own, and `Visitor#render`'s only stateful field
+  is already saved/restored around every call so the same instance can
+  safely render nested subqueries recursively, so a lazily-memoized
+  per-thread default instance is exactly as safe as that existing
+  recursion. Verified correct (full suite, plus a direct two-query
+  reuse check) and measured on skindicate.dia's own `/` route via a
+  controlled A/B: within noise (~27.0ms -> ~26.7ms) on that specific
+  workload -- a real, legitimate allocation removed, but request time
+  there is dominated by other costs, so don't expect this alone to move
+  a request-latency number.
 
 ### Language
 
