@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.6.0
+
 ### Tooling
 
 - Added `textDocument/formatting` to the Language Server: normalizes
