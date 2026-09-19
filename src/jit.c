@@ -1114,6 +1114,46 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     emit_bail_if_al_nonzero(jc);
 }
 
+/* Phase 10: DIAMOND_OP_NEW -- calls diamond_jit_new_instance with every
+ * operand a compile-time-known immediate (dest/class_index/base/argc all
+ * come straight from the decoded bytecode, same as compile_super_call's
+ * own owner_index/name/base/argc). Unconditional: this opcode has no
+ * receiver-kind gate to check (unlike compile_invoke_dispatch) -- the
+ * trampoline itself validates class_index<chunk->class_count and returns
+ * DIAMOND_VM_INVALID_BYTECODE if not, exactly like the interpreter's own
+ * case did before extraction. Sets both jc->needs_frame (allocate_
+ * instance's own maybe_collect can trigger GC) and jc->has_called (a
+ * user-defined `initialize` can run arbitrary code), mirroring every
+ * other call-capable trampoline here. */
+static void compile_new(JitCompiler *jc, uint16_t dest, uint8_t class_index,
+                         uint16_t base, uint8_t argc) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    /* diamond_jit_new_instance takes 8 arguments -- SysV passes the first
+     * 6 (vm, chunk, registers, dest, class_index, base) in RDI/RSI/RDX/
+     * RCX/R8/R9, and the remaining 2 (argc, depth) on the stack, at
+     * [rsp+0]/[rsp+8] at the moment of the call. 2 pushes (16 bytes)
+     * already keeps this function's own 16-byte call-alignment invariant
+     * with no pad needed (unlike compile_super_call's own 3-stack-arg
+     * case, or compile_invoke_dispatch's 7-stack-arg case) -- pushed in
+     * reverse order (depth, then argc last) so the last-pushed value
+     * (argc) ends up at the lowest address, [rsp+0], matching the ABI's
+     * own layout, same convention as every other trampoline call here. */
+    emit_push(buf, JIT_DEPTH);               /* depth -> [rsp+8] after the next push */
+    emit_mov_imm64(buf, REG_RAX, argc);
+    emit_push(buf, REG_RAX);                 /* argc -> [rsp+0] */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX, dest);
+    emit_mov_imm64(buf, REG_R8, class_index);
+    emit_mov_imm64(buf, REG_R9, base);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_instance);
+    emit_add_rsp_imm32(buf, 16); /* reclaim the 2 pushed stack slots */
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* Phase 9: true iff `recv_register` is a genuine declared-parameter home
  * register whose static type is a single concrete class (not a union, and
  * not DIAMOND_NO_TYPE_SET). compile_definition (src/compiler.c) always
@@ -1219,6 +1259,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_SUPER:
         case DIAMOND_OP_INVOKE:
         case DIAMOND_OP_INVOKE_MONO:
+        case DIAMOND_OP_NEW:
             return true;
         default:
             return false;
@@ -1311,10 +1352,159 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
                     !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return false;
                 break;
             }
+            case DIAMOND_OP_NEW: {
+                uint16_t a = 0; uint8_t b = 0, c = 0;
+                if (!decode_u8(fn, &pc, &b) || !decode_u16(fn, &pc, &a) ||
+                    !decode_u8(fn, &pc, &c)) return false;
+                break;
+            }
             default: return false; /* unreachable given opcode_dest_is_first_u16 */
         }
     }
     return true;
+}
+
+/* Phase 10: single-hop helper for register_new_class_if_sole_writer below.
+ * Scans fn's whole body once for `target_register`'s writers. Returns the
+ * compile-time class index (>=0) if there's EXACTLY ONE writer and it's
+ * DIAMOND_OP_NEW; sets `*move_src` and returns -2 if there's exactly one
+ * writer and it's DIAMOND_OP_MOVE (the caller re-scans from `*move_src`);
+ * returns -1 for anything else (zero writers, multiple writers, or a
+ * single writer that's neither). Needed because `x = SomeClass.new(...)`
+ * doesn't compile to a NEW that directly targets `x`'s own register --
+ * the compiler emits NEW into its own temp register, then a separate
+ * MOVE into whichever register the local `x` actually lives in (confirmed
+ * against a real `--dump-bytecode` disassembly before writing this: `NEW
+ * r11, classN, r10, 1 args` followed immediately by `MOVE r12, r11`,
+ * `r12` being the local INVOKE later reads as its receiver, not `r11`).
+ * Same fail-safe-by-construction default as parameter_never_reassigned/
+ * this file's other scanner. */
+static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
+        uint16_t target_register, uint16_t *move_src) {
+    size_t pc = 0;
+    size_t write_count = 0;
+    int32_t new_class = -1;
+    bool sole_write_is_move = false;
+    while (pc < fn->code_count) {
+        uint8_t raw_opcode = 0;
+        if (!decode_u8(fn, &pc, &raw_opcode)) return -1;
+        DiamondOpCode opcode = (DiamondOpCode)raw_opcode;
+        if (opcode_writes_no_register(opcode)) {
+            switch (opcode) {
+                case DIAMOND_OP_SET_IVAR: case DIAMOND_OP_INDEX_SET: {
+                    uint16_t a = 0, b = 0, c = 0;
+                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
+                        !decode_u16(fn, &pc, &c)) return -1;
+                    break;
+                }
+                case DIAMOND_OP_CHECK_TYPE: {
+                    uint16_t a = 0, b = 0;
+                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
+                    break;
+                }
+                case DIAMOND_OP_JUMP: {
+                    uint8_t a = 0, b = 0;
+                    if (!decode_u8(fn, &pc, &a) || !decode_u8(fn, &pc, &b)) return -1;
+                    break;
+                }
+                case DIAMOND_OP_JUMP_IF_TRUE: case DIAMOND_OP_JUMP_IF_FALSE: {
+                    uint16_t a = 0; uint8_t b = 0, c = 0;
+                    if (!decode_u16(fn, &pc, &a) || !decode_u8(fn, &pc, &b) ||
+                        !decode_u8(fn, &pc, &c)) return -1;
+                    break;
+                }
+                case DIAMOND_OP_RETURN: {
+                    uint16_t a = 0;
+                    if (!decode_u16(fn, &pc, &a)) return -1;
+                    break;
+                }
+                default: return -1; /* unreachable given opcode_writes_no_register */
+            }
+            continue;
+        }
+        if (!opcode_dest_is_first_u16(opcode)) return -1;
+        uint16_t dest = 0;
+        if (!decode_u16(fn, &pc, &dest)) return -1;
+        const bool writes_target = dest == target_register;
+        if (writes_target) {
+            write_count++;
+            if (write_count > 1) return -1;
+        }
+        switch (opcode) {
+            case DIAMOND_OP_NIL: break;
+            case DIAMOND_OP_MOVE: {
+                uint16_t src = 0;
+                if (!decode_u16(fn, &pc, &src)) return -1;
+                if (writes_target) { sole_write_is_move = true; *move_src = src; }
+                break;
+            }
+            case DIAMOND_OP_BOOL: case DIAMOND_OP_CONSTANT:
+            case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
+                uint16_t a = 0;
+                if (!decode_u16(fn, &pc, &a)) return -1;
+                break;
+            }
+            case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
+            case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
+            case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE:
+            case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
+            case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
+            case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
+            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH: {
+                uint16_t a = 0, b = 0;
+                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
+                break;
+            }
+            case DIAMOND_OP_SUPER: {
+                uint16_t a = 0, b = 0; uint8_t c = 0, d = 0;
+                if (!decode_u8(fn, &pc, &c) || !decode_u16(fn, &pc, &a) ||
+                    !decode_u16(fn, &pc, &b) || !decode_u8(fn, &pc, &d)) return -1;
+                break;
+            }
+            case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
+                uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
+                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
+                    !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return -1;
+                break;
+            }
+            case DIAMOND_OP_NEW: {
+                uint8_t class_index = 0, argc = 0; uint16_t base = 0;
+                if (!decode_u8(fn, &pc, &class_index) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u8(fn, &pc, &argc)) return -1;
+                if (writes_target) new_class = (int32_t)class_index;
+                break;
+            }
+            default: return -1; /* unreachable given opcode_dest_is_first_u16 */
+        }
+    }
+    /* Neither a non-NEW, non-MOVE write nor MOVE itself ever sets
+     * new_class, so the only way write_count==1 with new_class!=-1 is
+     * that sole write being a NEW -- covers "exactly one write, wrong
+     * opcode" (new_class stays -1) without needing a separate mid-loop
+     * check. sole_write_is_move can only be true when write_count==1
+     * too (set only inside the writes_target branch, which already
+     * enforces write_count<=1 via the early return above). */
+    if (write_count != 1) return -1;
+    if (new_class >= 0) return new_class;
+    return sole_write_is_move ? -2 : -1;
+}
+
+/* Phase 10: returns the compile-time class index if `target_register`
+ * provably always holds the result of one specific DIAMOND_OP_NEW,
+ * chasing through register_new_class_or_move_src's own single MOVE-hop
+ * result for up to 8 hops (generous for any real compiler-generated
+ * local-assignment shape, cheap to bound) -- else -1. Each hop re-scans
+ * fn's whole body, same O(function body length) cost class as
+ * parameter_never_reassigned already accepts per INVOKE site. */
+static int32_t register_new_class_if_sole_writer(const DiamondFunction *fn, uint16_t target_register) {
+    uint16_t current = target_register;
+    for (int hop = 0; hop < 8; hop++) {
+        uint16_t move_src = 0;
+        const int32_t result = register_new_class_or_move_src(fn, current, &move_src);
+        if (result != -2) return result;
+        current = move_src;
+    }
+    return -1;
 }
 
 /* Returns false (jc->bailed set) the moment anything outside the supported
@@ -1485,6 +1675,16 @@ static void compile_body(JitCompiler *jc) {
                 compile_super_call(jc, dest, owner_index, name, base, argc);
                 break;
             }
+            case DIAMOND_OP_NEW: {
+                uint16_t dest = 0, base = 0;
+                uint8_t class_index = 0, argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &class_index) ||
+                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                    jc->bailed = true; return;
+                }
+                compile_new(jc, dest, class_index, base, argc);
+                break;
+            }
             case DIAMOND_OP_JUMP: {
                 uint8_t high = 0, low = 0;
                 if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
@@ -1559,7 +1759,7 @@ static void compile_body(JitCompiler *jc) {
                 emit_ret(buf);
                 break;
             }
-            /* Merges three independently-scoped compile-time strategies for
+            /* Merges four independently-scoped compile-time strategies for
              * this one opcode pair, tried in order:
              *  1. Phase 7 (self.method(), any name): when recv==0 in a
              *     function whose owner_class proves register 0 is always
@@ -1571,12 +1771,16 @@ static void compile_body(JitCompiler *jc) {
              *     statically proven to always hold an Instance of a
              *     single concrete class for the whole function body -- see
              *     parameter_is_single_class/parameter_never_reassigned's
-             *     own comments. Both 1 and 2 are a strict superset of
-             *     strategy 3 for the receiver they each cover -- any
-             *     method name, not just dup/freeze/frozen?, and correct
-             *     override dispatch via the same lookup_method-gated logic
-             *     the interpreter itself uses.
-             *  3. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
+             *     own comments.
+             *  3. Phase 10 (x = SomeClass.new(...); ...; x.method()): when
+             *     recv has exactly one writer in the whole function and
+             *     that writer is DIAMOND_OP_NEW -- see register_new_
+             *     class_if_sole_writer's own comment. Strategies 1/2/3 are
+             *     each a strict superset of strategy 4 for the receiver
+             *     they cover -- any method name, not just dup/freeze/
+             *     frozen?, and correct override dispatch via the same
+             *     lookup_method-gated logic the interpreter itself uses.
+             *  4. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
              *     non-self, unproven types included): only the three
              *     receiver-kind-agnostic pseudo-methods, requires argc==0
              *     and !jc->has_called. None of the three can ever invoke
@@ -1633,6 +1837,19 @@ static void compile_body(JitCompiler *jc) {
                  * receiver kind, proven or not. */
                 if (parameter_is_single_class(jc->function, recv) &&
                     parameter_never_reassigned(jc->function, recv)) {
+                    compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
+                                         opcode == DIAMOND_OP_INVOKE_MONO);
+                    break;
+                }
+                /* Phase 10: recv statically proven to always hold the
+                 * result of one specific DIAMOND_OP_NEW -- see register_
+                 * new_class_if_sole_writer's own comment. Doesn't matter
+                 * *which* class for eligibility purposes (only that it's
+                 * exactly one NEW and nothing else ever writes this
+                 * register) -- diamond_jit_invoke_instance dispatches by
+                 * the runtime instance's own class regardless, same as
+                 * Phase 9's own reasoning. */
+                if (register_new_class_if_sole_writer(jc->function, recv) >= 0) {
                     compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
                                          opcode == DIAMOND_OP_INVOKE_MONO);
                     break;

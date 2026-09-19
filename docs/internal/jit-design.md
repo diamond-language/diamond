@@ -1068,6 +1068,108 @@ against this doc's own older skindicate baseline number rather than a true
 same-run A/B) looked like ~20-25%; the controlled comparison is the
 trustworthy one.
 
+### Phase 10: `DIAMOND_OP_NEW` + `.method()` on a never-reassigned freshly-constructed local
+
+Phase 9's own roadmap follow-up named the byte-offset-to-bytecode-PC
+mapping problem (making the LSP's own per-register type-fact table,
+`DiamondScopeTypeFact`, usable from `src/jit.c`) as the prerequisite for
+the general "any local or return value" non-self `INVOKE` case. Investigated
+directly before writing any code, and rejected: `DiamondScopeTypeFact` is
+populated by `record_scope_type_fact` at roughly 16 call sites scattered
+across `src/compiler.c`, and nothing establishes that set is *exhaustive* --
+i.e. that it fires at literally every place the compiler's own live
+`known_type_sets[reg]` array changes. For the LSP, a stale fact is harmless
+(worst case: a wrong hover tooltip). For the JIT, reusing a stale fact to
+justify routing an `INVOKE` to `diamond_jit_invoke_instance` could produce a
+**wrong observable answer**, not just a safe bail: that trampoline's own
+runtime check (`registers[recv].kind`, `src/vm.c`) catches "not an Instance
+at all" and returns a normal `DIAMOND_VM_TYPE_ERROR`, but if the register
+sometimes legitimately holds e.g. a String with its own real `.foo()`
+method, and a stale fact wrongly says "always an Instance," the JIT would
+report "undefined method" instead of correctly dispatching to the String's
+own method -- a real behavioral divergence from the interpreter. An
+exhaustive audit of every `known_type_sets`-mutating site would be needed
+first, and even then the PC mapping problem itself still needs solving.
+Not attempted.
+
+**A narrower, self-contained, provably sound alternative covers a real and
+common shape instead**: `x = SomeClass.new(...); ...; x.method()`, `x`
+never reassigned after construction. Needs zero new `DiamondFunction`
+fields, zero `src/compiler.c` changes, zero snapshot/lookup table -- it
+generalizes Phase 9's own `parameter_never_reassigned` (`src/jit.c`) from
+"a parameter register with zero writes" to "a register with *exactly one*
+write, and that write is `DIAMOND_OP_NEW` with a compile-time-known class
+index" (`register_new_class_or_move_src`/`register_new_class_if_sole_
+writer`). Airtight without any control-flow modeling: on any real
+execution reaching a later read of the register, the value can only have
+come from that one `NEW`, since nothing else in the function ever writes
+it -- true regardless of loops/branches, the same reasoning Phase 9's own
+whole-body scan already relies on.
+
+**A real gap found empirically, not assumed**: the first version of this
+compiled correctly but never actually fired -- `DIAMOND_TRACE_JIT` still
+showed the pre-Phase-10 compiled-function count on a real test case. A
+`--dump-bytecode` disassembly (this project's own established practice:
+verify against real compiled bytecode before trusting an assumption)
+showed why: `x = SomeClass.new(...)` doesn't compile to a `NEW` that
+directly targets `x`'s own register at all -- the compiler emits `NEW`
+into its own temp register, then a separate `MOVE` into whichever register
+the local actually lives in (`NEW r11, classN, r10, 1 args` immediately
+followed by `MOVE r12, r11`, with `r12` being what a later `INVOKE` reads
+as its receiver). `register_new_class_if_sole_writer` therefore chases
+through up to 8 single-hop `register_new_class_or_move_src` calls (generous
+for any real compiler-generated local-assignment shape, cheap to bound),
+each a fresh whole-function scan, following a `MOVE`'s own source register
+until it either finds the `NEW` or gives up.
+
+**`DIAMOND_OP_NEW` itself** wasn't in `compile_body`'s ~26-opcode
+whitelist at all before this phase, so *any* function containing a
+`.new()` call fully bailed, independent of what happened to the
+constructed value afterward. `diamond_jit_new_instance` (`src/vm.c`) is a
+verbatim extraction of the interpreter's own plain-`NEW` case (allocate,
+run `initialize` if defined, else the `Exception`-subclass two-field
+fallback, else a bare `argc==0` requirement) -- `compile_new` (`src/jit.c`)
+emits a trampoline call mirroring `compile_super_call`'s own stack-argument
+convention, needing no pad (2 real stack args = 16 bytes, already a
+multiple of 16, unlike `compile_super_call`'s own 3-arg case).
+`DIAMOND_OP_NEW_KEYWORDS`/`DIAMOND_OP_NEW_SPREAD` (synthetic-chunk
+re-entry into `run_chunk`) are explicitly out of scope -- no case added,
+so a function containing either still bails whole.
+
+**Verified**: `git stash`-compared before/after on a minimal `x =
+Box.new(...); ...; x.double()`-in-a-loop script confirmed the delta (2 ->
+3 compiled functions, 0 bailouts either way). Two pre-existing tests
+(`jit_dup_instance_fallback.di`, `jit_invoke_self_universal.di`) needed
+their own compiled-function counts bumped -- both already contained a
+`.new()` call inside an overridden `dup()`, previously uncompiled,
+correctly compiling now. New `tests/cases/jit_new_local*`/`jit_new_
+exception*`/`jit_new_no_initialize*`/`jit_new_keywords_bail*` cover: the
+basic compiling case, a reassigned local still correctly bailing (caught
+an arithmetic mistake in this test's own first draft while writing it --
+`Box.new(21)` re-executes every loop iteration, so the intended `i==3`
+reassignment's effect never actually becomes observable before being
+overwritten again; the disqualification is still correct regardless,
+just the expected output value needed recomputing), a class with no
+`initialize` still compiling via `NEW`'s own bare-`argc==0` path, an
+`Exception` subclass exercising the two-field special case, a real
+override dispatched correctly (not devirtualized), and `NEW_KEYWORDS`
+still correctly bailing. Full bar: debug suite (1569/1569 including the
+new cases), ASan/UBSan (1569/1569), and the JIT+`DIAMOND_STRESS_GC`
+combination run directly against each new test case (all still correct,
+on a from-scratch clean rebuild -- Phase 9's own postmortem, avoided this
+time). Release A/B benchmark (`bench/jit_new_local.di`, a hot loop
+constructing a fresh `Box` and calling a method on it every iteration):
+~1.02s interpreted vs. ~0.67s JIT'd, a consistent ~35% win across
+repeated runs, in the same range as Phase 7/9's own ~35%/~38%.
+
+**Out of scope (explicit)**: non-parameter, non-`NEW` receivers (a
+method call's own return value assigned to a local -- still the largest
+remaining piece of skindicate's own diffuse `uploaders_for`/`platforms_
+for` cost, per Phase 8's profiling); a register reassigned anywhere in
+the function, even to another instance of the same class, or only *after*
+the read in question -- no flow-sensitive narrowing; `DIAMOND_OP_INVOKE_
+TYPED` -- still bails, same as every prior phase.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

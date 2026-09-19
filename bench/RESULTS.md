@@ -784,3 +784,30 @@ Any receiver other than `self` remains unsupported -- see
 `docs/internal/jit-design.md`'s Phase 7 section for exactly why that's a
 real, not-yet-buildable boundary (no compile-time proof of receiver type,
 no runtime deopt mechanism to guard and fall back mid-function).
+
+## Typed-parameter and freshly-`NEW`'d-local dispatch -- JIT Phases 9-10 (2026-09-18/19)
+
+Two narrow, provably-sound slices of non-`self` `DIAMOND_OP_INVOKE`,
+closed back to back (`docs/internal/jit-design.md`'s own "Phase 9" and
+"Phase 10" sections have the full design/verification detail): a
+declared parameter with a single concrete class type that the function
+body never reassigns (Phase 9), and a local holding the result of one
+`SomeClass.new(...)` call, never reassigned after (Phase 10). Both reuse
+Phase 7's own `diamond_jit_invoke_instance` trampoline unchanged --
+`recv` was already a real compile-time-known register-index parameter
+there for exactly this reuse.
+
+| Benchmark | Interpreted | JIT'd | Speedup |
+|---|---:|---:|---:|
+| `jit_invoke_typed_param` (typed-param `.method()` in a loop) | ~0.55s | ~0.34s | ~1.62x |
+| `jit_new_local` (`.new()` + `.method()` in a loop) | ~1.02s | ~0.67s | ~1.53x |
+
+A controlled A/B on skindicate's own `/` route (same dev server/DB/
+instrumentation, only the `diamond` binary differing via a `git worktree`)
+measured a real but modest ~4-6% end-to-end win from Phase 9 alone --
+`SkinPlatform.platforms_for` barely moved (~0.6%), confirming most of
+that route's own remaining ORM overhead flows through neither typed
+parameters nor `.new()` results, but through a method call's own return
+value assigned to a local -- still unsupported, see `docs/internal/
+jit-design.md`'s Phase 10 section for why that's a materially harder
+case (no compile-time-known class to attach, unlike `NEW`'s own operand).

@@ -12482,6 +12482,53 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         type_argument_count,type_arguments,chunk,depth,out);
 }
 
+/* Phase 10 (docs/internal/jit-design.md): the interpreter's own plain
+ * DIAMOND_OP_NEW case, extracted verbatim -- allocate, run `initialize` if
+ * the class defines one (arity-checked exactly as the interpreter does),
+ * else the Exception-subclass two-field fallback, else a bare argc==0
+ * requirement. Writes registers[dest] directly rather than through a
+ * separate `out` pointer (unlike diamond_jit_invoke_instance) since dest
+ * is already a real index into the same registers array both the
+ * interpreter and the JIT's own JIT_REGISTERS_BASE share.
+ * DIAMOND_OP_NEW_KEYWORDS/DIAMOND_OP_NEW_SPREAD (synthetic-chunk re-entry
+ * into run_chunk, src/vm.c below) are deliberately NOT covered here --
+ * compile_body has no case for either, so a function containing one still
+ * bails whole, same as any other unsupported construct. */
+DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t dest, uint8_t class_index,
+        uint16_t base, uint8_t argc, size_t depth) {
+    if((size_t)class_index>=chunk->class_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondClass *class=&chunk->classes[class_index];
+    DiamondInstance *instance=allocate_instance(vm,class,nullptr);
+    if(instance==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(instance);
+    const DiamondMethod *init=lookup_method(
+        chunk,class,"initialize",sizeof("initialize")-1);
+    if(init!=nullptr) {
+        if(argc<init->required_arity||
+           (argc>init->arity && !init->has_variadic))
+            return DIAMOND_VM_ARITY_ERROR;
+        DiamondValue ignored=DIAMOND_NIL;
+        return invoke_resolved_method_helper(vm,chunk,
+            init,registers[dest],registers,base,argc,false,0,nullptr,
+            chunk,depth,&ignored);
+    }
+    bool exception_class=false;const DiamondClass *ancestor=class;
+    while(ancestor!=nullptr) {
+        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+            exception_class=true;break;
+        }
+        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+            &chunk->classes[ancestor->superclass];
+    }
+    if(exception_class) {
+        if(argc>2) return DIAMOND_VM_ARITY_ERROR;
+        if(argc>0)instance->fields[0]=registers[base];
+        if(argc>1)instance->fields[1]=registers[(size_t)base+1];
+    } else if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *fn,
         const DiamondClosure *called,const DiamondArray *spread,size_t depth,
@@ -17509,37 +17556,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_NEW: {
                 uint16_t dest=0,base=0;uint8_t ci=0,argc=0;
                 READ_SHORT(dest);READ_BYTE(ci);READ_SHORT(base);READ_BYTE(argc);
-                if((size_t)ci>=chunk->class_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondClass *class=&chunk->classes[ci];
-                DiamondInstance *instance=allocate_instance(vm,class,nullptr);
-                if(instance==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[dest]=DIAMOND_OBJECT(instance);
-                const DiamondMethod *init=lookup_method(
-                    chunk,class,"initialize",sizeof("initialize")-1);
-                if(init!=nullptr) {
-                    if(argc<init->required_arity||
-                       (argc>init->arity && !init->has_variadic))
-                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    DiamondValue ignored=DIAMOND_NIL;
-                    const DiamondVmStatus s=invoke_resolved_method_helper(vm,chunk,
-                        init,registers[dest],registers,base,argc,false,0,nullptr,
-                        chunk,depth,&ignored);
-                    VM_PROPAGATE(s);
-                } else {
-                    bool exception_class=false;const DiamondClass *ancestor=class;
-                    while(ancestor!=nullptr) {
-                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
-                            exception_class=true;break;
-                        }
-                        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-                            &chunk->classes[ancestor->superclass];
-                    }
-                    if(exception_class) {
-                        if(argc>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        if(argc>0)instance->fields[0]=registers[base];
-                        if(argc>1)instance->fields[1]=registers[(size_t)base+1];
-                    } else if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                }
+                const DiamondVmStatus s=diamond_jit_new_instance(vm,chunk,
+                    registers,dest,ci,base,argc,depth);
+                VM_PROPAGATE(s);
                 break;
             }
             case DIAMOND_OP_NEW_KEYWORDS: {

@@ -78,6 +78,14 @@ authoritative fine-grained record.
   a reassigned parameter, an untyped parameter, and any non-parameter
   receiver (a local, a prior call's return value) remain unsupported. See
   docs/internal/jit-design.md's "Phase 9".
+- JIT now compiles `DIAMOND_OP_NEW` (`SomeClass.new(...)`), and a later
+  `.method()` call on the freshly-constructed result when assigned to a
+  local that's never reassigned -- until now, any function containing a
+  `.new()` call bailed out of JIT eligibility entirely, regardless of what
+  happened to the constructed value afterward. Closes another real slice
+  of non-`self` dispatch alongside Phase 9's own typed-parameter case.
+  Keyword/spread construction (`SomeClass.new(field: value)`) remains
+  unsupported. See docs/internal/jit-design.md's "Phase 10".
 
 ### Language
 

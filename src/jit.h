@@ -357,28 +357,51 @@ DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
  * the INVOKE<->INVOKE_MONO inline-cache check and self-rewrite, method_
  * missing fallback, visibility checks, and the final invoke_resolved_
  * method_helper call. Kept receiver-position-general (`recv` is a real
- * parameter) for the interpreter's sake -- jit.c's own compile_invoke_self
- * only ever calls this with recv==0, restricted at compile time to a
- * function whose own owner_class proves register 0 is always the receiver
- * (see that function's comment for why). This trampoline still keeps its
- * own unconditional registers[recv] kind check regardless (matching
- * diamond_jit_super_call's own belt-and-suspenders precedent), so an error
- * in that compile-time reasoning fails safe as a plain DIAMOND_VM_TYPE_
- * ERROR, never a crash. `site` is this occurrence's own bytecode address,
- * the same per-occurrence method-cache/quickening key every other
- * overload-checking trampoline here already uses. `instruction` is the
- * real decoded opcode (INVOKE/INVOKE_MONO/INVOKE_TYPED) -- unlike a plain
- * monomorphic bool, this also lets `type_argument_count`/`type_arguments`
- * (needed for the INVOKE_TYPED case, which the JIT itself never compiles --
- * see compile_invoke_self's own comment) resolve to the correct `typed`
- * flag for invoke_resolved_method_helper. Can invoke arbitrary user code
- * and allocate (a real method call, method_missing, tap's closure call),
- * so its JIT-side caller sets both jc->needs_frame and jc->has_called
+ * parameter) for the interpreter's sake -- jit.c's own compile_invoke_
+ * dispatch calls this for any compile-time-proven-Instance receiver, not
+ * just self (`recv==0`): Phase 7's own self-receiver proof (a function
+ * whose owner_class proves register 0 is always the receiver) and Phase
+ * 9/10's typed-parameter/freshly-`NEW`'d-local proofs (see jit.c's own
+ * parameter_is_single_class/register_new_class_if_sole_writer) all funnel
+ * through the same compile_invoke_dispatch call site, passing whichever
+ * register their own proof covers. This trampoline still keeps its own
+ * unconditional registers[recv] kind check regardless of which proof
+ * justified compiling the call (matching diamond_jit_super_call's own
+ * belt-and-suspenders precedent), so an error in any of that compile-time
+ * reasoning fails safe as a plain DIAMOND_VM_TYPE_ERROR, never a crash.
+ * `site` is this occurrence's own bytecode address, the same per-
+ * occurrence method-cache/quickening key every other overload-checking
+ * trampoline here already uses. `instruction` is the real decoded opcode
+ * (INVOKE/INVOKE_MONO/INVOKE_TYPED) -- unlike a plain monomorphic bool,
+ * this also lets `type_argument_count`/`type_arguments` (needed for the
+ * INVOKE_TYPED case, which the JIT itself never compiles -- see compile_
+ * invoke_dispatch's own comment) resolve to the correct `typed` flag for
+ * invoke_resolved_method_helper. Can invoke arbitrary user code and
+ * allocate (a real method call, method_missing, tap's closure call), so
+ * its JIT-side caller sets both jc->needs_frame and jc->has_called
  * unconditionally, exactly like diamond_jit_super_call's own treatment. */
 DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
         const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
         uint8_t type_argument_count, const uint16_t *type_arguments,
         size_t depth, DiamondValue *out);
+
+/* Phase 10: the interpreter's own plain DIAMOND_OP_NEW case (src/vm.c),
+ * extracted verbatim -- allocate, run `initialize` if the class defines
+ * one (arity-checked exactly as the interpreter does), else the
+ * Exception-subclass two-field fallback, else a bare argc==0 requirement.
+ * Writes registers[dest] directly (unlike diamond_jit_invoke_instance's
+ * separate `out` pointer) since dest already indexes the same registers
+ * array both the interpreter and the JIT's own JIT_REGISTERS_BASE share.
+ * DIAMOND_OP_NEW_KEYWORDS/DIAMOND_OP_NEW_SPREAD (synthetic-chunk re-entry
+ * into run_chunk) are deliberately not covered -- compile_body has no
+ * case for either, so a function containing one still bails whole. Can
+ * invoke arbitrary user code (`initialize`) and allocate, so its JIT-side
+ * caller (compile_new) sets both jc->needs_frame and jc->has_called
+ * unconditionally, same as diamond_jit_super_call/diamond_jit_invoke_
+ * instance's own treatment. */
+DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t dest, uint8_t class_index,
+        uint16_t base, uint8_t argc, size_t depth);
 
 #endif

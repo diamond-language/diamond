@@ -3,4 +3,4 @@
 ^true$
 ^10$
 ^999$
-jit: 5 compiled function(s), 0 bailout(s), 0 hard propagation(s)
+jit: 6 compiled function(s), 0 bailout(s), 0 hard propagation(s)
