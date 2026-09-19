@@ -843,6 +843,82 @@ measured win: `bench/jit_invoke_self.di` (a `self.method()` call inside
 a hot loop, the whole loop now compiling with zero bailouts) ~35% faster
 JIT'd (0.75s -> 0.49s, release build, stable across repeated runs).
 
+### Phase 8 (research only, not implemented): non-`self` `INVOKE` -- a real dead end, precisely characterized
+
+Following Phase 7, a re-profile of skindicate's own front page (`/`, temporary
+`Time.monotonic()` instrumentation, reverted after measuring -- not committed)
+found its actual current bottleneck isn't template rendering or SQL execution
+at all, overturning this doc's own earlier "grid/card template rendering"
+finding: total request time is now ~38-40ms (down from the ~95ms this
+session's earlier div-escape/Hash#dup fixes started from), of which the grid
+step is still ~30ms (~79%) but template rendering itself is only ~4ms of
+that. The other ~26ms is skindicate's own `uploaders_for`/`platforms_for`/
+`screenshots_for` batch loaders -- and *not* their SQL, either: raw SQLite
+execution across the whole request sums to ~1.7ms (measured directly from
+the query logger), while `uploaders_for` alone costs ~11.5ms for a query
+that executes in ~0.4ms. The gap is ActiveRecord/Arel's own query-building
+and rendering (`to_sql` regenerated fresh every call, no caching; checked
+`render`/`render_expression` directly for an algorithmic culprit like O(n^2)
+string concatenation -- found none, a 100-value `IN` clause builds via a
+clean O(n) array-join), made of many small Instance-to-Instance method calls
+(`visitor.render_expression(...)`, `expression.left()`, `query.projections()`,
+...) that are almost never `self`-calls, so Phase 7 doesn't touch any of it.
+That motivated asking directly: is a *non-self* `INVOKE` slice buildable,
+short of the full ~2500-line native-type surface?
+
+**The correctness half of this turned out to already be solved**, and more
+cheaply than the "Deopt trigger" section above (written before any JIT phase
+existed) assumed. That section speculated a JIT'd function would need a new
+"check assumptions, bail to `run_chunk` from the top" entry guard; what
+actually shipped across Phases 3-7 is narrower and already sufficient: *any*
+bail site reached while `jc->has_called` is still false is unconditionally
+safe to retry via full interpretation, with no new mechanism, **provided
+nothing with a real, non-idempotent side effect has already committed**.
+Checked this directly against the one opcode that looked likely to violate
+it -- `SET_IVAR` (a real heap mutation, and notably the one call-adjacent
+opcode that does *not* set `jc->has_called`, `src/jit.c`'s `compile_set_ivar`)
+-- and confirmed `diamond_jit_set_ivar` (`src/vm.c`) returns every non-OK
+status *before* its one mutation (`instance->fields[field] = *value`); the
+only nonzero return after that point is `gc_write_barrier` failing
+(`DIAMOND_VM_OUT_OF_MEMORY`), an existing, already-accepted, OOM-only risk
+predating this investigation entirely, not something new to it. So: extending
+`diamond_jit_invoke_instance` to accept *any* receiver register (not just
+`recv==0`), gated only on `!jc->has_called` rather than `compile_invoke_self`'s
+`owner_class` check, would be **correct** with zero new deopt or GC-root
+design -- a real, substantially smaller undertaking than the full native-type
+surface, reusing 100% of Phase 7's own machinery.
+
+**The performance half is the actual, unresolved blocker.** `dup`/`freeze`/
+`frozen?` are safe to compile unconditionally because their trampolines have
+*real* behavior for every receiver kind -- they never just bail for "wrong
+kind." A generic method name has no such property: `diamond_jit_invoke_
+instance` only knows how to dispatch on a real Instance, so any receiver that
+turns out to be a String/Array/Hash/primitive at runtime bails via the exact
+retry path above, unconditionally, every single call. For a function whose
+non-self `INVOKE` receiver is *typically* not an Instance (a native-type
+method call), this would compile the function (passing `diamond_jit_try_
+compile`'s dry run) and then retry-bail on *every* invocation forever --
+strictly worse than today, where such a function simply never gets a
+`jit_code` pointer attached and every call goes straight to `run_chunk` with
+no added overhead at all. Avoiding this needs the JIT to know, at compile
+time, whether a given register is likely to hold an Instance -- and
+`src/jit.c` has **zero** access to any static type information today (no
+reference anywhere to the compiler's own `parameter_type_sets`/
+`scope_type_fact_count` machinery, confirmed by direct search). Threading
+that through is a real, separate prerequisite, not a small addition to this
+phase.
+
+**Conclusion: not attempted.** The project's own established bar --
+"require benchmark evidence large enough to justify the added complexity"
+(this doc's own "Before extending past the current narrow slice" list) --
+isn't met here, and can't cheaply be met without first building compile-time
+type-fact propagation into the JIT. Revisit only alongside that prerequisite,
+or with real measurement of how often skindicate's own non-self `INVOKE`
+call sites are actually Instance-typed (unmeasured; the question that would
+tell you whether the regression risk bites in practice was identified but
+deliberately not chased further here, to avoid scope creep past "scope this
+out").
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
@@ -970,6 +1046,17 @@ offset N with register file matching what the JIT had" problem to solve) --
 the same reason picking a narrow, guard-checked opcode subset in
 implementation is a correctness simplification, not just a scoping one (see
 the approved plan's Phase 2).
+
+**Update, post-Phase-7/8 research**: what actually shipped needed no new
+"entry guard" mechanism at all -- the existing `jc->has_called`-gated retry
+(any bail while it's still false safely discards the whole attempt and
+re-interprets from the top) already provides exactly this, opcode by opcode,
+not as a single coarse guard. Phase 8's own research (above) leaned on this
+directly to establish that a non-`self` `INVOKE` slice would be *correct*
+with no new design -- confirming this section's core intuition was right,
+just heavier than what was actually needed. What that research found
+missing instead was static type information reaching the JIT at all, a
+different gap this section didn't anticipate.
 
 ## Threading
 

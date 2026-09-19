@@ -650,14 +650,19 @@ Still open:
 
 - generic `DIAMOND_OP_INVOKE` beyond `self` -- every native per-type method
   (`.keys()`/`.length()`/...), and Instance method dispatch on any receiver
-  *other* than `self` (no compile-time proof exists that a non-self
-  register holds an Instance, and there's no runtime deopt mechanism yet to
-  guard and fall back mid-function -- see "Deopt trigger" below), plus
-  `tap`/`public_send`. The real case body is ~2500 lines of native-type
-  dispatch alone (`src/vm.c`) -- a dramatically larger, separately-scoped
-  undertaking than any single phase so far, not "one more trampoline." A
-  method calling a native per-type method, or calling another method on a
-  non-self receiver, is not covered by anything landed yet;
+  *other* than `self`, plus `tap`/`public_send`. Researched post-Phase-7
+  (`docs/internal/jit-design.md`'s "Phase 8," research only, not
+  implemented): the *correctness* half is actually already solved --
+  extending `self`'s own trampoline to any receiver, gated on the existing
+  `has_called`-false-means-safe-retry rule, needs no new deopt design at
+  all. What actually blocks it is a *performance* risk with no cheap fix:
+  a receiver that's typically NOT an Instance would retry-bail on every
+  call forever (strictly worse than today's clean "never compiled"), and
+  avoiding that needs the JIT to know a register's likely type at compile
+  time -- `src/jit.c` has zero access to any static type information
+  today. That's the real prerequisite, not "one more trampoline" and not
+  a deopt mechanism. The ~2500-line native-type dispatch surface itself
+  remains separately unattempted regardless;
 - a value the JIT can't prove is `Int` at *runtime* either (a real
   String, Instance, Float, ...) still correctly falls to the slow
   trampoline every time, at real per-call cost -- expected, not a gap;
@@ -676,9 +681,15 @@ Before extending past the current narrow slice:
 - identify hot workloads that remain VM-bound after existing
   specialization *and* after the current JIT's own whitelist -- most
   realistic candidates now hinge on generic `INVOKE` specifically, the
-  one gap still open above;
-- define deoptimization and GC-root contracts for anything that compiles a
-  call, allocation, or exception path the current slice deliberately avoids;
+  one gap still open above (skindicate's own current bottleneck, per a
+  post-Phase-7 re-profile, is exactly this shape: ActiveRecord/Arel's own
+  non-`self` Instance method calls, not templating or SQL -- see
+  `docs/internal/jit-design.md`'s Phase 8 section);
+- for non-`self` `INVOKE` specifically: thread static type information
+  from the compiler into the JIT first (`src/jit.c` has none today) --
+  the actual, identified prerequisite (Phase 8's research), not a new
+  deopt/GC-root design, which the existing `has_called`-gated retry
+  already covers;
 - require benchmark evidence large enough to justify the added complexity,
   the same bar the current slice was itself held to.
 
