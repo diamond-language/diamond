@@ -689,9 +689,11 @@ Before extending past the current narrow slice:
   post-Phase-7 re-profile, is largely this shape: ActiveRecord/Arel's own
   non-`self` Instance method calls flowing through locals and return
   values, not through typed parameters -- Phase 9 closes the typed-
-  parameter slice of it, not the whole thing; re-profiling to measure the
-  real-world delta is itself unstarted -- see `docs/internal/jit-
-  design.md`'s Phase 8 and Phase 9 sections);
+  parameter slice of it, not the whole thing; a controlled A/B re-profile
+  measured only a modest ~4-6% real-world win on skindicate's own `/`
+  route from Phase 9 alone, well short of the ~11.5ms/~10ms the diffuse
+  remainder still costs -- see `docs/internal/jit-design.md`'s Phase 8 and
+  Phase 9 sections);
 - for the remaining non-parameter-receiver gap specifically: solve the
   byte-offset-to-bytecode-PC mapping needed to make the LSP's own
   per-register type-fact table (`DiamondScopeTypeFact`) usable from

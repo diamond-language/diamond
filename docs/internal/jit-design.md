@@ -1049,10 +1049,24 @@ This closes the specific hot-path shape Phase 8's own skindicate profiling
 named (`Arel::Visitor`'s own `render_*` methods, which take explicitly
 typed `Arel::Attribute`/`Arel::Table`/`Arel::Join` parameters) but not the
 diffuse remainder of `uploaders_for`/`platforms_for`'s own ~11.5ms/~10ms
-(per [[project_skindicate_hotspot_profile]]), most of which flows through
-untyped locals and return values, not typed parameters -- re-profiling
-skindicate's own `/` route to measure the real-world delta was left for a
-follow-up, not done as part of this phase.
+(see the "Phase 8" section immediately above), most of which flows through
+untyped locals and return values, not typed parameters.
+
+**Real-world measurement.** Re-profiled skindicate's own `/` route with a
+controlled A/B: same dev server, same DB, same `Time.monotonic()`
+instrumentation (reverted after measuring, nothing committed to
+skindicate.dia) -- only the `diamond` binary differed, built via a `git
+worktree` at the pre-Phase-9 commit vs. current `main`. 20 warmed-up
+requests each: total request duration 31.44ms -> 30.10ms (~4.3% faster),
+grid render 24.26ms -> 23.29ms (~4.0%), `uploaders_for` 8.98ms -> 8.47ms
+(~5.7%), `screenshots_for` 3.90ms -> 3.67ms (~5.9%), `platforms_for`
+7.90ms -> 7.85ms (~0.6%, barely moved). Real, but modest -- confirms the
+prediction above: `platforms_for` barely benefiting is exactly what "most
+of the diffuse remainder flows through untyped locals/return values, not
+typed parameters" predicts. An initial single-sample estimate (comparing
+against this doc's own older skindicate baseline number rather than a true
+same-run A/B) looked like ~20-25%; the controlled comparison is the
+trustworthy one.
 
 ## Why the interop seam is already clean
 
