@@ -11,6 +11,13 @@ ordinary `diamond program.di` interpreter path.
 ./app arg1 arg2
 ```
 
+You can also invoke the Diamond binary from the application directory:
+
+```sh
+cd ../skindicate.dia
+../diamond/build/diamond build app.di
+```
+
 ## CLI contract
 
 ```text
@@ -32,6 +39,10 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   exits 65 -- the C compiler and `make` are never invoked in this case.
 - A `make`/link failure (a missing toolchain or system library) exits 74.
 - On success, prints `diamond: built 'OUTPUT'` and exits 0.
+- The compiler finds its own build checkout from the Diamond executable,
+  while `SOURCE` and relative `OUTPUT` paths resolve from the caller's
+  working directory. The checkout still supplies the C sources and
+  Makefile used for linking.
 
 At the language level, the produced binary behaves exactly like
 `diamond program.di`: it sets `ARGV` from its own command-line arguments and
@@ -51,17 +62,11 @@ needed).
   portable across machines as `diamond` itself is, no more and no less.
 - **Not cross-compilation.** The binary targets the machine `diamond build`
   ran on.
-- **Must be run *from* the repository checkout, not run *against* one
-  afterward.** `diamond build` invokes `make aot-build` to link the binary,
-  the same assumption `make dap`/`make lsp` already make about their own
-  build targets -- there is no separate "install Diamond system-wide" story
-  yet for it to build against instead. This is a **build-time** constraint
-  only: the finished binary has no dependency on the checkout at *run*
-  time. It can be copied anywhere, including a machine with no Diamond
-  checkout on it at all, and run from any working directory (confirmed
-  directly: copying a built binary outside the repo, then running it from
-  an unrelated directory, produces identical output to running it from
-  inside the checkout).
+- **The Diamond build checkout is still needed at build time.** `diamond
+  build` invokes its checkout's `make aot-build` target to link the binary;
+  there is no separate installed runtime library yet. The finished binary
+  has no dependency on the checkout at run time and can run from any
+  working directory, including on a machine with no Diamond checkout.
 
 See [docs/roadmap.md](roadmap.md) for what's explicitly deferred here
 (cross-compilation, a real install step, static linking).

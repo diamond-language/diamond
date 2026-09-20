@@ -245,11 +245,10 @@ up, none attempted yet, none committed:
 - **cross-compilation** -- building for a target other than the machine
   `diamond build` runs on. Needs a real story for cross-linking against
   OpenSSL/SQLite3/`libpq`/MariaDB for the target, not just a compiler flag;
-- **a real install step** -- removing the "must run from the repo
-  checkout" build-time constraint (`diamond build` invokes `make
-  aot-build` directly today, the same assumption `make dap`/`make lsp`
-  already make about their own targets) would need Diamond's own headers/
-  sources installed somewhere `aot-build` could find without a checkout;
+- **a real install step** -- `diamond build` can run from an application
+  directory, but it still invokes `make aot-build` in the checkout found
+  from its executable. Building without that source checkout would need
+  Diamond's headers and sources installed elsewhere;
 - **static linking** -- a fully hermetic binary with no dynamic dependency
   on OpenSSL/SQLite3/`libpq`/MariaDB/zlib/`libcrypt` at all. Not attempted
   because `diamond` itself doesn't link statically either; doing this for

@@ -19,6 +19,8 @@
 
 static constexpr char DIAMOND_VERSION[] = "0.6.0";
 
+static char *absolute_path(const char *path);
+
 static char *read_file(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) {
@@ -109,8 +111,14 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
         char *path_out, size_t path_out_capacity) {
     const char *tmp_dir = getenv("TMPDIR");
     if (tmp_dir == nullptr || tmp_dir[0] == '\0') tmp_dir = "/tmp";
+    char *absolute_tmp_dir = absolute_path(tmp_dir);
+    if (absolute_tmp_dir == nullptr) {
+        fprintf(stderr, "diamond: cannot resolve temporary directory\n");
+        return false;
+    }
     const int written = snprintf(path_out, path_out_capacity,
-        "%s/diamond-aot-XXXXXX", tmp_dir);
+        "%s/diamond-aot-XXXXXX", absolute_tmp_dir);
+    free(absolute_tmp_dir);
     if (written < 0 || (size_t)written >= path_out_capacity) {
         fprintf(stderr, "diamond: temporary directory path is too long\n");
         return false;
@@ -175,31 +183,116 @@ static char *make_assignment(const char *name,const char *value) {
     return assignment;
 }
 
-/* Runs `make aot-build AOT_EMBED=... AOT_OUTPUT=... [CC=...]` (the
+static char *absolute_path(const char *path) {
+    if (path[0] == '/') return strdup(path);
+    char *cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) return nullptr;
+    const size_t length = strlen(cwd) + 1 + strlen(path) + 1;
+    char *result = malloc(length);
+    if (result != nullptr) snprintf(result, length, "%s/%s", cwd, path);
+    free(cwd);
+    return result;
+}
+
+/* Resolve the binary itself, including when invoked as `diamond` via PATH
+ * or through a symlink. /proc/self/exe also handles a custom argv[0] on
+ * Linux; the argv/PATH path works on other POSIX systems. */
+static char *executable_path(const char *argv0) {
+#if defined(__linux__)
+    char proc_path[4096];
+    const ssize_t count = readlink("/proc/self/exe", proc_path,
+        sizeof proc_path - 1);
+    if (count > 0 && (size_t)count < sizeof proc_path - 1) {
+        proc_path[count] = '\0';
+        return realpath(proc_path, nullptr);
+    }
+#endif
+    if (strchr(argv0, '/') != nullptr) return realpath(argv0, nullptr);
+    const char *path = getenv("PATH");
+    if (path == nullptr) return nullptr;
+    char *copy = strdup(path);
+    if (copy == nullptr) return nullptr;
+    char *entry = copy;
+    char *resolved = nullptr;
+    while (entry != nullptr) {
+        char *separator = strchr(entry, ':');
+        if (separator != nullptr) *separator = '\0';
+        const char *directory = entry[0] == '\0' ? "." : entry;
+        const size_t length = strlen(directory) + 1 + strlen(argv0) + 1;
+        char *candidate = malloc(length);
+        if (candidate == nullptr) break;
+        snprintf(candidate, length, "%s/%s", directory, argv0);
+        if (access(candidate, X_OK) == 0) resolved = realpath(candidate, nullptr);
+        free(candidate);
+        if (resolved != nullptr || separator == nullptr) break;
+        entry = separator + 1;
+    }
+    free(copy);
+    return resolved;
+}
+
+static bool has_build_files(const char *directory) {
+    static const char *const files[] = {
+        "Makefile", "src/main.c", "tools/aot_runtime_main.c"};
+    for (size_t index = 0; index < sizeof files / sizeof files[0]; index++) {
+        const size_t length = strlen(directory) + 1 + strlen(files[index]) + 1;
+        char *path = malloc(length);
+        if (path == nullptr) return false;
+        snprintf(path, length, "%s/%s", directory, files[index]);
+        const bool exists = access(path, F_OK) == 0;
+        free(path);
+        if (!exists) return false;
+    }
+    return true;
+}
+
+static char *diamond_repo_root(const char *argv0) {
+    char *path = executable_path(argv0);
+    if (path == nullptr) return nullptr;
+    char *slash = strrchr(path, '/');
+    if (slash == nullptr) { free(path); return nullptr; }
+    if (slash == path) slash[1] = '\0';
+    else *slash = '\0';
+    while (!has_build_files(path)) {
+        slash = strrchr(path, '/');
+        if (slash == nullptr || slash == path) {
+            free(path);
+            return nullptr;
+        }
+        *slash = '\0';
+    }
+    return path;
+}
+
+/* Runs `make -C REPO aot-build AOT_EMBED=... AOT_OUTPUT=... [CC=...]` (the
  * Makefile target added alongside diamond-lsp/diamond-dap's own) via
- * fork/execvp -- not system(3), so none of these paths ever pass
- * through a shell, sidestepping shell-quoting entirely. Requires a
- * `./Makefile` in the current directory, the same "run from the repo
- * root" assumption `make dap`/`make lsp` already make -- there is no
- * separate "install Diamond" story yet for this to build against
- * instead (see docs/roadmap.md's own note on this). */
+ * fork/execvp -- not system(3), so make receives these assignments as
+ * distinct arguments. The Makefile
+ * lives alongside the executable's source checkout; the app and output
+ * paths still belong to the caller's working directory. */
 static int run_make_aot_build(const char *embed_path, const char *output_path,
-        const char *cc) {
-    if (access("Makefile", F_OK) != 0) {
-        fprintf(stderr,
-            "diamond: 'diamond build' must be run from the Diamond repository root\n");
+        const char *cc, const char *argv0) {
+    char *repo_root = diamond_repo_root(argv0);
+    char *absolute_embed = absolute_path(embed_path);
+    char *absolute_output = absolute_path(output_path);
+    if (repo_root == nullptr || absolute_embed == nullptr || absolute_output == nullptr) {
+        fprintf(stderr, "diamond: cannot locate Diamond build files or resolve build paths\n");
+        free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
     }
-    char *embed_arg=make_assignment("AOT_EMBED",embed_path);
-    char *output_arg=make_assignment("AOT_OUTPUT",output_path);
+    char *embed_arg=make_assignment("AOT_EMBED",absolute_embed);
+    char *output_arg=make_assignment("AOT_OUTPUT",absolute_output);
     char *cc_arg=cc!=nullptr?make_assignment("CC",cc):nullptr;
     if(embed_arg==nullptr||output_arg==nullptr||(cc!=nullptr&&cc_arg==nullptr)) {
         fprintf(stderr,"diamond: out of memory\n");
-        free(embed_arg);free(output_arg);free(cc_arg);return 74;
+        free(embed_arg);free(output_arg);free(cc_arg);
+        free(repo_root);free(absolute_embed);free(absolute_output);return 74;
     }
-    char *args[8];
+    char *args[10];
     size_t arg_count = 0;
     args[arg_count++] = (char *)"make";
+    args[arg_count++] = (char *)"-C";
+    args[arg_count++] = repo_root;
     args[arg_count++] = (char *)"aot-build";
     args[arg_count++] = embed_arg;
     args[arg_count++] = output_arg;
@@ -212,6 +305,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     if (child < 0) {
         fprintf(stderr, "diamond: fork failed: %s\n", strerror(errno));
         free(embed_arg);free(output_arg);free(cc_arg);
+        free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
     }
     if (child == 0) {
@@ -223,9 +317,11 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     if (waitpid(child, &status, 0) < 0) {
         fprintf(stderr, "diamond: waitpid failed: %s\n", strerror(errno));
         free(embed_arg);free(output_arg);free(cc_arg);
+        free(repo_root);free(absolute_embed);free(absolute_output);
         return 74;
     }
     free(embed_arg);free(output_arg);free(cc_arg);
+    free(repo_root);free(absolute_embed);free(absolute_output);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         fprintf(stderr, "diamond: build failed\n");
         return 74;
@@ -239,8 +335,7 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
  * file for it, and links that plus tools/aot_runtime_main.c into a
  * standalone executable via the Makefile's own aot-build target. See
  * docs/deployment.md for the full contract and its current limitations
- * (still dynamically links whatever `diamond` itself does; must run from
- * the repo root). */
+ * (still dynamically links whatever `diamond` itself does). */
 static int handle_build_command(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]\n");
@@ -313,7 +408,7 @@ static int handle_build_command(int argc, char **argv) {
         return 74;
     }
 
-    const int status = run_make_aot_build(embed_path, output_path, cc);
+    const int status = run_make_aot_build(embed_path, output_path, cc, argv[0]);
     unlink(bin_path);
     unlink(embed_path);
     if (status == 0) printf("diamond: built '%s'\n", output_path);
@@ -340,7 +435,7 @@ static void print_usage(FILE *stream) {
           "\n"
           "'diamond build' compiles SOURCE into a standalone executable (default\n"
           "output: SOURCE's own basename with its extension stripped) -- see\n"
-          "docs/deployment.md. Must be run from the Diamond repository root.\n"
+          "docs/deployment.md. The Diamond build checkout must be available.\n"
           "\n"
           "ARGS after FILE or CODE are available to the program through ARGV.\n",
           stream);
