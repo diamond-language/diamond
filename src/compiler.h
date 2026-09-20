@@ -37,6 +37,16 @@ typedef struct DiamondProgram {
      * (set in diamond_program_init, alongside every other zero-init
      * default) until then/if never found. */
     uint8_t range_class_index;
+    /* True the moment DIAMOND_OP_REDEFINE_METHOD is emitted anywhere
+     * during this compile (parse_redefine_method_call, src/compiler.c) --
+     * broadcast onto every DiamondFunction.redefine_method_used_anywhere
+     * at the end of diamond_compile_impl's real pass (see that field's
+     * own comment, src/vm.h, for why src/jit.c needs this snapshotted
+     * per-function rather than reading it here directly). Zeroed by
+     * diamond_program_init's own memset like every other field here, so
+     * a reused DiamondProgram (tests/run_cases.c's own batch loop) starts
+     * fresh each compile, never inheriting a previous program's flag. */
+    bool uses_redefine_method;
 } DiamondProgram;
 
 typedef struct DiamondDiagnostic {

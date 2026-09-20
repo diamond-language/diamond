@@ -31,6 +31,20 @@ authoritative fine-grained record.
   attr_accessor-generated writer, or a struct-declared field, both used
   to look "never assigned" instead of contributing a real known-class (or
   correctly-unknown) fact. See docs/internal/jit-design.md's "Phase 11".
+- JIT now also compiles `.method()` on a local whose only assignment is a
+  method call resolved to a target with a declared, single-concrete-class
+  return type (`x = obj.method(); ...; x.other()`), when `obj` is itself a
+  typed parameter or a freshly-`new`'d local -- closing the roadmap's own
+  last-named `INVOKE`-receiver gap for that slice. Unlike Phase 10/11's own
+  facts, a method's return type can go stale at runtime via
+  `redefine_method`; a new whole-program flag (set the moment
+  `redefine_method` is called anywhere, on any class) disables this
+  optimization program-wide when that happens, rather than risking a wrong
+  dispatch. `self` and an ivar load are not yet valid receivers for the
+  *inner* call specifically (neither currently feeds the compiler's own
+  static type tracking this depends on) -- a real, separately fixable gap,
+  not something this change silently drops. See docs/internal/
+  jit-design.md's "Phase 12".
 
 ## 0.6.0
 

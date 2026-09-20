@@ -1486,10 +1486,24 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
                     !decode_u16(fn, &pc, &b) || !decode_u8(fn, &pc, &d)) return -1;
                 break;
             }
+            /* Phase 12 (docs/internal/jit-design.md): a third class-
+             * producing terminal, alongside NEW and GET_IVAR above -- an
+             * INVOKE result the *compiler* already proved (real
+             * semantics, via publish_instance_return_type, not LSP
+             * heuristics) holds a single concrete class. Gated on
+             * !fn->redefine_method_used_anywhere -- see that field's own
+             * comment (src/vm.h) for why a method's declared return type,
+             * unlike NEW's own class-index operand or Phase 11's ivar
+             * fact, can go stale at runtime via redefine_method, in a way
+             * nothing else this scan trusts can. */
             case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
                 uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
                     !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return -1;
+                if (writes_target && !fn->redefine_method_used_anywhere &&
+                    target_register < DIAMOND_JIT_MAX_REGISTERS &&
+                    fn->register_known_class[target_register] != UINT8_MAX)
+                    new_class = (int32_t)fn->register_known_class[target_register];
                 break;
             }
             case DIAMOND_OP_NEW: {

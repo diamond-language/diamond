@@ -54,15 +54,13 @@
  * replacement.
  */
 
-/* Duplicates vm.c's own file-local DIAMOND_INLINE_REGISTER_COUNT (not
- * visible outside vm.c) -- a JIT-eligible function's register_count must
- * fit this v1's call-site stack array (src/vm.c's DIAMOND_OP_CALL
- * interception), which never heap-allocates the way run_chunk itself does
- * for an oversized function. If vm.c's own constant ever changes, this one
- * must be updated to match by hand; there is no shared header value to
- * derive it from without exposing vm.c's own array-sizing choice more
- * broadly than it needs to be. */
-enum { DIAMOND_JIT_MAX_REGISTERS = 256 };
+/* DIAMOND_JIT_MAX_REGISTERS itself now lives in src/vm.h (see that file's
+ * own comment on it) -- DiamondFunction.register_known_class (Phase 12,
+ * docs/internal/jit-design.md) needed the same bound visible from
+ * src/compiler.c, which doesn't include this header, so the canonical
+ * definition moved to the lower-level header both already include rather
+ * than staying duplicated. jit.h's own #include "vm.h" above already
+ * brings it in. */
 
 /* Phase 2d: the sentinel DiamondJitFn returns to mean "discard this
  * attempt, fall back to run_chunk" -- every value that isn't this AND

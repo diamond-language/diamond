@@ -1297,6 +1297,129 @@ state has no per-field class-index table the way a real class's fields[]
 does); a register reassigned anywhere in the function, even to another
 read of the exact same ivar -- no flow-sensitive narrowing.
 
+### Phase 12: `DIAMOND_OP_INVOKE` joins `NEW`/`GET_IVAR` as a third class-producing terminal
+
+Closes the roadmap's remaining named `INVOKE`-receiver gap: `x =
+obj.method(); ...; x.other()`, `x` never reassigned after the call.
+Unlike Phase 10/11's own proofs (an object's class is fixed forever; a
+field's declared type can't change at runtime), a *method's* declared
+return type genuinely can go stale -- `redefine_method` replaces a
+class's own method dispatch entry at runtime with **no return-type
+compatibility check at all** (confirmed directly against its own
+`DIAMOND_OP_REDEFINE_METHOD` case, `src/vm.c`: only arity/variadic must
+match). Traced the actual risk precisely rather than assuming a general
+"might be wrong" hand-wave: `diamond_jit_invoke_instance` (the shared
+trampoline every one of Phases 7/9/10/11 already calls) is **Instance-
+only** -- on a non-Instance receiver it unconditionally raises
+`DIAMOND_VM_TYPE_ERROR` ("undefined method X for Y") **without checking
+whether Y actually has a real method named X** (native types have their
+own, entirely separate dispatch block the interpreter never routes
+through this trampoline). So if `redefine_method` swaps a resolved
+target for one returning e.g. an `Int`, and the real `Int` happens to
+have a method by the name the chain calls, this path would incorrectly
+report "undefined method" instead of correctly dispatching -- a genuine
+behavioral divergence from the interpreter, not just a wasted compile.
+`define_method` (the sibling opcode) needed no such gate: confirmed it
+hard-rejects installing a method under a name the class already has, so
+it can only ever add a genuinely new name, never invalidate an already-
+resolved one.
+
+**The mechanism**: the compiler's own real method-call-compiling code
+(`publish_instance_return_type`/`instance_call_signature`, `src/
+compiler.c`) already resolves `obj.method()`'s target and its *declared*
+return type into `known_types[reg]`/`known_type_sets[reg]` for real
+semantic purposes (structural type-checking, generics) whenever
+`obj`'s own class is already known to the compiler -- not new work, and
+a fundamentally more trustworthy source than the LSP's
+`DiamondScopeTypeFact` table Phase 10 investigated and rejected (that
+one is a best-effort, non-exhaustive, hover-only heuristic; this one is
+load-bearing for actual type-checking today). Crucially, `publish_call_
+return_type` only feeds this real path for a target with an *explicit,
+declared* `-> Type` return annotation -- an inferred-only return is
+deliberately routed to a separate, tooling-only array instead, with
+its own comment: "never known_type_sets (and therefore never type
+checks or opcode choice)." Phase 12 only ever trusts the declared path.
+
+A new `DiamondFunction.register_known_class[DIAMOND_JIT_MAX_REGISTERS]`
+(`src/vm.h`) snapshots this per-register fact -- populated inside
+`publish_instance_return_type` itself (one shared function all of its
+five call sites already funnel through, not duplicated per call site,
+avoiding the kind of gap that caused two of Phase 11's own bugs) --
+exactly like Phase 11's `ivar_known_class`, since `src/jit.c` still has
+zero `DiamondProgram`/class-table access by design. Gated on a new
+whole-program `DiamondFunction.redefine_method_used_anywhere` flag
+(`true` the instant `DIAMOND_OP_REDEFINE_METHOD` is emitted anywhere,
+broadcast onto every function at the end of `diamond_compile_impl`'s
+real pass, mirroring how `ivar_known_class` is broadcast per-class).
+Coarse (whole-program, not per-method) by design: `redefine_method`'s
+own target-method-name argument is a runtime `String` value, not
+reliably a compile-time literal, so a precise per-(class,method) gate
+would need new string-literal tracking for a precision gain not worth
+it without a real program that both uses `redefine_method` *and* wants
+this optimization elsewhere.
+
+With the snapshot and gate in place, `src/jit.c`'s `register_new_class_
+or_move_src` needed exactly one new case -- `DIAMOND_OP_INVOKE`/
+`INVOKE_MONO` recognized as a third class-producing terminal alongside
+`NEW` and `GET_IVAR` -- and **zero** changes to `register_new_class_if_
+sole_writer`'s MOVE-chase, `parameter_never_reassigned`, or the
+`compile_body` `INVOKE` case's own `register_new_class_if_sole_writer(
+...) >= 0` eligibility check, which picks the new terminal up for free.
+
+**A real, narrower-than-planned scope, found empirically not assumed**:
+the plan going in was "this just works for any of Phases 7/9/10/11's
+own already-provable receivers, since the compiler's real type-tracking
+doesn't care which of those proved `obj`." Verified directly with a
+temporary trace before trusting it, and found this is only half true.
+`obj` being a **typed, never-reassigned parameter** (Phase 9) or a
+**freshly-`NEW`'d local** (Phase 10) works exactly as designed --
+`known_types[obj]` is genuinely populated in both cases, confirmed via
+`--dump-bytecode` and a real compiled-function trace. `obj` being
+**`self`** or an **ivar load** (Phase 7/11's own receivers) does *not*
+currently chain: `self`'s own register (0) never gets a `known_types`
+entry at all (nothing in `compile_definition` ever sets it -- `self.
+method()` dispatch is handled entirely at the bytecode/JIT level, with
+no compiler-side type-tracking counterpart), and an ivar read (`x =
+@field`) likewise never touches `known_types[x]` (Phase 11's own
+`ivar_known_class` is a JIT-only side channel, not wired into the
+compiler's real semantic tracking at all). Confirmed both gaps
+directly: `f = Factory.new(); x = f.make(); x.double()` and `x =
+f.make(); x.double()` (`f` a typed parameter) both correctly compile;
+`x = self.make(); x.double()` and `x = @f; y = x.make(); y.double()`
+both correctly do not, with zero difference in `register_known_class`
+or the `redefine_method` gate -- the resolution step itself simply
+never runs for either. Left as a documented, real limitation rather
+than silently overclaiming generality; closing either is real,
+separate follow-on work (wiring `self`'s own register, or an ivar
+read, into the compiler's `known_types` tracking the same way a typed
+parameter already is), not something this phase's own mechanism needed
+to (or does) cover.
+
+**Verified**: `--dump-bytecode` confirmed `x = obj.method()` compiles to
+`INVOKE` directly targeting `x`'s own register (no intervening `MOVE`
+the way `NEW`/`GET_IVAR` need, since `INVOKE`'s own destination operand
+already *is* wherever the compiler placed the call's result) -- Phase
+10/11's own MOVE-chase still runs unconditionally afterward and simply
+finds zero hops needed, no special-casing required. New `tests/cases/
+jit_invoke_result*` cover: the basic typed-parameter-chain case, the
+`NEW`-local-chain case, a reassigned intermediate local still bailing,
+a real override on the *inner* call (`x.double()`, dispatched through a
+subclass actually constructed by the outer call) still correct -- not
+devirtualized, an inferred-only (no `-> Type`) return type still
+correctly not trusted, and a `redefine_method` call anywhere in the
+program (on a completely unrelated class) disabling the optimization
+for a function nowhere near it -- each eligibility claim confirmed via
+a temporary per-function compiled/ineligible trace, not just a raw
+count. Full bar: debug suite (1582/1582 including the new cases),
+ASan/UBSan (via `build/run_cases` directly plus the JIT+`DIAMOND_
+STRESS_GC` combination -- this sandbox's own `tests/run.sh` signal test
+is independently flaky, confirmed via a stash-everything control run,
+unrelated to this phase). Release A/B benchmark (`bench/jit_invoke_
+result.di`, a hot loop calling a typed parameter's method and then a
+method on *that* result every iteration): ~33% faster JIT'd (~0.9s ->
+~0.6s, release build, stable across repeated runs), in the same range
+as every prior `INVOKE`-dispatch phase's own ~35-38%.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

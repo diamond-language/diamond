@@ -3970,6 +3970,9 @@ static uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) 
     emit_register(compiler,name_register);
     emit_register(compiler,callable_register);
     compiler->known_types[dest] = DIAMOND_TYPE_NIL;
+    /* See DiamondProgram.uses_redefine_method's own comment: this is the
+     * one place DIAMOND_OP_REDEFINE_METHOD is ever emitted. */
+    compiler->program->uses_redefine_method = true;
     return dest;
 }
 
@@ -7565,6 +7568,31 @@ static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         }
         publish_union_instance_return_type(compiler,reg,effective_set,
             name,bindings,binding_count,tooling_only);
+    }
+    /* Phase 12 (docs/internal/jit-design.md): snapshot whatever known_
+     * types[reg] the real (non-tooling) branches just above set -- either
+     * one, matching_target's own declared return type or a union
+     * receiver's joined one -- onto DiamondFunction.register_known_class
+     * for src/jit.c's later use, bounds-checked since a function with
+     * more registers than DIAMOND_JIT_MAX_REGISTERS is already
+     * unconditionally JIT-ineligible (see that field's own comment,
+     * src/vm.h, for the full reasoning). Reading known_types[reg] here,
+     * after the fact, rather than threading a "was this concrete" flag
+     * out of publish_call_return_type/publish_union_instance_return_type
+     * individually keeps this a single check regardless of which path
+     * (or neither -- an inferred-only or unresolved return leaves
+     * known_types[reg] exactly as it was before this call, decoding to
+     * "not concrete" the same way an untouched register already does)
+     * actually fired. */
+    if(reg<DIAMOND_JIT_MAX_REGISTERS) {
+        const uint8_t known=compiler->known_types[reg];
+        /* known_types[reg] holds the full type id (DIAMOND_TYPE_CLASS_BASE
+         * + class index, compile_assignment_store's own identical decode)
+         * -- subtract the base to get the plain class index Phase 10/11's
+         * own ivar_known_class/NEW-class-index terminals already use. */
+        compiler->function->register_known_class[reg]=
+            known>=DIAMOND_TYPE_CLASS_BASE&&known<DIAMOND_TYPE_VARIABLE_BASE?
+                (uint8_t)(known-DIAMOND_TYPE_CLASS_BASE):UINT8_MAX;
     }
     publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
 }
@@ -17081,6 +17109,16 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
+    /* See DiamondFunction.redefine_method_used_anywhere's own comment
+     * (src/vm.h): a single whole-program fact, snapshotted onto every
+     * function (including program->entry, the top-level program itself)
+     * since src/jit.c never sees DiamondProgram to read it directly. */
+    if(compiled) {
+        program->entry.redefine_method_used_anywhere=program->uses_redefine_method;
+        for(size_t index=0;index<program->function_count;index++)
+            program->functions[index]->redefine_method_used_anywhere=
+                program->uses_redefine_method;
+    }
     if(trace_compile) {
         clock_gettime(CLOCK_MONOTONIC,&trace_end);
         const double discovery_seconds=

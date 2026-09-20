@@ -82,6 +82,17 @@ enum {
     DIAMOND_MAX_DECLARED_PARAMETERS = 32,
     DIAMOND_MAX_METHODS = 256,
     DIAMOND_MAX_FIELDS = 64,
+    /* A JIT-eligible function's register_count must fit this v1's call-site
+     * stack array (src/vm.c's DIAMOND_OP_CALL interception), which never
+     * heap-allocates the way run_chunk itself does for an oversized
+     * function -- see src/jit.c's diamond_jit_try_compile, which rejects
+     * anything larger outright. Lives here (not src/jit.h, where it
+     * originated) because DiamondFunction.register_known_class below
+     * (Phase 12, docs/internal/jit-design.md) needs the same bound visible
+     * from src/compiler.c, which doesn't include jit.h; jit.h's own
+     * #include "vm.h" still brings this in unchanged for every existing
+     * caller. */
+    DIAMOND_JIT_MAX_REGISTERS = 256,
     DIAMOND_MAX_NAMESPACE_CONSTANTS = 128,
     /* Compile-time ceiling and READ_SHORT-encoded bytecode operand range
      * (big-endian 16-bit, matching the JUMP-target/function-index
@@ -941,6 +952,51 @@ typedef struct DiamondFunction {
      * struct assignment carries it across a Thread.new/gremlin_serve clone
      * for free, same as every other fixed-size DiamondFunction field. */
     uint8_t ivar_known_class[DIAMOND_MAX_FIELDS];
+    /* JIT-only (src/jit.c, Phase 12, docs/internal/jit-design.md): the
+     * third class-producing terminal alongside DIAMOND_OP_NEW (Phase 10)
+     * and DIAMOND_OP_GET_IVAR (Phase 11) -- for a DIAMOND_OP_INVOKE/
+     * INVOKE_MONO instruction whose destination register the *compiler*
+     * already proved (real semantics, not LSP heuristics) holds a single
+     * concrete class, register_known_class[dest] is that class, else
+     * UINT8_MAX. Populated by publish_instance_return_type (src/
+     * compiler.c) immediately after it sets known_types[dest] via the
+     * *declared* (never inferred-only) return-type path -- see that
+     * function's own comment for why the inferred-only path must never
+     * feed this. Sized DIAMOND_JIT_MAX_REGISTERS, not a function's real
+     * register_count: any function needing more registers than that is
+     * already unconditionally JIT-ineligible (diamond_jit_try_compile's
+     * own gate), so the compiler bounds-checks its own write against this
+     * same constant and simply skips recording the fact past it -- a
+     * missed optimization for a function that could never be JIT-compiled
+     * anyway, never a correctness gap. Trustworthy only when this
+     * function's own redefine_method_used_anywhere (below) is false --
+     * see that field's own comment for why a method's return type, unlike
+     * an ivar's declared type, can go stale at runtime. */
+    uint8_t register_known_class[DIAMOND_JIT_MAX_REGISTERS];
+    /* JIT-only (src/jit.c, Phase 12): true if `redefine_method` is called
+     * *anywhere* in the whole program (not just on this function's own
+     * class) -- broadcast identically onto every function at the end of
+     * diamond_compile_impl's real compile pass, the same "compute once at
+     * the program level, snapshot per-function since src/jit.c never sees
+     * DiamondProgram" shape ivar_known_class already uses per-class.
+     * `redefine_method` replaces a class's own method dispatch entry at
+     * runtime with no return-type compatibility check at all (confirmed
+     * directly against its own DIAMOND_OP_REDEFINE_METHOD case, src/vm.c:
+     * only arity/variadic must match) -- so a register_known_class fact
+     * derived from a method's *declared* return type can go stale after
+     * such a call, in a way Phase 10's NEW-based fact (an object's class
+     * is fixed forever) and Phase 11's ivar-based fact (data, not
+     * dispatch) structurally cannot. Whole-program and coarse rather than
+     * per-(class,method) on purpose: redefine_method's own target method
+     * name is a runtime String value, not reliably a compile-time
+     * literal, so a precise "was *this* method ever redefined" check
+     * would need new string-literal tracking for a precision gain not
+     * worth it without a real program that both uses redefine_method and
+     * wants this optimization elsewhere. `define_method` (the sibling
+     * opcode) needs no such flag: it hard-rejects installing a method
+     * under a name the class already has, so it can only ever add a
+     * genuinely new name, never invalidate an already-resolved one. */
+    bool redefine_method_used_anywhere;
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
      * slots are deliberately excluded. */
