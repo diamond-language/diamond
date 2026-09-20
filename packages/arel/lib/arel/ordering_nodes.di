@@ -6,7 +6,7 @@ module Arel
       @name = name
     end
     def expression() = @expression
-    def name() = @name
+    def name() -> String = @name
   end
 
   class Ordering
@@ -16,7 +16,7 @@ module Arel
       @nulls = nulls
     end
     def expression() = @expression
-    def direction() = @direction
+    def direction() -> String = @direction
     def nulls() = @nulls
     def nulls_first() = Ordering.new(@expression, @direction, "FIRST")
     def nulls_last() = Ordering.new(@expression, @direction, "LAST")
@@ -28,7 +28,7 @@ module Arel
       @name = name
     end
     def expression() = @expression
-    def name() = @name
+    def name() -> String = @name
   end
 
 end

@@ -28,14 +28,14 @@ module Arel
         table.table_alias())
     end
 
-    def table_name() = @table_name
-    def predicates() = @predicates
-    def orderings() = @orderings
+    def table_name() -> String = @table_name
+    def predicates() -> Array = @predicates
+    def orderings() -> Array = @orderings
     def limit_value() = @limit_value
     def offset_value() = @offset_value
-    def projections() = @projections
-    def quoted_identifiers() = @quoted_identifiers
-    def bind_limits() = @bind_limits
+    def projections() -> Array = @projections
+    def quoted_identifiers() -> Bool = @quoted_identifiers
+    def bind_limits() -> Bool = @bind_limits
     def table_alias() = @table_alias
     def base_reference_name()
       if @table_alias == nil
@@ -44,14 +44,14 @@ module Arel
         @table_alias
       end
     end
-    def distinct_value() = @distinct_value
-    def groups() = @groups
-    def havings() = @havings
-    def joins() = @joins
+    def distinct_value() -> Bool = @distinct_value
+    def groups() -> Array = @groups
+    def havings() -> Array = @havings
+    def joins() -> Array = @joins
     def source_query() = @source_query
-    def correlations() = @correlations
-    def ctes() = @ctes
-    def projection_count() = @projections.length()
+    def correlations() -> Array = @correlations
+    def ctes() -> Array = @ctes
+    def projection_count() -> Int = @projections.length()
     def projection_count_known?() -> Bool
       if @projections.length() != 1
         return true

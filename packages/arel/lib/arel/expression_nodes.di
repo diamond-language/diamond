@@ -9,9 +9,9 @@ module Arel
       @arguments = arguments
       @distinct = distinct
     end
-    def name() = @name
-    def arguments() = @arguments
-    def distinct?() = @distinct
+    def name() -> String = @name
+    def arguments() -> Array = @arguments
+    def distinct?() -> Bool = @distinct
     def eq(value) = Predicate.new(self, "=", value)
     def not_eq(value) = Predicate.new(self, "!=", value)
     def lt(value) = Predicate.new(self, "<", value)
@@ -38,9 +38,9 @@ module Arel
       @bind_right = bind_right
     end
     def left() = @left
-    def operator() = @operator
+    def operator() -> String = @operator
     def right() = @right
-    def bind_right?() = @bind_right
+    def bind_right?() -> Bool = @bind_right
     def add(value) = BinaryExpression.new(self, "+", value)
     def subtract(value) = BinaryExpression.new(self, "-", value)
     def multiply(value) = BinaryExpression.new(self, "*", value)
@@ -81,7 +81,7 @@ module Arel
       @type_name = type_name
     end
     def expression() = @expression
-    def type_name() = @type_name
+    def type_name() -> String = @type_name
   end
 
 end

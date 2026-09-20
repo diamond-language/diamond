@@ -14,7 +14,7 @@ module Arel
       @right = right
     end
     def left() = @left
-    def operator() = @operator
+    def operator() -> String = @operator
     def right() = @right
     def and_also(other) = Logical.new(self, "AND", other)
     def or_else(other) = Logical.new(self, "OR", other)
@@ -28,7 +28,7 @@ module Arel
       @right = right
     end
     def left() = @left
-    def operator() = @operator
+    def operator() -> String = @operator
     def right() = @right
     def and_also(other) = Logical.new(self, "AND", other)
     def or_else(other) = Logical.new(self, "OR", other)
@@ -43,7 +43,7 @@ module Arel
     end
     def left() = @left
     def values() = @values
-    def negated?() = @negated
+    def negated?() -> Bool = @negated
     def and_also(other) = Logical.new(self, "AND", other)
     def or_else(other) = Logical.new(self, "OR", other)
     def not_() = Not.new(self)
@@ -59,7 +59,7 @@ module Arel
     def left() = @left
     def lower() = @lower
     def upper() = @upper
-    def negated?() = @negated
+    def negated?() -> Bool = @negated
     def and_also(other) = Logical.new(self, "AND", other)
     def or_else(other) = Logical.new(self, "OR", other)
     def not_() = Not.new(self)

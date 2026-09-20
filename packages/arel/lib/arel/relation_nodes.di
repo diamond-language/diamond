@@ -6,7 +6,7 @@ module Arel
       @name = name
     end
     def table() = @table
-    def name() = @name
+    def name() -> String = @name
     def eq(value) = Predicate.new(self, "=", value)
     def not_eq(value) = Predicate.new(self, "!=", value)
     def lt(value) = Predicate.new(self, "<", value)
@@ -51,7 +51,7 @@ module Arel
       @name = name
       @table_alias = table_alias
     end
-    def name() = @name
+    def name() -> String = @name
     def table_alias() = @table_alias
     def reference_name()
       if @table_alias == nil
@@ -70,8 +70,8 @@ module Arel
       @sql = sql
       @params = params
     end
-    def sql() = @sql
-    def params() = @params
+    def sql() -> String = @sql
+    def params() -> Array = @params
     def and_also(other) = Logical.new(self, "AND", other)
     def or_else(other) = Logical.new(self, "OR", other)
     def not_() = Not.new(self)
@@ -81,7 +81,7 @@ module Arel
     def initialize(name: String)
       @name = name
     end
-    def name() = @name
+    def name() -> String = @name
     def add(value) = BinaryExpression.new(self, "+", value)
   end
 
@@ -89,7 +89,7 @@ module Arel
     def initialize(name: String)
       @name = name
     end
-    def name() = @name
+    def name() -> String = @name
     def eq(value) = Predicate.new(self, "=", value)
     def not_eq(value) = Predicate.new(self, "!=", value)
   end
