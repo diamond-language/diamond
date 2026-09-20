@@ -1707,6 +1707,9 @@ struct DiamondVm {
 };
 
 void diamond_vm_init(DiamondVm *vm);
+/* Apply the same opt-in JIT environment settings to interpreted and
+ * standalone programs after diamond_vm_init. */
+void diamond_vm_configure_jit_from_env(DiamondVm *vm);
 void diamond_vm_free(DiamondVm *vm);
 void diamond_vm_collect(DiamondVm *vm);
 void diamond_vm_collect_minor(DiamondVm *vm);

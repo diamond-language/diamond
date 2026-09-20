@@ -811,3 +811,24 @@ parameters nor `.new()` results, but through a method call's own return
 value assigned to a local -- still unsupported, see `docs/internal/
 jit-design.md`'s Phase 10 section for why that's a materially harder
 case (no compile-time-known class to attach, unlike `NEW`'s own operand).
+# Standalone Skindicate JIT (2026-09-20)
+
+After the standalone launcher began honoring `DIAMOND_JIT`, a local A/B
+used one `diamond build` executable and a copied development database
+(1,352 skins, 1,041 Winamp imports, migrated to the current schema). The
+program called Skindicate's real `app` handler for `GET /` directly, with
+70 warm-up requests followed by 80 timed requests. `LOG_LEVEL=error` kept
+request logging out of the timing. Four alternating runs, default JIT
+threshold (50 calls):
+
+| JIT | ms per timed request | Compiled functions | Bailouts |
+| --- | ---: | ---: | ---: |
+| off | 25.93 | 0 | 0 |
+| on | 23.96 | 67 | 0 |
+| on | 24.38 | 67 | 0 |
+| off | 25.58 | 0 | 0 |
+
+This is about a 6% local request-handler improvement. It excludes socket,
+proxy, and network time, and uses a smaller database than production; it is
+evidence that the standalone JIT executes real Skindicate code, not a
+production throughput claim.

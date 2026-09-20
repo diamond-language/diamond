@@ -127,25 +127,7 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
             vm.quickening_threshold = (size_t)parsed;
         }
     }
-    /* jit.c emits x86-64 machine code by design. Keep the runtime switch
-     * harmless on other architectures: an environment variable must never
-     * turn an unsupported backend into an illegal-instruction crash. The
-     * interpreter remains the portable execution path until another native
-     * backend exists. */
-#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
-    vm.jit = getenv("DIAMOND_JIT") != nullptr;
-#else
-    vm.jit = false;
-#endif
-    const char *jit_threshold = getenv("DIAMOND_JIT_THRESHOLD");
-    if (jit_threshold != nullptr && jit_threshold[0] != '\0') {
-        char *end = nullptr;
-        const unsigned long long parsed = strtoull(jit_threshold, &end, 10);
-        if (end != jit_threshold && *end == '\0' && parsed > 0 &&
-            parsed <= SIZE_MAX) {
-            vm.jit_threshold = (size_t)parsed;
-        }
-    }
+    diamond_vm_configure_jit_from_env(&vm);
     const char *mono_threshold = getenv("DIAMOND_IC_MONO_THRESHOLD");
     if (mono_threshold != nullptr && mono_threshold[0] != '\0') {
         char *end = nullptr;

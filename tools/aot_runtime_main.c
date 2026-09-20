@@ -12,10 +12,8 @@
  * diamond_vm_set_argv for ARGV, diamond_vm_run, diamond_value_print the
  * top-level result on success (confirmed directly against the real CLI:
  * `echo '"hello"' > f.di; diamond f.di` prints "hello" with no explicit
- * puts -- diamond_value_print is what does that). No DIAMOND_TRACE_
- * (name) or DIAMOND_STRESS_GC-style dev knobs here: those are for
- * developing Diamond itself, not for a program someone else's
- * `diamond build` shipped as a finished binary. */
+ * puts -- diamond_value_print is what does that). DIAMOND_JIT and
+ * DIAMOND_TRACE_JIT share the interpreter's opt-in behavior. */
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1
@@ -47,6 +45,7 @@ int main(int argc, char **argv) {
 
     DiamondVm vm;
     diamond_vm_init(&vm);
+    diamond_vm_configure_jit_from_env(&vm);
     diamond_vm_set_argv(&vm, argc > 1 ? argc - 1 : 0, argc > 1 ? argv + 1 : nullptr);
     const DiamondChunk chunk = diamond_program_chunk(program);
     DiamondValue result = DIAMOND_NIL;
@@ -61,6 +60,10 @@ int main(int argc, char **argv) {
     }
     diamond_value_print(result);
     putchar('\n');
+    if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
+        fprintf(stderr, "jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
+            vm.jit_compiled_functions, vm.jit_bailouts, vm.jit_hard_propagations);
+    }
     diamond_vm_free(&vm);
     diamond_program_free(program);
     free(program);

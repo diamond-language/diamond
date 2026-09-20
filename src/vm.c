@@ -1313,6 +1313,24 @@ void diamond_vm_init(DiamondVm *vm) {
     populate_default_argv_env(vm);
 }
 
+void diamond_vm_configure_jit_from_env(DiamondVm *vm) {
+    /* The native backend has only been validated on glibc x86-64. */
+#if (defined(__x86_64__) || defined(_M_X64)) && defined(__GLIBC__)
+    vm->jit = getenv("DIAMOND_JIT") != nullptr;
+#else
+    vm->jit = false;
+#endif
+    const char *threshold = getenv("DIAMOND_JIT_THRESHOLD");
+    if (threshold != nullptr && threshold[0] != '\0') {
+        char *end = nullptr;
+        const unsigned long long parsed = strtoull(threshold, &end, 10);
+        if (end != threshold && *end == '\0' && parsed > 0 &&
+            parsed <= SIZE_MAX) {
+            vm->jit_threshold = (size_t)parsed;
+        }
+    }
+}
+
 void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) {
     if(vm==nullptr)return;
     vm->root_queue=queue;

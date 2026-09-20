@@ -44,6 +44,22 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   working directory. The checkout still supplies the C sources and
   Makefile used for linking.
 
+## JIT in standalone programs
+
+Built executables use the same opt-in JIT settings as the interpreter:
+
+```sh
+DIAMOND_JIT=1 ./app
+DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 ./app
+```
+
+The default compilation threshold is 50 calls per eligible function. The
+JIT runs only on glibc x86-64; on other platforms the executable stays on
+the interpreter path. `DIAMOND_TRACE_JIT=1` prints compiled-function and
+bailout counts when the program returns normally; a server terminated by a
+signal may not emit that summary. The JIT remains off when `DIAMOND_JIT` is
+unset, including for standalone binaries.
+
 At the language level, the produced binary behaves exactly like
 `diamond program.di`: it sets `ARGV` from its own command-line arguments and
 prints its top-level result the same way (`diamond_value_print`, the same
