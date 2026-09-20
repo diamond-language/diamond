@@ -12524,6 +12524,32 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         function->required_arity=1;
         compiler->current_method = name;
         compiler->in_method = true;
+        /* JIT Phase 13 (docs/internal/jit-design.md): register 0 (self)
+         * genuinely holds an Instance of current_class here -- an
+         * ordinary instance method, or a def nested directly inside a
+         * singleton method (the redefine_method patch-factory idiom,
+         * which behaves exactly like an instance method, @ivar access
+         * included -- see nested_in_singleton_method's own comment
+         * above). Feeding this into known_types[0] the same way any
+         * other already-known-class register already is lets Phase 12's
+         * existing instance_call_signature/publish_instance_return_type
+         * resolve a self.foo() call's own return type, closing the
+         * "self.method().other()" half of Phase 12's own documented gap
+         * with no jit.c changes at all. Deliberately excludes direct_
+         * class_singleton_member (`def self.x`): self there is the
+         * literal *class* value (DIAMOND_OP_LOAD_CLASS, see emit_
+         * singleton_call's own comment), not an Instance -- tagging it
+         * as "known instance of current_class" would be actively wrong,
+         * not just an imprecise miss. direct_module_member is likewise
+         * excluded: a module has no class-table entry for instance_call_
+         * signature to resolve against at all. Must run after the
+         * allocate_register call just above, not before: allocate_
+         * register itself resets known_types[0] to TYPE_UNKNOWN on
+         * every call, so setting this any earlier would just be
+         * silently overwritten. */
+        if(direct_class_member||(nested_in_singleton_method&&compiler->current_class>=0))
+            compiler->known_types[0]=
+                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+compiler->current_class);
     } else if(captures_self) {
         /* self arrives entirely via capture, not an implicit-receiver
          * call convention -- no extra arity (a closure is called with

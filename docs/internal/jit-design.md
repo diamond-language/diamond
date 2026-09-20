@@ -1420,6 +1420,70 @@ method on *that* result every iteration): ~33% faster JIT'd (~0.9s ->
 ~0.6s, release build, stable across repeated runs), in the same range
 as every prior `INVOKE`-dispatch phase's own ~35-38%.
 
+#### Addendum: closing the `self` half of Phase 12's own documented gap
+
+Wiring `self`'s own register (0) into the same `known_types` tracking a
+typed parameter already gets turned out to be small: `compile_definition`
+(`src/compiler.c`) already knows, once per function, exactly which shape
+of `self` (if any) it has (`direct_class_member`, `direct_class_
+singleton_member`, `nested_in_singleton_method`, `direct_module_member`,
+`captures_self`); register 0 is allocated for the genuine-instance shapes
+at one `allocate_register(compiler)` call, which itself resets `known_
+types[0]` to `TYPE_UNKNOWN` (`enum { TYPE_UNKNOWN = UINT8_MAX }`, `src/
+compiler.c:18`) -- confirmed directly, since an earlier attempt at the
+`owner_class=...` assignment just above that call would have been
+silently overwritten by it. Right after that call, for `direct_class_
+member` or `nested_in_singleton_method` (the redefine_method patch-
+factory idiom, which behaves exactly like a genuine instance method,
+`@ivar` access included) with a real `current_class`, `known_types[0]`
+is now set to that class -- deliberately **excluding** `direct_class_
+singleton_member` (`def self.x`): confirmed against `emit_singleton_
+call`'s own comment that `self` there is the literal *class* value
+(`DIAMOND_OP_LOAD_CLASS`), not an Instance, so tagging it as "known
+instance of `current_class`" would be actively wrong, not just an
+imprecise miss; `self.` dispatch inside a singleton method already
+routes through the separate `parse_self_class_method_call`, confirmed
+never touching `publish_instance_return_type` at all either way.
+Zero `jit.c`/`vm.h` changes needed -- Phase 12's own `register_known_
+class` snapshot and `redefine_method_used_anywhere` gate are already
+generic over how a receiver's `known_types` entry got set.
+
+**Verified**: new `tests/cases/jit_invoke_result_self*` cover the basic
+case, a real override on the *inner* call (`self.make()` dispatched
+through a subclass instance the *enclosing* method's own class doesn't
+know about, confirming `self`'s own compile-time class doesn't need to
+match the runtime instance for correctness -- the same property every
+other `INVOKE`-dispatch phase already relies on), and the `nested_in_
+singleton_method` shape chaining too (installed via `define_method`
+rather than `redefine_method` specifically so the test doesn't trip its
+own whole-program `redefine_method_used_anywhere` flag and mask the
+thing being tested). Each eligibility claim confirmed via a temporary
+trace, including the delta with the fix stashed out. Full bar: debug
+suite (1585/1585), ASan/UBSan, JIT+`DIAMOND_STRESS_GC`, all green.
+~37% faster on a new `bench/jit_invoke_result_self.di` (release build).
+
+**A real, negative finding worth recording, not just the win**: rerunning
+this session's own isolated skindicate ORM microbenchmark (`Skin.random_
+sample` + the three `_for` batch loaders, called directly, no HTTP/
+template overhead) after this fix showed **no improvement** over Phase
+12 alone (~4.7%, versus ~4.5% before -- within noise, not a real
+delta), despite that hot path's own receivers being exactly the `self`-
+shaped calls this fix targets. Traced the reason directly rather than
+leaving it a mystery: Arel's own hot accessor methods named in Phase 8's
+original profile -- `Query#projections` (`def projections() = @projections`),
+`BinaryNode#left` (`def left() = @left`), and similar -- have **no
+explicit `-> Type` return annotation at all**. `publish_call_return_
+type` only ever feeds the real (non-tooling) `known_types` path for a
+*declared* return type (see Phase 12's own section) -- an inferred-only
+one is deliberately kept out of opcode-selection reach regardless of
+which receiver kind calls it. So the actual remaining blocker for
+*this specific workload* isn't a receiver-kind gap at all (Phases 9/10/
+11/12/13 between them now cover every receiver kind this JIT reasons
+about) -- it's that the hot methods themselves are unannotated. Adding
+`-> Type` annotations to Arel/ActiveRecord's own hot accessors is real,
+separate, application-level work (skindicate.dia's own package code,
+not the Diamond compiler/JIT), not attempted here.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

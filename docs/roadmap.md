@@ -640,10 +640,10 @@ whose only assignment is an ivar read of a field with a single compile-
 time-known concrete class, and `.method()` on a never-reassigned local
 whose only assignment is a call resolved (via the compiler's own real
 type-checking) to a target with a declared, single-concrete-class return
-type -- when that call's own receiver is itself a typed parameter or a
-`NEW`-local (not yet `self` or an ivar load, see the "Still open" note
-just below) -- each via a hand-verified trampoline extracted from the
-real interpreter's own opcode body rather than a general codegen
+type -- when that call's own receiver is itself `self`, a typed
+parameter, or a `NEW`-local (not yet an ivar load, see the "Still open"
+note just below) -- each via a hand-verified trampoline extracted from
+the real interpreter's own opcode body rather than a general codegen
 pipeline. Measured, real wins on `bench/RESULTS.md`'s own benchmarks
 (release build): ~2.9-3x on `int_arithmetic.di`, ~6-8% on
 `hash_ivar_construct.di`, ~4-8% on `object_hydration.di`, ~35% on a
@@ -651,8 +651,9 @@ pipeline. Measured, real wins on `bench/RESULTS.md`'s own benchmarks
 typed-parameter-`.method()`-in-a-loop shape
 (`bench/jit_invoke_typed_param.di`), ~35% on a `NEW`-in-a-loop shape
 (`bench/jit_new_local.di`), ~38% on an ivar-load-in-a-loop shape
-(`bench/jit_ivar_local.di`), and ~33% on a typed-parameter-method-call-
-chained-in-a-loop shape (`bench/jit_invoke_result.di`).
+(`bench/jit_ivar_local.di`), ~33% on a typed-parameter-method-call-
+chained-in-a-loop shape (`bench/jit_invoke_result.di`), and ~37% on the
+same shape through `self` (`bench/jit_invoke_result_self.di`).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -664,44 +665,56 @@ history: `docs/internal/jit-design.md`; user-facing summary:
 Still open:
 
 - generic `DIAMOND_OP_INVOKE` beyond `self`/typed-parameter/freshly-`NEW`'d-
-  local/ivar-load/typed-parameter-or-`NEW`-local-chained-call receivers --
-  every native per-type method (`.keys()`/`.length()`/...), plus `tap`/
-  `public_send` on a receiver of unproven type, plus Instance method
-  dispatch on a receiver that's a method call's own return value when the
-  *inner* call's own receiver is `self` or an ivar load specifically (see
-  Phase 12's own section for exactly why those two don't currently chain,
-  a real, separately fixable gap in each), or anything else not covered by
-  Phase 9/10/11/12's own narrow proofs. Phase 9 (`docs/internal/jit-
-  design.md`) closed the typed-parameter slice: Phase 8's own "`src/jit.c`
-  has zero access to any static type information" finding turned out to be
-  only half true -- `parameter_type_sets` was already sitting on
-  `DiamondFunction`, unread. Phase 10 closed the `x = SomeClass.new(...);
-  ...; x.method()` slice, via a self-contained JIT-local register-write
-  scan (no compiler changes, no new `DiamondFunction` fields) rather than
-  the LSP-table path -- that path was investigated and rejected (see Phase
-  10's own section): the LSP's per-register type-fact table
-  (`DiamondScopeTypeFact`) isn't provably exhaustive (only ~16 call sites
-  populate it, nothing establishes they cover every place `known_type_sets`
-  changes), and reusing a possibly-stale fact for the JIT risks a wrong
-  dispatch decision, not just a safe bail, unlike every other proof this
-  JIT relies on. Phase 11 closed the `x = @field; ...; x.method()` slice:
-  unlike a method call's own return type, a field's compile-time type
-  can't be invalidated by `redefine_method` at runtime (there's no
-  equivalent "redefine a field" operation), so this needed a new but still
-  fully sound `DiamondFunction.ivar_known_class` snapshot rather than the
-  return-value case's then-unsolved redefine-safety question -- see Phase
-  11's own section, including two real, pre-existing LSP soundness gaps
-  (attr_accessor-generated writers and struct-generated `initialize` both
-  bypassed the field-type fact entirely) found and fixed along the way.
-  Phase 12 closed the redefine-safety question itself (a new whole-program
-  `redefine_method`-usage flag, coarse but sound) and, with it, `x =
-  obj.method(); ...; x.other()` -- but only when `obj` is itself a typed
-  parameter or a `NEW`-local, since only those two feed the compiler's own
-  real `known_types` tracking that this resolution depends on; `self` and
-  an ivar load don't (found empirically, not assumed -- see Phase 12's own
-  section). Closing either of those two remaining receiver kinds for a
-  *chained* call, or the ~2500-line native-type dispatch surface, remain
-  separately unattempted;
+  local/ivar-load/self-or-typed-parameter-or-`NEW`-local-chained-call
+  receivers -- every native per-type method (`.keys()`/`.length()`/...),
+  plus `tap`/`public_send` on a receiver of unproven type, plus Instance
+  method dispatch on a receiver that's a method call's own return value
+  when the *inner* call's own receiver is an ivar load specifically (a
+  real, separately fixable gap -- would need a new *declared* per-field
+  type table, since the existing inferred `field_known_class` isn't safe
+  to read mid-compile), or anything else not covered by Phase 9/10/11/12/
+  13's own narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed
+  the typed-parameter slice: Phase 8's own "`src/jit.c` has zero access to
+  any static type information" finding turned out to be only half true --
+  `parameter_type_sets` was already sitting on `DiamondFunction`, unread.
+  Phase 10 closed the `x = SomeClass.new(...); ...; x.method()` slice, via
+  a self-contained JIT-local register-write scan (no compiler changes, no
+  new `DiamondFunction` fields) rather than the LSP-table path -- that path
+  was investigated and rejected (see Phase 10's own section): the LSP's
+  per-register type-fact table (`DiamondScopeTypeFact`) isn't provably
+  exhaustive (only ~16 call sites populate it, nothing establishes they
+  cover every place `known_type_sets` changes), and reusing a possibly-
+  stale fact for the JIT risks a wrong dispatch decision, not just a safe
+  bail, unlike every other proof this JIT relies on. Phase 11 closed the
+  `x = @field; ...; x.method()` slice: unlike a method call's own return
+  type, a field's compile-time type can't be invalidated by `redefine_
+  method` at runtime (there's no equivalent "redefine a field" operation),
+  so this needed a new but still fully sound `DiamondFunction.ivar_known_
+  class` snapshot rather than the return-value case's then-unsolved
+  redefine-safety question -- see Phase 11's own section, including two
+  real, pre-existing LSP soundness gaps (attr_accessor-generated writers
+  and struct-generated `initialize` both bypassed the field-type fact
+  entirely) found and fixed along the way. Phase 12 closed the redefine-
+  safety question itself (a new whole-program `redefine_method`-usage
+  flag, coarse but sound) and, with it, `x = obj.method(); ...;
+  x.other()` for a typed-parameter or `NEW`-local `obj` -- `self` didn't
+  chain yet (found empirically, not assumed), since its own register
+  never fed the compiler's real `known_types` tracking at all. Phase 13
+  closed that specific gap (one line, in `compile_definition`, no `jit.c`/
+  `vm.h` changes) -- an ivar-load `obj` still doesn't. Closing that
+  remaining receiver kind for a chained call, or the ~2500-line native-
+  type dispatch surface, remain separately unattempted. **A real, load-
+  bearing finding from Phase 13's own re-benchmark, worth keeping in
+  mind before chasing this further**: skindicate's own ORM hot path
+  (`Skin.random_sample`/the `_for` batch loaders) is exactly `self`-
+  receiver-shaped, yet Phase 13 measured no improvement there at all --
+  traced directly to Arel's own hot accessors (`Query#projections`,
+  `BinaryNode#left`, ...) having no explicit `-> Type` return annotation,
+  which this whole mechanism deliberately never trusts regardless of
+  receiver kind (Phase 12's own restriction). For *that* workload
+  specifically, adding return-type annotations to Arel/ActiveRecord's own
+  hot methods (real, separate, application-level work) matters more than
+  any further receiver-kind phase here;
 - a value the JIT can't prove is `Int` at *runtime* either (a real
   String, Instance, Float, ...) still correctly falls to the slow
   trampoline every time, at real per-call cost -- expected, not a gap;

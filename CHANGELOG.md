@@ -45,6 +45,17 @@ authoritative fine-grained record.
   static type tracking this depends on) -- a real, separately fixable gap,
   not something this change silently drops. See docs/internal/
   jit-design.md's "Phase 12".
+- `self.method()`'s own result now also chains the same way (`x =
+  self.make(); ...; x.other()`), closing the `self` half of the gap just
+  above -- `self`'s own register now feeds the compiler's real type
+  tracking the same way a typed parameter's already did, needing no
+  further JIT changes at all. An ivar load still doesn't chain. Measured
+  no improvement on skindicate's own real ORM hot path despite it being
+  exactly `self`-shaped: traced to Arel's own hot accessor methods
+  (`Query#projections`, `BinaryNode#left`, ...) having no explicit
+  return-type annotation at all, which this mechanism never trusts
+  regardless of receiver kind -- a separate, application-level gap, not
+  a compiler one. See docs/internal/jit-design.md's Phase 12 addendum.
 
 ## 0.6.0
 
