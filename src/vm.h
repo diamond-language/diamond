@@ -82,6 +82,12 @@ enum {
     DIAMOND_MAX_DECLARED_PARAMETERS = 32,
     DIAMOND_MAX_METHODS = 256,
     DIAMOND_MAX_FIELDS = 64,
+    /* Phase 15 (docs/internal/jit-design.md): per-function cap on
+     * DiamondFunction.invoke_site_known_class below -- same scale as
+     * DIAMOND_MAX_FIELDS/DIAMOND_MAX_LOCALS. Silently stops recording
+     * once full, same fail-safe-by-construction convention as every
+     * other side table this JIT already uses. */
+    DIAMOND_MAX_INVOKE_SITES = 64,
     /* A JIT-eligible function's register_count must fit this v1's call-site
      * stack array (src/vm.c's DIAMOND_OP_CALL interception), which never
      * heap-allocates the way run_chunk itself does for an oversized
@@ -845,6 +851,20 @@ typedef struct DiamondScopeTypeFact {
     int32_t tooling_type_set;
 } DiamondScopeTypeFact;
 
+/* JIT-only (src/jit.c, Phase 15, docs/internal/jit-design.md): a single
+ * DIAMOND_OP_INVOKE instruction's own receiver, recorded as a known
+ * single concrete class at the exact bytecode offset that instruction
+ * starts at -- unlike register_known_class below (a per-*register* fact,
+ * "is this register always one class everywhere"), this is a per-*site*
+ * fact, needed because a narrowed receiver can genuinely be different
+ * classes at different call sites in the same function (`if x is A;
+ * x.a(); elsif x is B; x.b(); end` -- Arel's own real render_expression
+ * shape). See DiamondFunction.invoke_site_known_class's own comment. */
+typedef struct DiamondInvokeSiteFact {
+    uint32_t offset;
+    uint8_t known_class;
+} DiamondInvokeSiteFact;
+
 typedef struct DiamondFunction {
     char name[DIAMOND_MAX_FUNCTION_NAME];
     /* 1-based source position of the function/method's own name token
@@ -997,6 +1017,32 @@ typedef struct DiamondFunction {
      * under a name the class already has, so it can only ever add a
      * genuinely new name, never invalidate an already-resolved one. */
     bool redefine_method_used_anywhere;
+    /* JIT-only (src/jit.c, Phase 15): position-sensitive counterpart to
+     * register_known_class above, for exactly the case that one can't
+     * cover -- a receiver narrowed by `is` to a single class at *this*
+     * specific DIAMOND_OP_INVOKE site, which may differ from what the
+     * same register is narrowed to at another call site elsewhere in the
+     * function. Populated by emit_invoke_call (src/compiler.c) -- the one
+     * shared funnel every plain (non-_TYPED/_SPREAD/_KEYWORDS/
+     * _SELF_METHOD) DIAMOND_OP_INVOKE emission goes through -- whenever
+     * compiler->known_types[receiver] is already a genuine single
+     * concrete class right before that instruction is emitted, from
+     * whichever source proved it (is-narrowing, self, a typed parameter,
+     * a chained call's declared return type, ...). Recorded
+     * unconditionally at compile time (the whole-program redefine_method_
+     * used_anywhere flag above isn't finalized until compilation
+     * finishes); gated the same conservative way register_known_class
+     * already is, at *read* time in src/jit.c, since a fact fed from a
+     * chained call's declared return type carries the same staleness risk
+     * that field's own comment explains -- even though a pure is-
+     * narrowing fact doesn't itself need the gate (it reflects a runtime
+     * type check, not a declared-but-possibly-stale return type), nothing
+     * here distinguishes which source produced a given entry, so gate
+     * uniformly rather than trying to. Silently stops recording past
+     * DIAMOND_MAX_INVOKE_SITES -- a missed optimization for a
+     * pathologically invoke-heavy function, never a correctness gap. */
+    DiamondInvokeSiteFact invoke_site_known_class[DIAMOND_MAX_INVOKE_SITES];
+    uint8_t invoke_site_known_class_count;
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
      * slots are deliberately excluded. */

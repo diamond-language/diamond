@@ -6627,6 +6627,25 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
             string->chars[string->length]='\0';
         }
     }
+    /* Phase 15 (docs/internal/jit-design.md): record this specific call
+     * site's own receiver class, if the compiler's real known_types
+     * tracking already proves one right here -- narrowing included, via
+     * whatever apply_narrowing_facts/apply_type_set_fact already applied
+     * for this exact lexical point. offset must be captured before
+     * emit_opcode below (which itself reads code_count for the same
+     * "this instruction's own start" purpose) -- src/jit.c's compile_body
+     * reads instruction_start the same way, before decoding the opcode
+     * byte, so the two must agree exactly. Plain DIAMOND_OP_INVOKE only:
+     * src/jit.c has no case for DIAMOND_OP_INVOKE_TYPED. */
+    if(type_argument_count==0&&
+       compiler->known_types[receiver]>=DIAMOND_TYPE_CLASS_BASE&&
+       compiler->known_types[receiver]<DIAMOND_TYPE_INTERFACE_BASE&&
+       compiler->function->invoke_site_known_class_count<DIAMOND_MAX_INVOKE_SITES) {
+        DiamondFunction *fn=compiler->function;
+        fn->invoke_site_known_class[fn->invoke_site_known_class_count++]=
+            (DiamondInvokeSiteFact){.offset=(uint32_t)fn->code_count,
+                .known_class=compiler->known_types[receiver]};
+    }
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
     emit_register(compiler,receiver);emit_register(compiler,method);emit_register(compiler,base);

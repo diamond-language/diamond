@@ -1929,6 +1929,30 @@ static void compile_body(JitCompiler *jc) {
                                          opcode == DIAMOND_OP_INVOKE_MONO);
                     break;
                 }
+                /* Phase 15: this exact call site's own receiver, proven a
+                 * single concrete class by the compiler's real known_types
+                 * tracking at the moment it emitted this instruction --
+                 * unlike the three proofs above (all position-insensitive:
+                 * "true everywhere in the function, or not at all"), this
+                 * is position-sensitive, the only way to cover a receiver
+                 * narrowed to *different* classes at different call sites
+                 * (`if x is A; x.a(); elsif x is B; x.b(); end`). See
+                 * DiamondFunction.invoke_site_known_class's own comment
+                 * for the redefine_method_used_anywhere gate's reasoning. */
+                if (!fn->redefine_method_used_anywhere) {
+                    bool site_known = false;
+                    for (size_t site = 0; site < fn->invoke_site_known_class_count; site++) {
+                        if (fn->invoke_site_known_class[site].offset == (uint32_t)instruction_start) {
+                            site_known = true;
+                            break;
+                        }
+                    }
+                    if (site_known) {
+                        compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
+                                             opcode == DIAMOND_OP_INVOKE_MONO);
+                        break;
+                    }
+                }
                 if (opcode == DIAMOND_OP_INVOKE_MONO || jc->has_called ||
                     argc != 0 || name >= fn->string_count) {
                     jc->bailed = true; return;

@@ -67,6 +67,18 @@ authoritative fine-grained record.
   remains open, and needs a different, position-sensitive mechanism
   from anything built so far. ~39% faster on a new
   `bench/jit_is_type.di`. See docs/internal/jit-design.md's "Phase 14".
+- JIT now also compiles a chained method call on a receiver narrowed by
+  `is`, even from a declared-union parameter that's never provably one
+  class anywhere else in the function (`if x is Derived; y = x.helper();
+  y.double(); end`) -- closing the gap Phase 14 explicitly left open.
+  Position-sensitive (a new per-call-site fact, not a per-register one),
+  deliberately not the simpler per-register approach considered first,
+  which was rejected because the real motivating shape (Arel's own
+  `render_expression`) narrows the same register to different classes at
+  different call sites -- confirmed via a stash-based A/B that the
+  simpler design would have missed exactly that case. ~38% faster on
+  a new `bench/jit_is_narrowed_invoke.di`. See docs/internal/
+  jit-design.md's "Phase 15".
 
 ## 0.6.0
 

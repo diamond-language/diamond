@@ -1601,6 +1601,121 @@ was already correct. ~39% faster on a new `bench/jit_is_type.di`
 (release build, `classify` from the `is_type_basic` reproduction above
 in a 3M-iteration loop): ~0.43s interpreted, ~0.26s with `DIAMOND_JIT=1`.
 
+### Phase 15: position-sensitive `is`-narrowed `INVOKE` receivers
+
+Closes the gap Phase 14 explicitly stopped short of: `def run(x: Derived
+| OtherBase) -> Int; if x is Derived; y = x.helper(); y.double(); end;
+end` still didn't JIT-compile even after Phase 14 fixed `IS_TYPE`
+codegen, because every one of `src/jit.c`'s three existing `INVOKE`-
+receiver proofs (`self`/Phase 13, `parameter_is_single_class`+
+`parameter_never_reassigned`/Phase 9, `register_new_class_if_sole_
+writer`/Phase 10-12) is deliberately **position-insensitive**: each asks
+"is this register *always* provably one class, everywhere in the
+function," never "is it provably one class *at this specific call
+site*." `x`'s own *declared* type is a two-member union, and nothing
+ever *writes* to `x` (it's a parameter), so neither existing proof can
+ever say anything about it on its own -- narrowing is a purely lexical,
+compile-time-only fact with zero trace in the compiled bytecode a later,
+position-insensitive scan could find.
+
+**A position-insensitive fix was considered and rejected first.** The
+obvious-looking shortcut -- reuse Phase 12's own `register_known_class
+[reg]`, populating it from `known_types[reg]` at every `is`-narrowed use
+and invalidating it the moment two uses disagree -- would have been a
+much smaller change. But Arel's actual motivating shape (`Visitor#
+render_expression`'s own `if expression is Attribute ... elsif
+expression is Predicate ...` chain) narrows the *same* register to
+*different* classes at *different* sites, calling a *different* method
+at each one. A "must agree everywhere" check would correctly, but
+uselessly, invalidate the fact for every site the moment it saw the
+second one disagree -- solving the synthetic case while missing the
+real one entirely. Confirmed directly: a `tests/cases/jit_is_narrowed_
+invoke_multi_branch`-shaped function (three `is`-branches on one
+receiver, each calling a different method) only reaches 3 compiled
+functions (the three called methods, not the containing one) under a
+position-insensitive design, versus 4 (the containing function too)
+with the real, position-sensitive one -- verified via a stash-based A/B
+before committing to the harder design, not assumed.
+
+**The mechanism**: one new fact, recorded once at the single point the
+compiler already knows it, consulted once at the single point `src/
+jit.c` already visits it -- no new bytecode scanning, no new codegen.
+
+`emit_invoke_call` (`src/compiler.c`) is the *one* shared funnel every
+plain (non-`_TYPED`/`_SPREAD`/`_KEYWORDS`/`_SELF_METHOD`) `DIAMOND_OP_
+INVOKE` emission goes through (`parse_invoke` and `compile_delegate`
+both call it). Right before its existing `emit_opcode` call,
+`compiler->known_types[receiver]` already holds whatever the compiler's
+real, flow-sensitive tracking currently believes -- narrowed class
+included, via the exact `apply_narrowing_facts`/`apply_type_set_fact`
+chain Phase 14 already traced and confirmed correct. When that value is
+a genuine single concrete class, record `{offset: compiler->function->
+code_count (this instruction's own start, matching src/jit.c's own
+`instruction_start = pc`-before-decode convention exactly), known_class}`
+into a new fixed-size table on `DiamondFunction`:
+`invoke_site_known_class[DIAMOND_MAX_INVOKE_SITES=64]` (`src/vm.h`,
+same scale as `DIAMOND_MAX_FIELDS`/`DIAMOND_MAX_LOCALS`, silently stops
+recording once full -- fail-safe by construction, same convention every
+other side table in this file already uses).
+
+`src/jit.c`'s `compile_body` `DIAMOND_OP_INVOKE`/`INVOKE_MONO` case gains
+a fourth acceptance branch, alongside the existing three: a linear scan
+(at most 64 entries, once per `INVOKE` site, at JIT-*compile* time only)
+checking whether *this* instruction's own `instruction_start` has a
+recorded entry. **Zero changes to `compile_invoke_dispatch` itself** --
+every acceptance path, old or new, funnels into the exact same,
+already-correct codegen; this only adds a new way to *qualify* for it.
+`diamond_jit_invoke_instance` (the runtime trampoline) still dispatches
+by the *runtime* instance's own class regardless of which compile-time
+path proved eligibility, same as every earlier phase already relies on
+-- so a receiver narrowed to `Derived` that turns out to be some further
+subclass at runtime still dispatches correctly; the compile-time fact
+only ever proves "definitely some Instance," never "definitely this
+exact method."
+
+**Safety**: recording is unconditional at compile time (the whole-
+program `redefine_method_used_anywhere` flag isn't finalized until
+compilation finishes, the same reason Phase 12 gates at *read* time
+instead of *write* time). The gate is applied uniformly at consultation
+time in `src/jit.c`, exactly mirroring Phase 12's own `register_known_
+class` gate -- even though a pure `is`-narrowing fact doesn't strictly
+need it (narrowing reflects a *runtime* type check via `IS_TYPE`, immune
+to a stale declared return type the way `redefine_method` can make a
+Phase-12-sourced fact go stale), nothing at read time distinguishes
+*which* source populated a given `known_types` entry, so gating
+uniformly and conservatively was the safer choice over trying to tell
+them apart. Verified via `tests/cases/jit_is_narrowed_invoke_redefine`
+(mirrors Phase 12's own `jit_invoke_result_redefine`): a `redefine_
+method` call anywhere in the program, even on a completely unrelated
+class, correctly disables this path too.
+
+**Cache safety**: confirmed via `src/compiled_prelude.c`'s
+`diamond_cache_fingerprint()` (includes `function_size=sizeof(
+DiamondFunction)`): growing `DiamondFunction` automatically invalidates
+any `.dic` bytecode cache written before this change (a safe cache miss,
+never a crash) -- the same mechanism that already silently covered
+Phase 11/12/13's own new fields, none of which are explicitly
+serialized in `diamond_program_write_compiled`/`read_compiled` either.
+Followed that same precedent: no serialization changes needed. A
+function loaded from a stale-format cache and never recompiled fresh
+just silently misses this optimization -- never dispatches incorrectly.
+
+**A genuine, positive side effect on an existing test, not a
+regression**: `tests/cases/jit_invoke_typed_param_union.di` (Phase 9's
+own `box: Box | Nil` test) started compiling one more function (3, not
+2) the moment this phase landed -- its own `if box is Box; box.double();
+end` is exactly this phase's target shape, and its comment/expectation,
+written when that was still correctly impossible, needed updating
+alongside the fix. A good sign the new mechanism generalizes beyond its
+own purpose-built test cases.
+
+**Verified**: new `tests/cases/jit_is_narrowed_invoke_basic` (the
+original motivating shape), `_multi_branch` (the Arel-shaped multi-site
+reproduction, confirmed via stash-based A/B that a position-insensitive
+design would miss it), and `_redefine` (the safety-gate negative test).
+Full debug suite, ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`,
+all green.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
