@@ -1484,6 +1484,123 @@ about) -- it's that the hot methods themselves are unannotated. Adding
 separate, application-level work (skindicate.dia's own package code,
 not the Diamond compiler/JIT), not attempted here.
 
+### Phase 14: `DIAMOND_OP_IS_TYPE` gets JIT codegen (and stops poisoning unrelated eligibility scans)
+
+Started as an attempt to wire `is`-narrowing into `known_types` so a
+narrowed receiver (`if x is Derived; y = x.helper(); y.double()`, `x`
+a declared `Derived | OtherBase` parameter) would chain the same way a
+typed parameter already does -- the natural next step after Phase 13's
+own negative finding that Arel's real hot path (`Visitor#render_
+expression`, dispatching on an untyped `expression` via an `is`-chain)
+needed exactly this. Diagnosed with real instrumentation before
+assuming a fix shape, per the plan going in.
+
+**The suspected bug didn't exist.** Traced every link in the existing
+`Narrowing`/`NarrowingFact` mechanism (`src/compiler.c`) with temporary
+tracing on the motivating case and found it all works correctly:
+`compiler->known_type_sets[x]` is populated at parameter-declaration
+time even for a union type, `x is Derived` correctly `split_type_set`s
+it and records the fact in `compiler->narrowing`, `parse_if` correctly
+picks the fact up and applies it via `apply_narrowing_facts` ->
+`apply_type_set_fact` before compiling the then-branch, and `known_
+types[x]` is genuinely `Derived`'s own type tag by the time `x.helper()`
+compiles inside that branch. `instance_call_signature` resolves the
+call and its declared return type correctly too. None of this was
+broken.
+
+**The real blocker was two levels below the compiler entirely**:
+`src/jit.c`'s `compile_body` had **zero case for `DIAMOND_OP_IS_TYPE`**
+-- not a narrow gap, a complete absence, present since the opcode was
+first introduced. Any function containing so much as `if x is SomeType`
+anywhere bailed the *whole function* outright, falling straight to
+`compile_body`'s own `default: jc->bailed = true`, regardless of
+whether the narrowing itself was ever going to matter for JIT purposes.
+Confirmed directly: `def classify(x: Int | String) -> Int; if x is Int;
+1; else; 2; end; end` -- no receiver chaining at all, the simplest
+possible reproduction -- was already JIT-ineligible before this phase.
+
+**Fixed** by adding `IS_TYPE` alongside `CHECK_TYPE` as a fourth "too
+semantically deep to hand-roll in asm, call a trampoline" opcode (same
+category as `SET_IVAR`/`GET_IVAR`/`INDEX_GET`/`CHECK_TYPE` already
+were): a new `diamond_jit_is_type(chunk, value, type, out)` trampoline
+(`src/vm.c`) wrapping the interpreter's own `value_matches_type`, and
+`compile_is_type` (`src/jit.c`) emitting the same 4-argument, no-stack-
+overflow call shape `compile_check_type` already uses. Needs neither
+`jc->needs_frame` nor `jc->has_called`: `value_matches_type` never
+allocates or invokes user code (confirmed by reading it fully -- even
+its interface-matching path only ever consults a fixed native-method
+table, never a real method call). The compiler already hard-rejects `is`
+against a generic type variable before it can ever reach codegen
+(`src/compiler.c`'s own "generic type variables cannot be used with
+'is' before binding" check), so the trampoline never needs to handle
+that case either.
+
+**A second, broader bug found in the same investigation**: `src/jit.c`
+has two other opcode-enumerating scans -- `parameter_never_reassigned`
+(Phase 9) and `register_new_class_or_move_src` (Phase 10-13) -- each
+with its own hand-maintained "does this opcode write a register, and
+where" switch, deliberately kept in sync with `compile_body`'s own
+switch by hand (their own comments say so explicitly) rather than a
+shared table. Both scan a function's *entire* bytecode from offset 0
+regardless of which register they're actually tracing, and both bail
+their *entire* walk -- not just "give up on this one register" -- the
+moment they hit any opcode outside their own whitelist. Since neither
+had an `IS_TYPE` case, **any function containing an `is` check anywhere
+in its body was silently losing Phase 9/10/11/12/13's own chaining
+eligibility for every other register in that function too**, not just
+whatever `is` was narrowing -- a real, pre-existing, and rather broad
+gap that predates this phase and had nothing to do with narrowing per
+se. Confirmed via a stash-based A/B on a function combining an ordinary
+Phase 13 `self.make().double()` chain with an unrelated `if x is Int`
+check elsewhere in the same body: 2 compiled functions before this
+fix (the chain itself silently lost), 3 after. Fixed by adding
+`DIAMOND_OP_IS_TYPE` to `opcode_dest_is_first_u16` and the matching
+2-extra-operand consumption case in both scans (its own operand shape --
+one dest register plus two more register-width fields -- happens to
+exactly match the existing `ADD_INT`/`EQUAL`/`GET_IVAR`/`INDEX_GET`/
+`HASH` group already in both switches). `IS_TYPE`'s destination is
+always `DIAMOND_TYPE_BOOL`, never a class, so it's correctly *not*
+added as a fourth class-producing terminal anywhere -- just recognized
+as "writes a register, but never the interesting kind."
+
+**What this phase does *not* close**: the original motivating case
+(`x.helper()` on an `is`-narrowed union-typed *parameter*, inside the
+narrowed branch) still does not JIT-compile, and this phase stops short
+of that rather than pushing through. The reason is structural, not a
+bug: every one of `compile_body`'s three INVOKE-receiver acceptance
+paths (`self`/Phase 13, `parameter_is_single_class`+`parameter_never_
+reassigned`/Phase 9, `register_new_class_if_sole_writer`/Phase 10-12)
+is deliberately **position-insensitive** -- each scans the whole
+function once, asking "is this register *always* provably one class,
+everywhere," never "is it provably one class *at this specific call
+site*." `parameter_is_single_class` looks only at the parameter's own
+*declared* type (`fn->parameter_type_sets`), which for `x: Derived |
+OtherBase` is a two-member union regardless of any `is` check later in
+the body -- narrowing is a purely compile-time, lexically-scoped fact
+that never rewrites `x`'s own register or leaves any trace in the
+compiled bytecode itself (nothing else reads `compiler->narrowing`
+after the branch it applied to finishes compiling). Making this case
+JIT-eligible would need a genuinely new mechanism -- a position-
+*sensitive* per-instruction-site class-fact table, unlike anything
+Phases 9-13 built -- not a fix to something already there. Per this
+phase's own approved plan ("if diagnosis reveals the fix is larger or
+riskier than expected... stop and report back rather than pushing
+through"), this is exactly that trigger: stopped here, reported the
+corrected finding, left the decision of whether to build the bigger
+mechanism to a future phase.
+
+**Verified**: new `tests/cases/jit_is_type_basic` (the standalone
+`classify` reproduction: 0 compiled -> 1 compiled, 0 bailouts) and
+`jit_is_type_no_poison` (the self-chain-plus-unrelated-`is`-check
+reproduction: 2 compiled -> 3 compiled, 0 bailouts, each confirmed via
+a stash-based A/B, not just a single-sided pass). Full debug suite,
+ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`, all green. No
+compiler.c changes at all this phase -- the entire fix lives in
+`src/jit.c`/`src/jit.h`/`src/vm.c`, since the compiler-side mechanism
+was already correct. ~39% faster on a new `bench/jit_is_type.di`
+(release build, `classify` from the `is_type_basic` reproduction above
+in a 3M-iteration loop): ~0.43s interpreted, ~0.26s with `DIAMOND_JIT=1`.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a

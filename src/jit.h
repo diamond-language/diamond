@@ -175,6 +175,17 @@ DiamondVmStatus diamond_jit_get_ivar(DiamondVm *vm, const uint8_t *site,
         const DiamondValue *receiver, uint8_t field, DiamondValue *out);
 DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
         const DiamondValue *value, uint16_t set_index);
+/* IS_TYPE -- value_matches_type's own single-type-tag matching (unlike
+ * CHECK_TYPE's value_matches_set, no union/interface/generic-binding
+ * cases reachable here: the compiler hard-rejects `is` against a type
+ * variable before this can ever be emitted with one, src/compiler.c's
+ * own "generic type variables cannot be used with 'is'" check). Pure
+ * value-kind/class-hierarchy inspection, no allocation or user-code
+ * invocation, so -- like GET_IVAR -- needs neither jc->needs_frame nor
+ * jc->has_called. Always returns DIAMOND_VM_OK; the status return exists
+ * only to match every other trampoline's emit_bail_if_al_nonzero tail. */
+DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
+        const DiamondValue *value, uint8_t type, DiamondValue *out);
 
 /* Phase 2e. JIT trampolines for DIAMOND_OP_INDEX_GET/INDEX_SET -- full
  * extractions of those opcodes' own real case bodies (src/vm.c), replacing

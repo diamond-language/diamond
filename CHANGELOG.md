@@ -56,6 +56,17 @@ authoritative fine-grained record.
   return-type annotation at all, which this mechanism never trusts
   regardless of receiver kind -- a separate, application-level gap, not
   a compiler one. See docs/internal/jit-design.md's Phase 12 addendum.
+- The JIT now compiles `is` type checks (`DIAMOND_OP_IS_TYPE`) at all --
+  previously any function containing one, however simple, failed to
+  JIT-compile at all. Also fixes a related bug where an unrelated `is`
+  check anywhere in a function silently disabled the `self`/typed-
+  parameter/`.new()`-result method-chaining optimizations above for
+  *every other* register in that same function. Narrowing a declared-
+  union parameter with `is` still doesn't make a *chained call on it*
+  JIT-eligible (`if x is Derived; x.helper().double(); end`) -- that
+  remains open, and needs a different, position-sensitive mechanism
+  from anything built so far. ~39% faster on a new
+  `bench/jit_is_type.di`. See docs/internal/jit-design.md's "Phase 14".
 
 ## 0.6.0
 

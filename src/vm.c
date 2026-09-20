@@ -9445,6 +9445,16 @@ DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
     return value_matches_set(chunk, *value, set_index, true) ? DIAMOND_VM_OK : DIAMOND_VM_TYPE_ERROR;
 }
 
+/* JIT trampoline for DIAMOND_OP_IS_TYPE -- see jit.h's own comment. Same
+ * shape as the interpreter's own DIAMOND_OP_IS_TYPE case (registers[dest]
+ * = value_matches_type(...)), just through the trampoline's out-pointer
+ * convention instead of a direct register write. */
+DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
+        const DiamondValue *value, uint8_t type, DiamondValue *out) {
+    *out = DIAMOND_BOOL(value_matches_type(chunk, *value, type));
+    return DIAMOND_VM_OK;
+}
+
 static bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value) {
     for(size_t index=0;index<array->constraint_count;index++) {

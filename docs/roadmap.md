@@ -652,8 +652,11 @@ typed-parameter-`.method()`-in-a-loop shape
 (`bench/jit_invoke_typed_param.di`), ~35% on a `NEW`-in-a-loop shape
 (`bench/jit_new_local.di`), ~38% on an ivar-load-in-a-loop shape
 (`bench/jit_ivar_local.di`), ~33% on a typed-parameter-method-call-
-chained-in-a-loop shape (`bench/jit_invoke_result.di`), and ~37% on the
-same shape through `self` (`bench/jit_invoke_result_self.di`).
+chained-in-a-loop shape (`bench/jit_invoke_result.di`), ~37% on the
+same shape through `self` (`bench/jit_invoke_result_self.di`), and
+~39% on a `is`-type-check-in-a-loop shape (`bench/jit_is_type.di`) now
+that `DIAMOND_OP_IS_TYPE` has JIT codegen at all (Phase 14 -- see the
+"Still open" note below for what that phase does and doesn't close).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -715,6 +718,26 @@ Still open:
   specifically, adding return-type annotations to Arel/ActiveRecord's own
   hot methods (real, separate, application-level work) matters more than
   any further receiver-kind phase here;
+- narrowing a declared-union parameter with `is` still doesn't make a
+  chained call on it JIT-eligible (`if x is Derived; y = x.helper();
+  y.double(); end`, `x: Derived | OtherBase`) -- Phase 14 (`docs/
+  internal/jit-design.md`) looked directly at this, expecting a
+  narrowing-propagation bug per Phase 13's own suspicion, and found
+  instead that the compiler-side mechanism already works correctly end
+  to end (verified via real tracing, not assumption); the actual
+  blocker was that `DIAMOND_OP_IS_TYPE` had **zero JIT codegen at all**,
+  bailing any function containing an `is` check outright regardless of
+  narrowing, which Phase 14 fixed (along with a related bug: two other
+  eligibility scans were silently losing Phase 9-13's own chaining for
+  *every* register in a function merely because it also contained an
+  unrelated `is` check elsewhere). What remains open is structural, not
+  a bug: every existing INVOKE-receiver proof is position-*insensitive*
+  (provable everywhere in the function, or not at all); narrowing is a
+  lexically-scoped, purely compile-time fact that leaves no trace in the
+  compiled bytecode a later position-insensitive scan could find. Closing
+  it needs a genuinely new position-*sensitive* per-call-site class-fact
+  mechanism, not a fix to something already there -- correctly scoped as
+  a candidate for a future phase, not attempted here;
 - a value the JIT can't prove is `Int` at *runtime* either (a real
   String, Instance, Float, ...) still correctly falls to the slow
   trampoline every time, at real per-call cost -- expected, not a gap;

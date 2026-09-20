@@ -957,6 +957,20 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
     emit_bail_if_al_nonzero(jc);
 }
 
+/* IS_TYPE -- calls diamond_jit_is_type(chunk, &registers[source], type,
+ * &registers[dest]). Same 4-argument, no-stack-overflow shape as compile_
+ * check_type plus one more register-width arg -- see jit.h's own comment
+ * for why this needs neither jc->needs_frame nor jc->has_called. */
+static void compile_is_type(JitCompiler *jc, uint16_t dest, uint16_t source, uint8_t type) {
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
+    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
+    emit_mov_imm64(buf, REG_RDX, type);
+    emit_lea(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_is_type);
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* STRING -- the first allocating opcode this JIT supports; sets
  * jc->needs_frame (both in the dry-run scan and the real pass alike, so
  * the real pass's own prologue already knows to reserve one by the time
@@ -1260,6 +1274,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_INVOKE:
         case DIAMOND_OP_INVOKE_MONO:
         case DIAMOND_OP_NEW:
+        case DIAMOND_OP_IS_TYPE:
             return true;
         default:
             return false;
@@ -1335,7 +1350,8 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH: {
+            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return false;
                 break;
@@ -1459,7 +1475,8 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH: {
+            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
                 break;
@@ -1683,6 +1700,14 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t source = 0, set_index = 0;
                 if (!decode_u16(fn, &pc, &source) || !decode_u16(fn, &pc, &set_index)) { jc->bailed = true; return; }
                 compile_check_type(jc, source, set_index);
+                break;
+            }
+            case DIAMOND_OP_IS_TYPE: {
+                uint16_t dest = 0, source = 0, type = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &source) ||
+                    !decode_u16(fn, &pc, &type)) { jc->bailed = true; return; }
+                if (type > UINT8_MAX) { jc->bailed = true; return; }
+                compile_is_type(jc, dest, source, (uint8_t)type);
                 break;
             }
             case DIAMOND_OP_STRING: {
