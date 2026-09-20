@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Added a bare `clear` REPL command (irb/pry/python-REPL-style, same
+  convention as the existing bare `exit`/`quit`): wipes the visible
+  terminal screen and redraws a fresh `{> ` prompt without touching the
+  running session (accumulated declarations, history, etc.). Recognized
+  only when a real terminal is attached; a piped/non-interactive session
+  still consumes the line as a no-op rather than trying to compile it as
+  Diamond source.
+
 ### Performance
 
 - JIT now also compiles `.method()` on a local whose only assignment is

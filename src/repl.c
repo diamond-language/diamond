@@ -614,6 +614,23 @@ static bool is_bare_exit_command(const char *line) {
            (length == 4 && memcmp(line + start, "quit", 4) == 0);
 }
 
+/* True if `line` is nothing but "clear", modulo surrounding whitespace --
+ * same bare-pseudo-command convention as is_bare_exit_command above (not a
+ * real language builtin; recognized only at the REPL prompt). Clears the
+ * terminal screen without touching the running session (accumulated
+ * declarations, `history`, etc.) -- just a visual reset, the same thing a
+ * shell's own `clear` does for its scrollback-visible screen. */
+static bool is_bare_clear_command(const char *line) {
+    size_t start = 0;
+    while (line[start] == ' ' || line[start] == '\t') start++;
+    size_t end = strlen(line);
+    while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t' ||
+                            line[end - 1] == '\r' || line[end - 1] == '\n'))
+        end--;
+    const size_t length = end - start;
+    return length == 5 && memcmp(line + start, "clear", 5) == 0;
+}
+
 /* Attempts to compile `source` (the whole REPL session so far, plus the
  * newest pending input) exactly the way -e/file execution do: core.di
  * prepended, then a #line 1 reset so the diagnostic's own line/column
@@ -862,6 +879,29 @@ int diamond_repl_run(void) {
                 buffer_free(&line_buffer);
                 eof = true;
                 break;
+            }
+            /* `clear`, bare, same convention as `exit`/`quit` just above --
+             * a shell-style "wipe the visible screen" reset, not a real
+             * language builtin (consumed here unconditionally so a piped/
+             * non-interactive session, e.g. tests/repl_test.sh's own
+             * DIAMOND_FORCE_REPL coproc, never tries to compile it as
+             * Diamond source either, even though there's no real terminal
+             * there to actually clear). \x1b[H moves the cursor home first,
+             * \x1b[2J then clears the whole visible screen relative to
+             * it -- ANSI/VT100, the same escape sequence a plain `clear`
+             * or `tput clear` emits, and already assumed elsewhere in this
+             * file (real_stdout's own raw-mode line editing above). Leaves
+             * `session`/`history`/candidate-program state untouched: purely
+             * a visual reset, then the *same* iteration of this inner loop
+             * re-prompts with a fresh "{> " (pending is still empty here,
+             * so `prompt` hasn't advanced to "... " yet either). */
+            if (pending.length == 0 && is_bare_clear_command(line_buffer.data)) {
+                buffer_free(&line_buffer);
+                if (interactive) {
+                    fputs("\x1b[H\x1b[2J", real_stdout);
+                    fflush(real_stdout);
+                }
+                continue;
             }
 
             const bool appended = buffer_append(&pending, line_buffer.data, line_buffer.length);

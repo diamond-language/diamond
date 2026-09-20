@@ -55,6 +55,23 @@ response="$(read_until_prompt)"
 [[ "$response" == $'15\n{> ' ]]
 count=$((count + 1))
 
+# --- a bare `clear` wipes the screen (a real pty only -- this coproc's
+# stdin is a pipe, so `interactive` is false and no escape bytes are
+# written, same as `exit`/`quit`'s own recognition not depending on a real
+# terminal either) but leaves the running session untouched: no compiled-
+# program output at all, just a fresh "{> ", and `x` is still bound
+# afterward. ---
+
+printf 'clear\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == "{> " ]]
+count=$((count + 1))
+
+printf 'x\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'10\n{> ' ]]
+count=$((count + 1))
+
 # Heap-backed results must remain printable after the candidate VM returns.
 # This used to trigger a use-after-free under ThreadSanitizer because the
 # REPL freed the VM before printing the returned Range object.
@@ -231,5 +248,32 @@ kill -0 "$repl_pid" 2>/dev/null
 count=$((count + 1))
 kill -9 "$repl_pid" 2>/dev/null || true
 wait "$repl_pid" 2>/dev/null || true
+
+# `clear` appearing inside an in-progress multi-line block (not as the
+# first line of a fresh statement) must not be swallowed as a screen-clear
+# either -- it's just the undefined local `clear`, same treatment as
+# `exit`'s own identical edge case just above.
+coproc CLEAR_REPL { DIAMOND_FORCE_REPL=1 "$diamond"; }
+buffer=
+while IFS= read -r -u "${CLEAR_REPL[0]}" -N 1 -t 10 chunk; do
+    buffer+="$chunk"
+    [[ "$buffer" == *$'\n{> ' || "$buffer" == "{> " ]] && break
+done
+printf '1 +\n' >&"${CLEAR_REPL[1]}"
+buffer=
+while IFS= read -r -u "${CLEAR_REPL[0]}" -N 1 -t 10 chunk; do
+    buffer+="$chunk"
+    [[ "$buffer" == *$'\n... ' || "$buffer" == "... " ]] && break
+done
+printf 'clear\n' >&"${CLEAR_REPL[1]}"
+buffer=
+while IFS= read -r -u "${CLEAR_REPL[0]}" -N 1 -t 10 chunk; do
+    buffer+="$chunk"
+    [[ "$buffer" == *$'\n{> ' || "$buffer" == "{> " ]] && break
+done
+[[ "$buffer" == *"error"* ]]
+count=$((count + 1))
+exec {CLEAR_REPL[1]}>&-
+wait "$CLEAR_REPL_PID" 2>/dev/null || true
 
 echo "$count repl tests passed"
