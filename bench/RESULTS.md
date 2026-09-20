@@ -832,3 +832,13 @@ This is about a 6% local request-handler improvement. It excludes socket,
 proxy, and network time, and uses a smaller database than production; it is
 evidence that the standalone JIT executes real Skindicate code, not a
 production throughput claim.
+
+On the Ubuntu 26.04 production droplet, the same locally cross-built
+Skindicate executable served 70 warm-up requests and 40 timed sequential
+HTTP requests to `127.0.0.1:18110/` per setting. With JIT off, median
+latency was 209.13 ms (mean 208.38 ms, p90 234.40 ms); with JIT on it was
+200.97 ms (mean 200.95 ms, p90 215.68 ms). That is a 3.9% median
+improvement in this single off-then-on run. The full production database,
+socket and HTTP handling are included; proxy and external network time are
+excluded. A single sequential run is sensitive to server load and cache
+state, so this is a deployment sanity check rather than a throughput result.
