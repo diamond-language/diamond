@@ -13313,6 +13313,54 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     return result;
 }
 
+/* Decodes a type_set index (as stored in compiler->function->type_sets,
+ * the same table parameter_type_sets/return_type_set/field declarations all
+ * index into) to a single concrete class id, or -1 if it isn't exactly one
+ * concrete class (a union, an interface/generic-variable member, or
+ * DIAMOND_NO_TYPE_SET/out-of-range, spelled here as type_set<0 -- every
+ * caller already uses that same sentinel for "no annotation at all"). Mirrors
+ * src/jit.c's own parameter_is_single_class decode exactly (same encoding,
+ * same "reject anything but a lone concrete class" rule), just reading from
+ * compiler->function's still-being-compiled table instead of an already-
+ * finished DiamondFunction's. */
+static int type_set_single_class(const Compiler *compiler, int type_set) {
+    if (type_set < 0 || (size_t)type_set >= compiler->function->type_set_count) return -1;
+    const DiamondTypeSet *set = &compiler->function->type_sets[(size_t)type_set];
+    if (set->count != 1) return -1;
+    const uint8_t id = set->members[0].id;
+    if (id < DIAMOND_TYPE_CLASS_BASE || id >= DIAMOND_TYPE_VARIABLE_BASE) return -1;
+    return (int)(id - DIAMOND_TYPE_CLASS_BASE);
+}
+
+/* Feeds one SET_IVAR site's own known-value-class (or -1, "not a single
+ * concrete class") into DiamondClass.field_type_status/field_known_class --
+ * the exhaustiveness this LSP-only fact needs to also be safely reusable by
+ * the JIT (see DiamondFunction.ivar_known_class's own comment, src/vm.h) is
+ * that EVERY place SET_IVAR is ever emitted for a real (non-module) field
+ * calls this, not just the ordinary `self.field = value` path. Confirmed by
+ * grepping every DIAMOND_OP_SET_IVAR emission site in this file: this
+ * function's own two extra call sites below (compile_attribute_named's own
+ * writer generation and compile_struct's generated `initialize`) used to
+ * bypass field_type_status/field_known_class entirely -- a real,
+ * pre-existing soundness gap for any class using attr_accessor or struct to
+ * declare a field (i.e. almost every real class), silently leaving lsp/
+ * receiver.c's own hover/definition support looking only at whatever a
+ * *different* field happened to also be assigned via a bare `self.field =`
+ * somewhere, or at nothing at all. Same merge logic in all three cases: the
+ * first concrete class seen for a field is trusted; a second, different
+ * concrete class, or any non-concrete write at all, permanently marks the
+ * field "unknown" (status 2) -- once poisoned, never re-trusted, matching
+ * this field's own pre-existing status==0/1/2 semantics exactly. */
+static void record_field_known_type(DiamondClass *class, size_t field, int known_class) {
+    const bool concrete = known_class >= 0;
+    if (class->field_type_status[field] == 0 && concrete) {
+        class->field_type_status[field] = 1;
+        class->field_known_class[field] = (uint8_t)known_class;
+    } else if (!concrete || class->field_known_class[field] != (uint8_t)known_class) {
+        class->field_type_status[field] = 2;
+    }
+}
+
 static void compile_attribute_named(Compiler *compiler,bool writer,bool predicate,
                                     DiamondSpan name,int type_set) {
     if(name.length+(writer||predicate?1u:0u)>=DIAMOND_MAX_FUNCTION_NAME||
@@ -13444,6 +13492,17 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         function->code[code++]=0;function->code[code++]=writer?0:1;
         function->code[code++]=0;function->code[code++]=writer?field:0;
         function->code[code++]=0;function->code[code++]=writer?1:field;
+        /* See record_field_known_type's own comment: this SET_IVAR (an
+         * attr_accessor/attr_writer-generated writer, storing its own
+         * caller-supplied argument straight into the field, untouched by
+         * the value-producing expression compile_assignment_store's own
+         * call site inspects) needs to feed the same fact, or a class whose
+         * only assignment to a field is through a generated writer would
+         * wrongly look "never assigned" (status 0) instead of either a real
+         * concrete class or "unknown" (status 2). */
+        if(writer)record_field_known_type(
+            &compiler->program->classes[(size_t)compiler->current_class],
+            (size_t)field,type_set_single_class(compiler,type_set));
     }
     if(!writer&&type_set>=0) {
         function->code[code++]=DIAMOND_OP_CHECK_TYPE;
@@ -14096,6 +14155,44 @@ static void compile_delegate(Compiler *compiler) {
  * caller having already set compiler->current_class/methods_private/
  * methods_protected to the right values -- never reads `index` itself,
  * only `class` (for `include`'s own field/method copy). */
+/* Copies class->field_type_status/field_known_class's own final answer (see
+ * record_field_known_type's own comment for why it's now exhaustive) onto
+ * DiamondFunction.ivar_known_class for every one of this class's own
+ * (non-`included`) methods -- see that field's own comment in src/vm.h for
+ * why the JIT needs its own snapshot rather than reading the class table
+ * directly. Called once at the end of compile_class_body, so it runs after
+ * every SET_IVAR-emitting construct for this class body has already updated
+ * field_type_status (attr_accessor/struct field declarations happen before
+ * compile_class_body's own loop for a struct, and inside it for an ordinary
+ * class's attr_accessor -- either way, strictly before this point). A
+ * reopened class (`class Foo ... end` appearing again later in the same
+ * compile pass) calls compile_class_body, and therefore this, again --
+ * naturally re-snapshotting *every* one of the class's methods (from every
+ * reopening, not just the newest one) with the latest, most complete
+ * field_type_status/field_known_class each time, so the state after the
+ * whole program finishes compiling is always the final, fully-merged
+ * answer regardless of how many times the class was reopened along the way
+ * -- an intermediate reopening's own snapshot being less complete is
+ * harmless, since a later reopening's own call here overwrites it. Skips
+ * an `included` method deliberately: its function belongs to (and may be
+ * shared by) the *module* that defined it, not this class -- see
+ * compile_attribute_named's own module branch, which never emits index-
+ * based SET_IVAR/GET_IVAR at all (always the name-based _NAME opcodes), so
+ * a shared module method could never use this fact anyway. */
+static void snapshot_ivar_known_classes(Compiler *compiler, DiamondClass *class) {
+    const uint8_t class_index = (uint8_t)compiler->current_class;
+    for (size_t m = 0; m < class->method_count; m++) {
+        if (class->methods[m].included) continue;
+        DiamondFunction *function =
+            compiler->program->functions[class->methods[m].function_index];
+        if (function->owner_class != class_index) continue;
+        for (size_t field = 0; field < DIAMOND_MAX_FIELDS; field++)
+            function->ivar_known_class[field] =
+                (field < class->field_count && class->field_type_status[field] == 1)
+                    ? class->field_known_class[field] : UINT8_MAX;
+    }
+}
+
 static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
@@ -14175,6 +14272,7 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
         }
         if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE) skip_newlines(compiler);
     }
+    if(!compiler->failed)snapshot_ivar_known_classes(compiler,class);
 }
 
 static uint16_t compile_class(Compiler *compiler) {
@@ -14594,6 +14692,21 @@ static uint16_t compile_struct(Compiler *compiler) {
             for(size_t field=0;field<field_count;field++)
                 (void)snprintf(init->parameter_names[field],
                     DIAMOND_MAX_FUNCTION_NAME,"%s",class->fields[field]);
+            /* Decoded *before* begin_struct_method below retargets
+             * compiler->function to `init` (a fresh function with its own,
+             * still-empty type_sets table) -- field_type_sets[] indexes into
+             * the *enclosing* function's type_sets (valid when parse_type_
+             * annotation captured it, back when the field list was parsed),
+             * not init's own. Decoding after the retarget silently read the
+             * wrong table (index out of init's own much-smaller type_set_
+             * count, so type_set_single_class always returned -1) -- caught
+             * by this phase's own verification methodology (compared JIT
+             * eligibility with/without this fix on a real struct case, not
+             * assumed), not proven correct by inspection alone. */
+            int field_known_classes[DIAMOND_MAX_DECLARED_PARAMETERS];
+            for(size_t field=0;field<field_count;field++)
+                field_known_classes[field]=
+                    type_set_single_class(compiler,field_type_sets[field]);
             StructMethodState state;
             if(!begin_struct_method(compiler,init,&state)) {
                 fail(compiler,name,"out of memory compiling initialize");
@@ -14603,6 +14716,12 @@ static uint16_t compile_struct(Compiler *compiler) {
                     const uint16_t value_register=allocate_register(compiler);
                     emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
                         (uint16_t)field,value_register,3);
+                    /* See record_field_known_type's own comment: a struct
+                     * field's declared type (required syntax, never
+                     * DIAMOND_NO_TYPE_SET) feeds the same class-level fact a
+                     * bare `self.field =` assignment would, so this field
+                     * doesn't wrongly look "never assigned" (status 0). */
+                    record_field_known_type(class,field,field_known_classes[field]);
                 }
                 emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
                 end_struct_method(compiler,&state);
@@ -15448,15 +15567,8 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                     known<DIAMOND_TYPE_VARIABLE_BASE&&
                     (size_t)(known-DIAMOND_TYPE_CLASS_BASE)<
                         compiler->program->class_count;
-                const uint8_t class_index=concrete?
-                    (uint8_t)(known-DIAMOND_TYPE_CLASS_BASE):0;
-                if(class->field_type_status[(size_t)field]==0&&concrete) {
-                    class->field_type_status[(size_t)field]=1;
-                    class->field_known_class[(size_t)field]=class_index;
-                } else if(!concrete||
-                          class->field_known_class[(size_t)field]!=class_index) {
-                    class->field_type_status[(size_t)field]=2;
-                }
+                record_field_known_type(class,(size_t)field,
+                    concrete?(int)(known-DIAMOND_TYPE_CLASS_BASE):-1);
             }
         }
         return value;

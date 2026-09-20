@@ -634,16 +634,19 @@ arithmetic and comparisons, `SUPER`, Hash/String/Array-backed ivar and index
 access, `self.method()` dynamic dispatch (any method name),
 `other.method()` dispatch when `other` is a declared, never-reassigned
 parameter with a single concrete class type, `SomeClass.new(...)`
-construction, and `.method()` on the freshly-constructed result when
-assigned to a never-reassigned local, each via a hand-verified trampoline
-extracted from the real interpreter's own opcode body rather than a
-general codegen pipeline. Measured, real wins on `bench/RESULTS.md`'s own
-benchmarks (release build): ~2.9-3x on `int_arithmetic.di`, ~6-8% on
+construction, `.method()` on the freshly-constructed result when assigned
+to a never-reassigned local, and `.method()` on a never-reassigned local
+whose only assignment is an ivar read of a field with a single compile-
+time-known concrete class, each via a hand-verified trampoline extracted
+from the real interpreter's own opcode body rather than a general codegen
+pipeline. Measured, real wins on `bench/RESULTS.md`'s own benchmarks
+(release build): ~2.9-3x on `int_arithmetic.di`, ~6-8% on
 `hash_ivar_construct.di`, ~4-8% on `object_hydration.di`, ~35% on a
 `self.method()`-in-a-loop shape (`bench/jit_invoke_self.di`), ~38% on a
 typed-parameter-`.method()`-in-a-loop shape
-(`bench/jit_invoke_typed_param.di`), and ~35% on a `NEW`-in-a-loop shape
-(`bench/jit_new_local.di`).
+(`bench/jit_invoke_typed_param.di`), ~35% on a `NEW`-in-a-loop shape
+(`bench/jit_new_local.di`), and ~38% on an ivar-load-in-a-loop shape
+(`bench/jit_ivar_local.di`).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -655,13 +658,14 @@ history: `docs/internal/jit-design.md`; user-facing summary:
 Still open:
 
 - generic `DIAMOND_OP_INVOKE` beyond `self`/typed-parameter/freshly-`NEW`'d-
-  local receivers -- every native per-type method (`.keys()`/`.length()`/
-  ...), plus `tap`/`public_send`, plus Instance method dispatch on a
-  receiver that's a method call's own return value assigned to a local (not
-  `.new()`), an ivar load, or anything else not covered by Phase 9/10's own
-  narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed the typed-
-  parameter slice: Phase 8's own "`src/jit.c` has zero access to any static
-  type information" finding turned out to be only half true --
+  local/ivar-load receivers -- every native per-type method
+  (`.keys()`/`.length()`/...), plus `tap`/`public_send` on a receiver of
+  unproven type, plus Instance method dispatch on a receiver that's a
+  method call's own return value assigned to a local (not `.new()`, not an
+  ivar), or anything else not covered by Phase 9/10/11's own narrow proofs.
+  Phase 9 (`docs/internal/jit-design.md`) closed the typed-parameter slice:
+  Phase 8's own "`src/jit.c` has zero access to any static type
+  information" finding turned out to be only half true --
   `parameter_type_sets` was already sitting on `DiamondFunction`, unread.
   Phase 10 closed the `x = SomeClass.new(...); ...; x.method()` slice, via
   a self-contained JIT-local register-write scan (no compiler changes, no
@@ -671,9 +675,18 @@ Still open:
   exhaustive (only ~16 call sites populate it, nothing establishes they
   cover every place `known_type_sets` changes), and reusing a possibly-
   stale fact for the JIT risks a wrong dispatch decision, not just a safe
-  bail, unlike every other proof this JIT relies on. The remaining gap
-  (a plain method-call return value assigned to a local) still needs that
-  mapping solved, or an equivalent new mechanism -- the ~2500-line
+  bail, unlike every other proof this JIT relies on. Phase 11 closed the
+  `x = @field; ...; x.method()` slice: unlike a method call's own return
+  type, a field's compile-time type can't be invalidated by `redefine_
+  method` at runtime (there's no equivalent "redefine a field" operation),
+  so this needed a new but still fully sound `DiamondFunction.ivar_known_
+  class` snapshot rather than the return-value case's still-unsolved
+  redefine-safety question -- see Phase 11's own section, including two
+  real, pre-existing LSP soundness gaps (attr_accessor-generated writers
+  and struct-generated `initialize` both bypassed the field-type fact
+  entirely) found and fixed along the way. The remaining gap (a plain
+  method-call return value assigned to a local) still needs the redefine-
+  safety question solved or an equivalent new mechanism -- the ~2500-line
   native-type dispatch surface itself remains separately unattempted
   regardless;
 - a value the JIT can't prove is `Int` at *runtime* either (a real

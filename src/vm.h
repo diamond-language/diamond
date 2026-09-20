@@ -915,6 +915,32 @@ typedef struct DiamondFunction {
      * fallback when return_type_set itself is DIAMOND_NO_TYPE_SET. */
     uint16_t inferred_return_type_set;
     uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    /* JIT-only (src/jit.c, "ivar load" INVOKE-receiver phase, docs/internal/
+     * jit-design.md): for a real class method (owner_class is a genuine
+     * class index), field F's compile-time-known concrete class, or
+     * UINT8_MAX if F's value isn't provably always one concrete class (or F
+     * itself is out of range). Snapshotted once, at the end of compiling the
+     * owning DiamondClass's body (compile_class_body, src/compiler.c) --
+     * *after* every SET_IVAR site for that class has run, so it reflects
+     * DiamondClass.field_known_class's own final, whole-class-exhaustive
+     * answer, not a partial one from mid-compile. Deliberately a snapshot
+     * copied onto each function rather than a live pointer back to the
+     * class: src/jit.c only ever sees one DiamondFunction in isolation (no
+     * DiamondProgram/class-table access, by design -- see jit-design.md's
+     * own "no compile-time-known class to attach" discussion for why every
+     * prior JIT phase avoided needing one), so the fact has to already be
+     * sitting on the function by the time diamond_jit_try_compile runs.
+     * Unlike lsp/receiver.c's own DiamondScopeTypeFact (rejected for JIT use
+     * in Phase 10 for being provably non-exhaustive), DiamondClass.field_
+     * known_class/field_type_status is exhaustive by construction across
+     * every SET_IVAR-emitting site for that field -- see record_field_
+     * known_type's own comment (src/compiler.c) for the three sites (an
+     * ordinary `self.field = value` assignment, an attr_accessor-generated
+     * writer, and a struct-generated initialize) that all feed it now.
+     * Never mutated after this snapshot; diamond_function_copy's whole-
+     * struct assignment carries it across a Thread.new/gremlin_serve clone
+     * for free, same as every other fixed-size DiamondFunction field. */
+    uint8_t ivar_known_class[DIAMOND_MAX_FIELDS];
     /* Declared public parameter names. Dynamic keyword calls retain names in
      * bytecode and resolve them here after target selection. Hidden self
      * slots are deliberately excluded. */

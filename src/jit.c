@@ -1364,21 +1364,30 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
     return true;
 }
 
-/* Phase 10: single-hop helper for register_new_class_if_sole_writer below.
- * Scans fn's whole body once for `target_register`'s writers. Returns the
- * compile-time class index (>=0) if there's EXACTLY ONE writer and it's
- * DIAMOND_OP_NEW; sets `*move_src` and returns -2 if there's exactly one
- * writer and it's DIAMOND_OP_MOVE (the caller re-scans from `*move_src`);
- * returns -1 for anything else (zero writers, multiple writers, or a
- * single writer that's neither). Needed because `x = SomeClass.new(...)`
- * doesn't compile to a NEW that directly targets `x`'s own register --
- * the compiler emits NEW into its own temp register, then a separate
- * MOVE into whichever register the local `x` actually lives in (confirmed
- * against a real `--dump-bytecode` disassembly before writing this: `NEW
- * r11, classN, r10, 1 args` followed immediately by `MOVE r12, r11`,
- * `r12` being the local INVOKE later reads as its receiver, not `r11`).
- * Same fail-safe-by-construction default as parameter_never_reassigned/
- * this file's other scanner. */
+/* Phase 10 (NEW), extended by Phase 11 (GET_IVAR): single-hop helper for
+ * register_new_class_if_sole_writer below. Scans fn's whole body once for
+ * `target_register`'s writers. Returns the compile-time class index (>=0)
+ * if there's EXACTLY ONE writer and it's either DIAMOND_OP_NEW, or a
+ * DIAMOND_OP_GET_IVAR of a field DiamondFunction.ivar_known_class already
+ * proves is a single concrete class (Phase 11: `x = self.assoc; ...;
+ * x.method()`, closing the roadmap's own named "an ivar load" INVOKE-
+ * receiver gap -- see that field's own comment, src/vm.h, for why this is
+ * sound where reusing the LSP's per-register scope_type_facts table, tried
+ * and rejected in Phase 10, would not have been); sets `*move_src` and
+ * returns -2 if there's exactly one writer and it's DIAMOND_OP_MOVE (the
+ * caller re-scans from `*move_src`); returns -1 for anything else (zero
+ * writers, multiple writers, or a single writer that's neither). The MOVE
+ * case is needed because `x = SomeClass.new(...)` doesn't compile to a NEW
+ * that directly targets `x`'s own register -- the compiler emits NEW into
+ * its own temp register, then a separate MOVE into whichever register the
+ * local `x` actually lives in (confirmed against a real `--dump-bytecode`
+ * disassembly before writing this: `NEW r11, classN, r10, 1 args` followed
+ * immediately by `MOVE r12, r11`, `r12` being the local INVOKE later reads
+ * as its receiver, not `r11`) -- `x = self.assoc` compiles the same way
+ * (GET_IVAR into a temp, then MOVE into `x`'s own register), so the same
+ * MOVE-chasing loop covers both without any change to it. Same fail-safe-
+ * by-construction default as parameter_never_reassigned/this file's other
+ * scanner. */
 static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
         uint16_t target_register, uint16_t *move_src) {
     size_t pc = 0;
@@ -1450,9 +1459,25 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH: {
+            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
+                break;
+            }
+            /* Phase 11: an ivar load is a second class-producing terminal,
+             * alongside NEW below -- see DiamondFunction.ivar_known_class's
+             * own comment (src/vm.h) for why `field < DIAMOND_MAX_FIELDS`
+             * is a redundant-but-cheap belt-and-suspenders bounds check
+             * (compile_get_ivar, src/compiler.c, already rejects
+             * `field > UINT8_MAX` at compile time, and ivar_known_class is
+             * sized DIAMOND_MAX_FIELDS==64, well under that) rather than
+             * something this scan needs to actually defend against. */
+            case DIAMOND_OP_GET_IVAR: {
+                uint16_t a = 0, field = 0;
+                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &field)) return -1;
+                if (writes_target && field < DIAMOND_MAX_FIELDS &&
+                    fn->ivar_known_class[field] != UINT8_MAX)
+                    new_class = (int32_t)fn->ivar_known_class[field];
                 break;
             }
             case DIAMOND_OP_SUPER: {
@@ -1477,25 +1502,32 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             default: return -1; /* unreachable given opcode_dest_is_first_u16 */
         }
     }
-    /* Neither a non-NEW, non-MOVE write nor MOVE itself ever sets
-     * new_class, so the only way write_count==1 with new_class!=-1 is
-     * that sole write being a NEW -- covers "exactly one write, wrong
-     * opcode" (new_class stays -1) without needing a separate mid-loop
-     * check. sole_write_is_move can only be true when write_count==1
-     * too (set only inside the writes_target branch, which already
-     * enforces write_count<=1 via the early return above). */
+    /* Neither a non-NEW, non-GET_IVAR, non-MOVE write nor MOVE itself ever
+     * sets new_class, so the only way write_count==1 with new_class!=-1 is
+     * that sole write being a NEW or a known-class GET_IVAR -- covers
+     * "exactly one write, wrong opcode (or an unproven ivar)" (new_class
+     * stays -1) without needing a separate mid-loop check. sole_write_is_
+     * move can only be true when write_count==1 too (set only inside the
+     * writes_target branch, which already enforces write_count<=1 via the
+     * early return above). */
     if (write_count != 1) return -1;
     if (new_class >= 0) return new_class;
     return sole_write_is_move ? -2 : -1;
 }
 
-/* Phase 10: returns the compile-time class index if `target_register`
- * provably always holds the result of one specific DIAMOND_OP_NEW,
- * chasing through register_new_class_or_move_src's own single MOVE-hop
- * result for up to 8 hops (generous for any real compiler-generated
- * local-assignment shape, cheap to bound) -- else -1. Each hop re-scans
- * fn's whole body, same O(function body length) cost class as
- * parameter_never_reassigned already accepts per INVOKE site. */
+/* Phase 10 (NEW) / Phase 11 (GET_IVAR): returns the compile-time class
+ * index if `target_register` provably always holds the result of one
+ * specific DIAMOND_OP_NEW, or one specific known-single-class
+ * DIAMOND_OP_GET_IVAR (see register_new_class_or_move_src's own updated
+ * comment), chasing through its single MOVE-hop result for up to 8 hops
+ * (generous for any real compiler-generated local-assignment shape, cheap
+ * to bound) -- else -1. Each hop re-scans fn's whole body, same
+ * O(function body length) cost class as parameter_never_reassigned already
+ * accepts per INVOKE site. Despite the name (kept as-is rather than
+ * renamed to avoid a repo-wide rename of every INVOKE-site call/comment
+ * that already says "register_new_class_if_sole_writer" for a still-
+ * accurate, if now incomplete, description), this now proves either
+ * shape. */
 static int32_t register_new_class_if_sole_writer(const DiamondFunction *fn, uint16_t target_register) {
     uint16_t current = target_register;
     for (int hop = 0; hop < 8; hop++) {
@@ -1772,10 +1804,14 @@ static void compile_body(JitCompiler *jc) {
              *     single concrete class for the whole function body -- see
              *     parameter_is_single_class/parameter_never_reassigned's
              *     own comments.
-             *  3. Phase 10 (x = SomeClass.new(...); ...; x.method()): when
-             *     recv has exactly one writer in the whole function and
-             *     that writer is DIAMOND_OP_NEW -- see register_new_
-             *     class_if_sole_writer's own comment. Strategies 1/2/3 are
+             *  3. Phase 10 (x = SomeClass.new(...); ...; x.method()),
+             *     extended by Phase 11 (x = self.assoc; ...; x.method(),
+             *     an ivar load instead of a constructor call): when recv
+             *     has exactly one writer in the whole function and that
+             *     writer is DIAMOND_OP_NEW, or a DIAMOND_OP_GET_IVAR of a
+             *     field DiamondFunction.ivar_known_class already proves is
+             *     a single concrete class -- see register_new_class_if_
+             *     sole_writer's own comment. Strategies 1/2/3 are
              *     each a strict superset of strategy 4 for the receiver
              *     they cover -- any method name, not just dup/freeze/
              *     frozen?, and correct override dispatch via the same

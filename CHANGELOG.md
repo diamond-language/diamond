@@ -6,6 +6,22 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Performance
+
+- JIT now also compiles `.method()` on a local whose only assignment is
+  an ivar read (`x = @field; ...; x.method()`), when the field's
+  compile-time type is a single concrete class -- closing the roadmap's
+  named "an ivar load" gap alongside Phase 10's own `.new()`-result case.
+  Unlike a method call's own return type, a field's type can't be
+  invalidated by `redefine_method` at runtime, so this needed a new
+  per-function snapshot of the class's own field-type table rather than
+  the harder redefine-safety question a method call's return value would
+  raise. Fixed two related, pre-existing gaps in that field-type table
+  along the way: a field whose only assignment came from an
+  attr_accessor-generated writer, or a struct-declared field, both used
+  to look "never assigned" instead of contributing a real known-class (or
+  correctly-unknown) fact. See docs/internal/jit-design.md's "Phase 11".
+
 ## 0.6.0
 
 ### Tooling

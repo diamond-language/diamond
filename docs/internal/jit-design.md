@@ -1170,6 +1170,133 @@ the function, even to another instance of the same class, or only *after*
 the read in question -- no flow-sensitive narrowing; `DIAMOND_OP_INVOKE_
 TYPED` -- still bails, same as every prior phase.
 
+### Phase 11: `DIAMOND_OP_GET_IVAR` joins `DIAMOND_OP_NEW` as a second class-producing terminal
+
+Closes the roadmap's own remaining named `INVOKE`-receiver gap for "an
+ivar load": `x = @box; ...; x.method()`, `x` never reassigned after the
+read. A `DiamondFunction`-level field, not a call-site return-type
+question, so it sidesteps the real blocker Phase 10 identified for the
+general "any local or return value" case entirely -- `redefine_method`
+can swap out a *method's* `function_index` on a class at runtime
+(invalidating any compile-time assumption about what a method call
+*returns*), but there is no equivalent "redefine a field" operation:
+`DIAMOND_OP_SET_IVAR`'s only two operands are a register index and a
+literal field index resolved once at compile time, so a field's
+compile-time-known type story can't go stale the way a method's can.
+
+**The mechanism itself needed no new proof, only a new terminal for an
+existing one.** `register_new_class_or_move_src` (`src/jit.c`, Phase 10)
+already answers "does `target_register` have exactly one writer, and is
+that writer something that guarantees a single compile-time-known
+class?" for `DIAMOND_OP_NEW`. `DIAMOND_OP_GET_IVAR` of a field whose
+compile-time type is itself a single concrete class is exactly the same
+shape of guarantee, so it slots into the same function as a second
+recognized terminal opcode (alongside `DIAMOND_OP_MOVE`'s existing
+pass-through hop) -- `register_new_class_if_sole_writer`'s 8-hop MOVE
+chase, `parameter_never_reassigned`'s whole-body scan, and `compile_
+invoke_dispatch`'s own call site all needed zero changes; the INVOKE
+dispatch switch's existing `register_new_class_if_sole_writer(...) >= 0`
+eligibility check transparently covers the new case for free. Confirmed
+via `--dump-bytecode` before trusting the assumption (this project's own
+established practice): `x = @box` compiles to `GET_IVAR` into a temp
+register followed by a separate `MOVE` into `x`'s own register, the
+identical indirection Phase 10 found for `x = SomeClass.new(...)`, so
+the existing MOVE-chasing loop needed no new logic to reach it.
+
+**The real work was making the field-type fact honest enough to trust.**
+A new `DiamondFunction.ivar_known_class[DIAMOND_MAX_FIELDS]` (`src/vm.h`)
+snapshots -- once, at the end of compiling the owning class's body
+(`compile_class_body`'s own new `snapshot_ivar_known_classes` call,
+`src/compiler.c`) -- `DiamondClass.field_type_status`/`field_known_class`,
+the same per-field fact `lsp/receiver.c` already reads for hover support.
+Deliberately a snapshot copied onto each of the class's own (non-
+`included`) methods rather than a live class-table pointer: `src/jit.c`
+still has zero access to `DiamondProgram`/class tables at compile time,
+by design (see Phase 8/10's own identical reasoning) -- the fact has to
+already be sitting on the one `DiamondFunction` object `diamond_jit_try_
+compile` ever sees.
+
+Reusing `field_type_status`/`field_known_class` as-is would have quietly
+inherited a real, pre-existing soundness gap, though: that table is
+populated by `compile_assignment_store`'s own inline logic for an
+ordinary `self.field = value`/`@field = value` assignment, but grepping
+every `DIAMOND_OP_SET_IVAR` emission site in `src/compiler.c` found two
+more that bypassed it entirely -- `compile_attribute_named`'s own
+attr_accessor/attr_writer-generated writer, and `compile_struct`'s own
+generated `initialize` (one `SET_IVAR` per declared field). For the LSP,
+this was harmless (a field only ever assigned through attr_accessor or a
+struct declaration -- i.e. almost every real class -- just permanently
+looked "never assigned," status 0, rather than either a real concrete
+class or "unknown"). For this phase's own new JIT use, "never assigned"
+and "known concrete class" need to stay distinguishable, or the whole
+mechanism would only ever fire for the least common ivar-assignment
+shape. Fixed by extracting the merge logic into a shared `record_field_
+known_type` (`src/compiler.c`) -- first concrete class seen wins, a
+second different one or any non-concrete write poisons the field to
+"unknown" forever -- and calling it from all three sites uniformly.
+`compile_assignment_store` itself is now a thin caller of it, not a
+change in its own behavior. A struct field is always explicitly typed
+(required syntax), so `compile_struct`'s own call always contributes a
+real fact one way or the other.
+
+**A real, non-obvious bug found and fixed while wiring up the struct
+side, not assumed correct**: the first version decoded a struct field's
+declared type *after* `begin_struct_method` had already retargeted
+`compiler->function` to the freshly-created `initialize` function -- a
+function with its own, still-essentially-empty `type_sets` table.
+`field_type_sets[field]` is an index into the *enclosing* function's
+`type_sets` (valid at the point `parse_type_annotation` captured it,
+while parsing the struct's own field list), not `init`'s, so decoding
+through the wrong table silently read out of `init`'s much smaller
+`type_set_count` and always returned "not concrete." Caught by this
+phase's own verification methodology -- comparing real JIT eligibility
+(`run` compiled or not, checked by function name via a temporary local
+trace, not just a raw count) with the fix landed vs. deliberately
+disabled on `tests/cases/jit_ivar_local_struct.di` -- rather than trusted
+by inspection; both states looked identical (`run` ineligible either
+way) until the decode was moved earlier, before `begin_struct_method`
+retargets `compiler->function`, into a small local array read back
+inside the loop.
+
+**Verified**: `git stash`-compared before/after on a minimal `x = @box;
+...; x.double()`-in-a-loop script confirmed the delta (`run` ineligible
+before, compiled after -- checked by function name via a temporary local
+`fprintf` trace in `jit_call_or_interpret`, `src/vm.c`, removed again
+before committing, not just a raw compiled-function count, since that
+count also includes unrelated prelude functions). New `tests/cases/
+jit_ivar_local*` cover: the basic compiling case (`box: Box` kept
+explicitly typed on `Holder#initialize` -- an *untyped* parameter
+assignment can't be proven to hold a single concrete class, confirmed
+directly as a real, correct rejection, not a bug, while drafting this
+test), a reassigned local still correctly bailing, a real override
+dispatched correctly through an ivar-typed-as-the-base-class receiver
+(not devirtualized), the attr_accessor-writer regression fix specifically
+(a field whose only `SET_IVAR` site is a generated writer), the struct-
+`initialize` regression fix specifically (same shape, struct-declared
+field), an untyped-parameter negative case (field permanently "unknown"),
+and a cross-site-conflict negative case (two differently-typed setters
+for the same field, poisoning it after the second call). Full bar: debug
+suite (1576/1576 including the new cases), ASan/UBSan (via `build/
+run_cases` directly plus each new case run individually under `DIAMOND_
+JIT=1 DIAMOND_STRESS_GC=1` -- `tests/run.sh`'s own shell-driven signal/
+network case at "ready\ncaught INT\naccepted\nnil" is independently flaky
+in this environment, reproduced identically with every change here
+stashed away, so not a regression from this phase), and the JIT+
+`DIAMOND_STRESS_GC` combination all still correct. Release A/B benchmark
+(`bench/jit_ivar_local.di`, a hot loop reading an ivar once outside the
+loop and calling a method on it every iteration): ~38% faster JIT'd
+(~0.57s -> ~0.35s, release build, stable across repeated runs), in the
+same range as Phase 7/9/10's own ~35-38%.
+
+**Out of scope (explicit)**: the general non-parameter, non-`NEW`,
+non-`GET_IVAR` receiver case (a method call's own return value assigned
+to a local) -- still unattempted, still blocked on either solving the
+redefine-safe return-type question Phase 10 identified, or a different
+mechanism entirely; a `GET_IVAR_NAME`-addressed module attribute (module
+state has no per-field class-index table the way a real class's fields[]
+does); a register reassigned anywhere in the function, even to another
+read of the exact same ivar -- no flow-sensitive narrowing.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
