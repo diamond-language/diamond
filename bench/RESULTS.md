@@ -886,3 +886,9 @@ about 1.15% faster. JIT runs compiled 50 functions with zero bailouts and zero
 hard propagations. The lighter 30-skin page does less application work than
 the earlier 100-skin measurement, so these numbers are not directly
 comparable to that result.
+
+Repeating the identical procedure after restoring Skindicate's root page to
+100 skins produced 30.220 ms/request interpreted and 29.105 ms/request with
+JIT across three alternating runs per mode, about 3.69% faster. Each response
+was 59,728 bytes; JIT runs again compiled 50 functions with zero bailouts and
+zero hard propagations.
