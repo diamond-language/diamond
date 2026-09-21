@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Persistent `diamond build` AOT caches now use a SHA-256 fingerprint of the
+  runtime sources, headers, build configuration, and embedded prelude. Replacing
+  a source checkout with older-timestamped files can no longer reuse an
+  ABI-incompatible runtime archive.
 - Added a bare `clear` REPL command (irb/pry/python-REPL-style, same
   convention as the existing bare `exit`/`quit`): wipes the visible
   terminal screen and redraws a fresh `{> ` prompt without touching the

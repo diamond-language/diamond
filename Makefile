@@ -223,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -571,24 +571,31 @@ test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
 # separate archive: the ordinary CLI objects may use different debug,
 # release, or sanitizer flags, while every standalone app uses -O2/-g0.
 # The compiler name is part of the cache path so --cc=clang never reuses
-# gcc objects. Header dependencies and the generated prelude are tracked
-# below. AOT_CACHE_ROOT can put the cache outside build/ (for ephemeral
-# container checkouts); the caller then owns its cleanup.
+# gcc objects. A content fingerprint in the config stamp protects persistent
+# caches from copied/replaced source trees whose mtimes move backwards; the
+# ordinary dependency files still avoid rebuilding for unchanged content.
+# AOT_CACHE_ROOT can put the cache outside build/ (for ephemeral container
+# checkouts); the caller then owns its cleanup.
 AOT_EMBED ?=
 AOT_OUTPUT ?= $(BUILD_DIR)/a.out
 AOT_CACHE_ROOT ?= $(BUILD_DIR)/aot
 AOT_CACHE_DIR := $(AOT_CACHE_ROOT)-$(subst /,_,$(CC))
 AOT_CFLAGS := $(CFLAGS_COMMON) -O2 -g0
 AOT_CONFIG := $(AOT_CACHE_DIR)/config
+AOT_FINGERPRINT_EXTRA ?=
+AOT_FINGERPRINT_INPUTS := Makefile tools/aot_fingerprint.sh \
+	$(API_SOURCES) $(wildcard src/*.h) tools/aot_runtime_main.c \
+	$(wildcard $(REGINOLD_DIR)/*.h) $(PRELUDE_BIN) $(AOT_FINGERPRINT_EXTRA)
 AOT_RUNTIME_OBJECTS := $(API_SOURCES:src/%.c=$(AOT_CACHE_DIR)/%.o) $(AOT_CACHE_DIR)/runtime_main.o
 AOT_RUNTIME_LIB := $(AOT_CACHE_DIR)/libdiamond-aot.a
 
 .PHONY: aot-config-check
 aot-config-check:
 
-$(AOT_CONFIG): aot-config-check
+$(AOT_CONFIG): aot-config-check $(AOT_FINGERPRINT_INPUTS)
 	@mkdir -p $(AOT_CACHE_DIR)
-	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(shell $(CC) -dumpversion)' > $@.tmp
+	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(shell $(CC) -dumpversion)' \
+		"$$(tools/aot_fingerprint.sh $(AOT_FINGERPRINT_INPUTS))" > $@.tmp
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
 $(AOT_CACHE_DIR)/%.o: src/%.c $(AOT_CONFIG)
@@ -608,6 +615,9 @@ $(AOT_RUNTIME_LIB): $(AOT_RUNTIME_OBJECTS)
 aot-build: $(AOT_RUNTIME_LIB)
 	$(CC) $(CPPFLAGS) $(AOT_CFLAGS) $(AOT_EMBED) \
 	    $(AOT_RUNTIME_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
+
+test-aot-cache: debug
+	bash tests/build_from_app_dir.sh
 
 test-repl: debug
 	bash tests/repl_test.sh
@@ -670,6 +680,7 @@ test-all:
 	$(MAKE) test-semver
 	$(MAKE) test-incremental-compile
 	$(MAKE) test-compiled-prelude
+	$(MAKE) test-aot-cache
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-guards
 	$(MAKE) test-fiber-run

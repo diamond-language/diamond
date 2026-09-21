@@ -46,8 +46,11 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
 - The first build compiles the runtime into `build/aot-COMPILER/` and
   archives it as `libdiamond-aot.a`. Later builds reuse that archive and
   compile only the generated program data. Header/source changes and
-  changes to compiler flags rebuild affected runtime objects; `make clean`
-  removes the default cache. `--cc` uses a separate cache per compiler.
+  changes to compiler flags rebuild affected runtime objects. The cache stamp
+  includes a SHA-256 fingerprint of the runtime sources, headers, Makefile,
+  and embedded prelude, so replacing a checkout with files that have older
+  timestamps still invalidates the archive safely. `make clean` removes the
+  default cache. `--cc` uses a separate cache per compiler.
   Set `AOT_CACHE_ROOT` to an absolute path to keep the archive outside an
   ephemeral checkout; remove that directory explicitly when no longer
   needed. Container builds should key this path to their image/toolchain.
@@ -138,11 +141,11 @@ the container build described above and leaves the result at
 target and restarts the service running it.
 
 The example keeps AOT runtime objects in `skindicate.dia/dist/aot-cache/`,
-outside the disposable source copy. Its cache key comes from the Ubuntu
-image's filesystem layers; source timestamps and Make dependency files
-invalidate changed objects. The Diamond CLI's `make release` step still
-rebuilds on each container run, while the AOT runtime compilation is reused.
-Delete `dist/aot-cache/` when that cache is no longer wanted.
+outside the disposable source copy. Diamond fingerprints the runtime inputs,
+so the cache remains safe when a new source copy has older timestamps. The
+Diamond CLI's `make release` step still rebuilds on each container run, while
+the AOT runtime compilation is reused. Delete `dist/aot-cache/` when that
+cache is no longer wanted.
 
 **One more thing a cross-build must override:** the Makefile's own `release`
 target defaults `CFLAGS_RELEASE` to `-march=native` (right for the common
