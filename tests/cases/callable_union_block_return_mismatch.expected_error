@@ -1,1 +1,1 @@
-expression cannot satisfy type annotation
+expected UnionReturnDog, got String

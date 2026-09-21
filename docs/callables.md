@@ -136,6 +136,10 @@ with the same outer type remain distinct alternatives, such as
 `Array[Int] | Array[String]`; exact duplicates are invalid. Fixed constructor
 calls infer `initialize` type variables
 from their positional arguments in the same way.
+When the compiler can prove that an expression violates one of these
+annotations, its diagnostic prints both complete type graphs, for example
+`expected Array[Int], got String` or
+`expected Callable[[Int], String], got Callable[[Int], Int]`.
 Spreading a homogeneously typed Array supplies its element contract to generic
 parameters before a trailing block is compiled. This applies to functions,
 singleton methods, instance methods, and constructors.

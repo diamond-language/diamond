@@ -352,7 +352,7 @@ if "$diamond" -e $'def wrong() -> Bool\n  42\nend\nwrong()' \
     rm -f "$error_file"
     exit 1
 fi
-grep -q 'expression cannot satisfy type annotation' "$error_file"
+grep -q 'expected Bool, got Int' "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e $'def absent() -> String | Nil\n  nil\nend\nabsent()')"

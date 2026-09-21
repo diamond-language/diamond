@@ -667,6 +667,111 @@ static bool type_set_contains_variable(const Compiler *compiler,uint16_t set_ind
     return false;
 }
 
+static const char *compiler_type_name(const Compiler *compiler,uint8_t type) {
+    if(type==DIAMOND_TYPE_INT)return "Int";
+    if(type==DIAMOND_TYPE_FLOAT)return "Float";
+    if(type==DIAMOND_TYPE_STRING)return "String";
+    if(type==DIAMOND_TYPE_SYMBOL)return "Symbol";
+    if(type==DIAMOND_TYPE_BOOL)return "Bool";
+    if(type==DIAMOND_TYPE_NIL)return "Nil";
+    if(type==DIAMOND_TYPE_ARRAY)return "Array";
+    if(type==DIAMOND_TYPE_HASH)return "Hash";
+    if(type==DIAMOND_TYPE_CALLABLE)return "Callable";
+    if(type==DIAMOND_TYPE_SIZED)return "Sized";
+    if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t index=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
+        return index<compiler->function->type_variable_count?
+            compiler->function->type_variables[index]:"TypeVariable";
+    }
+    if(type>=DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t index=(size_t)(type-DIAMOND_TYPE_INTERFACE_BASE);
+        return index<compiler->program->interface_count?
+            compiler->program->interfaces[index].name:"<invalid type>";
+    }
+    if(type>=DIAMOND_TYPE_CLASS_BASE) {
+        const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
+        return index<compiler->program->class_count?
+            compiler->program->classes[index].name:"<invalid type>";
+    }
+    return "<invalid type>";
+}
+
+static void format_compiler_type_set(char *buffer,size_t capacity,
+        const Compiler *compiler,uint16_t set_index) {
+    if(capacity==0)return;
+    buffer[0]='\0';
+    if((size_t)set_index>=compiler->function->type_set_count) {
+        snprintf(buffer,capacity,"<invalid type set>");return;
+    }
+    const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    size_t used=0;
+    for(size_t index=0;index<set->count&&used<capacity;index++) {
+        const DiamondTypeMember member=set->members[index];
+        const int name=snprintf(buffer+used,capacity-used,"%s%s",
+            index==0?"":" | ",compiler_type_name(compiler,member.id));
+        if(name<0)return;
+        used+=(size_t)name;
+        if(member.argument_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
+            char first[192],second[192]="";
+            format_compiler_type_set(first,sizeof first,compiler,member.argument_set);
+            if(member.second_argument_set!=DIAMOND_NO_TYPE_SET)
+                format_compiler_type_set(second,sizeof second,compiler,
+                    member.second_argument_set);
+            const int nested=snprintf(buffer+used,capacity-used,"[%s%s%s]",first,
+                second[0]=='\0'?"":", ",second);
+            if(nested<0)return;
+            used+=(size_t)nested;
+        } else if(member.id==DIAMOND_TYPE_CALLABLE&&
+                  member.callable_arity!=UINT8_MAX&&used<capacity) {
+            const int open=snprintf(buffer+used,capacity-used,
+                member.callable_parameters_typed?"[[":"[%u",member.callable_arity);
+            if(open<0)return;
+            used+=(size_t)open;
+            if(member.callable_parameters_typed) {
+                for(size_t parameter=0;parameter<member.callable_arity&&used<capacity;
+                    parameter++) {
+                    char parameter_type[192];
+                    format_compiler_type_set(parameter_type,sizeof parameter_type,
+                        compiler,member.callable_parameter_sets[parameter]);
+                    const int written=snprintf(buffer+used,capacity-used,"%s%s",
+                        parameter==0?"":", ",parameter_type);
+                    if(written<0)return;
+                    used+=(size_t)written;
+                }
+                if(used<capacity) {
+                    const int close=snprintf(buffer+used,capacity-used,"]");
+                    if(close<0)return;
+                    used+=(size_t)close;
+                }
+            }
+            if(member.callable_return_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
+                char returns[192];
+                format_compiler_type_set(returns,sizeof returns,compiler,
+                    member.callable_return_set);
+                const int written=snprintf(buffer+used,capacity-used,", %s",returns);
+                if(written<0)return;
+                used+=(size_t)written;
+            }
+            if(used<capacity)snprintf(buffer+used,capacity-used,"]");
+        }
+    }
+}
+
+static void fail_type_mismatch(Compiler *compiler,DiamondSpan span,
+        uint16_t reg,uint16_t expected_set) {
+    char expected[384],actual[384];
+    format_compiler_type_set(expected,sizeof expected,compiler,expected_set);
+    if(compiler->known_type_sets[reg]>=0)
+        format_compiler_type_set(actual,sizeof actual,compiler,
+            (uint16_t)compiler->known_type_sets[reg]);
+    else
+        snprintf(actual,sizeof actual,"%s",
+            compiler_type_name(compiler,compiler->known_types[reg]));
+    char message[sizeof compiler->diagnostic->message];
+    snprintf(message,sizeof message,"expected %s, got %s",expected,actual);
+    fail(compiler,span,message);
+}
+
 static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
                             DiamondSpan span) {
     if(type_set_contains_variable(compiler,set_index)) {
@@ -680,7 +785,7 @@ static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index
             emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
             return;
         }
-        fail(compiler,span,"expression cannot satisfy type annotation");return;
+        fail_type_mismatch(compiler,span,reg,set_index);return;
     }
     const uint8_t known=compiler->known_types[reg];
     if(known==TYPE_UNKNOWN) {
@@ -694,7 +799,7 @@ static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index
             emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
         return;
     }
-    fail(compiler,span,"expression cannot satisfy type annotation");
+    fail_type_mismatch(compiler,span,reg,set_index);
 }
 
 static uint16_t add_constant(Compiler *compiler, DiamondValue value) {

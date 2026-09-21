@@ -11,6 +11,9 @@ authoritative fine-grained record.
 - Compiler diagnostics now own their formatted message text, so messages remain
   valid after compiler teardown and struct copies. Non-exhaustive `case` errors
   use this to name each missing union member or sealed subclass.
+- Compile-time annotation failures now render the expected and known actual
+  types, including unions, parameterized collections, callables, user classes,
+  interfaces, and generic type-variable names.
 
 ### Tooling
 
