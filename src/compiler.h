@@ -51,7 +51,9 @@ typedef struct DiamondProgram {
 
 typedef struct DiamondDiagnostic {
     DiamondSpan span;
-    const char *message;
+    /* Stored inline so formatted diagnostics outlive the stack-local Compiler
+     * that produced them and remain valid when this struct is copied. */
+    char message[1024];
 } DiamondDiagnostic;
 
 /* Zeroes *program and populates the fixed built-in exception-class table.

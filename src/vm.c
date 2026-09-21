@@ -4380,7 +4380,8 @@ static DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *t
     const bool compiled=diamond_compile(combined,program,&diagnostic);
     free(combined);
     if(!compiled) {
-        snprintf(vm->error,sizeof vm->error,"compile_method: %s",diagnostic.message);
+        snprintf(vm->error,sizeof vm->error,"compile_method: %.1007s",
+            diagnostic.message);
         diamond_program_free(program);
         free(program);
         return DIAMOND_VM_ARITY_ERROR;

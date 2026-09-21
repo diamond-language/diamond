@@ -334,9 +334,20 @@ static uint16_t compile_assignment_store(Compiler *compiler,DiamondSpan name,
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
         compiler->diagnostic->span = span;
-        compiler->diagnostic->message = message;
+        snprintf(compiler->diagnostic->message,
+            sizeof compiler->diagnostic->message,"%s",message);
         compiler->failed = true;
     }
+}
+
+static const char *closed_type_name(const Compiler *compiler,uint8_t id) {
+    if(id==DIAMOND_TYPE_NIL)return "Nil";
+    if(id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_INTERFACE_BASE) {
+        const size_t index=(size_t)(id-DIAMOND_TYPE_CLASS_BASE);
+        if(index<compiler->program->class_count)
+            return compiler->program->classes[index].name;
+    }
+    return "unknown";
 }
 
 static void advance_token(Compiler *compiler) {
@@ -9531,6 +9542,27 @@ typedef struct CaseExhaustiveness {
     DiamondSpan case_span;
 } CaseExhaustiveness;
 
+static void fail_non_exhaustive_case(Compiler *compiler,
+        const CaseExhaustiveness *exhaustiveness) {
+    char message[sizeof compiler->diagnostic->message];
+    size_t used=(size_t)snprintf(message,sizeof message,
+        "case is not exhaustive over its subject's known closed type; missing: ");
+    bool first=true;
+    for(uint8_t member=0;member<exhaustiveness->required_count;member++) {
+        if(exhaustiveness->covered[member])continue;
+        const char *name=closed_type_name(compiler,
+            exhaustiveness->required_ids[member]);
+        if(used<sizeof message)
+            used+=(size_t)snprintf(message+used,sizeof message-used,
+                "%s%s",first?"":", ",name);
+        first=false;
+    }
+    if(used<sizeof message)
+        snprintf(message+used,sizeof message-used,
+            "; add the missing branch or an 'else'");
+    fail(compiler,exhaustiveness->case_span,message);
+}
+
 typedef enum CaseArrayNodeKind {CASE_ARRAY_GROUP,CASE_ARRAY_VALUE,
     CASE_ARRAY_BIND,CASE_ARRAY_WILDCARD,CASE_ARRAY_REST_BIND,
     CASE_ARRAY_REST_WILDCARD,CASE_ARRAY_PIN,CASE_HASH_GROUP,
@@ -10187,9 +10219,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             for(uint8_t member=0;member<exhaustiveness->required_count;member++)
                 if(!exhaustiveness->covered[member]){all_covered=false;break;}
             if(!all_covered) {
-                fail(compiler,exhaustiveness->case_span,
-                    "case is not exhaustive over its subject's known closed "
-                    "type -- add a branch for the missing type(s), or an 'else'");
+                fail_non_exhaustive_case(compiler,exhaustiveness);
                 return destination;
             }
         }

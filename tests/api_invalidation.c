@@ -115,6 +115,16 @@ int main(void) {
        result.kind!=DIAMOND_VALUE_INT||result.as.integer!=599)return 16;
     diamond_vm_free(&large_vm);
     diamond_program_free(&program);
+    static const char diagnostic_source[]=
+        "class Left\nend\nclass Right\nend\n"
+        "def choose(value: Left | Right)\n"
+        "  case value\n  when Left\n    1\n  end\nend\n";
+    if(diamond_compile(diagnostic_source,&program,&diagnostic))return 18;
+    DiamondDiagnostic copied_diagnostic=diagnostic;
+    memset(diagnostic.message,'x',sizeof diagnostic.message-1);
+    diagnostic.message[sizeof diagnostic.message-1]='\0';
+    if(strstr(copied_diagnostic.message,"missing: Right")==nullptr)return 19;
+    diamond_program_free(&program);
     puts("api invalidation passed");
     return 0;
 }

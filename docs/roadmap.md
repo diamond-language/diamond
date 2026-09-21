@@ -171,13 +171,10 @@ opens up, none attempted yet, none committed:
   class id for an "empty `[]`/`{}` covers this member" fact to attach
   to in the first place -- not a narrower cut of the same idea, a
   question that doesn't apply to them;
-- **naming the missing member(s) in the compile error** -- Diamond's
-  compiler diagnostics are static string literals throughout
-  (`DiamondDiagnostic.message` is a raw, non-owning `const char *`, and the
-  `Compiler` struct compiling one function is stack-local and gone before a
-  caller could read a dynamically-built message out of it), so this needs a
-  real, separate diagnostic-message-ownership mechanism benefiting every
-  compile error, not something worth inventing for this one check alone.
+- ~~**naming the missing member(s) in the compile error**~~ -- **closed**
+  (2026-09): `DiamondDiagnostic` now owns inline message storage, remaining
+  valid after compiler teardown and ordinary struct copies. Exhaustiveness
+  errors list every missing union member or sealed subclass by name.
 
 Revisit only with a real driving need, not speculatively -- same bar
 docs/roadmap.md already holds every other research direction to.

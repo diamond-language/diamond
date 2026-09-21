@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Diagnostics
+
+- Compiler diagnostics now own their formatted message text, so messages remain
+  valid after compiler teardown and struct copies. Non-exhaustive `case` errors
+  use this to name each missing union member or sealed subclass.
+
 ### Tooling
 
 - Added a bare `clear` REPL command (irb/pry/python-REPL-style, same

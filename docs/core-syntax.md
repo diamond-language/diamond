@@ -203,8 +203,8 @@ def area(shape: Circle | Square)
   when Circle
     3.14159 * shape.radius() * shape.radius()
   end
-  # error: case is not exhaustive over its subject's known closed type --
-  # add a branch for the missing type(s), or an 'else'
+  # error: case is not exhaustive over its subject's known closed type;
+  # missing: Square; add the missing branch or an 'else'
 end
 ```
 
@@ -284,10 +284,8 @@ own specific shape of subject:
   common case: `when Circle` already matches Circle-or-any-of-*its own*
   subclasses at runtime the ordinary way, so a deeper hierarchy under a
   sealed class's direct subclasses doesn't need separate coverage.)
-- The compile error itself does not name which member(s) are missing
-  (Diamond's compiler diagnostics are static strings throughout, with
-  no per-call-site interpolation mechanism) — it only reports that the
-  `case` isn't exhaustive.
+- The compile error names every uncovered member, including `Nil` and direct
+  subclasses of a sealed class.
 
 ## Ternary
 
