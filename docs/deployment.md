@@ -47,7 +47,10 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   archives it as `libdiamond-aot.a`. Later builds reuse that archive and
   compile only the generated program data. Header/source changes and
   changes to compiler flags rebuild affected runtime objects; `make clean`
-  removes the cache. `--cc` uses a separate cache per compiler.
+  removes the default cache. `--cc` uses a separate cache per compiler.
+  Set `AOT_CACHE_ROOT` to an absolute path to keep the archive outside an
+  ephemeral checkout; remove that directory explicitly when no longer
+  needed. Container builds should key this path to their image/toolchain.
 
 ## JIT in standalone programs
 
@@ -133,6 +136,13 @@ complete worked example of this for a Diamond application: the former runs
 the container build described above and leaves the result at
 `skindicate.dia/dist/app`; the latter ships that binary to a real deploy
 target and restarts the service running it.
+
+The example keeps AOT runtime objects in `skindicate.dia/dist/aot-cache/`,
+outside the disposable source copy. Its cache key comes from the Ubuntu
+image's filesystem layers; source timestamps and Make dependency files
+invalidate changed objects. The Diamond CLI's `make release` step still
+rebuilds on each container run, while the AOT runtime compilation is reused.
+Delete `dist/aot-cache/` when that cache is no longer wanted.
 
 **One more thing a cross-build must override:** the Makefile's own `release`
 target defaults `CFLAGS_RELEASE` to `-march=native` (right for the common

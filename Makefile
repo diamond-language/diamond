@@ -572,10 +572,12 @@ test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
 # release, or sanitizer flags, while every standalone app uses -O2/-g0.
 # The compiler name is part of the cache path so --cc=clang never reuses
 # gcc objects. Header dependencies and the generated prelude are tracked
-# below; make clean removes the whole cache with build/.
+# below. AOT_CACHE_ROOT can put the cache outside build/ (for ephemeral
+# container checkouts); the caller then owns its cleanup.
 AOT_EMBED ?=
 AOT_OUTPUT ?= $(BUILD_DIR)/a.out
-AOT_CACHE_DIR := $(BUILD_DIR)/aot-$(subst /,_,$(CC))
+AOT_CACHE_ROOT ?= $(BUILD_DIR)/aot
+AOT_CACHE_DIR := $(AOT_CACHE_ROOT)-$(subst /,_,$(CC))
 AOT_CFLAGS := $(CFLAGS_COMMON) -O2 -g0
 AOT_CONFIG := $(AOT_CACHE_DIR)/config
 AOT_RUNTIME_OBJECTS := $(API_SOURCES:src/%.c=$(AOT_CACHE_DIR)/%.o) $(AOT_CACHE_DIR)/runtime_main.o
