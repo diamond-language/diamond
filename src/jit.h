@@ -399,17 +399,18 @@ typedef enum DiamondJitNativeReadOp {
     DIAMOND_JIT_NATIVE_STRING_LENGTH,
     DIAMOND_JIT_NATIVE_STRING_INDEX_OF,
     DIAMOND_JIT_NATIVE_STRING_ORD,
+    DIAMOND_JIT_NATIVE_STRING_SLICE,
     DIAMOND_JIT_NATIVE_ARRAY_LENGTH,
     DIAMOND_JIT_NATIVE_HASH_LENGTH,
     DIAMOND_JIT_NATIVE_HASH_KEY_AT,
     DIAMOND_JIT_NATIVE_HASH_VALUE_AT,
 } DiamondJitNativeReadOp;
 
-/* Allocation-free native String/collection reads selected from a compiler-recorded
- * receiver type at this exact INVOKE site. These operations cannot call user
- * code or mutate state, so a later JIT bailout may still safely restart the
- * function from the interpreter entry. */
-DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
+/* Selected native String/collection calls chosen from a compiler-recorded
+ * receiver type at this exact INVOKE site. Most are allocation-free reads.
+ * String#slice allocates, so its compiler path publishes a DiamondFrame and
+ * propagates failures instead of restarting the function. */
+DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
         const DiamondValue *receiver,const DiamondValue *argument,
         DiamondJitNativeReadOp operation,DiamondValue *out);
 

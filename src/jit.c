@@ -1128,15 +1128,19 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     emit_bail_if_al_nonzero(jc);
 }
 
-static void compile_native_read(JitCompiler *jc,uint16_t dest,uint16_t recv,
+static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
         uint16_t base,DiamondJitNativeReadOp operation) {
+    if(operation==DIAMOND_JIT_NATIVE_STRING_SLICE) {
+        jc->needs_frame=true;
+        jc->has_called=true;
+    }
     JitBuffer *buf=&jc->buf;
     emit_mov_rr(buf,REG_RDI,JIT_VM);
     emit_lea(buf,REG_RSI,JIT_REGISTERS_BASE,reg_disp(recv,0));
     emit_lea(buf,REG_RDX,JIT_REGISTERS_BASE,reg_disp(base,0));
     emit_mov_imm64(buf,REG_RCX,(uint64_t)operation);
     emit_lea(buf,REG_R8,JIT_REGISTERS_BASE,reg_disp(dest,0));
-    emit_call_trampoline(buf,(void *)(uintptr_t)diamond_jit_native_read);
+    emit_call_trampoline(buf,(void *)(uintptr_t)diamond_jit_native_call);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1923,6 +1927,10 @@ static void compile_body(JitCompiler *jc) {
                               native_name->length==3&&
                               memcmp(native_name->chars,"ord",3)==0) {
                         operation=DIAMOND_JIT_NATIVE_STRING_ORD;supported=true;
+                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==2&&
+                              native_name->length==5&&
+                              memcmp(native_name->chars,"slice",5)==0) {
+                        operation=DIAMOND_JIT_NATIVE_STRING_SLICE;supported=true;
                     } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
                               native_name->length==6&&
                               memcmp(native_name->chars,"key_at",6)==0) {
@@ -1933,7 +1941,7 @@ static void compile_body(JitCompiler *jc) {
                         operation=DIAMOND_JIT_NATIVE_HASH_VALUE_AT;supported=true;
                     }
                     if(supported) {
-                        compile_native_read(jc,dest,recv,base,operation);
+                        compile_native_call(jc,dest,recv,base,operation);
                         break;
                     }
                 }

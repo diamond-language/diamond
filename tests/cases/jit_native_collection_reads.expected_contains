@@ -5,6 +5,9 @@
 ^7$
 ^3$
 ^65$
+^achu$
+^slice bounds$
+^slice types$
 ^nil$
 ^empty ord$
-jit: 7 compiled function(s), 1 bailout(s), 0 hard propagation(s)
+jit: 9 compiled function(s), 1 bailout(s), 2 hard propagation(s)

@@ -659,7 +659,8 @@ chaining through an ivar-loaded receiver (`bench/jit_invoke_result_ivar.di`,
 Phase 16), and ~96% on a tight statically typed Array/Hash native-read loop
 (`bench/jit_native_collection_reads.di`, Phase 17; 4.86s to 0.19s). Phase
 17's String read extension is ~67% faster in its isolated benchmark (0.80s
-to 0.27s average).
+to 0.27s average). Phase 18's allocating String slice benchmark is ~63%
+faster (0.17s to 0.063s average).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -676,6 +677,7 @@ Still open:
   receivers -- most native per-type methods (`.keys()`/`.slice()`/...);
   Phase 17 covers String `length`, `index_of`, and `ord`, plus Array/Hash
   `length`, `key_at`, and `value_at`,
+  and Phase 18 covers allocating String `slice`,
   plus `tap`/`public_send` on a receiver of unproven type, plus Instance
   method dispatch on anything else not covered by Phase 9/10/11/12/
   13's own narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed

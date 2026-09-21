@@ -12513,12 +12513,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         type_argument_count,type_arguments,chunk,depth,out);
 }
 
-DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
+DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
         const DiamondValue *receiver,const DiamondValue *argument,
         DiamondJitNativeReadOp operation,DiamondValue *out) {
     const bool string_operation=operation==DIAMOND_JIT_NATIVE_STRING_LENGTH||
         operation==DIAMOND_JIT_NATIVE_STRING_INDEX_OF||
-        operation==DIAMOND_JIT_NATIVE_STRING_ORD;
+        operation==DIAMOND_JIT_NATIVE_STRING_ORD||
+        operation==DIAMOND_JIT_NATIVE_STRING_SLICE;
     const bool array_operation=operation==DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
     if(receiver->kind!=DIAMOND_VALUE_OBJECT||
        receiver->as.object->kind!=(string_operation?DIAMOND_OBJECT_STRING:
@@ -12537,6 +12538,28 @@ DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
             }
             *out=DIAMOND_INT((unsigned char)source->chars[0]);
             return DIAMOND_VM_OK;
+        }
+        if(operation==DIAMOND_JIT_NATIVE_STRING_SLICE) {
+            if(argument[0].kind!=DIAMOND_VALUE_INT||
+               argument[1].kind!=DIAMOND_VALUE_INT) {
+                snprintf(vm->error,sizeof vm->error,
+                    "String#slice arguments must be Int");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const int64_t start=argument[0].as.integer;
+            const int64_t requested_length=argument[1].as.integer;
+            if(start<0||(uint64_t)start>source->length||requested_length<0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "index %" PRId64 " out of bounds for String of length %zu",
+                    start,source->length);
+                return DIAMOND_VM_INDEX_ERROR;
+            }
+            const size_t available=source->length-(size_t)start;
+            const size_t length=(uint64_t)requested_length>available?
+                available:(size_t)requested_length;
+            DiamondString *slice=allocate_string(vm,source->chars+(size_t)start,length);
+            if(slice==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            *out=DIAMOND_OBJECT(slice);return DIAMOND_VM_OK;
         }
         if(argument->kind!=DIAMOND_VALUE_OBJECT||
            argument->as.object->kind!=DIAMOND_OBJECT_STRING) {

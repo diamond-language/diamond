@@ -868,3 +868,10 @@ the end-to-end Skindicate gain.
 The follow-up `bench/jit_native_string_reads.di` runs five million iterations
 containing String `length`, `index_of`, and `ord`. Three alternating release
 runs averaged 0.80s interpreted and 0.27s with JIT, about 67% faster.
+
+## Allocating String slice -- JIT Phase 18 (2026-09-20)
+
+`bench/jit_native_string_slice.di` runs one million `String#slice` allocations
+and reads each result's length. Three alternating release runs averaged 0.17s
+interpreted and 0.063s with JIT, about 63% faster. The focused regression also
+runs under `DIAMOND_STRESS_GC=1` to validate the framed allocation path.

@@ -1934,3 +1934,12 @@ Call-site receiver facts also retain statically known `String`, `Array`, and
 and `Hash#value_at`. A small trampoline performs the same type, argument, and
 bounds checks as the interpreter. These operations allocate nothing and
 mutate nothing, so a later bailout can safely restart the bytecode function.
+
+### Phase 18: allocating native String slice
+
+Statically typed `String#slice` uses the same native-call selection, but marks
+the compiled function as framed and call-bearing. The frame exposes receiver
+and argument registers to GC while `allocate_string` runs. Any type, bounds,
+or allocation failure propagates its VM status directly, avoiding a restart
+that could repeat an allocation. Stress-GC regression coverage exercises the
+successful, clamped, bounds-error, and type-error paths.
