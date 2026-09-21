@@ -875,3 +875,14 @@ runs averaged 0.80s interpreted and 0.27s with JIT, about 67% faster.
 and reads each result's length. Three alternating release runs averaged 0.17s
 interpreted and 0.063s with JIT, about 63% faster. The focused regression also
 runs under `DIAMOND_STRESS_GC=1` to validate the framed allocation path.
+
+### Skindicate root page after Phases 17-18
+
+The real Skindicate root handler ran against the same migrated 1,352-skin
+development dataset, now rendering the current 30-skin page. Each process ran
+70 warmups followed by 100 timed requests; three alternating release runs per
+mode averaged 14.558 ms/request interpreted and 14.390 ms/request with JIT,
+about 1.15% faster. JIT runs compiled 50 functions with zero bailouts and zero
+hard propagations. The lighter 30-skin page does less application work than
+the earlier 100-skin measurement, so these numbers are not directly
+comparable to that result.
