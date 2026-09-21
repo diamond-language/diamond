@@ -395,6 +395,21 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         uint8_t type_argument_count, const uint16_t *type_arguments,
         size_t depth, DiamondValue *out);
 
+typedef enum DiamondJitNativeReadOp {
+    DIAMOND_JIT_NATIVE_ARRAY_LENGTH,
+    DIAMOND_JIT_NATIVE_HASH_LENGTH,
+    DIAMOND_JIT_NATIVE_HASH_KEY_AT,
+    DIAMOND_JIT_NATIVE_HASH_VALUE_AT,
+} DiamondJitNativeReadOp;
+
+/* Allocation-free native collection reads selected from a compiler-recorded
+ * receiver type at this exact INVOKE site. These operations cannot call user
+ * code or mutate state, so a later JIT bailout may still safely restart the
+ * function from the interpreter entry. */
+DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
+        const DiamondValue *receiver,const DiamondValue *argument,
+        DiamondJitNativeReadOp operation,DiamondValue *out);
+
 /* Phase 10: the interpreter's own plain DIAMOND_OP_NEW case (src/vm.c),
  * extracted verbatim -- allocate, run `initialize` if the class defines
  * one (arity-checked exactly as the interpreter does), else the

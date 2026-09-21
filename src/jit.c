@@ -1128,6 +1128,18 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     emit_bail_if_al_nonzero(jc);
 }
 
+static void compile_native_read(JitCompiler *jc,uint16_t dest,uint16_t recv,
+        uint16_t base,DiamondJitNativeReadOp operation) {
+    JitBuffer *buf=&jc->buf;
+    emit_mov_rr(buf,REG_RDI,JIT_VM);
+    emit_lea(buf,REG_RSI,JIT_REGISTERS_BASE,reg_disp(recv,0));
+    emit_lea(buf,REG_RDX,JIT_REGISTERS_BASE,reg_disp(base,0));
+    emit_mov_imm64(buf,REG_RCX,(uint64_t)operation);
+    emit_lea(buf,REG_R8,JIT_REGISTERS_BASE,reg_disp(dest,0));
+    emit_call_trampoline(buf,(void *)(uintptr_t)diamond_jit_native_read);
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* Phase 10: DIAMOND_OP_NEW -- calls diamond_jit_new_instance with every
  * operand a compile-time-known immediate (dest/class_index/base/argc all
  * come straight from the decoded bytecode, same as compile_super_call's
@@ -1882,6 +1894,38 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
+                uint8_t site_type=UINT8_MAX;
+                for(size_t site=0;site<fn->invoke_site_known_class_count;site++)
+                    if(fn->invoke_site_known_class[site].offset==
+                            (uint32_t)instruction_start) {
+                        site_type=fn->invoke_site_known_class[site].known_type;
+                        break;
+                    }
+                if(opcode==DIAMOND_OP_INVOKE&&name<fn->string_count&&
+                   (site_type==DIAMOND_TYPE_ARRAY||site_type==DIAMOND_TYPE_HASH)) {
+                    const DiamondStringConstant *native_name=&fn->strings[name];
+                    DiamondJitNativeReadOp operation=DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
+                    bool supported=false;
+                    if(native_name->length==6&&
+                       memcmp(native_name->chars,"length",6)==0&&argc==0) {
+                        operation=site_type==DIAMOND_TYPE_ARRAY?
+                            DIAMOND_JIT_NATIVE_ARRAY_LENGTH:
+                            DIAMOND_JIT_NATIVE_HASH_LENGTH;
+                        supported=true;
+                    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
+                              native_name->length==6&&
+                              memcmp(native_name->chars,"key_at",6)==0) {
+                        operation=DIAMOND_JIT_NATIVE_HASH_KEY_AT;supported=true;
+                    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
+                              native_name->length==8&&
+                              memcmp(native_name->chars,"value_at",8)==0) {
+                        operation=DIAMOND_JIT_NATIVE_HASH_VALUE_AT;supported=true;
+                    }
+                    if(supported) {
+                        compile_native_read(jc,dest,recv,base,operation);
+                        break;
+                    }
+                }
                 if (recv == 0 && jc->function->owner_class != UINT8_MAX &&
                     jc->function->owner_class != (uint8_t)(UINT8_MAX - 1) &&
                     jc->function->owner_class != (uint8_t)(UINT8_MAX - 2)) {
@@ -1940,14 +1984,8 @@ static void compile_body(JitCompiler *jc) {
                  * DiamondFunction.invoke_site_known_class's own comment
                  * for the redefine_method_used_anywhere gate's reasoning. */
                 if (!fn->redefine_method_used_anywhere) {
-                    bool site_known = false;
-                    for (size_t site = 0; site < fn->invoke_site_known_class_count; site++) {
-                        if (fn->invoke_site_known_class[site].offset == (uint32_t)instruction_start) {
-                            site_known = true;
-                            break;
-                        }
-                    }
-                    if (site_known) {
+                    if(site_type>=DIAMOND_TYPE_CLASS_BASE&&
+                       site_type<DIAMOND_TYPE_INTERFACE_BASE) {
                         compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
                                              opcode == DIAMOND_OP_INVOKE_MONO);
                         break;

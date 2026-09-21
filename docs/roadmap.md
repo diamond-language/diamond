@@ -656,7 +656,8 @@ a `is`-type-check-in-a-loop shape (`bench/jit_is_type.di`, Phase 14),
 and ~38% on an `is`-narrowed-receiver-chained-call-in-a-loop shape
 (`bench/jit_is_narrowed_invoke.di`, Phase 15), plus ~49% on declared-return
 chaining through an ivar-loaded receiver (`bench/jit_invoke_result_ivar.di`,
-Phase 16).
+Phase 16), and ~96% on a tight statically typed Array/Hash native-read loop
+(`bench/jit_native_collection_reads.di`, Phase 17; 4.86s to 0.19s).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -670,7 +671,8 @@ Still open:
 - generic `DIAMOND_OP_INVOKE` beyond `self`/typed-parameter/freshly-`NEW`'d-
   local/ivar-load/self-or-typed-parameter-or-`NEW`-local-or-ivar-load-
   chained-call
-  receivers -- every native per-type method (`.keys()`/`.length()`/...),
+  receivers -- most native per-type methods (`.keys()`/`.slice()`/...);
+  Phase 17 covers Array/Hash `length`, `key_at`, and `value_at`,
   plus `tap`/`public_send` on a receiver of unproven type, plus Instance
   method dispatch on anything else not covered by Phase 9/10/11/12/
   13's own narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed
@@ -703,8 +705,8 @@ Still open:
   closed that specific gap (one line, in `compile_definition`, no `jit.c`/
   `vm.h` changes). Phase 16 then closed the ivar-load receiver by carrying the
   discovery pass's final, whole-class field fact into real compilation.
-  The ~2500-line native-type dispatch surface remains separately
-  unattempted. **A real, load-
+  The rest of the ~2500-line native-type dispatch surface remains.
+  **A real, load-
   bearing finding from Phase 13's own re-benchmark, worth keeping in
   mind before chasing this further**: skindicate's own ORM hot path
   (`Skin.random_sample`/the `_for` batch loaders) is exactly `self`-

@@ -857,18 +857,19 @@ typedef struct DiamondScopeTypeFact {
     int32_t tooling_type_set;
 } DiamondScopeTypeFact;
 
-/* JIT-only (src/jit.c, Phase 15, docs/internal/jit-design.md): a single
- * DIAMOND_OP_INVOKE instruction's own receiver, recorded as a known
- * single concrete class at the exact bytecode offset that instruction
+/* JIT-only (src/jit.c, Phases 15 and 17, docs/internal/jit-design.md): a
+ * single DIAMOND_OP_INVOKE instruction's own receiver type at the exact
+ * bytecode offset that instruction
  * starts at -- unlike register_known_class below (a per-*register* fact,
  * "is this register always one class everywhere"), this is a per-*site*
  * fact, needed because a narrowed receiver can genuinely be different
  * classes at different call sites in the same function (`if x is A;
  * x.a(); elsif x is B; x.b(); end` -- Arel's own real render_expression
- * shape). See DiamondFunction.invoke_site_known_class's own comment. */
+ * shape). Phase 17 also consumes Array/Hash facts for selected native reads.
+ * See DiamondFunction.invoke_site_known_class's own comment. */
 typedef struct DiamondInvokeSiteFact {
     uint32_t offset;
-    uint8_t known_class;
+    uint8_t known_type;
 } DiamondInvokeSiteFact;
 
 typedef struct DiamondFunction {

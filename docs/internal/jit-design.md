@@ -1926,3 +1926,10 @@ yet decided:
 
 Either is workable; the wrong move is leaving this implicit and finding out
 via a stack-depth-related crash after codegen exists.
+### Phase 17: selected native collection reads
+
+Call-site receiver facts also retain statically known `Array` and `Hash`
+types. The x86-64 backend uses those facts for `Array#length`, `Hash#length`,
+`Hash#key_at`, and `Hash#value_at`. A small trampoline performs the same type
+and bounds checks as the interpreter. These operations allocate nothing and
+mutate nothing, so a later bailout can safely restart the bytecode function.

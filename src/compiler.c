@@ -6629,24 +6629,35 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
             string->chars[string->length]='\0';
         }
     }
-    /* Phase 15 (docs/internal/jit-design.md): record this specific call
-     * site's own receiver class, if the compiler's real known_types
+    /* Phases 15 and 17 (docs/internal/jit-design.md): record this specific
+     * call site's own receiver type, if the compiler's real known_types
      * tracking already proves one right here -- narrowing included, via
      * whatever apply_narrowing_facts/apply_type_set_fact already applied
-     * for this exact lexical point. offset must be captured before
+     * for this exact lexical point. Concrete classes feed instance dispatch;
+     * Array and Hash feed the selected allocation-free native reads. offset
+     * must be captured before
      * emit_opcode below (which itself reads code_count for the same
      * "this instruction's own start" purpose) -- src/jit.c's compile_body
      * reads instruction_start the same way, before decoding the opcode
      * byte, so the two must agree exactly. Plain DIAMOND_OP_INVOKE only:
      * src/jit.c has no case for DIAMOND_OP_INVOKE_TYPED. */
+    uint8_t receiver_type=compiler->known_types[receiver];
+    const int32_t receiver_set=compiler->known_type_sets[receiver];
+    if(receiver_type==TYPE_UNKNOWN&&receiver_set>=0&&
+       (size_t)receiver_set<compiler->function->type_set_count) {
+        const DiamondTypeSet *set=
+            &compiler->function->type_sets[(size_t)receiver_set];
+        if(set->count==1)receiver_type=set->members[0].id;
+    }
     if(type_argument_count==0&&
-       compiler->known_types[receiver]>=DIAMOND_TYPE_CLASS_BASE&&
-       compiler->known_types[receiver]<DIAMOND_TYPE_INTERFACE_BASE&&
+       ((receiver_type>=DIAMOND_TYPE_CLASS_BASE&&
+         receiver_type<DIAMOND_TYPE_INTERFACE_BASE)||
+        receiver_type==DIAMOND_TYPE_ARRAY||receiver_type==DIAMOND_TYPE_HASH)&&
        compiler->function->invoke_site_known_class_count<DIAMOND_MAX_INVOKE_SITES) {
         DiamondFunction *fn=compiler->function;
         fn->invoke_site_known_class[fn->invoke_site_known_class_count++]=
             (DiamondInvokeSiteFact){.offset=(uint32_t)fn->code_count,
-                .known_class=compiler->known_types[receiver]};
+                .known_type=receiver_type};
     }
     emit_opcode(compiler,type_argument_count==0?
         DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);

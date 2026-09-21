@@ -856,3 +856,11 @@ followed by a hot loop calling a declared method on `result`. Release build,
 
 The JIT path was about 49% faster. This isolates the newly eligible receiver
 shape; it is not an end-to-end application measurement.
+
+## Native collection reads -- JIT Phase 17 (2026-09-20)
+
+`bench/jit_native_collection_reads.di` runs five million iterations containing
+Array/Hash `length`, Hash `key_at`, and Hash `value_at`. One release-build run
+took 4.86s interpreted and 0.19s with JIT (`DIAMOND_JIT_THRESHOLD=1`), about
+96% faster. This intentionally isolates dispatch overhead; it does not predict
+the end-to-end Skindicate gain.

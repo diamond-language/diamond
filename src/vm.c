@@ -12513,6 +12513,36 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         type_argument_count,type_arguments,chunk,depth,out);
 }
 
+DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
+        const DiamondValue *receiver,const DiamondValue *argument,
+        DiamondJitNativeReadOp operation,DiamondValue *out) {
+    const bool array_operation=operation==DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT||
+       receiver->as.object->kind!=(array_operation?
+           DIAMOND_OBJECT_ARRAY:DIAMOND_OBJECT_HASH))
+        return DIAMOND_VM_TYPE_ERROR;
+    if(operation==DIAMOND_JIT_NATIVE_ARRAY_LENGTH) {
+        *out=DIAMOND_INT((int64_t)((const DiamondArray *)receiver->as.object)->count);
+        return DIAMOND_VM_OK;
+    }
+    const DiamondHash *hash=(const DiamondHash *)receiver->as.object;
+    if(operation==DIAMOND_JIT_NATIVE_HASH_LENGTH) {
+        *out=DIAMOND_INT((int64_t)hash->count);
+        return DIAMOND_VM_OK;
+    }
+    if(argument->kind!=DIAMOND_VALUE_INT)return DIAMOND_VM_TYPE_ERROR;
+    const int64_t index=argument->as.integer;
+    if(index<0||(uint64_t)index>=hash->count) {
+        snprintf(vm->error,sizeof vm->error,
+            "index %" PRId64 " out of bounds for Hash of length %zu",
+            index,hash->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    const DiamondHashEntry entry=hash->entries[(size_t)index];
+    *out=operation==DIAMOND_JIT_NATIVE_HASH_KEY_AT?entry.key:entry.value;
+    return DIAMOND_VM_OK;
+}
+
 /* Phase 10 (docs/internal/jit-design.md): the interpreter's own plain
  * DIAMOND_OP_NEW case, extracted verbatim -- allocate, run `initialize` if
  * the class defines one (arity-checked exactly as the interpreter does),
