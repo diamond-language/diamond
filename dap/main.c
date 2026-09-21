@@ -48,7 +48,7 @@
  * *records* the program/args/cwd rather than spawning immediately:
  * spawning directly out of `launch` would race a `setBreakpoints`
  * request that arrives after it, silently dropping those breakpoints
- * from the *initial* DIAMOND_DEBUG_BREAKPOINTS seed (a live update
+ * from the *initial* DIAMOND_DEBUG_BREAKPOINT_OFFSETS seed (a live update
  * would eventually correct it, but the debuggee would still start with
  * the wrong set for however long that takes). Waiting for
  * `configurationDone` (this server declares
@@ -187,7 +187,7 @@ static size_t combined_buffer_offset_for_line_column(const char *combined,
 /* Loads `program_path` into `server`'s own bundle/combined-buffer state,
  * exactly mirroring run_source_from_bundle_program's own concatenation
  * (src/run_source.c) -- the two must agree byte-for-byte, since
- * DIAMOND_DEBUG_BREAKPOINTS (computed against this same combined buffer)
+ * DIAMOND_DEBUG_BREAKPOINT_OFFSETS (computed against this same combined buffer)
  * is meaningless otherwise. That function stays static to run_source.c,
  * so this reimplements the small concatenation itself rather than
  * exposing it -- see run_source.c's own note on why a debug launch
@@ -223,39 +223,28 @@ static bool load_program_bundle(DapServer *server, const char *program_path,
     return true;
 }
 
-/* Resolves one stored (path,line) breakpoint to a combined-buffer line
- * number, or SIZE_MAX if it doesn't land inside any loaded segment --
- * an editor breakpoint in a file this program never actually reaches
- * (stale, or a typo'd path), silently dropped rather than erroring the
- * whole launch over one bad breakpoint. `path` is realpath'd first: every
- * segment (loader.c's own record_segment, called for the entry file too,
- * not just require targets) is recorded under a realpath'd path, and a
- * DAP client's own source path is not guaranteed to already be one. */
-static size_t resolve_breakpoint_line(DapServer *server, const char *path, size_t line) {
+/* Resolves one stored (path,line) breakpoint to a unique byte offset in
+ * the expanded source. A missing source or line returns SIZE_MAX. Paths
+ * are canonicalized because loader segments use real paths. */
+static size_t resolve_breakpoint_offset(DapServer *server, const char *path, size_t line) {
     char canonical[DAP_MAX_PATH];
     const char *resolved_path = path;
     if(realpath(path, canonical) != nullptr) resolved_path = canonical;
     const size_t offset = diamond_resolve_source_position(resolved_path,
         server->combined, &server->bundle, server->user_offset, line, 1);
-    if(offset == SIZE_MAX) return SIZE_MAX;
-    return diamond_combined_buffer_line(server->combined, offset);
+    return offset;
 }
 
-/* Resolves every currently-stored (path,line) pair -- across every
- * source the client has ever called setBreakpoints for, not just one
- * file -- into combined-buffer line numbers. Shared by
- * handle_configuration_done's own initial DIAMOND_DEBUG_BREAKPOINTS
- * construction and send_live_breakpoints below: both need "the complete
- * current set", since neither the env var nor the live control-channel
- * message has a file discriminator (see docs/debugging.md's own
- * "known gap" on this). */
-static size_t resolve_all_breakpoint_lines(DapServer *server,
-        size_t *out_lines, size_t capacity) {
+/* Resolve the complete current breakpoint set across all source files.
+ * Both the initial environment variable and live control messages use
+ * these offsets. */
+static size_t resolve_all_breakpoint_offsets(DapServer *server,
+        size_t *out_offsets, size_t capacity) {
     size_t count = 0;
     for(size_t index = 0; index < server->breakpoint_count && count < capacity; index++) {
-        const size_t resolved = resolve_breakpoint_line(server,
+        const size_t resolved = resolve_breakpoint_offset(server,
             server->breakpoints[index].path, server->breakpoints[index].line);
-        if(resolved != SIZE_MAX) out_lines[count++] = resolved;
+        if(resolved != SIZE_MAX) out_offsets[count++] = resolved;
     }
     return count;
 }
@@ -263,27 +252,27 @@ static size_t resolve_all_breakpoint_lines(DapServer *server,
 /* The live half of setBreakpoints (see handle_set_breakpoints below,
  * and docs/debugging.md's "live breakpoints" section): sends the
  * *complete* current armed-line set (never a diff -- see
- * resolve_all_breakpoint_lines's own comment) to an already-running
+ * resolve_all_breakpoint_offsets's own comment) to an already-running
  * debuggee over the same control channel handle_continue already
  * writes "continue" on, using the identical JsonValue+rpc_write_message
  * pattern. A no-op when the child hasn't been spawned yet
  * (server->control_stream is only ever non-null once
  * handle_configuration_done has actually forked) -- that case still
- * gets the initial DIAMOND_DEBUG_BREAKPOINTS env var built at spawn
+ * gets the initial DIAMOND_DEBUG_BREAKPOINT_OFFSETS env var built at spawn
  * time, unchanged from v1. */
 static void send_live_breakpoints(DapServer *server) {
     if(server->control_stream == nullptr) return;
-    size_t lines[DAP_MAX_BREAKPOINTS];
-    const size_t count = resolve_all_breakpoint_lines(server, lines, DAP_MAX_BREAKPOINTS);
+    size_t offsets[DAP_MAX_BREAKPOINTS];
+    const size_t count = resolve_all_breakpoint_offsets(server, offsets, DAP_MAX_BREAKPOINTS);
     JsonValue *command = json_object();
-    JsonValue *lines_array = json_array();
-    if(command == nullptr || lines_array == nullptr) {
-        json_free(command); json_free(lines_array); return;
+    JsonValue *offsets_array = json_array();
+    if(command == nullptr || offsets_array == nullptr) {
+        json_free(command); json_free(offsets_array); return;
     }
     for(size_t index = 0; index < count; index++)
-        json_array_push(lines_array, json_number((double)lines[index]));
+        json_array_push(offsets_array, json_number((double)offsets[index]));
     json_object_set(command, "command", json_string_z("setBreakpoints"));
-    json_object_set(command, "lines", lines_array);
+    json_object_set(command, "offsets", offsets_array);
     rpc_write_message(server->control_stream, command);
     json_free(command);
 }
@@ -383,7 +372,7 @@ static void handle_set_breakpoints(DapServer *server, const JsonValue *request,
      * so it takes effect with no restart at all (docs/debugging.md's
      * "live breakpoints" section). A session still mid-configuration
      * (server->launched false) needs no such push: its own eventual
-     * DIAMOND_DEBUG_BREAKPOINTS construction at configurationDone
+     * DIAMOND_DEBUG_BREAKPOINT_OFFSETS construction at configurationDone
      * already reads server->breakpoints[] fresh, unchanged from v1. */
     if(server->launched) send_live_breakpoints(server);
 
@@ -443,14 +432,14 @@ static void handle_configuration_done(DapServer *server, const JsonValue *reques
         return;
     }
 
-    size_t breakpoint_lines[DAP_MAX_BREAKPOINTS];
-    const size_t breakpoint_line_count =
-        resolve_all_breakpoint_lines(server, breakpoint_lines, DAP_MAX_BREAKPOINTS);
-    char breakpoints_env[DAP_MAX_BREAKPOINTS * 8] = {0};
+    size_t breakpoint_offsets[DAP_MAX_BREAKPOINTS];
+    const size_t breakpoint_offset_count =
+        resolve_all_breakpoint_offsets(server, breakpoint_offsets, DAP_MAX_BREAKPOINTS);
+    char breakpoints_env[DAP_MAX_BREAKPOINTS * 24] = {0};
     size_t written = 0;
-    for(size_t index = 0; index < breakpoint_line_count; index++) {
+    for(size_t index = 0; index < breakpoint_offset_count; index++) {
         const int piece = snprintf(breakpoints_env + written, sizeof breakpoints_env - written,
-            "%s%zu", index > 0 ? "," : "", breakpoint_lines[index]);
+            "%s%zu", index > 0 ? "," : "", breakpoint_offsets[index]);
         if(piece < 0 || (size_t)piece >= sizeof breakpoints_env - written) break;
         written += (size_t)piece;
     }
@@ -487,8 +476,7 @@ static void handle_configuration_done(DapServer *server, const JsonValue *reques
         char debug_fd_value[32];
         snprintf(debug_fd_value, sizeof debug_fd_value, "%d", control_fds[1]);
         setenv("DIAMOND_DEBUG_FD", debug_fd_value, 1);
-        if(breakpoint_line_count > 0)
-            setenv("DIAMOND_DEBUG_BREAKPOINTS", breakpoints_env, 1);
+        setenv("DIAMOND_DEBUG_BREAKPOINT_OFFSETS", breakpoints_env, 1);
         const char *diamond_bin = getenv("DIAMOND_BIN");
         if(diamond_bin == nullptr) diamond_bin = "diamond";
         char *argv[4 + DAP_MAX_ARGS];
@@ -589,7 +577,9 @@ static void handle_stack_trace(DapServer *server, const JsonValue *request) {
         for(size_t index = 0; index < server->stopped_stack->as.array.count; index++) {
             const JsonValue *entry = server->stopped_stack->as.array.items[index];
             const char *name_chars = nullptr; size_t name_length = 0;
-            double line_value = 0, column_value = 0;
+            double line_value = 0, column_value = 0, source_offset_value = 0;
+            const bool has_source_offset = json_as_number(
+                json_object_get(entry, "sourceOffset"), &source_offset_value);
             json_as_string(json_object_get(entry, "name"), &name_chars, &name_length);
             json_as_number(json_object_get(entry, "line"), &line_value);
             json_as_number(json_object_get(entry, "column"), &column_value);
@@ -601,8 +591,9 @@ static void handle_stack_trace(DapServer *server, const JsonValue *request) {
             double resolved_line = line_value;
             const char *resolved_path = nullptr;
             if(server->bundle_loaded) {
-                const size_t offset = combined_buffer_offset_for_line_column(
-                    server->combined, (size_t)line_value, (size_t)column_value);
+                const size_t offset = has_source_offset ? (size_t)source_offset_value :
+                    combined_buffer_offset_for_line_column(
+                        server->combined, (size_t)line_value, (size_t)column_value);
                 DiamondDiagnostic synthetic = {.span = {.start = offset,
                     .line = (size_t)line_value, .column = (size_t)column_value}};
                 const DiamondResolvedLocation resolved = diamond_resolve_diagnostic_location(

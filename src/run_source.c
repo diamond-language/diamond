@@ -435,6 +435,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
      * breakpoint set; DIAMOND_DEBUG_BREAKPOINTS alone (no DAP client at
      * all) remains supported too, for direct manual testing. */
     const bool debug_mode = getenv("DIAMOND_DEBUG_BREAKPOINTS")!=nullptr ||
+        getenv("DIAMOND_DEBUG_BREAKPOINT_OFFSETS")!=nullptr ||
         getenv("DIAMOND_DEBUG_FD")!=nullptr;
 
     /* Bytecode cache (docs/caching.md): only for this auto-dispatch entry

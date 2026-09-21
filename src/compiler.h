@@ -186,11 +186,9 @@ size_t diamond_resolve_source_position(const char *path, const char *combined,
  * source right after the prelude, and every `require`d file's own
  * inlined text) -- see the implementation's own comment for why this
  * has to recognize that same marker to agree with what the compiler
- * will actually see. Exists for a DAP server (dap/main.c) translating a
- * resolved breakpoint position into the same combined-buffer line-number
- * space DIAMOND_DEBUG_BREAKPOINTS and a live `setBreakpoints` control-
- * channel message both expect (see DiamondVm.debug_active_lines, src/
- * vm.h, and docs/debugging.md). */
+ * will actually see. This helper is retained for callers needing the
+ * lexer's per-segment line number; DAP breakpoints use unique source
+ * offsets instead. */
 size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 
 #endif

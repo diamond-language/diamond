@@ -466,4 +466,86 @@ count=$((count + 1))
 wait "$dap3_pid"
 count=$((count + 1))
 
-echo "$count dap tests passed"
+# --- source paths distinguish identical line numbers in required files ---
+
+cat > "$work/first.di" <<'EOF_FIRST'
+def first()
+  puts("first")
+end
+EOF_FIRST
+cat > "$work/second.di" <<'EOF_SECOND'
+def second()
+  puts("second")
+end
+EOF_SECOND
+fixture4="$work/multiple.di"
+cat > "$fixture4" <<'EOF_MAIN'
+require "./first"
+require "./second"
+first()
+second()
+EOF_MAIN
+
+coproc DAP4 { "$dap"; }
+dap4_pid="$DAP4_PID"
+send4() {
+    local body="$1"
+    printf 'Content-Length: %d\r\n\r\n%s' "${#body}" "$body" >&"${DAP4[1]}"
+}
+read_message4() {
+    local line length=-1 body
+    while IFS= read -r -u "${DAP4[0]}" line; do
+        line="${line%$'\r'}"
+        [[ -z "$line" ]] && break
+        if [[ "$line" == Content-Length:* ]]; then length="${line#Content-Length: }"; fi
+    done
+    if (( length < 0 )); then
+        echo "dap_test: message with no Content-Length header" >&2
+        exit 1
+    fi
+    IFS= read -r -u "${DAP4[0]}" -N "$length" body
+    printf '%s' "$body"
+}
+read_until4() {
+    local pattern="$1" tries=0 msg
+    while (( tries < 30 )); do
+        msg="$(read_message4)"
+        if [[ "$msg" == *"$pattern"* ]]; then printf '%s' "$msg"; return 0; fi
+        tries=$((tries + 1))
+    done
+    echo "dap_test: never saw a message matching: $pattern" >&2
+    exit 1
+}
+
+send4 '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"diamond"}}'
+read_until4 '"command":"initialize"' >/dev/null
+read_until4 '"event":"initialized"' >/dev/null
+send4 '{"seq":2,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$work/first.di"'"},"breakpoints":[{"line":2}]}}'
+read_until4 '"command":"setBreakpoints"' >/dev/null
+send4 '{"seq":3,"type":"request","command":"launch","arguments":{"program":"'"$fixture4"'"}}'
+read_until4 '"command":"launch"' >/dev/null
+send4 '{"seq":4,"type":"request","command":"configurationDone"}'
+read_until4 '"command":"configurationDone"' >/dev/null
+stopped="$(read_until4 '"event":"stopped"')"
+[[ "$stopped" == *'"reason":"breakpoint"'* ]]
+send4 '{"seq":5,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
+response="$(read_until4 '"command":"stackTrace"')"
+[[ "$response" == *'"name":"first"'* ]]
+[[ "$response" == *"\"path\":\"$work/first.di\""* ]]
+count=$((count + 1))
+send4 '{"seq":6,"type":"request","command":"continue","arguments":{"threadId":1}}'
+read_until4 '"command":"continue"' >/dev/null
+saw_unexpected_stop=0
+while true; do
+    msg="$(read_message4)"
+    if [[ "$msg" == *'"event":"stopped"'* ]]; then saw_unexpected_stop=1; break; fi
+    if [[ "$msg" == *'"event":"terminated"'* ]]; then break; fi
+done
+[[ "$saw_unexpected_stop" == "0" ]]
+count=$((count + 1))
+send4 '{"seq":7,"type":"request","command":"disconnect"}'
+read_until4 '"command":"disconnect"' >/dev/null
+wait "$dap4_pid"
+count=$((count + 1))
+
+echo "$count dap tests passed (including multiple source files)"

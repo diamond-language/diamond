@@ -33,12 +33,7 @@ format plus deoptimization-style bookkeeping." What's left, if anything:
   DAP feature; basic `stepIn` (into whichever call happens to execute
   first) doesn't need it.
 
-See docs/debugging.md's own "known gap" section too: breakpoints in more
-than one `require`d file can still collide on line number, a limitation
-of the flat combined-buffer line-number set (both the initial
-`DIAMOND_DEBUG_BREAKPOINTS` seed and a live `setBreakpoints` update)
-having no file discriminator -- unrelated to and unchanged by either
-live breakpoints or stepping. Also see docs/debugging.md's own
+Also see docs/debugging.md's own
 "Stepping" section for the one accepted edge case (a self-recursive tail
 call doesn't increment the depth counter stepping compares against, so
 step-over/out can't fully distinguish it from staying in the same call).

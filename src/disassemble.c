@@ -1284,15 +1284,15 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=total;break;
             }
             case DIAMOND_OP_BREAKPOINT_CHECK: {
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,12)){valid=false;offset=chunk->code_count;break;}
                 const uint16_t dest=checked_register(chunk,stream,
                     read_operand(chunk,offset+1),&valid);
                 const uint8_t local_count=chunk->code[offset+3];
-                const size_t total=4+(size_t)local_count*4;
+                const size_t total=12+(size_t)local_count*4;
                 if(!require_bytes(stream,chunk,offset,total)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, %u locals\n","BREAKPOINT_CHECK",dest,local_count);
                 for(size_t index=0;index<local_count;index++) {
-                    const size_t entry_offset=offset+4+index*4;
+                    const size_t entry_offset=offset+12+index*4;
                     const uint16_t name_index=read_operand(chunk,entry_offset);
                     const uint16_t local_register=checked_register(chunk,stream,
                         read_operand(chunk,entry_offset+2),&valid);

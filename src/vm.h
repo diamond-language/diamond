@@ -1610,12 +1610,13 @@ struct DiamondVm {
      * debugger_helper instead writes a Content-Length-framed JSON pause
      * payload to and blocks reading one framed command back from. */
     int debug_fd;
-    /* The live, runtime-mutable set of source lines currently armed as a
+    /* The live, runtime-mutable set of source positions currently armed as a
      * breakpoint -- consulted by DIAMOND_OP_BREAKPOINT_CHECK (src/vm.c),
      * emitted once per statement whenever the program was compiled with
      * Compiler.debug_mode set (see src/compiler.c), unlike the fixed,
      * baked-in-at-compile-time DIAMOND_OP_DEBUGGER pauses above. Seeded
-     * from DIAMOND_DEBUG_BREAKPOINTS at diamond_vm_init (the initial
+     * from DIAMOND_DEBUG_BREAKPOINT_OFFSETS (or legacy
+     * DIAMOND_DEBUG_BREAKPOINTS) at diamond_vm_init (the initial
      * set), then freely replaced wholesale at runtime by a `setBreakpoints`
      * command arriving over debug_fd (dap/main.c's own live-update path,
      * docs/debugging.md) -- no restart needed to add or remove one.
@@ -1625,6 +1626,9 @@ struct DiamondVm {
      * no concurrent access to guard against. */
     size_t debug_active_lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];
     size_t debug_active_line_count;
+    /* DAP uses unique expanded-source line offsets; the legacy manual
+     * DIAMOND_DEBUG_BREAKPOINTS environment variable still uses lines. */
+    bool debug_breakpoints_are_offsets;
     /* Real stepping (docs/debugging.md's own "Stepping" section):
      * DIAMOND_STEP_NONE (the default) means DIAMOND_OP_BREAKPOINT_CHECK
      * only ever consults debug_active_lines above. A `next`/`stepIn`/

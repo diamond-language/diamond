@@ -5284,11 +5284,13 @@ static uint16_t emit_debugger_pause(Compiler *compiler) {
  * are armed yet -- see DiamondVm.debug_active_lines's own comment
  * (src/vm.h) for why compile time no longer needs to know which lines
  * matter in advance. */
-static uint16_t emit_breakpoint_check(Compiler *compiler) {
+static uint16_t emit_breakpoint_check(Compiler *compiler,size_t source_line_offset) {
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_BREAKPOINT_CHECK);
     emit_register(compiler,dest);
     emit_byte(compiler,(uint8_t)compiler->local_count);
+    for(int shift=56;shift>=0;shift-=8)
+        emit_byte(compiler,(uint8_t)((uint64_t)source_line_offset>>shift));
     for(size_t index=0;index<compiler->local_count;index++) {
         const uint16_t name_index=add_name_string(compiler,compiler->locals[index].name);
         emit_register(compiler,name_index);
@@ -16248,7 +16250,10 @@ static uint16_t compile_sequence(Compiler *compiler) {
              * just for this one. */
             const DiamondSpan statement_span=compiler->current.span;
             const size_t check_offset=compiler->function->code_count;
-            emit_breakpoint_check(compiler);
+            size_t source_line_offset=statement_span.start;
+            while(source_line_offset>0&&compiler->source[source_line_offset-1]!='\n')
+                source_line_offset--;
+            emit_breakpoint_check(compiler,source_line_offset);
             if(check_offset<compiler->function->code_count) {
                 compiler->function->lines[check_offset]=(uint32_t)statement_span.line;
                 compiler->function->columns[check_offset]=(uint32_t)statement_span.column;

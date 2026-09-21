@@ -113,7 +113,7 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   program exactly the way the CLI's own non-template compile path does
   (`run_source_from_bundle_program`, `src/run_source.c`), resolves every
   stored breakpoint's original `(path, line)` against that expanded
-  buffer (`diamond_resolve_source_position` + `diamond_combined_buffer_line`,
+  buffer (`diamond_resolve_source_position`,
   `src/compiler.h`), and spawns `diamond <program> [args...]` with two
   environment variables set (see below) and a dedicated `AF_UNIX`
   `SOCK_STREAM` socketpair wired to one end as the "control channel" --
@@ -121,7 +121,7 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
 - A `setBreakpoints` request that arrives *after* the debuggee is already
   running takes the exact same resolve step, then instead sends the
   complete, freshly-recomputed set as a `{"command":"setBreakpoints",
-  "lines":[...]}` message over the already-open control channel
+  "offsets":[...]}` message over the already-open control channel
   (`send_live_breakpoints`, `dap/main.c`) -- no recompile, no restart.
   `next`/`stepIn`/`stepOut` write a bare `{"command":"next"}`/`"stepIn"`/
   `"stepOut"` the same way (`handle_next`/`handle_step_in`/
@@ -155,21 +155,12 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   `stopped` event plus whatever `stackTrace`/`scopes`/`variables` the
   client asks for next.
 
-## Known gap: breakpoints across multiple `require`d files
+## Breakpoints across multiple `require`d files
 
-A compiled program's line numbers reset to 1 at the start of every
-segment (`diamond_lexer_next`'s own `#line 1` handling, `src/lexer.c` --
-the loader writes that literal marker ahead of the top-level user source
-and every `require`d file's own inlined text, `src/loader.c`'s `expand`).
-`DIAMOND_DEBUG_BREAKPOINTS` (below) -- and, equally, a live
-`setBreakpoints` command's own `DiamondVm.debug_active_lines` set -- is a
-flat set of these per-segment line numbers with no file discriminator,
-so a breakpoint on line *N* in one file and an unrelated statement that
-happens to start on line *N* in a different file (the entry script, or
-another `require`d file) currently pause identically -- not caught or
-resolved, just an open, documented gap for a program that spans more
-than one file's own breakpoints landing on the same line number in
-each. Unaffected by the move to live breakpoints: unchanged from v1.
+The adapter resolves each requested `(path, line)` to a byte offset in the
+expanded source. Each debug checkpoint carries its statement's line-start
+offset, so identical line numbers in different files remain distinct.
+The stopped frame uses that offset to report the source file and line.
 
 ## The env-var contract (for a second DAP-compatible client)
 
@@ -186,21 +177,18 @@ each. Unaffected by the move to live breakpoints: unchanged from v1.
   compile path** (`src/run_source.c`) -- a real DAP session sets this
   unconditionally, so a debuggee that starts with zero breakpoints
   selected is still fully instrumented and ready for a live
-  `setBreakpoints` later; `DIAMOND_DEBUG_BREAKPOINTS` alone (no
+  `setBreakpoints` later; either breakpoint environment variable alone (no
   `DIAMOND_DEBUG_FD`, e.g. direct manual testing with no DAP client at
   all) also still triggers it.
-- `DIAMOND_DEBUG_BREAKPOINTS=<line>[,<line>...]` -- a comma-separated list
-  of the *expanded-buffer* line numbers (not the original file's own,
-  except in the common single-file, no-`require` case where they're
-  identical -- see `diamond_combined_buffer_line`'s own doc comment,
-  `src/compiler.h`) that start out armed (`DiamondVm.debug_active_lines`,
-  seeded once in `diamond_vm_init`, `src/vm.c`) -- freely replaceable
-  afterward by a live `setBreakpoints` command over the control channel,
-  never itself re-read after process startup. May be empty or absent
-  entirely (a session with nothing selected yet). A line with no
-  statement start on it (blank, a comment, mid-expression) silently has
-  no effect either way, matching how an editor already snaps a gutter
-  breakpoint to the nearest valid line for most languages.
+- `DIAMOND_DEBUG_BREAKPOINT_OFFSETS=<offset>[,<offset>...]` -- the initial
+  armed set of byte offsets to line starts in the expanded source. This is
+  what `diamond-dap` supplies; live `setBreakpoints` commands replace the
+  entire set using `{"command":"setBreakpoints","offsets":[...]}`.
+  An empty value arms no breakpoints.
+- `DIAMOND_DEBUG_BREAKPOINTS=<line>[,<line>...]` -- the legacy manual
+  interface, using per-segment line numbers. It remains available for
+  direct debugging, but identical line numbers in different files collide.
+  The offset variable takes precedence if both are set.
 
 ## Building it
 

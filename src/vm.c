@@ -1233,7 +1233,7 @@ void diamond_vm_init(DiamondVm *vm) {
         const long parsed=strtol(debug_fd_env,nullptr,10);
         if(parsed>=0&&parsed<=INT_MAX)vm->debug_fd=(int)parsed;
     }
-    /* DIAMOND_DEBUG_BREAKPOINTS (see DiamondVm.debug_active_lines's own
+    /* Initial breakpoint positions (see DiamondVm.debug_active_lines's own
      * comment above): the initial armed set, read directly here rather
      * than threaded in as a parameter, matching debug_fd's own
      * independent-per-VM env read just above. A live `setBreakpoints`
@@ -1242,7 +1242,10 @@ void diamond_vm_init(DiamondVm *vm) {
      * (comma-separated, same convention as every other DIAMOND_*-env-var
      * list elsewhere in this codebase; malformed entries are skipped
      * rather than failing VM init, matching debug_fd's own tolerance). */
-    const char *debug_breakpoints_env=getenv("DIAMOND_DEBUG_BREAKPOINTS");
+    const char *debug_breakpoints_env=getenv("DIAMOND_DEBUG_BREAKPOINT_OFFSETS");
+    vm->debug_breakpoints_are_offsets=debug_breakpoints_env!=nullptr;
+    if(debug_breakpoints_env==nullptr)
+        debug_breakpoints_env=getenv("DIAMOND_DEBUG_BREAKPOINTS");
     if(debug_breakpoints_env!=nullptr) {
         const char *cursor=debug_breakpoints_env;
         while(*cursor!='\0'&&vm->debug_active_line_count<DIAMOND_MAX_ACTIVE_BREAKPOINTS) {
@@ -15174,10 +15177,12 @@ typedef enum DiamondDebugCommandKind {
  * convention elsewhere in this codebase) -- the caller only ever copies
  * min(*line_count,capacity) entries out. */
 static DiamondDebugCommandKind parse_debug_command(const char *body,
-        size_t *lines,size_t *line_count,size_t capacity) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
     if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
         size_t count=0;
-        const char *lines_key=strstr(body,"\"lines\"");
+        const char *lines_key=strstr(body,"\"offsets\"");
+        *are_offsets=lines_key!=nullptr;
+        if(lines_key==nullptr)lines_key=strstr(body,"\"lines\"");
         const char *cursor=lines_key!=nullptr?strchr(lines_key,'['):nullptr;
         if(cursor!=nullptr) {
             cursor++;
@@ -15215,7 +15220,7 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
  * DIAMOND_DEBUG_COMMAND_NONE; the caller treats that the same as an
  * ordinary "continue" (see its own comment). */
 static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
-        size_t *lines,size_t *line_count,size_t capacity) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
     *kind=DIAMOND_DEBUG_COMMAND_NONE;
     *line_count=0;
     long content_length=-1;
@@ -15232,7 +15237,7 @@ static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
         }
     }
     if(content_length<0)return false;
-    char body[4096];
+    char body[16384];
     const size_t body_capacity=sizeof body-1;
     const size_t body_length=
         (size_t)content_length<body_capacity?(size_t)content_length:body_capacity;
@@ -15246,7 +15251,7 @@ static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
         remaining-=next;
     }
     if(body_length==(size_t)content_length)
-        *kind=parse_debug_command(body,lines,line_count,capacity);
+        *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets);
     return true;
 }
 
@@ -15315,6 +15320,7 @@ static bool debug_json_append_escaped_string(GrowBuffer *buffer,
  * debuggee's own execution over a detached debugger. */
 static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         const DiamondChunk *chunk,size_t depth,size_t instruction_offset,
+        size_t source_line_offset,
         DiamondValue *registers,const uint16_t *name_indices,
         const uint16_t *local_registers,uint8_t local_count,const char *reason) {
     (void)instruction_offset;
@@ -15336,9 +15342,13 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
             frame->chunk->columns[offset]:0;
         ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
         if(ok)ok=debug_json_append_escaped_string(&body,frame_name,strlen(frame_name));
-        char numbers[64];
-        const int written=snprintf(numbers,sizeof numbers,
-            ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
+        char numbers[96];
+        const int written=frame_index==0&&source_line_offset!=SIZE_MAX?
+            snprintf(numbers,sizeof numbers,
+                ",\"line\":%u,\"column\":%u,\"sourceOffset\":%zu}",
+                frame_line,frame_column,source_line_offset):
+            snprintf(numbers,sizeof numbers,
+                ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
         if(ok&&written>0)ok=grow_buffer_append(&body,numbers,(size_t)written);
         else if(written<0)ok=false;
     }
@@ -15374,12 +15384,14 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
     while(true) {
         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
         size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+        bool are_offsets=false;
         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets))
             break;
         if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
             memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
             vm->debug_active_line_count=line_count;
+            vm->debug_breakpoints_are_offsets=are_offsets;
             continue;
         }
         /* next/stepIn/stepOut (docs/debugging.md's own "Stepping"
@@ -15422,11 +15434,11 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
  * because it may recurse into run_chunk itself once per local, through
  * stringify_value calling a user-defined to_s. */
 static DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
-        size_t depth,size_t instruction_offset,DiamondValue *registers,
+        size_t depth,size_t instruction_offset,size_t source_line_offset,DiamondValue *registers,
         const uint16_t *name_indices,const uint16_t *local_registers,uint8_t local_count,
         const char *reason) {
     if(vm->debug_fd>=0)
-        return debugger_structured_helper(vm,chunk,depth,instruction_offset,
+        return debugger_structured_helper(vm,chunk,depth,instruction_offset,source_line_offset,
             registers,name_indices,local_registers,local_count,reason);
     const char *frame_name=chunk->name!=nullptr?chunk->name:"<chunk>";
     const bool in_bounds=instruction_offset<chunk->code_count;
@@ -21189,7 +21201,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     READ_SHORT(local_registers[index]);
                 }
                 const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                    instruction_offset,registers,name_indices,local_registers,local_count,
+                    instruction_offset,SIZE_MAX,registers,name_indices,local_registers,local_count,
                     "breakpoint");
                 VM_PROPAGATE(debugger_status);
                 registers[destination]=DIAMOND_NIL;
@@ -21198,6 +21210,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_BREAKPOINT_CHECK: {
                 uint16_t destination=0;uint8_t local_count=0;
                 READ_SHORT(destination);READ_BYTE(local_count);
+                uint64_t source_line_offset=0;
+                for(size_t index=0;index<8;index++) {
+                    uint8_t next=0;READ_BYTE(next);
+                    source_line_offset=(source_line_offset<<8)|next;
+                }
                 uint16_t name_indices[DIAMOND_MAX_LOCALS];
                 uint16_t local_registers[DIAMOND_MAX_LOCALS];
                 for(size_t index=0;index<local_count;index++) {
@@ -21219,12 +21236,14 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
                         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
                         size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+                        bool are_offsets=false;
                         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                                DIAMOND_MAX_ACTIVE_BREAKPOINTS))
+                                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets))
                             break;
                         if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
                             memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
                             vm->debug_active_line_count=line_count;
+                            vm->debug_breakpoints_are_offsets=are_offsets;
                         }
                         poll_fd.revents=0;
                     }
@@ -21234,7 +21253,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     chunk->lines[instruction_offset]:0;
                 bool armed=false;
                 for(size_t index=0;index<vm->debug_active_line_count;index++)
-                    if(vm->debug_active_lines[index]==(size_t)statement_line) { armed=true; break; }
+                    if(vm->debug_active_lines[index]==(vm->debug_breakpoints_are_offsets?
+                            (size_t)source_line_offset:(size_t)statement_line)) { armed=true; break; }
                 /* Real stepping (docs/debugging.md's own "Stepping"
                  * section): an armed breakpoint line always wins/pauses
                  * regardless (checked above, unconditionally) -- this is
@@ -21257,7 +21277,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(armed||stepped) {
                     vm->debug_step_mode=DIAMOND_STEP_NONE;
                     const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                        instruction_offset,registers,name_indices,local_registers,local_count,
+                        instruction_offset,(size_t)source_line_offset,registers,name_indices,local_registers,local_count,
                         armed?"breakpoint":"step");
                     VM_PROPAGATE(debugger_status);
                 }
