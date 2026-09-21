@@ -567,20 +567,45 @@ test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
 # AOT_EMBED is a generated .c file (following src/compiled_prelude_
 # data.c's own #embed-plus-accessor-function shape, see tools/aot_
 # runtime_main.c's own top comment) that diamond build writes to a temp
-# path per invocation, never checked in. $(API_SOURCES) from raw source
-# (not precompiled .o), same as diamond-lsp/diamond-dap just above --
-# already the proven pattern for "link a standalone binary against the
-# same sources diamond itself uses, minus main.c/repl.c" in this
-# Makefile, not something new here. -O2/-g0: this is a release artifact
-# someone else runs, not a debug build of Diamond itself.
+# path per invocation, never checked in. Cache the runtime objects as a
+# separate archive: the ordinary CLI objects may use different debug,
+# release, or sanitizer flags, while every standalone app uses -O2/-g0.
+# The compiler name is part of the cache path so --cc=clang never reuses
+# gcc objects. Header dependencies and the generated prelude are tracked
+# below; make clean removes the whole cache with build/.
 AOT_EMBED ?=
 AOT_OUTPUT ?= $(BUILD_DIR)/a.out
+AOT_CACHE_DIR := $(BUILD_DIR)/aot-$(subst /,_,$(CC))
+AOT_CFLAGS := $(CFLAGS_COMMON) -O2 -g0
+AOT_CONFIG := $(AOT_CACHE_DIR)/config
+AOT_RUNTIME_OBJECTS := $(API_SOURCES:src/%.c=$(AOT_CACHE_DIR)/%.o) $(AOT_CACHE_DIR)/runtime_main.o
+AOT_RUNTIME_LIB := $(AOT_CACHE_DIR)/libdiamond-aot.a
+
+.PHONY: aot-config-check
+aot-config-check:
+
+$(AOT_CONFIG): aot-config-check
+	@mkdir -p $(AOT_CACHE_DIR)
+	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(shell $(CC) -dumpversion)' > $@.tmp
+	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
+
+$(AOT_CACHE_DIR)/%.o: src/%.c $(AOT_CONFIG)
+	@mkdir -p $(AOT_CACHE_DIR)
+	$(CC) $(CPPFLAGS) $(AOT_CFLAGS) -MMD -MP -c $< -o $@
+
+$(AOT_CACHE_DIR)/runtime_main.o: tools/aot_runtime_main.c $(AOT_CONFIG)
+	@mkdir -p $(AOT_CACHE_DIR)
+	$(CC) $(CPPFLAGS) $(AOT_CFLAGS) -MMD -MP -c $< -o $@
+
+$(AOT_CACHE_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+$(AOT_RUNTIME_LIB): $(AOT_RUNTIME_OBJECTS)
+	$(AR) rcs $@ $^
 
 .PHONY: aot-build
-aot-build:
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) -O2 -g0 \
-	    $(AOT_EMBED) tools/aot_runtime_main.c $(API_SOURCES) \
-	    $(REGINOLD_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
+aot-build: $(AOT_RUNTIME_LIB)
+	$(CC) $(CPPFLAGS) $(AOT_CFLAGS) $(AOT_EMBED) \
+	    $(AOT_RUNTIME_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
 
 test-repl: debug
 	bash tests/repl_test.sh
@@ -687,4 +712,4 @@ test-all:
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(DEPS)
+-include $(DEPS) $(AOT_RUNTIME_OBJECTS:.o=.d)

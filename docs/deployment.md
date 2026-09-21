@@ -43,6 +43,11 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   while `SOURCE` and relative `OUTPUT` paths resolve from the caller's
   working directory. The checkout still supplies the C sources and
   Makefile used for linking.
+- The first build compiles the runtime into `build/aot-COMPILER/` and
+  archives it as `libdiamond-aot.a`. Later builds reuse that archive and
+  compile only the generated program data. Header/source changes and
+  changes to compiler flags rebuild affected runtime objects; `make clean`
+  removes the cache. `--cc` uses a separate cache per compiler.
 
 ## JIT in standalone programs
 

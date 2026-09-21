@@ -16,10 +16,16 @@ i
 EOF
 
 cd "$test_dir"
-"$diamond_bin" build app.di
+"$diamond_bin" build app.di > "$test_dir/first-build.log"
 test -x "$test_dir/app"
 output="$("$test_dir/app")"
 test "$output" = "100"
+"$diamond_bin" build app.di -o app-again > "$test_dir/second-build.log"
+test "$("$test_dir/app-again")" = "100"
+if grep -Eq ' -c src/|ar rcs ' "$test_dir/second-build.log"; then
+    echo "second standalone build rebuilt the cached runtime" >&2
+    exit 1
+fi
 DIAMOND_TRACE_JIT=1 "$test_dir/app" > "$test_dir/interpreted.out" 2> "$test_dir/interpreted.trace"
 grep -q 'jit: 0 compiled function(s)' "$test_dir/interpreted.trace"
 DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 "$test_dir/app" > "$test_dir/jit.out" 2> "$test_dir/jit.trace"
