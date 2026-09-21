@@ -9212,6 +9212,21 @@ static uint16_t parse_prefix(Compiler *compiler) {
                 const int field=field_index(compiler,compiler->previous.span,true);
                 emit_instruction(compiler,DIAMOND_OP_GET_IVAR,destination,0,
                                  (uint8_t)field,3);
+                /* The discovery pass has already seen every write in every
+                 * reopening of this class. Its final field fact is therefore
+                 * safe to use here regardless of where this method appears
+                 * in source. This feeds the ordinary declared-return path in
+                 * publish_instance_return_type, allowing @field.make().use()
+                 * to reach Phase 12's existing JIT proof. */
+                if(!compiler->discovery_pass&&field>=0&&
+                   compiler->current_class>=0) {
+                    const DiamondClass *class=&compiler->program->classes[
+                        (size_t)compiler->current_class];
+                    if(class->discovered_field_type_status[(size_t)field]==1)
+                        compiler->known_types[destination]=(uint8_t)(
+                            DIAMOND_TYPE_CLASS_BASE+
+                            class->discovered_field_known_class[(size_t)field]);
+                }
             }
             if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
                 return parse_closure_call_arguments(compiler,destination);
@@ -14399,6 +14414,10 @@ static uint16_t compile_class(Compiler *compiler) {
              * left the other pass's stale contents sitting in these
              * arrays for a claimed slot to silently accumulate on top
              * of. */
+            memcpy(class->discovered_field_type_status,class->field_type_status,
+                sizeof class->field_type_status);
+            memcpy(class->discovered_field_known_class,class->field_known_class,
+                sizeof class->field_known_class);
             memset(class->methods,0,sizeof class->methods);
             memset(class->singleton_methods,0,sizeof class->singleton_methods);
             memset(class->fields,0,sizeof class->fields);
@@ -14443,6 +14462,10 @@ static uint16_t compile_class(Compiler *compiler) {
         memset(class->fields,0,sizeof class->fields);
         memset(class->field_type_status,0,sizeof class->field_type_status);
         memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->discovered_field_type_status,0,
+            sizeof class->discovered_field_type_status);
+        memset(class->discovered_field_known_class,0,
+            sizeof class->discovered_field_known_class);
         memset(class->class_variables,0,sizeof class->class_variables);
         class->method_count=0;
         class->singleton_method_count=0;
@@ -14659,6 +14682,17 @@ static uint16_t compile_struct(Compiler *compiler) {
         }
         index=(int)compiler->program->class_count++;
         class=&compiler->program->classes[(size_t)index];
+    }
+    if(class->declared_by_discovery) {
+        memcpy(class->discovered_field_type_status,class->field_type_status,
+            sizeof class->field_type_status);
+        memcpy(class->discovered_field_known_class,class->field_known_class,
+            sizeof class->field_known_class);
+    } else {
+        memset(class->discovered_field_type_status,0,
+            sizeof class->discovered_field_type_status);
+        memset(class->discovered_field_known_class,0,
+            sizeof class->discovered_field_known_class);
     }
     memset(class->methods,0,sizeof class->methods);
     memset(class->singleton_methods,0,sizeof class->singleton_methods);
@@ -16715,6 +16749,10 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         memset(class->singleton_methods,0,sizeof class->singleton_methods);
         memset(class->field_type_status,0,sizeof class->field_type_status);
         memset(class->field_known_class,0,sizeof class->field_known_class);
+        memset(class->discovered_field_type_status,0,
+            sizeof class->discovered_field_type_status);
+        memset(class->discovered_field_known_class,0,
+            sizeof class->discovered_field_known_class);
         memset(class->class_variables,0,sizeof class->class_variables);
         class->method_count=0;
         class->singleton_method_count=0;

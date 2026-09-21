@@ -842,3 +842,17 @@ improvement in this single off-then-on run. The full production database,
 socket and HTTP handling are included; proxy and external network time are
 excluded. A single sequential run is sensitive to server load and cache
 state, so this is a deployment sanity check rather than a throughput result.
+
+## Ivar receiver result chaining -- JIT Phase 16 (2026-09-20)
+
+`bench/jit_invoke_result_ivar.di` exercises `result = @factory.make(@value)`
+followed by a hot loop calling a declared method on `result`. Release build,
+`DIAMOND_JIT_THRESHOLD=1`, three alternating runs:
+
+| Mode | Times | Mean |
+|---|---:|---:|
+| Interpreted | 8.05s, 9.00s, 7.95s | 8.33s |
+| JIT | 4.73s, 4.14s, 3.90s | 4.26s |
+
+The JIT path was about 49% faster. This isolates the newly eligible receiver
+shape; it is not an end-to-end application measurement.

@@ -793,6 +793,12 @@ struct DiamondClass {
      * assignment agreed on field_known_class, 2 unknown/conflicting. */
     uint8_t field_type_status[DIAMOND_MAX_FIELDS];
     uint8_t field_known_class[DIAMOND_MAX_FIELDS];
+    /* Final field facts from the declaration-discovery pass. Unlike the
+     * real pass's table above, these are complete before any real method
+     * body is emitted, so GET_IVAR can safely publish a receiver class for
+     * later call-return chaining without depending on source order. */
+    uint8_t discovered_field_type_status[DIAMOND_MAX_FIELDS];
+    uint8_t discovered_field_known_class[DIAMOND_MAX_FIELDS];
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
     /* Class variable *names* only -- compile-time, pointer-free metadata
      * exactly like `fields` above, so it costs nothing extra in

@@ -1855,6 +1855,34 @@ just heavier than what was actually needed. What that research found
 missing instead was static type information reaching the JIT at all, a
 different gap this section didn't anticipate.
 
+### Phase 16: declared-return chaining from an ivar-loaded receiver
+
+Phase 12 could carry a declared concrete return through `obj.make()` into a
+later call on the result, but the inner receiver `obj` had to be `self`, a
+typed parameter, or a freshly constructed local. An ivar load was already a
+sound JIT receiver in Phase 11, yet it never entered the compiler's
+`known_types` table, so method resolution could not publish the inner call's
+declared return.
+
+The declaration-discovery pass already computes a whole-class, exhaustive
+`field_type_status`/`field_known_class` result across ordinary assignments,
+generated attribute writers, struct initialization, inheritance, and class
+reopenings. Phase 16 preserves that final result in
+`DiamondClass.discovered_field_*` before the real pass clears and rebuilds
+the class. A real-pass `GET_IVAR` publishes a concrete receiver type only
+when discovery saw exactly one class at every write. This makes the fact
+available before any real method body is emitted and avoids source-order
+assumptions. A later conflicting or untyped write has already poisoned the
+discovery result, even if its source appears after the method using the field.
+
+No JIT code changed. The existing Phase 11 receiver proof compiles the inner
+call, while Phase 12's `register_known_class` and `redefine_method` guard carry
+its declared return into the outer call. Focused cases cover the compiling
+path and a later conflicting-write rejection. The release benchmark
+`bench/jit_invoke_result_ivar.di` measured 7.95–9.00s interpreted and
+3.90–4.73s JIT compiled across three alternating runs, about a 49% reduction
+using the run averages.
+
 ## Threading
 
 Every `Thread.new`/`gremlin_serve(threads: N)` worker gets its own

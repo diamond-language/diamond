@@ -18,6 +18,12 @@ authoritative fine-grained record.
 
 ### Performance
 
+- JIT method-result chaining now covers an ivar-loaded inner receiver:
+  `result = @factory.make(); result.use()`. The discovery pass preserves
+  its final, whole-class ivar type facts for the real code-generation pass,
+  so this remains independent of method and reopening order and rejects a
+  field with any untyped or conflicting write. The focused release benchmark
+  is about 49% faster (~8.3s to ~4.3s). See JIT Phase 16.
 - JIT now also compiles `.method()` on a local whose only assignment is
   an ivar read (`x = @field; ...; x.method()`), when the field's
   compile-time type is a single concrete class -- closing the roadmap's

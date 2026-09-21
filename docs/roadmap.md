@@ -635,7 +635,8 @@ time-known concrete class, and `.method()` on a never-reassigned local
 whose only assignment is a call resolved (via the compiler's own real
 type-checking) to a target with a declared, single-concrete-class return
 type -- when that call's own receiver is itself `self`, a typed
-parameter, or a `NEW`-local (not yet an ivar load) -- and `.method()` on
+parameter, a `NEW`-local, or an ivar load with one concrete class across
+every write -- and `.method()` on
 a receiver `is`-narrowed to a single concrete class *at that specific
 call site*, even from a declared-union parameter that's never itself
 provably one class anywhere else in the function (Phase 15 -- see
@@ -653,7 +654,9 @@ chained-in-a-loop shape (`bench/jit_invoke_result.di`), ~37% on the
 same shape through `self` (`bench/jit_invoke_result_self.di`), ~39% on
 a `is`-type-check-in-a-loop shape (`bench/jit_is_type.di`, Phase 14),
 and ~38% on an `is`-narrowed-receiver-chained-call-in-a-loop shape
-(`bench/jit_is_narrowed_invoke.di`, Phase 15).
+(`bench/jit_is_narrowed_invoke.di`, Phase 15), plus ~49% on declared-return
+chaining through an ivar-loaded receiver (`bench/jit_invoke_result_ivar.di`,
+Phase 16).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -665,14 +668,11 @@ history: `docs/internal/jit-design.md`; user-facing summary:
 Still open:
 
 - generic `DIAMOND_OP_INVOKE` beyond `self`/typed-parameter/freshly-`NEW`'d-
-  local/ivar-load/self-or-typed-parameter-or-`NEW`-local-chained-call
+  local/ivar-load/self-or-typed-parameter-or-`NEW`-local-or-ivar-load-
+  chained-call
   receivers -- every native per-type method (`.keys()`/`.length()`/...),
   plus `tap`/`public_send` on a receiver of unproven type, plus Instance
-  method dispatch on a receiver that's a method call's own return value
-  when the *inner* call's own receiver is an ivar load specifically (a
-  real, separately fixable gap -- would need a new *declared* per-field
-  type table, since the existing inferred `field_known_class` isn't safe
-  to read mid-compile), or anything else not covered by Phase 9/10/11/12/
+  method dispatch on anything else not covered by Phase 9/10/11/12/
   13's own narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed
   the typed-parameter slice: Phase 8's own "`src/jit.c` has zero access to
   any static type information" finding turned out to be only half true --
@@ -697,13 +697,14 @@ Still open:
   entirely) found and fixed along the way. Phase 12 closed the redefine-
   safety question itself (a new whole-program `redefine_method`-usage
   flag, coarse but sound) and, with it, `x = obj.method(); ...;
-  x.other()` for a typed-parameter or `NEW`-local `obj` -- `self` didn't
-  chain yet (found empirically, not assumed), since its own register
+  x.other()` for a typed-parameter or `NEW`-local `obj` -- `self` did not initially
+  chain (found empirically, not assumed), since its own register
   never fed the compiler's real `known_types` tracking at all. Phase 13
   closed that specific gap (one line, in `compile_definition`, no `jit.c`/
-  `vm.h` changes) -- an ivar-load `obj` still doesn't. Closing that
-  remaining receiver kind for a chained call, or the ~2500-line native-
-  type dispatch surface, remain separately unattempted. **A real, load-
+  `vm.h` changes). Phase 16 then closed the ivar-load receiver by carrying the
+  discovery pass's final, whole-class field fact into real compilation.
+  The ~2500-line native-type dispatch surface remains separately
+  unattempted. **A real, load-
   bearing finding from Phase 13's own re-benchmark, worth keeping in
   mind before chasing this further**: skindicate's own ORM hot path
   (`Skin.random_sample`/the `_for` batch loaders) is exactly `self`-
@@ -731,9 +732,9 @@ Still open:
 Before extending past the current narrow slice:
 
 - identify hot workloads that remain VM-bound after existing
-  specialization *and* after the current JIT's own whitelist -- most
-  realistic candidates now hinge on the remaining non-`NEW`, non-
-  parameter-receiver `INVOKE` gap above (skindicate's own current
+  specialization *and* after the current JIT's own whitelist -- remaining
+  candidates now mostly hinge on receivers with no concrete
+  compiler proof or on native-type `INVOKE` dispatch (skindicate's own current
   bottleneck, per a post-Phase-7 re-profile, is largely this shape:
   ActiveRecord/Arel's own non-`self` Instance method calls flowing through
   locals holding a *method call's own return value*, not through typed
@@ -742,7 +743,7 @@ Before extending past the current narrow slice:
   modest ~4-6% real-world win on skindicate's own `/` route from Phase 9
   alone, well short of the ~11.5ms/~10ms the diffuse remainder still
   costs -- see `docs/internal/jit-design.md`'s Phase 8/9/10 sections);
-- for the remaining return-value-receiver gap specifically: solve the
+- for still-unproven return-value receivers: solve the
   byte-offset-to-bytecode-PC mapping needed to make the LSP's own
   per-register type-fact table (`DiamondScopeTypeFact`) usable from
   `src/jit.c` (Phase 10 investigated and rejected this path for its own
