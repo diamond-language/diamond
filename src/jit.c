@@ -1902,16 +1902,27 @@ static void compile_body(JitCompiler *jc) {
                         break;
                     }
                 if(opcode==DIAMOND_OP_INVOKE&&name<fn->string_count&&
-                   (site_type==DIAMOND_TYPE_ARRAY||site_type==DIAMOND_TYPE_HASH)) {
+                   (site_type==DIAMOND_TYPE_STRING||site_type==DIAMOND_TYPE_ARRAY||
+                    site_type==DIAMOND_TYPE_HASH)) {
                     const DiamondStringConstant *native_name=&fn->strings[name];
                     DiamondJitNativeReadOp operation=DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
                     bool supported=false;
                     if(native_name->length==6&&
                        memcmp(native_name->chars,"length",6)==0&&argc==0) {
-                        operation=site_type==DIAMOND_TYPE_ARRAY?
-                            DIAMOND_JIT_NATIVE_ARRAY_LENGTH:
-                            DIAMOND_JIT_NATIVE_HASH_LENGTH;
+                        operation=site_type==DIAMOND_TYPE_STRING?
+                            DIAMOND_JIT_NATIVE_STRING_LENGTH:
+                            (site_type==DIAMOND_TYPE_ARRAY?
+                                DIAMOND_JIT_NATIVE_ARRAY_LENGTH:
+                                DIAMOND_JIT_NATIVE_HASH_LENGTH);
                         supported=true;
+                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==1&&
+                              native_name->length==8&&
+                              memcmp(native_name->chars,"index_of",8)==0) {
+                        operation=DIAMOND_JIT_NATIVE_STRING_INDEX_OF;supported=true;
+                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==0&&
+                              native_name->length==3&&
+                              memcmp(native_name->chars,"ord",3)==0) {
+                        operation=DIAMOND_JIT_NATIVE_STRING_ORD;supported=true;
                     } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
                               native_name->length==6&&
                               memcmp(native_name->chars,"key_at",6)==0) {

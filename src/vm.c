@@ -12516,11 +12516,44 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
 DiamondVmStatus diamond_jit_native_read(DiamondVm *vm,
         const DiamondValue *receiver,const DiamondValue *argument,
         DiamondJitNativeReadOp operation,DiamondValue *out) {
+    const bool string_operation=operation==DIAMOND_JIT_NATIVE_STRING_LENGTH||
+        operation==DIAMOND_JIT_NATIVE_STRING_INDEX_OF||
+        operation==DIAMOND_JIT_NATIVE_STRING_ORD;
     const bool array_operation=operation==DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
     if(receiver->kind!=DIAMOND_VALUE_OBJECT||
-       receiver->as.object->kind!=(array_operation?
-           DIAMOND_OBJECT_ARRAY:DIAMOND_OBJECT_HASH))
+       receiver->as.object->kind!=(string_operation?DIAMOND_OBJECT_STRING:
+           (array_operation?DIAMOND_OBJECT_ARRAY:DIAMOND_OBJECT_HASH)))
         return DIAMOND_VM_TYPE_ERROR;
+    if(string_operation) {
+        const DiamondString *source=(const DiamondString *)receiver->as.object;
+        if(operation==DIAMOND_JIT_NATIVE_STRING_LENGTH) {
+            *out=DIAMOND_INT((int64_t)source->length);return DIAMOND_VM_OK;
+        }
+        if(operation==DIAMOND_JIT_NATIVE_STRING_ORD) {
+            if(source->length==0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "cannot take ord of an empty String");
+                return DIAMOND_VM_INDEX_ERROR;
+            }
+            *out=DIAMOND_INT((unsigned char)source->chars[0]);
+            return DIAMOND_VM_OK;
+        }
+        if(argument->kind!=DIAMOND_VALUE_OBJECT||
+           argument->as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#index_of argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *needle=(const DiamondString *)argument->as.object;
+        *out=DIAMOND_NIL;
+        if(needle->length==0) {*out=DIAMOND_INT(0);return DIAMOND_VM_OK;}
+        if(needle->length<=source->length)
+            for(size_t start=0;start+needle->length<=source->length;start++)
+                if(memcmp(source->chars+start,needle->chars,needle->length)==0) {
+                    *out=DIAMOND_INT((int64_t)start);break;
+                }
+        return DIAMOND_VM_OK;
+    }
     if(operation==DIAMOND_JIT_NATIVE_ARRAY_LENGTH) {
         *out=DIAMOND_INT((int64_t)((const DiamondArray *)receiver->as.object)->count);
         return DIAMOND_VM_OK;

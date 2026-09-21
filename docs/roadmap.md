@@ -657,7 +657,9 @@ and ~38% on an `is`-narrowed-receiver-chained-call-in-a-loop shape
 (`bench/jit_is_narrowed_invoke.di`, Phase 15), plus ~49% on declared-return
 chaining through an ivar-loaded receiver (`bench/jit_invoke_result_ivar.di`,
 Phase 16), and ~96% on a tight statically typed Array/Hash native-read loop
-(`bench/jit_native_collection_reads.di`, Phase 17; 4.86s to 0.19s).
+(`bench/jit_native_collection_reads.di`, Phase 17; 4.86s to 0.19s). Phase
+17's String read extension is ~67% faster in its isolated benchmark (0.80s
+to 0.27s average).
 
 `Model#initialize` (skindicate's own original motivating target, as of
 its current `.dup()`-based shape) is now fully JIT-eligible end to end,
@@ -672,7 +674,8 @@ Still open:
   local/ivar-load/self-or-typed-parameter-or-`NEW`-local-or-ivar-load-
   chained-call
   receivers -- most native per-type methods (`.keys()`/`.slice()`/...);
-  Phase 17 covers Array/Hash `length`, `key_at`, and `value_at`,
+  Phase 17 covers String `length`, `index_of`, and `ord`, plus Array/Hash
+  `length`, `key_at`, and `value_at`,
   plus `tap`/`public_send` on a receiver of unproven type, plus Instance
   method dispatch on anything else not covered by Phase 9/10/11/12/
   13's own narrow proofs. Phase 9 (`docs/internal/jit-design.md`) closed

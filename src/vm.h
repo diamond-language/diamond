@@ -865,7 +865,7 @@ typedef struct DiamondScopeTypeFact {
  * fact, needed because a narrowed receiver can genuinely be different
  * classes at different call sites in the same function (`if x is A;
  * x.a(); elsif x is B; x.b(); end` -- Arel's own real render_expression
- * shape). Phase 17 also consumes Array/Hash facts for selected native reads.
+ * shape). Phase 17 also consumes String/Array/Hash facts for selected native reads.
  * See DiamondFunction.invoke_site_known_class's own comment. */
 typedef struct DiamondInvokeSiteFact {
     uint32_t offset;

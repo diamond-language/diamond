@@ -6634,7 +6634,7 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
      * tracking already proves one right here -- narrowing included, via
      * whatever apply_narrowing_facts/apply_type_set_fact already applied
      * for this exact lexical point. Concrete classes feed instance dispatch;
-     * Array and Hash feed the selected allocation-free native reads. offset
+     * String, Array, and Hash feed selected allocation-free native reads. offset
      * must be captured before
      * emit_opcode below (which itself reads code_count for the same
      * "this instruction's own start" purpose) -- src/jit.c's compile_body
@@ -6652,7 +6652,8 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
     if(type_argument_count==0&&
        ((receiver_type>=DIAMOND_TYPE_CLASS_BASE&&
          receiver_type<DIAMOND_TYPE_INTERFACE_BASE)||
-        receiver_type==DIAMOND_TYPE_ARRAY||receiver_type==DIAMOND_TYPE_HASH)&&
+        receiver_type==DIAMOND_TYPE_STRING||receiver_type==DIAMOND_TYPE_ARRAY||
+        receiver_type==DIAMOND_TYPE_HASH)&&
        compiler->function->invoke_site_known_class_count<DIAMOND_MAX_INVOKE_SITES) {
         DiamondFunction *fn=compiler->function;
         fn->invoke_site_known_class[fn->invoke_site_known_class_count++]=

@@ -2,4 +2,9 @@
 ^1$
 ^answer$
 ^35$
-jit: 4 compiled function(s), 0 bailout(s), 0 hard propagation(s)
+^7$
+^3$
+^65$
+^nil$
+^empty ord$
+jit: 7 compiled function(s), 1 bailout(s), 0 hard propagation(s)

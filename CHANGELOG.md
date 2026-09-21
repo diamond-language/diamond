@@ -18,8 +18,8 @@ authoritative fine-grained record.
 
 ### Performance
 
-- JIT statically typed Array/Hash `length`, `key_at`, and `value_at` reads
-  on x86-64.
+- JIT statically typed String `length`, `index_of`, and `ord`, plus Array/Hash
+  `length`, `key_at`, and `value_at` reads on x86-64.
 
 - JIT method-result chaining now covers an ivar-loaded inner receiver:
   `result = @factory.make(); result.use()`. The discovery pass preserves

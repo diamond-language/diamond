@@ -864,3 +864,7 @@ Array/Hash `length`, Hash `key_at`, and Hash `value_at`. One release-build run
 took 4.86s interpreted and 0.19s with JIT (`DIAMOND_JIT_THRESHOLD=1`), about
 96% faster. This intentionally isolates dispatch overhead; it does not predict
 the end-to-end Skindicate gain.
+
+The follow-up `bench/jit_native_string_reads.di` runs five million iterations
+containing String `length`, `index_of`, and `ord`. Three alternating release
+runs averaged 0.80s interpreted and 0.27s with JIT, about 67% faster.
