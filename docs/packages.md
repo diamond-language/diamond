@@ -140,7 +140,7 @@ naming both requesters and their own ranges; mixing an exact ref and a
 whichever side resolved first happens to already satisfy the other's
 own constraint too — that one is never resolved by backtracking (see
 below). See `tools/semver.h` for the exact range grammar and
-`docs/roadmap.md` for the resolver's own design.
+[`tools/facet.c`](../tools/facet.c) for the resolver implementation.
 
 Declaring a dependency here does **not** implicitly `require_cut` it —
 `require_cut` and `dependencies` are separate mechanisms. A project that

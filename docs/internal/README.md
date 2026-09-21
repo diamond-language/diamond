@@ -14,9 +14,8 @@ start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
   the language-level API instead.
 - [Generational GC design](gc-generational-design.md) -- write barriers,
   card marking, object header layout.
-- [JIT design](jit-design.md) -- deoptimization and GC-root contracts a
-  future JIT tier would need to satisfy; no codegen exists yet, this is
-  groundwork per `docs/roadmap.md`'s stated preconditions.
+- [JIT design](jit-design.md) -- implementation history, current code generation,
+  and its deoptimization and GC-root contracts.
 - [Fuzzing](fuzzing.md) -- building and running the fuzzing harness.
 - [Diamond-modernization audit](di-modernization-audit.md) -- a one-time
   historical audit of a past refactor; kept for context, not maintained

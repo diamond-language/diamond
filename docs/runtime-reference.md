@@ -54,7 +54,7 @@ only if `path` exists and is a directory; any `stat()` failure (missing
 path, permission denied, ...) reads as an ordinary `false` rather than
 raising, matching Ruby's `File.directory?` so a recursive directory walk
 can use it in a plain condition with nothing to rescue. See [Local
-I/O](local-io.md#file-paths-filejoindirnamebasenameextnameabsoluteexpandpath)
+I/O](local-io.md#file-paths-filejoindirnamebasenameextnameabsoluteexpand_path)
 for the full rules.
 
 `ARGV` and `ENV` are plain global values, not calls — `ARGV` is an

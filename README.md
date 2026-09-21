@@ -96,7 +96,7 @@ sandbox.
 ## Learn more
 
 - [CHANGELOG.md](CHANGELOG.md) -- completed capability milestones
-- [docs/roadmap.md](docs/roadmap.md) -- current priorities, explicitly
+- [docs/roadmap.md](docs/roadmap.md) -- candidate work, explicitly
   deferred work, and known limitations
 - [Language reference](docs/syntax.md) -- [core syntax](docs/core-syntax.md),
   [callables](docs/callables.md),

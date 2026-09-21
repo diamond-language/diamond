@@ -378,7 +378,8 @@ authoritative fine-grained record.
   `DIAMOND_DEBUG_BREAKPOINTS`/`DIAMOND_DEBUG_FD`) that makes zero changes
   to `run_chunk`'s own dispatch loop or the bytecode format. No step-over/
   into/out yet -- see docs/debugging.md for the full contract and
-  limitations, and docs/roadmap.md's "Step debugger v2" for what's next.
+  limitations, and the roadmap's
+  [debugger follow-ups](docs/roadmap.md#debugger-follow-ups).
   `editors/vscode` wires this up as a VS Code debugger via
   `diamond.debugAdapterPath`.
 - Added live breakpoints: a `setBreakpoints` request no longer requires
@@ -419,8 +420,8 @@ authoritative fine-grained record.
   fixes those pointers up wherever `classes[]` is populated without a
   following real compile pass. See docs/deployment.md for the CLI
   contract and what it doesn't do (no cross-compilation, no static
-  linking, must build from a repo checkout), and docs/roadmap.md's
-  "`diamond build`: what's next, if anything" for what's deferred.
+  linking, must build from a repo checkout). See the roadmap's
+  [`diamond build` section](docs/roadmap.md#diamond-build) for possible follow-ups.
 - `diamond build` now preserves arbitrarily long output paths and `--cc`
   values when passing them to `make`; its former fixed argument buffers could
   silently truncate either value and build the wrong target or invoke the
@@ -577,8 +578,8 @@ authoritative fine-grained record.
   crash. On by default for the ordinary CLI; `DIAMOND_NO_CACHE=1` opts out,
   `DIAMOND_TRACE_CACHE=1` reports hit/miss/write. `-e`, the REPL, a step-debugger
   session, `diamond build`, and the test suite's own batch corpus runner never use it
-  -- see docs/caching.md for the full contract and docs/roadmap.md's "Bytecode
-  caching: what's next, if anything" for what's deferred.
+  -- see [bytecode caching](docs/caching.md) for the full contract and the
+  [roadmap](docs/roadmap.md#bytecode-caching) for possible follow-ups.
 - A comparison against a native `.length()`/`.to_i()`/`.ord()`/etc. call
   (`while i < s.length()`, `s` a `String`, `Array`, or `Hash`) now
   compiles straight to `LESS_INT` (and siblings) from its very first

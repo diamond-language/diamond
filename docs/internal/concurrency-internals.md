@@ -1,8 +1,8 @@
 # Concurrency internals
 
 This document records the architectural constraints behind Diamond's Fiber
-and Thread implementations. For language-level usage, see [Fibers](fibers.md)
-and [Threads](threads.md).
+and Thread implementations. For language-level usage, see [Fibers](../fibers.md)
+and [Threads](../threads.md).
 
 ## Fibers
 

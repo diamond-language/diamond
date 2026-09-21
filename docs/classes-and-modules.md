@@ -569,7 +569,7 @@ declared member, and generates four methods for it automatically:
 
 A struct composes normally with everything else: `.freeze()`/
 `.frozen?()` work on an instance like any other
-([tap / dup / freeze / frozen? / respond_to? / public_send](#tap--dup--freeze--frozen--respond_to--public_send)),
+([tap / dup / freeze / frozen? / respond_to? / public_send](#tap-dup-freeze-frozen-respond_to-public_send)),
 a struct's own class can appear in a `Type | Type` union and participate
 in [exhaustiveness checking](core-syntax.md#exhaustiveness-checking) the
 same way any other class does, and a field's declared type may refer to

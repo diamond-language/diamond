@@ -63,6 +63,5 @@ stderr, useful for confirming the feature is actually doing something.
   fingerprint-compatible cache surviving between two test runs could otherwise mask a
   real compiler regression the test suite exists to catch.
 
-See [docs/roadmap.md](roadmap.md)'s "Bytecode caching: what's next, if anything" for
-what's deferred (a `diamond cache clear`-style command, moving the cache out from
-next to the source for read-only deployments, ...).
+See [the roadmap](roadmap.md#bytecode-caching) for possible follow-ups,
+including cache removal and read-only deployments.

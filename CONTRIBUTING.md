@@ -6,11 +6,9 @@ future-me as much as anyone else -- not a generic open-source intake process.
 
 ## Before making a change
 
-Read [docs/roadmap.md](docs/roadmap.md) first. It states current priorities
-and, just as importantly, what's *explicitly deferred* (Ruby compatibility,
-a hosted package registry, a JIT without profiling evidence, ...). A change
-that fights the roadmap's own stated direction needs a reason, not just an
-implementation.
+Read [the roadmap](docs/roadmap.md) for candidate work and explicitly deferred
+directions. For behavior, use the relevant topic guide; the roadmap is not a
+feature reference.
 
 For anything beyond a small fix, skim
 [docs/internal/design.md](docs/internal/design.md) and the relevant topic

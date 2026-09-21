@@ -1,24 +1,22 @@
 # Diamond roadmap
 
-This roadmap is intentionally forward-looking. Completed work belongs in the
-[changelog](../CHANGELOG.md), current behavior in the topic guides under
-`docs/`, and implementation rationale in design documents.
+This roadmap tracks possible work. Completed work belongs in the
+[changelog](../CHANGELOG.md), current behavior in the topic guides, and
+implementation rationale in design documents.
 
 Diamond is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
-## Current priorities
+## Candidate work
 
-### Step debugger v2
+These are possible next steps, not commitments. Start with a measured need or
+a concrete application gap. Completed features are documented in the topic
+guides and changelog.
 
-Both halves landed this cycle (docs/debugging.md): live, no-restart
-breakpoints via a new `DIAMOND_OP_BREAKPOINT_CHECK` emitted at every
-statement whenever a debug session is compiling at all, and real
-`next`/`stepIn`/`stepOut` on top of that same opcode -- turned out to
-need no new bytecode or compile-time mechanism at all once every
-statement was already instrumented, contrary to this roadmap's own
-original prediction that stepping would need "a new bytecode debug-info
-format plus deoptimization-style bookkeeping." What's left, if anything:
+### Debugger follow-ups
+
+Live breakpoints and stepping are implemented; see [debugging](debugging.md).
+Possible follow-ups:
 
 - **Throttling the live-breakpoint/step poll if it's ever a real
   problem** -- `DIAMOND_OP_BREAKPOINT_CHECK` does a non-blocking
@@ -33,11 +31,6 @@ format plus deoptimization-style bookkeeping." What's left, if anything:
   DAP feature; basic `stepIn` (into whichever call happens to execute
   first) doesn't need it.
 
-Also see docs/debugging.md's own
-"Stepping" section for the one accepted edge case (a self-recursive tail
-call doesn't increment the depth counter stepping compares against, so
-step-over/out can't fully distinguish it from staying in the same call).
-
 ### `struct` declarations
 
 `struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md,
@@ -45,14 +38,6 @@ landed this cycle) is deliberately narrow -- see that section's own list
 of what it doesn't do. Real possibilities this opens up, none attempted
 yet, none committed:
 
-- ~~an additional hand-written body~~ -- **closed** (2026-09, docs/
-  classes-and-modules.md's own struct section): `compile_class`'s body-
-  parsing loop is now a shared `compile_class_body` (`src/compiler.c`),
-  called by `compile_struct` after it registers its own generated
-  readers/`initialize`/`==`/`to_s`. A hand-written member can only add,
-  not override -- a name collision with a generated method already fails
-  via the same duplicate-method checks an ordinary `class` redefining a
-  method twice already hits, with no struct-specific handling needed.
 - **a superclass, or being reopened** -- both ruled out for this pass
   specifically because there's no obviously correct semantics for
   regenerating `==`/`to_s`/`initialize` against an inherited or changed
@@ -89,9 +74,6 @@ attempted yet, none committed:
   already unconditionally immutable, so this would only matter for
   `Array`/`Hash` literals; not attempted without a concrete use case
   asking for it.
-
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
 
 ### Tail-call optimization
 
@@ -132,9 +114,6 @@ committed:
   as a runtime event; not attempted without a concrete debugging need
   asking for it.
 
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
-
 ### Case/when exhaustiveness checking
 
 Exhaustiveness checking (docs/core-syntax.md, landed this cycle) now covers
@@ -154,30 +133,7 @@ opens up, none attempted yet, none committed:
   its own `when`. Not attempted because it would need to reason about
   "this `when`'s named class is the sealed base itself" as a genuinely
   different, third coverage rule, not just reusing the existing exact-id
-  match;
-- ~~structural (Array/Hash/Object) pattern coverage~~ -- **closed for
-  Object patterns** (2026-09, `CaseArrayNode` in `src/compiler.c`): a
-  *single*, top-level, *empty* `Circle{}` class-only guard (no `,`-joined
-  alternatives, no reader fields) now counts as covering the `Circle`
-  member the same way a bare `when Circle` already did, for both an
-  explicit union and a sealed hierarchy (same shared `covered_ids`/
-  `exhaustiveness->covered` commit path either way, so no separate change
-  needed per shape). A *non-empty* pattern (`Circle{radius: r}`) still
-  correctly doesn't count -- it only matches a subset of `Circle` --
-  and neither does an empty `Circle{}` nested inside something else
-  (`[Circle{}, x]`'s own top-level shape is an Array pattern, not an
-  Object one). Array/Hash patterns don't get an analogous rule: unlike
-  an Object pattern, they never name a class at all, so there's no
-  class id for an "empty `[]`/`{}` covers this member" fact to attach
-  to in the first place -- not a narrower cut of the same idea, a
-  question that doesn't apply to them;
-- ~~**naming the missing member(s) in the compile error**~~ -- **closed**
-  (2026-09): `DiamondDiagnostic` now owns inline message storage, remaining
-  valid after compiler teardown and ordinary struct copies. Exhaustiveness
-  errors list every missing union member or sealed subclass by name.
-
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
+  match.
 
 ### Channel
 
@@ -193,9 +149,6 @@ opens up, none attempted yet, none committed:
   handoff, or no capacity limit at all. Deliberately out of v1's own scope
   (a bound keeps memory use predictable and gives `send` real backpressure)
   and not clearly needed without a concrete use case asking for it.
-
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
 
 ### `Supervisor`
 
@@ -224,9 +177,6 @@ remain, none attempted yet, none committed:
   supervised child already can't reference its own parent `Supervisor`
   by design.
 
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
-
 ### `diamond build`
 
 `diamond build` (docs/deployment.md, landed this cycle) produces a
@@ -246,9 +196,6 @@ up, none attempted yet, none committed:
   because `diamond` itself doesn't link statically either; doing this for
   `diamond build` alone without doing it for `diamond` would be new,
   unproven build-system work, not a small extension.
-
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
 
 ### Sandbox mode
 
@@ -274,9 +221,6 @@ Real possibilities this opens up, none attempted yet, none committed:
 - **restricting `Signal.trap`** -- a process-wide side effect adjacent to, but distinct
   from, resource-opening.
 
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
-
 ### Bytecode caching
 
 Bytecode caching (docs/caching.md, landed this cycle) caches a compiled program in a
@@ -297,104 +241,6 @@ opens up, none attempted yet, none committed:
 - **caching `diamond -e`** -- excluded in v1 for having no stable on-disk identity to
   cache against; a content-addressed cache in a dedicated directory could cover it, but
   that's the same design work as the point just above, not a small extension.
-
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
-
-### Real semver dependency resolution for `facet` (done)
-
-`facet` used to pin every dependency to an exact git ref (tag/branch/
-commit) and treat any two requesters wanting a different ref for the
-same cut as a hard, unresolvable error -- even when both refs were
-semver-compatible. 0.3's headline ecosystem work replaced that with a
-real resolver, still with no hosted registry (cut identity stays a git
-URL; "resolving is fetching" stays true) since a git-tag-based resolver
-needs none of that operational cost:
-
-- **Semver type**: `tools/semver.c`/`tools/semver.h` --
-  MAJOR.MINOR.PATCH[-prerelease][+build] parsing (strict semver.org
-  grammar, no leading zeros, an optional leading `v`/`V` for real-world
-  git tags) and precedence ordering, plus range/constraint syntax
-  (`^1.2.3`, `~1.2.3`, `>=1.0.0 <2.0.0`, an exact `1.2.3`), satisfaction
-  checks, and range intersection. Standalone -- no dependency on `facet`
-  itself or the Diamond compiler/VM, since it's also generally useful on
-  its own (a package's own `diamond.cut` `version` field finally means
-  something). `make test-semver` (80 cases) covers parsing, ordering,
-  ranges, satisfaction, and intersection.
-- **Version discovery without a registry**: `git ls-remote --tags --refs`
-  against a dependency's own repository, filtered to tags that parse as
-  semver (with or without a leading `v`) -- the entire "version
-  database" this ever consults. No index, no service, no caching layer
-  beyond what git itself already does.
-- **Manifest format**: a `dependencies` entry can now carry a `version`
-  key as an alternative to `tag`/`branch`/`commit` (mutually exclusive
-  with those, the same way the existing ref keys are mutually exclusive
-  with each other) -- `{"git": "...", "version": "^1.2.0"}`.
-- **The resolver**: a version-constrained dependency can't resolve the
-  moment it's seen the way an exact-ref one does -- with no registry,
-  discovering a cut's own transitive dependencies needs a clone of some
-  concrete version of it, but *which* version depends on every
-  requester's constraint, and some requesters aren't discovered until
-  later in the walk. So `tools/facet.c` now keeps exact-ref dependencies
-  on the original clone-immediately-and-recurse path, but parks a
-  version-constrained name in a pending table instead, intersecting in
-  each new requester's own constraint as it's found; a queue-plus-
-  pending-table fixpoint (`resolve_full_graph`) alternates draining
-  newly-discovered exact-ref work and resolving one pending name (tags
-  listed, highest match picked, cloned, its own dependencies queued)
-  until both are empty. Picking the highest match is deterministic, no
-  real backtracking -- an empty intersection is a hard error naming
-  every requester and its own range; mixing an exact ref and a version
-  constraint for the same cut is also a hard error, except when whichever
-  side resolved first happens to already satisfy the other's constraint
-  too, in which case there's nothing to reconcile.
-- **Lockfile**: `facet.lock` still pins to one exact resolved commit
-  regardless of whether the manifest asked for an exact ref or a range;
-  a range-resolved entry also records which tag it resolved to, for
-  transparency (`facet update` always re-resolves from `diamond.cut`
-  fresh either way, never consulting the old lockfile's own pinned
-  version).
-- Two real, previously-undiscovered bugs found and fixed along the way,
-  by finally building `facet` under ASan/UBSan/LeakSanitizer for the
-  first time in this file's history: `facet_run_hash` passed freshly
-  `malloc`'d (not zeroed) memory to `diamond_compile`, which requires an
-  already-valid `DiamondProgram` since its own first act is freeing
-  whatever was there before recompiling -- crashed on the very first
-  manifest read, reproduced identically on facet.c from before this
-  work. `facet_program_free` never called `diamond_program_free` on the
-  compiled program's own internal arrays before freeing the outer
-  struct, leaking them on every manifest/lockfile read (harmless in
-  practice -- `facet` is a short-lived CLI process -- but a real,
-  fixable leak).
-- **Still explicitly out of scope**: a hosted registry/index (install by
-  bare name, search) and multi-version coexistence -- both deferred for
-  good reason (docs/packages.md's own "architecturally constrained"
-  note: two versions of one cut could never coexist in Diamond's single
-  flat compiled namespace anyway) and neither changes with this work.
-- **Real backtracking landed (2026-09)**: re-resolving an already-cloned
-  version-constrained dependency when a later-discovered constraint it
-  doesn't satisfy shows up used to be an unconditional hard error, even
-  when a different, still-available tag would have satisfied every
-  requester. `resolve_full_graph` now retries the whole graph walk
-  (wiping the ephemeral scratch clones each time) whenever that happens,
-  carrying forward the full intersected constraint history for every
-  version-constrained name across attempts -- so a later attempt already
-  knows everything an earlier one discovered, however late, and resolves
-  correctly the first time it reaches that name. Bounded at
-  `FACET_MAX_DEPENDENCIES` attempts, a real provable limit (one restart
-  per genuinely new conflicting-constraint discovery, and there are at
-  most that many version-constrained edges in the whole graph), not a
-  guess. A genuinely disjoint pair of constraints (no tag could ever
-  satisfy both, independent of resolution order) still hard-errors
-  immediately, on the first attempt -- no restart wasted on an
-  unsatisfiable graph. Scoped to pure version-vs-version conflicts only;
-  mixing an exact ref and a version constraint for the same name is
-  still `docs/packages.md`'s own by-design hard error, unrelated to this.
-
-0.3 overall is a bugfix-and-ecosystem release: this packaging work was
-the headline addition, alongside whatever bugs turn up along the way
-(see "Harden the end-user runtime surface" below for the audit already
-in progress) rather than new language surface.
 
 ### Improve receiver-aware tooling
 
@@ -503,78 +349,17 @@ opens up, none attempted yet, none committed:
   starting depth handed in from outside the selection, which nothing
   currently tracks.
 
-Revisit only with a real driving need, not speculatively -- same bar
-docs/roadmap.md already holds every other research direction to.
-
 ### Harden the end-user runtime surface
 
 The native service layer is broad enough to build real applications. Work here
 should now favor consistency, portability, and failure behavior over adding
 unrelated primitives.
 
-A first arity/type/range/closed-resource audit (2026-09) across File,
-Listener, Socket, UDPSocket, TLSSocket, SQLite3/Statement, PostgreSQL,
-MySQL, and Process/Handle/Stream found the surface largely consistent
-already: closed-resource checks are structurally guaranteed (every
-native dispatch checks "is closed" before any method-specific branch),
-arity validation is shared correctly across sibling methods (e.g.
-`Process.run`/`.spawn` share one argv-validation helper), and the one
-real type-consistency question found (PostgreSQL/MySQL rejecting a Hash
-`params` argument that SQLite3 accepts) turned out to be a genuine,
-already-documented driver-level constraint, not an oversight. One real
-range-check inconsistency was found and fixed: `UDPSocket#receive`
-rejected `0` where the read-family methods didn't.
-
-Re-run (2026-09-15) against every native surface added since the first
-pass -- `Tensor`, `Channel`, `Supervisor` -- the same way: sibling-method
-arity/type/range consistency (`Tensor#get`/`#set` share one arity/bounds
-check before their own method-specific work; `Supervisor#restart_count`/
-`#last_error`/`#alive?` all validate their shared child-index argument
-identically), constructor-level range/overflow guards (`Tensor.zeros`/
-`.random` both reject non-positive rows/cols; `allocate_tensor` itself
-guards `rows*cols*sizeof(double)` against overflow before ever calling
-`malloc`, so an absurd shape fails cleanly with `OUT_OF_MEMORY` rather
-than wrapping into a too-small allocation), and cross-type error-code
-consistency (`Channel#try_send`/`#try_receive`'s `WouldBlockError` is
-the exact same status non-blocking `Socket`/`File` reads already use,
-not a parallel invented one). Found nothing to fix this time -- a real,
-useful outcome in its own right, not just a formality: confirms the
-audit's own bar was met by three independently-authored features
-without anyone deliberately checking against it at the time each shipped.
-Re-run this audit periodically as new native surface is added, rather
-than treating it as permanently closed.
-
-The focused ThreadSanitizer suite was re-run in 2026-09 across the thread,
-channel, supervisor, and representative fiber cases: 35 cases passed with no
-races reported.
-
-Minor-GC stress now covers representative Channel payload transfer, nested
-channels, Supervisor restart, and nested supervision cases; the shared batch
-runner clears `DIAMOND_STRESS_MINOR_GC` between cases so those settings cannot
-leak across the corpus.
-
-TCP, TLS, and subprocess timeout/error cleanup was audited in 2026-09. Failed
-connect/listen/handshake and pipe-setup paths close transient descriptors, while
-rooted TLS handles retain sole ownership for later sweep cleanup; the existing
-timeout and failure cases passed without an ownership defect.
-
-SQLite resource cleanup is now stress-tested under both major and minor GC for
-prepared-statement reuse/closure and a statement that outlives its closed
-connection.
-
-Live-driver validation also passed in 2026-09 against throwaway PostgreSQL 16,
-MariaDB 11, and MySQL 8 containers: all three existing Arel dialect suites
-passed 12/12 tests.
-
-Those three opt-in scripts now enable both major and minor GC stress by
-default; the live suites passed 36/36 tests under forced collection.
-
-SQLite's deterministic invalid-query and closed-resource error fixtures also
-run under combined major/minor-GC stress, covering cleanup on rejected
-operations as well as successful statement lifetimes.
-
-The live PostgreSQL, MariaDB, and MySQL suites now include the same invalid-
-query/use-after-close assertions and pass 13/13 each under combined stress.
+Audits in September 2026 covered native service argument validation, resource
+cleanup, thread safety, GC stress, and live PostgreSQL/MariaDB/MySQL drivers.
+The only API inconsistency found was `UDPSocket#receive(0)`, which is fixed.
+Re-run focused audits as new native services land. Results and test commands
+belong in the relevant topic guides and test scripts.
 
 Priorities:
 

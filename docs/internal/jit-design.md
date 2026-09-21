@@ -1,12 +1,10 @@
 # JIT design: deoptimization and GC-root contracts
 
-This document records the design contracts a future JIT tier would need to
-satisfy to interoperate safely with the existing interpreter, GC, and
-threading model -- written ahead of any codegen, per
-[`docs/roadmap.md`](../roadmap.md)'s "Native-code execution" section, which
-gates real JIT work on exactly this plus representative benchmark evidence
-(see [`bench/RESULTS.md`](../../bench/RESULTS.md)'s `object_hydration.di`
-addition and the existing `typed_dispatch.di`).
+This document records the JIT's design history and the contracts for
+interoperating with the interpreter, GC, and threading model. The initial
+contract predates code generation; later sections document the implemented
+phases. See [the roadmap](../roadmap.md#native-code-execution) for open work
+and [benchmark results](../../bench/RESULTS.md) for measurements.
 
 **Status (2026-09-12): a first, deliberately narrow implementation now
 exists** (`src/jit.c`/`src/jit.h`, opt-in via `DIAMOND_JIT=1`) -- everything
