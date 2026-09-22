@@ -1,28 +1,15 @@
-# packages/graphql
+# graphql
 
-A from-scratch, spec-inspired GraphQL query engine for
-[Diamond](https://gitlab.com/dmn9180/diamond) -- not a line-by-line
-port of the Ruby [`graphql`](https://github.com/rmosolgo/graphql-ruby)
-gem this package is modeled on. That gem's whole public API is built on
-Ruby metaprogramming Diamond doesn't have (principally class bodies that
-execute arbitrary macro calls) -- see
-[`ROADMAP.md`](ROADMAP.md) for the full story on what that means for
-this package's own shape, and why schemas here are built with a fluent
-instance builder (`packages/dials`'s own `Router#get`/`#post` is the
-template) instead of Ruby-style `field :name, String` class-body
-macros.
+Define GraphQL schemas and execute queries in Diamond.
 
-## Install
+## Installation
 
-Same story as every other package here -- copy this directory into
-another project as `cuts/graphql/`, or give it its own git remote and
-depend on it via `facet` (see
-[`docs/packages.md`](../../docs/packages.md)).
+Install the cut at `cuts/graphql/` and load it with `require_cut "graphql"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
 
-## Building a schema
+## Usage
 
 ```ruby
-require "path/to/graphql/lib/graphql"
+require_cut "graphql"
 
 module BookResolvers
   module_function
@@ -55,198 +42,10 @@ QueryType.field("author", AuthorType, QueryResolvers.author,
 
 Schema = GraphQL::Schema.new()
 Schema.query(QueryType)
+
+result = Schema.execute("{ author(id: \"1\") { name } }", {}, {"db": db})
 ```
 
-`ObjectType.new(name)` builds an empty type; `.field(name, type,
-resolve = nil, arguments = [], description = nil)` registers a field against
-it and returns `self`, so repeated calls read like a declaration list
-even though each is an ordinary method call (Diamond has no
-class-body-macro mechanism to make this a single expression the way
-graphql-ruby's own `field :name, String, null: false` is -- see
-`ROADMAP.md`). When `resolve` is omitted, execution calls the field name as a
-public zero-argument method on the runtime object via `public_send`. This is
-the concise path for ordinary model fields such as `id`, `name`, or `title`.
-Pass an explicit `Callable[3]` when resolution needs the GraphQL arguments or
-context, translates the field name, or reads from a Hash. A bare `self.`
-singleton method reference (`AuthorResolvers.id`, no call) or an inline
-closure both work.
+## Notes
 
-`GraphQL::Type` is the common base every concrete kind
-(`ScalarType`/`ObjectType`/`InterfaceType`/`UnionType`/`EnumType`/
-`InputObjectType`, plus the two wrapper kinds) subclasses, purely for
-`.non_null()` (wraps in `NonNullType`) and `.list()`/`ListType.of(type)`
-(wraps in `ListType`) -- these compose (`STRING.non_null().list()` is
-`[String!]`).
-
-Built-in scalars: `GraphQL::ScalarType.string()`/`.int()`/`.float()`/
-`.boolean()`/`.id()` -- a fresh instance each call (Diamond has no
-top-level constant binding, so these are factory methods, not
-constants), fine since they're identity-less immutable values.
-
-`InterfaceType`/`UnionType` need `.resolve_type(callable)` (a
-`(object, context) -> String` `Callable` returning the concrete
-implementing/member type's name) before any interface- or union-typed
-field can actually be resolved -- there's no way to guess a concrete
-type from a plain Diamond value otherwise, same "explicit Callable, no
-magic" stance as `Field#resolve`. `ObjectType#implements(interface)`
-registers the relationship in both directions, so
-`Schema#type_map`/`#execute` can find an object type that's only
-reachable by implementing an interface (see `ROADMAP.md`'s "Resolved"
-section for why that matters).
-
-## Executing queries
-
-```ruby
-result = Schema.execute(query_string, variables, context, root_value, operation_name)
-# => {"data": {...}}
-# or {"data": {...}, "errors": [{"message": ..., "path": [...]}]}
-# or {"errors": [{"message": ...}]}   -- no "data" key: a request-level
-#                                          failure (parse error, unknown
-#                                          operation, failed validation,
-#                                          a variable that doesn't coerce)
-```
-
-All four trailing arguments are optional (default `{}`/`{}`/`nil`/
-`nil`) and positional -- `Schema#execute` is an ordinary method call, so
-Diamond's keyword-call syntax doesn't reach it either (`docs/syntax.md`'s
-"Method calls... stay positional-only"). `operation_name` is only
-required when `query_string` defines more than one operation.
-
-Execution is synchronous and spec-shaped (`ExecuteRequest` ->
-`ExecuteSelectionSet` -> `ExecuteField` -> `CompleteValue`): fragment
-spreads and inline fragments (typed and untyped) are expanded,
-`@include`/`@skip` are honored, and a `null` result for a `!`-typed
-field bubbles up to the nearest nullable ancestor per spec (recording
-exactly one error at the point of origin, not once per level it passes
-through on the way up).
-
-A resolver raising `GraphQL::ExecutionError` surfaces its own message
-as that field's error; any other exception surfaces its own
-`.message()` the same way (still just that one field's result going
-`null`, siblings unaffected, unless the field itself is non-null).
-
-## Lookahead
-
-`context["lookahead"]` is set immediately before every resolver call --
-a `GraphQL::Execution::Lookahead` scoped to that field's own
-sub-selections, for deciding whether to do expensive work (an eager
-load, say) *before* doing it, not after:
-
-```ruby
-module AuthorResolvers
-  module_function
-  def books(object, args, context)
-    if context["lookahead"].selects?("title")
-      # the query actually asked for book titles -- eager-load them
-    else
-      # skip it, the query didn't ask
-    end
-    object.books()
-  end
-end
-```
-
-A resolver one level up can peek into a *not-yet-resolved* child
-field's own selections the same way, via `.selection(field_name)`
-(returns another `Lookahead`, empty -- so every `.selects?` under it is
-`false` -- if `field_name` wasn't selected at all):
-
-```ruby
-def author(object, args, context)
-  if context["lookahead"].selection("books").selects?("title")
-    # decide up front whether resolving `author` should also prefetch
-    # book titles in the same query, before `books`' own resolver runs
-  end
-  object
-end
-```
-
-`.selections()` returns every field name selected at this level, for a
-resolver that wants to see everything at once. Read `context["lookahead"]`
-synchronously, during your own resolver call -- it's the same shared
-`context` Hash mutated in place for every field, not a fresh copy per
-field (see `execution/executor.di`'s own header comment on why that's
-safe here). Deliberately simpler than graphql-ruby's own Lookahead: a
-selection nested only under `... on OtherType` on a polymorphic field
-still counts as "selected" here regardless of the runtime type (see
-`ROADMAP.md`).
-
-## Dataloader
-
-`context["dataloader"]` (a `GraphQL::Execution::Dataloader`, one per
-request) batches together every `.load()` call against the same named
-loader made while resolving a list's own items -- the classic N+1
-shape, N parents each independently resolving the same child field:
-
-```ruby
-module BookLoader
-  module_function
-  def batch(author_ids, context)
-    db = context["db"]
-    rows = Book.where({"author_id": author_ids}).to_a(db)
-    grouped = {}
-    index = 0
-    while index < rows.length()
-      row = rows[index]
-      list = grouped[row.author_id()]
-      grouped[row.author_id()] = if list == nil then [row] else list.push(row) end
-      index += 1
-    end
-    grouped
-  end
-end
-
-module AuthorResolvers
-  module_function
-  def books(object, args, context)
-    context["dataloader"].with("books_by_author", BookLoader.batch).load(object["id"])
-  end
-end
-```
-
-`batch_fn`'s own signature is `(keys, context) -> Hash` -- one query for
-every accumulated key, returning each key's own result (the grouping
-happens once, inside `batch`, not per-call in the resolver). Resolving
-a list of authors, each calling `.load(author_id)` inside its own
-`books` field, fires `BookLoader.batch` exactly **once**, with every
-author's own id already collected -- not once per author.
-
-`.with(name, batch_fn)` memoizes one `Loader` per `name` for the whole
-request (the *first* call for a given name wins; every later call with
-the same name, from anywhere else in the request, returns that same
-`Loader` and ignores its own `batch_fn` argument -- every call site for
-the "same" loader should pass an equivalent `batch_fn`). A `batch_fn`
-that raises surfaces as a normal, per-field `GraphQL::ExecutionError`
-for every item that was waiting on it -- not a hang, not an uncaught
-crash.
-
-**Deliberately LOCAL batching, not graphql-ruby's own GLOBAL
-coalescing across the entire query tree** -- see
-`execution/dataloader.di`'s own header comment and `ROADMAP.md` for the
-full reasoning. In short: only a list's own items batch together
-(`#complete_list_value`); two unrelated lists in different branches of
-one query, or a selection set's own sibling fields, do not coalesce
-with each other. This still solves the dominant real-world N+1 shape.
-
-## Validation
-
-Every `Schema#execute` call validates the parsed document before
-running any resolver -- a request that fails validation returns *only*
-`{"errors": [...]}`, no partial `"data"` at all. This is a deliberate
-*subset* of the spec's own ~30 rules; see `ROADMAP.md` for exactly
-what's covered and what isn't.
-
-## Introspection
-
-`__schema`, `__type(name: "...")`, and `__typename` all work out of the
-box on every `Schema` -- no separate opt-in, built the same way a
-user's own types are (`packages/graphql/lib/graphql/introspection.di`).
-Good enough for GraphiQL/Apollo-style tooling to introspect a server;
-see `ROADMAP.md` for what's deliberately not tracked yet (type-level
-descriptions, deprecation, a real directive registry).
-
-## Tests
-
-```
-make test-graphql-package
-```
+Define types and fields with builders, then call `schema.execute(query, variables, context, root_value, operation_name)`. Results contain `data` and, when applicable, `errors`.
