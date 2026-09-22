@@ -42,11 +42,11 @@
 # VM/heap, so a one-time top-level call here would only ever land on
 # whichever worker happens to run inline -- see middleware.di's own
 # comment on ensure_models_configured for how this was confirmed.
-require "../../packages/active_record/lib/active_record"
-require "../../packages/gremlin/lib/gremlin"
-require "../../packages/rack/lib/rack"
-require "../../packages/div/lib/div/runtime"
-require "../../packages/dials/lib/dials"
+require_cut "active_record"
+require_cut "gremlin"
+require_cut "rack"
+require_cut "div"
+require_cut "dials"
 
 require "./lib/config/environment"
 require "./lib/views/.cache/author_books_table.html"

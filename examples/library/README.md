@@ -1,6 +1,6 @@
 # examples/library
 
-An end-to-end smoke test wiring together everything in `packages/`:
+An example application using Diamond cuts for database access, routing, and views:
 `SQLite3` (native driver) →
 [`arel`](../../packages/arel/README.md) (query builder) →
 [`active_record`](../../packages/active_record/README.md) (`ActiveRecord::Model`
@@ -102,6 +102,7 @@ without touching development data.
 
 ```sh
 cd examples/library
+bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh              # compiles lib/views/*.html.div (once, or after editing a view)
 ../../build/diamond setup_db.di    # creates library.db, seeds it
 ../../build/diamond app.di         # starts the server on :18080

@@ -50,8 +50,8 @@
 # CookieSession section for why that split exists at all once threads
 # enters the picture.
 
-require "../../packages/rack/lib/rack"
-require "../../packages/cookies/lib/cookies"
+require_cut "rack"
+require_cut "cookies"
 require "./lib/web"
 require "./lib/api"
 

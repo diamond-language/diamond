@@ -1,4 +1,4 @@
-require "../../packages/gremlin/lib/gremlin"
+require_cut "gremlin"
 require "./boot"
 
 port = 18090

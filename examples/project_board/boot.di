@@ -1,8 +1,8 @@
-require "../../packages/active_record/lib/active_record"
-require "../../packages/rack/lib/rack"
-require "../../packages/div/lib/div/runtime"
-require "../../packages/dials/lib/dials"
-require "../../packages/logger/lib/logger"
+require_cut "active_record"
+require_cut "rack"
+require_cut "div"
+require_cut "dials"
+require_cut "logger"
 
 require "./lib/config/environment"
 require "./lib/views/.cache/home.html"

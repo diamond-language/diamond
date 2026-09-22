@@ -69,6 +69,7 @@ shared bucket for the API route.
 
 ```sh
 cd examples/guestbook
+bash ../../tools/install_local_cuts.sh .
 ../../build/diamond app.di
 ```
 
@@ -95,6 +96,7 @@ zero setup -- see `boot.di`'s own comment.
 ## Smoke test
 
 ```sh
+bash ../../tools/install_local_cuts.sh .
 ../../build/diamond smoke_test.di
 ```
 

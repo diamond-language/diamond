@@ -25,7 +25,7 @@ Pipe the NDJSON stream through the optional log viewer for compact human
 output while developing:
 
 ```sh
-../../build/diamond app.di | DIAMOND_BIN=../../build/diamond ../../packages/log_viewer/bin/diamond-log
+../../build/diamond app.di | DIAMOND_BIN=../../build/diamond cuts/log_viewer/bin/diamond-log
 ```
 
 ## Environments
@@ -46,6 +46,7 @@ the selected database, so use it deliberately.
 
 ```sh
 cd examples/project_board
+bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh
 ../../build/diamond setup_db.di
 ../../build/diamond app.di
