@@ -3,6 +3,8 @@
 Diamond is a Ruby-inspired language with gradual, checked static typing,
 compiled to a custom register-bytecode VM written in C23.
 
+Learn more at [dilang.tech](https://dilang.tech).
+
 ```ruby
 class Counter
   include Comparable
