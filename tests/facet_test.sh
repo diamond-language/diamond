@@ -845,4 +845,12 @@ actual="$(cd packaged_project && "$diamond" -e 'require_cut "network_safety"
 resolve_public_hostname("http://8.8.8.8/x")["host"]')"
 [[ "$actual" == "8.8.8.8" ]]
 
-echo "141 facet tests passed"
+"$facet" check "$source_root/packages/gremlin" >/dev/null
+"$facet" pack "$source_root/packages/gremlin" gremlin.tar >/dev/null
+digest="$(sha256sum gremlin.tar | cut -d' ' -f1)"
+"$facet" verify gremlin.tar --sha256 "$digest" >/dev/null
+mkdir packaged_project/cuts/gremlin
+tar -xf gremlin.tar -C packaged_project/cuts/gremlin
+(cd packaged_project && "$diamond" -e 'require_cut "gremlin"' >/dev/null)
+
+echo "145 facet tests passed"

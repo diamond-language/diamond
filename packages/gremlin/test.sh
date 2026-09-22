@@ -6,6 +6,13 @@ set -euo pipefail
 # test-gremlin-package` from the repo root, which sets this up already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+mkdir -p "$test_project/cuts"
+ln -s "$package_root/../http" "$test_project/cuts/http"
+ln -s "$package_root/../logger" "$test_project/cuts/logger"
+cd "$test_project"
 
 wait_for_port() {
     local port="$1"
@@ -26,7 +33,7 @@ server_src() {
         serve_call="gremlin_serve($port, handler, threads: $threads)"
     fi
     cat <<SRCEOF
-require "$(pwd)/lib/gremlin"
+require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
     if request["method"] == "GET"
@@ -272,7 +279,7 @@ out="$(mktemp)"
 raw_handler_src() {
     local port="$1"
     cat <<SRCEOF
-require "$(pwd)/lib/gremlin"
+require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
     conn = context["gremlin_connection"]
@@ -310,7 +317,7 @@ out="$(mktemp)"
 tick_log="$(mktemp)"
 rm -f "$tick_log"
 cat >"$out.di" <<SRCEOF
-require "$(pwd)/lib/gremlin"
+require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
     [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
@@ -350,7 +357,7 @@ rm -f "$out" "$out.di" "$tick_log"
 port=19418
 out="$(mktemp)"
 cat >"$out.di" <<SRCEOF
-require "$(pwd)/lib/gremlin"
+require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
     [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
@@ -387,7 +394,7 @@ rm -f "$out" "$out.di"
 port=19419
 out="$(mktemp)"
 cat >"$out.di" <<SRCEOF
-require "$(pwd)/lib/gremlin"
+require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
     [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]

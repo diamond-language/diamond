@@ -151,9 +151,9 @@ Current `facet` accepts Git dependencies shaped like `{"git": URL,
 and `require_cut` parse metadata without executing it. Most bundled manifests
 still have only `name` and `version`; their runtime dependencies and release
 metadata are incomplete. Fifteen dependency-free cuts have the required
-metadata and license files and pass local archive checks. `network_safety`
-also declares and loads its `http` dependency, and passes an installed-artifact
-check. No registry exists to publish them yet.
+metadata and license files and pass local archive checks. `network_safety` and
+`gremlin` also declare and load their dependencies, and pass installed-artifact
+checks. No registry exists to publish them yet.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare
