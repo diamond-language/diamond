@@ -10,7 +10,7 @@ license declaration, data-only runtime dependency ranges, and regular
 `diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
 `--files` prints the sorted included file list. It does not yet verify SPDX
-expressions or create an archive. It checks statically visible literal imports
+expressions. It checks statically visible literal imports
 for paths that escape the cut and `require_cut` names missing from the manifest;
 dynamic imports are outside this check. Passing this check
 is necessary for a future publish, but is not a publish operation.
@@ -148,12 +148,12 @@ lockfiles are not used to resolve a consumer's graph.
 
 Current `facet` accepts Git dependencies shaped like `{"git": URL,
 "version": RANGE}` and derives available versions from Git tags. Both `facet`
-and `require_cut` parse metadata without executing it. Most bundled manifests
-still have only `name` and `version`; their runtime dependencies and release
-metadata are incomplete. Fifteen dependency-free cuts have the required
-metadata and license files and pass local archive checks. `network_safety` and
-`gremlin` also declare and load their dependencies, and pass installed-artifact
-checks. No registry exists to publish them yet.
+and `require_cut` parse metadata without executing it. All bundled cuts now
+have release metadata and license files, declare their runtime dependencies,
+and pass local archive checks. Dependent cuts load their dependencies through
+`require_cut`. `tools/install_local_cuts.sh` can stage verified artifacts in a
+local project while the registry and locked registry installation are built.
+No registry exists to publish them yet.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare

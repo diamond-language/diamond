@@ -33,10 +33,10 @@ manifests, paths, documentation, and existing projects.
    versions, and release status. Keep the API usable without the web interface.
 6. Migrate bundled cuts in small dependency-connected groups. Declare their
    runtime dependencies, test installation from artifacts in CI, then publish.
-   Fifteen dependency-free cuts now have release metadata and license files.
-   The Facet suite checks their packed artifacts from an isolated project.
-   `network_safety` and `gremlin` now declare and load their cut dependencies;
-   the remaining cuts with sibling-source imports still need migration.
+   All 23 bundled cuts now have release metadata, license files, and declared
+   dependencies. `tools/install_local_cuts.sh` stages verified archives for
+   local projects, including Skindicate. Registry publishing and locked
+   registry installation remain.
 
 ## Decisions to carry through implementation
 

@@ -1,4 +1,4 @@
-require "../../active_record/lib/active_record"
+require_cut "active_record"
 
 # Generalized from applications/skindicate.dia's own hand-rolled
 # Tag/Tagging models and SkinsController.parse_tags -- a from-scratch

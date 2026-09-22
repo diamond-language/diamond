@@ -7,12 +7,18 @@ set -euo pipefail
 # already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+source_root="$(cd ../.. && pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+"$source_root/tools/install_local_cuts.sh" "$test_project" >/dev/null
+cd "$test_project"
 
 count=0
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/active_social\"
+    "$diamond" -e "require_cut \"active_social\"
 db = SQLite3.open(\":memory:\")
 db.execute(\"CREATE TABLE follows (id INTEGER PRIMARY KEY, follower_id INTEGER NOT NULL, followed_id INTEGER NOT NULL, created_at INTEGER NOT NULL)\")
 ActiveSocial::Follow.configure(ActiveRecord::Repository.new(Arel.table(\"follows\"), build_follow, \"id\"))

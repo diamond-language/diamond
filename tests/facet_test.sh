@@ -853,4 +853,9 @@ mkdir packaged_project/cuts/gremlin
 tar -xf gremlin.tar -C packaged_project/cuts/gremlin
 (cd packaged_project && "$diamond" -e 'require_cut "gremlin"' >/dev/null)
 
-echo "145 facet tests passed"
+"$source_root/tools/install_local_cuts.sh" packaged_project >/dev/null
+for name in active_record active_auth active_discussion active_social active_tagging graphsql; do
+    (cd packaged_project && "$diamond" -e "require_cut \"$name\"" >/dev/null)
+done
+
+echo "all facet tests passed"

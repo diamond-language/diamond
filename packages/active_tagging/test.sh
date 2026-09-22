@@ -7,12 +7,18 @@ set -euo pipefail
 # already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+source_root="$(cd ../.. && pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+"$source_root/tools/install_local_cuts.sh" "$test_project" >/dev/null
+cd "$test_project"
 
 count=0
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/active_tagging\"
+    "$diamond" -e "require_cut \"active_tagging\"
 db = SQLite3.open(\":memory:\")
 db.execute(\"CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)\")
 db.execute(\"CREATE TABLE taggings (id INTEGER PRIMARY KEY, tag_id INTEGER NOT NULL, taggable_id INTEGER NOT NULL)\")

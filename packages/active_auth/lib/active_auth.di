@@ -5,8 +5,8 @@
 # checking, real SMTP delivery), and the Diamond-specific adaptations
 # (module-namespaced classes instead of Ruby's plain top-level ones;
 # an explicit `self.issue` factory instead of a before_create hook).
-require "../../active_record/lib/active_record"
-require "../../cookies/lib/cookies"
+require_cut "active_record"
+require_cut "cookies"
 require "./active_auth/configuration"
 require "./active_auth/account"
 require "./active_auth/token_support"

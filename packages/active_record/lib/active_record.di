@@ -1,4 +1,4 @@
-require "../../arel/lib/arel"
+require_cut "arel"
 
 # One file per class/error, each independently reopening `module
 # ActiveRecord` -- possible since Diamond gained real module/class

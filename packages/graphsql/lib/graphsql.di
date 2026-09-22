@@ -1,4 +1,5 @@
-require "../../active_record/lib/active_record"
+require_cut "active_record"
+require_cut "graphql"
 
 require "./graphsql/unknown_column_error"
 require "./graphsql/aliased_association_error"

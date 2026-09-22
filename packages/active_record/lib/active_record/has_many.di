@@ -1,4 +1,4 @@
-require "../../../arel/lib/arel"
+require_cut "arel"
 
 module ActiveRecord
 

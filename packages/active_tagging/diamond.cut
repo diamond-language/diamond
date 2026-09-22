@@ -1,1 +1,1 @@
-{"name": "active_tagging", "version": "0.1.0"}
+{"name": "active_tagging", "version": "0.1.0", "summary": "Normalized tags and tagging relationships", "license": "MIT", "dependencies": {"active_record": "^0.19.0"}}

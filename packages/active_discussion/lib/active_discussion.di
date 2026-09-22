@@ -5,7 +5,7 @@
 # a separate architecture review found duplicating this elsewhere in
 # the Ruby monorepo -- neither is ported; this package's own
 # FlameSignal is the one moderation primitive kept).
-require "../../active_record/lib/active_record"
+require_cut "active_record"
 require "./active_discussion/signal"
 require "./active_discussion/item_karma"
 require "./active_discussion/configuration"

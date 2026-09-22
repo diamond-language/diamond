@@ -16,6 +16,12 @@ without extracting it. The expected digest is required when verifying bytes
 against a trusted lockfile or registry record.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
+For a local checkout before registry installation is available,
+`tools/install_local_cuts.sh <project-directory>` installs all bundled cuts as
+verified artifacts from `packages/` into that project's `cuts/` directory.
+This development bootstrap does not
+resolve registry versions or write a registry lockfile.
+
 This document covers Diamond's package resolution — packages are called
 **cuts**, resolved from a `cuts/` directory via `require_cut`, a require
 form separate from and never competing with ordinary `require` — plus the

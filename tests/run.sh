@@ -10,6 +10,9 @@ set -euo pipefail
 # run: fires only at the exact point `set -e` was already about to abort.
 trap 'echo "DIAGNOSTIC: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
+# Compile the corpus against verified local cut artifacts.
+bash tools/install_local_cuts.sh . >/dev/null
+
 bash tests/collection_relay_contracts.sh
 
 # Every bespoke check below invokes the real `diamond` binary directly

@@ -1,4 +1,4 @@
-require "../../packages/graphql/lib/graphql"
+require_cut "graphql"
 require "../../packages/graphsql/lib/graphsql"
 
 def map_integrated_graphsql_row(row) = row

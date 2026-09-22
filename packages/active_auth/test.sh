@@ -7,13 +7,19 @@ set -euo pipefail
 # already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+source_root="$(cd ../.. && pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+"$source_root/tools/install_local_cuts.sh" "$test_project" >/dev/null
+cd "$test_project"
 
 count=0
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/active_auth\"
-require \"$(pwd)/test_fixtures\"
+    "$diamond" -e "require_cut \"active_auth\"
+require \"$package_root/test_fixtures\"
 $script"
 }
 
