@@ -643,6 +643,28 @@ printf 'MIT License\n' > checkcut/LICENSE
 printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
 "$facet" check checkcut >/dev/null
 
+printf 'require "../../http/lib/http"\n' > checkcut/lib/checkcut.di
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted an import outside the cut" >&2
+    exit 1
+fi
+grep -q "imports outside the cut" "$error_file"
+rm -f "$error_file"
+
+printf 'require_cut "missing_cut"\n' > checkcut/lib/checkcut.di
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted an undeclared cut import" >&2
+    exit 1
+fi
+grep -q "imports undeclared cut 'missing_cut'" "$error_file"
+rm -f "$error_file"
+
+printf 'require_cut "logger"\ndef checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+"$facet" check checkcut >/dev/null
+printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+
 rm checkcut/LICENSE
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
@@ -797,4 +819,4 @@ actual="$(cd packaged_project && "$diamond" -e 'require_cut "network_safety"
 resolve_public_hostname("http://8.8.8.8/x")["host"]')"
 [[ "$actual" == "8.8.8.8" ]]
 
-echo "136 facet tests passed"
+echo "139 facet tests passed"

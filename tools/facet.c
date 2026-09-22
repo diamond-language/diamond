@@ -1923,6 +1923,88 @@ static bool expected_digest(const char *text, const unsigned char actual[32]) {
     return true;
 }
 
+/* Catch literal imports that would be missing from a standalone artifact.
+ * This is a preflight for statically visible imports, not a full Diamond
+ * parser: quoted imports at the start of a source line are the common form. */
+static bool import_escapes_cut(const char *source_path, const char *target) {
+    if (target[0] == '/') return true;
+    int depth = 0;
+    for (const char *p = source_path; *p != '\0'; p++)
+        if (*p == '/') depth++;
+    const char *part = target;
+    while (*part != '\0') {
+        const char *end = strchr(part, '/');
+        size_t length = end == NULL ? strlen(part) : (size_t)(end - part);
+        if (length == 2 && part[0] == '.' && part[1] == '.') {
+            if (--depth < 0) return true;
+        } else if (length != 0 && !(length == 1 && part[0] == '.')) {
+            depth++;
+        }
+        if (end == NULL) break;
+        part = end + 1;
+    }
+    return false;
+}
+
+static bool audit_cut_imports(const char *root, const FacetFileList *files,
+                              const DiamondManifestValue *dependencies,
+                              char *error, size_t error_size) {
+    for (size_t i = 0; i < files->count; i++) {
+        const char *relative = files->paths[i];
+        size_t length = strlen(relative);
+        if ((strncmp(relative, "lib/", 4) != 0 &&
+             strncmp(relative, "bin/", 4) != 0) ||
+            length < 3 || strcmp(relative + length - 3, ".di") != 0)
+            continue;
+        char path[FACET_MAX_PATH];
+        if (snprintf(path, sizeof path, "%s/%s", root, relative) >=
+            (int)sizeof path) {
+            (void)snprintf(error, error_size, "runtime source path is too long");
+            return false;
+        }
+        char *source = read_whole_file(path, error, error_size);
+        if (source == NULL) return false;
+        for (char *line = source; *line != '\0';) {
+            char *end = strchr(line, '\n');
+            if (end != NULL) *end = '\0';
+            char *p = line;
+            while (*p == ' ' || *p == '\t') p++;
+            bool cut = strncmp(p, "require_cut", 11) == 0 &&
+                       (p[11] == ' ' || p[11] == '\t');
+            bool local = !cut && strncmp(p, "require", 7) == 0 &&
+                         (p[7] == ' ' || p[7] == '\t');
+            if (cut || local) {
+                p += cut ? 11 : 7;
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == '"') {
+                    char *value = ++p;
+                    while (*p != '\0' && *p != '"') p++;
+                    if (*p == '"') {
+                        *p = '\0';
+                        if (cut && (dependencies == NULL ||
+                            diamond_manifest_get(dependencies, value) == NULL)) {
+                            (void)snprintf(error, error_size,
+                                "%s imports undeclared cut '%s'", relative, value);
+                            free(source);
+                            return false;
+                        }
+                        if (local && import_escapes_cut(relative, value)) {
+                            (void)snprintf(error, error_size,
+                                "%s imports outside the cut: %s", relative, value);
+                            free(source);
+                            return false;
+                        }
+                    }
+                }
+            }
+            if (end == NULL) break;
+            line = end + 1;
+        }
+        free(source);
+    }
+    return true;
+}
+
 static int cmd_verify(int argc, char **argv) {
     if (argc != 3 && !(argc == 5 && strcmp(argv[3], "--sha256") == 0)) {
         fputs("usage: facet verify <archive.tar> [--sha256 <digest>]\n", stderr);
@@ -2336,6 +2418,10 @@ static int cmd_check(int argc, char **argv) {
         }
     }
     qsort(files.paths, files.count, sizeof *files.paths, compare_file_paths);
+    if (!audit_cut_imports(root, &files, dependencies, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        goto done;
+    }
     if (show_files || packing)
         for (size_t i = 0; i < files.count; i++) puts(files.paths[i]);
     if (packing) {

@@ -10,7 +10,9 @@ license declaration, data-only runtime dependency ranges, and regular
 `diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
 `--files` prints the sorted included file list. It does not yet verify SPDX
-expressions, find undeclared imports, or create an archive. Passing this check
+expressions or create an archive. It checks statically visible literal imports
+for paths that escape the cut and `require_cut` names missing from the manifest;
+dynamic imports are outside this check. Passing this check
 is necessary for a future publish, but is not a publish operation.
 
 ## Identity and layout
