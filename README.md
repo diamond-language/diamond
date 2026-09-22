@@ -1,5 +1,8 @@
 # Diamond
 
+[![Version](https://img.shields.io/github/v/tag/diamond-language/diamond?label=version)](https://github.com/diamond-language/diamond/tags)
+[![Build status](https://github.com/diamond-language/diamond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/diamond-language/diamond/actions/workflows/ci.yml)
+
 Diamond is a Ruby-inspired language with gradual, checked static typing,
 compiled to a custom register-bytecode VM written in C23.
 
