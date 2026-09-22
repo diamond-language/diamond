@@ -1,5 +1,10 @@
 # Cuts
 
+For the proposed publishable package contract and hosted registry roadmap, see
+[cut-contract.md](cut-contract.md) and
+[package-registry-plan.md](package-registry-plan.md). This page documents the
+currently implemented behavior.
+
 This document covers Diamond's package resolution — packages are called
 **cuts**, resolved from a `cuts/` directory via `require_cut`, a require
 form separate from and never competing with ordinary `require` — plus the
