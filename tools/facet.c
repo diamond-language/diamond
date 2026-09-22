@@ -2,6 +2,7 @@
 #include "compiler.h"
 #include "semver.h"
 #include "vm.h"
+#include "manifest_literal.h"
 
 #include <errno.h>
 #include <ftw.h>
@@ -418,8 +419,8 @@ static bool pick_best_matching_tag(char tags[][FACET_MAX_REF], size_t tag_count,
     return true;
 }
 
-/* --- manifest/lockfile reading: both are just Diamond Hash literals,
- * compiled and run standalone exactly the way src/loader.c's
+/* --- manifest/lockfile reading: data-only Hash literals are validated,
+ * then compiled and run standalone exactly the way src/loader.c's
  * validate_cut_manifest already evaluates a cut's own diamond.cut -
  * duplicated here rather than shared, since this needs a different
  * error-reporting shape (stderr + exit code, not a Loader error
@@ -485,6 +486,14 @@ static bool facet_run_hash(const char *path, FacetProgram *owner,
     }
     char *source = read_whole_file(path, error, error_size);
     if (source == nullptr) return false;
+    char literal_error[160];
+    if (!diamond_manifest_literal_validate(source, literal_error,
+                                           sizeof literal_error)) {
+        (void)snprintf(error, error_size, "'%s' must be data only: %s",
+                       path, literal_error);
+        free(source);
+        return false;
+    }
     DiamondDiagnostic diagnostic;
     if (!diamond_compile(source, owner->program, &diagnostic)) {
         (void)snprintf(error, error_size, "'%s' failed to compile at line %zu: %s",

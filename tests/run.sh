@@ -931,7 +931,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
     rm -rf "$manifest_dir" "$manifest_error"
     exit 1
 fi
-grep -q "must evaluate to a Hash" "$manifest_error"
+grep -q "expected Hash literal" "$manifest_error"
 
 printf '{"version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
@@ -955,7 +955,7 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
     rm -rf "$manifest_dir" "$manifest_error"
     exit 1
 fi
-grep -q "failed to compile at line" "$manifest_error"
+grep -q "must be data only" "$manifest_error"
 
 printf 'raise "manifest boom"\n' >"$manifest_dir/cuts/greeter/diamond.cut"
 if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
@@ -963,7 +963,17 @@ if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"
     rm -rf "$manifest_dir" "$manifest_error"
     exit 1
 fi
-grep -q "cut manifest '.*' failed: uncaught exception: manifest boom" "$manifest_error"
+grep -q "must be data only" "$manifest_error"
+rm -f "$manifest_error"
+
+manifest_error="$(mktemp)"
+printf '{"name": "#{raise(\\"executed interpolation\\")}"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"
+if (cd "$manifest_dir" && "$diamond_abs" main.di) >/dev/null 2>"$manifest_error"; then
+    echo "interpolated manifest unexpectedly succeeded" >&2
+    rm -rf "$manifest_dir" "$manifest_error"
+    exit 1
+fi
+grep -q "String interpolation is not allowed" "$manifest_error"
 rm -f "$manifest_error"
 
 printf '{"name": "greeter", "version": "0.1.0"}\n' >"$manifest_dir/cuts/greeter/diamond.cut"

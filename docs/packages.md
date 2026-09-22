@@ -90,13 +90,15 @@ copied or renamed incorrectly during a manual install). An optional
 nothing reads its value yet, since there's no dependency resolution to
 consult it (see `docs/roadmap.md`).
 
-A manifest is compiled and run **standalone**: it does not go through
+A manifest must contain a single data-only Hash literal. The loader and
+`facet` reject expressions, calls, and trailing code before compiling it.
+The validated literal is compiled and run **standalone**: it does not go through
 `require`/`require_cut`'s own loader pipeline, so neither is supported
 inside a manifest. A manifest is metadata, not a program — this keeps it
 to a single self-contained expression and avoids the loader recursing
-into itself to resolve a manifest's own dependencies. There's no
-sandboxing around manifest execution beyond that — same trust model the
-rest of the language already has for any program it runs.
+into itself to resolve a manifest's own dependencies. The literal guard
+prevents general package code from running while metadata is read. This is an
+interim step toward a parser that reads the literal without using the VM.
 
 If no `diamond.cut` exists at all, none of this applies — the cut resolves
 exactly as it would with no manifest support at all.

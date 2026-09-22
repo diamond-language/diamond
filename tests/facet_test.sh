@@ -549,4 +549,47 @@ grep -q "conflicting dependency 'semver'" "$error_file"
 grep -q "no version can satisfy both" "$error_file"
 rm -f "$error_file"
 
-echo "52 facet tests passed"
+# Metadata must not execute while facet reads a project manifest or lockfile.
+mkdir project26
+printf '{"name": "myapp"}\nraise "executed manifest"\n' > project26/diamond.cut
+error_file="$(mktemp)"
+if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet accepted executable manifest" >&2
+    exit 1
+fi
+grep -q "must be data only" "$error_file"
+! grep -q "executed manifest" "$error_file"
+rm -f "$error_file"
+
+printf '{"name": "myapp"}\n' > project26/diamond.cut
+printf '{}\nraise "executed lock"\n' > project26/facet.lock
+error_file="$(mktemp)"
+if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet accepted executable lockfile" >&2
+    exit 1
+fi
+grep -q "must be data only" "$error_file"
+! grep -q "executed lock" "$error_file"
+rm -f "$error_file"
+
+printf '{"name": "#{raise(\"executed interpolation\")}"}\n' > project26/diamond.cut
+rm -f project26/facet.lock
+error_file="$(mktemp)"
+if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet accepted interpolated manifest String" >&2
+    exit 1
+fi
+grep -q "String interpolation is not allowed" "$error_file"
+! grep -q "executed interpolation" "$error_file"
+rm -f "$error_file"
+
+printf '{"name": "myapp"' > project26/diamond.cut
+error_file="$(mktemp)"
+if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet accepted truncated manifest" >&2
+    exit 1
+fi
+grep -q "expected ',' or closing delimiter" "$error_file"
+rm -f "$error_file"
+
+echo "56 facet tests passed"

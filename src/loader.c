@@ -2,6 +2,7 @@
 #include "loader.h"
 #include "compiler.h"
 #include "vm.h"
+#include "manifest_literal.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -105,6 +106,16 @@ static bool validate_cut_manifest(Loader *loader,const char *name,
         (void)snprintf(loader->error,loader->error_capacity,
             "%s:%zu: cannot read cut manifest '%s': %s",
             including_path,including_line,canonical_manifest,strerror(errno));
+        return false;
+    }
+
+    char literal_error[160];
+    if(!diamond_manifest_literal_validate(manifest_source,literal_error,
+                                           sizeof literal_error)) {
+        (void)snprintf(loader->error,loader->error_capacity,
+            "%s:%zu: cut manifest '%s' must be data only: %s",
+            including_path,including_line,canonical_manifest,literal_error);
+        free(manifest_source);
         return false;
     }
 

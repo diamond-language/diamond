@@ -116,8 +116,9 @@ cut's manifest for validation. Current bundled manifests have only `name` and
 `version`; their runtime dependencies and release metadata are incomplete.
 These files are not yet publishable under this contract.
 
-The migration should first add a data-only parser and make `facet` and the
-loader use it for manifests. Preserve reading existing literal manifests and
+The migration has begun with a data-only syntax guard before the existing VM
+evaluation path. A dedicated parser should replace that evaluation path.
+Preserve reading existing literal manifests and
 Git source specs. Reject executable manifests for registry publication; give
 local projects a clear migration error before removing the old execution
 path. Add registry source specs and lockfile digests without reinterpreting an
