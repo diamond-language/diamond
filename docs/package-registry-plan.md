@@ -60,9 +60,9 @@ manifests, paths, documentation, and existing projects.
 
 ## Work still to design
 
-The registry API and archive format need versioned specifications. Resolver
-work needs explicit rules for prereleases, yanked versions, source conflicts,
-timeouts, cycles, and updates that minimize unrelated changes. Operations need
+The [version 1 registry protocol](registry-protocol.md) now specifies the read API,
+archive identity, lockfile shape, publishing boundary, and resolver rules.
+Implementation remains. Operations need
 an owner, backups, incident response, abuse handling, and retention rules
 before a public service is launched. Until then, the registry remains a plan.
 

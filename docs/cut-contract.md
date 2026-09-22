@@ -1,7 +1,8 @@
 # Publishable cut contract
 
 Status: proposed contract, 2026-09-21. No registry or publish command exists
-yet. Current behavior and compatibility details are in [packages.md](packages.md).
+yet. Current behavior is in [packages.md](packages.md); the proposed wire API
+is in [registry-protocol.md](registry-protocol.md).
 
 `facet check <cut-directory>` now performs the first local preflight. It checks
 the canonical name and directory, strict version spelling, summary, nonempty
