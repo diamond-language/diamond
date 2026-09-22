@@ -3,6 +3,14 @@
 Status: proposed contract, 2026-09-21. No registry or publish command exists
 yet. Current behavior and compatibility details are in [packages.md](packages.md).
 
+`facet check <cut-directory>` now performs the first local preflight. It checks
+the canonical name and directory, strict version spelling, summary, nonempty
+license declaration, data-only runtime dependency ranges, and regular
+`diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
+unknown manifest keys. It does not yet verify SPDX expressions, inspect the
+full artifact file list, find undeclared imports, or create an archive. Passing
+this check is necessary for a future publish, but is not a publish operation.
+
 ## Identity and layout
 
 A cut has one canonical, case-sensitive name and one public entry point.
@@ -65,7 +73,8 @@ The first registry schema should require:
 
 `name` matches the root directory and entry point. `version` is strict SemVer
 2.0.0, canonical without a leading `v`; build metadata needs an explicit
-identity policy before publication is allowed. `summary` is short plain text.
+identity policy before publication is allowed. `summary` is single-line plain
+text of 1-160 bytes.
 `license` uses an SPDX expression or an explicit `LicenseRef` convention to be
 specified. Runtime dependencies are name-to-range mappings; no floating Git
 branch, arbitrary URL, or local path is allowed in a published cut's runtime

@@ -614,4 +614,31 @@ fi
 grep -q "contains a NUL byte" "$error_file"
 rm -f "$error_file"
 
-echo "59 facet tests passed"
+# --- publishable cut preflight, independent of the project working directory ---
+mkdir -p checkcut/lib
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/diamond.cut
+printf '# Checkcut\n' > checkcut/README.md
+printf 'MIT License\n' > checkcut/LICENSE
+printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+"$facet" check checkcut >/dev/null
+
+rm checkcut/LICENSE
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted a cut without a license file" >&2
+    exit 1
+fi
+grep -q "needs a regular LICENSE" "$error_file"
+rm -f "$error_file"
+printf 'MIT License\n' > checkcut/LICENSE
+
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "dependencies": {"logger": {"git": "example", "version": "^0.4.0"}}}\n' > checkcut/diamond.cut
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted a Git dependency in a release manifest" >&2
+    exit 1
+fi
+grep -q "dependency 'logger' needs a valid SemVer range String" "$error_file"
+rm -f "$error_file"
+
+echo "62 facet tests passed"

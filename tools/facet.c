@@ -1410,10 +1410,157 @@ static int cmd_add(int argc, char **argv) {
     return 0;
 }
 
+static bool publishable_name(const char *name) {
+    size_t length = strlen(name);
+    if (length == 0 || length >= FACET_MAX_NAME ||
+        name[0] < 'a' || name[0] > 'z') return false;
+    for (size_t i = 1; i < length; i++) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+            return false;
+    }
+    return strcmp(name, "diamond") != 0 && strcmp(name, "facet") != 0 &&
+           strcmp(name, "cuts") != 0;
+}
+
+static bool regular_file(const char *path) {
+    struct stat info;
+    return lstat(path, &info) == 0 && S_ISREG(info.st_mode);
+}
+
+static int cmd_check(int argc, char **argv) {
+    if (argc != 3) {
+        fputs("usage: facet check <cut-directory>\n", stderr);
+        return 64;
+    }
+    char *canonical = realpath(argv[2], NULL);
+    if (canonical == NULL) {
+        fprintf(stderr, "facet: cannot open cut directory '%s': %s\n",
+                argv[2], strerror(errno));
+        return 66;
+    }
+    if (strlen(canonical) >= FACET_MAX_PATH) {
+        fprintf(stderr, "facet: cut directory path is too long\n");
+        free(canonical);
+        return 65;
+    }
+    char root[FACET_MAX_PATH];
+    strcpy(root, canonical);
+    free(canonical);
+    struct stat root_info;
+    if (stat(root, &root_info) != 0 || !S_ISDIR(root_info.st_mode)) {
+        fprintf(stderr, "facet: '%s' is not a directory\n", argv[2]);
+        return 65;
+    }
+    const char *directory_name = strrchr(root, '/');
+    directory_name = directory_name == NULL ? root : directory_name + 1;
+    char path[FACET_MAX_PATH];
+    if (snprintf(path, sizeof path, "%s/diamond.cut", root) >= (int)sizeof path ||
+        !regular_file(path)) {
+        fprintf(stderr, "facet: '%s' needs a regular diamond.cut\n", root);
+        return 65;
+    }
+    char error[512];
+    DiamondManifestValue *manifest = facet_read_hash(path, error, sizeof error);
+    if (manifest == NULL) {
+        fprintf(stderr, "facet: %s\n", error);
+        return 65;
+    }
+    int status = 65;
+    const char *allowed[] = {"name", "version", "summary", "license",
+                             "dependencies", "homepage", "source",
+                             "documentation", "issues"};
+    for (const DiamondManifestValue *item = manifest->children;
+         item != NULL; item = item->next) {
+        bool known = false;
+        for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
+            if (strcmp(item->key, allowed[i]) == 0) known = true;
+        if (!known) {
+            fprintf(stderr, "facet: unknown manifest key '%s'\n", item->key);
+            goto done;
+        }
+    }
+    const DiamondManifestValue *name = diamond_manifest_get(manifest, "name");
+    if (name == NULL || name->kind != DIAMOND_MANIFEST_STRING ||
+        !publishable_name(name->string) || strcmp(name->string, directory_name) != 0) {
+        fprintf(stderr, "facet: cut name must match its directory and use lowercase ASCII letters, digits, or underscores (starting with a letter)\n");
+        goto done;
+    }
+    const DiamondManifestValue *version = diamond_manifest_get(manifest, "version");
+    Semver parsed_version;
+    if (version == NULL || version->kind != DIAMOND_MANIFEST_STRING ||
+        version->string[0] == 'v' || version->string[0] == 'V' ||
+        !semver_parse(version->string, &parsed_version) || parsed_version.build[0] != '\0') {
+        fputs("facet: 'version' must be canonical SemVer without a leading v or build metadata\n", stderr);
+        goto done;
+    }
+    const DiamondManifestValue *summary = diamond_manifest_get(manifest, "summary");
+    if (summary == NULL || summary->kind != DIAMOND_MANIFEST_STRING ||
+        summary->string[0] == '\0' || strlen(summary->string) > 160 ||
+        strpbrk(summary->string, "\r\n\t") != NULL) {
+        fputs("facet: 'summary' must be a single-line String of 1-160 bytes\n", stderr);
+        goto done;
+    }
+    const DiamondManifestValue *license = diamond_manifest_get(manifest, "license");
+    if (license == NULL || license->kind != DIAMOND_MANIFEST_STRING ||
+        license->string[0] == '\0') {
+        fputs("facet: 'license' must be a nonempty String\n", stderr);
+        goto done;
+    }
+    const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+    if (dependencies != NULL) {
+        if (dependencies->kind != DIAMOND_MANIFEST_HASH) {
+            fputs("facet: 'dependencies' must be a Hash\n", stderr);
+            goto done;
+        }
+        for (const DiamondManifestValue *dependency = dependencies->children;
+             dependency != NULL; dependency = dependency->next) {
+            SemverConstraint range;
+            if (!publishable_name(dependency->key) ||
+                dependency->kind != DIAMOND_MANIFEST_STRING ||
+                !semver_constraint_parse(dependency->string, &range)) {
+                fprintf(stderr, "facet: dependency '%s' needs a valid SemVer range String\n",
+                        dependency->key);
+                goto done;
+            }
+        }
+    }
+    const char *display_keys[] = {"homepage", "source", "documentation", "issues"};
+    for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
+        const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
+        if (display != NULL && display->kind != DIAMOND_MANIFEST_STRING) {
+            fprintf(stderr, "facet: '%s' must be a String\n", display_keys[i]);
+            goto done;
+        }
+    }
+    const char *required_files[] = {"README.md", "LICENSE"};
+    for (size_t i = 0; i < sizeof required_files / sizeof required_files[0]; i++) {
+        if (snprintf(path, sizeof path, "%s/%s", root, required_files[i]) >=
+            (int)sizeof path || !regular_file(path)) {
+            fprintf(stderr, "facet: '%s' needs a regular %s\n", root,
+                    required_files[i]);
+            goto done;
+        }
+    }
+    if (snprintf(path, sizeof path, "%s/lib/%s.di", root, name->string) >=
+        (int)sizeof path || !regular_file(path)) {
+        fprintf(stderr, "facet: '%s' needs a regular lib/%s.di\n", root,
+                name->string);
+        goto done;
+    }
+    printf("facet: %s %s is ready for packaging checks\n", name->string,
+           version->string);
+    status = 0;
+done:
+    diamond_manifest_free(manifest);
+    return status;
+}
+
 static void print_usage(void) {
     fputs("usage: facet install\n"
           "       facet update\n"
           "       facet init [name]\n"
+          "       facet check <cut-directory>\n"
           "       facet add <name> --git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
           stderr);
@@ -1431,6 +1578,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "add") == 0) {
         return cmd_add(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "check") == 0) {
+        return cmd_check(argc, argv);
     }
     print_usage();
     return 64;
