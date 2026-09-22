@@ -16,8 +16,10 @@ manifests, paths, documentation, and existing projects.
    hosted release. Keep local Git dependencies working during migration.
    The parser, `facet check`, and deterministic `facet pack` are implemented.
 2. Add immutable archives, content digests, registry source identity, and
-   checksums to the lockfile. A locked install must verify downloaded bytes and
-   use the locked source, version, and digest without consulting mutable tags.
+   checksums to the lockfile. `facet pack` and `facet verify` cover local
+   artifacts; lockfile integration remains. A locked install must verify
+   downloaded bytes and use the locked source, version, and digest without
+   consulting mutable tags.
 3. Resolve registry versions and transitive dependency metadata without
    downloading or executing package code. Use one version per cut name for a
    program. Preserve useful conflict explanations and deterministic selection;

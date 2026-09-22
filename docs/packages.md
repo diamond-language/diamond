@@ -11,6 +11,9 @@ creating an archive. `--files` prints the sorted candidate artifact file list.
 `facet pack <cut-directory> <output.tar>` packages that exact list as a
 deterministic ustar archive and prints its SHA-256 digest. Neither command
 publishes to a registry yet.
+`facet verify <archive.tar> [--sha256 <digest>]` checks a packed artifact
+without extracting it. The expected digest is required when verifying bytes
+against a trusted lockfile or registry record.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
 This document covers Diamond's package resolution — packages are called

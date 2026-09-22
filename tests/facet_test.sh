@@ -707,4 +707,36 @@ fi
 grep -q "outside the cut directory" "$error_file"
 rm -f "$error_file"
 
-echo "70 facet tests passed"
+digest="$(sha256sum one.tar | cut -d' ' -f1)"
+"$facet" verify one.tar --sha256 "$digest" > verify_output
+grep -q '^facet: verified checkcut 1.2.0 (5 files)$' verify_output
+
+error_file="$(mktemp)"
+if "$facet" verify one.tar --sha256 "$(printf '0%.0s' {1..64})" >/dev/null 2>"$error_file"; then
+    echo "facet verify accepted the wrong digest" >&2
+    exit 1
+fi
+grep -q "does not match expected digest" "$error_file"
+rm -f "$error_file"
+
+cp one.tar malformed.tar
+printf '2' | dd of=malformed.tar bs=1 seek=156 conv=notrunc status=none
+error_file="$(mktemp)"
+if "$facet" verify malformed.tar >/dev/null 2>"$error_file"; then
+    echo "facet verify accepted a changed tar entry type" >&2
+    exit 1
+fi
+grep -q "noncanonical or unsafe archive entry" "$error_file"
+rm -f "$error_file"
+
+cp one.tar trailing.tar
+printf 'unexpected' >> trailing.tar
+error_file="$(mktemp)"
+if "$facet" verify trailing.tar >/dev/null 2>"$error_file"; then
+    echo "facet verify accepted trailing archive bytes" >&2
+    exit 1
+fi
+grep -q "invalid archive ending" "$error_file"
+rm -f "$error_file"
+
+echo "74 facet tests passed"

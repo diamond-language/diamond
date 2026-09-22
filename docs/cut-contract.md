@@ -59,6 +59,15 @@ These fixed fields make equal contents produce equal archive bytes across
 repeated packs. Explicit includes may be added later, but cannot override
 safety exclusions.
 
+`facet verify <archive.tar> [--sha256 <digest>]` checks this exact archive
+format without extracting files or running cut code. It rejects unsafe paths,
+noncanonical headers, unexpected bytes, missing required files, and invalid
+release metadata, then reports the cut identity and SHA-256 digest. Supplying
+`--sha256` requires the archive bytes to match the expected digest. A future
+locked install must use that expected-digest form before extraction; an
+unqualified `verify` is useful for inspecting a local archive but cannot
+establish that it matches a lockfile or registry record.
+
 An installed cut occupies `cuts/<name>/` within the consuming project, with
 `cuts/<name>/lib/<name>.di` as its entry point. Installation never writes into
 Diamond's own `packages/` tree. A version is selected per name for the whole

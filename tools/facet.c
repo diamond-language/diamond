@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <openssl/evp.h>
 #include <ftw.h>
@@ -1616,6 +1617,25 @@ static void tar_octal(char *field, size_t width, unsigned long long number) {
     (void)snprintf(field, width, "%0*llo", (int)width - 1, number);
 }
 
+static void tar_header(unsigned char header[512], const char *relative,
+                       unsigned mode, unsigned long long size) {
+    memset(header, 0, 512);
+    memcpy(header, relative, strlen(relative));
+    tar_octal((char *)header + 100, 8, mode);
+    tar_octal((char *)header + 108, 8, 0);
+    tar_octal((char *)header + 116, 8, 0);
+    tar_octal((char *)header + 124, 12, size);
+    tar_octal((char *)header + 136, 12, 0);
+    memset(header + 148, ' ', 8);
+    header[156] = '0';
+    memcpy(header + 257, "ustar", 5);
+    memcpy(header + 263, "00", 2);
+    unsigned checksum = 0;
+    for (size_t i = 0; i < 512; i++) checksum += header[i];
+    (void)snprintf((char *)header + 148, 7, "%06o", checksum);
+    header[155] = ' ';
+}
+
 static bool write_tar_member(FILE *archive, const char *root, const char *relative,
                              char *error, size_t error_size) {
     if (strlen(relative) > 99) {
@@ -1641,21 +1661,9 @@ static bool write_tar_member(FILE *archive, const char *root, const char *relati
         close(fd);
         return false;
     }
-    unsigned char header[512] = {0};
-    memcpy(header, relative, strlen(relative));
-    tar_octal((char *)header + 100, 8, (before.st_mode & 0111) != 0 ? 0755 : 0644);
-    tar_octal((char *)header + 108, 8, 0);
-    tar_octal((char *)header + 116, 8, 0);
-    tar_octal((char *)header + 124, 12, (unsigned long long)before.st_size);
-    tar_octal((char *)header + 136, 12, 0);
-    memset(header + 148, ' ', 8);
-    header[156] = '0';
-    memcpy(header + 257, "ustar", 5);
-    memcpy(header + 263, "00", 2);
-    unsigned checksum = 0;
-    for (size_t i = 0; i < sizeof header; i++) checksum += header[i];
-    (void)snprintf((char *)header + 148, 7, "%06o", checksum);
-    header[155] = ' ';
+    unsigned char header[512];
+    tar_header(header, relative, (before.st_mode & 0111) != 0 ? 0755 : 0644,
+               (unsigned long long)before.st_size);
     if (fwrite(header, 1, sizeof header, archive) != sizeof header) ok = false;
     unsigned char buffer[8192];
     unsigned long long remaining = (unsigned long long)before.st_size;
@@ -1686,11 +1694,10 @@ static bool write_tar_member(FILE *archive, const char *root, const char *relati
     return ok;
 }
 
-static bool digest_file(const char *path, unsigned char digest[32],
-                        char *error, size_t error_size) {
-    FILE *file = fopen(path, "rb");
+static bool digest_stream(FILE *file, unsigned char digest[32],
+                          char *error, size_t error_size) {
     EVP_MD_CTX *context = EVP_MD_CTX_new();
-    bool ok = file != NULL && context != NULL &&
+    bool ok = context != NULL &&
               EVP_DigestInit_ex(context, EVP_sha256(), NULL) == 1;
     unsigned char buffer[8192];
     while (ok) {
@@ -1704,9 +1711,20 @@ static bool digest_file(const char *path, unsigned char digest[32],
     unsigned length = 0;
     if (ok && (EVP_DigestFinal_ex(context, digest, &length) != 1 || length != 32))
         ok = false;
-    if (file != NULL) fclose(file);
     EVP_MD_CTX_free(context);
     if (!ok) (void)snprintf(error, error_size, "cannot hash archive");
+    return ok;
+}
+
+static bool digest_file(const char *path, unsigned char digest[32],
+                        char *error, size_t error_size) {
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        (void)snprintf(error, error_size, "cannot open archive: %s", strerror(errno));
+        return false;
+    }
+    bool ok = digest_stream(file, digest, error, error_size);
+    if (fclose(file) != 0) ok = false;
     return ok;
 }
 
@@ -1786,6 +1804,358 @@ static bool pack_tar(const char *root, const FacetFileList *files,
     for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
     putchar('\n');
     return true;
+}
+
+static bool tar_number(const unsigned char *field, size_t width,
+                       unsigned long long *out) {
+    if (field[width - 1] != '\0') return false;
+    unsigned long long value = 0;
+    for (size_t i = 0; i + 1 < width; i++) {
+        if (field[i] < '0' || field[i] > '7') return false;
+        value = value * 8 + (unsigned long long)(field[i] - '0');
+    }
+    *out = value;
+    return true;
+}
+
+static bool all_zero(const unsigned char *bytes, size_t length) {
+    for (size_t i = 0; i < length; i++) if (bytes[i] != 0) return false;
+    return true;
+}
+
+static bool valid_archive_path(const char *path) {
+    if (strcmp(path, "diamond.cut") == 0 || strcmp(path, "README.md") == 0 ||
+        strcmp(path, "LICENSE") == 0) return true;
+    const char *prefixes[] = {"lib/", "bin/", "assets/"};
+    bool allowed = false;
+    for (size_t i = 0; i < sizeof prefixes / sizeof prefixes[0]; i++)
+        if (strncmp(path, prefixes[i], strlen(prefixes[i])) == 0) allowed = true;
+    if (!allowed) return false;
+    const char *component = path;
+    for (const char *cursor = path;; cursor++) {
+        unsigned char c = (unsigned char)*cursor;
+        if (c == '/' || c == '\0') {
+            size_t length = (size_t)(cursor - component);
+            if (length == 0 || (length == 1 && component[0] == '.') ||
+                (length == 2 && component[0] == '.' && component[1] == '.'))
+                return false;
+            char name[101];
+            if (length >= sizeof name) return false;
+            memcpy(name, component, length);
+            name[length] = '\0';
+            if (sensitive_name(name)) return false;
+            if (c == '\0') return true;
+            component = cursor + 1;
+        } else if (c < 0x20 || c > 0x7e || c == '\\' || c == ':') {
+            return false;
+        }
+    }
+}
+
+static bool archive_path_conflict(const char *a, const char *b) {
+    for (;;) {
+        const char *a_end = strchr(a, '/');
+        const char *b_end = strchr(b, '/');
+        size_t a_length = a_end == NULL ? strlen(a) : (size_t)(a_end - a);
+        size_t b_length = b_end == NULL ? strlen(b) : (size_t)(b_end - b);
+        if (a_length != b_length) return false;
+        bool equal_folded = true;
+        for (size_t i = 0; i < a_length; i++) {
+            unsigned char left = (unsigned char)a[i], right = (unsigned char)b[i];
+            if (left >= 'A' && left <= 'Z') left = (unsigned char)(left + 32);
+            if (right >= 'A' && right <= 'Z') right = (unsigned char)(right + 32);
+            if (left != right) { equal_folded = false; break; }
+        }
+        if (!equal_folded) return false;
+        if (memcmp(a, b, a_length) != 0) return true;
+        if (a_end == NULL || b_end == NULL) return a_end != b_end;
+        a = a_end + 1;
+        b = b_end + 1;
+    }
+}
+
+static bool expected_digest(const char *text, const unsigned char actual[32]) {
+    if (strlen(text) != 64) return false;
+    for (size_t i = 0; i < 32; i++) {
+        unsigned char digits[2] = {(unsigned char)text[i * 2],
+                                   (unsigned char)text[i * 2 + 1]};
+        unsigned byte = 0;
+        for (size_t j = 0; j < 2; j++) {
+            unsigned char c = digits[j];
+            if (c >= '0' && c <= '9') byte = byte * 16 + (unsigned)(c - '0');
+            else if (c >= 'a' && c <= 'f') byte = byte * 16 + (unsigned)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') byte = byte * 16 + (unsigned)(c - 'A' + 10);
+            else return false;
+        }
+        if (byte != actual[i]) return false;
+    }
+    return true;
+}
+
+static int cmd_verify(int argc, char **argv) {
+    if (argc != 3 && !(argc == 5 && strcmp(argv[3], "--sha256") == 0)) {
+        fputs("usage: facet verify <archive.tar> [--sha256 <digest>]\n", stderr);
+        return 64;
+    }
+    char error[512];
+    unsigned char digest[32];
+    FILE *archive = fopen(argv[2], "rb");
+    if (archive == NULL) {
+        fprintf(stderr, "facet: cannot open archive: %s\n", strerror(errno));
+        return 66;
+    }
+    struct stat archive_before, archive_after;
+    if (fstat(fileno(archive), &archive_before) != 0 ||
+        !S_ISREG(archive_before.st_mode) || archive_before.st_size < 0 ||
+        archive_before.st_size > 56LL * 1024 * 1024 ||
+        !digest_stream(archive, digest, error, sizeof error) ||
+        fseek(archive, 0, SEEK_SET) != 0) {
+        fclose(archive);
+        fputs("facet: cannot hash archive\n", stderr);
+        return 66;
+    }
+    if (argc == 5 && !expected_digest(argv[4], digest)) {
+        fclose(archive);
+        fputs("facet: archive SHA-256 does not match expected digest\n", stderr);
+        return 65;
+    }
+    FacetFileList files = {0};
+    char *manifest_source = NULL;
+    unsigned long long total_bytes = 0;
+    bool ok = true, ended = false;
+    while (ok && !ended) {
+        unsigned char header[512];
+        if (fread(header, 1, sizeof header, archive) != sizeof header) {
+            (void)snprintf(error, sizeof error, "truncated archive header");
+            ok = false;
+            break;
+        }
+        if (all_zero(header, sizeof header)) {
+            unsigned char second[512];
+            if (fread(second, 1, sizeof second, archive) != sizeof second ||
+                !all_zero(second, sizeof second) || fgetc(archive) != EOF ||
+                ferror(archive)) {
+                (void)snprintf(error, sizeof error, "invalid archive ending");
+                ok = false;
+            }
+            ended = true;
+            break;
+        }
+        const unsigned char *end = memchr(header, '\0', 100);
+        unsigned long long mode, size;
+        if (end == NULL || end == header ||
+            !tar_number(header + 100, 8, &mode) ||
+            !tar_number(header + 124, 12, &size) ||
+            (mode != 0644 && mode != 0755) || size > 10ULL * 1024 * 1024 ||
+            files.count == 4096 || total_bytes + size > 50ULL * 1024 * 1024) {
+            (void)snprintf(error, sizeof error, "invalid archive entry header or limits");
+            ok = false;
+            break;
+        }
+        char path[101];
+        size_t path_length = (size_t)(end - header);
+        memcpy(path, header, path_length);
+        path[path_length] = '\0';
+        unsigned char canonical[512];
+        tar_header(canonical, path, (unsigned)mode, size);
+        if (memcmp(header, canonical, sizeof header) != 0 ||
+            !valid_archive_path(path) ||
+            (files.count > 0 && strcmp(files.paths[files.count - 1], path) >= 0)) {
+            (void)snprintf(error, sizeof error, "noncanonical or unsafe archive entry: %s", path);
+            ok = false;
+            break;
+        }
+        for (size_t i = 0; i < files.count; i++) {
+            if (archive_path_conflict(files.paths[i], path)) {
+                (void)snprintf(error, sizeof error,
+                               "case-insensitive archive path collision: %s", path);
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
+        if (files.count == files.capacity) {
+            size_t capacity = files.capacity == 0 ? 16 : files.capacity * 2;
+            char **grown = realloc(files.paths, capacity * sizeof *grown);
+            if (grown == NULL) {
+                (void)snprintf(error, sizeof error, "out of memory reading archive");
+                ok = false;
+                break;
+            }
+            files.paths = grown;
+            files.capacity = capacity;
+        }
+        files.paths[files.count] = strdup(path);
+        if (files.paths[files.count] == NULL) {
+            (void)snprintf(error, sizeof error, "out of memory reading archive");
+            ok = false;
+            break;
+        }
+        files.count++;
+        total_bytes += size;
+        if (strcmp(path, "diamond.cut") == 0) {
+            if (size > 1024 * 1024) {
+                (void)snprintf(error, sizeof error, "manifest exceeds 1 MiB");
+                ok = false;
+                break;
+            }
+            manifest_source = malloc((size_t)size + 1);
+            if (manifest_source == NULL ||
+                fread(manifest_source, 1, (size_t)size, archive) != (size_t)size) {
+                (void)snprintf(error, sizeof error, "truncated archive manifest");
+                ok = false;
+                break;
+            }
+            manifest_source[size] = '\0';
+            if (memchr(manifest_source, '\0', (size_t)size) != NULL) {
+                (void)snprintf(error, sizeof error, "NUL in archive manifest");
+                ok = false;
+                break;
+            }
+        } else {
+            unsigned char buffer[8192];
+            unsigned long long remaining = size;
+            while (remaining > 0) {
+                size_t amount = remaining < sizeof buffer ? (size_t)remaining : sizeof buffer;
+                if (fread(buffer, 1, amount, archive) != amount) {
+                    (void)snprintf(error, sizeof error, "truncated archive entry: %s", path);
+                    ok = false;
+                    break;
+                }
+                remaining -= amount;
+            }
+            if (!ok) break;
+        }
+        unsigned char padding[512];
+        size_t pad = (size_t)((512 - size % 512) % 512);
+        if (pad > 0 && (fread(padding, 1, pad, archive) != pad ||
+                        !all_zero(padding, pad))) {
+            (void)snprintf(error, sizeof error, "invalid archive padding: %s", path);
+            ok = false;
+        }
+    }
+    if (fstat(fileno(archive), &archive_after) != 0 ||
+        archive_before.st_size != archive_after.st_size ||
+        archive_before.st_mtim.tv_sec != archive_after.st_mtim.tv_sec ||
+        archive_before.st_mtim.tv_nsec != archive_after.st_mtim.tv_nsec ||
+        archive_before.st_ctim.tv_sec != archive_after.st_ctim.tv_sec ||
+        archive_before.st_ctim.tv_nsec != archive_after.st_ctim.tv_nsec) {
+        (void)snprintf(error, sizeof error, "archive changed while verifying");
+        ok = false;
+    }
+    fclose(archive);
+    DiamondManifestValue *manifest = NULL;
+    if (ok && manifest_source != NULL) {
+        char detail[160];
+        manifest = diamond_manifest_parse(manifest_source, detail, sizeof detail);
+        if (manifest == NULL) {
+            (void)snprintf(error, sizeof error, "invalid archive manifest: %s", detail);
+            ok = false;
+        }
+    }
+    if (ok && manifest == NULL) {
+        (void)snprintf(error, sizeof error, "archive is missing diamond.cut");
+        ok = false;
+    }
+    if (ok) {
+        const char *allowed[] = {"name", "version", "summary", "license",
+                                 "dependencies", "homepage", "source",
+                                 "documentation", "issues"};
+        for (const DiamondManifestValue *item = manifest->children;
+             item != NULL; item = item->next) {
+            bool known = false;
+            for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
+                if (strcmp(item->key, allowed[i]) == 0) known = true;
+            if (!known) {
+                (void)snprintf(error, sizeof error,
+                               "unknown archive manifest key: %s", item->key);
+                ok = false;
+                break;
+            }
+        }
+    }
+    const DiamondManifestValue *name = diamond_manifest_get(manifest, "name");
+    const DiamondManifestValue *version = diamond_manifest_get(manifest, "version");
+    Semver parsed_version;
+    if (ok && (name == NULL || name->kind != DIAMOND_MANIFEST_STRING ||
+               !publishable_name(name->string) || version == NULL ||
+               version->kind != DIAMOND_MANIFEST_STRING ||
+               version->string[0] == 'v' || version->string[0] == 'V' ||
+               !semver_parse(version->string, &parsed_version) ||
+               parsed_version.build[0] != '\0')) {
+        (void)snprintf(error, sizeof error, "archive manifest has invalid name or version");
+        ok = false;
+    }
+    if (ok) {
+        const DiamondManifestValue *summary = diamond_manifest_get(manifest, "summary");
+        const DiamondManifestValue *license = diamond_manifest_get(manifest, "license");
+        if (summary == NULL || summary->kind != DIAMOND_MANIFEST_STRING ||
+            summary->string[0] == '\0' || strlen(summary->string) > 160 ||
+            strpbrk(summary->string, "\r\n\t") != NULL ||
+            license == NULL || license->kind != DIAMOND_MANIFEST_STRING ||
+            license->string[0] == '\0') {
+            (void)snprintf(error, sizeof error, "archive manifest is missing valid summary or license");
+            ok = false;
+        }
+    }
+    if (ok) {
+        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+        if (dependencies != NULL && dependencies->kind != DIAMOND_MANIFEST_HASH) {
+            (void)snprintf(error, sizeof error, "archive dependencies must be a Hash");
+            ok = false;
+        } else if (dependencies != NULL) {
+            for (const DiamondManifestValue *dependency = dependencies->children;
+                 dependency != NULL; dependency = dependency->next) {
+                SemverConstraint range;
+                if (!publishable_name(dependency->key) ||
+                    dependency->kind != DIAMOND_MANIFEST_STRING ||
+                    !semver_constraint_parse(dependency->string, &range)) {
+                    (void)snprintf(error, sizeof error, "invalid archive dependency: %s",
+                                   dependency->key);
+                    ok = false;
+                    break;
+                }
+            }
+        }
+    }
+    if (ok) {
+        const char *display_keys[] = {"homepage", "source", "documentation", "issues"};
+        for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
+            const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
+            if (display != NULL && display->kind != DIAMOND_MANIFEST_STRING) {
+                (void)snprintf(error, sizeof error,
+                               "archive manifest '%s' must be a String", display_keys[i]);
+                ok = false;
+                break;
+            }
+        }
+    }
+    bool has_readme = false, has_license = false, has_entry = false;
+    if (ok) {
+        char entry[128];
+        (void)snprintf(entry, sizeof entry, "lib/%s.di", name->string);
+        for (size_t i = 0; i < files.count; i++) {
+            if (strcmp(files.paths[i], "README.md") == 0) has_readme = true;
+            if (strcmp(files.paths[i], "LICENSE") == 0) has_license = true;
+            if (strcmp(files.paths[i], entry) == 0) has_entry = true;
+        }
+        if (!has_readme || !has_license || !has_entry) {
+            (void)snprintf(error, sizeof error, "archive is missing README.md, LICENSE, or public entry point");
+            ok = false;
+        }
+    }
+    if (ok) {
+        printf("facet: verified %s %s (%zu files)\nsha256: ",
+               name->string, version->string, files.count);
+        for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
+        putchar('\n');
+    } else {
+        fprintf(stderr, "facet: %s\n", error);
+    }
+    diamond_manifest_free(manifest);
+    free(manifest_source);
+    free_file_list(&files);
+    return ok ? 0 : 65;
 }
 
 static int cmd_check(int argc, char **argv) {
@@ -1959,6 +2329,7 @@ static void print_usage(void) {
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
+          "       facet verify <archive.tar> [--sha256 <digest>]\n"
           "       facet add <name> --git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
           stderr);
@@ -1982,6 +2353,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "pack") == 0) {
         return cmd_check(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "verify") == 0) {
+        return cmd_verify(argc, argv);
     }
     print_usage();
     return 64;
