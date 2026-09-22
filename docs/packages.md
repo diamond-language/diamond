@@ -8,6 +8,9 @@ currently implemented behavior.
 `facet check <cut-directory> [--files]` validates the first publishable layout,
 manifest, and runtime file inventory without installing dependencies or
 creating an archive. `--files` prints the sorted candidate artifact file list.
+`facet pack <cut-directory> <output.tar>` packages that exact list as a
+deterministic ustar archive and prints its SHA-256 digest. Neither command
+publishes to a registry yet.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
 This document covers Diamond's package resolution — packages are called

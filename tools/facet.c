@@ -4,6 +4,8 @@
 
 #include <errno.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <openssl/evp.h>
 #include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1610,10 +1612,188 @@ static int compare_file_paths(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+static void tar_octal(char *field, size_t width, unsigned long long number) {
+    (void)snprintf(field, width, "%0*llo", (int)width - 1, number);
+}
+
+static bool write_tar_member(FILE *archive, const char *root, const char *relative,
+                             char *error, size_t error_size) {
+    if (strlen(relative) > 99) {
+        (void)snprintf(error, error_size, "ustar path exceeds 99 bytes: %s", relative);
+        return false;
+    }
+    char path[FACET_MAX_PATH];
+    if (snprintf(path, sizeof path, "%s/%s", root, relative) >= (int)sizeof path) {
+        (void)snprintf(error, error_size, "path too long: %s", relative);
+        return false;
+    }
+    int fd = open(path, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0) {
+        (void)snprintf(error, error_size, "cannot open package file: %s", relative);
+        return false;
+    }
+    struct stat before, after;
+    bool ok = fstat(fd, &before) == 0 && S_ISREG(before.st_mode) &&
+              before.st_nlink == 1 && before.st_size >= 0 &&
+              before.st_size <= 10 * 1024 * 1024;
+    if (!ok) {
+        (void)snprintf(error, error_size, "package file changed or is unsafe: %s", relative);
+        close(fd);
+        return false;
+    }
+    unsigned char header[512] = {0};
+    memcpy(header, relative, strlen(relative));
+    tar_octal((char *)header + 100, 8, (before.st_mode & 0111) != 0 ? 0755 : 0644);
+    tar_octal((char *)header + 108, 8, 0);
+    tar_octal((char *)header + 116, 8, 0);
+    tar_octal((char *)header + 124, 12, (unsigned long long)before.st_size);
+    tar_octal((char *)header + 136, 12, 0);
+    memset(header + 148, ' ', 8);
+    header[156] = '0';
+    memcpy(header + 257, "ustar", 5);
+    memcpy(header + 263, "00", 2);
+    unsigned checksum = 0;
+    for (size_t i = 0; i < sizeof header; i++) checksum += header[i];
+    (void)snprintf((char *)header + 148, 7, "%06o", checksum);
+    header[155] = ' ';
+    if (fwrite(header, 1, sizeof header, archive) != sizeof header) ok = false;
+    unsigned char buffer[8192];
+    unsigned long long remaining = (unsigned long long)before.st_size;
+    while (ok && remaining > 0) {
+        size_t amount = remaining < sizeof buffer ? (size_t)remaining : sizeof buffer;
+        ssize_t got = read(fd, buffer, amount);
+        if (got <= 0 || fwrite(buffer, 1, (size_t)got, archive) != (size_t)got) {
+            ok = false;
+            break;
+        }
+        remaining -= (unsigned long long)got;
+    }
+    size_t padding = (size_t)((512 - ((unsigned long long)before.st_size % 512)) % 512);
+    if (ok && padding > 0) {
+        unsigned char zeros[512] = {0};
+        if (fwrite(zeros, 1, padding, archive) != padding) ok = false;
+    }
+    if (fstat(fd, &after) != 0 || after.st_size != before.st_size ||
+        after.st_dev != before.st_dev || after.st_ino != before.st_ino ||
+        after.st_mode != before.st_mode ||
+        after.st_mtim.tv_sec != before.st_mtim.tv_sec ||
+        after.st_mtim.tv_nsec != before.st_mtim.tv_nsec ||
+        after.st_ctim.tv_sec != before.st_ctim.tv_sec ||
+        after.st_ctim.tv_nsec != before.st_ctim.tv_nsec)
+        ok = false;
+    close(fd);
+    if (!ok) (void)snprintf(error, error_size, "package file changed while packing: %s", relative);
+    return ok;
+}
+
+static bool digest_file(const char *path, unsigned char digest[32],
+                        char *error, size_t error_size) {
+    FILE *file = fopen(path, "rb");
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    bool ok = file != NULL && context != NULL &&
+              EVP_DigestInit_ex(context, EVP_sha256(), NULL) == 1;
+    unsigned char buffer[8192];
+    while (ok) {
+        size_t got = fread(buffer, 1, sizeof buffer, file);
+        if (got > 0 && EVP_DigestUpdate(context, buffer, got) != 1) ok = false;
+        if (got < sizeof buffer) {
+            if (ferror(file)) ok = false;
+            break;
+        }
+    }
+    unsigned length = 0;
+    if (ok && (EVP_DigestFinal_ex(context, digest, &length) != 1 || length != 32))
+        ok = false;
+    if (file != NULL) fclose(file);
+    EVP_MD_CTX_free(context);
+    if (!ok) (void)snprintf(error, error_size, "cannot hash archive");
+    return ok;
+}
+
+static bool pack_tar(const char *root, const FacetFileList *files,
+                     const char *output_arg, char *error, size_t error_size) {
+    error[0] = '\0';
+    char output_copy[FACET_MAX_PATH];
+    if (snprintf(output_copy, sizeof output_copy, "%s", output_arg) >=
+        (int)sizeof output_copy) {
+        (void)snprintf(error, error_size, "output path too long");
+        return false;
+    }
+    char *slash = strrchr(output_copy, '/');
+    const char *base = slash == NULL ? output_copy : slash + 1;
+    if (base[0] == '\0' || strcmp(base, ".") == 0 || strcmp(base, "..") == 0) {
+        (void)snprintf(error, error_size, "invalid output filename");
+        return false;
+    }
+    const char *parent = ".";
+    if (slash != NULL) {
+        *slash = '\0';
+        parent = output_copy[0] == '\0' ? "/" : output_copy;
+    }
+    char *directory = realpath(parent, NULL);
+    if (directory == NULL) {
+        (void)snprintf(error, error_size, "cannot resolve output directory");
+        return false;
+    }
+    bool inside_root = strncmp(directory, root, strlen(root)) == 0 &&
+        (directory[strlen(root)] == '/' || directory[strlen(root)] == '\0');
+    if (inside_root) {
+        (void)snprintf(error, error_size, "archive output must be outside the cut directory");
+        free(directory);
+        return false;
+    }
+    char output[FACET_MAX_PATH], temporary[FACET_MAX_PATH];
+    bool paths_ok = snprintf(output, sizeof output, "%s/%s", directory, base) <
+                    (int)sizeof output &&
+                    snprintf(temporary, sizeof temporary, "%s/.facet-pack-XXXXXX", directory) <
+                    (int)sizeof temporary;
+    free(directory);
+    if (!paths_ok) {
+        (void)snprintf(error, error_size, "output path too long");
+        return false;
+    }
+    int fd = mkstemp(temporary);
+    if (fd < 0) {
+        (void)snprintf(error, error_size, "cannot create temporary archive: %s", strerror(errno));
+        return false;
+    }
+    FILE *archive = fdopen(fd, "wb");
+    if (archive == NULL) {
+        close(fd);
+        unlink(temporary);
+        (void)snprintf(error, error_size, "cannot open temporary archive");
+        return false;
+    }
+    bool ok = true;
+    for (size_t i = 0; ok && i < files->count; i++)
+        ok = write_tar_member(archive, root, files->paths[i], error, error_size);
+    unsigned char zeros[1024] = {0};
+    if (ok && fwrite(zeros, 1, sizeof zeros, archive) != sizeof zeros) ok = false;
+    if (fclose(archive) != 0) ok = false;
+    unsigned char digest[32];
+    if (ok) ok = digest_file(temporary, digest, error, error_size);
+    if (ok && link(temporary, output) != 0) {
+        (void)snprintf(error, error_size, "cannot create '%s': %s", output, strerror(errno));
+        ok = false;
+    }
+    unlink(temporary);
+    if (!ok) {
+        if (error[0] == '\0')
+            (void)snprintf(error, error_size, "cannot write archive");
+        return false;
+    }
+    printf("facet: packed %zu files to %s\nsha256: ", files->count, output);
+    for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
+    putchar('\n');
+    return true;
+}
+
 static int cmd_check(int argc, char **argv) {
-    bool show_files = argc == 4 && strcmp(argv[3], "--files") == 0;
-    if (argc != 3 && !show_files) {
-        fputs("usage: facet check <cut-directory> [--files]\n", stderr);
+    bool packing = strcmp(argv[1], "pack") == 0;
+    bool show_files = !packing && argc == 4 && strcmp(argv[3], "--files") == 0;
+    if ((packing && argc != 4) || (!packing && argc != 3 && !show_files)) {
+        fputs(packing ? "usage: facet pack <cut-directory> <output.tar>\n" :
+                        "usage: facet check <cut-directory> [--files]\n", stderr);
         return 64;
     }
     char *canonical = realpath(argv[2], NULL);
@@ -1755,10 +1935,17 @@ static int cmd_check(int argc, char **argv) {
         }
     }
     qsort(files.paths, files.count, sizeof *files.paths, compare_file_paths);
-    if (show_files)
+    if (show_files || packing)
         for (size_t i = 0; i < files.count; i++) puts(files.paths[i]);
-    printf("facet: %s %s is ready for packaging checks\n", name->string,
-           version->string);
+    if (packing) {
+        if (!pack_tar(root, &files, argv[3], error, sizeof error)) {
+            fprintf(stderr, "facet: %s\n", error);
+            goto done;
+        }
+    } else {
+        printf("facet: %s %s is ready for packaging checks\n", name->string,
+               version->string);
+    }
     status = 0;
 done:
     free_file_list(&files);
@@ -1771,6 +1958,7 @@ static void print_usage(void) {
           "       facet update\n"
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
+          "       facet pack <cut-directory> <output.tar>\n"
           "       facet add <name> --git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
           stderr);
@@ -1790,6 +1978,9 @@ int main(int argc, char **argv) {
         return cmd_add(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "check") == 0) {
+        return cmd_check(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "pack") == 0) {
         return cmd_check(argc, argv);
     }
     print_usage();

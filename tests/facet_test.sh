@@ -679,5 +679,32 @@ if "$facet" check checkcut >/dev/null 2>"$error_file"; then
 fi
 grep -q "case-insensitive path collision" "$error_file"
 rm -f "$error_file"
+rm -rf checkcut/lib/Widgets checkcut/lib/widgets
 
-echo "66 facet tests passed"
+"$facet" pack checkcut one.tar > pack_output
+tar -tf one.tar > packed_files
+grep -q '^lib/checkcut/helper.di$' packed_files
+! grep -q '^tests/' packed_files
+grep -q '^sha256: ' pack_output
+[[ "$(sed -n 's/^sha256: //p' pack_output)" == "$(sha256sum one.tar | cut -d' ' -f1)" ]]
+touch -t 202001010000 checkcut/lib/checkcut/helper.di
+"$facet" pack checkcut two.tar >/dev/null
+cmp one.tar two.tar
+
+error_file="$(mktemp)"
+if "$facet" pack checkcut one.tar >/dev/null 2>"$error_file"; then
+    echo "facet pack overwrote an existing archive" >&2
+    exit 1
+fi
+grep -q "cannot create" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$facet" pack checkcut checkcut/package.tar >/dev/null 2>"$error_file"; then
+    echo "facet pack wrote inside the cut directory" >&2
+    exit 1
+fi
+grep -q "outside the cut directory" "$error_file"
+rm -f "$error_file"
+
+echo "70 facet tests passed"

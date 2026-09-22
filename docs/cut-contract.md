@@ -47,10 +47,17 @@ case-colliding entry inside a selected runtime directory fails the check. The
 first format limits one file to 10 MiB, total selected bytes to 50 MiB, and
 selected files to 4,096. These limits can be revisited with real package needs.
 
-`facet pack <path>` should create an artifact from this root, not from its
-parent repo, using exactly the checked relative file list. It should print the
-final file list and artifact digest. Explicit includes may be added later, but
-cannot override safety exclusions.
+`facet pack <cut-directory> <output.tar>` creates a deterministic, uncompressed
+[ustar archive](https://www.gnu.org/software/tar/manual/tar.pdf) from exactly
+the checked relative file list. It prints the list and SHA-256 digest. Output
+must be outside the cut directory and cannot replace an existing file. An
+archive has regular-file entries only, sorted by relative path, followed by
+two zero blocks. Every entry has uid/gid 0, an empty owner/group name, and
+mtime 0. Its mode is 0755 when the source has any execute bit, otherwise 0644.
+Paths longer than 99 bytes fail until an extended-header policy is specified.
+These fixed fields make equal contents produce equal archive bytes across
+repeated packs. Explicit includes may be added later, but cannot override
+safety exclusions.
 
 An installed cut occupies `cuts/<name>/` within the consuming project, with
 `cuts/<name>/lib/<name>.di` as its entry point. Installation never writes into

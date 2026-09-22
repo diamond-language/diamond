@@ -14,6 +14,7 @@ manifests, paths, documentation, and existing projects.
 1. Specify the publishable cut contract in [cut-contract.md](cut-contract.md).
    Make manifest parsing data-only and validate package contents before any
    hosted release. Keep local Git dependencies working during migration.
+   The parser, `facet check`, and deterministic `facet pack` are implemented.
 2. Add immutable archives, content digests, registry source identity, and
    checksums to the lockfile. A locked install must verify downloaded bytes and
    use the locked source, version, and digest without consulting mutable tags.
