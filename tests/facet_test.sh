@@ -8,6 +8,7 @@ set -euo pipefail
 
 diamond="$(realpath ./build/diamond)"
 facet="$(realpath ./build/facet)"
+source_root="$(pwd)"
 
 export GIT_AUTHOR_NAME=facet-test GIT_AUTHOR_EMAIL=facet-test@example.com
 export GIT_COMMITTER_NAME=facet-test GIT_COMMITTER_EMAIL=facet-test@example.com
@@ -759,4 +760,20 @@ fi
 grep -q "invalid archive ending" "$error_file"
 rm -f "$error_file"
 
-echo "74 facet tests passed"
+# Dependency-free bundled cuts must remain packageable and load from their
+# installed artifact layout, without access to the source checkout.
+mkdir -p packaged_project/cuts
+for name in arel http logger; do
+    "$facet" check "$source_root/packages/$name" >/dev/null
+    "$facet" pack "$source_root/packages/$name" "$name.tar" >/dev/null
+    digest="$(sha256sum "$name.tar" | cut -d' ' -f1)"
+    "$facet" verify "$name.tar" --sha256 "$digest" >/dev/null
+    mkdir "packaged_project/cuts/$name"
+    tar -xf "$name.tar" -C "packaged_project/cuts/$name"
+done
+(cd packaged_project && "$diamond" -e 'require_cut "arel"
+require_cut "http"
+require_cut "logger"
+Arel.table("people").name()' >/dev/null)
+
+echo "84 facet tests passed"

@@ -145,10 +145,11 @@ lockfiles are not used to resolve a consumer's graph.
 
 Current `facet` accepts Git dependencies shaped like `{"git": URL,
 "version": RANGE}` and derives available versions from Git tags. Both `facet`
-and `require_cut` parse metadata without executing it. Current bundled
-manifests have only `name` and `version`; their runtime dependencies and
-release metadata are incomplete.
-These files are not yet publishable under this contract.
+and `require_cut` parse metadata without executing it. Most bundled manifests
+still have only `name` and `version`; their runtime dependencies and release
+metadata are incomplete. `arel`, `http`, and `logger` have the required
+metadata and license files and pass local archive checks. No registry exists
+to publish them yet.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare

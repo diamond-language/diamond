@@ -1,1 +1,1 @@
-{"name": "http", "version": "0.1.0"}
+{"name": "http", "version": "0.1.0", "summary": "HTTP server and client for Diamond", "license": "MIT"}
