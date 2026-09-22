@@ -1,6 +1,6 @@
 # network_safety
 
-Reject URLs that resolve to private or reserved network addresses before an outbound HTTP request.
+Reject local names and private or reserved IPv4 literals before an outbound HTTP request.
 
 ## Installation
 
@@ -23,4 +23,4 @@ resolve_public_hostname("http://127.0.0.1/x")
 
 ## Notes
 
-Call `resolve_public_hostname(url)` before `http_get(url)`. DNS can change between the check and the request, so this check alone does not pin the destination address.
+Call `resolve_public_hostname(url)` before `http_get(url)`. This function checks the URL text; it does not resolve DNS or pin the connection address. A public-looking hostname that resolves to a private address is not blocked.

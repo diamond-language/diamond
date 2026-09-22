@@ -787,4 +787,14 @@ for name in active_karma cookies database_config dials div graphql jobs \
     (cd packaged_project && "$diamond" -e "require_cut \"$name\"" >/dev/null)
 done
 
-echo "132 facet tests passed"
+"$facet" check "$source_root/packages/network_safety" >/dev/null
+"$facet" pack "$source_root/packages/network_safety" network_safety.tar >/dev/null
+digest="$(sha256sum network_safety.tar | cut -d' ' -f1)"
+"$facet" verify network_safety.tar --sha256 "$digest" >/dev/null
+mkdir packaged_project/cuts/network_safety
+tar -xf network_safety.tar -C packaged_project/cuts/network_safety
+actual="$(cd packaged_project && "$diamond" -e 'require_cut "network_safety"
+resolve_public_hostname("http://8.8.8.8/x")["host"]')"
+[[ "$actual" == "8.8.8.8" ]]
+
+echo "136 facet tests passed"

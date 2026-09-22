@@ -1,4 +1,4 @@
-require "../../http/lib/http"
+require_cut "http"
 
 # A basic SSRF (server-side request forgery) guard for outbound HTTP
 # requests -- ported from ModFederate::NetworkSafety (MaquinasStack's

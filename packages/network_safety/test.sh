@@ -7,13 +7,19 @@ set -euo pipefail
 # already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+mkdir -p "$test_project/cuts"
+ln -s "$package_root/../http" "$test_project/cuts/http"
 
 count=0
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/network_safety\"
+    (cd "$test_project" && "$diamond" -e "require \"$package_root/lib/network_safety\"
 $script"
+    )
 }
 
 assert_eq() {

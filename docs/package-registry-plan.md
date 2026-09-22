@@ -35,7 +35,8 @@ manifests, paths, documentation, and existing projects.
    runtime dependencies, test installation from artifacts in CI, then publish.
    Fifteen dependency-free cuts now have release metadata and license files.
    The Facet suite checks their packed artifacts from an isolated project.
-   Cuts with sibling-source imports still need migration.
+   `network_safety` now declares and loads `http` as a cut dependency; the
+   remaining cuts with sibling-source imports still need migration.
 
 ## Decisions to carry through implementation
 
