@@ -95,8 +95,8 @@ CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 # yourself is possible; it's just unsupported.
 #
 # Anything that deliberately builds on one machine to run the binary
-# on a *different* one -- applications/skindicate.dia's own
-# build_ubuntu.sh cross-build script is the current real example --
+# on a *different* one -- skindicate.dia's build_vm.sh is the
+# production example --
 # must override CFLAGS_RELEASE itself rather than rely on the -native
 # default, e.g. `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
 # release`: x86-64-v3 is a named, standardized ISA tier, not one

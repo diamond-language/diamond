@@ -98,7 +98,7 @@ needed).
 See [docs/roadmap.md](roadmap.md) for what's explicitly deferred here
 (cross-compilation, a real install step, static linking).
 
-## Building for a different target distro, via container
+## Building for a different target distro
 
 Because `diamond build` links against whatever OpenSSL/SQLite3/`libpq`/MariaDB
 client/glibc versions the *build machine* has ("Not a fully static/hermetic
@@ -107,14 +107,18 @@ another -- most concretely, glibc is backward- but not forward-compatible, so
 a binary built on a newer glibc can reference symbol versions an older-glibc
 target doesn't have.
 
-Rather than chase static linking (a separately-tracked, much bigger effort --
-see `docs/roadmap.md`), the practical fix is to build *inside* a container
-running the same distro/version as the deploy target, so the binary links
-against *its* library versions directly, regardless of what the build host
-itself has installed. `docker/Dockerfile.ubuntu-build` is a worked example:
-an `ubuntu:26.04` base image with the same dev packages this README's own
-"On Ubuntu" section lists, with no source baked in (source comes from a bind
-mount at container-run time, not a clone, so it reflects whatever's on disk
+Build on a machine with the target's distro and architecture. For Skindicate,
+the production droplet has one CPU core and 1 GB of RAM, so **never compile
+on the droplet**. Its [deployment runbook](https://github.com/matrix9180/skindicate.dia/blob/main/DEPLOYMENT.md)
+builds on a local Ubuntu 26.04 VM with `build_vm.sh`, then uploads the finished
+binary with `deploy_prebuilt.sh`. The upload script updates tracked static
+assets and restarts the service; it does not build on the droplet.
+
+A container is another way to match the target distro for local development.
+`docker/Dockerfile.ubuntu-build` is an example:
+an `ubuntu:26.04` base image with the dev packages in
+[CONTRIBUTING.md](../CONTRIBUTING.md#build-and-test). It has no source baked in;
+source comes from a bind mount at container-run time, so it reflects whatever is on disk
 locally -- committed or not).
 
 The container must never build against a live checkout in place via a
@@ -134,11 +138,9 @@ wrong-platform object file left over from the other one. The safe shape is:
    crosses the container boundary in either direction besides the initial
    read-only source copy.
 
-`skindicate.dia/build_ubuntu.sh` and `skindicate.dia/deploy_prebuilt.sh` are a
-complete worked example of this for a Diamond application: the former runs
-the container build described above and leaves the result at
-`skindicate.dia/dist/app`; the latter ships that binary to a real deploy
-target and restarts the service running it.
+`skindicate.dia/build_ubuntu.sh` implements this container build for local
+use. Production uses its VM build script, which also records the source
+revision required by `deploy_prebuilt.sh`.
 
 The example keeps AOT runtime objects in `skindicate.dia/dist/aot-cache/`,
 outside the disposable source copy. Diamond fingerprints the runtime inputs,
@@ -154,7 +156,7 @@ building it for the machine they're going to run it on). A container only
 isolates the OS/libraries, not the CPU, so building inside one still runs on
 the *host's* actual CPU -- inheriting that default would bake the build
 machine's exact CPU features into a binary meant for a different one.
-`build_ubuntu.sh` passes `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
+`build_vm.sh` and `build_ubuntu.sh` pass `make CFLAGS_RELEASE="-O3 -DNDEBUG -march=x86-64-v3"
 release` instead: `x86-64-v3` is a named, standardized ISA tier (AVX2/BMI2/
 FMA/LZCNT/MOVBE), not one CPU's exact feature set -- supported by any real
 x86_64 machine from roughly 2013 (Intel Haswell) or 2015 (AMD Excavator)
@@ -173,10 +175,7 @@ Makefile's own `CFLAGS_RELEASE` comment and the README's system
 dependencies section). A deploy target older than that is unsupported, not
 just slower.
 
-**Caveat:** matching the target's distro and major version is "very likely
-works," not a guaranteed identical package snapshot -- the container image's
-installed library versions are whatever that base image shipped with at
-build time, which can drift from a real target's own `apt upgrade` history
-since it was provisioned. Verify with `ldd`/`file` against the produced
-binary and a real smoke test against the actual target, the same as any
-other deploy.
+**Caveat:** matching the distro and release does not guarantee identical
+package versions. A local VM or container can drift from the target's
+`apt upgrade` history. Inspect the produced binary with `file` and `ldd`,
+then smoke-test it on the target after upload.

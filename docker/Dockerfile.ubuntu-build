@@ -2,8 +2,8 @@
 # (docs/deployment.md) AOT binary somewhere that isn't Ubuntu itself
 # (Fedora, in particular) so the *link* target is Ubuntu 26.04's own
 # glibc/OpenSSL/SQLite3/libpq/MariaDB Connector versions, not the build
-# machine's -- see docs/deployment.md's own "cross-building for a
-# different target distro" section for why this matters (glibc is
+# machine's -- see docs/deployment.md's "Building for a different target
+# distro" section for why this matters (glibc is
 # backward- but not forward-compatible, so a binary built on a newer
 # glibc than the deploy target simply won't run there).
 #
@@ -16,6 +16,8 @@
 # this image (see skindicate.dia/build_ubuntu.sh for the reference
 # shape) -- never baked into the image itself, so this Dockerfile never
 # needs rebuilding just because source changed.
+# Skindicate production builds use a local Ubuntu VM (build_vm.sh); this
+# container remains an optional local development build environment.
 FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
