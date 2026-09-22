@@ -3,6 +3,7 @@
 #include "manifest_literal.h"
 
 #include <errno.h>
+#include <dirent.h>
 #include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1428,9 +1429,191 @@ static bool regular_file(const char *path) {
     return lstat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
+typedef struct FacetFileList {
+    char **paths;
+    size_t count;
+    size_t capacity;
+    unsigned long long total_bytes;
+    size_t examined_entries;
+} FacetFileList;
+
+static void free_file_list(FacetFileList *list) {
+    for (size_t i = 0; i < list->count; i++) free(list->paths[i]);
+    free(list->paths);
+}
+
+static bool same_folded_path(const char *a, const char *b) {
+    for (; *a != '\0' && *b != '\0'; a++, b++) {
+        unsigned char left = (unsigned char)*a, right = (unsigned char)*b;
+        if (left >= 'A' && left <= 'Z') left = (unsigned char)(left + 32);
+        if (right >= 'A' && right <= 'Z') right = (unsigned char)(right + 32);
+        if (left != right) return false;
+    }
+    return *a == *b;
+}
+
+static bool sensitive_name(const char *name) {
+    size_t length = strlen(name);
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (c < 0x20 || c > 0x7e || c == '\\' || c == ':') return true;
+    }
+    if (name[0] == '.' || strcmp(name, "id_rsa") == 0 ||
+        strcmp(name, "id_ed25519") == 0 || strcmp(name, "credentials") == 0 ||
+        strcmp(name, "secrets") == 0) return true;
+    const char *suffixes[] = {".pem", ".key", ".p12", ".pfx", ".dic"};
+    for (size_t i = 0; i < sizeof suffixes / sizeof suffixes[0]; i++) {
+        size_t suffix_length = strlen(suffixes[i]);
+        if (length >= suffix_length &&
+            strcmp(name + length - suffix_length, suffixes[i]) == 0) return true;
+    }
+    return false;
+}
+
+static bool add_file(FacetFileList *list, const char *root, const char *relative,
+                     char *error, size_t error_size) {
+    char path[FACET_MAX_PATH];
+    if (snprintf(path, sizeof path, "%s/%s", root, relative) >= (int)sizeof path) {
+        (void)snprintf(error, error_size, "path too long: %s", relative);
+        return false;
+    }
+    struct stat info;
+    if (lstat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_nlink != 1) {
+        (void)snprintf(error, error_size, "unsafe file type or hardlink: %s", relative);
+        return false;
+    }
+    if (info.st_size < 0 || (unsigned long long)info.st_size > 10ULL * 1024 * 1024 ||
+        list->total_bytes + (unsigned long long)info.st_size > 50ULL * 1024 * 1024) {
+        (void)snprintf(error, error_size, "file size limit exceeded: %s", relative);
+        return false;
+    }
+    if (list->count == 4096) {
+        (void)snprintf(error, error_size, "too many package files (max 4096)");
+        return false;
+    }
+    for (size_t i = 0; i < list->count; i++) {
+        if (same_folded_path(list->paths[i], relative)) {
+            (void)snprintf(error, error_size, "case-insensitive path collision: %s", relative);
+            return false;
+        }
+    }
+    if (list->count == list->capacity) {
+        size_t new_capacity = list->capacity == 0 ? 16 : list->capacity * 2;
+        char **grown = realloc(list->paths, new_capacity * sizeof *grown);
+        if (grown == NULL) {
+            (void)snprintf(error, error_size, "out of memory collecting files");
+            return false;
+        }
+        list->paths = grown;
+        list->capacity = new_capacity;
+    }
+    list->paths[list->count] = strdup(relative);
+    if (list->paths[list->count] == NULL) {
+        (void)snprintf(error, error_size, "out of memory collecting files");
+        return false;
+    }
+    list->count++;
+    list->total_bytes += (unsigned long long)info.st_size;
+    return true;
+}
+
+static bool scan_runtime_tree(FacetFileList *list, const char *root,
+                              const char *relative, unsigned depth,
+                              char *error, size_t error_size) {
+    if (depth > 32) {
+        (void)snprintf(error, error_size, "package tree exceeds 32 levels");
+        return false;
+    }
+    char path[FACET_MAX_PATH];
+    if (snprintf(path, sizeof path, "%s/%s", root, relative) >= (int)sizeof path) {
+        (void)snprintf(error, error_size, "path too long: %s", relative);
+        return false;
+    }
+    struct stat info;
+    if (lstat(path, &info) != 0 || !S_ISDIR(info.st_mode)) {
+        (void)snprintf(error, error_size, "unsafe directory: %s", relative);
+        return false;
+    }
+    DIR *directory = opendir(path);
+    if (directory == NULL) {
+        (void)snprintf(error, error_size, "cannot read directory: %s", relative);
+        return false;
+    }
+    bool ok = true;
+    char **siblings = NULL;
+    size_t sibling_count = 0;
+    size_t sibling_capacity = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        if (++list->examined_entries > 8192) {
+            (void)snprintf(error, error_size, "too many package entries (max 8192)");
+            ok = false;
+            break;
+        }
+        for (size_t i = 0; i < sibling_count; i++) {
+            if (same_folded_path(siblings[i], entry->d_name)) {
+                (void)snprintf(error, error_size,
+                               "case-insensitive path collision: %s/%s",
+                               relative, entry->d_name);
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
+        if (sibling_count == sibling_capacity) {
+            size_t new_capacity = sibling_capacity == 0 ? 8 : sibling_capacity * 2;
+            char **grown = realloc(siblings, new_capacity * sizeof *grown);
+            if (grown == NULL) {
+                (void)snprintf(error, error_size, "out of memory collecting paths");
+                ok = false;
+                break;
+            }
+            siblings = grown;
+            sibling_capacity = new_capacity;
+        }
+        siblings[sibling_count] = strdup(entry->d_name);
+        if (siblings[sibling_count] == NULL) {
+            (void)snprintf(error, error_size, "out of memory collecting paths");
+            ok = false;
+            break;
+        }
+        sibling_count++;
+        if (sensitive_name(entry->d_name)) {
+            (void)snprintf(error, error_size, "excluded or sensitive path in runtime tree: %s/%s",
+                           relative, entry->d_name);
+            ok = false;
+            break;
+        }
+        char child[FACET_MAX_PATH];
+        if (snprintf(child, sizeof child, "%s/%s", relative, entry->d_name) >=
+            (int)sizeof child || snprintf(path, sizeof path, "%s/%s", root, child) >=
+            (int)sizeof path || lstat(path, &info) != 0) {
+            (void)snprintf(error, error_size, "cannot inspect package path");
+            ok = false;
+            break;
+        }
+        if (S_ISDIR(info.st_mode))
+            ok = scan_runtime_tree(list, root, child, depth + 1, error, error_size);
+        else
+            ok = add_file(list, root, child, error, error_size);
+        if (!ok) break;
+    }
+    closedir(directory);
+    for (size_t i = 0; i < sibling_count; i++) free(siblings[i]);
+    free(siblings);
+    return ok;
+}
+
+static int compare_file_paths(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
 static int cmd_check(int argc, char **argv) {
-    if (argc != 3) {
-        fputs("usage: facet check <cut-directory>\n", stderr);
+    bool show_files = argc == 4 && strcmp(argv[3], "--files") == 0;
+    if (argc != 3 && !show_files) {
+        fputs("usage: facet check <cut-directory> [--files]\n", stderr);
         return 64;
     }
     char *canonical = realpath(argv[2], NULL);
@@ -1467,6 +1650,7 @@ static int cmd_check(int argc, char **argv) {
         return 65;
     }
     int status = 65;
+    FacetFileList files = {0};
     const char *allowed[] = {"name", "version", "summary", "license",
                              "dependencies", "homepage", "source",
                              "documentation", "issues"};
@@ -1548,10 +1732,36 @@ static int cmd_check(int argc, char **argv) {
                 name->string);
         goto done;
     }
+    const char *metadata_files[] = {"diamond.cut", "README.md", "LICENSE"};
+    for (size_t i = 0; i < sizeof metadata_files / sizeof metadata_files[0]; i++) {
+        if (!add_file(&files, root, metadata_files[i], error, sizeof error)) {
+            fprintf(stderr, "facet: %s\n", error);
+            goto done;
+        }
+    }
+    const char *runtime_roots[] = {"lib", "bin", "assets"};
+    for (size_t i = 0; i < sizeof runtime_roots / sizeof runtime_roots[0]; i++) {
+        if (snprintf(path, sizeof path, "%s/%s", root, runtime_roots[i]) >=
+            (int)sizeof path) {
+            fputs("facet: runtime path is too long\n", stderr);
+            goto done;
+        }
+        struct stat info;
+        if (lstat(path, &info) != 0 && errno == ENOENT && i != 0) continue;
+        if (!scan_runtime_tree(&files, root, runtime_roots[i], 0,
+                               error, sizeof error)) {
+            fprintf(stderr, "facet: %s\n", error);
+            goto done;
+        }
+    }
+    qsort(files.paths, files.count, sizeof *files.paths, compare_file_paths);
+    if (show_files)
+        for (size_t i = 0; i < files.count; i++) puts(files.paths[i]);
     printf("facet: %s %s is ready for packaging checks\n", name->string,
            version->string);
     status = 0;
 done:
+    free_file_list(&files);
     diamond_manifest_free(manifest);
     return status;
 }
@@ -1560,7 +1770,7 @@ static void print_usage(void) {
     fputs("usage: facet install\n"
           "       facet update\n"
           "       facet init [name]\n"
-          "       facet check <cut-directory>\n"
+          "       facet check <cut-directory> [--files]\n"
           "       facet add <name> --git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
           stderr);

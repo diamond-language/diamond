@@ -5,8 +5,9 @@ For the proposed publishable package contract and hosted registry roadmap, see
 [package-registry-plan.md](package-registry-plan.md). This page documents the
 currently implemented behavior.
 
-`facet check <cut-directory>` validates the first publishable layout and
-manifest requirements without installing dependencies or creating an archive.
+`facet check <cut-directory> [--files]` validates the first publishable layout,
+manifest, and runtime file inventory without installing dependencies or
+creating an archive. `--files` prints the sorted candidate artifact file list.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
 This document covers Diamond's package resolution — packages are called

@@ -7,9 +7,10 @@ yet. Current behavior and compatibility details are in [packages.md](packages.md
 the canonical name and directory, strict version spelling, summary, nonempty
 license declaration, data-only runtime dependency ranges, and regular
 `diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
-unknown manifest keys. It does not yet verify SPDX expressions, inspect the
-full artifact file list, find undeclared imports, or create an archive. Passing
-this check is necessary for a future publish, but is not a publish operation.
+unknown manifest keys. It audits the candidate runtime file tree and
+`--files` prints the sorted included file list. It does not yet verify SPDX
+expressions, find undeclared imports, or create an archive. Passing this check
+is necessary for a future publish, but is not a publish operation.
 
 ## Identity and layout
 
@@ -37,12 +38,19 @@ has the same layout:
   tests/                  optional development tests
 ```
 
+`facet check --files` currently selects `diamond.cut`, `README.md`, `LICENSE`,
+and regular files under `lib/`, `bin/`, and `assets/`. The latter two directories
+are optional. Other top-level files and directories, including tests, VCS
+files, lockfiles, build output, and installed `cuts/`, are excluded. A hidden,
+credential-like, cache, symlink, hardlink, special, oversized, non-ASCII, or
+case-colliding entry inside a selected runtime directory fails the check. The
+first format limits one file to 10 MiB, total selected bytes to 50 MiB, and
+selected files to 4,096. These limits can be revisited with real package needs.
+
 `facet pack <path>` should create an artifact from this root, not from its
-parent repo. The archive contains paths relative to the cut root, including
-`diamond.cut`, `README.md`, `LICENSE`, and runtime files. Tests, VCS files,
-lockfiles, caches, build output, credentials, and installed `cuts/` are excluded
-by default. The pack command prints the final file list and artifact digest.
-Explicit includes may be added later, but cannot override safety exclusions.
+parent repo, using exactly the checked relative file list. It should print the
+final file list and artifact digest. Explicit includes may be added later, but
+cannot override safety exclusions.
 
 An installed cut occupies `cuts/<name>/` within the consuming project, with
 `cuts/<name>/lib/<name>.di` as its entry point. Installation never writes into

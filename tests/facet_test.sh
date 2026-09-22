@@ -641,4 +641,43 @@ fi
 grep -q "dependency 'logger' needs a valid SemVer range String" "$error_file"
 rm -f "$error_file"
 
-echo "62 facet tests passed"
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT"}\n' > checkcut/diamond.cut
+mkdir -p checkcut/lib/checkcut checkcut/tests
+printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.di
+printf 'ignored test\n' > checkcut/tests/test.di
+files_output="$("$facet" check checkcut --files)"
+grep -q '^lib/checkcut/helper.di$' <<<"$files_output"
+! grep -q 'tests/test.di' <<<"$files_output"
+[[ "$(printf '%s\n' "$files_output" | sed '/^facet:/d' | LC_ALL=C sort)" == \
+   "$(printf '%s\n' "$files_output" | sed '/^facet:/d')" ]]
+
+ln -s /etc/passwd checkcut/lib/checkcut/linked.di
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted symlink in runtime tree" >&2
+    exit 1
+fi
+grep -q "unsafe file type or hardlink" "$error_file"
+rm -f "$error_file"
+rm checkcut/lib/checkcut/linked.di
+
+printf 'stale bytecode\n' > checkcut/lib/checkcut/helper.dic
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted cache file in runtime tree" >&2
+    exit 1
+fi
+grep -q "excluded or sensitive path" "$error_file"
+rm -f "$error_file"
+rm checkcut/lib/checkcut/helper.dic
+
+mkdir checkcut/lib/Widgets checkcut/lib/widgets
+error_file="$(mktemp)"
+if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+    echo "facet check accepted case-colliding directories" >&2
+    exit 1
+fi
+grep -q "case-insensitive path collision" "$error_file"
+rm -f "$error_file"
+
+echo "66 facet tests passed"
