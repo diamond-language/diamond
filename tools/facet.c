@@ -571,6 +571,29 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
             break;
         }
         strcpy(resolved->name, name_string);
+        const DiamondManifestValue *source = diamond_manifest_get(entry, "source");
+        if (source != NULL && (source->kind != DIAMOND_MANIFEST_STRING ||
+                               strcmp(source->string, "git") != 0)) {
+            (void)snprintf(error, error_size,
+                "'%s' entry '%s' has unsupported source (expected 'git')",
+                path, resolved->name);
+            ok = false;
+            break;
+        }
+        for (const DiamondManifestValue *field = entry->children;
+             field != NULL; field = field->next) {
+            if (strcmp(field->key, "source") != 0 &&
+                strcmp(field->key, "git") != 0 &&
+                strcmp(field->key, "commit") != 0 &&
+                strcmp(field->key, "version") != 0) {
+                (void)snprintf(error, error_size,
+                    "'%s' entry '%s' has unknown key '%s'",
+                    path, resolved->name, field->key);
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
         if (!diamond_manifest_get_string(entry, "git", resolved->git,
                                          sizeof resolved->git) ||
             !diamond_manifest_get_string(entry, "commit", resolved->commit,
@@ -586,8 +609,16 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
         resolved->ref[0] = '\0';
         resolved->required_by[0] = '\0';
         resolved->version[0] = '\0';
-        (void)diamond_manifest_get_string(entry, "version", resolved->version,
-                                          sizeof resolved->version);
+        const DiamondManifestValue *version = diamond_manifest_get(entry, "version");
+        if (version != NULL &&
+            (!diamond_manifest_get_string(entry, "version", resolved->version,
+                                          sizeof resolved->version) ||
+             !is_safe_field(resolved->version))) {
+            (void)snprintf(error, error_size,
+                "'%s' entry '%s' has invalid version", path, resolved->name);
+            ok = false;
+            break;
+        }
         resolution->count++;
     }
     diamond_manifest_free(hash);
@@ -611,10 +642,10 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
         if (resolved->version[0] != '\0') {
-            fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}, ",
+            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}, ",
                     resolved->name, resolved->git, resolved->commit, resolved->version);
         } else {
-            fprintf(file, "\"%s\": {\"git\": \"%s\", \"commit\": \"%s\"}, ",
+            fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\"}, ",
                     resolved->name, resolved->git, resolved->commit);
         }
     }

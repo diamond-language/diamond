@@ -178,7 +178,7 @@ if you ever want to:
 
 ```ruby
 # facet.lock
-{"greeter": {"git": "https://example.com/user/greeter", "commit": "a1b2c3d..."}}
+{"greeter": {"source": "git", "git": "https://example.com/user/greeter", "commit": "a1b2c3d..."}}
 ```
 
 a flat map of every resolved cut (the whole transitive set, already
@@ -188,6 +188,11 @@ the fast, reproducible path, unaffected by a tag or branch moving in
 the meantime. `facet update` always re-resolves from `diamond.cut`
 (picking up anything a tracked branch has moved to) and rewrites the
 lock.
+
+New locks mark each entry with `"source": "git"`. Older Git locks without
+that key remain readable. Unknown source types and lockfile fields fail
+explicitly; registry entries will have a separate schema when registry
+installation is implemented.
 
 Because Diamond has no registry to query dependency metadata from,
 resolving *is* fetching: discovering a dependency's own transitive

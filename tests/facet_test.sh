@@ -43,6 +43,26 @@ EOF
 [[ -f project1/cuts/greeter/greeter.di ]]
 [[ ! -d project1/cuts/greeter/.git ]]
 [[ -f project1/facet.lock ]]
+grep -q '"source": "git"' project1/facet.lock
+
+# Older Git locks without a source key remain readable. Unknown source
+# types and fields fail before any checkout is installed.
+cp project1/facet.lock project1/facet.lock.new
+sed 's/"source": "git", //' project1/facet.lock.new > project1/facet.lock
+(cd project1 && "$facet" install >/dev/null)
+mv project1/facet.lock.new project1/facet.lock
+cp project1/facet.lock project1/facet.lock.good
+sed 's/"source": "git"/"source": "registry"/' project1/facet.lock.good > project1/facet.lock
+if (cd project1 && "$facet" install) >/dev/null 2>&1; then
+    echo "facet accepted an unsupported lockfile source" >&2
+    exit 1
+fi
+sed 's/"source": "git"/"source": "git", "sha256": "unchecked"/' project1/facet.lock.good > project1/facet.lock
+if (cd project1 && "$facet" install) >/dev/null 2>&1; then
+    echo "facet accepted an unknown lockfile field" >&2
+    exit 1
+fi
+mv project1/facet.lock.good project1/facet.lock
 
 actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"

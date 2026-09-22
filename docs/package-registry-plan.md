@@ -17,7 +17,8 @@ manifests, paths, documentation, and existing projects.
    The parser, `facet check`, and deterministic `facet pack` are implemented.
 2. Add immutable archives, content digests, registry source identity, and
    checksums to the lockfile. `facet pack` and `facet verify` cover local
-   artifacts; lockfile integration remains. A locked install must verify
+   artifacts; new Git locks record `source: git` and old Git locks still load.
+   Registry digest and installation integration remain. A locked install must verify
    downloaded bytes and use the locked source, version, and digest without
    consulting mutable tags.
 3. Resolve registry versions and transitive dependency metadata without

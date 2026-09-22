@@ -150,7 +150,9 @@ release metadata are incomplete.
 These files are not yet publishable under this contract.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
-literal manifests and Git source specs. Add registry source specs and lockfile
+literal manifests and Git source specs. Git lock entries now declare
+`"source": "git"`; old entries without a source remain readable, while
+unknown source types fail. Add registry source specs and lockfile
 digests without reinterpreting an old Git lock as a registry lock. The flat
 `cuts/<name>/` compatibility fallback
 can remain for manually installed legacy cuts; published artifacts use `lib/`.
