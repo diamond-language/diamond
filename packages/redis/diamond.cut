@@ -1,1 +1,1 @@
-{"name": "redis", "version": "0.1.0"}
+{"name": "redis", "version": "0.1.0", "summary": "Redis client using RESP2 and RESP3", "license": "MIT"}

@@ -33,8 +33,8 @@ manifests, paths, documentation, and existing projects.
    versions, and release status. Keep the API usable without the web interface.
 6. Migrate bundled cuts in small dependency-connected groups. Declare their
    runtime dependencies, test installation from artifacts in CI, then publish.
-   `arel`, `http`, and `logger` now have release metadata and license files,
-   and the Facet suite checks their packed artifacts from an isolated project.
+   Fifteen dependency-free cuts now have release metadata and license files.
+   The Facet suite checks their packed artifacts from an isolated project.
    Cuts with sibling-source imports still need migration.
 
 ## Decisions to carry through implementation

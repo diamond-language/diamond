@@ -1,1 +1,1 @@
-{"name": "log_viewer", "version": "0.1.0"}
+{"name": "log_viewer", "version": "0.1.0", "summary": "Format structured JSON log streams", "license": "MIT"}

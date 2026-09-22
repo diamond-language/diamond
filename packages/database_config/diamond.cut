@@ -1,1 +1,1 @@
-{"name": "database_config", "version": "0.1.0"}
+{"name": "database_config", "version": "0.1.0", "summary": "Load JSON database configuration and open a connection", "license": "MIT"}

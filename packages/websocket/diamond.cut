@@ -1,1 +1,1 @@
-{"name": "websocket", "version": "0.1.0"}
+{"name": "websocket", "version": "0.1.0", "summary": "WebSocket handshake and frame handling", "license": "MIT"}

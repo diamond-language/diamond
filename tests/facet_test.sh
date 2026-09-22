@@ -776,4 +776,15 @@ require_cut "http"
 require_cut "logger"
 Arel.table("people").name()' >/dev/null)
 
-echo "84 facet tests passed"
+for name in active_karma cookies database_config dials div graphql jobs \
+            log_viewer multipart rack redis websocket; do
+    "$facet" check "$source_root/packages/$name" >/dev/null
+    "$facet" pack "$source_root/packages/$name" "$name.tar" >/dev/null
+    digest="$(sha256sum "$name.tar" | cut -d' ' -f1)"
+    "$facet" verify "$name.tar" --sha256 "$digest" >/dev/null
+    mkdir "packaged_project/cuts/$name"
+    tar -xf "$name.tar" -C "packaged_project/cuts/$name"
+    (cd packaged_project && "$diamond" -e "require_cut \"$name\"" >/dev/null)
+done
+
+echo "132 facet tests passed"

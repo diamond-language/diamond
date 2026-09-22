@@ -1,1 +1,1 @@
-{"name": "rack", "version": "0.1.0"}
+{"name": "rack", "version": "0.1.0", "summary": "Compose HTTP request middleware", "license": "MIT"}
