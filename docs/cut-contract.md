@@ -110,17 +110,14 @@ lockfiles are not used to resolve a consumer's graph.
 ## Compatibility with the current implementation
 
 Current `facet` accepts Git dependencies shaped like `{"git": URL,
-"version": RANGE}` and derives available versions from Git tags. It executes
-`diamond.cut` to obtain metadata, and `require_cut` executes an installed
-cut's manifest for validation. Current bundled manifests have only `name` and
-`version`; their runtime dependencies and release metadata are incomplete.
+"version": RANGE}` and derives available versions from Git tags. Both `facet`
+and `require_cut` parse metadata without executing it. Current bundled
+manifests have only `name` and `version`; their runtime dependencies and
+release metadata are incomplete.
 These files are not yet publishable under this contract.
 
-The migration has begun with a data-only syntax guard before the existing VM
-evaluation path. A dedicated parser should replace that evaluation path.
-Preserve reading existing literal manifests and
-Git source specs. Reject executable manifests for registry publication; give
-local projects a clear migration error before removing the old execution
-path. Add registry source specs and lockfile digests without reinterpreting an
-old Git lock as a registry lock. The flat `cuts/<name>/` compatibility fallback
+The migration now uses a dedicated data-only parser. Preserve reading existing
+literal manifests and Git source specs. Add registry source specs and lockfile
+digests without reinterpreting an old Git lock as a registry lock. The flat
+`cuts/<name>/` compatibility fallback
 can remain for manually installed legacy cuts; published artifacts use `lib/`.

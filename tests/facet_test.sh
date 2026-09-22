@@ -592,4 +592,26 @@ fi
 grep -q "expected ',' or closing delimiter" "$error_file"
 rm -f "$error_file"
 
-echo "56 facet tests passed"
+printf '{"name": "myapp", "name": "other"}\n' > project26/diamond.cut
+error_file="$(mktemp)"
+if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
+    echo "facet accepted duplicate manifest key" >&2
+    exit 1
+fi
+grep -q "duplicate Hash key" "$error_file"
+rm -f "$error_file"
+
+printf '{"name": "my\\u0061pp"}\n' > project26/diamond.cut
+(cd project26 && "$facet" install >/dev/null)
+[[ -f project26/facet.lock ]]
+
+printf '{"name": "myapp"}\000{"name": "other"}\n' > project26/diamond.cut
+error_file="$(mktemp)"
+if (cd project26 && "$facet" update) >/dev/null 2>"$error_file"; then
+    echo "facet accepted NUL in manifest" >&2
+    exit 1
+fi
+grep -q "contains a NUL byte" "$error_file"
+rm -f "$error_file"
+
+echo "59 facet tests passed"

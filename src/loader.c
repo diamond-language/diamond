@@ -1,7 +1,5 @@
 #define _XOPEN_SOURCE 700
 #include "loader.h"
-#include "compiler.h"
-#include "vm.h"
 #include "manifest_literal.h"
 
 #include <errno.h>
@@ -63,137 +61,62 @@ static char *read_source(const char *path) {
     if(fread(source,1,(size_t)size,file)!=(size_t)size) {
         free(source);fclose(file);return nullptr;
     }
+    if(memchr(source,'\0',(size_t)size)!=nullptr) {
+        free(source);fclose(file);errno=EINVAL;return nullptr;
+    }
     source[size]='\0';fclose(file);return source;
 }
 
-static bool manifest_hash_get_string(const DiamondHash *hash,const char *key,
-                                     DiamondValue *out) {
-    const size_t key_length=strlen(key);
-    for(size_t index=0;index<hash->count;index++) {
-        const DiamondValue candidate=hash->entries[index].key;
-        if(candidate.kind!=DIAMOND_VALUE_OBJECT||
-           candidate.as.object->kind!=DIAMOND_OBJECT_STRING)continue;
-        const DiamondString *string=(const DiamondString *)candidate.as.object;
-        if(string->length==key_length&&memcmp(string->chars,key,key_length)==0) {
-            *out=hash->entries[index].value;return true;
-        }
-    }
-    return false;
-}
-
-/* A cut manifest is compiled and run standalone (not through expand()'s
- * own require pipeline - manifests are metadata, not programs, so require
- * inside one is deliberately unsupported) to get back a Hash whose "name"
- * must match the cut's own directory. DiamondProgram/DiamondVm are
- * heap-allocated rather than stack-declared: expand() recurses once per
- * require depth, and sizeof(DiamondProgram) is over 3MB - a stack-declared
- * instance in every frame is exactly the mistake that once overflowed the
- * stack at DIAMOND_MAX_REQUIRE_DEPTH nesting. */
+/* Manifest metadata is parsed without compiling or running Diamond code. */
 static bool validate_cut_manifest(Loader *loader,const char *name,
         size_t name_length,const char *including_path,size_t including_line) {
-    char *manifest_path=malloc(DIAMOND_MAX_SOURCE_PATH);
-    if(manifest_path==nullptr)return true;
-    const int written=snprintf(manifest_path,DIAMOND_MAX_SOURCE_PATH,
+    char manifest_path[DIAMOND_MAX_SOURCE_PATH];
+    const int written=snprintf(manifest_path,sizeof manifest_path,
         "cuts/%.*s/diamond.cut",(int)name_length,name);
     char canonical_manifest[DIAMOND_MAX_SOURCE_PATH];
-    const bool has_manifest=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
+    const bool has_manifest=written>0&&(size_t)written<sizeof manifest_path&&
         realpath(manifest_path,canonical_manifest)!=nullptr;
-    free(manifest_path);
     if(!has_manifest)return true;
 
-    char *manifest_source=read_source(canonical_manifest);
-    if(manifest_source==nullptr) {
+    char *source=read_source(canonical_manifest);
+    if(source==nullptr) {
         (void)snprintf(loader->error,loader->error_capacity,
             "%s:%zu: cannot read cut manifest '%s': %s",
             including_path,including_line,canonical_manifest,strerror(errno));
         return false;
     }
-
-    char literal_error[160];
-    if(!diamond_manifest_literal_validate(manifest_source,literal_error,
-                                           sizeof literal_error)) {
+    char detail[160];
+    DiamondManifestValue *manifest=diamond_manifest_parse(source,detail,sizeof detail);
+    free(source);
+    if(manifest==nullptr) {
         (void)snprintf(loader->error,loader->error_capacity,
             "%s:%zu: cut manifest '%s' must be data only: %s",
-            including_path,including_line,canonical_manifest,literal_error);
-        free(manifest_source);
+            including_path,including_line,canonical_manifest,detail);
         return false;
     }
-
-    DiamondProgram *program=calloc(1,sizeof *program);
-    DiamondVm *vm=malloc(sizeof *vm);
-    if(program==nullptr||vm==nullptr) {
-        free(manifest_source);free(program);free(vm);
-        (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: out of memory validating cut manifest '%s'",
-            including_path,including_line,canonical_manifest);
-        return false;
-    }
-
+    const DiamondManifestValue *declared=diamond_manifest_get(manifest,"name");
     bool ok=true;
-    DiamondDiagnostic diagnostic;
-    bool vm_initialized=false;
-    DiamondValue result=DIAMOND_NIL;
-    if(!diamond_compile(manifest_source,program,&diagnostic)) {
-        (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: cut manifest '%s' failed to compile at line %zu: %s",
-            including_path,including_line,canonical_manifest,
-            diagnostic.span.line,diagnostic.message);
-        ok=false;
-    }
-    if(ok) {
-        DiamondChunk chunk=diamond_program_chunk(program);
-        chunk.name=canonical_manifest;
-        diamond_vm_init(vm);
-        vm_initialized=true;
-        const DiamondVmStatus status=diamond_vm_run(vm,&chunk,&result);
-        if(status!=DIAMOND_VM_OK) {
-            const char *detail=diamond_vm_error(vm);
-            (void)snprintf(loader->error,loader->error_capacity,
-                "%s:%zu: cut manifest '%s' failed: %s",
-                including_path,including_line,canonical_manifest,
-                detail!=nullptr?detail:diamond_vm_status_name(status));
-            ok=false;
-        }
-    }
-    if(ok&&(result.kind!=DIAMOND_VALUE_OBJECT||
-            result.as.object->kind!=DIAMOND_OBJECT_HASH)) {
-        (void)snprintf(loader->error,loader->error_capacity,
-            "%s:%zu: cut manifest '%s' must evaluate to a Hash",
-            including_path,including_line,canonical_manifest);
-        ok=false;
-    }
-    const DiamondHash *hash=ok?(const DiamondHash *)result.as.object:nullptr;
-    DiamondValue declared_name=DIAMOND_NIL;
-    if(ok&&(!manifest_hash_get_string(hash,"name",&declared_name)||
-            declared_name.kind!=DIAMOND_VALUE_OBJECT||
-            declared_name.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+    if(declared==nullptr||declared->kind!=DIAMOND_MANIFEST_STRING) {
         (void)snprintf(loader->error,loader->error_capacity,
             "%s:%zu: cut manifest '%s' must have a String 'name' key",
             including_path,including_line,canonical_manifest);
         ok=false;
+    } else if(strlen(declared->string)!=name_length||
+              memcmp(declared->string,name,name_length)!=0) {
+        (void)snprintf(loader->error,loader->error_capacity,
+            "%s:%zu: cut manifest '%s' declares name '%s', expected '%.*s'",
+            including_path,including_line,canonical_manifest,
+            declared->string,(int)name_length,name);
+        ok=false;
     }
-    if(ok) {
-        const DiamondString *declared=(const DiamondString *)declared_name.as.object;
-        if(declared->length!=name_length||memcmp(declared->chars,name,name_length)!=0) {
-            (void)snprintf(loader->error,loader->error_capacity,
-                "%s:%zu: cut manifest '%s' declares name '%.*s', expected '%.*s'",
-                including_path,including_line,canonical_manifest,
-                (int)declared->length,declared->chars,(int)name_length,name);
-            ok=false;
-        }
-    }
-    DiamondValue declared_version=DIAMOND_NIL;
-    if(ok&&manifest_hash_get_string(hash,"version",&declared_version)&&
-       (declared_version.kind!=DIAMOND_VALUE_OBJECT||
-        declared_version.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+    const DiamondManifestValue *version=diamond_manifest_get(manifest,"version");
+    if(ok&&version!=nullptr&&version->kind!=DIAMOND_MANIFEST_STRING) {
         (void)snprintf(loader->error,loader->error_capacity,
             "%s:%zu: cut manifest '%s' key 'version' must be a String",
             including_path,including_line,canonical_manifest);
         ok=false;
     }
-
-    if(vm_initialized)diamond_vm_free(vm);
-    free(manifest_source);diamond_program_free(program);free(program);free(vm);
+    diamond_manifest_free(manifest);
     return ok;
 }
 

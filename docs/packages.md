@@ -79,9 +79,8 @@ A cut may optionally include `cuts/<name>/diamond.cut` — a fixed filename,
 not parameterized by the cut's own name, since the same file also has to
 work unmodified as the manifest sitting at a dependency's own repository
 root before `facet` ever installs it anywhere (see "`facet`" below). If
-present, its last-expression value — the same "last line is the result"
-convention every Diamond program already has — must be a `Hash` with a
-String `name` key matching the cut's own directory exactly; a cut whose
+present, it must contain a data-only `Hash` with a String `name` key matching
+the cut's own directory exactly; a cut whose
 manifest disagrees with its own directory name fails the whole
 `require_cut` with a clear error rather than silently loading anyway
 (this is the manifest's actual payoff today: catching a cut that was
@@ -91,26 +90,16 @@ nothing reads its value yet, since there's no dependency resolution to
 consult it (see `docs/roadmap.md`).
 
 A manifest must contain a single data-only Hash literal. The loader and
-`facet` reject expressions, calls, and trailing code before compiling it.
-The validated literal is compiled and run **standalone**: it does not go through
-`require`/`require_cut`'s own loader pipeline, so neither is supported
-inside a manifest. A manifest is metadata, not a program — this keeps it
-to a single self-contained expression and avoids the loader recursing
-into itself to resolve a manifest's own dependencies. The literal guard
-prevents general package code from running while metadata is read. This is an
-interim step toward a parser that reads the literal without using the VM.
+`facet` parse it without compiling or running Diamond code. Expressions,
+calls, interpolation, duplicate keys, and trailing code are rejected.
+`require` and `require_cut` are not supported inside metadata.
 
 If no `diamond.cut` exists at all, none of this applies — the cut resolves
 exactly as it would with no manifest support at all.
 
-A manifest can be pretty-printed across multiple lines — a newline is
-allowed right after `{`, right after each `,`, and right before `}`
-(the natural positions a formatter would put one), matching the same
-support every other bracket-delimited list in the language has (array/
-hash literals, call arguments, parameter declarations, and more — see
-`docs/syntax.md`). Newlines are not accepted *inside* an entry (between
-a key and its `:`, or between `:` and the value) — an unusual style
-no formatter would actually produce.
+A manifest can be pretty-printed across multiple lines. Whitespace is allowed
+around keys, colons, values, commas, and braces. A trailing comma is accepted
+for compatibility with existing `facet.lock` files.
 
 ### Dependencies
 

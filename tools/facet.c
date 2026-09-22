@@ -1,7 +1,5 @@
 #define _XOPEN_SOURCE 700
-#include "compiler.h"
 #include "semver.h"
-#include "vm.h"
 #include "manifest_literal.h"
 
 #include <errno.h>
@@ -132,16 +130,6 @@ typedef struct FacetWorkQueue {
     size_t count;
 } FacetWorkQueue;
 
-/* DiamondProgram/DiamondVm are heap-allocated everywhere below, never
- * stack-declared: sizeof(DiamondProgram) is over 3MB (see the same note
- * in src/loader.c's validate_package_manifest, the pattern this file's
- * manifest/lockfile reading mirrors). */
-typedef struct FacetProgram {
-    DiamondProgram *program;
-    DiamondVm *vm;
-    bool vm_initialized;
-} FacetProgram;
-
 static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
@@ -188,6 +176,12 @@ static char *read_whole_file(const char *path, char *error, size_t error_size) {
     }
     if (fread(source, 1, (size_t)size, file) != (size_t)size) {
         (void)snprintf(error, error_size, "cannot read '%s'", path);
+        free(source);
+        fclose(file);
+        return nullptr;
+    }
+    if (memchr(source, '\0', (size_t)size) != nullptr) {
+        (void)snprintf(error, error_size, "'%s' contains a NUL byte", path);
         free(source);
         fclose(file);
         return nullptr;
@@ -419,145 +413,28 @@ static bool pick_best_matching_tag(char tags[][FACET_MAX_REF], size_t tag_count,
     return true;
 }
 
-/* --- manifest/lockfile reading: data-only Hash literals are validated,
- * then compiled and run standalone exactly the way src/loader.c's
- * validate_cut_manifest already evaluates a cut's own diamond.cut -
- * duplicated here rather than shared, since this needs a different
- * error-reporting shape (stderr + exit code, not a Loader error
- * buffer) and facet.lock has no counterpart in the runtime at all. --- */
-
-static bool hash_find(const DiamondHash *hash, const char *key, DiamondValue *out) {
-    const size_t key_length = strlen(key);
-    for (size_t index = 0; index < hash->count; index++) {
-        const DiamondValue candidate = hash->entries[index].key;
-        if (candidate.kind != DIAMOND_VALUE_OBJECT ||
-            candidate.as.object->kind != DIAMOND_OBJECT_STRING) continue;
-        const DiamondString *string = (const DiamondString *)candidate.as.object;
-        if (string->length == key_length &&
-            memcmp(string->chars, key, key_length) == 0) {
-            *out = hash->entries[index].value;
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool hash_find_string(const DiamondHash *hash, const char *key, char *out,
-                             size_t out_size) {
-    DiamondValue value;
-    if (!hash_find(hash, key, &value)) return false;
-    if (value.kind != DIAMOND_VALUE_OBJECT ||
-        value.as.object->kind != DIAMOND_OBJECT_STRING) return false;
-    const DiamondString *string = (const DiamondString *)value.as.object;
-    if (string->length >= out_size) return false;
-    memcpy(out, string->chars, string->length);
-    out[string->length] = '\0';
-    return true;
-}
-
-static bool facet_run_hash(const char *path, FacetProgram *owner,
-                           const DiamondHash **out_hash, char *error,
-                           size_t error_size) {
-    /* calloc, not malloc: diamond_compile_impl's own first act is
-     * diamond_program_free(program) (src/compiler.c), so it can be
-     * called again to recompile an already-populated program -- that's
-     * only safe when `program` starts out already valid (compiler.h's
-     * own diamond_program_init doc comment: "Zeroes *program..."), not
-     * freshly malloc'd garbage. Every other real caller gets this for
-     * free (a `static`/global DiamondProgram is zero-initialized by C
-     * itself, or it's already been through a prior diamond_program_
-     * init/diamond_compile call) -- this is the one heap-allocated,
-     * first-use case, so it has to ask for the zero-fill explicitly.
-     * Found via a from-scratch ASan/UBSan build of facet (never done
-     * before this file existed) crashing (SEGV freeing garbage
-     * pointers, UBSan flagging a garbage `bool`) on the very first
-     * diamond_compile call, reproduced identically on facet.c before
-     * this commit's own changes -- pre-existing, unrelated to this
-     * commit's actual feature work. diamond_vm_init has no equivalent
-     * issue: it unconditionally overwrites every field via a struct-
-     * literal assignment rather than reading anything first, so `vm`
-     * staying a plain malloc is fine. */
-    owner->program = calloc(1, sizeof *owner->program);
-    owner->vm = malloc(sizeof *owner->vm);
-    owner->vm_initialized = false;
-    if (owner->program == nullptr || owner->vm == nullptr) {
-        (void)snprintf(error, error_size, "out of memory reading '%s'", path);
-        return false;
-    }
+/* Read manifest and lockfile metadata without compiling or executing it. */
+static DiamondManifestValue *facet_read_hash(const char *path, char *error,
+                                             size_t error_size) {
     char *source = read_whole_file(path, error, error_size);
-    if (source == nullptr) return false;
-    char literal_error[160];
-    if (!diamond_manifest_literal_validate(source, literal_error,
-                                           sizeof literal_error)) {
-        (void)snprintf(error, error_size, "'%s' must be data only: %s",
-                       path, literal_error);
-        free(source);
-        return false;
-    }
-    DiamondDiagnostic diagnostic;
-    if (!diamond_compile(source, owner->program, &diagnostic)) {
-        (void)snprintf(error, error_size, "'%s' failed to compile at line %zu: %s",
-                       path, diagnostic.span.line, diagnostic.message);
-        free(source);
-        return false;
-    }
+    if (source == NULL) return NULL;
+    char detail[160];
+    DiamondManifestValue *hash = diamond_manifest_parse(source, detail, sizeof detail);
     free(source);
-    DiamondChunk chunk = diamond_program_chunk(owner->program);
-    chunk.name = path;
-    diamond_vm_init(owner->vm);
-    owner->vm_initialized = true;
-    DiamondValue result = DIAMOND_NIL;
-    const DiamondVmStatus status = diamond_vm_run(owner->vm, &chunk, &result);
-    if (status != DIAMOND_VM_OK) {
-        const char *detail = diamond_vm_error(owner->vm);
-        (void)snprintf(error, error_size, "'%s' failed: %s", path,
-                       detail != nullptr ? detail : diamond_vm_status_name(status));
-        return false;
-    }
-    if (result.kind != DIAMOND_VALUE_OBJECT ||
-        result.as.object->kind != DIAMOND_OBJECT_HASH) {
-        (void)snprintf(error, error_size, "'%s' must evaluate to a Hash", path);
-        return false;
-    }
-    *out_hash = (const DiamondHash *)result.as.object;
-    return true;
+    if (hash == NULL)
+        (void)snprintf(error, error_size, "'%s' must be data only: %s", path, detail);
+    return hash;
 }
 
-static void facet_program_free(FacetProgram *owner) {
-    if (owner->vm_initialized) diamond_vm_free(owner->vm);
-    /* diamond_program_free releases the program's own internal dynamic
-     * arrays (bytecode, constants, strings, type sets, and every
-     * compiled function's own copies of those) -- a second pre-existing
-     * bug found by the same from-scratch ASan/UBSan build that caught
-     * the calloc issue above: this only ever freed the outer
-     * `*owner->program` block itself, leaking everything diamond_compile
-     * allocated inside it on every single manifest/lockfile read.
-     * Harmless in practice (facet is a short-lived CLI process; the OS
-     * reclaims everything at exit either way), but a real, fixable leak
-     * caught by the same investigation, not a new risk introduced by it. */
-    diamond_program_free(owner->program);
-    free(owner->program);
-    free(owner->vm);
-}
-
-static bool parse_dependencies(const DiamondHash *dependencies,
+static bool parse_dependencies(const DiamondManifestValue *dependencies,
                                FacetManifest *manifest, char *error,
                                size_t error_size) {
-    for (size_t index = 0; index < dependencies->count; index++) {
-        const DiamondValue key = dependencies->entries[index].key;
-        const DiamondValue value = dependencies->entries[index].value;
-        if (key.kind != DIAMOND_VALUE_OBJECT ||
-            key.as.object->kind != DIAMOND_OBJECT_STRING) {
+    for (const DiamondManifestValue *value = dependencies->children;
+         value != NULL; value = value->next) {
+        const char *name_string = value->key;
+        if (value->kind != DIAMOND_MANIFEST_HASH) {
             (void)snprintf(error, error_size,
-                           "dependency name must be a String");
-            return false;
-        }
-        const DiamondString *name_string = (const DiamondString *)key.as.object;
-        if (value.kind != DIAMOND_VALUE_OBJECT ||
-            value.as.object->kind != DIAMOND_OBJECT_HASH) {
-            (void)snprintf(error, error_size,
-                           "dependency spec for '%.*s' must be a Hash",
-                           (int)name_string->length, name_string->chars);
+                           "dependency spec for '%s' must be a Hash", name_string);
             return false;
         }
         if (manifest->dependency_count == FACET_MAX_DEPENDENCIES) {
@@ -568,20 +445,20 @@ static bool parse_dependencies(const DiamondHash *dependencies,
         }
         FacetDependency *dependency =
             &manifest->dependencies[manifest->dependency_count];
-        if (name_string->length >= sizeof dependency->name) {
+        if (strlen(name_string) >= sizeof dependency->name) {
             (void)snprintf(error, error_size, "dependency name is too long");
             return false;
         }
-        memcpy(dependency->name, name_string->chars, name_string->length);
-        dependency->name[name_string->length] = '\0';
+        memcpy(dependency->name, name_string, strlen(name_string));
+        dependency->name[strlen(name_string)] = '\0';
         if (!is_safe_field(dependency->name)) {
             (void)snprintf(error, error_size,
                            "dependency name '%s' contains an invalid character",
                            dependency->name);
             return false;
         }
-        const DiamondHash *spec = (const DiamondHash *)value.as.object;
-        if (!hash_find_string(spec, "git", dependency->git, sizeof dependency->git) ||
+        const DiamondManifestValue *spec = value;
+        if (!diamond_manifest_get_string(spec, "git", dependency->git, sizeof dependency->git) ||
             !is_safe_field(dependency->git)) {
             (void)snprintf(error, error_size,
                            "dependency '%s' is missing a valid String 'git' key",
@@ -590,19 +467,19 @@ static bool parse_dependencies(const DiamondHash *dependencies,
         }
         int ref_keys = 0;
         FacetRefKind ref_kind = FACET_REF_TAG;
-        if (hash_find_string(spec, "tag", dependency->ref, sizeof dependency->ref)) {
+        if (diamond_manifest_get_string(spec, "tag", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
             ref_kind = FACET_REF_TAG;
         }
-        if (hash_find_string(spec, "branch", dependency->ref, sizeof dependency->ref)) {
+        if (diamond_manifest_get_string(spec, "branch", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
             ref_kind = FACET_REF_BRANCH;
         }
-        if (hash_find_string(spec, "commit", dependency->ref, sizeof dependency->ref)) {
+        if (diamond_manifest_get_string(spec, "commit", dependency->ref, sizeof dependency->ref)) {
             ref_keys++;
             ref_kind = FACET_REF_COMMIT;
         }
-        const bool has_version = hash_find_string(spec, "version", dependency->version_text,
+        const bool has_version = diamond_manifest_get_string(spec, "version", dependency->version_text,
             sizeof dependency->version_text);
         if (has_version) {
             ref_keys++;
@@ -637,50 +514,42 @@ static bool parse_dependencies(const DiamondHash *dependencies,
 static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size) {
     memset(manifest, 0, sizeof *manifest);
-    FacetProgram owner = {};
-    const DiamondHash *hash = nullptr;
-    bool ok = facet_run_hash(path, &owner, &hash, error, error_size);
-    if (ok && (!hash_find_string(hash, "name", manifest->name,
-                                 sizeof manifest->name) ||
-              !is_safe_field(manifest->name))) {
+    DiamondManifestValue *hash = facet_read_hash(path, error, error_size);
+    if (hash == NULL) return false;
+    bool ok = true;
+    if (!diamond_manifest_get_string(hash, "name", manifest->name,
+                                     sizeof manifest->name) ||
+        !is_safe_field(manifest->name)) {
         (void)snprintf(error, error_size,
                        "'%s' must have a valid String 'name' key", path);
         ok = false;
     }
-    if (ok) {
-        manifest->has_version = hash_find_string(hash, "version",
+    if (ok)
+        manifest->has_version = diamond_manifest_get_string(hash, "version",
             manifest->version, sizeof manifest->version);
-    }
-    DiamondValue dependencies_value;
-    if (ok && hash_find(hash, "dependencies", &dependencies_value)) {
-        if (dependencies_value.kind != DIAMOND_VALUE_OBJECT ||
-            dependencies_value.as.object->kind != DIAMOND_OBJECT_HASH) {
+    const DiamondManifestValue *dependencies = diamond_manifest_get(hash, "dependencies");
+    if (ok && dependencies != NULL) {
+        if (dependencies->kind != DIAMOND_MANIFEST_HASH) {
             (void)snprintf(error, error_size,
                            "'%s' key 'dependencies' must be a Hash", path);
             ok = false;
-        } else if (!parse_dependencies(
-                (const DiamondHash *)dependencies_value.as.object, manifest,
-                error, error_size)) {
+        } else if (!parse_dependencies(dependencies, manifest, error, error_size)) {
             ok = false;
         }
     }
-    facet_program_free(&owner);
+    diamond_manifest_free(hash);
     return ok;
 }
 
 static bool parse_lockfile(const char *path, FacetResolution *resolution,
                            char *error, size_t error_size) {
     resolution->count = 0;
-    FacetProgram owner = {};
-    const DiamondHash *hash = nullptr;
-    bool ok = facet_run_hash(path, &owner, &hash, error, error_size);
-    for (size_t index = 0; ok && index < hash->count; index++) {
-        const DiamondValue key = hash->entries[index].key;
-        const DiamondValue value = hash->entries[index].value;
-        if (key.kind != DIAMOND_VALUE_OBJECT ||
-            key.as.object->kind != DIAMOND_OBJECT_STRING ||
-            value.kind != DIAMOND_VALUE_OBJECT ||
-            value.as.object->kind != DIAMOND_OBJECT_HASH) {
+    DiamondManifestValue *hash = facet_read_hash(path, error, error_size);
+    if (hash == NULL) return false;
+    bool ok = true;
+    for (const DiamondManifestValue *entry = hash->children;
+         ok && entry != NULL; entry = entry->next) {
+        if (entry->kind != DIAMOND_MANIFEST_HASH) {
             (void)snprintf(error, error_size, "'%s' has a malformed entry", path);
             ok = false;
             break;
@@ -691,19 +560,17 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
             break;
         }
         FacetResolved *resolved = &resolution->packages[resolution->count];
-        const DiamondString *name_string = (const DiamondString *)key.as.object;
-        if (name_string->length >= sizeof resolved->name) {
-            (void)snprintf(error, error_size, "package name in '%s' is too long",
-                           path);
+        const char *name_string = entry->key;
+        if (strlen(name_string) >= sizeof resolved->name) {
+            (void)snprintf(error, error_size, "package name in '%s' is too long", path);
             ok = false;
             break;
         }
-        memcpy(resolved->name, name_string->chars, name_string->length);
-        resolved->name[name_string->length] = '\0';
-        const DiamondHash *entry = (const DiamondHash *)value.as.object;
-        if (!hash_find_string(entry, "git", resolved->git, sizeof resolved->git) ||
-            !hash_find_string(entry, "commit", resolved->commit,
-                              sizeof resolved->commit) ||
+        strcpy(resolved->name, name_string);
+        if (!diamond_manifest_get_string(entry, "git", resolved->git,
+                                         sizeof resolved->git) ||
+            !diamond_manifest_get_string(entry, "commit", resolved->commit,
+                                         sizeof resolved->commit) ||
             !is_safe_field(resolved->name) || !is_safe_field(resolved->git) ||
             !is_safe_field(resolved->commit)) {
             (void)snprintf(error, error_size,
@@ -714,15 +581,12 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
         }
         resolved->ref[0] = '\0';
         resolved->required_by[0] = '\0';
-        /* Purely informational if present -- `facet install` from a
-         * lockfile never re-resolves, so nothing here reads it back;
-         * `facet update` always re-resolves from diamond.cut instead of
-         * consulting the old lockfile at all (see run_install_or_update). */
         resolved->version[0] = '\0';
-        (void)hash_find_string(entry, "version", resolved->version, sizeof resolved->version);
+        (void)diamond_manifest_get_string(entry, "version", resolved->version,
+                                          sizeof resolved->version);
         resolution->count++;
     }
-    facet_program_free(&owner);
+    diamond_manifest_free(hash);
     return ok;
 }
 
