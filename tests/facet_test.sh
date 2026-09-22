@@ -754,6 +754,32 @@ digest="$(sha256sum one.tar | cut -d' ' -f1)"
 "$facet" verify one.tar --sha256 "$digest" > verify_output
 grep -q '^facet: verified checkcut 1.2.0 (5 files)$' verify_output
 
+# A crafted archive must not bypass the literal-import checks used by
+# `facet check`. Change only payload bytes, keeping canonical tar headers.
+for import in 'require "../../x"' 'require_cut "missing"'; do
+    cp one.tar imported.tar
+    python3 - imported.tar "$import" <<'PY'
+import sys
+import tarfile
+
+path, statement = sys.argv[1:]
+with tarfile.open(path) as archive:
+    member = archive.getmember("lib/checkcut.di")
+payload = (statement + "\n").encode().ljust(member.size, b" ")
+assert len(payload) == member.size
+with open(path, "r+b") as archive:
+    archive.seek(member.offset_data)
+    archive.write(payload)
+PY
+    error_file="$(mktemp)"
+    if "$facet" verify imported.tar >/dev/null 2>"$error_file"; then
+        echo "facet verify accepted an unsafe import" >&2
+        exit 1
+    fi
+    grep -Eq 'imports outside the cut|imports undeclared cut' "$error_file"
+    rm -f "$error_file"
+done
+
 error_file="$(mktemp)"
 if "$facet" verify one.tar --sha256 "$(printf '0%.0s' {1..64})" >/dev/null 2>"$error_file"; then
     echo "facet verify accepted the wrong digest" >&2
@@ -819,4 +845,4 @@ actual="$(cd packaged_project && "$diamond" -e 'require_cut "network_safety"
 resolve_public_hostname("http://8.8.8.8/x")["host"]')"
 [[ "$actual" == "8.8.8.8" ]]
 
-echo "139 facet tests passed"
+echo "141 facet tests passed"

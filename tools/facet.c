@@ -1946,24 +1946,16 @@ static bool import_escapes_cut(const char *source_path, const char *target) {
     return false;
 }
 
-static bool audit_cut_imports(const char *root, const FacetFileList *files,
-                              const DiamondManifestValue *dependencies,
-                              char *error, size_t error_size) {
-    for (size_t i = 0; i < files->count; i++) {
-        const char *relative = files->paths[i];
-        size_t length = strlen(relative);
-        if ((strncmp(relative, "lib/", 4) != 0 &&
-             strncmp(relative, "bin/", 4) != 0) ||
-            length < 3 || strcmp(relative + length - 3, ".di") != 0)
-            continue;
-        char path[FACET_MAX_PATH];
-        if (snprintf(path, sizeof path, "%s/%s", root, relative) >=
-            (int)sizeof path) {
-            (void)snprintf(error, error_size, "runtime source path is too long");
-            return false;
-        }
-        char *source = read_whole_file(path, error, error_size);
-        if (source == NULL) return false;
+static bool runtime_source_path(const char *relative) {
+    size_t length = strlen(relative);
+    return (strncmp(relative, "lib/", 4) == 0 ||
+            strncmp(relative, "bin/", 4) == 0) &&
+           length >= 3 && strcmp(relative + length - 3, ".di") == 0;
+}
+
+static bool audit_source_imports(char *source, const char *relative,
+                                 const DiamondManifestValue *dependencies,
+                                 char *error, size_t error_size) {
         for (char *line = source; *line != '\0';) {
             char *end = strchr(line, '\n');
             if (end != NULL) *end = '\0';
@@ -1985,13 +1977,11 @@ static bool audit_cut_imports(const char *root, const FacetFileList *files,
                             diamond_manifest_get(dependencies, value) == NULL)) {
                             (void)snprintf(error, error_size,
                                 "%s imports undeclared cut '%s'", relative, value);
-                            free(source);
                             return false;
                         }
                         if (local && import_escapes_cut(relative, value)) {
                             (void)snprintf(error, error_size,
                                 "%s imports outside the cut: %s", relative, value);
-                            free(source);
                             return false;
                         }
                     }
@@ -2000,7 +1990,26 @@ static bool audit_cut_imports(const char *root, const FacetFileList *files,
             if (end == NULL) break;
             line = end + 1;
         }
+    return true;
+}
+
+static bool audit_cut_imports(const char *root, const FacetFileList *files,
+                              const DiamondManifestValue *dependencies,
+                              char *error, size_t error_size) {
+    for (size_t i = 0; i < files->count; i++) {
+        const char *relative = files->paths[i];
+        if (!runtime_source_path(relative)) continue;
+        char path[FACET_MAX_PATH];
+        if (snprintf(path, sizeof path, "%s/%s", root, relative) >=
+            (int)sizeof path) {
+            (void)snprintf(error, error_size, "runtime source path is too long");
+            return false;
+        }
+        char *source = read_whole_file(path, error, error_size);
+        if (source == NULL) return false;
+        bool ok = audit_source_imports(source, relative, dependencies, error, error_size);
         free(source);
+        if (!ok) return false;
     }
     return true;
 }
@@ -2033,6 +2042,12 @@ static int cmd_verify(int argc, char **argv) {
         return 65;
     }
     FacetFileList files = {0};
+    char **runtime_sources = calloc(4096, sizeof *runtime_sources);
+    if (runtime_sources == NULL) {
+        fclose(archive);
+        fputs("facet: out of memory reading archive\n", stderr);
+        return 65;
+    }
     char *manifest_source = NULL;
     unsigned long long total_bytes = 0;
     bool ok = true, ended = false;
@@ -2125,6 +2140,22 @@ static int cmd_verify(int argc, char **argv) {
                 ok = false;
                 break;
             }
+        } else if (runtime_source_path(path)) {
+            char *source = malloc((size_t)size + 1);
+            if (source == NULL || fread(source, 1, (size_t)size, archive) != (size_t)size) {
+                free(source);
+                (void)snprintf(error, sizeof error, "truncated archive source: %s", path);
+                ok = false;
+                break;
+            }
+            source[size] = '\0';
+            if (memchr(source, '\0', (size_t)size) != NULL) {
+                free(source);
+                (void)snprintf(error, sizeof error, "NUL in archive source: %s", path);
+                ok = false;
+                break;
+            }
+            runtime_sources[files.count - 1] = source;
         } else {
             unsigned char buffer[8192];
             unsigned long long remaining = size;
@@ -2243,6 +2274,17 @@ static int cmd_verify(int argc, char **argv) {
             }
         }
     }
+    if (ok) {
+        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+        for (size_t i = 0; i < files.count; i++) {
+            if (runtime_sources[i] != NULL &&
+                !audit_source_imports(runtime_sources[i], files.paths[i], dependencies,
+                                      error, sizeof error)) {
+                ok = false;
+                break;
+            }
+        }
+    }
     bool has_readme = false, has_license = false, has_entry = false;
     if (ok) {
         char entry[128];
@@ -2267,6 +2309,8 @@ static int cmd_verify(int argc, char **argv) {
     }
     diamond_manifest_free(manifest);
     free(manifest_source);
+    for (size_t i = 0; i < files.count; i++) free(runtime_sources[i]);
+    free(runtime_sources);
     free_file_list(&files);
     return ok ? 0 : 65;
 }

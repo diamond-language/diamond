@@ -65,7 +65,8 @@ safety exclusions.
 `facet verify <archive.tar> [--sha256 <digest>]` checks this exact archive
 format without extracting files or running cut code. It rejects unsafe paths,
 noncanonical headers, unexpected bytes, missing required files, and invalid
-release metadata, then reports the cut identity and SHA-256 digest. Supplying
+release metadata. It applies the same literal-import audit as `facet check`,
+then reports the cut identity and SHA-256 digest. Supplying
 `--sha256` requires the archive bytes to match the expected digest. A future
 locked install must use that expected-digest form before extraction; an
 unqualified `verify` is useful for inspecting a local archive but cannot
