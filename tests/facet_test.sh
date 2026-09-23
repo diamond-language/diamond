@@ -316,7 +316,7 @@ if (cd project5 && "$facet" install) >/dev/null 2>"$error_file"; then
     echo "facet install unexpectedly accepted a dependency with no git key" >&2
     exit 1
 fi
-grep -q "missing a valid String 'git' key" "$error_file"
+grep -q "must specify exactly one of git or registry" "$error_file"
 rm -f "$error_file"
 
 # none of the above malformed-manifest cases should ever have cloned anything
@@ -568,6 +568,20 @@ mkdir project21
     "$facet" install >/dev/null)
 [[ -f project21/cuts/semver/semver.di ]]
 
+mkdir project21_registry
+(cd project21_registry && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --registry https://cuts.example/api \
+        --version "^1.0.0" >/dev/null)
+[[ "$(cd project21_registry && "$diamond" diamond.cut)" == \
+    "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.0.0}}}" ]]
+error_file="$(mktemp)"
+if (cd project21_registry && "$facet" update) >/dev/null 2>"$error_file"; then
+    echo "facet unexpectedly resolved a registry dependency without metadata support" >&2
+    exit 1
+fi
+grep -q "registry resolution for dependency 'greeter' is not implemented yet" "$error_file"
+rm -f "$error_file"
+
 # --- facet add: rejects a duplicate name, an ambiguous or missing ref,
 # an invalid version constraint, and running before facet init ---
 
@@ -599,6 +613,25 @@ if (cd project22 && "$facet" add other --git "$work/greeter_repo" \
     exit 1
 fi
 grep -q "specify exactly one of --tag, --branch, --commit, --version" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add other --git "$work/greeter_repo" \
+        --registry https://cuts.example --version '^1.0.0') \
+        >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly accepted mixed sources" >&2
+    exit 1
+fi
+grep -q "exactly one of --git or --registry" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if (cd project22 && "$facet" add other --registry http://cuts.example \
+        --version '^1.0.0') >/dev/null 2>"$error_file"; then
+    echo "facet add unexpectedly accepted an insecure registry" >&2
+    exit 1
+fi
+grep -q "not a valid registry URL" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

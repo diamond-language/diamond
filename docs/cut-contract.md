@@ -147,7 +147,9 @@ lockfiles are not used to resolve a consumer's graph.
 ## Compatibility with the current implementation
 
 Current `facet` accepts Git dependencies shaped like `{"git": URL,
-"version": RANGE}` and derives available versions from Git tags. Both `facet`
+"version": RANGE}` and registry dependencies shaped like
+`{"registry": HTTPS_URL, "version": RANGE}`. Git versions are derived from
+tags; registry resolution is the next implementation step. Both `facet`
 and `require_cut` parse metadata without executing it. All bundled cuts now
 have release metadata and license files, declare their runtime dependencies,
 and pass local archive checks. Dependent cuts load their dependencies through

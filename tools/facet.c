@@ -45,7 +45,9 @@ typedef enum FacetRefKind {
 
 typedef struct FacetDependency {
     char name[FACET_MAX_NAME];
+    FacetSource source;
     char git[FACET_MAX_URL];
+    char registry[FACET_MAX_URL];
     /* Exactly one of (ref, ref_kind) or (uses_version, version_text)
      * is meaningful, set at manifest-parse time by parse_dependencies --
      * see docs/roadmap.md's "Real semver dependency resolution". */
@@ -515,10 +517,20 @@ static bool parse_dependencies(const DiamondManifestValue *dependencies,
             return false;
         }
         const DiamondManifestValue *spec = value;
-        if (!diamond_manifest_get_string(spec, "git", dependency->git, sizeof dependency->git) ||
-            !is_safe_field(dependency->git)) {
+        const bool has_git = diamond_manifest_get_string(spec, "git", dependency->git,
+                                                          sizeof dependency->git);
+        const bool has_registry = diamond_manifest_get_string(spec, "registry",
+            dependency->registry, sizeof dependency->registry);
+        if (has_git == has_registry) {
             (void)snprintf(error, error_size,
-                           "dependency '%s' is missing a valid String 'git' key",
+                           "dependency '%s' must specify exactly one of git or registry",
+                           dependency->name);
+            return false;
+        }
+        dependency->source = has_registry ? FACET_SOURCE_REGISTRY : FACET_SOURCE_GIT;
+        if ((has_git && !is_safe_field(dependency->git)) ||
+            (has_registry && !valid_registry_url(dependency->registry))) {
+            (void)snprintf(error, error_size, "dependency '%s' has an invalid source",
                            dependency->name);
             return false;
         }
@@ -553,6 +565,26 @@ static bool parse_dependencies(const DiamondManifestValue *dependencies,
                     dependency->name, dependency->version_text);
                 return false;
             }
+        }
+        for (const DiamondManifestValue *field = spec->children;
+             field != NULL; field = field->next) {
+            bool allowed = strcmp(field->key, has_registry ? "registry" : "git") == 0 ||
+                strcmp(field->key, "version") == 0 ||
+                (!has_registry && (strcmp(field->key, "tag") == 0 ||
+                                    strcmp(field->key, "branch") == 0 ||
+                                    strcmp(field->key, "commit") == 0));
+            if (!allowed) {
+                (void)snprintf(error, error_size,
+                    "dependency '%s' has unknown or mixed-source key '%s'",
+                    dependency->name, field->key);
+                return false;
+            }
+        }
+        if (has_registry && (!has_version || ref_keys != 1)) {
+            (void)snprintf(error, error_size,
+                "registry dependency '%s' must specify exactly one version constraint",
+                dependency->name);
+            return false;
         }
         if (ref_keys != 1 || (!has_version && !is_safe_field(dependency->ref))) {
             (void)snprintf(error, error_size,
@@ -774,8 +806,10 @@ static bool write_manifest(const char *path, const FacetManifest *manifest,
         fputs(",\n  \"dependencies\": {\n", file);
         for (size_t index = 0; index < manifest->dependency_count; index++) {
             const FacetDependency *dependency = &manifest->dependencies[index];
-            fprintf(file, "    \"%s\": {\"git\": \"%s\", ", dependency->name,
-                    dependency->git);
+            fprintf(file, "    \"%s\": {\"%s\": \"%s\", ", dependency->name,
+                    dependency->source == FACET_SOURCE_REGISTRY ? "registry" : "git",
+                    dependency->source == FACET_SOURCE_REGISTRY ? dependency->registry :
+                                                                  dependency->git);
             if (dependency->uses_version) {
                 fprintf(file, "\"version\": \"%s\"}", dependency->version_text);
             } else {
@@ -1097,6 +1131,12 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     bool *needs_restart, char *error, size_t error_size) {
     for (size_t index = 0; index < manifest->dependency_count; index++) {
         const FacetDependency *dependency = &manifest->dependencies[index];
+        if (dependency->source == FACET_SOURCE_REGISTRY) {
+            (void)snprintf(error, error_size,
+                "registry resolution for dependency '%s' is not implemented yet; "
+                "install requires an existing facet.lock", dependency->name);
+            return false;
+        }
         if (dependency->uses_version) {
             if (!handle_version_dependency(dependency, required_by, resolution, pending,
                                            history, needs_restart, error, error_size)) {
@@ -1705,17 +1745,20 @@ static int cmd_init(int argc, char **argv) {
 
 static int cmd_add(int argc, char **argv) {
     if (argc < 4) {
-        fputs("usage: facet add <name> --git <url> "
-              "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
+        fputs("usage: facet add <name> (--git <url> "
+              "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
+              "| --registry <url> --version <constraint>)\n",
               stderr);
         return 64;
     }
     const char *name = argv[2];
     const char *git = nullptr;
+    const char *registry = nullptr;
     const char *tag = nullptr, *branch = nullptr, *commit = nullptr, *version = nullptr;
     for (int index = 3; index < argc; index++) {
         const char *flag = argv[index];
         const char **slot = strcmp(flag, "--git") == 0 ? &git
+            : strcmp(flag, "--registry") == 0 ? &registry
             : strcmp(flag, "--tag") == 0 ? &tag
             : strcmp(flag, "--branch") == 0 ? &branch
             : strcmp(flag, "--commit") == 0 ? &commit
@@ -1731,8 +1774,8 @@ static int cmd_add(int argc, char **argv) {
         }
         *slot = argv[++index];
     }
-    if (git == nullptr) {
-        fprintf(stderr, "facet: --git is required\n");
+    if ((git == nullptr) == (registry == nullptr)) {
+        fprintf(stderr, "facet: specify exactly one of --git or --registry\n");
         return 64;
     }
     const int ref_count = (tag != nullptr) + (branch != nullptr) +
@@ -1740,6 +1783,10 @@ static int cmd_add(int argc, char **argv) {
     if (ref_count != 1) {
         fprintf(stderr,
                 "facet: specify exactly one of --tag, --branch, --commit, --version\n");
+        return 64;
+    }
+    if (registry != nullptr && version == nullptr) {
+        fprintf(stderr, "facet: --registry requires --version\n");
         return 64;
     }
     if (!file_exists("diamond.cut")) {
@@ -1766,8 +1813,12 @@ static int cmd_add(int argc, char **argv) {
             return 65;
         }
     }
-    if (git[0] == '\0' || !is_safe_field(git)) {
+    if (git != nullptr && (git[0] == '\0' || !is_safe_field(git))) {
         fprintf(stderr, "facet: '%s' is not a valid git URL\n", git);
+        return 64;
+    }
+    if (registry != nullptr && !valid_registry_url(registry)) {
+        fprintf(stderr, "facet: '%s' is not a valid registry URL\n", registry);
         return 64;
     }
     if (manifest.dependency_count == FACET_MAX_DEPENDENCIES) {
@@ -1778,7 +1829,11 @@ static int cmd_add(int argc, char **argv) {
     FacetDependency *dependency = &manifest.dependencies[manifest.dependency_count];
     memset(dependency, 0, sizeof *dependency);
     (void)snprintf(dependency->name, sizeof dependency->name, "%s", name);
-    (void)snprintf(dependency->git, sizeof dependency->git, "%s", git);
+    dependency->source = registry != nullptr ? FACET_SOURCE_REGISTRY : FACET_SOURCE_GIT;
+    if (registry != nullptr)
+        (void)snprintf(dependency->registry, sizeof dependency->registry, "%s", registry);
+    else
+        (void)snprintf(dependency->git, sizeof dependency->git, "%s", git);
     if (version != nullptr) {
         if (version[0] == '\0' || strlen(version) >= sizeof dependency->version_text ||
             !is_safe_field(version)) {
@@ -2858,8 +2913,9 @@ static void print_usage(void) {
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
           "       facet verify <archive.tar> [--sha256 <digest>]\n"
-          "       facet add <name> --git <url> "
-          "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
+          "       facet add <name> (--git <url> "
+          "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
+          "| --registry <url> --version <constraint>)\n",
           stderr);
 }
 

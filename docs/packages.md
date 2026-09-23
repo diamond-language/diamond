@@ -136,8 +136,11 @@ runtime's own manifest validation ignores it entirely, so adding it to
 an existing manifest changes nothing about how `require_cut` behaves. It's
 a `Hash` from cut name to a spec `Hash` with a required String
 `git` key and **exactly one** of `tag`, `branch`, `commit`, or `version`
-(also String) — ambiguous or missing ref/version keys are rejected
-before anything is fetched.
+(also String), or a `registry` HTTPS URL with exactly one `version` constraint.
+Git and registry fields cannot be mixed. Ambiguous or missing source/ref/version
+keys are rejected before anything is fetched. Registry dependencies can be
+written today, but resolving them into a new lock remains under development;
+an existing registry lock can already be installed.
 
 `version` is a semver range/constraint instead of a pinned ref —
 `^1.2.3` (compatible-with, semver's own "don't change the left-most
@@ -263,6 +266,7 @@ surprising `require_cut` later.
 facet init [name]     # writes a fresh diamond.cut; defaults name to the
                        # current directory's own basename if omitted
 facet add <name> --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
+facet add <name> --registry <https-url> --version <constraint>
 ```
 
 `facet init` refuses to run if `diamond.cut` already exists — it never
