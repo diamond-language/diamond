@@ -17,6 +17,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `facet` now reads and validates registry lock records separately from Git
+  records, including canonical versions, HTTPS source URLs, SHA-256 digests,
+  and bounded artifact sizes. Registry downloading remains a later step.
 - Persistent `diamond build` AOT caches now use a SHA-256 fingerprint of the
   runtime sources, headers, build configuration, and embedded prelude. Replacing
   a source checkout with older-timestamped files can no longer reuse an

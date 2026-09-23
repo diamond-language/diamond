@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 typedef struct LiteralParser {
     const char *source;
@@ -208,10 +209,23 @@ static DiamondManifestValue *parse_value(LiteralParser *parser) {
         value->string = parse_string(parser);
         if (value->string != NULL) return value;
     } else if (c == '-' || isdigit((unsigned char)c)) {
-        if (c == '-') parser->position++;
         size_t start = parser->position;
+        if (c == '-') parser->position++;
+        size_t digits = parser->position;
         while (isdigit((unsigned char)parser->source[parser->position])) parser->position++;
-        if (start != parser->position) return value;
+        if (digits != parser->position) {
+            size_t length = parser->position - start;
+            value->string = malloc(length + 1);
+            if (value->string == NULL) {
+                fail(parser, "out of memory");
+                free(value);
+                return NULL;
+            }
+            memcpy(value->string, parser->source + start, length);
+            value->string[length] = '\0';
+            value->kind = DIAMOND_MANIFEST_INTEGER;
+            return value;
+        }
         fail(parser, "expected integer");
     } else {
         const char *keywords[] = {"true", "false", "nil"};
@@ -266,5 +280,20 @@ bool diamond_manifest_get_string(const DiamondManifestValue *hash, const char *k
     size_t length = strlen(value->string);
     if (length >= out_size) return false;
     memcpy(out, value->string, length + 1);
+    return true;
+}
+
+bool diamond_manifest_get_u64(const DiamondManifestValue *hash, const char *key,
+                              uint64_t *out) {
+    const DiamondManifestValue *value = diamond_manifest_get(hash, key);
+    if (value == NULL || value->kind != DIAMOND_MANIFEST_INTEGER ||
+        value->string[0] == '-') return false;
+    uint64_t result = 0;
+    for (const char *cursor = value->string; *cursor != '\0'; cursor++) {
+        unsigned digit = (unsigned)(*cursor - '0');
+        if (result > (UINT64_MAX - digit) / 10) return false;
+        result = result * 10 + digit;
+    }
+    *out = result;
     return true;
 }

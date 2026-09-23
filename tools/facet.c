@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <stdint.h>
 
 enum {
     FACET_MAX_NAME = 64,
@@ -22,7 +23,13 @@ enum {
     FACET_MAX_PATH = 4096,
     FACET_MAX_COMMIT = 80,
     FACET_MAX_DEPENDENCIES = 64,
+    FACET_MAX_ARCHIVE_SIZE = 64 * 1024 * 1024,
 };
+
+typedef enum FacetSource {
+    FACET_SOURCE_GIT,
+    FACET_SOURCE_REGISTRY,
+} FacetSource;
 
 /* Which literal manifest key a dependency's ref came from -- needed (not
  * just for resolution, which treats tag/branch/commit identically via
@@ -58,7 +65,11 @@ typedef struct FacetManifest {
 
 typedef struct FacetResolved {
     char name[FACET_MAX_NAME];
+    FacetSource source;
     char git[FACET_MAX_URL];
+    char registry[FACET_MAX_URL];
+    char sha256[65];
+    uint64_t size;
     /* The literal tag/branch/commit an exact-ref dependency asked for,
      * or the tag a version-constrained one resolved to (same as
      * `version` below in that case) -- "" only ever for a lockfile-
@@ -136,6 +147,7 @@ typedef struct FacetWorkQueue {
 
 static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
+static bool publishable_name(const char *name);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
     FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
@@ -144,6 +156,37 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
 static bool file_exists(const char *path) {
     struct stat info;
     return stat(path, &info) == 0;
+}
+
+static bool valid_sha256(const char *text) {
+    if (strlen(text) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!((text[i] >= '0' && text[i] <= '9') ||
+              (text[i] >= 'a' && text[i] <= 'f'))) return false;
+    return true;
+}
+
+static bool valid_registry_url(const char *url) {
+    static const char prefix[] = "https://";
+    if (strncmp(url, prefix, sizeof prefix - 1) != 0 ||
+        url[sizeof prefix - 1] == '\0' || strchr(url, '?') != NULL ||
+        strchr(url, '#') != NULL || strchr(url + sizeof prefix - 1, '@') != NULL)
+        return false;
+    const char *authority = url + sizeof prefix - 1;
+    const char *slash = strchr(authority, '/');
+    size_t authority_length = slash == NULL ? strlen(authority) : (size_t)(slash - authority);
+    if (authority_length == 0 || (slash != NULL && slash[1] == '\0')) return false;
+    for (const char *cursor = url; *cursor != '\0'; cursor++)
+        if ((unsigned char)*cursor <= 0x20 || (unsigned char)*cursor >= 0x7f) return false;
+    return true;
+}
+
+static bool canonical_registry_version(const char *text) {
+    if (text[0] == 'v' || text[0] == 'V' || strchr(text, '+') != NULL) return false;
+    Semver parsed;
+    char formatted[FACET_MAX_REF];
+    return semver_parse(text, &parsed) && semver_format(&parsed, formatted, sizeof formatted) &&
+           strcmp(text, formatted) == 0;
 }
 
 static bool is_safe_field(const char *text) {
@@ -572,20 +615,30 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
         }
         strcpy(resolved->name, name_string);
         const DiamondManifestValue *source = diamond_manifest_get(entry, "source");
-        if (source != NULL && (source->kind != DIAMOND_MANIFEST_STRING ||
-                               strcmp(source->string, "git") != 0)) {
-            (void)snprintf(error, error_size,
-                "'%s' entry '%s' has unsupported source (expected 'git')",
-                path, resolved->name);
+        if (source != NULL && source->kind != DIAMOND_MANIFEST_STRING) {
+            (void)snprintf(error, error_size, "'%s' entry '%s' has invalid source",
+                           path, resolved->name);
             ok = false;
             break;
         }
+        const bool registry = source != NULL && strcmp(source->string, "registry") == 0;
+        if (source != NULL && !registry && strcmp(source->string, "git") != 0) {
+            (void)snprintf(error, error_size, "'%s' entry '%s' has unsupported source",
+                           path, resolved->name);
+            ok = false;
+            break;
+        }
+        resolved->source = registry ? FACET_SOURCE_REGISTRY : FACET_SOURCE_GIT;
         for (const DiamondManifestValue *field = entry->children;
              field != NULL; field = field->next) {
-            if (strcmp(field->key, "source") != 0 &&
-                strcmp(field->key, "git") != 0 &&
-                strcmp(field->key, "commit") != 0 &&
-                strcmp(field->key, "version") != 0) {
+            const bool allowed = strcmp(field->key, "source") == 0 ||
+                strcmp(field->key, "version") == 0 ||
+                (!registry && (strcmp(field->key, "git") == 0 ||
+                               strcmp(field->key, "commit") == 0)) ||
+                (registry && (strcmp(field->key, "registry") == 0 ||
+                              strcmp(field->key, "sha256") == 0 ||
+                              strcmp(field->key, "size") == 0));
+            if (!allowed) {
                 (void)snprintf(error, error_size,
                     "'%s' entry '%s' has unknown key '%s'",
                     path, resolved->name, field->key);
@@ -594,6 +647,26 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
             }
         }
         if (!ok) break;
+        if (registry) {
+            if (!diamond_manifest_get_string(entry, "registry", resolved->registry,
+                                              sizeof resolved->registry) ||
+                !diamond_manifest_get_string(entry, "version", resolved->version,
+                                              sizeof resolved->version) ||
+                !diamond_manifest_get_string(entry, "sha256", resolved->sha256,
+                                              sizeof resolved->sha256) ||
+                !diamond_manifest_get_u64(entry, "size", &resolved->size) ||
+                !publishable_name(resolved->name) ||
+                !valid_registry_url(resolved->registry) ||
+                !canonical_registry_version(resolved->version) ||
+                !valid_sha256(resolved->sha256) || resolved->size == 0 ||
+                resolved->size > FACET_MAX_ARCHIVE_SIZE) {
+                (void)snprintf(error, error_size,
+                    "'%s' entry '%s' has invalid registry fields", path, resolved->name);
+                ok = false;
+            }
+            if (ok) resolution->count++;
+            continue;
+        }
         if (!diamond_manifest_get_string(entry, "git", resolved->git,
                                          sizeof resolved->git) ||
             !diamond_manifest_get_string(entry, "commit", resolved->commit,
@@ -641,7 +714,11 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
     fputs("{", file);
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
-        if (resolved->version[0] != '\0') {
+        if (resolved->source == FACET_SOURCE_REGISTRY) {
+            fprintf(file, "\"%s\": {\"source\": \"registry\", \"registry\": \"%s\", \"version\": \"%s\", \"sha256\": \"%s\", \"size\": %llu}, ",
+                    resolved->name, resolved->registry, resolved->version,
+                    resolved->sha256, (unsigned long long)resolved->size);
+        } else if (resolved->version[0] != '\0') {
             fprintf(file, "\"%s\": {\"source\": \"git\", \"git\": \"%s\", \"commit\": \"%s\", \"version\": \"%s\"}, ",
                     resolved->name, resolved->git, resolved->commit, resolved->version);
         } else {
@@ -1224,6 +1301,11 @@ static bool install_resolution(const FacetResolution *resolution,
                                size_t error_size) {
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
+        if (resolved->source == FACET_SOURCE_REGISTRY) {
+            (void)snprintf(error, error_size,
+                "registry installation for '%s' is not implemented yet", resolved->name);
+            return false;
+        }
         char scratch_path[FACET_MAX_PATH];
         char final_path[FACET_MAX_PATH];
         (void)snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root,

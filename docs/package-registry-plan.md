@@ -18,9 +18,10 @@ manifests, paths, documentation, and existing projects.
 2. Add immutable archives, content digests, registry source identity, and
    checksums to the lockfile. `facet pack` and `facet verify` cover local
    artifacts; new Git locks record `source: git` and old Git locks still load.
-   Registry digest and installation integration remain. A locked install must verify
-   downloaded bytes and use the locked source, version, and digest without
-   consulting mutable tags.
+   Registry lock records now preserve and validate source, version, digest, and
+   artifact size. Registry downloading and installation remain. A locked install
+   must verify downloaded bytes and use the locked source, version, and digest
+   without consulting mutable tags.
 3. Resolve registry versions and transitive dependency metadata without
    downloading or executing package code. Use one version per cut name for a
    program. Preserve useful conflict explanations and deterministic selection;

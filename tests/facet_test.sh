@@ -47,7 +47,7 @@ EOF
 grep -q '"source": "git"' project1/facet.lock
 
 # Older Git locks without a source key remain readable. Unknown source
-# types and fields fail before any checkout is installed.
+# types and fields, and mixed source fields, fail before installation.
 cp project1/facet.lock project1/facet.lock.new
 sed 's/"source": "git", //' project1/facet.lock.new > project1/facet.lock
 (cd project1 && "$facet" install >/dev/null)
@@ -55,7 +55,7 @@ mv project1/facet.lock.new project1/facet.lock
 cp project1/facet.lock project1/facet.lock.good
 sed 's/"source": "git"/"source": "registry"/' project1/facet.lock.good > project1/facet.lock
 if (cd project1 && "$facet" install) >/dev/null 2>&1; then
-    echo "facet accepted an unsupported lockfile source" >&2
+    echo "facet accepted mixed Git and registry lock fields" >&2
     exit 1
 fi
 sed 's/"source": "git"/"source": "git", "sha256": "unchecked"/' project1/facet.lock.good > project1/facet.lock
@@ -64,6 +64,39 @@ if (cd project1 && "$facet" install) >/dev/null 2>&1; then
     exit 1
 fi
 mv project1/facet.lock.good project1/facet.lock
+cp project1/facet.lock project1/facet.lock.git
+
+# Registry lock records are parsed and validated before the network installer
+# is involved. A valid record reaches the explicit unimplemented boundary.
+digest="$(printf 'a%.0s' {1..64})"
+cat > project1/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": 12345}}
+EOF
+if (cd project1 && "$facet" install) >/dev/null 2>registry_error; then
+    echo "facet unexpectedly installed a registry lock" >&2
+    exit 1
+fi
+grep -q "registry installation for 'greeter' is not implemented yet" registry_error
+
+check_bad_registry_lock() {
+    printf '%s\n' "$1" > project1/facet.lock
+    if (cd project1 && "$facet" install) >/dev/null 2>registry_error; then
+        echo "facet accepted invalid registry lock: $2" >&2
+        exit 1
+    fi
+    if ! grep -q "invalid registry fields" registry_error; then
+        echo "facet did not reject invalid registry fields: $2" >&2
+        cat registry_error >&2
+        exit 1
+    fi
+}
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"http://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 12345}}" "non-HTTPS URL"
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"v1.2.3\", \"sha256\": \"$digest\", \"size\": 12345}}" "noncanonical version"
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"ABC\", \"size\": 12345}}" "invalid digest"
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 0}}" "zero size"
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": \"12345\"}}" "string size"
+check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 18446744073709551616}}" "overflowing size"
+mv project1/facet.lock.git project1/facet.lock
 
 actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
