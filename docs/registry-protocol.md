@@ -1,15 +1,65 @@
 # Cut registry protocol, version 1
 
 Status: proposed wire contract. Registry resolution and locked archive
-installation are implemented; publishing and a hosted service do not exist. This
-specification defines their metadata and artifact boundary without changing Git
-dependency behavior.
+installation are implemented; the hosted service is not yet implemented. This
+specification defines its metadata, authentication, and artifact boundary
+without changing Git dependency behavior.
 
 ## Identity
 
 A release is identified by `(registry URL, cut name, version)`. The registry URL is a normalized HTTPS origin plus an optional base path, with no query or fragment. `facet` stores that exact configured URL in the lockfile and never substitutes another registry. A name follows the publishable cut name rule in [cut-contract.md](cut-contract.md). A version is canonical SemVer 2.0.0 without a leading `v` or build metadata. Each tuple is immutable, including its metadata and archive digest.
 
 Protocol responses include `"protocol": 1`. Unknown protocol versions fail closed. Clients ignore only explicitly optional display fields; unknown fields in identity, dependency, or artifact records fail. Responses use UTF-8 JSON with bounded sizes. JSON object keys must be unique. Registry metadata is data: neither resolution nor installation executes code from a cut.
+
+## Errors
+
+Every failed request returns a JSON object with `Content-Type: application/json`:
+
+```json
+{
+  "protocol": 1,
+  "error": "release_exists",
+  "message": "version 1.2.0 is already published",
+  "request_id": "01J..."
+}
+```
+
+`error` is a stable machine-readable code. `message` is for humans and is not
+parsed by clients. `request_id` is optional for local clients and is included
+by hosted deployments for support and audit correlation. The initial code set:
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `invalid_request` | Malformed path, header, or archive request |
+| 401 | `unauthorized` | Missing or invalid credential |
+| 403 | `forbidden` | Credential lacks the required scope |
+| 404 | `not_found` | Cut, release, or blob does not exist |
+| 409 | `release_exists` | Immutable release conflicts with this request |
+| 409 | `idempotency_conflict` | Idempotency key is reused for another body |
+| 413 | `payload_too_large` | Request exceeds the configured limit |
+| 422 | `invalid_archive` | Archive fails cut or manifest validation |
+| 429 | `rate_limited` | Caller must wait before retrying |
+| 500 | `internal_error` | Server could not complete a valid request |
+| 503 | `unavailable` | Service is temporarily unavailable |
+
+Clients may retry `429`, `500`, and `503` with bounded backoff. They must not
+retry a publish after `400`, `401`, `403`, `409`, or `422` without changing the
+request.
+
+## Authentication and ownership
+
+Publish and administrative requests send `Authorization: Bearer <token>` over
+HTTPS. Tokens are opaque, stored only as password-equivalent hashes, and never
+returned by the API. A credential has scopes such as:
+
+- `publish:<name>` to publish a release for one cut;
+- `manage:<name>` to yank, restore, or manage owners for one cut;
+- `admin` for exceptional takedown and credential administration.
+
+Read endpoints are public by default. Token creation, rotation, and revocation
+are operator actions in v1. Servers reject credentials containing control
+characters and record credential identity, scopes, and expiry in audit events,
+never the token value.
 
 ## Read API
 
@@ -79,8 +129,24 @@ uncompressed tar bytes. The server validates the archive with the same contract
 as `facet verify`, derives the version and dependencies from `diamond.cut`,
 compares its manifest name with the path, stores the blob by digest, and
 atomically creates the immutable release record. Repeating an identical request
-is idempotent; different bytes for an existing tuple are rejected. The client
-command is:
+is idempotent; different bytes for an existing tuple are rejected. A successful
+first publish returns `201 Created`; an identical repeat returns `200 OK`.
+Both return:
+
+```json
+{
+  "protocol": 1,
+  "name": "greeter",
+  "version": "1.2.0",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "size": 12345,
+  "yanked": false
+}
+```
+
+The optional `Idempotency-Key` header may be supplied by clients. A key is
+bound to the authenticated credential and request body digest; reusing it for
+another body returns `409 idempotency_conflict`. The client command is:
 
 ```text
 facet publish <cut-directory> --registry <https-url> --token <token>
@@ -90,4 +156,26 @@ facet publish <cut-directory> --registry <https-url> --token <token>
 the token through a temporary mode-0600 curl configuration and removes that
 file after the request; it does not write credentials to the project or lock.
 
-Yanking changes only new-resolution visibility and records who acted, when, and why. It does not rewrite metadata or remove blob bytes. An exceptional takedown has its own audited operator path; locked installs then fail with an explicit unavailable-release error. Owner changes, publish actions, yanks, and takedowns enter an append-only audit log. Credential format, owner policy, and service operations require a separate deployment design before public launch.
+### `POST /v1/cuts/<name>/versions/<version>/yank`
+
+Requires `manage:<name>` and a JSON body containing a non-empty `reason`.
+Yanking is idempotent and returns the complete release record with
+`"yanked": true`.
+
+### `POST /v1/cuts/<name>/versions/<version>/unyank`
+
+Requires `manage:<name>` and the same reason body. It restores visibility for
+new resolution while preserving the archive digest and release metadata.
+
+### `POST /v1/cuts/<name>/versions/<version>/takedown`
+
+Requires `admin` and a non-empty reason. Takedown removes the release from read
+APIs and causes locked installs to fail with `404 not_found`; it never reuses
+the version tuple or silently replaces its blob. The audit event keeps the
+original digest and metadata for incident review.
+
+Yanking changes only new-resolution visibility and records who acted, when, and
+why. It does not rewrite metadata or remove blob bytes. Owner changes, publish
+actions, yanks, takedowns, and credential changes enter an append-only audit
+log. The service must make the release row, blob reference, and corresponding
+audit event durable before returning success.

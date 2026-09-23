@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Documented the registry v1 service contract: stable error responses,
+  scoped bearer credentials, idempotent publishing, and audited yank, unyank,
+  and takedown operations. The hosted registry implementation is still
+  pending.
 - `facet` now reads and validates registry lock records separately from Git
   records, including canonical versions, HTTPS source URLs, SHA-256 digests,
   and bounded artifact sizes. Locked installs fetch the digest-addressed archive
