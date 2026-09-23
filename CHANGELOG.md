@@ -17,6 +17,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added audited registry yank, unyank, and takedown endpoints with scope and
+  ownership checks, atomic state/audit updates, and idempotent retries. Added
+  local credential issue/list/rotate/revoke commands with expiring random tokens
+  and atomic rotation; raw tokens are returned once and never stored.
+
 - Added the registry HTTP read/publish API and runnable Gremlin application,
   with live HTTPS tests covering transitive resolution, installation, yanked
   locks, and takedown visibility. Fixed real curl publish configuration and
@@ -35,7 +40,7 @@ authoritative fine-grained record.
   pass because of unrelated load or syntax errors.
 - Documented the registry v1 service contract: stable error responses,
   scoped bearer credentials, idempotent publishing, and audited yank, unyank,
-  and takedown operations. Administrative endpoints and production deployment
+  and takedown operations. Owner-management endpoints and production deployment
   remain pending.
 - Added the initial `registry` cut with SQLite schema migrations and an
   immutable, digest-addressed archive store.

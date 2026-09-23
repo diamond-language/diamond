@@ -5,6 +5,7 @@ module Registry
       @store = store
       @publisher = publisher
       @base = base
+      @administration = Administration.new(db)
     end
 
     def json(status, body)
@@ -105,6 +106,25 @@ module Registry
       self.json(status, {"protocol": 1, "name": result["name"], "version": result["version"], "sha256": result["sha256"], "size": result["size"], "yanked": result["yanked"]})
     end
 
+    def manage(name, version, action, request)
+      authorization = request["headers"]["authorization"]
+      if authorization == nil || !authorization.start_with?("Bearer ") then return self.error(401, "unauthorized") end
+      if request["headers"]["content-type"] != "application/json" || request["body"].length() > 4096
+        return self.error(400, "invalid_request")
+      end
+      begin
+        payload = JSON.parse(request["body"])
+      rescue error: StandardError
+        return self.error(400, "invalid_request")
+      end
+      unless payload is Hash then return self.error(400, "invalid_request") end
+      unless payload["reason"] is String then return self.error(400, "invalid_request") end
+      if payload.length() != 1 then return self.error(400, "invalid_request") end
+      result = @administration.change(name, version, action, payload["reason"], authorization.slice(7, authorization.length() - 7))
+      if action == "takedown" then return self.json(200, result) end
+      self.release(name, version)
+    end
+
     def call(request)
       begin
         path = request["path"]
@@ -125,6 +145,8 @@ module Registry
           if parts.length() == 5
             if method == "GET" then return self.index(parts[3]) end
             if method == "POST" then return self.upload(parts[3], request) end
+          elsif parts.length() == 7 && method == "POST" && ["yank", "unyank", "takedown"].include?(parts[6])
+            return self.manage(parts[3], parts[5], parts[6], request)
           elsif parts.length() == 6 && method == "GET"
             return self.release(parts[3], parts[5])
           end
@@ -139,6 +161,7 @@ module Registry
         code = error.message()
         if code == "unauthorized" then return self.error(401, code) end
         if code == "forbidden" then return self.error(403, code) end
+        if code == "not_found" then return self.error(404, code) end
         if code == "release_exists" || code == "idempotency_conflict" then return self.error(409, code) end
         self.error(500, "internal_error")
       rescue error: StandardError

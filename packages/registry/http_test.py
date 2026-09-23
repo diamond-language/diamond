@@ -5,7 +5,6 @@ import http.server
 import json
 import os
 from pathlib import Path
-import secrets
 import shutil
 import socket
 import sqlite3
@@ -62,12 +61,16 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         else:
             raise AssertionError('registry failed to start')
 
-        token = secrets.token_hex(32)
+        shutil.copy(source / 'applications/registry/credentials.di', work / 'credentials.di')
+        env['REGISTRY_OPERATOR'] = 'test-operator'
+
+        def credential(*args):
+            return json.loads(run(str(diamond), 'credentials.di', *args, cwd=work, env=env).stdout)
+
+        issued = credential('issue', 'test-owner', '3600',
+                            'publish:greeter,publish:helper,manage:greeter', 'test setup')
+        token = issued['token']
         db = sqlite3.connect(data / 'registry.db')
-        db.execute('INSERT INTO credentials (token_digest, subject, scopes, created_at) VALUES (?, ?, ?, ?)',
-                   (hashlib.sha256(token.encode()).hexdigest(), 'test-owner',
-                    json.dumps(['publish:greeter', 'publish:helper']), 0))
-        db.commit()
         run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
             '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
             '-keyout', str(work / 'key.pem'), '-out', str(work / 'cert.pem'))
@@ -181,17 +184,79 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         run(str(facet), 'update', cwd=consumer, env=env)
         assert run(str(diamond), '-e', 'require_cut "greeter"\ngreet()', cwd=consumer, env=env).stdout.strip() == 'installed from registry'
         assert (consumer / 'cuts/helper/lib/helper.di').exists()
-        db.execute('UPDATE releases SET yanked = 1 WHERE version = ?', ('1.0.0',))
+        def manage(action, credential_token, reason='test state change'):
+            return request('/v1/cuts/greeter/versions/1.0.0/' + action, 'POST',
+                           json.dumps({'reason': reason}).encode(),
+                           {'Authorization': 'Bearer ' + credential_token, 'Content-Type': 'application/json'})
+
+        outsider = credential('issue', 'other-owner', '3600', 'manage:greeter', 'wrong owner test')
+        publisher_only = credential('issue', 'test-owner', '3600', 'publish:greeter', 'scope test')
+        assert manage('yank', outsider['token'])[0] == 403
+        assert manage('yank', publisher_only['token'])[0] == 403
+        assert manage('takedown', token)[0] == 403
+        assert manage('yank', 'invalid')[0] == 401
+        assert manage('yank', token, '   ')[0] == 400
+        assert manage('yank', token, 'x' * 1025)[0] == 400
+        assert request('/v1/cuts/greeter/versions/1.0.0/yank', 'POST', b'[]',
+                       {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})[0] == 400
+        # An audit failure must roll back the state update.
+        db.execute("CREATE TRIGGER fail_yank_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'yank' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
         db.commit()
+        assert manage('yank', token)[0] == 500
+        assert request('/v1/cuts/greeter/versions/1.0.0')[1]['yanked'] is False
+        db.execute('DROP TRIGGER fail_yank_audit')
+        db.commit()
+        status, yanked = manage('yank', token)
+        assert status == 200 and yanked['yanked'] is True and yanked['archive'] == release['archive']
+        assert manage('yank', token, 'repeat')[0] == 200
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'yank'").fetchone()[0] == 1
         shutil.rmtree(consumer / 'cuts')
         run(str(facet), 'install', cwd=consumer, env=env)
         assert (consumer / 'cuts/greeter/lib/greeter.di').exists()
-        db.execute("UPDATE releases SET takedown_reason = 'test removal' WHERE cut_id = (SELECT id FROM cuts WHERE name = 'greeter')")
+        status, unyanked = manage('unyank', token)
+        assert status == 200 and unyanked['yanked'] is False
+        assert request('/v1/cuts/greeter/versions')[1]['versions'][0]['yanked'] is False
+        admin = credential('issue', 'operator', '3600', 'admin', 'takedown test')
+        # Failure to audit the replacement must not revoke the old credential.
+        before = db.execute('SELECT count(*) FROM credentials').fetchone()[0]
+        db.execute("CREATE TRIGGER fail_issue_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'credential_issue' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
         db.commit()
+        failed = subprocess.run([str(diamond), 'credentials.di', 'rotate', str(admin['id']), '3600', 'failed rotation'],
+                                cwd=work, env=env, capture_output=True, text=True, timeout=30)
+        assert failed.returncode != 0
+        assert db.execute('SELECT count(*) FROM credentials').fetchone()[0] == before
+        assert db.execute('SELECT revoked_at FROM credentials WHERE id = ?', (admin['id'],)).fetchone()[0] is None
+        db.execute('DROP TRIGGER fail_issue_audit')
+        db.commit()
+        for scope, ttl in [('publish:../../invalid', '3600'), ('admin', '3600junk')]:
+            failed = subprocess.run([str(diamond), 'credentials.di', 'issue', 'operator', ttl, scope, 'invalid input'],
+                                    cwd=work, env=env, capture_output=True, text=True, timeout=30)
+            assert failed.returncode != 0
+        assert db.execute('SELECT count(*) FROM credentials').fetchone()[0] == before
+        rotated = credential('rotate', str(admin['id']), '3600', 'rotation test')
+        assert manage('takedown', admin['token'])[0] == 401
+        status, taken = manage('takedown', rotated['token'], 'test removal')
+        assert status == 200 and taken['taken_down'] is True
+        assert manage('takedown', rotated['token'], 'repeat')[0] == 200
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'takedown'").fetchone()[0] == 1
         assert request('/v1/cuts/greeter/versions/1.0.0')[0] == 404
         assert request(release['archive']['path'])[0] == 404
+        assert manage('unyank', token)[0] == 404
+        revoked = credential('revoke', str(rotated['id']), 'revocation test')
+        assert revoked['revoked'] is True
+        assert manage('takedown', rotated['token'])[0] == 401
+        credential('revoke', str(rotated['id']), 'repeat revocation')
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'credential_revoke' AND credential_id = ?", (rotated['id'],)).fetchone()[0] == 1
+        audit = db.execute("SELECT reason, credential_id, sha256 FROM audit_events WHERE action = 'takedown'").fetchone()
+        assert audit == ('test removal', rotated['id'], release['archive']['sha256'])
+        inventory = credential('list')
+        assert any(item['id'] == rotated['id'] and item['revoked_at'] is not None for item in inventory)
+        assert all('token' not in item and 'token_digest' not in item for item in inventory)
+        dump = '\n'.join(db.iterdump())
+        for raw in (token, outsider['token'], publisher_only['token'], admin['token'], rotated['token']):
+            assert raw not in dump
         db.close()
-        print('registry HTTPS publish, transitive resolve, locked install, and takedown tests passed')
+        print('registry HTTPS publish/install and audited administration tests passed')
     finally:
         if proxy:
             proxy.shutdown()

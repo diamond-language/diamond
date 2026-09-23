@@ -5,7 +5,7 @@ Storage primitives for the Diamond cut registry.
 The package provides the SQLite schema and a content-addressed blob store.
 The authenticated publish transaction verifies archives with `facet` and stores
 release metadata with its audit event. The HTTP adapter is available as
-`Registry::API`; a runnable service lives in `applications/registry`. Credential provisioning commands are still pending.
+`Registry::API`; a runnable service lives in `applications/registry`. Local credential commands are documented with the application.
 
 Install with `facet` and load with `require_cut "registry"`.
 
@@ -77,8 +77,16 @@ headers must be normalized to lowercase, as the HTTP parser does. A service
 worker keeps its own API instance and SQLite connection.
 
 The adapter exposes version indexes, release metadata, digest-addressed blobs,
-and publishing. It omits the publisher's internal `created` flag from JSON.
+publishing, and audited yank/unyank/takedown operations. It omits the publisher's internal `created` flag from JSON.
 Only releases with no takedown reason expose blobs; orphan files are never
 served. A storage integrity failure returns an internal error without bytes.
 Run `make test-registry-http` to exercise the adapter through real HTTPS and
 facet, including SemVer ordering and transitive dependency installation.
+
+`Registry::Administration` implements credential issuance/revocation and release
+state changes. Release mutations authenticate inside an immediate transaction
+and atomically record the credential, reason, release identity, and digest.
+Idempotent retries do not duplicate audit events. For local credential events,
+`subject` is the operator label and `credential_id` identifies the affected
+credential; no raw credential is recorded. The application CLI offers issue,
+list, rotate, and revoke commands under filesystem access control.

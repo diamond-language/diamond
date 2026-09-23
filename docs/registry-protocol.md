@@ -2,7 +2,7 @@
 
 Status: proposed wire contract. Registry resolution and locked archive
 installation and the HTTP read/publish service are implemented. Production
-deployment and administrative endpoints remain pending. This
+deployment and owner-management endpoints remain pending. This
 specification defines its metadata, authentication, and artifact boundary
 without changing Git dependency behavior.
 
@@ -58,7 +58,10 @@ returned by the API. A credential has scopes such as:
 - `admin` for exceptional takedown and credential administration.
 
 Read endpoints are public by default. Token creation, rotation, and revocation
-are operator actions in v1. Servers reject credentials containing control
+are local operator actions in v1, implemented by
+`applications/registry/credentials.di`. Tokens are random 256-bit secrets with
+required expiry; only SHA-256 fingerprints are stored. Rotation revokes the
+old credential atomically with issuance of its replacement. Servers reject credentials containing control
 characters and record credential identity, scopes, and expiry in audit events,
 never the token value.
 
@@ -159,21 +162,27 @@ file after the request; it does not write credentials to the project or lock.
 
 ### `POST /v1/cuts/<name>/versions/<version>/yank`
 
-Requires `manage:<name>` and a JSON body containing a non-empty `reason`.
+Requires `manage:<name>`, current ownership of the cut, and a JSON body
+containing exactly one field, `reason`: a nonblank String of at most 1024 bytes.
 Yanking is idempotent and returns the complete release record with
-`"yanked": true`.
+`"yanked": true` and HTTP 200. Unyank also returns HTTP 200 with the full
+release record. Repeating the current state preserves the original audit event
+and reason.
 
 ### `POST /v1/cuts/<name>/versions/<version>/unyank`
 
-Requires `manage:<name>` and the same reason body. It restores visibility for
+Requires `manage:<name>`, current ownership, and the same reason body. It restores visibility for
 new resolution while preserving the archive digest and release metadata.
 
 ### `POST /v1/cuts/<name>/versions/<version>/takedown`
 
-Requires `admin` and a non-empty reason. Takedown removes the release from read
+Requires `admin` and the same bounded reason body. Takedown removes the release from read
 APIs and causes locked installs to fail with `404 not_found`; it never reuses
 the version tuple or silently replaces its blob. The audit event keeps the
-original digest and metadata for incident review.
+original digest and metadata for incident review. The response is HTTP 200
+with `protocol`, `name`, `version`, and `taken_down: true`. Repeated requests
+succeed without changing the original reason or adding audit events. Unyank
+cannot undo a takedown.
 
 Yanking changes only new-resolution visibility and records who acted, when, and
 why. It does not rewrite metadata or remove blob bytes. Owner changes, publish
