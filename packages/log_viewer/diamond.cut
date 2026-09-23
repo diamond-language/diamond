@@ -1,1 +1,1 @@
-{"name": "log_viewer", "version": "0.1.0", "summary": "Format structured JSON log streams", "license": "MIT"}
+{"name": "log_viewer", "version": "0.1.1", "summary": "Format structured JSON log streams", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

@@ -216,7 +216,8 @@ Templates require host-specific configuration and validation before deployment.
 The intended public endpoint is `https://cuts.dilang.tech`. The application root
 serves a searchable release catalog and getting-started instructions. The browser
 loads live metadata from `catalog.json`; taken-down releases are excluded and
-yanked versions are marked. Pages contain at most 100 releases, with `next_after`
+yanked versions are marked. Each row carries the release's `maintainers` as a
+JSON string, or `null` for releases published before manifests declared them. Pages contain at most 100 releases, with `next_after`
 as an ascending release-ID cursor. Search filters the loaded releases; load more
 to search additional pages. The catalog uses text rendering for metadata and a
 same-origin script policy. It contains no publishing credential or administration UI.

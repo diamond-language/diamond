@@ -1,1 +1,1 @@
-{"name": "http", "version": "0.1.0", "summary": "HTTP server and client for Diamond", "license": "MIT"}
+{"name": "http", "version": "0.1.1", "summary": "HTTP server and client for Diamond", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

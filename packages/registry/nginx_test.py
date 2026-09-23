@@ -145,7 +145,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
             package = work / 'canary'
             (package / 'lib').mkdir(parents=True)
             (package / 'diamond.cut').write_text(json.dumps(dict(name='canary', version='1.0.0',
-                summary='staging canary', license='MIT', dependencies={})))
+                summary='staging canary', license='MIT', maintainers=[dict(name='Test', contact='test@example.com')], dependencies={})))
             (package / 'README.md').write_text('Staging canary\n')
             (package / 'LICENSE').write_text('MIT\n')
             (package / 'lib/canary.di').write_text('def canary() = "nginx staging passed"\n')

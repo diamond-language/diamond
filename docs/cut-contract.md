@@ -7,7 +7,7 @@ is in [registry-protocol.md](registry-protocol.md).
 
 `facet check <cut-directory>` now performs the first local preflight. It checks
 the canonical name and directory, strict version spelling, summary, nonempty
-license declaration, data-only runtime dependency ranges, and regular
+license declaration, public maintainers, data-only runtime dependency ranges, and regular
 `diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
 `--files` prints the sorted included file list. It does not yet verify SPDX
@@ -96,6 +96,7 @@ The first registry schema should require:
   "version": "1.2.0",
   "summary": "Small greeting helpers",
   "license": "MIT",
+  "maintainers": [{"name": "Ada Lovelace", "contact": "ada@example.com"}],
   "dependencies": {"logger": "^0.4.0"}
 }
 ```
@@ -104,6 +105,14 @@ The first registry schema should require:
 2.0.0, canonical without a leading `v`; build metadata needs an explicit
 identity policy before publication is allowed. `summary` is single-line plain
 text of 1-160 bytes.
+`maintainers` is an Array of 1-8 Hashes, each with exactly a `name` (1-80
+bytes of printable UTF-8 without leading or trailing spaces) and a `contact`
+(an email address or an `https://` URL without credentials, at most 200 bytes).
+Contacts must be distinct. This information is **public**: the registry
+catalog displays it. Use an address or issue tracker you intend to publish,
+never a credential or private channel. It is display metadata only and does not
+grant registry ownership or publishing rights; those come from operator-issued
+scoped credentials.
 `license` uses an SPDX expression or an explicit `LicenseRef` convention to be
 specified. Runtime dependencies are name-to-range mappings; no floating Git
 branch, arbitrary URL, or local path is allowed in a published cut's runtime
@@ -123,6 +132,17 @@ Published library dependency ranges should cover versions actually tested,
 without pinning every dependency to a single release. The consuming
 application's `facet.lock` records the exact resolved graph. Published library
 lockfiles are not used to resolve a consumer's graph.
+
+### Maintainers in existing archives
+
+`facet check`, `facet pack`, and `facet publish` require `maintainers`.
+`facet verify` and installation still accept archives published before the
+field existed; `facet verify --json` reports `"maintainers": []` for them.
+The registry requires maintainers when it creates a release. An identical
+retry of a release published earlier stays idempotent, and existing release
+bytes are never rewritten. To add maintainers to a published cut, publish a new
+version. The version 1 metadata API is unchanged, because facet 0.7.0 rejects
+unknown metadata keys; maintainers appear in the catalog.
 
 ## Request publishing access
 

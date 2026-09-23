@@ -1,1 +1,1 @@
-{"name": "websocket", "version": "0.1.0", "summary": "WebSocket handshake and frame handling", "license": "MIT"}
+{"name": "websocket", "version": "0.1.1", "summary": "WebSocket handshake and frame handling", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

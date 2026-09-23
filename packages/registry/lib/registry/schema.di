@@ -40,6 +40,15 @@ module Registry
           db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [owner_version])
         end
       end
+      # Public maintainer display metadata; NULL for releases published before
+      # manifests declared it.
+      maintainer_version = "2026092401"
+      if db.query("SELECT version FROM schema_migrations WHERE version = ?", [maintainer_version]).length() == 0
+        ActiveRecord::Transaction.run(db) do
+          db.execute("ALTER TABLE releases ADD COLUMN maintainers TEXT")
+          db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [maintainer_version])
+        end
+      end
     end
   end
 end

@@ -30,7 +30,7 @@ def registry_catalog(request, db, base)
       return [400, {"Content-Type": "application/json"}, JSON.stringify({"protocol": 1, "error": "invalid_request", "message": "invalid cursor"})]
     end
   end
-  rows = db.query("SELECT releases.id, cuts.name, releases.version, releases.dependencies, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE releases.id > ? AND releases.takedown_reason IS NULL ORDER BY releases.id LIMIT 101", [after])
+  rows = db.query("SELECT releases.id, cuts.name, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE releases.id > ? AND releases.takedown_reason IS NULL ORDER BY releases.id LIMIT 101", [after])
   more = rows.length() > 100
   if more then rows.pop() end
   next_after = nil

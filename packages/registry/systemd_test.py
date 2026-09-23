@@ -124,7 +124,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-systemd-', dir='/opt')
         cut = work / 'canary'
         (cut / 'lib').mkdir(parents=True)
         (cut / 'diamond.cut').write_text(json.dumps(dict(name='canary', version='1.0.0',
-            summary='systemd canary', license='MIT', dependencies={})))
+            summary='systemd canary', license='MIT', maintainers=[dict(name='Test', contact='test@example.com')], dependencies={})))
         (cut / 'README.md').write_text('Systemd staging canary\n')
         (cut / 'LICENSE').write_text('MIT\n')
         (cut / 'lib/canary.di').write_text('def canary() = "restored"\n')

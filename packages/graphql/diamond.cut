@@ -1,1 +1,1 @@
-{"name": "graphql", "version": "0.1.0", "summary": "GraphQL schema and query execution", "license": "MIT"}
+{"name": "graphql", "version": "0.1.1", "summary": "GraphQL schema and query execution", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

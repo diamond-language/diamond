@@ -68,6 +68,11 @@ module Registry
         version = metadata["version"]
         releases = @db.query("SELECT * FROM releases WHERE cut_id = ? AND version = ?", [cut_id, version])
         created = releases.length() == 0
+        # New releases must name maintainers; an identical retry of a release
+        # published before the requirement remains idempotent.
+        if created && !(metadata["maintainers"] is Array && metadata["maintainers"].length() > 0)
+          raise ArgumentError.new("invalid_archive")
+        end
         yanked = false
         if !created
           release = releases[0]
@@ -85,7 +90,7 @@ module Registry
           @store.put(digest, bytes)
         end
         if created
-          @db.execute("INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (?, ?, ?, ?, ?, ?)", [cut_id, version, JSON.stringify(metadata["dependencies"]), digest, bytes.length(), now])
+          @db.execute("INSERT INTO releases (cut_id, version, dependencies, maintainers, sha256, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [cut_id, version, JSON.stringify(metadata["dependencies"]), JSON.stringify(metadata["maintainers"]), digest, bytes.length(), now])
           @db.execute("INSERT INTO audit_events (subject, action, cut_name, version, sha256, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, 'publish', ?, ?, ?, ?, ?, ?, ?)", [credential["subject"], name, version, digest, now, credential["id"], credential["scopes"], credential["expires_at"]])
         end
         if key != ""

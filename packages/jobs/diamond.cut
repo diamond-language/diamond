@@ -1,1 +1,1 @@
-{"name": "jobs", "version": "0.1.0", "summary": "Durable database-backed background jobs", "license": "MIT"}
+{"name": "jobs", "version": "0.1.1", "summary": "Durable database-backed background jobs", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

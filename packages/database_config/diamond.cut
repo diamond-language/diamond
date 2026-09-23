@@ -1,1 +1,1 @@
-{"name": "database_config", "version": "0.1.0", "summary": "Load JSON database configuration and open a connection", "license": "MIT"}
+{"name": "database_config", "version": "0.1.1", "summary": "Load JSON database configuration and open a connection", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

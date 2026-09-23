@@ -1,1 +1,1 @@
-{"name": "active_record", "version": "0.19.0", "summary": "SQL repositories, models, validation, and migrations", "license": "MIT", "dependencies": {"arel": "^0.34.0"}}
+{"name": "active_record", "version": "0.19.1", "summary": "SQL repositories, models, validation, and migrations", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}], "dependencies": {"arel": "^0.34.0"}}

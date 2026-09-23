@@ -1,1 +1,1 @@
-{"name": "div", "version": "0.2.0", "summary": "Compile view templates into Diamond source", "license": "MIT"}
+{"name": "div", "version": "0.2.1", "summary": "Compile view templates into Diamond source", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

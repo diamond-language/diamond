@@ -1,1 +1,1 @@
-{"name": "multipart", "version": "0.2.0", "summary": "Parse multipart form data and file uploads", "license": "MIT"}
+{"name": "multipart", "version": "0.2.1", "summary": "Parse multipart form data and file uploads", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

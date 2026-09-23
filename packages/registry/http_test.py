@@ -204,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
             path = work / name
             (path / 'lib').mkdir(parents=True, exist_ok=True)
             (path / 'diamond.cut').write_text(json.dumps(dict(name=name, version=version, summary='test cut',
-                license='MIT', dependencies=dependencies or {})))
+                license='MIT', maintainers=[dict(name='Test', contact='test@example.com')], dependencies=dependencies or {})))
             (path / 'README.md').write_text('test\n')
             (path / 'LICENSE').write_text('MIT\n')
             (path / 'lib' / f'{name}.di').write_text(body)
@@ -238,6 +238,36 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         run(str(facet), 'pack', str(greeter), str(work / 'changed.tar'))
         status, conflict = request('/v1/cuts/greeter/versions', 'POST', (work / 'changed.tar').read_bytes(), headers)
         assert status == 409 and conflict['error'] == 'release_exists' and conflict['request_id']
+        # A release packed before manifests declared maintainers: blank the field
+        # in place so the ustar header and size stay canonical.
+        legacy_root = work / 'legacy' / 'greeter'
+        shutil.copytree(greeter, legacy_root)
+        manifest = json.loads((legacy_root / 'diamond.cut').read_text())
+        manifest['version'] = '0.9.0'
+        (legacy_root / 'diamond.cut').write_text(json.dumps(manifest))
+        run(str(facet), 'pack', str(legacy_root), str(work / 'legacy.tar'))
+        legacy = (work / 'legacy.tar').read_bytes()
+        field = b', "maintainers": ' + json.dumps(manifest['maintainers']).encode()
+        assert legacy.count(field) == 1
+        legacy = legacy.replace(field, b' ' * len(field))
+        status, rejected = request('/v1/cuts/greeter/versions', 'POST', legacy, headers)
+        assert status == 422 and rejected['error'] == 'invalid_archive'
+        # Releases that predate the requirement stay idempotent on retry.
+        cut_id = db.execute("SELECT id FROM cuts WHERE name = 'greeter'").fetchone()[0]
+        db.execute("INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (?, '0.9.0', ?, ?, ?, 0)",
+                   (cut_id, json.dumps(manifest['dependencies']), hashlib.sha256(legacy).hexdigest(), len(legacy)))
+        db.commit()
+        status, retried = request('/v1/cuts/greeter/versions', 'POST', legacy, headers)
+        assert status == 200 and retried['version'] == '0.9.0'
+        stored = dict(db.execute("SELECT version, maintainers FROM releases WHERE cut_id = ?", (cut_id,)).fetchall())
+        assert stored['0.9.0'] is None
+        assert json.loads(stored['1.0.0']) == [{'name': 'Test', 'contact': 'test@example.com'}]
+        status, catalog = request('/catalog.json')
+        listed = {(row['name'], row['version']): row['maintainers'] for row in catalog['releases']}
+        assert status == 200 and listed[('greeter', '0.9.0')] is None
+        assert json.loads(listed[('greeter', '1.0.0')])[0]['contact'] == 'test@example.com'
+        db.execute("DELETE FROM releases WHERE cut_id = ? AND version = '0.9.0'", (cut_id,))
+        db.commit()
         status, index = request('/v1/cuts/greeter/versions')
         assert status == 200 and index['versions'] == [{'version': '1.0.0', 'yanked': False}]
         status, release = request('/v1/cuts/greeter/versions/1.0.0')

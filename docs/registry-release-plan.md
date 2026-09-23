@@ -70,6 +70,12 @@ verified archive's name, version, dependency ranges, SHA-256, byte size, and fil
 name, in deterministic dependency-first publication order. Changing a selected package requires regenerating and reviewing
 its inventory entry before the launch gate will pass.
 
+After 0.7.0, every selected cut received a patch release that adds
+`maintainers`; the checked-in selection and inventory describe those versions.
+Production still serves the launch versions until an operator publishes the
+new seed. Until then, `verify_registry_launch.py` against production fails on
+the missing versions; the launch digests remain in the `v0.7.0` tag.
+
 Build the exact candidate without publishing anything:
 
 ```sh

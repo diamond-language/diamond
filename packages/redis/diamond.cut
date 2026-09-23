@@ -1,1 +1,1 @@
-{"name": "redis", "version": "0.1.0", "summary": "Redis client using RESP2 and RESP3", "license": "MIT"}
+{"name": "redis", "version": "0.1.1", "summary": "Redis client using RESP2 and RESP3", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

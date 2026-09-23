@@ -33,7 +33,8 @@ with tempfile.TemporaryDirectory(prefix='diamond-seed-test-') as temporary:
     prepare(failed, '--expect', work / 'changed.json', success=False)
     assert not failed.exists()
     selection = work / 'selection.json'
-    selection.write_text(json.dumps({'registry': '0.1.0'}))
+    registry_version = json.loads((root / 'applications/registry/launch-cuts.json').read_text())['registry']
+    selection.write_text(json.dumps({'registry': registry_version}))
     assert 'dependency missing' in prepare(failed, '--selection', selection, success=False).stderr
     assert not failed.exists()
     selection.write_text(json.dumps({'registry': '99.0.0'}))

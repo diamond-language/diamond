@@ -2181,6 +2181,162 @@ static bool regular_file(const char *path) {
     return lstat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
+/* Top-level keys accepted in a publishable diamond.cut and in archive
+ * manifests; both validators share this list so they cannot drift. */
+static const char *const MANIFEST_KEYS[] = {
+    "name", "version", "summary", "license", "dependencies", "maintainers",
+    "homepage", "source", "documentation", "issues"};
+
+enum { FACET_MAX_MAINTAINERS = 8, FACET_MAX_MAINTAINER_NAME = 80,
+       FACET_MAX_CONTACT = 200 };
+
+static bool manifest_key_known(const char *key) {
+    for (size_t i = 0; i < sizeof MANIFEST_KEYS / sizeof MANIFEST_KEYS[0]; i++)
+        if (strcmp(key, MANIFEST_KEYS[i]) == 0) return true;
+    return false;
+}
+
+/* Well-formed UTF-8 without C0 controls or DEL. */
+static bool printable_utf8(const char *text) {
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p != '\0') {
+        if (*p < 0x20 || *p == 0x7f) return false;
+        if (*p < 0x80) { p++; continue; }
+        size_t extra;
+        uint32_t code;
+        if (*p >= 0xc2 && *p <= 0xdf) { extra = 1; code = *p & 0x1f; }
+        else if (*p >= 0xe0 && *p <= 0xef) { extra = 2; code = *p & 0x0f; }
+        else if (*p >= 0xf0 && *p <= 0xf4) { extra = 3; code = *p & 0x07; }
+        else return false;
+        p++;
+        for (size_t i = 0; i < extra; i++, p++) {
+            if ((*p & 0xc0) != 0x80) return false;
+            code = (code << 6) | (*p & 0x3f);
+        }
+        if ((extra == 2 && (code < 0x800 || (code >= 0xd800 && code <= 0xdfff))) ||
+            (extra == 3 && (code < 0x10000 || code > 0x10ffff)))
+            return false;
+    }
+    return true;
+}
+
+static bool contact_email(const char *text) {
+    const char *at = strchr(text, '@');
+    if (at == NULL || strchr(at + 1, '@') != NULL) return false;
+    size_t local = (size_t)(at - text);
+    const char *domain = at + 1;
+    if (local == 0 || local > 64 || text[0] == '.' || at[-1] == '.') return false;
+    for (const char *c = text; c < at; c++) {
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9') || strchr(".!#$%&'*+/=?^_`{|}~-", *c) != NULL))
+            return false;
+        if (*c == '.' && c[1] == '.') return false;
+    }
+    size_t label = 0, labels = 0;
+    for (const char *c = domain;; c++) {
+        if (*c == '.' || *c == '\0') {
+            if (label == 0 || c[-1] == '-') return false;
+            labels++;
+            label = 0;
+            if (*c == '\0') break;
+            continue;
+        }
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9') || (*c == '-' && label > 0)))
+            return false;
+        if (++label > 63) return false;
+    }
+    return labels >= 2 && strlen(domain) <= 253;
+}
+
+static bool contact_https_url(const char *text) {
+    if (strncmp(text, "https://", 8) != 0) return false;
+    const char *host = text + 8;
+    size_t host_length = strcspn(host, "/?#");
+    if (host_length == 0 || host[0] == '.' || host[0] == '-' || host[0] == ':') return false;
+    for (const unsigned char *c = (const unsigned char *)text; *c; c++)
+        if (*c <= 0x20 || *c >= 0x7f || strchr("\"<>\\^`{|}", *c) != NULL) return false;
+    for (size_t i = 0; i < host_length; i++)
+        if (host[i] == '@') return false;
+    return true;
+}
+
+/* `maintainers` is public display metadata: 1-8 {name, contact} Hashes with
+ * distinct contacts. It grants no registry ownership. Source manifests must
+ * declare it; archives published before it existed may omit it. */
+static bool validate_maintainers(const DiamondManifestValue *manifest, bool required,
+                                 char *error, size_t error_size) {
+    const DiamondManifestValue *list = diamond_manifest_get(manifest, "maintainers");
+    if (list == NULL) {
+        if (!required) return true;
+        (void)snprintf(error, error_size,
+                       "'maintainers' must list 1-%d maintainers, each with a name and contact",
+                       FACET_MAX_MAINTAINERS);
+        return false;
+    }
+    size_t count = 0;
+    if (list->kind == DIAMOND_MANIFEST_ARRAY)
+        for (const DiamondManifestValue *item = list->children; item != NULL; item = item->next)
+            count++;
+    if (list->kind != DIAMOND_MANIFEST_ARRAY || count == 0 || count > FACET_MAX_MAINTAINERS) {
+        (void)snprintf(error, error_size, "'maintainers' must be an Array of 1-%d entries",
+                       FACET_MAX_MAINTAINERS);
+        return false;
+    }
+    size_t index = 0;
+    for (const DiamondManifestValue *item = list->children; item != NULL;
+         item = item->next, index++) {
+        const DiamondManifestValue *name = diamond_manifest_get(item, "name");
+        const DiamondManifestValue *contact = diamond_manifest_get(item, "contact");
+        size_t keys = 0;
+        if (item->kind == DIAMOND_MANIFEST_HASH)
+            for (const DiamondManifestValue *key = item->children; key != NULL; key = key->next)
+                keys++;
+        if (item->kind != DIAMOND_MANIFEST_HASH || keys != 2 || name == NULL ||
+            contact == NULL || name->kind != DIAMOND_MANIFEST_STRING ||
+            contact->kind != DIAMOND_MANIFEST_STRING) {
+            (void)snprintf(error, error_size,
+                           "maintainer %zu must be a Hash with exactly String 'name' and 'contact'",
+                           index + 1);
+            return false;
+        }
+        size_t name_length = strlen(name->string);
+        if (name_length == 0 || name_length > FACET_MAX_MAINTAINER_NAME ||
+            name->string[0] == ' ' || name->string[name_length - 1] == ' ' ||
+            !printable_utf8(name->string)) {
+            (void)snprintf(error, error_size,
+                           "maintainer %zu name must be 1-%d bytes of printable UTF-8 without surrounding spaces",
+                           index + 1, FACET_MAX_MAINTAINER_NAME);
+            return false;
+        }
+        if (strlen(contact->string) > FACET_MAX_CONTACT ||
+            !(contact_email(contact->string) || contact_https_url(contact->string))) {
+            (void)snprintf(error, error_size,
+                           "maintainer %zu contact must be an email address or https:// URL of at most %d bytes",
+                           index + 1, FACET_MAX_CONTACT);
+            return false;
+        }
+        for (const DiamondManifestValue *earlier = list->children; earlier != item;
+             earlier = earlier->next) {
+            if (strcmp(diamond_manifest_get(earlier, "contact")->string, contact->string) == 0) {
+                (void)snprintf(error, error_size, "maintainer %zu repeats a contact", index + 1);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static void print_json_string(const char *text) {
+    putchar('"');
+    for (const unsigned char *ch = (const unsigned char *)text; *ch; ch++) {
+        if (*ch == '"' || *ch == '\\') printf("\\%c", *ch);
+        else if (*ch < 32) printf("\\u%04x", (unsigned)*ch);
+        else putchar(*ch);
+    }
+    putchar('"');
+}
+
 typedef struct FacetFileList {
     char **paths;
     size_t count;
@@ -2925,15 +3081,9 @@ static int cmd_verify(int argc, char **argv) {
         ok = false;
     }
     if (ok) {
-        const char *allowed[] = {"name", "version", "summary", "license",
-                                 "dependencies", "homepage", "source",
-                                 "documentation", "issues"};
         for (const DiamondManifestValue *item = manifest->children;
              item != NULL; item = item->next) {
-            bool known = false;
-            for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
-                if (strcmp(item->key, allowed[i]) == 0) known = true;
-            if (!known) {
+            if (!manifest_key_known(item->key)) {
                 (void)snprintf(error, sizeof error,
                                "unknown archive manifest key: %s", item->key);
                 ok = false;
@@ -2998,6 +3148,13 @@ static int cmd_verify(int argc, char **argv) {
         }
     }
     if (ok) {
+        char detail[256];
+        if (!validate_maintainers(manifest, false, detail, sizeof detail)) {
+            (void)snprintf(error, sizeof error, "archive manifest %s", detail);
+            ok = false;
+        }
+    }
+    if (ok) {
         const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
         for (size_t i = 0; i < files.count; i++) {
             if (runtime_sources[i] != NULL &&
@@ -3033,15 +3190,20 @@ static int cmd_verify(int argc, char **argv) {
              dep != NULL; dep = dep->next) {
             printf("%s\"%s\":", first ? "" : ",", dep->key);
             first = false;
-            putchar('"');
-            for (const unsigned char *ch = (const unsigned char *)dep->string; *ch; ch++) {
-                if (*ch == '"' || *ch == '\\') printf("\\%c", *ch);
-                else if (*ch < 32) printf("\\u%04x", (unsigned)*ch);
-                else putchar(*ch);
-            }
-            putchar('"');
+            print_json_string(dep->string);
         }
-        fputs("}}\n", stdout);
+        /* Legacy archives without maintainers report an empty list. */
+        fputs("},\"maintainers\":[", stdout);
+        const DiamondManifestValue *maintainers = diamond_manifest_get(manifest, "maintainers");
+        for (const DiamondManifestValue *item = maintainers ? maintainers->children : NULL;
+             item != NULL; item = item->next) {
+            fputs(item == maintainers->children ? "{\"name\":" : ",{\"name\":", stdout);
+            print_json_string(diamond_manifest_get(item, "name")->string);
+            fputs(",\"contact\":", stdout);
+            print_json_string(diamond_manifest_get(item, "contact")->string);
+            putchar('}');
+        }
+        fputs("]}\n", stdout);
     } else if (ok) {
         printf("facet: verified %s %s (%zu files)\nsha256: ",
                name->string, version->string, files.count);
@@ -3101,15 +3263,9 @@ static int cmd_check(int argc, char **argv) {
     }
     int status = 65;
     FacetFileList files = {0};
-    const char *allowed[] = {"name", "version", "summary", "license",
-                             "dependencies", "homepage", "source",
-                             "documentation", "issues"};
     for (const DiamondManifestValue *item = manifest->children;
          item != NULL; item = item->next) {
-        bool known = false;
-        for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
-            if (strcmp(item->key, allowed[i]) == 0) known = true;
-        if (!known) {
+        if (!manifest_key_known(item->key)) {
             fprintf(stderr, "facet: unknown manifest key '%s'\n", item->key);
             goto done;
         }
@@ -3166,6 +3322,10 @@ static int cmd_check(int argc, char **argv) {
             fprintf(stderr, "facet: '%s' must be a String\n", display_keys[i]);
             goto done;
         }
+    }
+    if (!validate_maintainers(manifest, true, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        goto done;
     }
     const char *required_files[] = {"README.md", "LICENSE"};
     for (size_t i = 0; i < sizeof required_files / sizeof required_files[0]; i++) {

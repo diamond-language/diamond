@@ -70,7 +70,7 @@ cp project1/facet.lock project1/facet.lock.git
 # its locked size and digest, validates the archive, and replaces the cut from
 # staging. A fake curl keeps the test local while exercising the argv contract.
 mkdir -p registry_source/greeter/lib fake_bin
-printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT"}' > registry_source/greeter/diamond.cut
+printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/greeter/diamond.cut
 printf '%s\n' '# Registry greeter' > registry_source/greeter/README.md
 printf '%s\n' 'MIT' > registry_source/greeter/LICENSE
 printf '%s\n' 'def greet(name)' '  "registry hello, " + name' 'end' > registry_source/greeter/lib/greeter.di
@@ -602,7 +602,7 @@ mkdir project21_registry
 # downloading either archive, skips yanked versions, writes the full lock, and
 # then installs both verified artifacts.
 mkdir -p registry_source/logger/lib registry_metadata
-printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT"}' > registry_source/logger/diamond.cut
+printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/logger/diamond.cut
 printf '%s\n' '# Registry logger' > registry_source/logger/README.md
 printf '%s\n' 'MIT' > registry_source/logger/LICENSE
 printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/lib/logger.di
@@ -859,7 +859,7 @@ rm -f "$error_file"
 
 # --- publishable cut preflight, independent of the project working directory ---
 mkdir -p checkcut/lib
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/diamond.cut
 printf '# Checkcut\n' > checkcut/README.md
 printf 'MIT License\n' > checkcut/LICENSE
 printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
@@ -897,7 +897,7 @@ grep -q "needs a regular LICENSE" "$error_file"
 rm -f "$error_file"
 printf 'MIT License\n' > checkcut/LICENSE
 
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "dependencies": {"logger": {"git": "example", "version": "^0.4.0"}}}\n' > checkcut/diamond.cut
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": {"git": "example", "version": "^0.4.0"}}}\n' > checkcut/diamond.cut
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted a Git dependency in a release manifest" >&2
@@ -906,7 +906,38 @@ fi
 grep -q "dependency 'logger' needs a valid SemVer range String" "$error_file"
 rm -f "$error_file"
 
-printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT"}\n' > checkcut/diamond.cut
+# Source manifests must name public maintainers with an email or https contact.
+for maintainers in '' ', "maintainers": []' \
+    ', "maintainers": [{"name": "Test", "contact": "http://example.com"}]' \
+    ', "maintainers": [{"name": "Test", "contact": "test@localhost"}]' \
+    ', "maintainers": [{"name": "Test", "contact": "test@example.com", "role": "lead"}]' \
+    ', "maintainers": [{"name": "A", "contact": "a@example.com"}, {"name": "B", "contact": "a@example.com"}]'; do
+    printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT"%s}\n' "$maintainers" > checkcut/diamond.cut
+    error_file="$(mktemp)"
+    if "$facet" check checkcut >/dev/null 2>"$error_file"; then
+        echo "facet check accepted invalid maintainers: $maintainers" >&2
+        exit 1
+    fi
+    grep -q "maintainer" "$error_file"
+    rm -f "$error_file"
+done
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test \\"Q\\"", "contact": "test@example.com"}, {"name": "Site", "contact": "https://example.com/issues"}]}\n' > checkcut/diamond.cut
+maintained_archive="$(mktemp -d)/checkcut.tar"
+"$facet" pack checkcut "$maintained_archive" >/dev/null
+[[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[{"name":"Test \"Q\"","contact":"test@example.com"},{"name":"Site","contact":"https://example.com/issues"}]}' ]]
+# Archives published before the field existed still verify, reporting none.
+python3 - "$maintained_archive" <<'PY'
+import re, sys
+path = sys.argv[1]
+data = open(path, 'rb').read()
+match = re.search(rb', "maintainers": \[.*?\]\]?(?=\})', data)
+assert match
+open(path, 'wb').write(data[:match.start()] + b' ' * (match.end() - match.start()) + data[match.end():])
+PY
+[[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[]}' ]]
+rm -rf "$(dirname "$maintained_archive")"
+
+printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}\n' > checkcut/diamond.cut
 mkdir -p checkcut/lib/checkcut checkcut/tests
 printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.di
 printf 'ignored test\n' > checkcut/tests/test.di

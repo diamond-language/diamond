@@ -133,7 +133,7 @@ echo "publication failure cleanup tests passed"
 export REGISTRY_PUBLISH_ROOT="$test_project/publish"
 export REGISTRY_FACET="$source_root/build/facet"
 mkdir -p "$REGISTRY_PUBLISH_ROOT"/{blobs,staging,publish_test/lib}
-printf '%s\n' '{"name":"publish_test","version":"1.0.0","summary":"Publish test","license":"MIT","dependencies":{"logger":"^0.1.0"}}' >"$REGISTRY_PUBLISH_ROOT/publish_test/diamond.cut"
+printf '%s\n' '{"name":"publish_test","version":"1.0.0","summary":"Publish test","license":"MIT","maintainers":[{"name":"Test","contact":"test@example.com"}],"dependencies":{"logger":"^0.1.0"}}' >"$REGISTRY_PUBLISH_ROOT/publish_test/diamond.cut"
 printf 'test\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/README.md"
 printf 'MIT\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/LICENSE"
 printf '1\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/lib/publish_test.di"

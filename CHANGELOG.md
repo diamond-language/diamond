@@ -6,6 +6,19 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Publishable cut manifests now require `maintainers`: 1-8 public name and
+  contact entries (email or `https://` URL). `facet check`, `pack`, and
+  `publish` enforce it; `facet verify` still accepts older archives and its
+  JSON reports the list. The registry records maintainers, requires them for new
+  releases, and shows them in the catalog; the version 1 metadata API is
+  unchanged for facet 0.7.0 compatibility.
+- All bundled cuts name Chad 'Matrix9180' Ingram as maintainer. The 18
+  published cuts have new patch versions carrying it, and the seed inventory
+  now lists them. Production still serves
+  the launch versions.
+
 ## 0.7.0 — 2026-09-23
 
 ### Diagnostics

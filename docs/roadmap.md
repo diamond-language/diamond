@@ -385,17 +385,6 @@ Likely directions:
 - avoid framework magic that hides database access or weakens Diamond's type
   and error contracts.
 
-### Require maintainer identity in package manifests
-
-Planned after 0.7.0: require a maintainer name and a contact method in every
-publishable `diamond.cut`. Define the fields and accepted contact formats,
-validate them in `facet check`, packing/verification, and registry publication,
-and expose them in the catalog. Provide a migration path for existing source
-manifests and already published immutable archives; do not rewrite existing
-release bytes. Document that this contact information becomes public and keep
-private credentials out of it. Manifest contact metadata does not itself grant
-registry ownership or publishing rights.
-
 ## Runtime research
 
 ### Bound pause time further

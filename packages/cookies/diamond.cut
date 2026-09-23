@@ -1,1 +1,1 @@
-{"name": "cookies", "version": "0.1.0", "summary": "Cookie parsing, signing, encryption, and session helpers", "license": "MIT"}
+{"name": "cookies", "version": "0.1.1", "summary": "Cookie parsing, signing, encryption, and session helpers", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

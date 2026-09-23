@@ -1,1 +1,1 @@
-{"name": "arel", "version": "0.34.0", "summary": "Immutable SQL query builder with dialect visitors", "license": "MIT"}
+{"name": "arel", "version": "0.34.1", "summary": "Immutable SQL query builder with dialect visitors", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}
