@@ -1,0 +1,26 @@
+[Unit]
+Description=Diamond cut registry
+After=network.target
+
+[Service]
+Type=simple
+User=diamond-registry
+Group=diamond-registry
+WorkingDirectory=/opt/diamond/applications/registry
+EnvironmentFile=/etc/diamond-registry.env
+ExecStart=/opt/diamond/build/diamond app.di
+StateDirectory=diamond-registry
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/diamond-registry
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

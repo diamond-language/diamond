@@ -10,6 +10,7 @@ import socket
 import sqlite3
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -408,7 +409,66 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         assert set(request_ids).issubset({row['request_id'] for row in completed})
         assert completed and all(row['request_id'] and row['duration_ms'] >= 0 for row in completed)
         assert all('path' not in row and 'headers' not in row and 'body' not in row for row in completed)
-        print('registry HTTPS publish/install and audited administration tests passed')
+        backup_tool = str(source / 'applications/registry/backup.py')
+        backup = work / 'backup'
+        restored = work / 'restored'
+        run(sys.executable, backup_tool, 'backup', str(data), str(backup))
+        run(sys.executable, backup_tool, 'restore', str(backup), str(restored))
+        with sqlite3.connect(restored / 'registry.db') as recovered:
+            assert '\n'.join(recovered.iterdump()) == dump
+        assert not list((restored / 'staging').iterdir())
+        assert not (restored / 'blobs' / digest).exists()  # orphan excluded
+        result = subprocess.run([sys.executable, backup_tool, 'restore', str(backup), str(restored)],
+                                capture_output=True, timeout=10)
+        assert result.returncode != 0 and (restored / 'registry.db').exists()
+        blob = next((backup / 'blobs').iterdir())
+        original_bytes = blob.read_bytes()
+        blob.write_bytes(b'corrupt')
+        failed = work / 'failed-restore'
+        result = subprocess.run([sys.executable, backup_tool, 'restore', str(backup), str(failed)],
+                                capture_output=True, timeout=10)
+        assert result.returncode != 0 and not failed.exists()
+        blob.write_bytes(original_bytes)
+        saved_database = (backup / 'registry.db').read_bytes()
+        (backup / 'registry.db').write_bytes(b'corrupt database')
+        result = subprocess.run([sys.executable, backup_tool, 'restore', str(backup), str(failed)],
+                                capture_output=True, timeout=10)
+        assert result.returncode != 0 and not failed.exists()
+        (backup / 'registry.db').write_bytes(saved_database)
+        manifest = backup / 'manifest.json'
+        manifest.unlink()
+        result = subprocess.run([sys.executable, backup_tool, 'restore', str(backup), str(failed)],
+                                capture_output=True, timeout=10)
+        assert result.returncode != 0 and not failed.exists()
+        server.terminate()
+        server.wait(timeout=5)
+        env['REGISTRY_ROOT'] = str(restored)
+        server = subprocess.Popen([str(diamond), 'app.di'], cwd=work, env=env, stdout=log, stderr=log)
+        for _ in range(100):
+            try:
+                conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
+                conn.request('GET', '/registry/health')
+                response = conn.getresponse()
+                ready = response.status == 200
+                response.read()
+                conn.close()
+                if ready:
+                    break
+            except (OSError, http.client.HTTPException):
+                pass
+            time.sleep(.05)
+        else:
+            raise AssertionError('restored registry failed to start')
+        assert request('/v1/cuts/greeter/versions/1.0.0')[0] == 404
+        assert request('/v1/audit', headers=audit_headers)[0] == 401
+        recovery_consumer = work / 'recovery-consumer'
+        recovery_consumer.mkdir()
+        run(str(facet), 'init', 'recovery-consumer', cwd=recovery_consumer, env=env)
+        run(str(facet), 'add', 'helper', '--registry', url, '--version', '^1.0.0', cwd=recovery_consumer, env=env)
+        run(str(facet), 'update', cwd=recovery_consumer, env=env)
+        assert run(str(diamond), '-e', 'require_cut "helper"\nhelper_value()',
+                   cwd=recovery_consumer, env=env).stdout.strip() == 'installed from registry'
+        print('registry HTTPS publish/install, administration, and restore tests passed')
     finally:
         if proxy:
             proxy.shutdown()

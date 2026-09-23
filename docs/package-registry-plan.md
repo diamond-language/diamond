@@ -37,7 +37,9 @@ manifests, paths, documentation, and existing projects.
    The HTTP read/publish service now lives in `applications/registry`, with a
    real HTTPS facet integration test. Audited yank/unyank/takedown endpoints and local credential lifecycle commands
    are implemented, along with owner management and paginated audit inspection.
-   Production operations remain. Publish from a selected `packages/<name>/` directory,
+   Online backup and verified restore tooling, a live recovery drill, and systemd
+   deployment templates are implemented. Production proxy configuration, rate
+   limiting, monitoring, and operational ownership remain. Publish from a selected `packages/<name>/` directory,
    not from the monorepo root.
 5. Add a web interface for search, package pages, documentation, owners,
    versions, and release status. Keep the API usable without the web interface.

@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added online registry snapshots and verified restoration into a new directory,
+  with blob/database checksums, a live HTTPS recovery drill, and systemd
+  deployment templates and operator recovery instructions.
+
 - Added configurable registry upload/connection limits and I/O deadlines,
   bounded request/header parsing, and structured logs with correlated request
   IDs. Early oversized requests receive JSON errors; logs exclude URLs,

@@ -143,3 +143,58 @@ and scope/expiry snapshots where applicable. No raw tokens or token digests are
 exposed. Credential events distinguish the local operator (subject) from the
 affected credential (credential ID). See the protocol for complete response
 fields and authorization rules.
+
+## Backup and recovery
+
+Use Python 3's standard library tool with trusted local source and destination
+parents. Run as the storage owner. Both commands require a **new destination**:
+
+```sh
+python3 backup.py backup /var/lib/diamond-registry /srv/backups/registry-20260923
+python3 backup.py restore /srv/backups/registry-20260923 /srv/recovery/registry
+```
+
+Backup may run while the service publishes. SQLite's backup API captures a
+consistent database; immutable blobs referenced by that snapshot are then copied
+and verified. This relies on the current policy of retaining blobs, including
+taken-down releases. Do not delete blobs or run garbage collection during backup.
+Orphan blobs and staging uploads are excluded. The snapshot includes credentials,
+owners, audit events, idempotency keys, and release state. Protect and encrypt
+backup storage as you would the live database; credential digests remain sensitive.
+
+`manifest.json` records the database checksum and complete blob inventory and is
+written last. Restore checks those values, SQLite integrity and foreign keys,
+and every blob's digest and size. Checksums detect damage; they do not authenticate
+a backup against malicious replacement. Files are synced before success is
+reported. Failed operations remove their new destination; process termination or
+power loss can leave a partial directory. Never use a partial restore. A backup
+without a valid manifest cannot be restored. Keep successful snapshots off-host
+and establish retention and periodic recovery drills with your operator.
+
+Restore does not alter the running service. After a successful restore, stop the
+service, point `REGISTRY_ROOT` and its service write permissions at the recovered
+directory, and restart. Check health, authentication, release state, and a real
+facet installation before reopening traffic. Credential expiry times are preserved;
+restoring an older snapshot also restores its older revocation and ownership state.
+Reconcile changes since that snapshot before reopening writes. The HTTPS test runs
+an online backup, verifies database contents, restarts on recovered data, and
+installs and executes a cut through facet.
+
+## Service deployment template
+
+`deploy/registry.service` and `deploy/registry.env.example` provide a Linux systemd
+starting point. Install built binaries and locally installed cuts under
+`/opt/diamond`, create the `diamond-registry` service account, and install the
+environment file as `/etc/diamond-registry.env`. Create
+`/var/lib/diamond-registry/{blobs,staging}` owned by that account with mode 0700
+before starting. Install the unit in `/etc/systemd/system/`, reload systemd, and
+enable/start `registry.service`. Adjust paths in both files together. Application
+code should be read-only to the service account; only its state directory is writable.
+Logs go to the journal. The template is not an automatic deployment.
+
+Configure your HTTPS proxy to preserve the path prefix, allow the configured
+upload size, and use timeouts appropriate to archive verification. Restrict port
+18120 to the proxy with host/network firewall rules **before** starting the service:
+Gremlin binds all interfaces. Configure TLS certificates, proxy rate limits,
+monitoring, and backup scheduling for your host. No public service, proxy, firewall,
+or certificate configuration is installed by this repository.
