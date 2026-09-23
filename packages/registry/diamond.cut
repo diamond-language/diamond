@@ -1,0 +1,1 @@
+{"name": "registry", "version": "0.1.0", "summary": "Cut registry storage primitives", "license": "MIT", "dependencies": {"active_record": "^0.19.0"}}
