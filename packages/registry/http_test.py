@@ -254,6 +254,20 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         (data / 'blobs' / digest).write_bytes(orphan)
         assert request('/v1/blobs/sha256/' + digest)[0] == 404
 
+        monitor = str(source / 'applications/registry/monitor.py')
+        monitor_args = [sys.executable, monitor, url, '--ca-file', str(work / 'cert.pem')]
+        result = run(*monitor_args, '--archive-sha256', release['archive']['sha256'])
+        assert json.loads(result.stdout)['ok'] is True
+        for arguments in (
+                [sys.executable, monitor, url],  # untrusted TLS certificate
+                [sys.executable, monitor, url + '/missing', '--ca-file', str(work / 'cert.pem')],
+                monitor_args + ['--archive-sha256', '0' * 64],
+                [sys.executable, monitor, 'http://localhost:' + str(public_port)],
+        ):
+            result = subprocess.run(arguments, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 1 and json.loads(result.stdout)['ok'] is False
+            assert url not in result.stdout
+
         consumer = work / 'consumer'
         consumer.mkdir()
         run(str(facet), 'init', 'consumer', cwd=consumer, env=env)
@@ -468,7 +482,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         run(str(facet), 'update', cwd=recovery_consumer, env=env)
         assert run(str(diamond), '-e', 'require_cut "helper"\nhelper_value()',
                    cwd=recovery_consumer, env=env).stdout.strip() == 'installed from registry'
-        print('registry HTTPS publish/install, administration, and restore tests passed')
+        print('registry HTTPS publish/install, monitoring, administration, and restore tests passed')
     finally:
         if proxy:
             proxy.shutdown()

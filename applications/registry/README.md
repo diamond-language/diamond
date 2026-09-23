@@ -198,3 +198,9 @@ upload size, and use timeouts appropriate to archive verification. Restrict port
 Gremlin binds all interfaces. Configure TLS certificates, proxy rate limits,
 monitoring, and backup scheduling for your host. No public service, proxy, firewall,
 or certificate configuration is installed by this repository.
+
+## Proxy limits and monitoring
+
+See [deployment operations](deploy/OPERATIONS.md) for the nginx rate-limit template,
+HTTPS health/archive probe, alert signals, and launch and upgrade checklists.
+Templates require host-specific configuration and validation before deployment.

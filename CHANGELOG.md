@@ -17,6 +17,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a registry nginx proxy template with read/write rate limits, a verified
+  HTTPS health/archive monitoring probe, and deployment and incident checklists.
+
 - Added online registry snapshots and verified restoration into a new directory,
   with blob/database checksums, a live HTTPS recovery drill, and systemd
   deployment templates and operator recovery instructions.
