@@ -50,22 +50,24 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
 
-The public hostname is `cuts.dilang.tech` on the existing droplet. A live catalog
-and getting-started flow are implemented. Confirm off-host backup destination and alert delivery, then validate the complete
-Caddy/nginx chain in QEMU before public deployment. See the
-[production preparation record](../applications/registry/deploy/PRODUCTION.md).
-The QEMU systemd lifecycle gate covers startup, restart, and restored-service
-operation under a dedicated account; production host validation remains.
+The public registry and catalog are live at `https://cuts.dilang.tech` on the
+existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
+for the installed revision, service layout, verification, and operational limits.
+Next: choose the first manual laptop backup destination and external alert
+receiver, then finalize the 0.7 versus 0.8 release, notes, tag, and announcement.
+Production reboot and certificate-renewal drills remain outstanding.
 
-## Candidate launch inventory
+## Public launch inventory
 
-The candidate contains all **24** bundled cuts, including `registry`. The explicit
+The public selection contains **18** bundled cuts, including `registry`.
+The operator excluded `dials`, `active_auth`, `active_discussion`, `active_karma`,
+`active_social`, and `active_tagging`; these were unpublished and removed from
+the seed selection. Their source packages remain available in this repository. The explicit
 selection and versions are in
 [`applications/registry/launch-cuts.json`](../applications/registry/launch-cuts.json).
 [`registry-launch-inventory.json`](registry-launch-inventory.json) records each
 verified archive's name, version, dependency ranges, SHA-256, byte size, and file
-name, in deterministic dependency-first publication order. This is a candidate
-freeze for review; changing a selected package requires regenerating and reviewing
+name, in deterministic dependency-first publication order. Changing a selected package requires regenerating and reviewing
 its inventory entry before the launch gate will pass.
 
 Build the exact candidate without publishing anything:
@@ -97,6 +99,8 @@ using only root cuts as direct dependencies, loads every cut, and reinstalls fro
 the unchanged lockfile. All data and credentials are temporary. This is a local
 rehearsal; final public publication remains a separate release action.
 
-The 2026-09-23 QEMU rehearsal passed for this candidate: all 24 archives matched
+The 2026-09-23 QEMU rehearsal passed for the original candidate: all 24 archives matched
 the host-built inventory, published successfully, resolved through facet, loaded,
-and reinstalled from an unchanged lockfile. Public publication is still pending.
+and reinstalled from an unchanged lockfile. The public registry was subsequently
+activated, seeded, and reduced to the approved 18 cuts. The current selection
+retains the reviewed bytes and has no dependency on the six removed cuts.

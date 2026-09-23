@@ -17,6 +17,12 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Launched the public package registry at https://cuts.dilang.tech with 18 selected
+  cuts. Unpublished Dials and the auth, discussion, karma, social, and tagging
+  cuts at the operator's request and excluded them from future launch seeds.
+  Added QEMU release bundles, initial deployment, scoped seed publication, and
+  public installation verification tools.
+
 - Added a live, searchable public cut catalog with bounded pagination, release
   status and digest details, and facet onboarding for cuts.dilang.tech. Added
   preparation and a QEMU gate for the existing droplet's Caddy HTTPS and

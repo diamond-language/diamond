@@ -1,13 +1,34 @@
-# cuts.dilang.tech launch preparation
+# cuts.dilang.tech production record
 
-The user selected `https://cuts.dilang.tech` on the existing droplet. Read-only
-inspection on 2026-09-23 found a DNS typo: cuts.dilang.tech resolved to
-142.39.192.149, while the droplet interface and modartist.app resolve to
-**142.93.192.149**. The user is correcting the A record. Recheck DNS before TLS
-activation. The same inspection found Caddy active
-and enabled, existing routes for dilang.tech and Skindicate, and an active UFW
-policy allowing SSH, HTTP, and HTTPS. No production configuration was changed
-by this inspection. The public registry has not been deployed or seeded.
+The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
+The corrected A record is **142.93.192.149**. Caddy issued a publicly trusted
+HTTPS certificate, and external health and catalog requests succeeded.
+
+Runtime revision: `f90c10bd5eddb8dc0faf8debf894934c89cf7c25`, built in the local
+Ubuntu 26.04 QEMU guest with x86-64-v3 release flags. Registry files live under
+`/opt/diamond-registry/releases/<revision>` with a `current` symlink; application
+state is `/var/lib/diamond-registry`. This separate root avoids the existing
+Skindicate application's restricted `/opt/diamond` directory.
+
+The registry, nginx, and Caddy services are active and enabled. The registry runs
+as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
+Existing dilang.tech, skindicate.art, and modartist.app routes were checked after
+activation. Production reboot and certificate-renewal drills have not been run.
+
+The initial seed contained 24 cuts. At the operator's request, `dials`,
+`active_auth`, `active_discussion`, `active_karma`, `active_social`, and
+`active_tagging` were subsequently unpublished through audited takedowns.
+The public launch inventory now contains **18 cuts**. No retained cut depends
+on the removed cuts. Takedowns hide metadata and archive downloads while retaining
+internal audit records and immutable version tombstones; those exact versions
+cannot be republished. The source packages remain in the repository.
+The publication and takedown credentials were temporary and have been revoked.
+Initial published ownership belongs to `diamond-language`.
+
+External HTTPS verification confirmed exactly 18 catalog releases, 404 responses
+for each removed release's metadata and archive, and successful facet resolution,
+digest checks, loading, and locked reinstall of every retained cut. The revised
+seed also passed local reproducibility and dependency-closure checks.
 
 ## Fit the existing proxy
 
@@ -43,19 +64,13 @@ headers. Validate the installed configuration and public traffic again on the ho
 - Choose the external alert recipient/service and provision its credentials
   outside Git. Connect probes and expiry/storage/backup-age signals; deliver a
   test alert and confirm receipt.
-- Build release binaries in QEMU matching the droplet OS. Install registry code
-  and static catalog assets without modifying the running Skindicate checkout.
-  The service working directory must contain `app.di`, `catalog.di`,
-  `catalog.html`, `catalog.js`, and installed cuts.
-- Validate and enable the registry service, then verify reboot activation and
-  the real host firewall. Preserve other sites and check them after proxy reload.
-- Issue a temporary scoped seed credential, publish the reviewed 24-cut inventory,
-  verify public facet install/execute and locked reinstall, then revoke the seed
-  credential. Inspect the public catalog against the inventory.
+- Perform a planned production reboot check and monitor certificate renewal.
+  Service enablement and a successfully issued certificate do not establish
+  evidence of those future events.
 - Finalize 0.7 versus 0.8, release notes, tag, and announcement after verification.
 
-The catalog reads live published rows and will show an empty state until releases
-exist. The checked-in candidate inventory is not substituted for live availability.
+The catalog reads live published rows; the checked-in inventory records the
+reviewed public selection.
 
 ## Current backup and alert choices
 
@@ -70,7 +85,7 @@ With Python 3.12+ on the laptop, select a new private destination yourself and u
 ```sh
 python3 tools/fetch_registry_backup.py /your/chosen/new-backup-directory \
   --host root@modartist.app \
-  --app /actual/registry/application/directory \
+  --app /opt/diamond-registry/current/app \
   --data /var/lib/diamond-registry
 ```
 
@@ -96,3 +111,28 @@ and perform a facet installation. Follow the service restore procedure when
 switching real traffic. Manually run `monitor.py https://cuts.dilang.tech` until
 external alert delivery is selected; a successful manual probe does not establish
 continuous monitoring.
+
+## Deployment tools
+
+`tools/build_registry_vm.sh <new-output-directory>` builds the committed revision
+in QEMU, runs the release-binary HTTPS integration suite, verifies the selected
+seed, and produces `registry-deployment.tar.gz`, `SHA256SUMS`, and `REVISION`.
+The QEMU guest must match Ubuntu 26.04 x86_64; the target CPU must support x86-64-v3.
+
+`applications/registry/deploy/install_initial.sh <bundle.tar.gz> <sha256>` is a
+root-only initial-install helper for the existing Caddy host. It verifies bundle
+checksums, installs the dedicated service and loopback nginx layer, and backs up
+and validates Caddy configuration before reload. It refuses existing registry
+state; use a separately reviewed procedure for upgrades or a partial installation.
+It does not publish packages or configure backup destinations and alert delivery.
+
+For an explicitly approved new seed, use `tools/publish_registry_seed.py` with the
+HTTPS registry URL, `--seed <verified-seed-directory>`, and
+`--credentials <private-credential-json>`. Issue short-lived name-scoped credentials
+with `credentials.di`; revoke them after the operation and remove the private file.
+The publisher verifies archive identities and respects the live write rate limit.
+Do not reuse the original deployed 24-cut seed: use the current 18-cut selection.
+
+Run `python3 tools/verify_registry_launch.py https://cuts.dilang.tech` to resolve
+all selected cuts into a temporary clean consumer, compare the lock against the
+reviewed inventory, load every cut, and reinstall from the unchanged lockfile.

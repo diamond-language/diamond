@@ -27,69 +27,12 @@
       "version": "0.1.0"
     },
     {
-      "archive": "active_auth.tar",
-      "dependencies": {
-        "active_record": "^0.19.0",
-        "cookies": "^0.1.0"
-      },
-      "name": "active_auth",
-      "sha256": "8c33b0eb68a137a2902831f6af2b2e27b0aaed33f62ee8b38dfbeb7c00e0f948",
-      "size": 39424,
-      "version": "0.2.0"
-    },
-    {
-      "archive": "active_discussion.tar",
-      "dependencies": {
-        "active_record": "^0.19.0"
-      },
-      "name": "active_discussion",
-      "sha256": "4b3b8839acf99a87f709078fdc047361c1def16cc795fc1c919b34adbf8baa2a",
-      "size": 40448,
-      "version": "0.1.0"
-    },
-    {
-      "archive": "active_karma.tar",
-      "dependencies": {},
-      "name": "active_karma",
-      "sha256": "b242e8760063236e21d2d0cbb2a51f85a067f56daaa453200a33fa3afa9699bf",
-      "size": 16896,
-      "version": "0.1.0"
-    },
-    {
-      "archive": "active_social.tar",
-      "dependencies": {
-        "active_record": "^0.19.0"
-      },
-      "name": "active_social",
-      "sha256": "4c4b2957e00f12c3f80abcfc93f22db813f89275d54536a689c7c6aefbeaf2e6",
-      "size": 11776,
-      "version": "0.1.0"
-    },
-    {
-      "archive": "active_tagging.tar",
-      "dependencies": {
-        "active_record": "^0.19.0"
-      },
-      "name": "active_tagging",
-      "sha256": "73273e1bf442b1fc8df4c2473fa53131b09ab370240e2960d2f42a85c08cdfa6",
-      "size": 13824,
-      "version": "0.1.0"
-    },
-    {
       "archive": "database_config.tar",
       "dependencies": {},
       "name": "database_config",
       "sha256": "4a8a1cda0bcd44158fcb6df1b1d502adee952a3750e1f55dd7ee016aa476fc7c",
       "size": 11776,
       "version": "0.1.0"
-    },
-    {
-      "archive": "dials.tar",
-      "dependencies": {},
-      "name": "dials",
-      "sha256": "be928898dcf60032e759001d20d0690a4442693fc714227c31ee8995b51d08fa",
-      "size": 24576,
-      "version": "0.2.0"
     },
     {
       "archive": "div.tar",
