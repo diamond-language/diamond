@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.7.0 — 2026-09-23
+
 ### Diagnostics
 
 - Compiler diagnostics now own their formatted message text, so messages remain

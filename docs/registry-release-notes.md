@@ -1,8 +1,6 @@
-# Package registry release notes — draft
+# Diamond 0.7.0
 
-Proposed release: **Diamond 0.7.0**. The final version and release date are still
-pending; use 0.8.0 if another minor release ships first. This is draft announcement
-text, not a published release. See [the checklist](registry-release-plan.md#release-checklist).
+Release date: 2026-09-23.
 
 ## Diamond's public package registry is live
 
@@ -13,7 +11,7 @@ Search the catalog to find a library and copy its facet installation command.
 
 ### Try it
 
-[Build Diamond and facet](../README.md), then run these commands in a new project
+[Build Diamond and facet](https://github.com/diamond-language/diamond/blob/v0.7.0/README.md), then run these commands in a new project
 directory with both executables on your PATH:
 
 ```sh
@@ -40,7 +38,7 @@ The initial public selection is:
 - Utilities: `div`, `jobs`, `logger`, `log_viewer`.
 - Registry support: `registry`.
 
-The [reviewed inventory](registry-launch-inventory.json) records exact versions
+The [reviewed inventory](https://github.com/diamond-language/diamond/blob/v0.7.0/docs/registry-launch-inventory.json) records exact versions
 and archive identities. Cut versions are independent of the Diamond runtime
 version. Dials and the auth, discussion, karma, social, and tagging cuts are
 excluded from this public selection; their source packages remain in the repo.
@@ -48,9 +46,9 @@ excluded from this public selection; their source packages remain in the repo.
 ### Publishing and reproducibility
 
 Publishing is available to operator-approved maintainers using scoped credentials.
-[Request maintainership through GitHub issues](registry-maintainership.md).
+[Request maintainership through GitHub issues](https://github.com/diamond-language/diamond/blob/main/docs/registry-maintainership.md).
 Self-service registration is not available. Check and pack your cut with facet;
-follow the [cut contract](cut-contract.md) for metadata and archive requirements.
+follow the [cut contract](https://github.com/diamond-language/diamond/blob/v0.7.0/docs/cut-contract.md) for metadata and archive requirements.
 
 Published versions are immutable. A yank excludes a release from new resolution
 while preserving existing locks. An operator takedown removes access to that
@@ -58,6 +56,13 @@ release, including locked downloads. Publish changed contents under a new versio
 
 ### Other changes
 
-See the [changelog](../CHANGELOG.md) for compiler diagnostics, runtime, and tooling
-changes included in the final release. This draft covers the registry highlight;
-review the full changelog when the release commit is selected.
+- Compiler diagnostics now preserve their message text and show more precise
+  type information, including missing members in non-exhaustive `case` errors.
+- The x86-64 JIT covers more typed string and collection operations, string
+  slicing, type checks, and method chains through known or narrowed receivers.
+- Persistent AOT caches include runtime source and build fingerprints, preventing
+  incompatible cached runtime archives from being reused across checkouts.
+- The interactive REPL adds a `clear` command.
+
+See the [full changelog](https://github.com/diamond-language/diamond/blob/v0.7.0/CHANGELOG.md#070--2026-09-23)
+for implementation details and limitations. Diamond remains pre-1.0.

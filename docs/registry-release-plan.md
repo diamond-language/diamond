@@ -1,9 +1,8 @@
-# Package repository launch: next pre-1.0 release
+# Package repository launch: Diamond 0.7.0
 
-The release highlight is the public package repository going live. Target the
-next suitable minor release: **0.7**, or **0.8** if the work spans another release.
-Choose the version when scheduling the release; do not bump it solely to reserve
-this milestone. The current runtime remains 0.6.0.
+The selected release is **0.7.0**, highlighting the live public package registry.
+Runtime metadata and release notes are prepared; tagging follows successful
+release checks.
 
 ## Release outcome
 
@@ -55,8 +54,7 @@ The public registry and catalog are live at `https://cuts.dilang.tech` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
 The first manual laptop snapshot has passed restore verification. Automatic
-alerts are deferred by the operator. Next: finalize the 0.7 versus 0.8 release,
-notes, tag, and announcement.
+alerts are deferred by the operator. Next: verify the 0.7.0 release commit, then tag and publish its release notes.
 Production reboot and certificate-renewal drills remain outstanding.
 
 ## Public launch inventory
@@ -109,8 +107,8 @@ retains the reviewed bytes and has no dependency on the six removed cuts.
 
 ## Release checklist
 
-Draft announcement text is in [registry-release-notes.md](registry-release-notes.md).
-Use 0.7.0 provisionally; select the actual version before editing runtime metadata.
+Release notes are in [registry-release-notes.md](registry-release-notes.md).
+The selected version is 0.7.0.
 
 - [x] Deploy HTTPS catalog and registry; preserve existing host routes.
 - [x] Publish and verify the final 18-cut selection; revoke temporary credentials.
@@ -123,8 +121,8 @@ Use 0.7.0 provisionally; select the actual version before editing runtime metada
   `monitor.py` probes remain available; automatic notification is not a release gate.
 - [ ] Schedule production reboot and certificate-renewal checks. Record any
   deferred operational checks explicitly in the release decision.
-- [ ] Choose 0.7.0 versus 0.8.0 and finalize the complete release notes.
-- [ ] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
+- [x] Choose 0.7.0 and finalize the release notes.
+- [x] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
   changelog entries under the version/date heading.
 - [ ] Verify the final release commit: inspect the complete CI results, run the
   QEMU registry gate (`tools/test_registry_vm.sh`), and run
