@@ -92,3 +92,41 @@ binaries can read a migrated database. If rollback needs a snapshot, restore to 
 new directory while traffic is closed, account for writes since the snapshot,
 and reconcile credential revocations before reopening. See the application's
 [backup and recovery instructions](../README.md#backup-and-recovery).
+
+## Local QEMU staging gate
+
+Staging means an isolated test deployment; this project prefers a local QEMU VM.
+The existing Ubuntu 26.04 build guest can be reused without changing its normal
+build checkout. Use QEMU user networking (NAT), forward SSH only on host loopback,
+and do not forward the guest's registry ports. Install nginx and the repository's
+Ubuntu build dependencies, Python 3, curl, and OpenSSL in the guest first.
+
+From the host checkout:
+
+```sh
+REGISTRY_VM_PORT=2222 \
+REGISTRY_VM_KNOWN_HOSTS=/path/to/verified/known_hosts \
+  tools/test_registry_vm.sh
+```
+
+The runner uses `builder@127.0.0.1`, strict host-key verification, and existing SSH
+keys. The default known-hosts file is `../.vm-build/known_hosts`, matching the local
+build VM workflow. It transfers the current source snapshot (including pending
+nonignored files), builds in a fresh `/tmp` directory, runs `test-registry-nginx`
+and `test-registry-http`, and removes that directory afterward. Review untracked
+files before running it. It neither changes the usual build checkout nor installs
+packages automatically. The VM remains running afterward.
+
+The nginx drill changes only addresses, ports, certificates, and log paths in the
+shipped proxy template. It uses a temporary local certificate with verification
+on, a temporary database and credential, and unprivileged nginx on guest loopback.
+It checks real facet publishing/install/execution, preserved request IDs and base
+paths, 401/413 rejection, independent write throttling, read throttling and recovery,
+and access-log redaction. No real package is published. The separate HTTPS suite
+also exercises administration and restoring a service from backup. Full systemd
+startup, public DNS, certificate renewal, alert delivery, and host firewall checks
+remain deployment gates.
+
+Validated on 2026-09-23 in the local Ubuntu 26.04.1 QEMU guest with nginx
+1.28.3: the nginx staging gate and the full registry HTTPS integration suite
+passed, including monitored archive access and backup restoration.

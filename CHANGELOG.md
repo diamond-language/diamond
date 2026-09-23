@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a repeatable local QEMU staging gate for the real nginx registry proxy,
+  including HTTPS facet publishing/install, upload and rate limits, and recovery.
+  Recorded the public package repository launch plan for the next minor release.
+
 - Added a registry nginx proxy template with read/write rate limits, a verified
   HTTPS health/archive monitoring probe, and deployment and incident checklists.
 

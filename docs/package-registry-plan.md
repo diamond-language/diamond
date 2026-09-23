@@ -1,6 +1,6 @@
 # Cut registry plan
 
-Status: design plan, 2026-09-21. This document describes intended behavior;
+Status: implementation and launch plan, 2026-09-23. This document tracks delivery;
 `docs/packages.md` describes the current `facet` and `require_cut` behavior.
 
 Diamond calls a reusable package a **cut**. Keep `facet` as the package manager,
@@ -78,11 +78,12 @@ manifests, paths, documentation, and existing projects.
 
 The [version 1 registry protocol](registry-protocol.md) now specifies the read API,
 archive identity, lockfile shape, publishing boundary, and resolver rules.
-Read and publish endpoints are implemented and tested through HTTPS. Operations
-still need an owner, backups, incident response, abuse handling, and retention
-rules before a public service is launched. Owner management and bounded audit inspection are implemented; production
-request limits, I/O deadlines, and structured logging are implemented. Backup
-and restore procedures, rate limits, and deployment operations remain.
+Read and publish endpoints, owner management, audit inspection, request limits,
+I/O deadlines, structured logs, backup/restore, proxy templates, and monitoring
+probes are implemented. Local QEMU staging exercises the actual nginx proxy.
+Public hosting, alert delivery, scheduled off-host backups, operational ownership,
+and the launch package inventory remain. The next pre-1.0 minor release (0.7 or
+0.8) targets a live public repository; see [the release plan](registry-release-plan.md).
 
 ## Lessons informing the contract
 
