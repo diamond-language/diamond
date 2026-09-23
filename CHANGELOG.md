@@ -17,6 +17,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a GitHub issue template and developer guide for requesting public-registry
+  maintainership, including ownership review and private scoped-credential delivery.
+
 - Launched the public package registry at https://cuts.dilang.tech with 18 selected
   cuts. Unpublished Dials and the auth, discussion, karma, social, and tagging
   cuts at the operator's request and excluded them from future launch seeds.

@@ -124,6 +124,12 @@ without pinning every dependency to a single release. The consuming
 application's `facet.lock` records the exact resolved graph. Published library
 lockfiles are not used to resolve a consumer's graph.
 
+## Request publishing access
+
+For the public registry, [request maintainership through GitHub issues](registry-maintainership.md).
+The guide explains the required evidence, operator review, and private credential
+delivery. Approval is required before publishing.
+
 ## Release and install invariants
 
 - The tuple (registry source, name, version) identifies exactly one immutable

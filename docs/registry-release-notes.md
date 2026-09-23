@@ -48,6 +48,7 @@ excluded from this public selection; their source packages remain in the repo.
 ### Publishing and reproducibility
 
 Publishing is available to operator-approved maintainers using scoped credentials.
+[Request maintainership through GitHub issues](registry-maintainership.md).
 Self-service registration is not available. Check and pack your cut with facet;
 follow the [cut contract](cut-contract.md) for metadata and archive requirements.
 

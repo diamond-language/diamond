@@ -93,6 +93,12 @@ test, a local HTTPS proxy, and a running Diamond service. It publishes cuts with
 transitive dependencies, resolves and executes installed code, reinstalls a
 yanked locked release, and checks takedown visibility.
 
+## Request maintainership
+
+Developers can [request public-registry maintainership through GitHub issues](../../docs/registry-maintainership.md).
+Use the template for new publications, additional maintainers, and ownership
+transfers. Operators verify source ownership and deliver scoped credentials privately.
+
 ## Local credential administration
 
 Run these commands from the application directory, after the application has
