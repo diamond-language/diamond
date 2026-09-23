@@ -46,9 +46,10 @@ manifests, paths, documentation, and existing projects.
    versions, and release status. Keep the API usable without the web interface.
 6. Migrate bundled cuts in small dependency-connected groups. Declare their
    runtime dependencies, test installation from artifacts in CI, then publish.
-   All 23 bundled cuts now have release metadata, license files, and declared
+   All 24 bundled cuts now have release metadata, license files, and declared
    dependencies. `tools/install_local_cuts.sh` stages verified archives for
-   local projects, including Skindicate. Registry publishing remains.
+   local projects, including Skindicate. A reviewed candidate inventory and QEMU
+   publication/install rehearsal cover the complete seed; public publication remains.
 
 ## Decisions to carry through implementation
 
@@ -82,7 +83,7 @@ Read and publish endpoints, owner management, audit inspection, request limits,
 I/O deadlines, structured logs, backup/restore, proxy templates, and monitoring
 probes are implemented. Local QEMU staging exercises the actual nginx proxy.
 Public hosting, alert delivery, scheduled off-host backups, operational ownership,
-and the launch package inventory remain. The next pre-1.0 minor release (0.7 or
+and final launch inventory approval remain. The next pre-1.0 minor release (0.7 or
 0.8) targets a live public repository; see [the release plan](registry-release-plan.md).
 
 ## Lessons informing the contract

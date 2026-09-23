@@ -1,0 +1,218 @@
+{
+  "cuts": [
+    {
+      "archive": "arel.tar",
+      "dependencies": {},
+      "name": "arel",
+      "sha256": "14a7fe131086f1e3ccbde30122df33b0a2357b6674a2e357f0fbd805e3a07e78",
+      "size": 152064,
+      "version": "0.34.0"
+    },
+    {
+      "archive": "active_record.tar",
+      "dependencies": {
+        "arel": "^0.34.0"
+      },
+      "name": "active_record",
+      "sha256": "eca9b50ee18d7838d51acf2adb61650879d37c5dfecf3d89b4c7363b7396bbbd",
+      "size": 91136,
+      "version": "0.19.0"
+    },
+    {
+      "archive": "cookies.tar",
+      "dependencies": {},
+      "name": "cookies",
+      "sha256": "b8515c17f66172197ece33e252e4bbf70e06bffe4e133e01dbb51faa954f5b1a",
+      "size": 27648,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "active_auth.tar",
+      "dependencies": {
+        "active_record": "^0.19.0",
+        "cookies": "^0.1.0"
+      },
+      "name": "active_auth",
+      "sha256": "8c33b0eb68a137a2902831f6af2b2e27b0aaed33f62ee8b38dfbeb7c00e0f948",
+      "size": 39424,
+      "version": "0.2.0"
+    },
+    {
+      "archive": "active_discussion.tar",
+      "dependencies": {
+        "active_record": "^0.19.0"
+      },
+      "name": "active_discussion",
+      "sha256": "4b3b8839acf99a87f709078fdc047361c1def16cc795fc1c919b34adbf8baa2a",
+      "size": 40448,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "active_karma.tar",
+      "dependencies": {},
+      "name": "active_karma",
+      "sha256": "b242e8760063236e21d2d0cbb2a51f85a067f56daaa453200a33fa3afa9699bf",
+      "size": 16896,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "active_social.tar",
+      "dependencies": {
+        "active_record": "^0.19.0"
+      },
+      "name": "active_social",
+      "sha256": "4c4b2957e00f12c3f80abcfc93f22db813f89275d54536a689c7c6aefbeaf2e6",
+      "size": 11776,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "active_tagging.tar",
+      "dependencies": {
+        "active_record": "^0.19.0"
+      },
+      "name": "active_tagging",
+      "sha256": "73273e1bf442b1fc8df4c2473fa53131b09ab370240e2960d2f42a85c08cdfa6",
+      "size": 13824,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "database_config.tar",
+      "dependencies": {},
+      "name": "database_config",
+      "sha256": "4a8a1cda0bcd44158fcb6df1b1d502adee952a3750e1f55dd7ee016aa476fc7c",
+      "size": 11776,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "dials.tar",
+      "dependencies": {},
+      "name": "dials",
+      "sha256": "be928898dcf60032e759001d20d0690a4442693fc714227c31ee8995b51d08fa",
+      "size": 24576,
+      "version": "0.2.0"
+    },
+    {
+      "archive": "div.tar",
+      "dependencies": {},
+      "name": "div",
+      "sha256": "7ec8cdcfa37ee12831150e0d43bc17af99b8841c00bedbecdfa3bba175c0b626",
+      "size": 29184,
+      "version": "0.2.0"
+    },
+    {
+      "archive": "graphql.tar",
+      "dependencies": {},
+      "name": "graphql",
+      "sha256": "ed576cda607ff8c05425e4ccb09169534cbcaad62f2feed01f1327a8997e563e",
+      "size": 147968,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "graphsql.tar",
+      "dependencies": {
+        "active_record": "^0.19.0",
+        "graphql": "^0.1.0"
+      },
+      "name": "graphsql",
+      "sha256": "7e8111ee5c403fb014d0023d52f1005f049a6a4521d933e684220000c08edb72",
+      "size": 20992,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "http.tar",
+      "dependencies": {},
+      "name": "http",
+      "sha256": "459dcc0aa317c9e554b3db6f7ad50ee78be0fbc47e3210418cfe65b4fbb2a47a",
+      "size": 43008,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "logger.tar",
+      "dependencies": {},
+      "name": "logger",
+      "sha256": "9d9cf05d15e8e316be10ecab30946d1d569f5f86951ebe52b68878ca9638af44",
+      "size": 16384,
+      "version": "0.4.0"
+    },
+    {
+      "archive": "gremlin.tar",
+      "dependencies": {
+        "http": "^0.1.0",
+        "logger": "^0.4.0"
+      },
+      "name": "gremlin",
+      "sha256": "856b1709a7a5a83e053cb1d0b4f9e015c6cd5d474c404a0c49b445afaec67e12",
+      "size": 43008,
+      "version": "0.2.0"
+    },
+    {
+      "archive": "jobs.tar",
+      "dependencies": {},
+      "name": "jobs",
+      "sha256": "29cdcaf3c6631cd42831727c0d67aa914f9d2006feecdca70f2dcbcb7fe5f159",
+      "size": 18432,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "log_viewer.tar",
+      "dependencies": {},
+      "name": "log_viewer",
+      "sha256": "09b09aa1d4c2aa595888b5bbd23c8df2087aa9751d3086cfbecb19b04e3a28e0",
+      "size": 10752,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "multipart.tar",
+      "dependencies": {},
+      "name": "multipart",
+      "sha256": "663c63f4919f35828f192ed18c89216656c78f30a27a830f28658d025edc96bb",
+      "size": 16384,
+      "version": "0.2.0"
+    },
+    {
+      "archive": "network_safety.tar",
+      "dependencies": {
+        "http": "^0.1.0"
+      },
+      "name": "network_safety",
+      "sha256": "886901645bc7b91dfdbd589bacbba13a1ccb3449b7a4d9a3c5f1af9ac31f0141",
+      "size": 12800,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "rack.tar",
+      "dependencies": {},
+      "name": "rack",
+      "sha256": "5c3f2989ef58d8d9b37778a3fb613a6820cb9ebe9ebe79a480063cf5abc7cdcb",
+      "size": 40448,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "redis.tar",
+      "dependencies": {},
+      "name": "redis",
+      "sha256": "fc1fe3a4d92e03921978e6121fb89b1eff411c18cfa3a0f643adff57fd091de6",
+      "size": 47616,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "registry.tar",
+      "dependencies": {
+        "active_record": "^0.19.0"
+      },
+      "name": "registry",
+      "sha256": "1dde721823f5a091faf283f445d9a8875c70beedfaeec03fbc1bd61afb99f5e0",
+      "size": 47616,
+      "version": "0.1.0"
+    },
+    {
+      "archive": "websocket.tar",
+      "dependencies": {},
+      "name": "websocket",
+      "sha256": "b30ea2e2388fd87826a92bc3e40b667488b6ee1e6e2e45661f979bf90be037ea",
+      "size": 32768,
+      "version": "0.1.0"
+    }
+  ],
+  "format": 1
+}

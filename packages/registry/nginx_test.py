@@ -3,11 +3,13 @@ import collections
 import http.client
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -155,6 +157,61 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
             # Allow the full read burst debt to drain; write debt lasts much longer.
             time.sleep(3)
             assert request()[0] == 200
+            if os.environ.get('REGISTRY_REHEARSE_SEED') == '1':
+                seed = work / 'seed'
+                run(sys.executable, str(source / 'tools/prepare_registry_seed.py'), str(seed),
+                    '--expect', str(source / 'docs/registry-launch-inventory.json'))
+                inventory = json.loads((seed / 'inventory.json').read_text())['cuts']
+                scopes = ','.join('publish:' + cut['name'] for cut in inventory)
+                seed_token = json.loads(run(diamond, 'credentials.di', 'issue', 'launch-rehearsal',
+                    '3600', scopes, 'launch seed rehearsal', cwd=work, env=env).stdout)['token']
+                for cut in inventory:
+                    archive = (seed / cut['archive']).read_bytes()
+                    for attempt in range(6):
+                        status, _, payload = request('/v1/cuts/' + cut['name'] + '/versions',
+                            'POST', archive, {'Authorization': 'Bearer ' + seed_token,
+                                             'Content-Type': 'application/octet-stream'})
+                        if status != 429:
+                            break
+                        time.sleep(10.1)
+                    assert status == 201, (cut['name'], status)
+                    published = json.loads(payload)
+                    for key in ('name', 'version', 'sha256', 'size'):
+                        assert published[key] == cut[key]
+                    status, _, payload = request('/v1/cuts/' + cut['name'] + '/versions/' + cut['version'])
+                    assert status == 200
+                    assert json.loads(payload)['dependencies'] == cut['dependencies']
+                    print('seed published:', cut['name'], cut['version'], flush=True)
+                    # Honor the shipped six writes/minute policy, including across cuts.
+                    time.sleep(10.1)
+                launch = work / 'launch-consumer'
+                launch.mkdir()
+                run(facet, 'init', 'launch-consumer', cwd=launch, env=env)
+                dependencies = {name for cut in inventory for name in cut['dependencies']}
+                roots = [cut for cut in inventory if cut['name'] not in dependencies]
+                manifest = json.loads((launch / 'diamond.cut').read_text())
+                manifest['dependencies'] = {cut['name']: {'registry': url, 'version': cut['version']}
+                                            for cut in roots}
+                (launch / 'diamond.cut').write_text(json.dumps(manifest))
+                run(facet, 'update', cwd=launch, env=env)
+                lock_bytes = (launch / 'facet.lock').read_bytes()
+                # The canonical facet writer emits one outer trailing comma.
+                # Remove only that final separator in this test-owned lock.
+                lock = json.loads(re.sub(rb",\s*}\s*$", b"}", lock_bytes))
+                assert set(lock) == {cut['name'] for cut in inventory}
+                for cut in inventory:
+                    locked = lock[cut['name']]
+                    assert locked['source'] == 'registry' and locked['registry'] == url
+                    for key in ('version', 'sha256', 'size'):
+                        assert locked[key] == cut[key]
+                    run(diamond, '-e', 'require_cut "' + cut['name'] + '"\n"loaded"', cwd=launch, env=env)
+                shutil.rmtree(launch / 'cuts')
+                time.sleep(3)
+                run(facet, 'install', cwd=launch, env=env)
+                assert (launch / 'facet.lock').read_bytes() == lock_bytes
+                assert {path.name for path in (launch / 'cuts').iterdir()} >= set(lock)
+                print(f"launch seed: {len(inventory)} exact archives published, resolved, loaded, and reinstalled", flush=True)
+                assert seed_token not in (work / 'access.log').read_text()
             stop(proxy)
             proxy = None
             records = [json.loads(line) for line in (work / 'access.log').read_text().splitlines()]

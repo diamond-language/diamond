@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a reproducible 24-cut launch inventory with pinned archive digests and
+  dependency publication order, plus a QEMU rehearsal that publishes the seed
+  through nginx and verifies fresh and locked facet installations.
+
 - Added a repeatable local QEMU staging gate for the real nginx registry proxy,
   including HTTPS facet publishing/install, upload and rate limits, and recovery.
   Recorded the public package repository launch plan for the next minor release.

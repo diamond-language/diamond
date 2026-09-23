@@ -50,6 +50,50 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
 
-After the QEMU proxy gate, prepare the reproducible launch inventory and its
-staging publication rehearsal. Resolve public hostname and initial publisher
-policy while that work proceeds.
+After the inventory rehearsal, validate the systemd service lifecycle and
+restore procedure in QEMU. Resolve public hostname, hosting, initial publisher
+policy, and minimum browsing experience before the public launch.
+
+## Candidate launch inventory
+
+The candidate contains all **24** bundled cuts, including `registry`. The explicit
+selection and versions are in
+[`applications/registry/launch-cuts.json`](../applications/registry/launch-cuts.json).
+[`registry-launch-inventory.json`](registry-launch-inventory.json) records each
+verified archive's name, version, dependency ranges, SHA-256, byte size, and file
+name, in deterministic dependency-first publication order. This is a candidate
+freeze for review; changing a selected package requires regenerating and reviewing
+its inventory entry before the launch gate will pass.
+
+Build the exact candidate without publishing anything:
+
+```sh
+make facet
+python3 tools/prepare_registry_seed.py /tmp/registry-launch-seed \
+  --expect docs/registry-launch-inventory.json
+```
+
+The destination must not exist. Archives and `inventory.json` are written there;
+failed preparation removes only the newly created destination. The builder uses
+facet's archive verifier, checks selected identities, rejects missing dependencies
+and cycles, and compares the result to the reviewed inventory. Dependency range
+compatibility is checked by facet resolution during the staging rehearsal. No
+registry URL, credential, timestamp, or machine-specific path enters the inventory.
+
+To propose a changed candidate, use a fresh destination without `--expect`, inspect
+the archives and the inventory diff, and update the checked-in inventory only after
+review. Package versions are independent of Diamond's eventual 0.7/0.8 version.
+Before publishing a previously released package, increment its cut version if its
+bytes changed: registry releases cannot be replaced.
+
+`tools/test_registry_vm.sh` now includes `make test-registry-seed`. The rehearsal
+rebuilds the reviewed archives in QEMU, publishes those exact bytes through the real
+nginx HTTPS proxy in dependency order, and respects its six-writes-per-minute
+policy. It compares returned archive identities, installs the graph through facet
+using only root cuts as direct dependencies, loads every cut, and reinstalls from
+the unchanged lockfile. All data and credentials are temporary. This is a local
+rehearsal; final public publication remains a separate release action.
+
+The 2026-09-23 QEMU rehearsal passed for this candidate: all 24 archives matched
+the host-built inventory, published successfully, resolved through facet, loaded,
+and reinstalled from an unchanged lockfile. Public publication is still pending.

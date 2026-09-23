@@ -33,6 +33,6 @@ command -v nginx >/dev/null || [[ -x /usr/sbin/nginx ]] || {
 }
 make -j2
 make facet
-make test-registry-nginx
+make test-registry-seed
 make test-registry-http
 REMOTE

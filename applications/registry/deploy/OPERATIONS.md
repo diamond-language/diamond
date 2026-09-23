@@ -112,7 +112,7 @@ REGISTRY_VM_KNOWN_HOSTS=/path/to/verified/known_hosts \
 The runner uses `builder@127.0.0.1`, strict host-key verification, and existing SSH
 keys. The default known-hosts file is `../.vm-build/known_hosts`, matching the local
 build VM workflow. It transfers the current source snapshot (including pending
-nonignored files), builds in a fresh `/tmp` directory, runs `test-registry-nginx`
+nonignored files), builds in a fresh `/tmp` directory, runs `test-registry-seed`
 and `test-registry-http`, and removes that directory afterward. Review untracked
 files before running it. It neither changes the usual build checkout nor installs
 packages automatically. The VM remains running afterward.
@@ -130,3 +130,7 @@ remain deployment gates.
 Validated on 2026-09-23 in the local Ubuntu 26.04.1 QEMU guest with nginx
 1.28.3: the nginx staging gate and the full registry HTTPS integration suite
 passed, including monitored archive access and backup restoration.
+
+The seed gate includes the nginx checks plus the complete candidate launch inventory.
+Allow several minutes for its paced writes. See the [launch inventory instructions](../../../docs/registry-release-plan.md#candidate-launch-inventory)
+for artifact review and reproducibility checks.
