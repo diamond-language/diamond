@@ -11,6 +11,7 @@ make
 make facet
 tools/install_local_cuts.sh applications/registry
 cd applications/registry
+umask 077
 mkdir -p data/blobs data/staging
 export REGISTRY_ROOT="$PWD/data"
 export REGISTRY_FACET="$(cd ../.. && pwd)/build/facet"
@@ -52,12 +53,39 @@ prerelease identifiers. Errors return protocol JSON without internal exception
 messages. Responses currently use `Cache-Control: no-store` so later takedowns
 are not hidden by HTTP caching.
 
-This first service uses one worker and buffers request bodies and blobs. The
-current HTTP parser imposes a 25 MiB upload limit, below the artifact verifier's
-56 MiB limit, and closes connections exceeding it. Configure the proxy to reject
-oversized uploads with HTTP 413. Streaming uploads, rate limits, structured
-request logging, backups, and production deployment
-remain follow-up work.
+This service uses one worker and buffers request bodies and blobs. Bounded
+parsing rejects oversized bodies with HTTP 413 and oversized lines, headers, or
+header counts with HTTP 431, using protocol JSON errors and request IDs.
+Malformed or ambiguous framing (including duplicate headers, negative/noncanonical
+lengths, and transfer encoding) returns HTTP 400. `Expect: 100-continue` is
+supported after size validation; other expectations return HTTP 417.
+
+Defaults and startup settings:
+
+| Limit | Default | Configuration |
+| --- | --- | --- |
+| Body bytes | 25 MiB | `REGISTRY_MAX_BODY_BYTES`, 1–56 MiB |
+| Active connections | 8 | `REGISTRY_MAX_CONNECTIONS`, 1–1024 |
+| Connection I/O deadline | 30 seconds | `REGISTRY_TIMEOUT_SECONDS`, 1–3600 |
+| Request/header line including CRLF | 8192 bytes | Fixed |
+| Combined request line and headers | 32768 bytes | Fixed |
+| Header count | 100 | Fixed |
+
+Expired connections and connections above the capacity limit are closed, with
+structured log events; these closures do not promise an HTTP error response.
+The deadline starts at accept and does not reset when bytes arrive. It bounds
+stalled socket reads/writes while the worker polls; it cannot interrupt
+synchronous database, verifier, or handler work. Upload memory consumption grows
+with the body limit and connection count, with additional buffer copies.
+Streaming uploads, rate limits, backups, and production deployment remain.
+
+Logs are newline-delimited JSON. Handled requests log `request.started` and
+`request.completed` with a generated request ID, method, sizes, handler duration,
+and status. The same ID appears in `X-Request-ID` and JSON error bodies. Early
+parser rejections and I/O deadlines are logged by Gremlin. URLs, queries,
+headers, tokens, and bodies are excluded from registry request logs. Completion
+means the handler produced its response; it does not confirm delivery to the
+client. Configure the reverse proxy's limits and deadlines consistently.
 
 Run `make test-registry-http` from the repository root for the live integration
 suite. It uses Python 3, OpenSSL, real curl, a temporary CA trusted only by the

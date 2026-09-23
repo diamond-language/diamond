@@ -46,7 +46,7 @@ end
 # `nil`, meaning no tick at all -- IO.poll blocks with its original
 # `-1` (or whatever shutdown alone already bounded it to), exactly
 # today's behavior, unchanged for every existing caller.
-def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
+def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = nil)
   listener = TCPServer.listen_nonblocking(port, reuse_port: true)
   connections = []
   context = {}
@@ -73,9 +73,18 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
   Signal.trap("INT", GremlinShutdown.request)
 
   def spawn_connection(client_socket)
-    conn = NonblockingConnection.new(client_socket)
+    conn = NonblockingConnection.new(client_socket, limits)
     def handle_connection()
-      request = http_parse_request(conn)
+      begin
+        request = http_parse_request(conn, limits)
+      rescue error: HttpRequestError
+        status = error.message().to_i()
+        code = if status == 413 then "payload_too_large" else "invalid_request" end
+        log.warn("request.rejected", {"request_id": conn.request_id(), "status": status, "error": code})
+        http_write_response(conn, [status, {"Content-Type": "application/json", "Connection": "close", "X-Request-ID": conn.request_id()}, JSON.stringify({"protocol": 1, "error": code, "message": code, "request_id": conn.request_id()})])
+        conn.close()
+        return nil
+      end
       unless request == nil
         # context["gremlin_connection"]: this request's own live
         # NonblockingConnection -- an escape hatch for a handler that
@@ -87,6 +96,7 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
         # never needs this at all -- it's here purely for a handler
         # that wants to opt in.
         context["gremlin_connection"] = conn
+        if limits != nil then request["request_id"] = conn.request_id() end
         response = handler(request, context)
         # nil is the signal a handler already fully took over `conn`
         # itself (via context["gremlin_connection"] above) and wrote
@@ -162,7 +172,18 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
     # never returns, and a tick would never fire at all on an otherwise
     # idle worker. See gremlin_poll_timeout_ms's own comment for how the
     # two bounds combine.
-    ready = IO.poll(read_list, write_list, gremlin_poll_timeout_ms(next_tick_at))
+    poll_ms = gremlin_poll_timeout_ms(next_tick_at)
+    position = 0
+    while position < connections.length()
+      deadline = connections[position]["conn"].deadline()
+      if deadline != nil
+        remaining = to_i((deadline - Time.monotonic()) * 1000)
+        if remaining < 0 then remaining = 0 end
+        if poll_ms < 0 || remaining < poll_ms then poll_ms = remaining end
+      end
+      position += 1
+    end
+    ready = IO.poll(read_list, write_list, poll_ms)
 
     # Accepted here, *not* folded into `connections` until after the resume
     # pass below -- `ready`'s own readable/writable arrays are sized and
@@ -195,6 +216,7 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
     # (client_socket == nil) -- a real, if narrow, empirically-found
     # race, not a hypothetical one.
     newly_spawned = []
+    accepted_this_tick = 0
     if ready["readable"][0] && !GremlinShutdown.requested?()
       begin
       loop do
@@ -202,10 +224,18 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
         if client_socket == nil
           break
         end
-        entry = spawn_connection(client_socket)
-        unless entry == nil
-          newly_spawned.push(entry)
+        accepted_this_tick += 1
+        if limits != nil && connections.length() + newly_spawned.length() >= limits["connections"]
+          client_socket.close()
+          log.warn("connection.rejected", {"reason": "connection_limit"})
+          break
+        else
+          entry = spawn_connection(client_socket)
+          unless entry == nil
+            newly_spawned.push(entry)
+          end
         end
+        if limits != nil && accepted_this_tick >= limits["connections"] then break end
       end
       rescue error: IOError
         nil
@@ -214,6 +244,12 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil)
 
     still_active = []
     def resume_if_ready(entry, position)
+      deadline = entry["conn"].deadline()
+      if deadline != nil && Time.monotonic() >= deadline
+        log.warn("request.timeout", {"request_id": entry["conn"].request_id(), "reason": "deadline_exceeded"})
+        entry["conn"].close()
+        return nil
+      end
       # +1 only while read_list actually held the listener at index 0
       # *when IO.poll ran* -- derived from read_list/connections'
       # own lengths (both already fixed for this tick) rather than a
@@ -295,7 +331,13 @@ end
 # supplied; skipping `threads` while naming `tick_interval`/`on_tick`
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
-def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil)
+def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil)
+  if limits != nil
+    ["line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"].each() do |key|
+      unless limits[key] is Int then raise ArgumentError.new("Gremlin limits must be positive integers") end
+      if limits[key] < 1 then raise ArgumentError.new("Gremlin limits must be positive integers") end
+    end
+  end
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
   end
@@ -316,7 +358,7 @@ def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, 
   # stays a live GC root for the server's entire lifetime.
   spawned = []
   (threads - 1).times() do |i|
-    spawned.push(Thread.new(gremlin_worker, port, handler, tick_interval, on_tick))
+    spawned.push(Thread.new(gremlin_worker, port, handler, tick_interval, on_tick, limits))
   end
-  gremlin_worker(port, handler, tick_interval, on_tick)
+  gremlin_worker(port, handler, tick_interval, on_tick, limits)
 end

@@ -19,6 +19,22 @@ def http_status_text(status)
     "Not Found"
   elsif status == 405
     "Method Not Allowed"
+  elsif status == 408
+    "Request Timeout"
+  elsif status == 409
+    "Conflict"
+  elsif status == 413
+    "Content Too Large"
+  elsif status == 417
+    "Expectation Failed"
+  elsif status == 422
+    "Unprocessable Content"
+  elsif status == 429
+    "Too Many Requests"
+  elsif status == 431
+    "Request Header Fields Too Large"
+  elsif status == 503
+    "Service Unavailable"
   elsif status == 500
     "Internal Server Error"
   else

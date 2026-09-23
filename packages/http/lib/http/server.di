@@ -1,4 +1,77 @@
-def http_parse_request(conn)
+class HttpRequestError < StandardError
+end
+
+# Bounded parsing is opt-in; Gremlin supplies per-service limits.
+def http_bounded_line(conn, maximum)
+  line = ""
+  loop do
+    byte = conn.read(1)
+    if byte == "" then raise HttpRequestError.new("400") end
+    line = line + byte
+    if line.length() > maximum then raise HttpRequestError.new("431") end
+    if byte == "\n"
+      if line.length() < 2 || line.slice(line.length() - 2, 2) != "\r\n" then raise HttpRequestError.new("400") end
+      return line.slice(0, line.length() - 2)
+    end
+  end
+end
+
+def http_parse_bounded_request(conn, limits)
+  line = http_bounded_line(conn, limits["line_bytes"])
+  pieces = line.split(" ")
+  if pieces.length() != 3 || !["HTTP/1.1", "HTTP/1.0"].include?(pieces[2]) || !pieces[1].start_with?("/")
+    raise HttpRequestError.new("400")
+  end
+  unless ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH", "OPTIONS"].include?(pieces[0]) then raise HttpRequestError.new("400") end
+  pieces[1].chars().each() do |ch|
+    code = ch.ord()
+    if code <= 32 || code >= 127 then raise HttpRequestError.new("400") end
+  end
+  headers = {}
+  total = line.length() + 2
+  count = 0
+  loop do
+    line = http_bounded_line(conn, limits["line_bytes"])
+    total += line.length() + 2
+    if total > limits["header_bytes"] then raise HttpRequestError.new("431") end
+    if line == "" then break end
+    count += 1
+    if count > limits["header_count"] then raise HttpRequestError.new("431") end
+    colon = line.index_of(":")
+    if colon == nil || colon == 0 then raise HttpRequestError.new("400") end
+    name = line.slice(0, colon).downcase()
+    name.chars().each() do |ch|
+      code = ch.ord()
+      if !((code >= 97 && code <= 122) || (code >= 48 && code <= 57) || "!#$%&'*+-.^_`|~".include?(ch))
+        raise HttpRequestError.new("400")
+      end
+    end
+    if headers[name] != nil then raise HttpRequestError.new("400") end
+    value = line.slice(colon + 1, line.length() - colon - 1).strip()
+    value.chars().each() do |ch|
+      code = ch.ord()
+      if (code < 32 && code != 9) || code == 127 then raise HttpRequestError.new("400") end
+    end
+    headers[name] = value
+  end
+  if headers["transfer-encoding"] != nil then raise HttpRequestError.new("400") end
+  if headers["expect"] != nil && headers["expect"].downcase() != "100-continue" then raise HttpRequestError.new("417") end
+  if pieces[2] == "HTTP/1.1" && (headers["host"] == nil || headers["host"] == "") then raise HttpRequestError.new("400") end
+  length = 0
+  if headers["content-length"] != nil
+    text = headers["content-length"]
+    length = text.to_i()
+    if "#{length}" != text || length < 0 then raise HttpRequestError.new("400") end
+    if length > limits["body_bytes"] then raise HttpRequestError.new("413") end
+  end
+  if headers["expect"] != nil then conn.write("HTTP/1.1 100 Continue\r\n\r\n") end
+  body = conn.read(length)
+  if body.length() != length then raise HttpRequestError.new("400") end
+  {"method": pieces[0], "path": pieces[1], "headers": headers, "body": body}
+end
+
+def http_parse_request(conn, limits = nil)
+  if limits != nil then return http_parse_bounded_request(conn, limits) end
   request_line = conn.gets()
   if request_line == nil
     return nil

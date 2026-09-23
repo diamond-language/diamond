@@ -1,11 +1,19 @@
 class NonblockingConnection
-  def initialize(socket)
+  def initialize(socket, limits = nil)
     @socket = socket
     @buffer = ""
     @eof = false
     @want_write = false
+    @deadline = nil
+    @request_id = nil
+    if limits != nil
+      @deadline = Time.monotonic() + limits["timeout_seconds"]
+      @request_id = SecureRandom.hex(16)
+    end
   end
 
+  def deadline() = @deadline
+  def request_id() = @request_id
   def socket() = @socket
 
   # Whether #write is currently mid-flight, blocked on a prior

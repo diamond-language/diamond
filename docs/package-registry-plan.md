@@ -78,7 +78,8 @@ archive identity, lockfile shape, publishing boundary, and resolver rules.
 Read and publish endpoints are implemented and tested through HTTPS. Operations
 still need an owner, backups, incident response, abuse handling, and retention
 rules before a public service is launched. Owner management and bounded audit inspection are implemented; production
-request limits and structured logging are next.
+request limits, I/O deadlines, and structured logging are implemented. Backup
+and restore procedures, rate limits, and deployment operations remain.
 
 ## Lessons informing the contract
 

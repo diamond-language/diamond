@@ -37,7 +37,9 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     env = dict(os.environ, REGISTRY_ROOT=str(data), REGISTRY_FACET=str(facet),
-               REGISTRY_PORT=str(port), REGISTRY_BASE='/registry', DIAMOND_NO_CACHE='1')
+               REGISTRY_PORT=str(port), REGISTRY_BASE='/registry', DIAMOND_NO_CACHE='1',
+               REGISTRY_TIMEOUT_SECONDS='2', REGISTRY_MAX_CONNECTIONS='4',
+               REGISTRY_MAX_BODY_BYTES='1048576')
     log = open(work / 'server.log', 'w+')
     server = subprocess.Popen([str(diamond), 'app.di'], cwd=work, env=env, stdout=log, stderr=log)
     proxy = None
@@ -70,6 +72,73 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         issued = credential('issue', 'test-owner', '3600',
                             'publish:greeter,publish:helper,manage:greeter', 'test setup')
         token = issued['token']
+        def raw_request(data, half_close=False):
+            with socket.create_connection(('127.0.0.1', port), timeout=5) as client:
+                client.sendall(data)
+                if half_close:
+                    client.shutdown(socket.SHUT_WR)
+                chunks = []
+                while True:
+                    try:
+                        chunk = client.recv(65536)
+                    except ConnectionResetError:
+                        break
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                return b''.join(chunks)
+
+        for extra, expected in [
+            (b'Content-Length: 1048577', 413),
+            (b'Content-Length: -1', 400),
+            (b'Content-Length: 2junk', 400),
+            (b'Content-Length: 0\r\nContent-Length: 0', 400),
+            (b'Transfer-Encoding: chunked', 400),
+            (b'X-Large: ' + b'a' * 8200, 431),
+            (b'\r\n'.join(f'X-{i}: a'.encode() for i in range(101)), 431),
+            (b'\r\n'.join(f'X-{i}: '.encode() + b'a' * 7000 for i in range(5)), 431),
+        ]:
+            response = raw_request(b'POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\n' + extra + b'\r\n\r\n')
+            assert response.startswith(f'HTTP/1.1 {expected} '.encode()), response[:150]
+            head, body = response.split(b'\r\n\r\n', 1)
+            payload = json.loads(body)
+            assert payload['protocol'] == 1 and payload['request_id'].encode() in head
+        response = raw_request(b'POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nx', half_close=True)
+        assert response.startswith(b'HTTP/1.1 400 ')
+        response = raw_request(b'GET /registry/\x00 HTTP/1.1\r\nHost: localhost\r\n\r\n')
+        assert response.startswith(b'HTTP/1.1 400 ')
+        # Supported Expect handshake occurs only after length validation.
+        with socket.create_connection(('127.0.0.1', port), timeout=5) as client:
+            client.sendall(b'POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 1\r\n\r\n')
+            assert client.recv(4096) == b'HTTP/1.1 100 Continue\r\n\r\n'
+            client.sendall(b'x')
+            assert client.recv(4096).startswith(b'HTTP/1.1 404 ')
+        for partial in (b'', b'GET /registry/health HTTP/1.1\r\nHost:',
+                        b'POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nx'):
+            start = time.monotonic()
+            assert raw_request(partial) == b''
+            assert time.monotonic() - start < 5
+        idle = [socket.create_connection(('127.0.0.1', port), timeout=5) for _ in range(4)]
+        try:
+            time.sleep(.15)
+            started = time.monotonic()
+            assert raw_request(b'') == b''
+            assert time.monotonic() - started < 1.5
+        finally:
+            for client in idle:
+                client.close()
+        for _ in range(100):
+            response = raw_request(b'GET /registry/health HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            if response.startswith(b'HTTP/1.1 200 '):
+                break
+            time.sleep(.02)
+        else:
+            raise AssertionError('capacity did not recover after clients disconnected')
+        # A request containing secret-looking data must not copy it into logs.
+        marker = b'registry-test-sensitive-marker'
+        response = raw_request(b'POST /registry/unknown?secret=' + marker + b' HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + marker + b'\r\nContent-Length: ' + str(len(marker)).encode() + b'\r\n\r\n' + marker)
+        assert response.startswith(b'HTTP/1.1 404 ')
+
         db = sqlite3.connect(data / 'registry.db')
         run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
             '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
@@ -110,6 +179,8 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         env['NO_PROXY'] = 'localhost,127.0.0.1'
         trust = ssl.create_default_context(cafile=str(work / 'cert.pem'))
 
+        request_ids = []
+
         def request(path, method='GET', body=None, headers=None):
             connection = http.client.HTTPSConnection('localhost', public_port, context=trust, timeout=30)
             connection.request(method, '/registry' + path, body, headers or {})
@@ -117,9 +188,14 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
             payload = response.read()
             status = response.status
             content_type = response.getheader('Content-Type')
+            request_id = response.getheader('X-Request-ID')
+            assert request_id
+            request_ids.append(request_id)
             connection.close()
             if content_type == 'application/json':
                 payload = json.loads(payload)
+                if status >= 400:
+                    assert payload['request_id'] == request_id
             return status, payload
 
         def package(name, version, body, dependencies=None):
@@ -318,6 +394,20 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         for raw in (token, outsider['token'], publisher_only['token'], admin['token'], rotated['token']):
             assert raw not in dump
         db.close()
+        log.flush()
+        log.seek(0)
+        log_text = log.read()
+        assert marker.decode() not in log_text
+        for raw in (token, outsider['token'], publisher_only['token'], admin['token'], rotated['token']):
+            assert raw not in log_text
+        records = [json.loads(line) for line in log_text.splitlines() if line.strip()]
+        assert any(row['message'] == 'request.timeout' for row in records)
+        assert any(row['message'] == 'connection.rejected' for row in records)
+        assert any(row['message'] == 'request.rejected' and row['status'] == 413 for row in records)
+        completed = [row for row in records if row['message'] == 'request.completed']
+        assert set(request_ids).issubset({row['request_id'] for row in completed})
+        assert completed and all(row['request_id'] and row['duration_ms'] >= 0 for row in completed)
+        assert all('path' not in row and 'headers' not in row and 'body' not in row for row in completed)
         print('registry HTTPS publish/install and audited administration tests passed')
     finally:
         if proxy:

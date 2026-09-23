@@ -17,6 +17,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added configurable registry upload/connection limits and I/O deadlines,
+  bounded request/header parsing, and structured logs with correlated request
+  IDs. Early oversized requests receive JSON errors; logs exclude URLs,
+  headers, credentials, and bodies. Gremlin's policy is opt-in for other apps.
+
 - Added authorized registry owner listing and add/remove operations with
   last-owner protection, immediate access revocation, and atomic audit events.
   Administrators can inspect audit records through bounded cursor pagination;

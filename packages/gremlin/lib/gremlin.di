@@ -37,11 +37,11 @@ require_cut "logger"
 # using more than one core.
 #
 # Deliberately basic: no keep-alive (matching http_serve's own scope
-# cut), no request pipelining, no per-connection timeout (a client that
-# opens a connection and never sends anything sits in `connections`
-# until it disconnects or the process exits). An ordinary handler's
+# cut), no request pipelining. Optional `limits` enables bounded parsing,
+# active-connection caps, and connection I/O deadlines; without it an idle
+# connection remains until it disconnects or the process exits. An ordinary handler's
 # request/response still goes through packages/http's own
-# http_parse_request/http_write_response entirely unmodified -- the only
+# http_parse_request/http_write_response, with optional bounded parsing -- the only
 # new code here is the non-blocking connection wrapper and the event
 # loop around it. A handler that needs more than that (packages/websocket
 # being the motivating case) can opt out of both ends of that: see

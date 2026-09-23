@@ -39,6 +39,8 @@ by hosted deployments for support and audit correlation. The initial code set:
 | 409 | `idempotency_conflict` | Idempotency key is reused for another body |
 | 409 | `last_owner` | Removing the final owner is forbidden |
 | 413 | `payload_too_large` | Request exceeds the configured limit |
+| 417 | `invalid_request` | Unsupported HTTP expectation |
+| 431 | `invalid_request` | Request line or headers exceed configured limits |
 | 422 | `invalid_archive` | Archive fails cut or manifest validation |
 | 429 | `rate_limited` | Caller must wait before retrying |
 | 500 | `internal_error` | Server could not complete a valid request |
@@ -240,3 +242,15 @@ no more events in that request's snapshot. New events may appear between
 pages. Authorization and page retrieval share one read transaction, and
 credential revocation takes effect on subsequent requests. Inspection does
 not append audit events.
+
+## Service request limits and correlation
+
+The hosted application enables bounded request parsing and generates request
+IDs before parsing. Handled responses and parser rejection responses carry
+`X-Request-ID`; JSON errors use the same ID as structured request logs.
+Connection deadlines and capacity rejection close the socket without a promised
+HTTP response. Limits are deployment settings documented in the application
+README; the default upload limit is 25 MiB and may be increased up to the
+56 MiB artifact limit. Clients must handle transport failures with bounded
+retries, preserving publish idempotency. The service does not log raw request
+URLs, headers, credentials, or bodies.
