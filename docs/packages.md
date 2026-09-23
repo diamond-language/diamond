@@ -205,15 +205,15 @@ the meantime. `facet update` always re-resolves from `diamond.cut`
 (picking up anything a tracked branch has moved to) and rewrites the
 lock.
 
-New locks mark each entry with `"source": "git"`. Older Git locks without
-that key remain readable. Unknown source types and lockfile fields fail
-explicitly; registry entries will have a separate schema when registry
-installation is implemented.
+New Git locks mark each entry with `"source": "git"`. Older Git locks without
+that key remain readable. Registry entries use `"source": "registry"` plus
+their pinned source, version, digest, and archive size. Unknown source types
+and lockfile fields fail explicitly.
 
-Because Diamond has no registry to query dependency metadata from,
-resolving *is* fetching: discovering a dependency's own transitive
-dependencies requires a clone of it to read its `diamond.cut`. There is
-therefore no separate "resolve, then fetch" phase.
+For Git dependencies, resolving *is* fetching: discovering a dependency's own
+transitive dependencies requires a clone of it to read its `diamond.cut`.
+Registry dependencies use their metadata API during `facet update`, so their
+complete graph is resolved before any archive is downloaded.
 
 **Exact-ref conflicts are hard errors, never resolved.** If two
 different requesters in the dependency graph want a different `git`/

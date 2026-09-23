@@ -156,7 +156,8 @@ have release metadata and license files, declare their runtime dependencies,
 and pass local archive checks. Dependent cuts load their dependencies through
 `require_cut`. `tools/install_local_cuts.sh` can stage verified local artifacts.
 `facet install` can install an exact registry artifact from a committed lock
-record, but no registry exists to publish or resolve them yet.
+record, and `facet update` resolves registry metadata. No registry service or
+publish command exists yet.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare
