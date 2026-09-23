@@ -151,14 +151,14 @@ Current `facet` accepts Git dependencies shaped like `{"git": URL,
 and `require_cut` parse metadata without executing it. All bundled cuts now
 have release metadata and license files, declare their runtime dependencies,
 and pass local archive checks. Dependent cuts load their dependencies through
-`require_cut`. `tools/install_local_cuts.sh` can stage verified artifacts in a
-local project while the registry and locked registry installation are built.
-No registry exists to publish them yet.
+`require_cut`. `tools/install_local_cuts.sh` can stage verified local artifacts.
+`facet install` can install an exact registry artifact from a committed lock
+record, but no registry exists to publish or resolve them yet.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare
 `"source": "git"`; old entries without a source remain readable, while
-unknown source types fail. Add registry source specs and lockfile
-digests without reinterpreting an old Git lock as a registry lock. The flat
+unknown source types fail. Registry source specs and lockfile digests remain
+distinct from old Git locks. The flat
 `cuts/<name>/` compatibility fallback
 can remain for manually installed legacy cuts; published artifacts use `lib/`.

@@ -16,11 +16,17 @@ without extracting it. The expected digest is required when verifying bytes
 against a trusted lockfile or registry record.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
-For a local checkout before registry installation is available,
+For a local checkout without a registry service,
 `tools/install_local_cuts.sh <project-directory>` installs all bundled cuts as
 verified artifacts from `packages/` into that project's `cuts/` directory.
 This development bootstrap does not
 resolve registry versions or write a registry lockfile.
+
+An existing `facet.lock` may pin a registry artifact with `source`, `registry`,
+`version`, `sha256`, and `size`. `facet install` uses `curl` to fetch only that
+digest-addressed HTTPS archive, validates it with the same checks as
+`facet verify`, and stages every cut before replacing installed copies. It does
+not query an index or resolve registry versions yet.
 
 This document covers Diamond's package resolution — packages are called
 **cuts**, resolved from a `cuts/` directory via `require_cut`, a require
@@ -336,9 +342,10 @@ the first place.
   version satisfying both — see "Dependencies" above): there is no such
   thing as "both," so nothing could ever be resolved *to* when the
   refs themselves disagree.
-- **A hosted registry/index**: `facet install greeter` by short name,
-  search, or anything else that would need a service to query — cut
-  identity is a git URL, full stop.
+- **A hosted registry/index and registry resolution**: `facet install greeter`
+  by short name, search, or anything else that would need a service to query.
+  Existing registry lock records can install exact artifacts, but manifests
+  still resolve new dependencies through Git.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together — see `docs/roadmap.md`.

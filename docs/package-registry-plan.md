@@ -19,9 +19,10 @@ manifests, paths, documentation, and existing projects.
    checksums to the lockfile. `facet pack` and `facet verify` cover local
    artifacts; new Git locks record `source: git` and old Git locks still load.
    Registry lock records now preserve and validate source, version, digest, and
-   artifact size. Registry downloading and installation remain. A locked install
-   must verify downloaded bytes and use the locked source, version, and digest
-   without consulting mutable tags.
+   artifact size. A locked install now downloads the digest-addressed archive,
+   enforces its size and digest, verifies its contents, and stages extraction
+   before replacing the installed cut without consulting mutable indexes or
+   tags. Registry version resolution remains.
 3. Resolve registry versions and transitive dependency metadata without
    downloading or executing package code. Use one version per cut name for a
    program. Preserve useful conflict explanations and deterministic selection;
@@ -36,8 +37,8 @@ manifests, paths, documentation, and existing projects.
    runtime dependencies, test installation from artifacts in CI, then publish.
    All 23 bundled cuts now have release metadata, license files, and declared
    dependencies. `tools/install_local_cuts.sh` stages verified archives for
-   local projects, including Skindicate. Registry publishing and locked
-   registry installation remain.
+   local projects, including Skindicate. Registry publishing and version
+   resolution remain.
 
 ## Decisions to carry through implementation
 

@@ -1,6 +1,9 @@
 # Cut registry protocol, version 1
 
-Status: proposed wire contract. No hosted registry or registry install exists yet. This specification defines the metadata and artifact boundary that `facet` will use; it does not change Git dependency behavior.
+Status: proposed wire contract. Locked registry archive installation is implemented;
+registry resolution, publishing, and a hosted service do not exist yet. This
+specification defines their metadata and artifact boundary without changing Git
+dependency behavior.
 
 ## Identity
 

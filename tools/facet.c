@@ -23,7 +23,7 @@ enum {
     FACET_MAX_PATH = 4096,
     FACET_MAX_COMMIT = 80,
     FACET_MAX_DEPENDENCIES = 64,
-    FACET_MAX_ARCHIVE_SIZE = 64 * 1024 * 1024,
+    FACET_MAX_ARCHIVE_SIZE = 56 * 1024 * 1024,
 };
 
 typedef enum FacetSource {
@@ -148,6 +148,16 @@ typedef struct FacetWorkQueue {
 static bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
 static bool publishable_name(const char *name);
+static int cmd_verify(int argc, char **argv);
+static void tar_header(unsigned char header[512], const char *relative,
+                       unsigned mode, unsigned long long size);
+static bool tar_number(const unsigned char *field, size_t width,
+                       unsigned long long *out);
+static bool all_zero(const unsigned char *bytes, size_t count);
+static bool valid_archive_path(const char *path);
+static bool digest_file(const char *path, unsigned char digest[32],
+                        char *error, size_t error_size);
+static bool expected_digest(const char *text, const unsigned char actual[32]);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
     FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
@@ -1296,48 +1306,318 @@ static bool strip_git_directory(const char *package_path) {
     return remove_directory_recursive(git_path);
 }
 
+static bool run_curl_download(const char *url, const char *output, uint64_t max_size,
+                              char *error, size_t error_size) {
+    char size_text[32];
+    (void)snprintf(size_text, sizeof size_text, "%llu",
+                   (unsigned long long)max_size);
+    char *const argv[] = {(char *)"curl", (char *)"--fail", (char *)"--silent",
+        (char *)"--show-error", (char *)"--proto", (char *)"=https",
+        (char *)"--connect-timeout", (char *)"10", (char *)"--max-time",
+        (char *)"60", (char *)"--retry", (char *)"2", (char *)"--retry-delay",
+        (char *)"1", (char *)"--max-filesize", size_text, (char *)"--output",
+        (char *)output, (char *)"--", (char *)url, nullptr};
+    const pid_t pid = fork();
+    if (pid < 0) {
+        (void)snprintf(error, error_size, "cannot start curl: %s", strerror(errno));
+        return false;
+    }
+    if (pid == 0) {
+        execvp("curl", argv);
+        fprintf(stderr, "facet: cannot execute 'curl': %s\n", strerror(errno));
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0) {
+        (void)snprintf(error, error_size, "cannot download '%s'", url);
+        return false;
+    }
+    return true;
+}
+
+static bool read_hashed(FILE *file, EVP_MD_CTX *digest, void *buffer, size_t size) {
+    return fread(buffer, 1, size, file) == size &&
+           EVP_DigestUpdate(digest, buffer, size) == 1;
+}
+
+static bool extract_verified_archive(const char *archive_path, const char *destination,
+                                     const char *expected_sha256,
+                                     char *error, size_t error_size) {
+    FILE *archive = fopen(archive_path, "rb");
+    if (archive == NULL || !ensure_directory(destination)) {
+        if (archive != NULL) fclose(archive);
+        (void)snprintf(error, error_size, "cannot prepare archive extraction");
+        return false;
+    }
+    struct stat before, after;
+    EVP_MD_CTX *digest_context = EVP_MD_CTX_new();
+    bool ok = digest_context != NULL &&
+              EVP_DigestInit_ex(digest_context, EVP_sha256(), NULL) == 1 &&
+              fstat(fileno(archive), &before) == 0 && S_ISREG(before.st_mode);
+    bool ended = false;
+    size_t file_count = 0;
+    unsigned long long total_bytes = 0;
+    while (ok && !ended) {
+        unsigned char header[512];
+        if (!read_hashed(archive, digest_context, header, sizeof header)) {
+            ok = false;
+            break;
+        }
+        if (all_zero(header, sizeof header)) {
+            unsigned char second[512];
+            ok = read_hashed(archive, digest_context, second, sizeof second) &&
+                 all_zero(second, sizeof second) && fgetc(archive) == EOF &&
+                 !ferror(archive);
+            ended = true;
+            break;
+        }
+        const unsigned char *end = memchr(header, '\0', 100);
+        unsigned long long mode, size;
+        char relative[101];
+        if (end == NULL || end == header || !tar_number(header + 100, 8, &mode) ||
+            !tar_number(header + 124, 12, &size) ||
+            (mode != 0644 && mode != 0755) || size > 10ULL * 1024 * 1024 ||
+            file_count == 4096 || total_bytes + size > 50ULL * 1024 * 1024) {
+            ok = false;
+            break;
+        }
+        file_count++;
+        total_bytes += size;
+        size_t length = (size_t)(end - header);
+        memcpy(relative, header, length);
+        relative[length] = '\0';
+        unsigned char canonical[512];
+        tar_header(canonical, relative, (unsigned)mode, size);
+        if (!valid_archive_path(relative) || memcmp(header, canonical, sizeof header) != 0) {
+            ok = false;
+            break;
+        }
+        char output[FACET_MAX_PATH];
+        if (snprintf(output, sizeof output, "%s/%s", destination, relative) >=
+            (int)sizeof output) {
+            ok = false;
+            break;
+        }
+        char parent[FACET_MAX_PATH];
+        (void)snprintf(parent, sizeof parent, "%s", output);
+        char *slash = strrchr(parent, '/');
+        if (slash == NULL) { ok = false; break; }
+        *slash = '\0';
+        if (!ensure_directory(parent)) { ok = false; break; }
+        int fd = open(output, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+                      (mode_t)mode);
+        if (fd < 0) { ok = false; break; }
+        unsigned char buffer[8192];
+        unsigned long long remaining = size;
+        while (remaining > 0) {
+            size_t amount = remaining < sizeof buffer ? (size_t)remaining : sizeof buffer;
+            if (!read_hashed(archive, digest_context, buffer, amount)) {
+                ok = false;
+                break;
+            }
+            size_t written = 0;
+            while (written < amount) {
+                ssize_t count = write(fd, buffer + written, amount - written);
+                if (count <= 0) { ok = false; break; }
+                written += (size_t)count;
+            }
+            if (!ok) break;
+            remaining -= amount;
+        }
+        if (close(fd) != 0) ok = false;
+        unsigned char padding[512];
+        size_t pad = (size_t)((512 - size % 512) % 512);
+        if (ok && pad > 0 && (!read_hashed(archive, digest_context, padding, pad) ||
+                              !all_zero(padding, pad))) ok = false;
+    }
+    unsigned char extracted_digest[32];
+    unsigned digest_length = 0;
+    if (!ok || EVP_DigestFinal_ex(digest_context, extracted_digest, &digest_length) != 1 ||
+        digest_length != 32 || !expected_digest(expected_sha256, extracted_digest) ||
+        fstat(fileno(archive), &after) != 0 || before.st_size != after.st_size ||
+        before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) ok = false;
+    EVP_MD_CTX_free(digest_context);
+    if (fclose(archive) != 0) ok = false;
+    if (!ok) {
+        (void)remove_directory_recursive(destination);
+        (void)snprintf(error, error_size, "cannot extract verified archive");
+    }
+    return ok;
+}
+
+static bool prepare_registry_package(const FacetResolved *resolved,
+        const char *scratch_root, char *error, size_t error_size) {
+    char url[FACET_MAX_PATH], archive[FACET_MAX_PATH], destination[FACET_MAX_PATH];
+    if (snprintf(url, sizeof url, "%s/v1/blobs/sha256/%s", resolved->registry,
+                 resolved->sha256) >= (int)sizeof url ||
+        snprintf(archive, sizeof archive, "%s/.%s.tar", scratch_root,
+                 resolved->name) >= (int)sizeof archive ||
+        snprintf(destination, sizeof destination, "%s/%s", scratch_root,
+                 resolved->name) >= (int)sizeof destination) {
+        (void)snprintf(error, error_size, "registry path is too long for '%s'",
+                       resolved->name);
+        return false;
+    }
+    (void)remove(archive);
+    if (!run_curl_download(url, archive, resolved->size, error, error_size)) {
+        (void)remove(archive);
+        return false;
+    }
+    struct stat info;
+    unsigned char digest[32];
+    if (stat(archive, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
+        (uint64_t)info.st_size != resolved->size ||
+        !digest_file(archive, digest, error, error_size) ||
+        !expected_digest(resolved->sha256, digest)) {
+        (void)remove(archive);
+        (void)snprintf(error, error_size,
+            "downloaded archive for '%s' does not match its lock record", resolved->name);
+        return false;
+    }
+    char *verify_argv[] = {(char *)"facet", (char *)"verify", archive,
+                           (char *)"--sha256", (char *)resolved->sha256, nullptr};
+    (void)remove_directory_recursive(destination);
+    if (cmd_verify(5, verify_argv) != 0 ||
+        !extract_verified_archive(archive, destination, resolved->sha256,
+                                  error, error_size)) {
+        (void)remove(archive);
+        if (error[0] == '\0')
+            (void)snprintf(error, error_size, "archive verification failed for '%s'",
+                           resolved->name);
+        return false;
+    }
+    (void)remove(archive);
+    char manifest_path[FACET_MAX_PATH];
+    FacetManifest manifest;
+    if (snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", destination) >=
+            (int)sizeof manifest_path ||
+        !parse_manifest(manifest_path, &manifest, error, error_size) ||
+        strcmp(manifest.name, resolved->name) != 0 || !manifest.has_version ||
+        strcmp(manifest.version, resolved->version) != 0) {
+        (void)remove_directory_recursive(destination);
+        (void)snprintf(error, error_size,
+            "archive identity does not match lock record for '%s'", resolved->name);
+        return false;
+    }
+    return true;
+}
+
 static bool install_resolution(const FacetResolution *resolution,
                                const char *scratch_root, char *error,
                                size_t error_size) {
+    bool had_previous[FACET_MAX_DEPENDENCIES] = {0};
     for (size_t index = 0; index < resolution->count; index++) {
         const FacetResolved *resolved = &resolution->packages[index];
-        if (resolved->source == FACET_SOURCE_REGISTRY) {
-            (void)snprintf(error, error_size,
-                "registry installation for '%s' is not implemented yet", resolved->name);
-            return false;
-        }
         char scratch_path[FACET_MAX_PATH];
-        char final_path[FACET_MAX_PATH];
         (void)snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root,
-                       resolved->name);
-        (void)snprintf(final_path, sizeof final_path, "cuts/%s",
                        resolved->name);
         if (!file_exists(scratch_path)) {
             /* facet.lock-driven install: resolution didn't clone anything
              * (it skipped the walk entirely), so clone the pinned commit now. */
+            if (resolved->source != FACET_SOURCE_GIT) {
+                (void)snprintf(error, error_size,
+                               "registry archive for '%s' was not staged",
+                               resolved->name);
+                return false;
+            }
             if (!git_clone(resolved->git, resolved->commit, scratch_path, error,
                            error_size)) {
                 return false;
             }
         }
-        if (!strip_git_directory(scratch_path)) {
+        if (resolved->source == FACET_SOURCE_GIT && !strip_git_directory(scratch_path)) {
             (void)snprintf(error, error_size, "cannot remove '.git' from '%s'",
                            scratch_path);
             return false;
         }
-        (void)remove_directory_recursive(final_path);
+    }
+    size_t backed_up = 0;
+    for (; backed_up < resolution->count; backed_up++) {
+        const FacetResolved *resolved = &resolution->packages[backed_up];
+        char final_path[FACET_MAX_PATH], backup_path[FACET_MAX_PATH];
+        (void)snprintf(final_path, sizeof final_path, "cuts/%s", resolved->name);
+        (void)snprintf(backup_path, sizeof backup_path, "cuts/.facet-old-%s",
+                       resolved->name);
+        if (!remove_directory_recursive(backup_path)) {
+            (void)snprintf(error, error_size, "cannot clear install backup for '%s'",
+                           resolved->name);
+            break;
+        }
+        if (file_exists(final_path)) {
+            if (rename(final_path, backup_path) != 0) {
+                (void)snprintf(error, error_size, "cannot stage installed '%s': %s",
+                               resolved->name, strerror(errno));
+                break;
+            }
+            had_previous[backed_up] = true;
+        }
+    }
+    if (backed_up != resolution->count) {
+        for (size_t index = 0; index < backed_up; index++) {
+            if (!had_previous[index]) continue;
+            char final_path[FACET_MAX_PATH], backup_path[FACET_MAX_PATH];
+            (void)snprintf(final_path, sizeof final_path, "cuts/%s",
+                           resolution->packages[index].name);
+            (void)snprintf(backup_path, sizeof backup_path, "cuts/.facet-old-%s",
+                           resolution->packages[index].name);
+            (void)rename(backup_path, final_path);
+        }
+        return false;
+    }
+    size_t installed = 0;
+    for (; installed < resolution->count; installed++) {
+        const FacetResolved *resolved = &resolution->packages[installed];
+        char scratch_path[FACET_MAX_PATH], final_path[FACET_MAX_PATH];
+        (void)snprintf(scratch_path, sizeof scratch_path, "%s/%s", scratch_root,
+                       resolved->name);
+        (void)snprintf(final_path, sizeof final_path, "cuts/%s", resolved->name);
         if (rename(scratch_path, final_path) != 0) {
             (void)snprintf(error, error_size, "cannot install '%s': %s",
                            resolved->name, strerror(errno));
-            return false;
+            break;
         }
-        printf("facet: installed %s (%s)\n", resolved->name, resolved->commit);
+    }
+    if (installed != resolution->count) {
+        for (size_t index = 0; index < installed; index++) {
+            char final_path[FACET_MAX_PATH];
+            (void)snprintf(final_path, sizeof final_path, "cuts/%s",
+                           resolution->packages[index].name);
+            (void)remove_directory_recursive(final_path);
+        }
+        for (size_t index = 0; index < resolution->count; index++) {
+            if (!had_previous[index]) continue;
+            char final_path[FACET_MAX_PATH], backup_path[FACET_MAX_PATH];
+            (void)snprintf(final_path, sizeof final_path, "cuts/%s",
+                           resolution->packages[index].name);
+            (void)snprintf(backup_path, sizeof backup_path, "cuts/.facet-old-%s",
+                           resolution->packages[index].name);
+            (void)rename(backup_path, final_path);
+        }
+        return false;
+    }
+    for (size_t index = 0; index < resolution->count; index++) {
+        const FacetResolved *resolved = &resolution->packages[index];
+        if (had_previous[index]) {
+            char backup_path[FACET_MAX_PATH];
+            (void)snprintf(backup_path, sizeof backup_path, "cuts/.facet-old-%s",
+                           resolved->name);
+            if (!remove_directory_recursive(backup_path))
+                fprintf(stderr, "facet: warning: cannot remove install backup for '%s'\n",
+                        resolved->name);
+        }
+        printf("facet: installed %s (%s)\n", resolved->name,
+               resolved->source == FACET_SOURCE_REGISTRY ? resolved->version : resolved->commit);
     }
     return true;
 }
 
 static int run_install_or_update(bool force_resolve) {
-    char error[512];
+    char error[512] = {0};
     if (!file_exists("diamond.cut")) {
         fprintf(stderr, "facet: no diamond.cut found in the current directory\n");
         return 66;
@@ -1357,6 +1637,11 @@ static int run_install_or_update(bool force_resolve) {
         ok = parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
              resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);
+    }
+    for (size_t index = 0; ok && index < resolution.count; index++) {
+        if (resolution.packages[index].source == FACET_SOURCE_REGISTRY)
+            ok = prepare_registry_package(&resolution.packages[index], scratch_root,
+                                          error, sizeof error);
     }
     if (ok) ok = install_resolution(&resolution, scratch_root, error, sizeof error);
     (void)remove_directory_recursive(scratch_root);

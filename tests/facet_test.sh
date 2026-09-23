@@ -66,17 +66,88 @@ fi
 mv project1/facet.lock.good project1/facet.lock
 cp project1/facet.lock project1/facet.lock.git
 
-# Registry lock records are parsed and validated before the network installer
-# is involved. A valid record reaches the explicit unimplemented boundary.
-digest="$(printf 'a%.0s' {1..64})"
-cat > project1/facet.lock <<EOF
-{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": 12345}}
+# A locked registry install fetches only the digest-addressed artifact, verifies
+# its locked size and digest, validates the archive, and replaces the cut from
+# staging. A fake curl keeps the test local while exercising the argv contract.
+mkdir -p registry_source/greeter/lib fake_bin
+printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT"}' > registry_source/greeter/diamond.cut
+printf '%s\n' '# Registry greeter' > registry_source/greeter/README.md
+printf '%s\n' 'MIT' > registry_source/greeter/LICENSE
+printf '%s\n' 'def greet(name)' '  "registry hello, " + name' 'end' > registry_source/greeter/lib/greeter.di
+"$facet" pack registry_source/greeter registry_greeter.tar >/dev/null
+digest="$(sha256sum registry_greeter.tar | cut -d' ' -f1)"
+archive_size="$(stat -c %s registry_greeter.tar)"
+cat > fake_bin/curl <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=
+url=
+while (($#)); do
+    case "$1" in
+        --output) output="$2"; shift 2 ;;
+        --) url="$2"; break ;;
+        *) shift ;;
+    esac
+done
+printf '%s\n' "$url" > "$FACET_TEST_CURL_URL"
+cp "$FACET_TEST_ARCHIVE" "$output"
 EOF
-if (cd project1 && "$facet" install) >/dev/null 2>registry_error; then
-    echo "facet unexpectedly installed a registry lock" >&2
+chmod +x fake_bin/curl
+export FACET_TEST_ARCHIVE="$work/registry_greeter.tar"
+export FACET_TEST_CURL_URL="$work/registry_url"
+saved_path="$PATH"
+export PATH="$work/fake_bin:$PATH"
+cat > project1/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $archive_size}}
+EOF
+(cd project1 && "$facet" install >/dev/null)
+grep -q '^https://cuts.example/api/v1/blobs/sha256/'"$digest"'$' registry_url
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
+greet("world")')"
+[[ "$actual" == "registry hello, world" ]]
+
+# Failed locked installs leave the previously verified cut in place.
+bad_digest="$(printf '0%.0s' {1..64})"
+cat > project1/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$bad_digest", "size": $archive_size}}
+EOF
+if (cd project1 && "$facet" install) >/dev/null 2>&1; then
+    echo "facet installed an archive with the wrong locked digest" >&2
     exit 1
 fi
-grep -q "registry installation for 'greeter' is not implemented yet" registry_error
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
+greet("world")')"
+[[ "$actual" == "registry hello, world" ]]
+
+cat > project1/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $((archive_size + 1))}}
+EOF
+if (cd project1 && "$facet" install) >/dev/null 2>&1; then
+    echo "facet installed an archive with the wrong locked size" >&2
+    exit 1
+fi
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
+greet("world")')"
+[[ "$actual" == "registry hello, world" ]]
+
+# A valid archive whose manifest identity disagrees with the lock is also
+# rejected before the installed cut is replaced.
+sed -i 's/"version": "1.2.3"/"version": "1.2.4"/' registry_source/greeter/diamond.cut
+"$facet" pack registry_source/greeter registry_other.tar >/dev/null
+other_digest="$(sha256sum registry_other.tar | cut -d' ' -f1)"
+other_size="$(stat -c %s registry_other.tar)"
+export FACET_TEST_ARCHIVE="$work/registry_other.tar"
+cat > project1/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$other_digest", "size": $other_size}}
+EOF
+if (cd project1 && "$facet" install) >/dev/null 2>&1; then
+    echo "facet installed an archive with the wrong manifest identity" >&2
+    exit 1
+fi
+actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
+greet("world")')"
+[[ "$actual" == "registry hello, world" ]]
+export FACET_TEST_ARCHIVE="$work/registry_greeter.tar"
 
 check_bad_registry_lock() {
     printf '%s\n' "$1" > project1/facet.lock
@@ -97,6 +168,9 @@ check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": 
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": \"12345\"}}" "string size"
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 18446744073709551616}}" "overflowing size"
 mv project1/facet.lock.git project1/facet.lock
+export PATH="$saved_path"
+unset FACET_TEST_ARCHIVE FACET_TEST_CURL_URL
+(cd project1 && "$facet" install >/dev/null)
 
 actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
