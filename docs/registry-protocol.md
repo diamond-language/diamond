@@ -72,6 +72,22 @@ A registry locked install fetches the digest-addressed blob from the locked regi
 
 ## Publish and removal
 
-`POST /v1/cuts/<name>/versions` accepts one verified archive and requires a credential authorized for that name. The server validates the archive with the same contract as `facet verify`, compares its manifest name and version with the request, stores the blob by digest, and atomically creates the immutable release record. Repeating an identical request is idempotent; different bytes for an existing tuple are rejected.
+`POST /v1/cuts/<name>/versions` accepts one verified archive and requires an
+`Authorization: Bearer <token>` credential authorized for that name. The
+request uses `Content-Type: application/octet-stream` and contains the exact
+uncompressed tar bytes. The server validates the archive with the same contract
+as `facet verify`, derives the version and dependencies from `diamond.cut`,
+compares its manifest name with the path, stores the blob by digest, and
+atomically creates the immutable release record. Repeating an identical request
+is idempotent; different bytes for an existing tuple are rejected. The client
+command is:
+
+```text
+facet publish <cut-directory> --registry <https-url> --token <token>
+```
+
+`facet` validates the cut and archive locally before sending them. It passes
+the token through a temporary mode-0600 curl configuration and removes that
+file after the request; it does not write credentials to the project or lock.
 
 Yanking changes only new-resolution visibility and records who acted, when, and why. It does not rewrite metadata or remove blob bytes. An exceptional takedown has its own audited operator path; locked installs then fail with an explicit unavailable-release error. Owner changes, publish actions, yanks, and takedowns enter an append-only audit log. Credential format, owner policy, and service operations require a separate deployment design before public launch.

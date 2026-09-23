@@ -26,6 +26,9 @@ authoritative fine-grained record.
   source and SemVer constraint. `facet update` resolves bounded version indexes
   and transitive release metadata, excludes yanked versions, writes the complete
   lock, and downloads no package code until the graph succeeds.
+- Added `facet publish`, which validates and verifies a cut locally before
+  sending its archive to the configured registry with a temporary private token
+  configuration.
 - Persistent `diamond build` AOT caches now use a SHA-256 fingerprint of the
   runtime sources, headers, build configuration, and embedded prelude. Replacing
   a source checkout with older-timestamped files can no longer reuse an

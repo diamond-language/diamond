@@ -106,6 +106,29 @@ actual="$(cd project1 && "$diamond" -e 'require_cut "greeter"
 greet("world")')"
 [[ "$actual" == "registry hello, world" ]]
 
+# Publishing sends a verified archive and bearer credential to the configured
+# cut endpoint. The fake client inspects curl's private config file locally.
+mkdir -p publish_bin
+cat > publish_bin/curl <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+config=
+while (($#)); do
+    if [[ "$1" == "--config" ]]; then config="$2"; shift 2; else shift; fi
+done
+grep -q 'Authorization: Bearer publish-token' "$config"
+grep -q 'Content-Type: application/octet-stream' "$config"
+printf '%s\n' published > "$FACET_TEST_PUBLISH_OK"
+EOF
+chmod +x publish_bin/curl
+export FACET_TEST_PUBLISH_OK="$work/publish-ok"
+export PATH="$work/publish_bin:$saved_path"
+"$facet" publish registry_source/greeter --registry https://cuts.example/api \
+    --token publish-token >/dev/null
+grep -q '^published$' "$FACET_TEST_PUBLISH_OK"
+export PATH="$work/fake_bin:$saved_path"
+unset FACET_TEST_PUBLISH_OK
+
 # Failed locked installs leave the previously verified cut in place.
 bad_digest="$(printf '0%.0s' {1..64})"
 cat > project1/facet.lock <<EOF

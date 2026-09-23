@@ -16,6 +16,11 @@ without extracting it. The expected digest is required when verifying bytes
 against a trusted lockfile or registry record.
 See [cut-contract.md](cut-contract.md) for its current scope.
 
+`facet publish <cut-directory> --registry <https-url> --token <token>` runs the
+same local checks, then sends the verified archive to the registry's publish
+endpoint. The token is used only for that request and is not stored in the
+project.
+
 For a local checkout without a registry service,
 `tools/install_local_cuts.sh <project-directory>` installs all bundled cuts as
 verified artifacts from `packages/` into that project's `cuts/` directory.

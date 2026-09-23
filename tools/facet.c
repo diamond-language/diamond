@@ -3170,6 +3170,123 @@ done:
     return status;
 }
 
+static bool valid_publish_token(const char *token) {
+    size_t length = strlen(token);
+    if (length == 0 || length > 4096) return false;
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)token[i];
+        if (c <= 0x20 || c >= 0x7f || c == '"' || c == '\\') return false;
+    }
+    return true;
+}
+
+static bool run_curl_publish(const char *url, const char *archive,
+                             const char *token, char *error, size_t error_size) {
+    char config[] = "/tmp/facet-publish-XXXXXX";
+    int fd = mkstemp(config);
+    if (fd < 0) {
+        (void)snprintf(error, error_size, "cannot create publish configuration: %s",
+                       strerror(errno));
+        return false;
+    }
+    (void)fchmod(fd, 0600);
+    FILE *file = fdopen(fd, "wb");
+    bool ok = file != NULL;
+    if (ok) {
+        ok = fprintf(file,
+            "url = \"%s\"\nrequest = \"POST\"\n"
+            "header = \"Authorization: Bearer %s\"\n"
+            "header = \"Content-Type: application/octet-stream\"\n"
+            "data-binary = \"@%s\"\nfail = true\nsilent = true\n"
+            "show-error = true\nproto = \"=https\"\nconnect-timeout = \"10\"\n"
+            "max-time = \"60\"\n", url, token, archive) > 0;
+        if (fclose(file) != 0) ok = false;
+    } else {
+        close(fd);
+    }
+    if (!ok) {
+        (void)remove(config);
+        (void)snprintf(error, error_size, "cannot write publish configuration");
+        return false;
+    }
+    char *const argv[] = {(char *)"curl", (char *)"--config", config, nullptr};
+    const pid_t pid = fork();
+    if (pid < 0) {
+        (void)remove(config);
+        (void)snprintf(error, error_size, "cannot start curl: %s", strerror(errno));
+        return false;
+    }
+    if (pid == 0) {
+        execvp("curl", argv);
+        _exit(127);
+    }
+    int status = 0;
+    ok = waitpid(pid, &status, 0) >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    (void)remove(config);
+    if (!ok) {
+        (void)snprintf(error, error_size, "registry rejected publication");
+        return false;
+    }
+    return true;
+}
+
+static int cmd_publish(int argc, char **argv) {
+    if (argc != 7 || strcmp(argv[3], "--registry") != 0 ||
+        strcmp(argv[5], "--token") != 0) {
+        fputs("usage: facet publish <cut-directory> --registry <https-url> "
+              "--token <token>\n", stderr);
+        return 64;
+    }
+    const char *root_arg = argv[2], *registry = argv[4], *token = argv[6];
+    if (!valid_registry_url(registry) || !valid_publish_token(token)) {
+        fputs("facet: invalid registry URL or publish token\n", stderr);
+        return 64;
+    }
+    char *root = realpath(root_arg, NULL);
+    if (root == NULL || strlen(root) >= FACET_MAX_PATH) {
+        free(root);
+        fprintf(stderr, "facet: cannot open cut directory '%s'\n", root_arg);
+        return 66;
+    }
+    char manifest_path[FACET_MAX_PATH], error[512] = {0};
+    FacetManifest manifest;
+    bool ok = snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", root) <
+              (int)sizeof manifest_path && parse_manifest(manifest_path, &manifest,
+                                                            error, sizeof error);
+    if (!ok) {
+        fprintf(stderr, "facet: %s\n", error);
+        free(root);
+        return 65;
+    }
+    char archive[] = "/tmp/facet-publish-archive-XXXXXX";
+    int archive_fd = mkstemp(archive);
+    if (archive_fd < 0) {
+        free(root);
+        fputs("facet: cannot create publish archive\n", stderr);
+        return 74;
+    }
+    close(archive_fd);
+    (void)remove(archive);
+    char *pack_argv[] = {(char *)"facet", (char *)"pack", root, archive, nullptr};
+    ok = cmd_check(4, pack_argv) == 0;
+    char *verify_argv[] = {(char *)"facet", (char *)"verify", archive, nullptr};
+    ok = ok && cmd_verify(3, verify_argv) == 0;
+    char url[FACET_MAX_PATH];
+    if (ok && snprintf(url, sizeof url, "%s/v1/cuts/%s/versions", registry,
+                       manifest.name) >= (int)sizeof url) {
+        (void)snprintf(error, sizeof error, "publish URL is too long");
+        ok = false;
+    }
+    if (ok) ok = run_curl_publish(url, archive, token, error, sizeof error);
+    if (ok)
+        printf("facet: published %s %s\n", manifest.name, manifest.version);
+    else
+        fprintf(stderr, "facet: %s\n", error[0] == '\0' ? "publish failed" : error);
+    (void)remove(archive);
+    free(root);
+    return ok ? 0 : 70;
+}
+
 static void print_usage(void) {
     fputs("usage: facet install\n"
           "       facet update\n"
@@ -3177,6 +3294,7 @@ static void print_usage(void) {
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
           "       facet verify <archive.tar> [--sha256 <digest>]\n"
+          "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
           "       facet add <name> (--git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
           "| --registry <url> --version <constraint>)\n",
@@ -3204,6 +3322,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "verify") == 0) {
         return cmd_verify(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "publish") == 0) {
+        return cmd_publish(argc, argv);
     }
     print_usage();
     return 64;
