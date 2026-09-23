@@ -17,6 +17,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Registry blob reads now verify stored bytes against their digest and reject
+  incomplete or corrupt files. Corrected rejection tests that previously could
+  pass because of unrelated load or syntax errors.
 - Documented the registry v1 service contract: stable error responses,
   scoped bearer credentials, idempotent publishing, and audited yank, unyank,
   and takedown operations. The hosted registry implementation is still

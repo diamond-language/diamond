@@ -8,8 +8,8 @@ root="$(mktemp -d)"
 test_project="$(mktemp -d)"
 trap 'rm -rf "$root" "$test_project"' EXIT
 "$source_root/tools/install_local_cuts.sh" "$test_project" >/dev/null
-cp -R . "$test_project/registry_source"
 cd "$test_project"
+export REGISTRY_TEST_ROOT="$root"
 
 output="$($diamond -e "require_cut \"registry\"
 db = SQLite3.open(\":memory:\")
@@ -24,16 +24,47 @@ rows = db.query(\"SELECT name FROM sqlite_master WHERE type = 'table' AND name =
 \"#{size}|#{same}|#{rows.length()}|#{store.contains?(digest)}\"")"
 
 [[ "$output" == "13|archive bytes|1|true" ]]
-archive_digest="$($diamond -e 'puts(Digest.sha256("archive bytes"))')"
-
-if "$diamond" -e "require \"$(pwd)/lib/registry\"; Registry::BlobStore.new(\"$root\").put(\"$(printf '0%.0s' {1..64})\", \"wrong\")" >/dev/null 2>&1; then
-    echo "digest mismatch was accepted" >&2
-    exit 1
-fi
-
-if "$diamond" -e "require_cut \"registry\"; Registry::BlobStore.new(\"$root\").put(\"$archive_digest\", \"archive bytes\")" >/dev/null 2>&1; then
-    echo "duplicate digest was replaced" >&2
-    exit 1
-fi
-
+output="$("$diamond" -e 'require_cut "registry"
+root = ENV["REGISTRY_TEST_ROOT"]
+store = Registry::BlobStore.new(root)
+digest = Digest.sha256("archive bytes")
+rejected = false
+begin
+  store.put("0000000000000000000000000000000000000000000000000000000000000000", "wrong")
+rescue error: ArgumentError
+  rejected = error.message() == "blob bytes do not match digest"
+end
+unless rejected then raise "digest mismatch was not rejected" end
+unless Dir.entries(root).length() == 1 then raise "mismatch created a file" end
+rejected = false
+begin
+  store.put(digest, "archive bytes")
+rescue error: IOError
+  rejected = true
+end
+unless rejected then raise "duplicate write was not rejected" end
+unless store.read(digest) == "archive bytes" then raise "duplicate damaged blob" end
+rejected = false
+begin
+  store.path("../aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+rescue error: ArgumentError
+  rejected = true
+end
+unless rejected then raise "unsafe path was accepted" end
+missing = Digest.sha256("missing")
+if store.contains?(missing) then raise "missing blob reported present" end
+file = File.open(store.path(digest), "w")
+file.write("partial")
+file.close()
+rejected = false
+begin
+  store.read(digest)
+rescue error: IOError
+  rejected = error.message() == "stored blob does not match digest"
+end
+unless rejected then raise "corrupt blob was returned" end
+if store.contains?(digest) then raise "corrupt blob reported present" end
+"registry rejection and integrity tests passed"
+')"
+[[ "$output" == "registry rejection and integrity tests passed" ]]
 echo "registry package tests passed"

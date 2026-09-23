@@ -29,7 +29,7 @@ module Registry
 
     def contains?(digest: String) -> Bool
       begin
-        File.open(self.path(digest), "r").close()
+        self.read(digest)
         true
       rescue error: IOError
         false
@@ -54,6 +54,9 @@ module Registry
       file = File.open(self.path(digest), "r")
       bytes = file.read()
       file.close()
+      if Digest.sha256(bytes) != digest
+        raise IOError.new("stored blob does not match digest")
+      end
       bytes
     end
 
