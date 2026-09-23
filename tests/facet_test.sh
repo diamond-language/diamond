@@ -587,16 +587,20 @@ printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/l
 logger_digest="$(sha256sum registry_logger.tar | cut -d' ' -f1)"
 logger_size="$(stat -c %s registry_logger.tar)"
 cat > registry_metadata/greeter-index <<'EOF'
-{"protocol": 1, "versions": [{"version": "1.2.3", "yanked": false}, {"version": "9.0.0", "yanked": true}]}
+{"protocol": 1, "versions": [{"version": "1.2.3", "yanked": false}, {"version": "1.3.0", "yanked": false}, {"version": "9.0.0", "yanked": true}]}
 EOF
 cat > registry_metadata/greeter-release <<EOF
 {"protocol": 1, "name": "greeter", "version": "1.2.3", "dependencies": {"logger": "^1.0.0"}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$digest", "sha256": "$digest", "size": $archive_size}}
 EOF
+sed 's/"version": "1.2.3"/"version": "1.3.0"/' registry_metadata/greeter-release > registry_metadata/greeter-release-new
 cat > registry_metadata/logger-index <<'EOF'
 {"protocol": 1, "versions": [{"version": "1.0.0", "yanked": false}]}
 EOF
 cat > registry_metadata/logger-release <<EOF
 {"protocol": 1, "name": "logger", "version": "1.0.0", "dependencies": {}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$logger_digest", "sha256": "$logger_digest", "size": $logger_size}}
+EOF
+cat > project21_registry/facet.lock <<EOF
+{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $archive_size}}
 EOF
 cat > fake_bin/curl <<'EOF'
 #!/usr/bin/env bash
@@ -613,6 +617,7 @@ done
 case "$url" in
     */v1/cuts/greeter/versions) cp "$FACET_TEST_METADATA/greeter-index" "$output" ;;
     */v1/cuts/greeter/versions/1.2.3) cp "$FACET_TEST_METADATA/greeter-release" "$output" ;;
+    */v1/cuts/greeter/versions/1.3.0) cp "$FACET_TEST_METADATA/greeter-release-new" "$output" ;;
     */v1/cuts/logger/versions) cp "$FACET_TEST_METADATA/logger-index" "$output" ;;
     */v1/cuts/logger/versions/1.0.0) cp "$FACET_TEST_METADATA/logger-release" "$output" ;;
     */v1/blobs/sha256/"$FACET_TEST_GREETER_DIGEST") cp "$FACET_TEST_GREETER_ARCHIVE" "$output" ;;

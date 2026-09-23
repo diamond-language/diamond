@@ -92,6 +92,11 @@ typedef struct FacetResolution {
     size_t count;
 } FacetResolution;
 
+/* During `facet update`, a still-compatible registry lock is preferred over
+ * an otherwise newer candidate. This keeps updates reproducible while still
+ * allowing an explicit manifest constraint change to move the version. */
+static const FacetResolution *registry_update_preference = NULL;
+
 /* A cut name seen with a `version` constraint from at least one
  * requester, not yet resolved to one concrete tag -- see
  * resolve_full_graph's own comment for why this can't just resolve
@@ -1266,6 +1271,18 @@ static bool registry_best_version(const FacetPendingSemver *entry,
         only_keys(root, root_keys, 2, error, error_size);
     bool found = false;
     Semver best = {0};
+    char preferred[FACET_MAX_REF] = {0};
+    if (registry_update_preference != NULL) {
+        for (size_t index = 0; index < registry_update_preference->count; index++) {
+            const FacetResolved *locked = &registry_update_preference->packages[index];
+            if (locked->source == FACET_SOURCE_REGISTRY &&
+                strcmp(locked->name, entry->name) == 0 &&
+                strcmp(locked->registry, entry->registry) == 0) {
+                (void)snprintf(preferred, sizeof preferred, "%s", locked->version);
+                break;
+            }
+        }
+    }
     if (ok) {
         const char *record_keys[] = {"version", "yanked"};
         for (const DiamondManifestValue *record = versions->children;
@@ -1286,10 +1303,12 @@ static bool registry_best_version(const FacetPendingSemver *entry,
                 break;
             }
             if (!yanked && semver_satisfies(&candidate, &entry->constraint) &&
-                (!found || semver_compare(&candidate, &best) > 0)) {
+                (!found || semver_compare(&candidate, &best) > 0 ||
+                 strcmp(version, preferred) == 0)) {
                 found = true;
                 best = candidate;
                 (void)snprintf(out, out_size, "%s", version);
+                if (strcmp(version, preferred) == 0) break;
             }
         }
     }
@@ -1907,14 +1926,21 @@ static int run_install_or_update(bool force_resolve) {
         return 74;
     }
     FacetResolution resolution = {0};
+    FacetResolution previous = {0};
     bool ok;
     if (!force_resolve && file_exists("facet.lock")) {
         ok = parse_lockfile("facet.lock", &resolution, error, sizeof error);
     } else {
         FacetManifest manifest;
-        ok = parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
+        if (force_resolve && file_exists("facet.lock"))
+            ok = parse_lockfile("facet.lock", &previous, error, sizeof error);
+        else
+            ok = true;
+        registry_update_preference = ok && force_resolve ? &previous : NULL;
+        ok = ok && parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
              resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);
+        registry_update_preference = NULL;
     }
     for (size_t index = 0; ok && index < resolution.count; index++) {
         if (resolution.packages[index].source == FACET_SOURCE_REGISTRY)
