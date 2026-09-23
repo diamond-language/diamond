@@ -1,7 +1,7 @@
 # Cut registry protocol, version 1
 
-Status: proposed wire contract. Locked registry archive installation is implemented;
-registry resolution, publishing, and a hosted service do not exist yet. This
+Status: proposed wire contract. Registry resolution and locked archive
+installation are implemented; publishing and a hosted service do not exist. This
 specification defines their metadata and artifact boundary without changing Git
 dependency behavior.
 
@@ -17,7 +17,13 @@ All paths below are relative to the configured registry base. Path segments are 
 
 ### `GET /v1/cuts/<name>/versions`
 
-Returns an array of available version records, sorted by SemVer precedence and then by canonical version text. Each record includes `version`, `yanked`, and the release metadata URL. The index can omit yanked releases for new resolution, but a direct release lookup must still work for a locked release unless an exceptional takedown occurred. The client treats the order as presentation only and sorts deterministically itself.
+Returns an object containing `"protocol": 1` and a `versions` array, sorted by
+SemVer precedence and then by canonical version text. Each version record has
+exactly `version` and `yanked`; the release metadata URL follows the fixed path
+below. The index can omit yanked releases for new resolution, but a direct
+release lookup must still work for a locked release unless an exceptional
+takedown occurred. The client treats array order as presentation only and
+selects deterministically itself.
 
 ### `GET /v1/cuts/<name>/versions/<version>`
 

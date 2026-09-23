@@ -8,6 +8,7 @@
 typedef enum DiamondManifestKind {
     DIAMOND_MANIFEST_OTHER,
     DIAMOND_MANIFEST_INTEGER,
+    DIAMOND_MANIFEST_BOOLEAN,
     DIAMOND_MANIFEST_STRING,
     DIAMOND_MANIFEST_HASH,
     DIAMOND_MANIFEST_ARRAY,
@@ -31,5 +32,7 @@ bool diamond_manifest_get_string(const DiamondManifestValue *hash, const char *k
                                  char *out, size_t out_size);
 bool diamond_manifest_get_u64(const DiamondManifestValue *hash, const char *key,
                               uint64_t *out);
+bool diamond_manifest_get_bool(const DiamondManifestValue *hash, const char *key,
+                               bool *out);
 
 #endif

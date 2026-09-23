@@ -98,7 +98,9 @@ typedef struct FacetResolution {
  * immediately the way an exact-ref dependency does. */
 typedef struct FacetPendingSemver {
     char name[FACET_MAX_NAME];
+    FacetSource source;
     char git[FACET_MAX_URL];
+    char registry[FACET_MAX_URL];
     SemverConstraint constraint;
     /* The requester whose constraint is currently reflected in
      * `constraint` -- if several requesters have contributed via
@@ -125,7 +127,9 @@ typedef struct FacetPendingTable {
  * simplification (error messages only, not full provenance). */
 typedef struct FacetConstraintRecord {
     char name[FACET_MAX_NAME];
+    FacetSource source;
     char git[FACET_MAX_URL];
+    char registry[FACET_MAX_URL];
     SemverConstraint accumulated;
     char most_recent_requester[FACET_MAX_NAME];
 } FacetConstraintRecord;
@@ -160,6 +164,8 @@ static bool valid_archive_path(const char *path);
 static bool digest_file(const char *path, unsigned char digest[32],
                         char *error, size_t error_size);
 static bool expected_digest(const char *text, const unsigned char actual[32]);
+static bool run_curl_download(const char *url, const char *output, uint64_t max_size,
+                              char *error, size_t error_size);
 static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     const char *required_by, FacetResolution *resolution, FacetPendingTable *pending,
     FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
@@ -742,9 +748,18 @@ static bool parse_lockfile(const char *path, FacetResolution *resolution,
 
 static bool write_lockfile(const char *path, const FacetResolution *resolution,
                            char *error, size_t error_size) {
-    FILE *file = fopen(path, "wb");
+    char temporary[FACET_MAX_PATH];
+    if (snprintf(temporary, sizeof temporary, "%s.tmp.XXXXXX", path) >=
+        (int)sizeof temporary) {
+        (void)snprintf(error, error_size, "lockfile path is too long");
+        return false;
+    }
+    int fd = mkstemp(temporary);
+    FILE *file = fd < 0 ? NULL : fdopen(fd, "wb");
     if (file == nullptr) {
-        (void)snprintf(error, error_size, "cannot write '%s': %s", path,
+        if (fd >= 0) close(fd);
+        (void)remove(temporary);
+        (void)snprintf(error, error_size, "cannot create '%s': %s", path,
                        strerror(errno));
         return false;
     }
@@ -769,10 +784,14 @@ static bool write_lockfile(const char *path, const FacetResolution *resolution,
         }
     }
     fputs("}\n", file);
-    const bool ok = fclose(file) == 0;
+    bool ok = fflush(file) == 0 && fsync(fileno(file)) == 0;
+    if (fclose(file) != 0) ok = false;
+    if (ok && rename(temporary, path) != 0) ok = false;
     if (!ok) {
+        int saved_errno = errno;
+        (void)remove(temporary);
         (void)snprintf(error, error_size, "cannot write '%s': %s", path,
-                       strerror(errno));
+                       strerror(saved_errno));
     }
     return ok;
 }
@@ -897,10 +916,19 @@ static bool find_pending(FacetPendingTable *pending, const char *name,
  * version_dependency's own existing pending-table check to make, not
  * this function's). */
 static bool find_or_create_constraint_record(FacetConstraintHistory *history,
-        const char *name, const char *git, FacetConstraintRecord **out,
+        const FacetDependency *dependency, FacetConstraintRecord **out,
         char *error, size_t error_size) {
     for (size_t index = 0; index < history->count; index++) {
-        if (strcmp(history->entries[index].name, name) == 0) {
+        if (strcmp(history->entries[index].name, dependency->name) == 0) {
+            const bool same_source = history->entries[index].source == dependency->source &&
+                (dependency->source == FACET_SOURCE_GIT
+                    ? strcmp(history->entries[index].git, dependency->git) == 0
+                    : strcmp(history->entries[index].registry, dependency->registry) == 0);
+            if (!same_source) {
+                (void)snprintf(error, error_size,
+                    "conflicting sources for dependency '%s'", dependency->name);
+                return false;
+            }
             *out = &history->entries[index];
             return true;
         }
@@ -912,8 +940,10 @@ static bool find_or_create_constraint_record(FacetConstraintHistory *history,
         return false;
     }
     FacetConstraintRecord *record = &history->entries[history->count++];
-    (void)snprintf(record->name, sizeof record->name, "%s", name);
-    (void)snprintf(record->git, sizeof record->git, "%s", git);
+    (void)snprintf(record->name, sizeof record->name, "%s", dependency->name);
+    record->source = dependency->source;
+    (void)snprintf(record->git, sizeof record->git, "%s", dependency->git);
+    (void)snprintf(record->registry, sizeof record->registry, "%s", dependency->registry);
     *out = record;
     return true;
 }
@@ -1052,8 +1082,7 @@ static bool handle_version_dependency(const FacetDependency *dependency,
         return false;
     }
     FacetConstraintRecord *record;
-    if (!find_or_create_constraint_record(history, dependency->name, dependency->git,
-                                          &record, error, error_size)) {
+    if (!find_or_create_constraint_record(history, dependency, &record, error, error_size)) {
         return false;
     }
     SemverConstraint merged;
@@ -1075,6 +1104,15 @@ static bool handle_version_dependency(const FacetDependency *dependency,
 
     FacetResolved *existing;
     if (find_resolved(resolution, dependency->name, &existing)) {
+        const bool same_source = existing->source == dependency->source &&
+            (dependency->source == FACET_SOURCE_GIT
+                ? strcmp(existing->git, dependency->git) == 0
+                : strcmp(existing->registry, dependency->registry) == 0);
+        if (!same_source) {
+            (void)snprintf(error, error_size,
+                "conflicting sources for dependency '%s'", dependency->name);
+            return false;
+        }
         if (existing->version[0] == '\0') {
             (void)snprintf(error, error_size,
                 "conflicting dependency '%s': '%s' wants version %s, but it was "
@@ -1095,7 +1133,11 @@ static bool handle_version_dependency(const FacetDependency *dependency,
     }
     FacetPendingSemver *pending_existing;
     if (find_pending(pending, dependency->name, &pending_existing)) {
-        if (strcmp(pending_existing->git, dependency->git) != 0) {
+        const bool same_source = pending_existing->source == dependency->source &&
+            (dependency->source == FACET_SOURCE_GIT
+                ? strcmp(pending_existing->git, dependency->git) == 0
+                : strcmp(pending_existing->registry, dependency->registry) == 0);
+        if (!same_source) {
             (void)snprintf(error, error_size,
                 "conflicting dependency '%s': '%s' and '%s' point at different "
                 "git repositories ('%s' vs '%s')",
@@ -1117,7 +1159,10 @@ static bool handle_version_dependency(const FacetDependency *dependency,
     }
     FacetPendingSemver *new_entry = &pending->entries[pending->count++];
     (void)snprintf(new_entry->name, sizeof new_entry->name, "%s", dependency->name);
+    new_entry->source = dependency->source;
     (void)snprintf(new_entry->git, sizeof new_entry->git, "%s", dependency->git);
+    (void)snprintf(new_entry->registry, sizeof new_entry->registry, "%s",
+                   dependency->registry);
     /* Seeded from the full cross-attempt history, not just this one
      * sighting's own constraint -- see this function's own top comment. */
     new_entry->constraint = record->accumulated;
@@ -1131,12 +1176,6 @@ static bool resolve_manifest_dependencies(const FacetManifest *manifest,
     bool *needs_restart, char *error, size_t error_size) {
     for (size_t index = 0; index < manifest->dependency_count; index++) {
         const FacetDependency *dependency = &manifest->dependencies[index];
-        if (dependency->source == FACET_SOURCE_REGISTRY) {
-            (void)snprintf(error, error_size,
-                "registry resolution for dependency '%s' is not implemented yet; "
-                "install requires an existing facet.lock", dependency->name);
-            return false;
-        }
         if (dependency->uses_version) {
             if (!handle_version_dependency(dependency, required_by, resolution, pending,
                                            history, needs_restart, error, error_size)) {
@@ -1174,6 +1213,184 @@ static bool process_work_queue(FacetWorkQueue *queue, FacetResolution *resolutio
     return true;
 }
 
+static bool only_keys(const DiamondManifestValue *hash, const char *const keys[],
+                      size_t key_count, char *error, size_t error_size) {
+    for (const DiamondManifestValue *field = hash->children;
+         field != NULL; field = field->next) {
+        bool known = false;
+        for (size_t index = 0; index < key_count; index++)
+            if (strcmp(field->key, keys[index]) == 0) known = true;
+        if (!known) {
+            (void)snprintf(error, error_size, "registry metadata has unknown key '%s'",
+                           field->key);
+            return false;
+        }
+    }
+    return true;
+}
+
+static DiamondManifestValue *fetch_registry_hash(const char *url, const char *path,
+        char *error, size_t error_size) {
+    (void)remove(path);
+    if (!run_curl_download(url, path, 1024 * 1024, error, error_size)) return NULL;
+    struct stat info;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 ||
+        info.st_size > 1024 * 1024) {
+        (void)remove(path);
+        (void)snprintf(error, error_size, "registry metadata has an invalid size");
+        return NULL;
+    }
+    DiamondManifestValue *hash = facet_read_hash(path, error, error_size);
+    (void)remove(path);
+    return hash;
+}
+
+static bool registry_best_version(const FacetPendingSemver *entry,
+        const char *scratch_root, char *out, size_t out_size,
+        char *error, size_t error_size) {
+    char url[FACET_MAX_PATH], path[FACET_MAX_PATH];
+    if (snprintf(url, sizeof url, "%s/v1/cuts/%s/versions", entry->registry,
+                 entry->name) >= (int)sizeof url ||
+        snprintf(path, sizeof path, "%s/.index-%s.json", scratch_root,
+                 entry->name) >= (int)sizeof path) {
+        (void)snprintf(error, error_size, "registry metadata path is too long");
+        return false;
+    }
+    DiamondManifestValue *root = fetch_registry_hash(url, path, error, error_size);
+    if (root == NULL) return false;
+    const char *root_keys[] = {"protocol", "versions"};
+    uint64_t protocol = 0;
+    const DiamondManifestValue *versions = diamond_manifest_get(root, "versions");
+    bool ok = diamond_manifest_get_u64(root, "protocol", &protocol) && protocol == 1 &&
+        versions != NULL && versions->kind == DIAMOND_MANIFEST_ARRAY &&
+        only_keys(root, root_keys, 2, error, error_size);
+    bool found = false;
+    Semver best = {0};
+    if (ok) {
+        const char *record_keys[] = {"version", "yanked"};
+        for (const DiamondManifestValue *record = versions->children;
+             record != NULL; record = record->next) {
+            char version[FACET_MAX_REF];
+            bool yanked;
+            Semver candidate;
+            if (record->kind != DIAMOND_MANIFEST_HASH ||
+                !only_keys(record, record_keys, 2, error, error_size) ||
+                !diamond_manifest_get_string(record, "version", version, sizeof version) ||
+                !diamond_manifest_get_bool(record, "yanked", &yanked) ||
+                !canonical_registry_version(version) ||
+                !semver_parse(version, &candidate)) {
+                (void)snprintf(error, error_size,
+                               "registry returned an invalid version record for '%s'",
+                               entry->name);
+                ok = false;
+                break;
+            }
+            if (!yanked && semver_satisfies(&candidate, &entry->constraint) &&
+                (!found || semver_compare(&candidate, &best) > 0)) {
+                found = true;
+                best = candidate;
+                (void)snprintf(out, out_size, "%s", version);
+            }
+        }
+    }
+    diamond_manifest_free(root);
+    if (ok && !found) {
+        char range[128];
+        (void)semver_constraint_format(&entry->constraint, range, sizeof range);
+        (void)snprintf(error, error_size,
+            "no registry version of '%s' satisfies %s", entry->name, range);
+        ok = false;
+    }
+    return ok;
+}
+
+static bool registry_release(const FacetPendingSemver *entry, const char *version,
+        const char *scratch_root, FacetResolved *resolved, FacetManifest *nested,
+        char *error, size_t error_size) {
+    char url[FACET_MAX_PATH], path[FACET_MAX_PATH];
+    if (snprintf(url, sizeof url, "%s/v1/cuts/%s/versions/%s", entry->registry,
+                 entry->name, version) >= (int)sizeof url ||
+        snprintf(path, sizeof path, "%s/.release-%s.json", scratch_root,
+                 entry->name) >= (int)sizeof path) {
+        (void)snprintf(error, error_size, "registry release path is too long");
+        return false;
+    }
+    DiamondManifestValue *root = fetch_registry_hash(url, path, error, error_size);
+    if (root == NULL) return false;
+    const char *root_keys[] = {"protocol", "name", "version", "dependencies",
+                               "yanked", "archive"};
+    uint64_t protocol = 0;
+    char name[FACET_MAX_NAME], returned_version[FACET_MAX_REF];
+    bool yanked = true;
+    const DiamondManifestValue *dependencies = diamond_manifest_get(root, "dependencies");
+    const DiamondManifestValue *archive = diamond_manifest_get(root, "archive");
+    bool ok = only_keys(root, root_keys, 6, error, error_size) &&
+        diamond_manifest_get_u64(root, "protocol", &protocol) && protocol == 1 &&
+        diamond_manifest_get_string(root, "name", name, sizeof name) &&
+        diamond_manifest_get_string(root, "version", returned_version,
+                                    sizeof returned_version) &&
+        diamond_manifest_get_bool(root, "yanked", &yanked) && !yanked &&
+        strcmp(name, entry->name) == 0 && strcmp(returned_version, version) == 0 &&
+        dependencies != NULL && dependencies->kind == DIAMOND_MANIFEST_HASH &&
+        archive != NULL && archive->kind == DIAMOND_MANIFEST_HASH;
+    const char *archive_keys[] = {"path", "sha256", "size"};
+    char archive_path[FACET_MAX_PATH];
+    if (ok) {
+        ok = only_keys(archive, archive_keys, 3, error, error_size) &&
+            diamond_manifest_get_string(archive, "path", archive_path,
+                                        sizeof archive_path) &&
+            diamond_manifest_get_string(archive, "sha256", resolved->sha256,
+                                        sizeof resolved->sha256) &&
+            diamond_manifest_get_u64(archive, "size", &resolved->size) &&
+            valid_sha256(resolved->sha256) && resolved->size > 0 &&
+            resolved->size <= FACET_MAX_ARCHIVE_SIZE;
+        char expected_path[96];
+        (void)snprintf(expected_path, sizeof expected_path,
+                       "/v1/blobs/sha256/%s", resolved->sha256);
+        if (ok && strcmp(archive_path, expected_path) != 0) ok = false;
+    }
+    memset(nested, 0, sizeof *nested);
+    if (ok) {
+        (void)snprintf(nested->name, sizeof nested->name, "%s", entry->name);
+        for (const DiamondManifestValue *dependency = dependencies->children;
+             dependency != NULL; dependency = dependency->next) {
+            if (nested->dependency_count == FACET_MAX_DEPENDENCIES ||
+                !publishable_name(dependency->key) ||
+                dependency->kind != DIAMOND_MANIFEST_STRING ||
+                strlen(dependency->string) >= FACET_MAX_REF) {
+                ok = false;
+                break;
+            }
+            FacetDependency *item = &nested->dependencies[nested->dependency_count++];
+            (void)snprintf(item->name, sizeof item->name, "%s", dependency->key);
+            item->source = FACET_SOURCE_REGISTRY;
+            (void)snprintf(item->registry, sizeof item->registry, "%s", entry->registry);
+            (void)snprintf(item->version_text, sizeof item->version_text, "%s",
+                           dependency->string);
+            SemverConstraint probe;
+            if (!semver_constraint_parse(item->version_text, &probe)) {
+                ok = false;
+                break;
+            }
+            item->uses_version = true;
+        }
+    }
+    if (ok) {
+        resolved->source = FACET_SOURCE_REGISTRY;
+        (void)snprintf(resolved->name, sizeof resolved->name, "%s", entry->name);
+        (void)snprintf(resolved->registry, sizeof resolved->registry, "%s",
+                       entry->registry);
+        (void)snprintf(resolved->version, sizeof resolved->version, "%s", version);
+        (void)snprintf(resolved->required_by, sizeof resolved->required_by, "%s",
+                       entry->first_requester);
+    } else if (error[0] == '\0') {
+        (void)snprintf(error, error_size, "registry returned an invalid release for '%s'",
+                       entry->name);
+    }
+    diamond_manifest_free(root);
+    return ok;
+}
+
 /* Resolves the single pending name at the front of the table: lists
  * its repository's own semver tags, picks the highest one satisfying
  * the (already fully intersected, as far as the graph explored so far
@@ -1183,11 +1400,31 @@ static bool process_work_queue(FacetWorkQueue *queue, FacetResolution *resolutio
  * silently dropped from consideration) -- generous enough that this is
  * not a realistic concern for any real package. */
 static bool resolve_one_pending(FacetPendingTable *pending, FacetResolution *resolution,
-        FacetWorkQueue *queue, const char *scratch_root, char *error, size_t error_size) {
+        FacetWorkQueue *queue, const char *scratch_root, FacetConstraintHistory *history,
+        bool *needs_restart, char *error, size_t error_size) {
     FacetPendingSemver entry = pending->entries[0];
     memmove(&pending->entries[0], &pending->entries[1],
            (pending->count - 1) * sizeof pending->entries[0]);
     pending->count--;
+
+    if (entry.source == FACET_SOURCE_REGISTRY) {
+        char best_version[FACET_MAX_REF];
+        if (!registry_best_version(&entry, scratch_root, best_version,
+                                   sizeof best_version, error, error_size)) return false;
+        if (resolution->count == FACET_MAX_DEPENDENCIES) {
+            (void)snprintf(error, error_size,
+                           "too many resolved dependencies (max %d)",
+                           FACET_MAX_DEPENDENCIES);
+            return false;
+        }
+        FacetResolved *resolved = &resolution->packages[resolution->count];
+        FacetManifest nested;
+        if (!registry_release(&entry, best_version, scratch_root, resolved, &nested,
+                              error, error_size)) return false;
+        resolution->count++;
+        return resolve_manifest_dependencies(&nested, entry.name, resolution, pending,
+            queue, scratch_root, history, needs_restart, error, error_size);
+    }
 
     enum { MAX_TAGS = 4096 };
     char (*tags)[FACET_MAX_REF] = malloc((size_t)MAX_TAGS * sizeof *tags);
@@ -1271,7 +1508,8 @@ static bool attempt_resolve_graph(const FacetManifest *manifest, FacetResolution
         return false;
     }
     while (pending.count > 0) {
-        if (!resolve_one_pending(&pending, resolution, &queue, scratch_root, error, error_size)) {
+        if (!resolve_one_pending(&pending, resolution, &queue, scratch_root, history,
+                                 needs_restart, error, error_size)) {
             return false;
         }
         if (!process_work_queue(&queue, resolution, &pending, scratch_root, history,

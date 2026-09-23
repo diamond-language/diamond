@@ -574,13 +574,67 @@ mkdir project21_registry
         --version "^1.0.0" >/dev/null)
 [[ "$(cd project21_registry && "$diamond" diamond.cut)" == \
     "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.0.0}}}" ]]
-error_file="$(mktemp)"
-if (cd project21_registry && "$facet" update) >/dev/null 2>"$error_file"; then
-    echo "facet unexpectedly resolved a registry dependency without metadata support" >&2
-    exit 1
-fi
-grep -q "registry resolution for dependency 'greeter' is not implemented yet" "$error_file"
-rm -f "$error_file"
+
+# Registry update resolves metadata (including transitive dependencies) before
+# downloading either archive, skips yanked versions, writes the full lock, and
+# then installs both verified artifacts.
+mkdir -p registry_source/logger/lib registry_metadata
+printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT"}' > registry_source/logger/diamond.cut
+printf '%s\n' '# Registry logger' > registry_source/logger/README.md
+printf '%s\n' 'MIT' > registry_source/logger/LICENSE
+printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/lib/logger.di
+"$facet" pack registry_source/logger registry_logger.tar >/dev/null
+logger_digest="$(sha256sum registry_logger.tar | cut -d' ' -f1)"
+logger_size="$(stat -c %s registry_logger.tar)"
+cat > registry_metadata/greeter-index <<'EOF'
+{"protocol": 1, "versions": [{"version": "1.2.3", "yanked": false}, {"version": "9.0.0", "yanked": true}]}
+EOF
+cat > registry_metadata/greeter-release <<EOF
+{"protocol": 1, "name": "greeter", "version": "1.2.3", "dependencies": {"logger": "^1.0.0"}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$digest", "sha256": "$digest", "size": $archive_size}}
+EOF
+cat > registry_metadata/logger-index <<'EOF'
+{"protocol": 1, "versions": [{"version": "1.0.0", "yanked": false}]}
+EOF
+cat > registry_metadata/logger-release <<EOF
+{"protocol": 1, "name": "logger", "version": "1.0.0", "dependencies": {}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$logger_digest", "sha256": "$logger_digest", "size": $logger_size}}
+EOF
+cat > fake_bin/curl <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=
+url=
+while (($#)); do
+    case "$1" in
+        --output) output="$2"; shift 2 ;;
+        --) url="$2"; break ;;
+        *) shift ;;
+    esac
+done
+case "$url" in
+    */v1/cuts/greeter/versions) cp "$FACET_TEST_METADATA/greeter-index" "$output" ;;
+    */v1/cuts/greeter/versions/1.2.3) cp "$FACET_TEST_METADATA/greeter-release" "$output" ;;
+    */v1/cuts/logger/versions) cp "$FACET_TEST_METADATA/logger-index" "$output" ;;
+    */v1/cuts/logger/versions/1.0.0) cp "$FACET_TEST_METADATA/logger-release" "$output" ;;
+    */v1/blobs/sha256/"$FACET_TEST_GREETER_DIGEST") cp "$FACET_TEST_GREETER_ARCHIVE" "$output" ;;
+    */v1/blobs/sha256/"$FACET_TEST_LOGGER_DIGEST") cp "$FACET_TEST_LOGGER_ARCHIVE" "$output" ;;
+    *) echo "unexpected registry URL: $url" >&2; exit 22 ;;
+esac
+EOF
+chmod +x fake_bin/curl
+saved_path="$PATH"
+export PATH="$work/fake_bin:$PATH"
+export FACET_TEST_METADATA="$work/registry_metadata"
+export FACET_TEST_GREETER_DIGEST="$digest" FACET_TEST_LOGGER_DIGEST="$logger_digest"
+export FACET_TEST_GREETER_ARCHIVE="$work/registry_greeter.tar"
+export FACET_TEST_LOGGER_ARCHIVE="$work/registry_logger.tar"
+(cd project21_registry && "$facet" update >/dev/null)
+grep -q '"greeter": {"source": "registry"' project21_registry/facet.lock
+grep -q '"logger": {"source": "registry"' project21_registry/facet.lock
+[[ -f project21_registry/cuts/greeter/lib/greeter.di ]]
+[[ -f project21_registry/cuts/logger/lib/logger.di ]]
+export PATH="$saved_path"
+unset FACET_TEST_METADATA FACET_TEST_GREETER_DIGEST FACET_TEST_LOGGER_DIGEST
+unset FACET_TEST_GREETER_ARCHIVE FACET_TEST_LOGGER_ARCHIVE
 
 # --- facet add: rejects a duplicate name, an ambiguous or missing ref,
 # an invalid version constraint, and running before facet init ---

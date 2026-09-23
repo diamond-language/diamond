@@ -22,11 +22,13 @@ manifests, paths, documentation, and existing projects.
    artifact size. A locked install now downloads the digest-addressed archive,
    enforces its size and digest, verifies its contents, and stages extraction
    before replacing the installed cut without consulting mutable indexes or
-   tags. Registry version resolution remains.
+   tags.
 3. Resolve registry versions and transitive dependency metadata without
    downloading or executing package code. Use one version per cut name for a
    program. Preserve useful conflict explanations and deterministic selection;
    make `facet update` the explicit route to newer versions.
+   Registry metadata resolution is implemented. Prefer retaining a compatible
+   version from an existing lock during a future targeted-update refinement.
 4. Build a minimal registry with name ownership, authenticated publishing,
    immutable version records, artifact storage, yanking, audit logs, and a
    read-only index API. Publish from a selected `packages/<name>/` directory,
@@ -37,8 +39,7 @@ manifests, paths, documentation, and existing projects.
    runtime dependencies, test installation from artifacts in CI, then publish.
    All 23 bundled cuts now have release metadata, license files, and declared
    dependencies. `tools/install_local_cuts.sh` stages verified archives for
-   local projects, including Skindicate. Registry publishing and version
-   resolution remain.
+   local projects, including Skindicate. Registry publishing remains.
 
 ## Decisions to carry through implementation
 

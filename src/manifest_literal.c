@@ -234,6 +234,16 @@ static DiamondManifestValue *parse_value(LiteralParser *parser) {
             if (strlen(parser->source + parser->position) >= length &&
                 strncmp(parser->source + parser->position, keywords[i], length) == 0) {
                 parser->position += length;
+                if (i < 2) {
+                    value->kind = DIAMOND_MANIFEST_BOOLEAN;
+                    value->string = malloc(length + 1);
+                    if (value->string == NULL) {
+                        fail(parser, "out of memory");
+                        free(value);
+                        return NULL;
+                    }
+                    memcpy(value->string, keywords[i], length + 1);
+                }
                 return value;
             }
         }
@@ -295,5 +305,13 @@ bool diamond_manifest_get_u64(const DiamondManifestValue *hash, const char *key,
         result = result * 10 + digit;
     }
     *out = result;
+    return true;
+}
+
+bool diamond_manifest_get_bool(const DiamondManifestValue *hash, const char *key,
+                               bool *out) {
+    const DiamondManifestValue *value = diamond_manifest_get(hash, key);
+    if (value == NULL || value->kind != DIAMOND_MANIFEST_BOOLEAN) return false;
+    *out = strcmp(value->string, "true") == 0;
     return true;
 }

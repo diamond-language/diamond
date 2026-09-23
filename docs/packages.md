@@ -138,9 +138,10 @@ a `Hash` from cut name to a spec `Hash` with a required String
 `git` key and **exactly one** of `tag`, `branch`, `commit`, or `version`
 (also String), or a `registry` HTTPS URL with exactly one `version` constraint.
 Git and registry fields cannot be mixed. Ambiguous or missing source/ref/version
-keys are rejected before anything is fetched. Registry dependencies can be
-written today, but resolving them into a new lock remains under development;
-an existing registry lock can already be installed.
+keys are rejected before anything is fetched. `facet update` resolves registry
+version indexes and transitive release metadata into a complete lock before it
+downloads any package archive. An existing registry lock installs without
+consulting the mutable version index.
 
 `version` is a semver range/constraint instead of a pinned ref —
 `^1.2.3` (compatible-with, semver's own "don't change the left-most
@@ -346,10 +347,10 @@ the first place.
   version satisfying both — see "Dependencies" above): there is no such
   thing as "both," so nothing could ever be resolved *to* when the
   refs themselves disagree.
-- **A hosted registry/index and registry resolution**: `facet install greeter`
-  by short name, search, or anything else that would need a service to query.
-  Existing registry lock records can install exact artifacts, but manifests
-  still resolve new dependencies through Git.
+- **A hosted registry/index and search**: `facet install greeter` by short name,
+  search, or anything else that needs a default public service. Registry
+  dependencies already resolve against the explicit HTTPS source in a manifest,
+  but Diamond does not operate that service yet.
 
 Each of these is a plausible next slice, sized independently rather than
 attempted together — see `docs/roadmap.md`.

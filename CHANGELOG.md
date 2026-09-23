@@ -23,8 +23,9 @@ authoritative fine-grained record.
   with bounded retries and timeouts, verify its exact size, digest, contents,
   and manifest identity, then extract it through a staging directory.
 - `diamond.cut` and `facet add` now accept registry dependencies with an HTTPS
-  source and SemVer constraint. Registry dependency resolution still requires
-  the upcoming metadata client; existing registry locks install directly.
+  source and SemVer constraint. `facet update` resolves bounded version indexes
+  and transitive release metadata, excludes yanked versions, writes the complete
+  lock, and downloads no package code until the graph succeeds.
 - Persistent `diamond build` AOT caches now use a SHA-256 fingerprint of the
   runtime sources, headers, build configuration, and embedded prelude. Replacing
   a source checkout with older-timestamped files can no longer reuse an
