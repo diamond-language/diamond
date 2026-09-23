@@ -123,9 +123,10 @@ on, a temporary database and credential, and unprivileged nginx on guest loopbac
 It checks real facet publishing/install/execution, preserved request IDs and base
 paths, 401/413 rejection, independent write throttling, read throttling and recovery,
 and access-log redaction. No real package is published. The separate HTTPS suite
-also exercises administration and restoring a service from backup. Full systemd
-startup, public DNS, certificate renewal, alert delivery, and host firewall checks
-remain deployment gates.
+also exercises administration and restoring a service from backup. The systemd
+lifecycle gate below covers the service account and restart/restore behavior. Public
+DNS, certificate renewal, alert delivery, and host firewall checks remain deployment
+gates.
 
 Validated on 2026-09-23 in the local Ubuntu 26.04.1 QEMU guest with nginx
 1.28.3: the nginx staging gate and the full registry HTTPS integration suite
@@ -134,3 +135,37 @@ passed, including monitored archive access and backup restoration.
 The seed gate includes the nginx checks plus the complete candidate launch inventory.
 Allow several minutes for its paced writes. See the [launch inventory instructions](../../../docs/registry-release-plan.md#candidate-launch-inventory)
 for artifact review and reproducibility checks.
+
+## Systemd lifecycle gate
+
+Run just the service-account and recovery drill with:
+
+```sh
+tools/test_registry_vm.sh systemd
+```
+
+The default `all` run includes this gate after the seed and HTTPS tests. The guest
+must allow `builder` to run `sudo -n`; privilege is required only inside the VM to
+create and manage a temporary system service. The test requires an explicit
+`REGISTRY_QEMU_STAGING=1` guard when invoked directly. Do not run it on production.
+
+The drill uses the shipped unit template with temporary paths and a unique system
+account. It copies built binaries and installed cuts into root-owned code under
+`/opt`, creates private state under `/var/lib`, and places a temporary unit under
+`/run/systemd/system`. It retains `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`,
+`NoNewPrivileges`, the service account, private umask, and restart policy.
+
+Checks cover unit validation, startup, effective service UID, database ownership
+and permissions, explicit restart, automatic recovery after SIGKILL, persistence
+of a published canary, and a clean stop. An online backup is restored into a new
+subdirectory of the writable state directory; after changing `REGISTRY_ROOT`, the
+restarted service must serve the original blob, authenticate the restored
+credential, reject an unauthenticated write, and publish a new canary version.
+Journal records must contain request events without the credential.
+
+The test stops and removes its own unit, account, code, and state on completion or
+failure. It does not enable a boot service or change other units. Journal history
+can retain the test unit's records under the guest's normal retention policy.
+This service drill uses HTTP inside the isolated guest; the nginx gate separately
+covers HTTPS. Production reboot activation, host firewall, DNS, certificate
+renewal, and external alert delivery remain deployment checks.

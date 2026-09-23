@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the current source snapshot in an existing local QEMU guest over SSH.
 set -euo pipefail
+gate=${1:-all}
+[[ "$gate" == all || "$gate" == systemd ]] || { echo "usage: $0 [all|systemd]" >&2; exit 1; }
 repo=$(realpath "$(dirname "$0")/..")
 port=${REGISTRY_VM_PORT:-2222}
 known_hosts=${REGISTRY_VM_KNOWN_HOSTS:-$repo/../.vm-build/known_hosts}
@@ -25,14 +27,17 @@ cleanup() {
 }
 trap cleanup EXIT
 ssh "${ssh_options[@]}" builder@127.0.0.1 "tar -xf - -C '$remote'" < "$archive"
-ssh "${ssh_options[@]}" builder@127.0.0.1 bash -s -- "$remote" <<'REMOTE'
+ssh "${ssh_options[@]}" builder@127.0.0.1 bash -s -- "$remote" "$gate" <<'REMOTE'
 set -euo pipefail
 cd "$1"
-command -v nginx >/dev/null || [[ -x /usr/sbin/nginx ]] || {
+[[ "$2" == systemd ]] || command -v nginx >/dev/null || [[ -x /usr/sbin/nginx ]] || {
     echo 'Install nginx in the staging guest first' >&2; exit 1;
 }
 make -j2
 make facet
-make test-registry-seed
-make test-registry-http
+if [[ "$2" == all ]]; then
+    make test-registry-seed
+    make test-registry-http
+fi
+sudo -n env REGISTRY_QEMU_STAGING=1 python3 packages/registry/systemd_test.py
 REMOTE

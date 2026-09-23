@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a QEMU systemd lifecycle and restore gate using the shipped service
+  protections: service-account startup, explicit and crash restarts, private
+  database permissions, restored credentials, and publishing after recovery.
+
 - Added a reproducible 24-cut launch inventory with pinned archive digests and
   dependency publication order, plus a QEMU rehearsal that publishes the seed
   through nginx and verifies fresh and locked facet installations.

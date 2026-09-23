@@ -50,9 +50,11 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
 
-After the inventory rehearsal, validate the systemd service lifecycle and
-restore procedure in QEMU. Resolve public hostname, hosting, initial publisher
-policy, and minimum browsing experience before the public launch.
+Prepare the public catalog and getting-started flow, keeping the endpoint
+configurable until public hostname and hosting are chosen. Confirm the initial
+publisher policy and minimum browsing experience before the public launch.
+The QEMU systemd lifecycle gate covers startup, restart, and restored-service
+operation under a dedicated account; production host validation remains.
 
 ## Candidate launch inventory
 
