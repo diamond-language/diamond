@@ -4574,6 +4574,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_open_arguments(compiler);
     }
+    if(name_equals(compiler,"sync",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_SYNC);
+    }
     if(name_equals(compiler,"publish",method,false)) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_PUBLISH);
@@ -4610,7 +4614,7 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
     }
-    fail(compiler,method,"unknown File method (expected open/delete/publish/join/dirname/basename/"
+    fail(compiler,method,"unknown File method (expected open/delete/publish/sync/join/dirname/basename/"
         "extname/absolute?/directory?/expand_path)");
     return 0;
 }

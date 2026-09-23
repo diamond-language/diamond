@@ -22,7 +22,7 @@ a `diamond build`-produced [standalone binary](deployment.md), behave identicall
 Every one of these raises `SandboxError` (a rescuable `StandardError`) instead of doing
 anything:
 
-- `File.open`, `File.publish`, `File.delete`, `File.directory?`, `File.expand_path`
+- `File.open`, `File.publish`, `File.sync`, `File.delete`, `File.directory?`, `File.expand_path`
 - `Dir.entries`
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`
@@ -54,7 +54,7 @@ DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.di   # filesystem/da
 
 Four categories, comma-separated when combining more than one:
 
-- `filesystem` -- `File.open`/`.publish`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`
+- `filesystem` -- `File.open`/`.publish`/`.sync`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`
 - `network` -- `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`,
   `UDPSocket.bind`/`.open`, `TLSSocket.connect`, `TLSServer.listen`
 - `database` -- `SQLite3.open`, `PostgreSQL.open`, `MySQL.open` (kept separate from

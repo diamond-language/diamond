@@ -2701,8 +2701,19 @@ static bool audit_cut_imports(const char *root, const FacetFileList *files,
 }
 
 static int cmd_verify(int argc, char **argv) {
-    if (argc != 3 && !(argc == 5 && strcmp(argv[3], "--sha256") == 0)) {
-        fputs("usage: facet verify <archive.tar> [--sha256 <digest>]\n", stderr);
+    bool json = false;
+    const char *expected = NULL;
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0 && !json) json = true;
+        else if (strcmp(argv[i], "--sha256") == 0 && expected == NULL && i + 1 < argc)
+            expected = argv[++i];
+        else {
+            fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json]\n", stderr);
+            return 64;
+        }
+    }
+    if (argc < 3) {
+        fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json]\n", stderr);
         return 64;
     }
     char error[512];
@@ -2722,7 +2733,7 @@ static int cmd_verify(int argc, char **argv) {
         fputs("facet: cannot hash archive\n", stderr);
         return 66;
     }
-    if (argc == 5 && !expected_digest(argv[4], digest)) {
+    if (expected != NULL && !expected_digest(expected, digest)) {
         fclose(archive);
         fputs("facet: archive SHA-256 does not match expected digest\n", stderr);
         return 65;
@@ -2985,7 +2996,27 @@ static int cmd_verify(int argc, char **argv) {
             ok = false;
         }
     }
-    if (ok) {
+    if (ok && json) {
+        printf("{\"protocol\":1,\"name\":\"%s\",\"version\":\"%s\",\"size\":%lld,\"sha256\":\"",
+               name->string, version->string, (long long)archive_before.st_size);
+        for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
+        fputs("\",\"dependencies\":{", stdout);
+        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+        bool first = true;
+        for (const DiamondManifestValue *dep = dependencies ? dependencies->children : NULL;
+             dep != NULL; dep = dep->next) {
+            printf("%s\"%s\":", first ? "" : ",", dep->key);
+            first = false;
+            putchar('"');
+            for (const unsigned char *ch = (const unsigned char *)dep->string; *ch; ch++) {
+                if (*ch == '"' || *ch == '\\') printf("\\%c", *ch);
+                else if (*ch < 32) printf("\\u%04x", (unsigned)*ch);
+                else putchar(*ch);
+            }
+            putchar('"');
+        }
+        fputs("}}\n", stdout);
+    } else if (ok) {
         printf("facet: verified %s %s (%zu files)\nsha256: ",
                name->string, version->string, files.count);
         for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
@@ -3293,7 +3324,7 @@ static void print_usage(void) {
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
-          "       facet verify <archive.tar> [--sha256 <digest>]\n"
+          "       facet verify <archive.tar> [--sha256 <digest>] [--json]\n"
           "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
           "       facet add <name> (--git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "

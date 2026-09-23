@@ -17,6 +17,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added authenticated registry publish transactions with archive-derived metadata,
+  ownership checks, idempotent retries, durable orphan recovery, and atomic audit
+  records. Added `facet verify --json` and `File.sync` for this service layer;
+  the hosted HTTP API is still pending.
+
 - Added `File.publish(path, bytes)` for atomic file creation without replacement,
   with file and directory synchronization. Registry blob writes now use it so
   interrupted writes cannot expose partial bytes at the digest path.

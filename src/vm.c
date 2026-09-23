@@ -11428,6 +11428,44 @@ static DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *p
     return DIAMOND_VM_OK;
 }
 
+/* Recovery barrier for an already published file and its directory entry. */
+static DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path) {
+    if(path->length==0||memchr(path->chars,'\0',path->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"File.sync requires a nonempty path without NUL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    char *parent=strdup(path->chars);
+    if(parent==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    char *slash=strrchr(parent,'/');
+    if(slash==nullptr) strcpy(parent,".");
+    else if(slash==parent) slash[1]='\0';
+    else *slash='\0';
+    int fd=open(path->chars,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    int saved=fd<0?errno:0;
+    struct stat status;
+    if(saved==0) {
+        if(fstat(fd,&status)!=0) saved=errno;
+        else if(!S_ISREG(status.st_mode)) saved=EINVAL;
+        else if(fsync(fd)!=0) saved=errno;
+    }
+    if(fd>=0) close(fd);
+    if(saved==0) {
+        int directory=open(parent,O_RDONLY|O_DIRECTORY);
+        if(directory<0) saved=errno;
+        else {
+            if(fsync(directory)!=0) saved=errno;
+            close(directory);
+        }
+    }
+    free(parent);
+    if(saved!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot sync '%.*s': %s",
+                 (int)path->length,path->chars,strerror(saved));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* Publish complete bytes without replacing an existing directory entry.
  * The containing directory must be trusted and already exist. A failed final
  * directory sync can leave a complete published file: never remove that file
@@ -22072,6 +22110,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue path_result=DIAMOND_NIL;
                 DiamondVmStatus path_status=DIAMOND_VM_OK;
                 switch((DiamondFilePathFunction)selector) {
+                    case DIAMOND_FILE_PATH_SYNC:
+                        VM_SANDBOX_GUARD("File.sync", "filesystem");
+                        path_status=file_sync_helper(vm,path);
+                        path_result=registers[arg1];
+                        break;
                     case DIAMOND_FILE_PATH_PUBLISH:
                         VM_SANDBOX_GUARD("File.publish", "filesystem");
                         path_status=file_publish_helper(vm,path,second);

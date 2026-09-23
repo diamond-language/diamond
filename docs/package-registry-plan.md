@@ -32,8 +32,9 @@ manifests, paths, documentation, and existing projects.
 4. Build a minimal registry with name ownership, authenticated publishing,
    immutable version records, artifact storage, yanking, audit logs, and a
    read-only index API. The initial SQLite schema and content-addressed blob
-   store are now implemented in the `registry` cut; the HTTP service and
-   publish transaction still remain. Publish from a selected `packages/<name>/` directory,
+   store and authenticated publish transaction are implemented in the `registry`
+   cut, including archive verification, orphan recovery, and atomic audit records.
+   The HTTP service and credential provisioning interface remain. Publish from a selected `packages/<name>/` directory,
    not from the monorepo root.
 5. Add a web interface for search, package pages, documentation, owners,
    versions, and release status. Keep the API usable without the web interface.

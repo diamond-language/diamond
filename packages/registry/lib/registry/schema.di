@@ -22,6 +22,17 @@ module Registry
           db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [Schema.version()])
         end
       end
+      # Add credential attribution without recreating an existing registry.
+      audit_version = "2026092202"
+      recorded = db.query("SELECT version FROM schema_migrations WHERE version = ?", [audit_version])
+      if recorded.length() == 0
+        ActiveRecord::Transaction.run(db) do
+          db.execute("ALTER TABLE audit_events ADD COLUMN credential_id INTEGER REFERENCES credentials(id)")
+          db.execute("ALTER TABLE audit_events ADD COLUMN credential_scopes TEXT")
+          db.execute("ALTER TABLE audit_events ADD COLUMN credential_expires_at INTEGER")
+          db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [audit_version])
+        end
+      end
     end
   end
 end

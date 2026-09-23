@@ -566,6 +566,7 @@ typedef enum {
      * plain condition without needing to rescue anything first. */
     DIAMOND_FILE_PATH_DIRECTORY,
     DIAMOND_FILE_PATH_PUBLISH,
+    DIAMOND_FILE_PATH_SYNC,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

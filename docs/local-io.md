@@ -251,3 +251,12 @@ An interrupted process may leave `.diamond-publish-*` temporary files. Remove
 these only with writers stopped. Errors after the link can leave a complete
 published destination; callers must inspect it before retrying. Durability
 is subject to the filesystem and storage device honoring synchronization.
+
+## Recovery synchronization: `File.sync(path)`
+
+Synchronizes an existing regular file and its containing directory, returning
+its path. It rejects empty or NUL-containing paths with `TypeError`, and missing
+files, symlinks, nonregular files, and synchronization failures with `IOError`.
+The directory must be trusted. This is gated by the `filesystem` capability.
+Registry retries use it after verifying an orphan blob and before committing a
+new database reference. This operation does not itself validate file contents.

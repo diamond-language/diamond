@@ -3,8 +3,9 @@
 Storage primitives for the Diamond cut registry.
 
 This first slice provides the SQLite schema and a content-addressed blob store.
-The HTTP service, authentication flow, archive validation, and publish
-transaction will build on these primitives.
+The authenticated publish transaction verifies archives with `facet` and stores
+release metadata with its audit event. The HTTP service and credential
+provisioning interface are still pending.
 
 Install with `facet` and load with `require_cut "registry"`.
 
@@ -23,8 +24,46 @@ A crash before publication can leave `.diamond-publish-*` staging files;
 these are ignored by digest lookup and may be removed when writers are stopped.
 A failure after linking can leave a complete published file even though the
 call raises. Recovery must verify that file before recording a release or
-retrying. The database publish transaction is still pending.
+retrying. The publisher performs this recovery check automatically.
 
 Run `make test-registry-package` from the repository root. The tests verify
 expected exception types, unchanged bytes after a duplicate write, invalid
 digest rejection, and corrupt-file detection.
+
+## Publish transaction
+
+Create a `Registry::Publisher` with an initialized SQLite connection, a
+`BlobStore`, an existing private staging directory, and the trusted absolute
+path to the `facet` executable. Run schema migration once during startup,
+before opening worker connections. Each worker must use its own connection.
+
+```diamond
+publisher = Registry::Publisher.new(db, store, staging_path, facet_path)
+result = publisher.publish(name, archive_bytes, bearer_token, idempotency_key)
+```
+
+The optional key defaults to an empty String. The result includes protocol,
+name, version, sha256, size, yanked, and an internal `created` flag. An HTTP
+adapter should remove `created` and use it to choose status 201 or 200.
+
+Operator-provisioned credentials store the SHA-256 digest of a cryptographically
+random token, a subject, a JSON array of scopes, and optional expiry/revocation
+timestamps. Use at least 256 random bits for tokens. `publish:<name>` is required;
+for an existing cut the subject must also be an owner. The first successful
+publish claims an unused name for that subject and audits the claim.
+
+Publishing uses a bounded in-memory archive (at most 56 MiB), verified via
+`facet verify --sha256 ... --json`. It never executes package code. An immediate
+SQLite transaction serializes authorization, claims, releases, audit records,
+and idempotency keys. The blob is synchronized before the transaction commits.
+Repeated identical uploads return the existing release without extra publish
+audit events or changing yank status. Takedown tombstones cannot be republished.
+
+A failed database operation leaves no partial metadata. A complete orphan blob
+may remain and is verified and synchronized on retry. Corrupt existing blobs
+fail closed and need operator repair. No automatic blob garbage collection is
+provided. SQLite `synchronous=FULL` is configured; this single-node implementation
+requires local durable storage and holds the writer lock during verification.
+Authentication errors use `RuntimeError` codes, invalid requests/archives use
+`ArgumentError` codes, and filesystem failures propagate as `IOError`; the
+future HTTP adapter must map these to protocol responses.

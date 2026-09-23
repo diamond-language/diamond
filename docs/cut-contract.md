@@ -1,7 +1,7 @@
 # Publishable cut contract
 
-Status: proposed contract, 2026-09-21. No registry or publish command exists
-yet. Current behavior is in [packages.md](packages.md); the proposed wire API
+Status: artifact validation and the publish client are implemented; a hosted
+registry service is still pending. Current behavior is in [packages.md](packages.md); the proposed wire API
 is in [registry-protocol.md](registry-protocol.md).
 
 `facet check <cut-directory>` now performs the first local preflight. It checks
@@ -166,3 +166,9 @@ unknown source types fail. Registry source specs and lockfile digests remain
 distinct from old Git locks. The flat
 `cuts/<name>/` compatibility fallback
 can remain for manually installed legacy cuts; published artifacts use `lib/`.
+
+`facet verify ... --json` emits one machine-readable JSON object on success,
+with protocol, name, version, SHA-256, size, and dependency ranges derived from
+the verified archive. It supports `--sha256` in either option order and emits
+no success JSON for an invalid archive. Registry publishing uses this output
+instead of parsing human-readable diagnostics or evaluating the manifest.
