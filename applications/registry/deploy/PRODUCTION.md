@@ -61,9 +61,9 @@ headers. Validate the installed configuration and public traffic again on the ho
 - The current backup choice is manual downloads to the laptop; use the procedure
   below and verify a downloaded snapshot. Retention and recovery targets remain
   operator decisions; automatic off-host backups are not configured.
-- Choose the external alert recipient/service and provision its credentials
-  outside Git. Connect probes and expiry/storage/backup-age signals; deliver a
-  test alert and confirm receipt.
+- Automatic alerts are deferred by the operator as of 2026-09-23. Continue
+  manual probes; selecting a receiver and verifying delivery is follow-up work,
+  not a blocker for this release.
 - Perform a planned production reboot check and monitor certificate renewal.
   Service enablement and a successfully issued certificate do not establish
   evidence of those future events.
@@ -80,7 +80,8 @@ and verified by a temporary local restore on 2026-09-23T18:42:37+00:00.
 Database integrity, foreign keys, archive sizes and digests passed. The snapshot
 contains 18 public releases and six retained takedowns (24 archive blobs total);
 its parent directory is private (0700). Future downloads require a new directory.
-No automatic off-host schedule or alert receiver has been selected. Do not represent
+Automatic alerts are explicitly deferred; no receiver or automatic off-host
+backup schedule is configured. Do not represent
 scheduled backups or automatic alert delivery as operational. Recovery can lose
 all changes since the last manual snapshot; record when each verified copy was
 made and repeat before upgrades, credential changes, and package publication.

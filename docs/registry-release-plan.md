@@ -54,9 +54,9 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 The public registry and catalog are live at `https://cuts.dilang.tech` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
-The first manual laptop snapshot has passed restore verification. Next: choose
-an external alert receiver, then finalize the 0.7 versus 0.8 release, notes, tag,
-and announcement.
+The first manual laptop snapshot has passed restore verification. Automatic
+alerts are deferred by the operator. Next: finalize the 0.7 versus 0.8 release,
+notes, tag, and announcement.
 Production reboot and certificate-renewal drills remain outstanding.
 
 ## Public launch inventory
@@ -119,8 +119,8 @@ Use 0.7.0 provisionally; select the actual version before editing runtime metada
 - [x] Download and restore-verify the first snapshot with
   `tools/fetch_registry_backup.py`. Saved under `~/Projects/diamond-lang/cutbackup`;
   see the production record for its verification timestamp and retained state.
-- [ ] Select an alert receiver and confirm delivery of a test notification.
-  Manual `monitor.py` probes are available in the meantime.
+- **Deferred by operator:** automatic alerts and receiver selection. Manual
+  `monitor.py` probes remain available; automatic notification is not a release gate.
 - [ ] Schedule production reboot and certificate-renewal checks. Record any
   deferred operational checks explicitly in the release decision.
 - [ ] Choose 0.7.0 versus 0.8.0 and finalize the complete release notes.
