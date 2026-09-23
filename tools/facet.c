@@ -1,4 +1,7 @@
 #define _XOPEN_SOURCE 700
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#endif
 #include "semver.h"
 #include "manifest_literal.h"
 
@@ -15,6 +18,22 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdint.h>
+
+/* Darwin names the nanosecond fields differently; keep archive race checks
+ * equally precise on every supported platform. */
+static bool same_file_timestamps(const struct stat *left, const struct stat *right) {
+#ifdef __APPLE__
+    return left->st_mtimespec.tv_sec == right->st_mtimespec.tv_sec &&
+           left->st_mtimespec.tv_nsec == right->st_mtimespec.tv_nsec &&
+           left->st_ctimespec.tv_sec == right->st_ctimespec.tv_sec &&
+           left->st_ctimespec.tv_nsec == right->st_ctimespec.tv_nsec;
+#else
+    return left->st_mtim.tv_sec == right->st_mtim.tv_sec &&
+           left->st_mtim.tv_nsec == right->st_mtim.tv_nsec &&
+           left->st_ctim.tv_sec == right->st_ctim.tv_sec &&
+           left->st_ctim.tv_nsec == right->st_ctim.tv_nsec;
+#endif
+}
 
 enum {
     FACET_MAX_NAME = 64,
@@ -1750,10 +1769,7 @@ static bool extract_verified_archive(const char *archive_path, const char *desti
         digest_length != 32 || !expected_digest(expected_sha256, extracted_digest) ||
         fstat(fileno(archive), &after) != 0 || before.st_size != after.st_size ||
         before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
-        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
-        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
-        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
-        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) ok = false;
+        !same_file_timestamps(&before, &after)) ok = false;
     EVP_MD_CTX_free(digest_context);
     if (fclose(archive) != 0) ok = false;
     if (!ok) {
@@ -2417,10 +2433,7 @@ static bool write_tar_member(FILE *archive, const char *root, const char *relati
     if (fstat(fd, &after) != 0 || after.st_size != before.st_size ||
         after.st_dev != before.st_dev || after.st_ino != before.st_ino ||
         after.st_mode != before.st_mode ||
-        after.st_mtim.tv_sec != before.st_mtim.tv_sec ||
-        after.st_mtim.tv_nsec != before.st_mtim.tv_nsec ||
-        after.st_ctim.tv_sec != before.st_ctim.tv_sec ||
-        after.st_ctim.tv_nsec != before.st_ctim.tv_nsec)
+        !same_file_timestamps(&after, &before))
         ok = false;
     close(fd);
     if (!ok) (void)snprintf(error, error_size, "package file changed while packing: %s", relative);
@@ -2893,10 +2906,7 @@ static int cmd_verify(int argc, char **argv) {
     }
     if (fstat(fileno(archive), &archive_after) != 0 ||
         archive_before.st_size != archive_after.st_size ||
-        archive_before.st_mtim.tv_sec != archive_after.st_mtim.tv_sec ||
-        archive_before.st_mtim.tv_nsec != archive_after.st_mtim.tv_nsec ||
-        archive_before.st_ctim.tv_sec != archive_after.st_ctim.tv_sec ||
-        archive_before.st_ctim.tv_nsec != archive_after.st_ctim.tv_nsec) {
+        !same_file_timestamps(&archive_before, &archive_after)) {
         (void)snprintf(error, sizeof error, "archive changed while verifying");
         ok = false;
     }

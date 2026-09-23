@@ -19,6 +19,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Fixed facet compilation on macOS by enabling Darwin file-open flags and
+  using its nanosecond timestamp fields for archive-change checks.
+
 - Added a GitHub issue template and developer guide for requesting public-registry
   maintainership, including ownership review and private scoped-credential delivery.
 
