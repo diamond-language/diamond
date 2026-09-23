@@ -3275,6 +3275,7 @@ static bool run_curl_publish(const char *url, const char *archive,
     }
     if (pid == 0) {
         execvp("curl", argv);
+        fprintf(stderr, "facet: cannot execute 'curl': %s\n", strerror(errno));
         _exit(127);
     }
     int status = 0;

@@ -68,7 +68,7 @@ jobs:
         if: matrix.os.name == 'ubuntu'
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -96,7 +96,7 @@ jobs:
       - name: Install dependencies (Ubuntu arm64)
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       # The shipped JIT is intentionally x86-64-only. Its environment-driven
       # cases are kept in the main matrix; arm64 validates the portable
       # interpreter and does not pretend to exercise unavailable machine code.
@@ -146,7 +146,7 @@ jobs:
       - name: Install dependencies (Ubuntu arm64)
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
       - name: Exclude x86-64 JIT cases
         run: |
           mkdir -p /tmp/excluded-cases

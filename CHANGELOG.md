@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 - Fixed facet compilation on macOS by enabling Darwin file-open flags and
   using its nanosecond timestamp fields for archive-change checks.
+- `facet publish` now reports a missing `curl` executable instead of misreporting
+  it as a registry rejection.
 
 - Added a GitHub issue template and developer guide for requesting public-registry
   maintainership, including ownership review and private scoped-credential delivery.
