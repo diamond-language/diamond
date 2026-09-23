@@ -12,10 +12,10 @@ its lockfile, and reproduce the installation on a clean machine. Maintainers can
 publish immutable releases and manage access. An operator can monitor, back up,
 restore, and handle a compromised credential or package takedown.
 
-The initial launch proposal is public reads with operator-provisioned publishers.
+The confirmed launch policy is public reads with operator-approved maintainers
+and scoped publishing credentials.
 Self-service account registration, a large search UI, provenance automation, and
-multi-node hosting can follow. Confirm the publisher policy and minimum browsing
-experience before announcing availability.
+multi-node hosting can follow. Review the minimum browsing experience before announcing availability.
 
 ## Gates and order
 
@@ -50,9 +50,10 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
 
-Prepare the public catalog and getting-started flow, keeping the endpoint
-configurable until public hostname and hosting are chosen. Confirm the initial
-publisher policy and minimum browsing experience before the public launch.
+The public hostname is `cuts.dilang.tech` on the existing droplet. A live catalog
+and getting-started flow are implemented. Confirm off-host backup destination and alert delivery, then validate the complete
+Caddy/nginx chain in QEMU before public deployment. See the
+[production preparation record](../applications/registry/deploy/PRODUCTION.md).
 The QEMU systemd lifecycle gate covers startup, restart, and restored-service
 operation under a dedicated account; production host validation remains.
 

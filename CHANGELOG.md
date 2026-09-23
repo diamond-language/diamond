@@ -17,6 +17,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added a live, searchable public cut catalog with bounded pagination, release
+  status and digest details, and facet onboarding for cuts.dilang.tech. Added
+  preparation and a QEMU gate for the existing droplet's Caddy HTTPS and
+  loopback nginx policy, plus a manual verified snapshot-download helper.
+
 - Added a QEMU systemd lifecycle and restore gate using the shipped service
   protections: service-account startup, explicit and crash restarts, private
   database permissions, restored credentials, and publishing after recovery.

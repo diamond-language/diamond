@@ -524,6 +524,7 @@ test-registry-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/test.sh
 
 test-registry-http: $(TARGET) $(BUILD_DIR)/facet
+	python3 packages/registry/backup_download_test.py
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond python3 packages/registry/http_test.py
 
 # Opt-in staging gate: requires nginx and local sockets; run in a QEMU guest.

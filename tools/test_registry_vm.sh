@@ -2,7 +2,7 @@
 # Run the current source snapshot in an existing local QEMU guest over SSH.
 set -euo pipefail
 gate=${1:-all}
-[[ "$gate" == all || "$gate" == systemd ]] || { echo "usage: $0 [all|systemd]" >&2; exit 1; }
+[[ "$gate" == all || "$gate" == systemd || "$gate" == proxy ]] || { echo "usage: $0 [all|systemd|proxy]" >&2; exit 1; }
 repo=$(realpath "$(dirname "$0")/..")
 port=${REGISTRY_VM_PORT:-2222}
 known_hosts=${REGISTRY_VM_KNOWN_HOSTS:-$repo/../.vm-build/known_hosts}
@@ -39,5 +39,10 @@ if [[ "$2" == all ]]; then
     make test-registry-seed
     make test-registry-http
 fi
-sudo -n env REGISTRY_QEMU_STAGING=1 python3 packages/registry/systemd_test.py
+if [[ "$2" == all || "$2" == proxy ]]; then
+    REGISTRY_PROXY_CHAIN=1 python3 packages/registry/nginx_test.py
+fi
+if [[ "$2" == all || "$2" == systemd ]]; then
+    sudo -n env REGISTRY_QEMU_STAGING=1 python3 packages/registry/systemd_test.py
+fi
 REMOTE

@@ -169,3 +169,18 @@ can retain the test unit's records under the guest's normal retention policy.
 This service drill uses HTTP inside the isolated guest; the nginx gate separately
 covers HTTPS. Production reboot activation, host firewall, DNS, certificate
 renewal, and external alert delivery remain deployment checks.
+
+## Existing Caddy host and manual laptop backups
+
+The selected production endpoint is `https://cuts.dilang.tech`. The existing host
+uses Caddy; see [production preparation](PRODUCTION.md) for its additive site
+block and loopback nginx configuration. `tools/test_registry_vm.sh proxy` tests
+Caddy → nginx → registry with a verified local certificate, actual facet workflows,
+and forged forwarded-IP headers. Install Caddy in the QEMU guest first. The test
+uses temporary ports and state and does not rely on the guest's default Caddy unit.
+The default `all` gate includes this proxy-chain drill.
+
+Launch publishing is operator-approved with scoped credentials. The current
+backup preference is manual download to the laptop; the verified-download helper
+and restore procedure are documented in the production preparation record.
+Automated off-host backups and alert delivery are not configured.

@@ -204,3 +204,20 @@ or certificate configuration is installed by this repository.
 See [deployment operations](deploy/OPERATIONS.md) for the nginx rate-limit template,
 HTTPS health/archive probe, alert signals, and launch and upgrade checklists.
 Templates require host-specific configuration and validation before deployment.
+
+## Public catalog and onboarding
+
+The intended public endpoint is `https://cuts.dilang.tech`. The application root
+serves a searchable release catalog and getting-started instructions. The browser
+loads live metadata from `catalog.json`; taken-down releases are excluded and
+yanked versions are marked. Pages contain at most 100 releases, with `next_after`
+as an ascending release-ID cursor. Search filters the loaded releases; load more
+to search additional pages. The catalog uses text rendering for metadata and a
+same-origin script policy. It contains no publishing credential or administration UI.
+
+Keep `catalog.di`, `catalog.html`, and `catalog.js` beside `app.di` when deploying.
+`REGISTRY_BASE` prefixes the catalog and its assets as well as the API. Install
+commands use the catalog's origin/base; the public quickstart uses cuts.dilang.tech.
+See [production preparation](deploy/PRODUCTION.md) for the existing Caddy droplet
+integration and unresolved launch inputs. Providing the hostname in docs does not
+mean the public service is deployed.

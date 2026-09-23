@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-systemd-', dir='/opt')
         app = work / 'app'
         app.mkdir(mode=0o755)
         run(ROOT / 'tools/install_local_cuts.sh', app)
-        for filename in ('app.di', 'credentials.di', 'backup.py'):
+        for filename in ('app.di', 'credentials.di', 'backup.py', 'catalog.di', 'catalog.html', 'catalog.js'):
             shutil.copy(ROOT / 'applications/registry' / filename, app / filename)
         for executable in ('diamond', 'facet'):
             shutil.copy(ROOT / 'build' / executable, work / executable)

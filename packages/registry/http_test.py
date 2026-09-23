@@ -33,7 +33,8 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
     data = work / 'data'
     (data / 'blobs').mkdir(parents=True)
     (data / 'staging').mkdir()
-    shutil.copy(source / 'applications/registry/app.di', work / 'app.di')
+    for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js'):
+        shutil.copy(source / 'applications/registry' / name, work / name)
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
@@ -268,6 +269,12 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
             assert result.returncode == 1 and json.loads(result.stdout)['ok'] is False
             assert url not in result.stdout
 
+        assert request('/')[0] == 200
+        assert request('/catalog.js')[0] == 200
+        status, catalog = request('/catalog.json')
+        assert status == 200 and any(row['name'] == 'greeter' for row in catalog['releases'])
+        for cursor in ('bad', '', '-1', '01', '1&after=2', '999999999999999999999999'):
+            assert request('/catalog.json?after=' + cursor)[0] == 400, cursor
         consumer = work / 'consumer'
         consumer.mkdir()
         run(str(facet), 'init', 'consumer', cwd=consumer, env=env)
@@ -370,6 +377,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         assert manage('takedown', rotated['token'], 'repeat')[0] == 200
         assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'takedown'").fetchone()[0] == 1
         assert request('/v1/cuts/greeter/versions/1.0.0')[0] == 404
+        assert not any(row['name'] == 'greeter' for row in request('/catalog.json')[1]['releases'])
         assert request(release['archive']['path'])[0] == 404
         assert manage('unyank', token)[0] == 404
         audit_headers = {'Authorization': 'Bearer ' + rotated['token']}
@@ -405,6 +413,27 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         inventory = credential('list')
         assert any(item['id'] == rotated['id'] and item['revoked_at'] is not None for item in inventory)
         assert all('token' not in item and 'token_digest' not in item for item in inventory)
+        # Exercise bounded catalog pagination without creating public artifacts.
+        temporary_cut = db.execute("INSERT INTO cuts (name, created_at) VALUES ('catalog_page_test', 1)").lastrowid
+        for index in range(105):
+            db.execute('INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (?, ?, ?, ?, 1, 1)',
+                       (temporary_cut, f'1.0.{index}', '{}', hashlib.sha256(f'catalog-{index}'.encode()).hexdigest()))
+        db.commit()
+        seen = []
+        after = 0
+        while True:
+            status, page = request('/catalog.json?after=' + str(after))
+            assert status == 200 and len(page['releases']) <= 100
+            seen.extend(row['id'] for row in page['releases'])
+            if page['next_after'] is None:
+                break
+            assert page['next_after'] > after
+            after = page['next_after']
+        expected = [row[0] for row in db.execute('SELECT id FROM releases WHERE takedown_reason IS NULL ORDER BY id')]
+        assert seen == expected
+        db.execute('DELETE FROM releases WHERE cut_id = ?', (temporary_cut,))
+        db.execute('DELETE FROM cuts WHERE id = ?', (temporary_cut,))
+        db.commit()
         dump = '\n'.join(db.iterdump())
         for raw in (token, outsider['token'], publisher_only['token'], admin['token'], rotated['token']):
             assert raw not in dump
@@ -474,6 +503,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         else:
             raise AssertionError('restored registry failed to start')
         assert request('/v1/cuts/greeter/versions/1.0.0')[0] == 404
+        assert not any(row['name'] == 'greeter' for row in request('/catalog.json')[1]['releases'])
         assert request('/v1/audit', headers=audit_headers)[0] == 401
         recovery_consumer = work / 'recovery-consumer'
         recovery_consumer.mkdir()

@@ -1,5 +1,6 @@
 require_cut "registry"
 require_cut "gremlin"
+require "./catalog"
 
 root = ENV["REGISTRY_ROOT"]
 if root == nil then raise "REGISTRY_ROOT is required" end
@@ -20,7 +21,11 @@ def dispatch_registry(request, context)
     publisher = Registry::Publisher.new(db, store, File.join(root, "staging"), verifier)
     api = Registry::API.new(db, store, publisher, base)
     context["registry_api"] = api
+    context["registry_db"] = db
+    context["registry_base"] = base
   end
+  catalog = registry_catalog(request, context["registry_db"], context["registry_base"])
+  if catalog != nil then return catalog end
   api.call(request)
 end
 def handle_registry(request, context)

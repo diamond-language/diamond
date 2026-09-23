@@ -17,6 +17,7 @@ source = Path(__file__).resolve().parents[2]
 diamond = str(source / 'build/diamond')
 facet = str(source / 'build/facet')
 nginx = shutil.which('nginx') or '/usr/sbin/nginx'
+proxy_chain = os.environ.get('REGISTRY_PROXY_CHAIN') == '1'
 
 
 def run(*args, **kwargs):
@@ -46,9 +47,10 @@ def stop(process):
 with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
     work = Path(temporary)
     backend_port, proxy_port = port(), port()
+    internal_port = port() if proxy_chain else proxy_port
     assert backend_port != proxy_port
     run(str(source / 'tools/install_local_cuts.sh'), str(work))
-    for name in ('app.di', 'credentials.di'):
+    for name in ('app.di', 'credentials.di', 'catalog.di', 'catalog.html', 'catalog.js'):
         shutil.copy(source / 'applications/registry' / name, work / name)
     (work / 'data/blobs').mkdir(parents=True)
     (work / 'data/staging').mkdir()
@@ -58,17 +60,21 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
     run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
         '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
         '-keyout', str(work / 'key.pem'), '-out', str(work / 'cert.pem'))
-    template = (source / 'applications/registry/deploy/nginx.conf.example').read_text()
+    template_name = 'nginx-loopback.conf.example' if proxy_chain else 'nginx.conf.example'
+    template = (source / 'applications/registry/deploy' / template_name).read_text()
     # Only host-specific settings change; rate, size and buffering policy is exact.
     for old, new in (
-        ('listen 443 ssl;', f'listen 127.0.0.1:{proxy_port} ssl;'),
-        ('cuts.example.com', 'localhost'),
+        ('listen 127.0.0.1:18121;' if proxy_chain else 'listen 443 ssl;',
+         f'listen 127.0.0.1:{internal_port};' if proxy_chain else f'listen 127.0.0.1:{proxy_port} ssl;'),
+        ('cuts.dilang.tech', 'localhost'),
         ('/etc/ssl/registry/fullchain.pem', str(work / 'cert.pem')),
         ('/etc/ssl/registry/privkey.pem', str(work / 'key.pem')),
         ('/var/log/nginx/registry-access.log', str(work / 'access.log')),
         ('/var/log/nginx/registry-error.log', str(work / 'error.log')),
         ('127.0.0.1:18120', f'127.0.0.1:{backend_port}'),
     ):
+        if proxy_chain and old.startswith('/etc/ssl/'):
+            continue
         assert old in template
         template = template.replace(old, new)
     config = work / 'nginx.conf'
@@ -88,11 +94,11 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
         try:
             connection.request(method, '/registry' + path, body, headers or {})
             response = connection.getresponse()
-            return response.status, dict(response.getheaders()), response.read()
+            return response.status, {name.lower(): value for name, value in response.getheaders()}, response.read()
         finally:
             connection.close()
 
-    proxy = server = None
+    proxy = server = caddy = None
     with (work / 'process.log').open('w+') as log:
         try:
             server = subprocess.Popen([diamond, 'app.di'], cwd=work, env=env, stdout=log, stderr=log)
@@ -112,6 +118,16 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
             else:
                 raise AssertionError('registry did not start')
             proxy = subprocess.Popen([nginx, '-p', str(work), '-c', str(config)], stdout=log, stderr=log)
+            if proxy_chain:
+                caddy_config = work / 'Caddyfile'
+                caddy_config.write_text('{\n admin off\n auto_https disable_redirects\n}\n'
+                    + f'https://localhost:{proxy_port} {{\n tls {work}/cert.pem {work}/key.pem\n'
+                    + f' reverse_proxy 127.0.0.1:{internal_port}\n}}\n')
+                caddy_env = dict(os.environ, XDG_CONFIG_HOME=str(work / 'caddy-config'), XDG_DATA_HOME=str(work / 'caddy-data'))
+                run('caddy', 'validate', '--config', str(caddy_config), '--adapter', 'caddyfile', env=caddy_env)
+                caddy = subprocess.Popen(['caddy', 'run', '--config', str(caddy_config), '--adapter', 'caddyfile'],
+                                         stdout=log, stderr=log, env=caddy_env)
+
             for _ in range(100):
                 try:
                     status, headers, body = request()
@@ -122,7 +138,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
                 time.sleep(.05)
             else:
                 raise AssertionError('nginx did not start')
-            assert headers.get('X-Request-ID')
+            assert headers.get('x-request-id')
             assert json.loads(body) == {'protocol': 1, 'status': 'ok'}
             token = json.loads(run(diamond, 'credentials.di', 'issue', 'staging', '3600',
                                    'publish:canary', 'nginx drill', cwd=work, env=env).stdout)['token']
@@ -152,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
             # Query-bearing route is not a publish route; use an exact route for auth.
             assert 429 in writes and set(writes) <= {404, 429}
             assert request()[0] == 200  # write throttling does not block reads
-            reads = [request()[0] for _ in range(160)]
+            reads = [request(headers={'X-Forwarded-For': f'198.51.100.{index % 254 + 1}'})[0] for index in range(160)]
             assert 200 in reads and 429 in reads and set(reads) <= {200, 429}
             # Allow the full read burst debt to drain; write debt lasts much longer.
             time.sleep(3)
@@ -221,6 +237,8 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
             assert token not in access and marker not in access and '/registry' not in access
             print('nginx configuration, HTTPS facet publish/install, 413, write/read 429, recovery, and log checks passed')
             print('read statuses:', dict(collections.Counter(reads)))
+            if proxy_chain:
+                print('Caddy to loopback nginx: HTTPS and spoofed forwarded-IP rate-limit checks passed')
         except BaseException:
             log.flush()
             log.seek(0)
@@ -230,5 +248,6 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
                     print((work / name).read_text())
             raise
         finally:
+            stop(caddy)
             stop(proxy)
             stop(server)
