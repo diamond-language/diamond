@@ -32,7 +32,8 @@ authoritative fine-grained record.
   protections: service-account startup, explicit and crash restarts, private
   database permissions, restored credentials, and publishing after recovery.
 
-- Added a reproducible 24-cut launch inventory with pinned archive digests and
+- Added a reproducible launch inventory (18 public cuts selected from the original
+  24-cut rehearsal) with pinned archive digests and
   dependency publication order, plus a QEMU rehearsal that publishes the seed
   through nginx and verifies fresh and locked facet installations.
 
@@ -80,7 +81,7 @@ authoritative fine-grained record.
   pass because of unrelated load or syntax errors.
 - Documented the registry v1 service contract: stable error responses,
   scoped bearer credentials, idempotent publishing, and audited yank, unyank,
-  and takedown operations. Production deployment remains pending.
+  and takedown operations.
 - Added the initial `registry` cut with SQLite schema migrations and an
   immutable, digest-addressed archive store.
 - `facet` now reads and validates registry lock records separately from Git

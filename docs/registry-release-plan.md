@@ -31,7 +31,8 @@ multi-node hosting can follow. Review the minimum browsing experience before ann
    in staging. Keep credentials and private keys outside the inventory.
 3. **Public endpoint and operations.** Select the hostname, host, service owner,
    publisher policy, and incident contact. Configure TLS, network restrictions,
-   external probes, alert delivery, log retention, and off-host backup schedules.
+   external probes, alert delivery, log retention, and the chosen manual off-host
+   backup procedure.
    Demonstrate restoration and record recovery targets. Validate the systemd
    deployment on the target host; the temporary nginx drill does not cover it.
 4. **User path.** Provide a landing page or catalog and exact getting-started,
@@ -43,9 +44,9 @@ multi-node hosting can follow. Review the minimum browsing experience before ann
    host. Only then finalize the Diamond minor version, changelog, release notes,
    tag, and announcement. Record the deployed revision and rollback snapshot.
 
-A passing local drill establishes test evidence, not public deployment. DNS,
-production credentials, the hosting choice, and announcement remain launch
-inputs. The [operations checklist](../applications/registry/deploy/OPERATIONS.md)
+Public deployment is complete. Local drill evidence and production verification
+are recorded separately; remaining operational choices and the announcement
+are tracked below. The [operations checklist](../applications/registry/deploy/OPERATIONS.md)
 and [registry implementation plan](package-registry-plan.md) track the details.
 
 ## Next work
@@ -53,8 +54,9 @@ and [registry implementation plan](package-registry-plan.md) track the details.
 The public registry and catalog are live at `https://cuts.dilang.tech` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
-Next: choose the first manual laptop backup destination and external alert
-receiver, then finalize the 0.7 versus 0.8 release, notes, tag, and announcement.
+The first manual laptop snapshot has passed restore verification. Next: choose
+an external alert receiver, then finalize the 0.7 versus 0.8 release, notes, tag,
+and announcement.
 Production reboot and certificate-renewal drills remain outstanding.
 
 ## Public launch inventory
@@ -104,3 +106,33 @@ the host-built inventory, published successfully, resolved through facet, loaded
 and reinstalled from an unchanged lockfile. The public registry was subsequently
 activated, seeded, and reduced to the approved 18 cuts. The current selection
 retains the reviewed bytes and has no dependency on the six removed cuts.
+
+## Release checklist
+
+Draft announcement text is in [registry-release-notes.md](registry-release-notes.md).
+Use 0.7.0 provisionally; select the actual version before editing runtime metadata.
+
+- [x] Deploy HTTPS catalog and registry; preserve existing host routes.
+- [x] Publish and verify the final 18-cut selection; revoke temporary credentials.
+- [x] Verify removed cuts are unavailable and retained dependency graphs resolve.
+- [x] Record the deployed runtime revision and configuration backup procedure.
+- [x] Download and restore-verify the first snapshot with
+  `tools/fetch_registry_backup.py`. Saved under `~/Projects/diamond-lang/cutbackup`;
+  see the production record for its verification timestamp and retained state.
+- [ ] Select an alert receiver and confirm delivery of a test notification.
+  Manual `monitor.py` probes are available in the meantime.
+- [ ] Schedule production reboot and certificate-renewal checks. Record any
+  deferred operational checks explicitly in the release decision.
+- [ ] Choose 0.7.0 versus 0.8.0 and finalize the complete release notes.
+- [ ] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
+  changelog entries under the version/date heading.
+- [ ] Verify the final release commit: inspect the complete CI results, run the
+  QEMU registry gate (`tools/test_registry_vm.sh`), and run
+  `python3 tools/verify_registry_launch.py https://cuts.dilang.tech`.
+  Record the tested SHA and outcomes; earlier runs do not certify a later commit.
+- [ ] Confirm the version output, clean working tree, and pushed release commit;
+  create the version tag and publish the reviewed release notes.
+
+The backup helper requires a new directory and verifies the downloaded snapshot
+by restoring it into a temporary local directory. Choose its destination outside
+this source checkout. Follow the [production backup procedure](../applications/registry/deploy/PRODUCTION.md#current-backup-and-alert-choices).
