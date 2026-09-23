@@ -1,7 +1,8 @@
 # Publishable cut contract
 
-Status: artifact validation and the publish client are implemented; a hosted
-registry service is still pending. Current behavior is in [packages.md](packages.md); the proposed wire API
+Status: artifact validation, publishing, and the HTTP read/publish service are
+implemented; public deployment remains pending. Current behavior is in
+[packages.md](packages.md); the proposed wire API
 is in [registry-protocol.md](registry-protocol.md).
 
 `facet check <cut-directory>` now performs the first local preflight. It checks

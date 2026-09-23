@@ -34,7 +34,9 @@ manifests, paths, documentation, and existing projects.
    read-only index API. The initial SQLite schema and content-addressed blob
    store and authenticated publish transaction are implemented in the `registry`
    cut, including archive verification, orphan recovery, and atomic audit records.
-   The HTTP service and credential provisioning interface remain. Publish from a selected `packages/<name>/` directory,
+   The HTTP read/publish service now lives in `applications/registry`, with a
+   real HTTPS facet integration test. Administrative endpoints and credential
+   provisioning commands remain. Publish from a selected `packages/<name>/` directory,
    not from the monorepo root.
 5. Add a web interface for search, package pages, documentation, owners,
    versions, and release status. Keep the API usable without the web interface.
@@ -72,9 +74,10 @@ manifests, paths, documentation, and existing projects.
 
 The [version 1 registry protocol](registry-protocol.md) now specifies the read API,
 archive identity, lockfile shape, publishing boundary, and resolver rules.
-Implementation remains. Operations need
-an owner, backups, incident response, abuse handling, and retention rules
-before a public service is launched. Until then, the registry remains a plan.
+Read and publish endpoints are implemented and tested through HTTPS. Operations
+still need an owner, backups, incident response, abuse handling, and retention
+rules before a public service is launched. Administrative endpoints remain to
+be implemented.
 
 ## Lessons informing the contract
 

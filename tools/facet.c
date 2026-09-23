@@ -641,6 +641,22 @@ static bool parse_manifest(const char *path, FacetManifest *manifest,
     return ok;
 }
 
+/* Published cuts use dependency ranges, unlike application source specs.
+ * Full artifact validation happens in check/verify; this reads identity only. */
+static bool parse_cut_identity(const char *path, FacetManifest *manifest,
+                               char *error, size_t error_size) {
+    memset(manifest, 0, sizeof *manifest);
+    DiamondManifestValue *hash = facet_read_hash(path, error, error_size);
+    if (hash == NULL) return false;
+    bool ok = diamond_manifest_get_string(hash, "name", manifest->name, sizeof manifest->name) &&
+              is_safe_field(manifest->name) &&
+              diamond_manifest_get_string(hash, "version", manifest->version, sizeof manifest->version);
+    manifest->has_version = ok;
+    diamond_manifest_free(hash);
+    if (!ok) snprintf(error, error_size, "cut requires String name and version");
+    return ok;
+}
+
 static bool parse_lockfile(const char *path, FacetResolution *resolution,
                            char *error, size_t error_size) {
     resolution->count = 0;
@@ -1793,7 +1809,7 @@ static bool prepare_registry_package(const FacetResolved *resolved,
     FacetManifest manifest;
     if (snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", destination) >=
             (int)sizeof manifest_path ||
-        !parse_manifest(manifest_path, &manifest, error, error_size) ||
+        !parse_cut_identity(manifest_path, &manifest, error, error_size) ||
         strcmp(manifest.name, resolved->name) != 0 || !manifest.has_version ||
         strcmp(manifest.version, resolved->version) != 0) {
         (void)remove_directory_recursive(destination);
@@ -3228,8 +3244,8 @@ static bool run_curl_publish(const char *url, const char *archive,
             "url = \"%s\"\nrequest = \"POST\"\n"
             "header = \"Authorization: Bearer %s\"\n"
             "header = \"Content-Type: application/octet-stream\"\n"
-            "data-binary = \"@%s\"\nfail = true\nsilent = true\n"
-            "show-error = true\nproto = \"=https\"\nconnect-timeout = \"10\"\n"
+            "data-binary = \"@%s\"\nfail\nsilent\n"
+            "show-error\nproto = \"=https\"\nconnect-timeout = \"10\"\n"
             "max-time = \"60\"\n", url, token, archive) > 0;
         if (fclose(file) != 0) ok = false;
     } else {
@@ -3282,7 +3298,7 @@ static int cmd_publish(int argc, char **argv) {
     char manifest_path[FACET_MAX_PATH], error[512] = {0};
     FacetManifest manifest;
     bool ok = snprintf(manifest_path, sizeof manifest_path, "%s/diamond.cut", root) <
-              (int)sizeof manifest_path && parse_manifest(manifest_path, &manifest,
+              (int)sizeof manifest_path && parse_cut_identity(manifest_path, &manifest,
                                                             error, sizeof error);
     if (!ok) {
         fprintf(stderr, "facet: %s\n", error);

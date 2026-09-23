@@ -3,3 +3,4 @@ require "./registry/schema"
 require "./registry/blob_store"
 
 require "./registry/publisher"
+require "./registry/api"

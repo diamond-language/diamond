@@ -17,10 +17,14 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added the registry HTTP read/publish API and runnable Gremlin application,
+  with live HTTPS tests covering transitive resolution, installation, yanked
+  locks, and takedown visibility. Fixed real curl publish configuration and
+  library dependency parsing in publish and locked installs.
+
 - Added authenticated registry publish transactions with archive-derived metadata,
   ownership checks, idempotent retries, durable orphan recovery, and atomic audit
-  records. Added `facet verify --json` and `File.sync` for this service layer;
-  the hosted HTTP API is still pending.
+  records. Added `facet verify --json` and `File.sync` for this service layer.
 
 - Added `File.publish(path, bytes)` for atomic file creation without replacement,
   with file and directory synchronization. Registry blob writes now use it so
@@ -31,8 +35,8 @@ authoritative fine-grained record.
   pass because of unrelated load or syntax errors.
 - Documented the registry v1 service contract: stable error responses,
   scoped bearer credentials, idempotent publishing, and audited yank, unyank,
-  and takedown operations. The hosted registry implementation is still
-  pending.
+  and takedown operations. Administrative endpoints and production deployment
+  remain pending.
 - Added the initial `registry` cut with SQLite schema migrations and an
   immutable, digest-addressed archive store.
 - `facet` now reads and validates registry lock records separately from Git

@@ -2,10 +2,10 @@
 
 Storage primitives for the Diamond cut registry.
 
-This first slice provides the SQLite schema and a content-addressed blob store.
+The package provides the SQLite schema and a content-addressed blob store.
 The authenticated publish transaction verifies archives with `facet` and stores
-release metadata with its audit event. The HTTP service and credential
-provisioning interface are still pending.
+release metadata with its audit event. The HTTP adapter is available as
+`Registry::API`; a runnable service lives in `applications/registry`. Credential provisioning commands are still pending.
 
 Install with `facet` and load with `require_cut "registry"`.
 
@@ -66,4 +66,19 @@ provided. SQLite `synchronous=FULL` is configured; this single-node implementati
 requires local durable storage and holds the writer lock during verification.
 Authentication errors use `RuntimeError` codes, invalid requests/archives use
 `ArgumentError` codes, and filesystem failures propagate as `IOError`; the
-future HTTP adapter must map these to protocol responses.
+HTTP adapter maps these to protocol responses.
+
+## HTTP adapter
+
+`Registry::API.new(db, store, publisher, base_path)` accepts the same initialized
+connection and storage objects as the publisher. `base_path` defaults to empty.
+`call(request)` returns a Rack-style `[status, headers, body]` response. Request
+headers must be normalized to lowercase, as the HTTP parser does. A service
+worker keeps its own API instance and SQLite connection.
+
+The adapter exposes version indexes, release metadata, digest-addressed blobs,
+and publishing. It omits the publisher's internal `created` flag from JSON.
+Only releases with no takedown reason expose blobs; orphan files are never
+served. A storage integrity failure returns an internal error without bytes.
+Run `make test-registry-http` to exercise the adapter through real HTTPS and
+facet, including SemVer ordering and transitive dependency installation.

@@ -1,7 +1,8 @@
 # Cut registry protocol, version 1
 
 Status: proposed wire contract. Registry resolution and locked archive
-installation are implemented; the hosted service is not yet implemented. This
+installation and the HTTP read/publish service are implemented. Production
+deployment and administrative endpoints remain pending. This
 specification defines its metadata, authentication, and artifact boundary
 without changing Git dependency behavior.
 
