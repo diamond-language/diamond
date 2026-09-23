@@ -193,6 +193,45 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         publisher_only = credential('issue', 'test-owner', '3600', 'publish:greeter', 'scope test')
         assert manage('yank', outsider['token'])[0] == 403
         assert manage('yank', publisher_only['token'])[0] == 403
+        def owners(action=None, actor=token, owner='other-owner', reason='ownership test'):
+            path = '/v1/cuts/greeter/owners'
+            headers = {'Authorization': 'Bearer ' + actor, 'Content-Type': 'application/json'}
+            if action is None:
+                return request(path, headers=headers)
+            return request(path + '/' + action, 'POST', json.dumps({'owner': owner, 'reason': reason}).encode(), headers)
+
+        assert owners(actor=outsider['token'])[0] == 403
+        assert owners(actor=publisher_only['token'])[0] == 403
+        assert request('/v1/cuts/greeter/owners')[0] == 401
+        status, original = owners()
+        assert status == 200 and [row['owner'] for row in original['owners']] == ['test-owner']
+        status, failure = owners('remove', owner='test-owner')
+        assert status == 409 and failure['error'] == 'last_owner'
+        assert owners('add', owner='   ')[0] == 400
+        db.execute("CREATE TRIGGER fail_owner_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'owner_add' BEGIN SELECT RAISE(ABORT, 'owner audit failure'); END")
+        db.commit()
+        assert owners('add')[0] == 500
+        assert owners()[1] == original
+        db.execute('DROP TRIGGER fail_owner_audit')
+        db.commit()
+        status, added = owners('add')
+        assert status == 200 and [row['owner'] for row in added['owners']] == ['other-owner', 'test-owner']
+        assert owners('add')[0] == 200
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'owner_add'").fetchone()[0] == 1
+        assert owners(actor=outsider['token'])[0] == 200
+        # Removal revokes management and publishing despite unchanged scopes.
+        assert owners('remove', owner='test-owner', actor=outsider['token'])[0] == 200
+        assert owners()[0] == 403
+        assert request('/v1/cuts/greeter/versions', 'POST', archive, headers)[0] == 403
+        assert owners('add', owner='test-owner', actor=outsider['token'])[0] == 200
+        assert owners('remove')[0] == 200
+        count = db.execute("SELECT count(*) FROM audit_events WHERE action = 'owner_remove'").fetchone()[0]
+        assert owners('remove')[0] == 200
+        assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'owner_remove'").fetchone()[0] == count
+        assert owners(actor=outsider['token'])[0] == 403
+        event = db.execute("SELECT target_owner, reason, credential_id FROM audit_events WHERE action = 'owner_add' ORDER BY id LIMIT 1").fetchone()
+        assert event == ('other-owner', 'ownership test', issued['id'])
+
         assert manage('takedown', token)[0] == 403
         assert manage('yank', 'invalid')[0] == 401
         assert manage('yank', token, '   ')[0] == 400
@@ -242,9 +281,32 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         assert request('/v1/cuts/greeter/versions/1.0.0')[0] == 404
         assert request(release['archive']['path'])[0] == 404
         assert manage('unyank', token)[0] == 404
+        audit_headers = {'Authorization': 'Bearer ' + rotated['token']}
+        assert request('/v1/audit')[0] == 401
+        assert request('/v1/audit', headers={'Authorization': 'Bearer ' + token})[0] == 403
+        assert owners(actor=rotated['token'])[0] == 200
+        assert owners('remove', owner='test-owner', actor=rotated['token'])[0] == 409
+        for query in ('limit=101', 'limit=0', 'after=-1', 'after=abc', 'limit=2&limit=3', 'unknown=1'):
+            assert request('/v1/audit?' + query, headers=audit_headers)[0] == 400
+        after = 0
+        events = []
+        while True:
+            status, page = request(f'/v1/audit?after={after}&limit=2', headers=audit_headers)
+            assert status == 200 and len(page['events']) <= 2
+            events.extend(page['events'])
+            if page['next_after'] is None:
+                break
+            assert page['next_after'] > after
+            after = page['next_after']
+        expected_ids = [row[0] for row in db.execute('SELECT id FROM audit_events ORDER BY id')]
+        assert [event['id'] for event in events] == expected_ids
+        assert all('token_digest' not in event and 'token' not in event for event in events)
+        assert any(event['target_owner'] == 'other-owner' for event in events)
+        assert any(event['action'] == 'takedown' and event['credential_scopes'] == ['admin'] for event in events)
         revoked = credential('revoke', str(rotated['id']), 'revocation test')
         assert revoked['revoked'] is True
         assert manage('takedown', rotated['token'])[0] == 401
+        assert request('/v1/audit', headers=audit_headers)[0] == 401
         credential('revoke', str(rotated['id']), 'repeat revocation')
         assert db.execute("SELECT count(*) FROM audit_events WHERE action = 'credential_revoke' AND credential_id = ?", (rotated['id'],)).fetchone()[0] == 1
         audit = db.execute("SELECT reason, credential_id, sha256 FROM audit_events WHERE action = 'takedown'").fetchone()

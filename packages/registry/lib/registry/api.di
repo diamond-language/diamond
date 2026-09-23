@@ -125,6 +125,49 @@ module Registry
       self.release(name, version)
     end
 
+    def bearer(request)
+      authorization = request["headers"]["authorization"]
+      if authorization == nil || !authorization.start_with?("Bearer ") then raise RuntimeError.new("unauthorized") end
+      authorization.slice(7, authorization.length() - 7)
+    end
+
+    def owner_request(name, action, request)
+      token = self.bearer(request)
+      if action == "list" then return self.json(200, @administration.owners(name, token)) end
+      if request["headers"]["content-type"] != "application/json" || request["body"].length() > 4096 then raise ArgumentError.new("invalid_request") end
+      begin
+        payload = JSON.parse(request["body"])
+      rescue error: StandardError
+        raise ArgumentError.new("invalid_request")
+      end
+      unless payload is Hash then raise ArgumentError.new("invalid_request") end
+      unless payload["owner"] is String then raise ArgumentError.new("invalid_request") end
+      unless payload["reason"] is String then raise ArgumentError.new("invalid_request") end
+      if payload.length() != 2 then raise ArgumentError.new("invalid_request") end
+      self.json(200, @administration.change_owner(name, payload["owner"], action, payload["reason"], token))
+    end
+
+    def audit_request(path, request)
+      token = self.bearer(request)
+      parameters = {"after": 0, "limit": 50}
+      parts = path.split("?")
+      if parts.length() > 2 then raise ArgumentError.new("invalid_request") end
+      if parts.length() == 2
+        seen = []
+        parts[1].split("&").each() do |pair|
+          values = pair.split("=")
+          if values.length() != 2 then raise ArgumentError.new("invalid_request") end
+          key = values[0]
+          if !["after", "limit"].include?(key) || seen.include?(key) then raise ArgumentError.new("invalid_request") end
+          seen.push(key)
+          value = values[1].to_i()
+          if "#{value}" != values[1] || value > 9223372036854775807 then raise ArgumentError.new("invalid_request") end
+          parameters[key] = value
+        end
+      end
+      self.json(200, @administration.audit(token, parameters["after"], parameters["limit"]))
+    end
+
     def call(request)
       begin
         path = request["path"]
@@ -137,7 +180,16 @@ module Registry
           @db.query("SELECT 1")
           return self.json(200, {"protocol": 1, "status": "ok"})
         end
+        if method == "GET" && (path == "/v1/audit" || path.start_with?("/v1/audit?"))
+          return self.audit_request(path, request)
+        end
         parts = path.split("/")
+        if parts.length() >= 5 && parts[1] == "v1" && parts[2] == "cuts" && parts[4] == "owners"
+          if parts.length() == 5 && method == "GET" then return self.owner_request(parts[3], "list", request) end
+          if parts.length() == 6 && method == "POST" && ["add", "remove"].include?(parts[5])
+            return self.owner_request(parts[3], parts[5], request)
+          end
+        end
         if parts.length() == 5 && parts[1] == "v1" && parts[2] == "blobs" && parts[3] == "sha256" && method == "GET"
           return self.blob(parts[4])
         end
@@ -162,7 +214,7 @@ module Registry
         if code == "unauthorized" then return self.error(401, code) end
         if code == "forbidden" then return self.error(403, code) end
         if code == "not_found" then return self.error(404, code) end
-        if code == "release_exists" || code == "idempotency_conflict" then return self.error(409, code) end
+        if code == "release_exists" || code == "idempotency_conflict" || code == "last_owner" then return self.error(409, code) end
         self.error(500, "internal_error")
       rescue error: StandardError
         self.error(500, "internal_error")

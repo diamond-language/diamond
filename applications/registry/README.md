@@ -28,7 +28,8 @@ Terminate HTTPS at a reverse proxy. Gremlin listens on all interfaces, so the
 backend port must be reachable only by the proxy in a hosted deployment. Reads
 are public. Provision random-token credentials and name scopes as described in
 the [registry package](../../packages/registry/README.md) before publishing;
-use the local credential commands below. Owner-management commands remain pending.
+use the local credential commands below. Owner management is available over
+the authenticated API.
 
 Endpoints relative to the configured base:
 
@@ -40,6 +41,10 @@ Endpoints relative to the configured base:
 - `POST /v1/cuts/<name>/versions/<version>/yank`
 - `POST /v1/cuts/<name>/versions/<version>/unyank`
 - `POST /v1/cuts/<name>/versions/<version>/takedown`
+- `GET /v1/cuts/<name>/owners`
+- `POST /v1/cuts/<name>/owners/add`
+- `POST /v1/cuts/<name>/owners/remove`
+- `GET /v1/audit?after=0&limit=50`
 
 Only committed releases are served. Yanking preserves direct metadata and blob
 access; takedowns hide both. Indexes use SemVer precedence, including numeric
@@ -51,7 +56,7 @@ This first service uses one worker and buffers request bodies and blobs. The
 current HTTP parser imposes a 25 MiB upload limit, below the artifact verifier's
 56 MiB limit, and closes connections exceeding it. Configure the proxy to reject
 oversized uploads with HTTP 413. Streaming uploads, rate limits, structured
-request logging, owner management, backups, and production deployment
+request logging, backups, and production deployment
 remain follow-up work.
 
 Run `make test-registry-http` from the repository root for the live integration
@@ -92,3 +97,21 @@ complete release record. Takedown returns name, version, protocol, and
 `taken_down: true`. Retries preserve the original reason and do not add duplicate
 state-change audit events. Takedown is permanent through this API: unyank cannot
 restore it, and the version and archive identity remain reserved.
+
+## Ownership and audit inspection
+
+Owner-list reads and changes require either an administrator credential or a
+current owner's `manage:<name>` credential. Add/remove requests contain exactly
+`owner` and `reason` in a JSON body. Subjects must match credential subjects;
+adding ownership does not issue a credential. Removal immediately affects both
+publishing and management. The final owner cannot be removed, even by an
+administrator. Changes commit with their audit events and repeated unchanged
+requests do not add events.
+
+Administrators can inspect `/v1/audit` using `after` and `limit` query parameters.
+The default page size is 50 and maximum is 100. Follow `next_after` until null.
+Events include actor, affected owner, reason, release identity, credential ID,
+and scope/expiry snapshots where applicable. No raw tokens or token digests are
+exposed. Credential events distinguish the local operator (subject) from the
+affected credential (credential ID). See the protocol for complete response
+fields and authorization rules.

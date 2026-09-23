@@ -2,7 +2,7 @@
 
 Status: proposed wire contract. Registry resolution and locked archive
 installation and the HTTP read/publish service are implemented. Production
-deployment and owner-management endpoints remain pending. This
+deployment remains pending. Owner management and audit inspection are implemented. This
 specification defines its metadata, authentication, and artifact boundary
 without changing Git dependency behavior.
 
@@ -37,6 +37,7 @@ by hosted deployments for support and audit correlation. The initial code set:
 | 404 | `not_found` | Cut, release, or blob does not exist |
 | 409 | `release_exists` | Immutable release conflicts with this request |
 | 409 | `idempotency_conflict` | Idempotency key is reused for another body |
+| 409 | `last_owner` | Removing the final owner is forbidden |
 | 413 | `payload_too_large` | Request exceeds the configured limit |
 | 422 | `invalid_archive` | Archive fails cut or manifest validation |
 | 429 | `rate_limited` | Caller must wait before retrying |
@@ -189,3 +190,53 @@ why. It does not rewrite metadata or remove blob bytes. Owner changes, publish
 actions, yanks, takedowns, and credential changes enter an append-only audit
 log. The service must make the release row, blob reference, and corresponding
 audit event durable before returning success.
+
+## Owners
+
+`GET /v1/cuts/<name>/owners` requires either `admin`, or both `manage:<name>`
+and current ownership. It returns HTTP 200 with `protocol`, `name`, and
+`owners`: an array of `{owner, created_at}` records ordered by subject text.
+Ownership subjects match credential subjects exactly; timestamps are Unix
+seconds. Owner lists are not public in v1.
+
+`POST /v1/cuts/<name>/owners/add` and
+`POST /v1/cuts/<name>/owners/remove` require the same authorization and
+`Content-Type: application/json`. The body contains exactly `owner` and
+`reason`: a nonblank owner subject of at most 256 bytes and a nonblank reason
+of at most 1024 bytes. Bodies exceeding 4096 bytes are rejected. Both return
+HTTP 200 with the complete owner-list response.
+
+Adding an existing owner or removing an absent owner is idempotent and does
+not add an audit event. Removing the last owner returns `409 last_owner`,
+including for administrators. A removed owner immediately loses management
+and publishing access; their token and scopes alone do not preserve ownership.
+Every retry rechecks authorization, so a caller that removes itself cannot
+retry with its former ownership permissions. Adding a subject does not issue
+credentials or grant token scopes. Administrators can recover management
+access by adding an owner to an existing cut.
+
+Changes and audit events commit in one immediate SQLite transaction. Owner
+change events use `owner_add` or `owner_remove` and a separate `target_owner`
+field, preserving the acting subject and credential attribution. Existing
+audit records retain null `target_owner` through schema migration.
+
+## Audit inspection
+
+`GET /v1/audit?after=0&limit=50` requires `admin`. `after` is a nonnegative
+signed-64-bit event ID (default 0); `limit` is 1–100 (default 50). Query values
+must be canonical decimal integers. Unknown or duplicate parameters fail
+with `400 invalid_request`.
+
+The HTTP 200 body contains `protocol`, `events`, and `next_after`. Events are
+ordered by increasing ID and contain `id`, `subject`, `action`, `cut_name`,
+`version`, `sha256`, `reason`, `created_at`, `credential_id`,
+`credential_scopes`, `credential_expires_at`, and `target_owner`. Inapplicable
+fields are null; scopes are a JSON array when recorded. Tokens and token
+fingerprints are never returned. Credential lifecycle events identify the
+local operator in `subject` and the affected credential in `credential_id`.
+
+Pass a non-null `next_after` as `after` to fetch the next page; null indicates
+no more events in that request's snapshot. New events may appear between
+pages. Authorization and page retrieval share one read transaction, and
+credential revocation takes effect on subsequent requests. Inspection does
+not append audit events.

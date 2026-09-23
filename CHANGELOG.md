@@ -17,6 +17,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added authorized registry owner listing and add/remove operations with
+  last-owner protection, immediate access revocation, and atomic audit events.
+  Administrators can inspect audit records through bounded cursor pagination;
+  responses omit tokens and token digests.
+
 - Added audited registry yank, unyank, and takedown endpoints with scope and
   ownership checks, atomic state/audit updates, and idempotent retries. Added
   local credential issue/list/rotate/revoke commands with expiring random tokens
@@ -40,8 +45,7 @@ authoritative fine-grained record.
   pass because of unrelated load or syntax errors.
 - Documented the registry v1 service contract: stable error responses,
   scoped bearer credentials, idempotent publishing, and audited yank, unyank,
-  and takedown operations. Owner-management endpoints and production deployment
-  remain pending.
+  and takedown operations. Production deployment remains pending.
 - Added the initial `registry` cut with SQLite schema migrations and an
   immutable, digest-addressed archive store.
 - `facet` now reads and validates registry lock records separately from Git

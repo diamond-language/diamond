@@ -36,7 +36,8 @@ manifests, paths, documentation, and existing projects.
    cut, including archive verification, orphan recovery, and atomic audit records.
    The HTTP read/publish service now lives in `applications/registry`, with a
    real HTTPS facet integration test. Audited yank/unyank/takedown endpoints and local credential lifecycle commands
-   are implemented. Owner management and production operations remain. Publish from a selected `packages/<name>/` directory,
+   are implemented, along with owner management and paginated audit inspection.
+   Production operations remain. Publish from a selected `packages/<name>/` directory,
    not from the monorepo root.
 5. Add a web interface for search, package pages, documentation, owners,
    versions, and release status. Keep the API usable without the web interface.
@@ -76,7 +77,8 @@ The [version 1 registry protocol](registry-protocol.md) now specifies the read A
 archive identity, lockfile shape, publishing boundary, and resolver rules.
 Read and publish endpoints are implemented and tested through HTTPS. Operations
 still need an owner, backups, incident response, abuse handling, and retention
-rules before a public service is launched. Owner-management endpoints remain to be implemented.
+rules before a public service is launched. Owner management and bounded audit inspection are implemented; production
+request limits and structured logging are next.
 
 ## Lessons informing the contract
 

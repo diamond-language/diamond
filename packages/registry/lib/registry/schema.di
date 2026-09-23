@@ -33,6 +33,13 @@ module Registry
           db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [audit_version])
         end
       end
+      owner_version = "2026092203"
+      if db.query("SELECT version FROM schema_migrations WHERE version = ?", [owner_version]).length() == 0
+        ActiveRecord::Transaction.run(db) do
+          db.execute("ALTER TABLE audit_events ADD COLUMN target_owner TEXT")
+          db.execute("INSERT INTO schema_migrations (version) VALUES (?)", [owner_version])
+        end
+      end
     end
   end
 end

@@ -18,8 +18,92 @@ module Registry
       rows = @db.query("SELECT * FROM credentials WHERE token_digest = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", [Digest.sha256(token), Time.now().to_i()])
       if rows.length() != 1 then raise RuntimeError.new("unauthorized") end
       credential = rows[0]
-      unless JSON.parse(credential["scopes"]).include?(scope) then raise RuntimeError.new("forbidden") end
+      if scope != "" && !JSON.parse(credential["scopes"]).include?(scope) then raise RuntimeError.new("forbidden") end
       credential
+    end
+
+    def authorize_owners(name: String, token: String)
+      credential = self.authenticate(token, "")
+      scopes = JSON.parse(credential["scopes"])
+      unless scopes.include?("admin")
+        unless scopes.include?("manage:#{name}") then raise RuntimeError.new("forbidden") end
+        owners = @db.query("SELECT owners.owner FROM owners JOIN cuts ON cuts.id = owners.cut_id WHERE cuts.name = ? AND owners.owner = ?", [name, credential["subject"]])
+        if owners.length() == 0 then raise RuntimeError.new("forbidden") end
+      end
+      credential
+    end
+
+    def owner_rows(name: String)
+      cuts = @db.query("SELECT id FROM cuts WHERE name = ?", [name])
+      if cuts.length() != 1 then raise RuntimeError.new("not_found") end
+      @db.query("SELECT owner, created_at FROM owners WHERE cut_id = ? ORDER BY owner", [cuts[0]["id"]])
+    end
+
+    def owners(name: String, token: String)
+      @db.execute("BEGIN")
+      begin
+        self.authorize_owners(name, token)
+        rows = self.owner_rows(name)
+        @db.execute("COMMIT")
+        {"protocol": 1, "name": name, "owners": rows}
+      rescue error: StandardError
+        @db.execute("ROLLBACK")
+        raise error
+      end
+    end
+
+    def change_owner(name: String, owner: String, action: String, reason: String, token: String)
+      self.reason!(reason)
+      if owner.strip().length() == 0 || owner.length() > 256 || !["add", "remove"].include?(action)
+        raise ArgumentError.new("invalid_request")
+      end
+      @db.execute("BEGIN IMMEDIATE")
+      begin
+        credential = self.authorize_owners(name, token)
+        rows = self.owner_rows(name)
+        cut = @db.query("SELECT id FROM cuts WHERE name = ?", [name])[0]
+        present = @db.query("SELECT owner FROM owners WHERE cut_id = ? AND owner = ?", [cut["id"], owner]).length() != 0
+        changed = false
+        if action == "add" && !present
+          @db.execute("INSERT INTO owners (cut_id, owner, created_at) VALUES (?, ?, ?)", [cut["id"], owner, Time.now().to_i()])
+          changed = true
+        elsif action == "remove" && present
+          if rows.length() == 1 then raise RuntimeError.new("last_owner") end
+          @db.execute("DELETE FROM owners WHERE cut_id = ? AND owner = ?", [cut["id"], owner])
+          changed = true
+        end
+        if changed
+          @db.execute("INSERT INTO audit_events (subject, action, cut_name, target_owner, reason, created_at, credential_id, credential_scopes, credential_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [credential["subject"], "owner_#{action}", name, owner, reason, Time.now().to_i(), credential["id"], credential["scopes"], credential["expires_at"]])
+        end
+        result = self.owner_rows(name)
+        @db.execute("COMMIT")
+        {"protocol": 1, "name": name, "owners": result}
+      rescue error: StandardError
+        @db.execute("ROLLBACK")
+        raise error
+      end
+    end
+
+    def audit(token: String, after: Int = 0, limit: Int = 50)
+      if after < 0 || limit < 1 || limit > 100 then raise ArgumentError.new("invalid_request") end
+      @db.execute("BEGIN")
+      begin
+        self.authenticate(token, "admin")
+        rows = @db.query("SELECT id, subject, action, cut_name, version, sha256, reason, created_at, credential_id, credential_scopes, credential_expires_at, target_owner FROM audit_events WHERE id > ? ORDER BY id LIMIT ?", [after, limit + 1])
+        next_after = nil
+        if rows.length() > limit
+          rows.pop()
+          next_after = rows[rows.length() - 1]["id"]
+        end
+        rows.each() do |row|
+          if row["credential_scopes"] != nil then row["credential_scopes"] = JSON.parse(row["credential_scopes"]) end
+        end
+        @db.execute("COMMIT")
+        {"protocol": 1, "events": rows, "next_after": next_after}
+      rescue error: StandardError
+        @db.execute("ROLLBACK")
+        raise error
+      end
     end
 
     def change(name: String, version: String, action: String, reason: String, token: String)

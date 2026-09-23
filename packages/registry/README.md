@@ -77,7 +77,8 @@ headers must be normalized to lowercase, as the HTTP parser does. A service
 worker keeps its own API instance and SQLite connection.
 
 The adapter exposes version indexes, release metadata, digest-addressed blobs,
-publishing, and audited yank/unyank/takedown operations. It omits the publisher's internal `created` flag from JSON.
+publishing, audited yank/unyank/takedown operations, ownership management,
+and administrator-only audit inspection. It omits the publisher's internal `created` flag from JSON.
 Only releases with no takedown reason expose blobs; orphan files are never
 served. A storage integrity failure returns an internal error without bytes.
 Run `make test-registry-http` to exercise the adapter through real HTTPS and
@@ -90,3 +91,9 @@ Idempotent retries do not duplicate audit events. For local credential events,
 `subject` is the operator label and `credential_id` identifies the affected
 credential; no raw credential is recorded. The application CLI offers issue,
 list, rotate, and revoke commands under filesystem access control.
+
+Ownership changes also use immediate transactions, protect the last owner, and
+record the affected subject in `target_owner`. Schema migration adds this field
+without rebuilding existing audit records. Ownership and audit reads use read
+transactions so authorization and data come from the same snapshot. Audit
+inspection uses event-ID cursors and caps each page at 100 records.
