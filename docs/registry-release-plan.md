@@ -1,8 +1,8 @@
 # Package repository launch: Diamond 0.7.0
 
 The selected release is **0.7.0**, highlighting the live public package registry.
-Runtime metadata and release notes are prepared; tagging follows successful
-release checks.
+Release checks passed on `b98f27cc`; the `v0.7.0` tag marks the commit that
+records them, which differs only in this document.
 
 ## Release outcome
 
@@ -54,8 +54,8 @@ The public registry and catalog are live at `https://cuts.dilang.tech` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
 The first manual laptop snapshot has passed restore verification. Automatic
-alerts are deferred by the operator. Next: verify the 0.7.0 release commit, then tag and publish its release notes.
-Production reboot and certificate-renewal drills remain outstanding.
+alerts are deferred by the operator. Diamond 0.7.0 is tagged. Production reboot
+and certificate-renewal drills were deferred past the release and remain outstanding.
 
 ## Public launch inventory
 
@@ -119,17 +119,24 @@ The selected version is 0.7.0.
   see the production record for its verification timestamp and retained state.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
   `monitor.py` probes remain available; automatic notification is not a release gate.
-- [ ] Schedule production reboot and certificate-renewal checks. Record any
-  deferred operational checks explicitly in the release decision.
+- **Deferred past 0.7.0:** production reboot and certificate-renewal checks are
+  not yet scheduled. They are not release gates for 0.7.0 and remain outstanding
+  operational work.
 - [x] Choose 0.7.0 and finalize the release notes.
 - [x] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
   changelog entries under the version/date heading.
-- [ ] Verify the final release commit: inspect the complete CI results, run the
+- [x] Verify the final release commit: inspect the complete CI results, run the
   QEMU registry gate (`tools/test_registry_vm.sh`), and run
   `python3 tools/verify_registry_launch.py https://cuts.dilang.tech`.
   Record the tested SHA and outcomes; earlier runs do not certify a later commit.
-- [ ] Confirm the version output, clean working tree, and pushed release commit;
-  create the version tag and publish the reviewed release notes.
+  Verified 2026-09-23 on `b98f27cc`: all nine CI jobs passed (run 35922577277);
+  `tools/test_registry_vm.sh all` passed (seed, nginx proxy, HTTP, Caddy, systemd
+  lifecycle and restore); the public verifier resolved, digest-checked, loaded,
+  and reinstalled all 18 cuts. The preceding commit's Ubuntu failure was a missing
+  `curl` in the CI image, fixed in `b98f27cc`.
+- [x] Confirm the version output, clean working tree, and pushed release commit;
+  create the version tag. The release is the tag plus the in-repo release notes;
+  no GitHub Release or binaries are published yet.
 
 The backup helper requires a new directory and verifies the downloaded snapshot
 by restoring it into a temporary local directory. Choose its destination outside
