@@ -233,3 +233,21 @@ All three are recognized in the compiler the same way `File.open`/
 `Fiber.new` are (shadowable by a local or a top-level function of the
 same name). See [Sandbox mode](sandbox.md) for how `--sandbox` gates
 all three under its `filesystem` capability.
+
+## Atomic creation: `File.publish(path, bytes)`
+
+Publishes a complete String as a new file and returns its path. Both arguments
+are required Strings; the path must be nonempty and contain no NUL. Binary
+content, including NUL bytes, is preserved. Existing files, directories, and
+symlinks at the destination cause `IOError` and are never replaced.
+
+The parent directory must exist and be trusted. This operation creates a
+mode-0600 temporary file there, writes and synchronizes it, uses a hard link
+for atomic publication, removes the temporary name, and synchronizes the
+parent directory before returning. It requires a filesystem supporting hard
+links and directory `fsync`. It is gated by the `filesystem` sandbox capability.
+
+An interrupted process may leave `.diamond-publish-*` temporary files. Remove
+these only with writers stopped. Errors after the link can leave a complete
+published destination; callers must inspect it before retrying. Durability
+is subject to the filesystem and storage device honoring synchronization.

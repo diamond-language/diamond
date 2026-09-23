@@ -36,17 +36,12 @@ module Registry
       end
     end
 
-    # `wx` makes the digest path immutable: a second writer cannot replace an
-    # existing archive. The caller must verify bytes and digest before calling
-    # this method. A later service layer will add a same-filesystem temporary
-    # upload and recovery scan around this primitive.
+    # Publish synchronized bytes atomically without replacing an existing blob.
     def put(digest: String, bytes: String) -> Int
       if Digest.sha256(bytes) != digest
         raise ArgumentError.new("blob bytes do not match digest")
       end
-      file = File.open(self.path(digest), "wx")
-      file.write(bytes)
-      file.close()
+      File.publish(self.path(digest), bytes)
       bytes.length()
     end
 

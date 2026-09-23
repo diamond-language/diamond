@@ -34,6 +34,7 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_EXTNAME: return "extname";
         case DIAMOND_FILE_PATH_ABSOLUTE: return "absolute?";
         case DIAMOND_FILE_PATH_EXPAND: return "expand_path";
+        case DIAMOND_FILE_PATH_PUBLISH: return "publish";
         default: return "<invalid file path function>";
     }
 }

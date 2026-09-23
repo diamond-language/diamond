@@ -17,6 +17,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Added `File.publish(path, bytes)` for atomic file creation without replacement,
+  with file and directory synchronization. Registry blob writes now use it so
+  interrupted writes cannot expose partial bytes at the digest path.
+
 - Registry blob reads now verify stored bytes against their digest and reject
   incomplete or corrupt files. Corrected rejection tests that previously could
   pass because of unrelated load or syntax errors.

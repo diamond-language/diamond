@@ -549,7 +549,7 @@ typedef enum DiamondOpCode : uint8_t {
 } DiamondOpCode;
 
 /* Selector for DIAMOND_OP_FILE_PATH -- one opcode for this small family
- * of fixed-arity pure path-string utilities, the same "one opcode + a
+ * of fixed-arity path and filesystem utilities, the same "one opcode + a
  * selector byte" shape DIAMOND_OP_MATH_UNARY/_BINARY already use for
  * sqrt/sin/cos/tan/pow, rather than one new opcode per method. */
 typedef enum {
@@ -565,6 +565,7 @@ typedef enum {
      * level recursive directory walk (Dir.entries + this) use it in a
      * plain condition without needing to rescue anything first. */
     DIAMOND_FILE_PATH_DIRECTORY,
+    DIAMOND_FILE_PATH_PUBLISH,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

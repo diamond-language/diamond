@@ -11428,6 +11428,61 @@ static DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *p
     return DIAMOND_VM_OK;
 }
 
+/* Publish complete bytes without replacing an existing directory entry.
+ * The containing directory must be trusted and already exist. A failed final
+ * directory sync can leave a complete published file: never remove that file
+ * on failure, since another process may already have observed it. */
+static DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path,
+                                          const DiamondString *bytes) {
+    if(bytes==nullptr||path->length==0||
+       memchr(path->chars,'\0',path->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"File.publish requires a nonempty path without NUL and String bytes");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    char *parent=strdup(path->chars);
+    if(parent==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    char *slash=strrchr(parent,'/');
+    if(slash==nullptr) strcpy(parent,".");
+    else if(slash==parent) slash[1]='\0';
+    else *slash='\0';
+    size_t capacity=strlen(parent)+32;
+    char *temporary=malloc(capacity);
+    if(temporary==nullptr) { free(parent); return DIAMOND_VM_OUT_OF_MEMORY; }
+    snprintf(temporary,capacity,"%s/.diamond-publish-XXXXXX",parent);
+    int directory=open(parent,O_RDONLY|O_DIRECTORY);
+    int saved=directory<0?errno:0;
+    int fd=-1;
+    bool created=false;
+    if(saved==0) {
+        fd=mkstemp(temporary);
+        if(fd<0) saved=errno;
+        else created=true;
+    }
+    size_t offset=0;
+    while(saved==0&&offset<bytes->length) {
+        size_t remaining=bytes->length-offset;
+        if(remaining>(size_t)SSIZE_MAX) remaining=(size_t)SSIZE_MAX;
+        ssize_t written=write(fd,bytes->chars+offset,remaining);
+        if(written<0&&errno==EINTR) continue;
+        if(written<=0) { saved=written<0?errno:EIO; break; }
+        offset+=(size_t)written;
+    }
+    if(saved==0&&fsync(fd)!=0) saved=errno;
+    if(fd>=0&&close(fd)!=0&&saved==0) saved=errno;
+    if(saved==0&&link(temporary,path->chars)!=0) saved=errno;
+    if(created&&unlink(temporary)!=0&&saved==0) saved=errno;
+    if(saved==0&&fsync(directory)!=0) saved=errno;
+    if(directory>=0) close(directory);
+    free(temporary);
+    free(parent);
+    if(saved!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot publish '%.*s': %s",
+                 (int)path->length,path->chars,strerror(saved));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* File.dirname(path) -- everything before the last real path separator,
  * matching Ruby: no separator at all -> ".", a single leading separator
  * -> "/" (never truncated away, so the root stays meaningful), trailing
@@ -22017,6 +22072,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondValue path_result=DIAMOND_NIL;
                 DiamondVmStatus path_status=DIAMOND_VM_OK;
                 switch((DiamondFilePathFunction)selector) {
+                    case DIAMOND_FILE_PATH_PUBLISH:
+                        VM_SANDBOX_GUARD("File.publish", "filesystem");
+                        path_status=file_publish_helper(vm,path,second);
+                        path_result=registers[arg1];
+                        break;
                     case DIAMOND_FILE_PATH_DIRNAME:
                         path_status=file_path_dirname_helper(vm,path,&path_result);break;
                     case DIAMOND_FILE_PATH_BASENAME:

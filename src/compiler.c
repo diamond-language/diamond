@@ -4538,6 +4538,10 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
         second_register=parse_expression(compiler);
         skip_newlines(compiler);
     } else {
+        if(id==DIAMOND_FILE_PATH_PUBLISH) {
+            fail(compiler,compiler->current.span,"File.publish requires path and bytes");
+            return 0;
+        }
         second_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
     }
@@ -4569,6 +4573,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
     if(name_equals(compiler,"open",method,false)) {
         advance_token(compiler);
         return parse_file_open_arguments(compiler);
+    }
+    if(name_equals(compiler,"publish",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_PUBLISH);
     }
     if(name_equals(compiler,"delete",method,false)) {
         advance_token(compiler);
@@ -4602,7 +4610,7 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
     }
-    fail(compiler,method,"unknown File method (expected open/delete/join/dirname/basename/"
+    fail(compiler,method,"unknown File method (expected open/delete/publish/join/dirname/basename/"
         "extname/absolute?/directory?/expand_path)");
     return 0;
 }

@@ -68,3 +68,64 @@ if store.contains?(digest) then raise "corrupt blob reported present" end
 ')"
 [[ "$output" == "registry rejection and integrity tests passed" ]]
 echo "registry package tests passed"
+
+# Two processes race to publish the same binary body. Exactly one wins.
+export REGISTRY_TEST_DEST="$root/race"
+for worker in 1 2; do
+    "$diamond" -e 'bytes = "a" + 0.chr() + "b"
+begin
+  File.publish(ENV["REGISTRY_TEST_DEST"], bytes)
+  "created"
+rescue error: IOError
+  "exists"
+end' >"$test_project/worker-$worker" &
+    if [[ $worker == 1 ]]; then first_pid=$!; else second_pid=$!; fi
+done
+wait "$first_pid"
+wait "$second_pid"
+[[ "$(sort "$test_project/worker-1" "$test_project/worker-2")" == $'created\nexists' ]]
+output="$("$diamond" -e 'file = File.open(ENV["REGISTRY_TEST_DEST"], "r")
+bytes = file.read()
+file.close()
+bytes == "a" + 0.chr() + "b"')"
+[[ "$output" == true ]]
+# Abandoned staging files do not participate in digest lookup.
+printf partial >"$root/.diamond-publish-abandoned"
+output="$("$diamond" -e 'require_cut "registry"
+store = Registry::BlobStore.new(ENV["REGISTRY_TEST_ROOT"])
+bytes = "after interruption"
+digest = Digest.sha256(bytes)
+store.put(digest, bytes)
+store.read(digest) == bytes')"
+[[ "$output" == true ]]
+echo "atomic publication tests passed"
+
+mkdir "$root/existing-directory"
+ln -s "$root/race" "$root/existing-link"
+output="$("$diamond" -e 'root = ENV["REGISTRY_TEST_ROOT"]
+paths = [root + "/existing-directory", root + "/existing-link", root + "/missing/child"]
+count = 0
+paths.each() do |path|
+  begin
+    File.publish(path, "replacement")
+    raise "unexpected publish success"
+  rescue error: IOError
+    count += 1
+  end
+end
+begin
+  File.publish(root + "/nul" + 0.chr(), "data")
+rescue error: TypeError
+  count += 1
+end
+begin
+  File.publish(root + "/nil", nil)
+rescue error: TypeError
+  count += 1
+end
+count')"
+[[ "$output" == 5 ]]
+[[ -L "$root/existing-link" ]]
+[[ -d "$root/existing-directory" ]]
+[[ "$(find "$root" -name '.diamond-publish-*' | wc -l)" -eq 1 ]]
+echo "publication failure cleanup tests passed"
