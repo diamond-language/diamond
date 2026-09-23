@@ -6,6 +6,13 @@ set -euo pipefail
 # test-rack-package` from the repo root, which sets this up already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+mkdir -p "$test_project/cuts"
+ln -s "$package_root/../http" "$test_project/cuts/http"
+ln -s "$package_root/../logger" "$test_project/cuts/logger"
+cd "$test_project"
 
 count=0
 
@@ -16,7 +23,7 @@ assert_contains() {
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/rack\"
+    "$diamond" -e "require \"$package_root/lib/rack\"
 $script"
 }
 
@@ -44,8 +51,8 @@ server_src() {
         serve_call="gremlin_serve($port, rack_app, threads: $threads)"
     fi
     cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/rack"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/rack"
 
 def logging_middleware(request, context, forward)
   response = forward(request, context)
@@ -206,8 +213,8 @@ count=$((count + 1))
 # --- alongside app_handler's own Content-Type ---
 port=19423
 timeout 10 "$diamond" -e "$(cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/rack"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/rack"
 
 def app_handler(request, context)
   [200, {"Content-Type": "text/plain"}, "secured"]
@@ -283,8 +290,8 @@ count=$((count + 1))
 # --- from the same key within the window gets a real over-the-wire 429 ---
 port=19424
 timeout 10 "$diamond" -e "$(cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/rack"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/rack"
 
 def app_handler(request, context)
   [200, {"Content-Type": "text/plain"}, "ok"]
@@ -394,8 +401,8 @@ count=$((count + 1))
 # --- Access-Control-Allow-Origin header ---
 port=19425
 timeout 10 "$diamond" -e "$(cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/rack"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/rack"
 
 def app_handler(request, context)
   [200, {"Content-Type": "text/plain"}, "ok"]
@@ -481,8 +488,8 @@ count=$((count + 1))
 # --- falls through to the app instead of erroring ---
 port=19426
 timeout 10 "$diamond" -e "$(cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/rack"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/rack"
 
 def app_handler(request, context)
   [404, {"Content-Type": "text/plain"}, "app-fallback"]

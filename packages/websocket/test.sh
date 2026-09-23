@@ -12,6 +12,14 @@ set -euo pipefail
 # with its own decoder.
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+mkdir -p "$test_project/cuts"
+ln -s "$package_root/../http" "$test_project/cuts/http"
+ln -s "$package_root/../logger" "$test_project/cuts/logger"
+ln -s "$package_root/lib" "$test_project/lib"
+cd "$test_project"
 
 # Part 1: pure protocol-level checks -- no sockets, no gremlin_serve,
 # just frame.di/handshake.di/connection.di exercised directly against a
@@ -357,8 +365,8 @@ wait_for_port() {
 port=19420
 out="$(mktemp)"
 cat >"$out.di" <<DIEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/websocket"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/websocket"
 def run()
   def handler(request, context)
     if request["path"] == "/echo" && websocket_upgrade_request?(request)

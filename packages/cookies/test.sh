@@ -6,6 +6,13 @@ set -euo pipefail
 # test-cookies-package` from the repo root, which sets this up already).
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
+package_root="$(pwd)"
+test_project="$(mktemp -d)"
+trap 'rm -rf "$test_project"' EXIT
+mkdir -p "$test_project/cuts"
+ln -s "$package_root/../http" "$test_project/cuts/http"
+ln -s "$package_root/../logger" "$test_project/cuts/logger"
+cd "$test_project"
 
 count=0
 
@@ -16,7 +23,7 @@ assert_contains() {
 
 run_case() {
     local script="$1"
-    "$diamond" -e "require \"$(pwd)/lib/cookies\"
+    "$diamond" -e "require \"$package_root/lib/cookies\"
 $script"
 }
 
@@ -252,8 +259,8 @@ count=$((count + 1))
 server_src() {
     local port="$1"
     cat <<SRCEOF
-require "$(pwd)/../gremlin/lib/gremlin"
-require "$(pwd)/lib/cookies"
+require "$package_root/../gremlin/lib/gremlin"
+require "$package_root/lib/cookies"
 
 CookieSession.configure(secret: "test-secret")
 
