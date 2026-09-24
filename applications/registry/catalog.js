@@ -10,27 +10,62 @@ function node(tag, text, className) {
   if (className) element.className = className;
   return element;
 }
+function copyButton(getText) {
+  const button = node('button', 'Copy', 'copy-btn');
+  button.type = 'button';
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      button.textContent = 'Copied';
+      button.classList.add('copied');
+    } catch {
+      button.textContent = 'Select to copy';
+    }
+    setTimeout(() => { button.textContent = 'Copy'; button.classList.remove('copied'); }, 1600);
+  });
+  return button;
+}
+function field(label, value) {
+  const paragraph = node('p', '');
+  paragraph.append(node('span', label + ' ', 'label'));
+  if (typeof value === 'string') paragraph.append(value);
+  else paragraph.append(...value);
+  return paragraph;
+}
 function render() {
   const query = document.querySelector('#search').value.trim().toLowerCase();
   const visible = releases.filter(release => release.name.toLowerCase().includes(query));
   const cards = visible.map(release => {
-    const card = node('article', '');
-    card.append(node('h3', release.name), node('p', release.version + (release.yanked ? ' · Yanked' : ''), release.yanked ? 'status' : 'muted'));
+    const card = node('article', '', 'release-card');
+    const head = node('div', '', 'release-head');
+    head.append(node('h3', release.name), node('span', release.version, 'version'));
+    card.append(head);
+    if (release.yanked) card.append(node('span', 'Yanked', 'yanked'));
     const dependencies = Object.entries(JSON.parse(release.dependencies)).map(([name, range]) => name + ' ' + range).join(', ');
-    card.append(node('p', 'Dependencies: ' + (dependencies || 'None')));
+    card.append(field('Dependencies', dependencies || 'None'));
     const maintainers = JSON.parse(release.maintainers || '[]');
-    const maintained = node('p', maintainers.length ? 'Maintainers: ' : 'Maintainers: not recorded');
+    const people = [];
     maintainers.forEach(({name, contact}, index) => {
-      if (index) maintained.append(', ');
+      if (index) people.push(', ');
       const link = node('a', name);
       link.href = contact.startsWith('https://') ? contact : 'mailto:' + contact;
       link.rel = 'nofollow noopener';
-      maintained.append(link);
+      people.push(link);
     });
-    card.append(maintained);
+    card.append(field('Maintainers', people.length ? people : 'not recorded'));
     const command = `facet add ${release.name} --registry ${base.href.replace(/\/$/, '')} --version '${release.version}'`;
-    card.append(node('pre', release.yanked ? 'Available through an existing facet.lock only.' : command), node('p', `${release.size.toLocaleString()} bytes`), node('p', 'SHA-256: ' + release.sha256, 'digest'));
-    const link = node('a', 'Release metadata');
+    const box = node('div', '', 'command');
+    const display = `facet add ${release.name} \\\n  --registry ${base.href.replace(/\/$/, '')} \\\n  --version '${release.version}'`;
+    const text = release.yanked ? 'Available through an existing facet.lock only.' : display;
+    if (!release.yanked) {
+      const bar = node('div', '', 'command-bar');
+      bar.append(node('span', 'Install'), copyButton(() => command));
+      box.append(bar);
+    }
+    box.append(node('pre', text));
+    card.append(box);
+    card.append(node('p', `${release.size.toLocaleString()} bytes`), node('p', 'sha256 ' + release.sha256, 'digest'));
+    const link = node('a', 'Release metadata →');
     link.href = new URL(`v1/cuts/${encodeURIComponent(release.name)}/versions/${encodeURIComponent(release.version)}`, base);
     card.append(link);
     return card;
@@ -58,5 +93,11 @@ async function load() {
   }
 }
 document.querySelector('#search').addEventListener('input', render);
+document.querySelectorAll('[data-copy-target]').forEach(button => {
+  const target = document.getElementById(button.dataset.copyTarget);
+  const copy = copyButton(() => target.innerText.trim());
+  copy.dataset.copyTarget = button.dataset.copyTarget;
+  button.replaceWith(copy);
+});
 more.addEventListener('click', load);
 load();

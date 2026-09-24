@@ -12,7 +12,7 @@ def registry_catalog(request, db, base)
     return [302, {"Location": "#{base}/"}, ""]
   end
   if path == "#{base}/"
-    return [200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'", "X-Content-Type-Options": "nosniff"}, registry_catalog_file("catalog.html")]
+    return [200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'", "X-Content-Type-Options": "nosniff"}, registry_catalog_file("catalog.html")]
   end
   if path == "#{base}/catalog.js"
     return [200, {"Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff"}, registry_catalog_file("catalog.js")]
