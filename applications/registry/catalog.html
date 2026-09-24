@@ -50,7 +50,11 @@ section{padding:92px 0}
 .section-head h2{font-size:clamp(1.8rem,3vw,2.4rem);letter-spacing:-.02em;margin:0 0 14px;font-weight:800}
 .section-head p{color:var(--text-dim);font-size:18px;margin:0}
 .raised{background:var(--bg-raised)}
-#browse{padding-top:56px}
+#browse{padding-top:56px;position:relative;overflow:hidden}
+#browse>.container{position:relative;z-index:1}
+/* The dilang.tech hero background: gradient glow plus faint facet lines. */
+.hero-glow{position:absolute;inset:-128px -10% auto -10%;height:640px;background:radial-gradient(45% 55% at 25% 20%,rgba(79,70,229,.30),transparent 60%),radial-gradient(35% 45% at 75% 10%,rgba(34,211,238,.22),transparent 60%),radial-gradient(30% 40% at 50% 60%,rgba(59,130,246,.18),transparent 60%);pointer-events:none;z-index:0}
+.hero-facets{position:absolute;top:0;left:0;width:100%;height:640px;opacity:.5;pointer-events:none;z-index:0}
 .inline-code,p code,li code{font-size:.92em;color:var(--tok-fn);background:rgba(107,198,255,.08);padding:1px 5px;border-radius:4px}
 .prose a,.status a{color:var(--cyan);font-weight:600}
 
@@ -143,6 +147,24 @@ section{padding:92px 0}
 
 <main id="main">
   <section id="browse">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <svg class="hero-facets" viewBox="0 0 1200 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <defs>
+        <linearGradient id="facetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#4f46e5"/>
+          <stop offset="100%" stop-color="#22d3ee"/>
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke="url(#facetGrad)" stroke-width="1" opacity="0.35">
+        <polygon points="980,40 1120,140 1040,280 900,220"/>
+        <polygon points="1040,280 1120,140 1200,220 1160,360"/>
+        <polygon points="900,220 1040,280 980,400 840,340"/>
+        <polygon points="1040,280 1160,360 1080,460 980,400"/>
+        <polygon points="980,40 900,220 780,120 840,10"/>
+        <line x1="980" y1="40" x2="1040" y2="280"/>
+        <line x1="900" y1="220" x2="980" y2="400"/>
+      </g>
+    </svg>
     <div class="container">
       <div class="section-head">
         <span class="eyebrow"><span class="dot"></span> Catalog</span>
