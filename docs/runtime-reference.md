@@ -24,6 +24,7 @@ a callable that also declares `&block`; `Fiber.yield()` sends `nil`.
 
 ```ruby
 puts("hello, #{name}")     # print(value) has no trailing newline
+warn("disk almost full")    # stderr, with a newline
 line = gets()               # one line from stdin, nil at EOF
 
 f = File.open("data.txt", "w")

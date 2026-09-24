@@ -30,9 +30,9 @@ as calling it any other way would.
 place `Fiber.new` and `redefine_method` are — gated on the identifier not
 already being a local or a user-defined function, so `def print(x) ...
 end` shadows the builtin entirely (no reserved keyword). They compile to
-a single `DIAMOND_OP_PRINT dest, source, newline` instruction; `newline`
-is a compile-time-constant byte (`0` for `print`, `1` for `puts`), not a
-runtime value.
+a single `DIAMOND_OP_PRINT dest, source, flags` instruction; `flags` is a
+compile-time-constant byte of `DIAMOND_PRINT_*` bits (`0` for `print`, `1`
+for `puts`), not a runtime value.
 
 `puts` (`newline=1`) flushes stdout after writing; `print` (`newline=0`)
 does not. stdout is fully buffered, not line-buffered, once it isn't a
@@ -72,6 +72,19 @@ rescue e: IOError
   # the reader went away
 end
 ```
+
+## stderr: `warn`
+
+```ruby
+warn("config file not found; using defaults")
+```
+
+`warn(value)` writes `value`'s stringified form and a newline to stderr,
+using the same stringification as `puts`, and returns `nil`. Use it for
+diagnostics that shouldn't mix into a program's stdout, which may be piped
+somewhere else. It compiles to the same `DIAMOND_OP_PRINT` instruction with
+the stderr flag set, and like `print`/`puts` a local or user-defined function
+named `warn` takes precedence over the built-in.
 
 ## stdin: `gets()`
 

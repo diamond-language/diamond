@@ -16445,22 +16445,25 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=converted;break;
             }
             case DIAMOND_OP_PRINT: {
-                uint16_t destination=0,source=0;uint8_t newline=0;
-                READ_SHORT(destination);READ_SHORT(source);READ_BYTE(newline);
+                uint16_t destination=0,source=0;uint8_t flags=0;
+                READ_SHORT(destination);READ_SHORT(source);READ_BYTE(flags);
+                const bool newline=(flags&DIAMOND_PRINT_NEWLINE)!=0;
+                /* warn() writes to stderr; print/puts to stdout. */
+                FILE *out=(flags&DIAMOND_PRINT_STDERR)!=0?stderr:stdout;
                 DiamondValue converted=DIAMOND_NIL;
                 DiamondVmStatus status=stringify_value(vm,chunk,depth,
                     registers[source],&converted);
                 VM_PROPAGATE(status);
                 const DiamondString *text=(const DiamondString *)converted.as.object;
                 errno=0;
-                const size_t written=fwrite(text->chars,1,text->length,stdout);
-                if(written!=text->length||ferror(stdout)) {
+                const size_t written=fwrite(text->chars,1,text->length,out);
+                if(written!=text->length||ferror(out)) {
                     snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
                     VM_RETURN(DIAMOND_VM_IO_ERROR);
                 }
-                if(newline!=0) {
+                if(newline) {
                     errno=0;
-                    if(fputc('\n',stdout)==EOF||ferror(stdout)) {
+                    if(fputc('\n',out)==EOF||ferror(out)) {
                         snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }
@@ -16483,7 +16486,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * ordinary line-buffered-on-a-terminal behavior
                      * unconditionally rather than only when isatty(). */
                     errno=0;
-                    if(fflush(stdout)==EOF) {
+                    if(fflush(out)==EOF) {
                         snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }

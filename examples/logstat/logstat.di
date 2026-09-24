@@ -11,13 +11,8 @@ require "./lib/report"
 
 def logstat_usage() = "usage: logstat [--top N] [--strict] [FILE...]"
 
-# Diamond has no stderr writer for the running program yet; /dev/stderr works
-# on Linux, macOS, and FreeBSD. Append mode, so redirecting stderr to a file
-# shared with stdout never truncates output already written there.
 def logstat_error(message)
-  stream = File.open("/dev/stderr", "a")
-  stream.write("logstat: #{message}\n")
-  stream.close()
+  warn("logstat: #{message}")
 end
 
 def logstat_read(file, tally, number)

@@ -5303,7 +5303,8 @@ static uint16_t parse_math_binary_call(Compiler *compiler, DiamondMathFunction i
     return dest;
 }
 
-static uint16_t parse_print_call(Compiler *compiler, bool newline) {
+/* print/puts/warn: `flags` is a set of DIAMOND_PRINT_* bits. */
+static uint16_t parse_print_call(Compiler *compiler, uint8_t flags) {
     advance_token(compiler); /* consume '(' */
     const uint16_t source=parse_expression(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -5315,7 +5316,7 @@ static uint16_t parse_print_call(Compiler *compiler, bool newline) {
     emit_opcode(compiler,DIAMOND_OP_PRINT);
     emit_register(compiler,dest);
     emit_register(compiler,source);
-    emit_byte(compiler,newline?1:0);
+    emit_byte(compiler,flags);
     compiler->known_types[dest]=DIAMOND_TYPE_NIL;
     return dest;
 }
@@ -6419,7 +6420,12 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        (name_equals(compiler,"print",name,false)||
         name_equals(compiler,"puts",name,false)))
-        return parse_print_call(compiler,name_equals(compiler,"puts",name,false));
+        return parse_print_call(compiler,name_equals(compiler,"puts",name,false)?
+            DIAMOND_PRINT_NEWLINE:0);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"warn",name,false))
+        return parse_print_call(compiler,DIAMOND_PRINT_NEWLINE|DIAMOND_PRINT_STDERR);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"gets",name,false))

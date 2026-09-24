@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Runtime
 
+- `warn(value)` writes a value and a newline to stderr, so programs can report
+  diagnostics without mixing them into stdout.
 - Uncaught exceptions now report their message as well as their class
   (`uncaught exception: ArgumentError: bad input`), on the command line and in
   `Supervisor#last_error`. Previously only the class name was shown.

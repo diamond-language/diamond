@@ -1300,6 +1300,18 @@ if "$diamond" -e 'puts(1, 2)' >/dev/null 2>&1; then
     exit 1
 fi
 
+# warn() writes to stderr with a newline and leaves stdout alone; a user
+# function named warn still takes precedence, as with print/puts.
+warn_err="$(mktemp)"
+actual="$($diamond -e $'puts("out")\nwarn("err: #{1 + 1}")\nwarn([1, 2])\nprint("tail")\nnil' 2>"$warn_err")"
+[[ "$actual" == $'out\ntailnil' ]]
+[[ "$(cat "$warn_err")" == $'err: 2\n[1, 2]' ]]
+rm -f "$warn_err"
+actual="$($diamond --dump-bytecode -e 'warn("x")')"
+grep -Eq 'PRINT +r[0-9]+, r[0-9]+, newline=1 stderr=1' <<<"$actual"
+actual="$($diamond -e $'def warn(x)\n  "mine #{x}"\nend\nwarn(3)' 2>&1)"
+[[ "$actual" == "mine 3" ]]
+
 actual="$($diamond --dump-bytecode -e 'gets()' </dev/null)"
 grep -Eq 'GETS +r[0-9]+' <<<"$actual"
 

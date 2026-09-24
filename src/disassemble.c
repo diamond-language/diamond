@@ -995,10 +995,11 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset+=8;break;
             case DIAMOND_OP_PRINT:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
-                fprintf(stream,"%-18s r%u, r%u, newline=%u\n","PRINT",
+                fprintf(stream,"%-18s r%u, r%u, newline=%u stderr=%u\n","PRINT",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                    chunk->code[offset+5]);
+                    (chunk->code[offset+5]&DIAMOND_PRINT_NEWLINE)!=0?1u:0u,
+                    (chunk->code[offset+5]&DIAMOND_PRINT_STDERR)!=0?1u:0u);
                 offset+=6;break;
             case DIAMOND_OP_FILE_JOIN:
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}

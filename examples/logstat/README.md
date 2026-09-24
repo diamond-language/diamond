@@ -58,8 +58,8 @@ nearest-rank method.
 - **Typed signatures.** Parameters and results such as
   `logstat_parse(text: String, number: Int) -> LogLine` are checked at
   compile time.
-- **A real CLI.** Argument parsing from `ARGV`, file and stdin input, and
-  conventional exit codes through `exit`.
+- **A real CLI.** Argument parsing from `ARGV`, file and stdin input, errors
+  on stderr through `warn`, and conventional exit codes through `exit`.
 - **Shipping one file.** `diamond build logstat.di` produces a standalone
   executable; `smoke_test.sh` checks that it prints exactly what the
   interpreter prints.
@@ -74,7 +74,5 @@ bash smoke_test.sh
 
 ## Notes
 
-- Diamond has no stderr writer for the running program yet, so errors are
-  appended to `/dev/stderr` (Linux, macOS, and FreeBSD).
 - `Float` has no rounding methods; `logstat_ms` rounds to one decimal place
   by hand.

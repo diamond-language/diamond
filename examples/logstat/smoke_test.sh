@@ -26,8 +26,7 @@ status=0; "$work/logstat" --bogus 2> /dev/null || status=$?
 status=0; "$work/logstat" "$work/missing.ndjson" 2> "$work/missing.err" || status=$?
 [[ "$status" == 66 ]] && grep -q "cannot open" "$work/missing.err"
 
-# Errors append to /dev/stderr rather than truncating it, so with both
-# streams redirected to one file the message is still there.
+# With both streams redirected to one file, the error still arrives.
 status=0; "$work/logstat" testdata/sample.ndjson "$work/missing.ndjson" > "$work/both.txt" 2>&1 || status=$?
 [[ "$status" == 66 ]] && grep -q "cannot open" "$work/both.txt"
 

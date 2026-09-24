@@ -139,6 +139,13 @@ enum {
     DIAMOND_MAX_ACTIVE_BREAKPOINTS = 256,
 };
 
+/* DIAMOND_OP_PRINT flag bits. Bytecode written before stderr output existed
+ * only ever used 0 or 1, which keep their meaning. */
+enum {
+    DIAMOND_PRINT_NEWLINE = 1,
+    DIAMOND_PRINT_STDERR = 2,
+};
+
 typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_CONSTANT,
     DIAMOND_OP_STRING,
@@ -210,7 +217,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_YIELD,
     DIAMOND_OP_REDEFINE_METHOD,
     DIAMOND_OP_FIBER_NEW,
-    DIAMOND_OP_PRINT,
+    DIAMOND_OP_PRINT,          /* dest, source, flags: DIAMOND_PRINT_* */
     DIAMOND_OP_GETS,
     DIAMOND_OP_FILE_OPEN,
     DIAMOND_OP_FILE_DELETE,
