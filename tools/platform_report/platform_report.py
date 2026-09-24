@@ -30,8 +30,11 @@ BENCHMARKS = [("fibonacci", 15), ("int_arithmetic", 15), ("dispatch_monomorphic"
               ("hash_ops", 40), ("string_ops", 40), ("struct_field_access", 15),
               ("regexp_match", 15), ("tensor_matmul", 20), ("exception_handling", 12),
               ("fiber_switch", 10), ("channel_message_passing", 15), ("thread_pool", 15)]
-TEST_TARGETS = ["test", "test-api", "test-fibers", "test-facet", "test-aot-cache",
-                "test-aot-kit", "test-lsp", "test-repl"]
+# (make target, rough duration shown so a quiet step doesn't look stuck)
+TEST_TARGETS = [("test", "the main suite: 5-15 minutes"), ("test-api", "about a minute"),
+                ("test-fibers", "about a minute"), ("test-facet", "1-3 minutes"),
+                ("test-aot-cache", "about a minute"), ("test-aot-kit", "1-2 minutes"),
+                ("test-lsp", "about a minute"), ("test-repl", "under a minute")]
 report_lines = []
 
 
@@ -183,8 +186,9 @@ def exclude_known_gaps(work):
 def build_and_test(work, env, make_args, jobs):
     section("Build and tests")
     results = []
-    for target in TEST_TARGETS:
-        say(f"  running make {target} ...")
+    say("  Each step is quiet while it runs; that's normal.")
+    for target, duration in TEST_TARGETS:
+        say(f"  running make {target} ({duration}) ...")
         status, output, seconds = run(["make", f"-j{jobs}", *make_args, target], cwd=work,
                                       env=env, timeout=3600)
         verdict = "passed" if status == 0 else "FAILED"
@@ -224,6 +228,7 @@ def examples(work, env):
 
 def benchmarks(work, env, make_args, jobs):
     section("Benchmarks (release build, interpreter)")
+    say("  building an optimized copy (a few minutes) ...")
     status, output, seconds = run(["make", f"-j{jobs}", *make_args, "release"], cwd=work,
                                   env=env, timeout=3600)
     if status != 0:
@@ -247,6 +252,7 @@ def benchmarks(work, env, make_args, jobs):
 
     say()
     say("  thread scaling (same work per thread; flat time = perfect scaling)")
+    say("  (up to a minute per line)")
     record()
     record("thread scaling: each thread does the same work; ideal is flat time")
     record("threads   seconds   work/second relative to 1 thread")
