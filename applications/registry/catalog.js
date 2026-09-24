@@ -10,6 +10,12 @@ function node(tag, text, className) {
   if (className) element.className = className;
   return element;
 }
+function formatSize(bytes) {
+  const units = ['bytes', 'KB', 'MB', 'GB'];
+  let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return unit === 0 ? `${value} bytes` : `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
 function copyButton(getText) {
   const button = node('button', 'Copy', 'copy-btn');
   button.type = 'button';
@@ -64,7 +70,7 @@ function render() {
     }
     box.append(node('pre', text));
     card.append(box);
-    card.append(node('p', `${release.size.toLocaleString()} bytes`), node('p', 'sha256 ' + release.sha256, 'digest'));
+    card.append(field('Size', formatSize(release.size)), node('p', 'sha256 ' + release.sha256, 'digest'));
     const link = node('a', 'Release metadata →');
     link.href = new URL(`v1/cuts/${encodeURIComponent(release.name)}/versions/${encodeURIComponent(release.version)}`, base);
     card.append(link);
