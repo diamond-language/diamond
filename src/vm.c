@@ -11262,6 +11262,20 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
  * was missing entirely, so an exception that outlived an ensure block
  * before going uncaught printed a bare "uncaught exception" with no
  * class name or detail at all. */
+/* Whether `instance` is an Exception or a subclass of one, resolving its class
+ * chain in the chunk that owns the instance (or the root chunk). */
+static bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *instance) {
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+    if(owner==nullptr)return false;
+    const DiamondClass *ancestor=instance->class;
+    while(ancestor!=nullptr) {
+        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION])return true;
+        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+            &owner->classes[ancestor->superclass];
+    }
+    return false;
+}
+
 static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue exception) {
     if(exception.kind==DIAMOND_VALUE_INT)
         snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
@@ -11285,8 +11299,19 @@ static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue excepti
                  (int)string->length,string->chars);
     } else if(exception.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *instance=(const DiamondInstance *)exception.as.object;
-        snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
-                 instance->class->name);
+        /* Exceptions keep their message in field 0; include it so a report
+         * says what went wrong, not only which class was raised. */
+        const DiamondValue message=instance->field_count>0?instance->fields[0]:DIAMOND_NIL;
+        if(instance_is_exception(vm,instance)&&message.kind==DIAMOND_VALUE_OBJECT&&
+           message.as.object->kind==DIAMOND_OBJECT_STRING&&
+           ((const DiamondString *)message.as.object)->length>0) {
+            const DiamondString *text=(const DiamondString *)message.as.object;
+            snprintf(vm->error,sizeof vm->error,"uncaught exception: %s: %.*s",
+                     instance->class->name,(int)text->length,text->chars);
+        } else {
+            snprintf(vm->error,sizeof vm->error,"uncaught exception: %s",
+                     instance->class->name);
+        }
     } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
 }
 
@@ -12509,15 +12534,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         if(send_status!=DIAMOND_VM_OK) return send_status;
         *out=sent;return DIAMOND_VM_OK;
     }
-    bool exception_instance=false;
-    const DiamondClass *ancestor=instance->class;
-    while(ancestor!=nullptr) {
-        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]) {
-            exception_instance=true;break;
-        }
-        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-            &owner->classes[ancestor->superclass];
-    }
+    const bool exception_instance=instance_is_exception(vm,instance);
     if(exception_instance&&method_name->length==7&&
        memcmp(method_name->chars,"message",7)==0) {
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
@@ -14759,14 +14776,7 @@ static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chu
     if(vm->exception.kind!=DIAMOND_VALUE_OBJECT||
        vm->exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return;
     DiamondInstance *raised=(DiamondInstance *)vm->exception.as.object;
-    const DiamondChunk *owner=raised->owner!=nullptr?raised->owner:vm->root_chunk;
-    bool is_exception=false;const DiamondClass *ancestor=raised->class;
-    while(ancestor!=nullptr) {
-        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION]){is_exception=true;break;}
-        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
-            &owner->classes[ancestor->superclass];
-    }
-    if(!is_exception||raised->field_count<=2)return;
+    if(!instance_is_exception(vm,raised)||raised->field_count<=2)return;
     DiamondArray *backtrace=allocate_array(vm,nullptr,0);
     if(backtrace==nullptr)return;
     /* Root immediately: vm->exception (already set, has_exception=true by

@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Runtime
+
+- Uncaught exceptions now report their message as well as their class
+  (`uncaught exception: ArgumentError: bad input`), on the command line and in
+  `Supervisor#last_error`. Previously only the class name was shown.
+
 ### Packages
 
 - gremlin 0.2.2: a connection closed by another fiber while its own fiber was

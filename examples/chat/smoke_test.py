@@ -120,7 +120,7 @@ try:
 
     ada.send({'type': 'say', 'text': '/crash'})
     restart = bob.expect(lambda e: e['type'] == 'bot' and 'restarted' in e['text'], 'restart notice')
-    assert 'RuntimeError' in restart['text'], restart
+    assert 'RuntimeError: Ada asked the bot to crash' in restart['text'], restart
     ada.send({'type': 'say', 'text': '/time'})
     ada.expect(lambda e: e['type'] == 'bot' and e['text'].startswith('Server time'), 'bot after restart')
     ada.send({'type': 'say', 'text': '/stats'})

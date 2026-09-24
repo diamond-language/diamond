@@ -65,5 +65,4 @@ notices, and a clean SIGTERM exit.
 - One worker thread. Scaling across threads would need a shared store for
   membership and fan-out, since workers share no memory; see gremlin's
   `on_tick` notes.
-- `Supervisor#last_error` reports the exception class, not its message.
 - There is no authentication; names are first come, first served.
