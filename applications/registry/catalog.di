@@ -5,7 +5,7 @@ def registry_catalog_file(path)
   bytes
 end
 
-def registry_catalog(request, db, base)
+def registry_catalog(request, db, base, api)
   path = request["path"]
   if request["method"] != "GET" then return nil end
   if path == base && base != ""
@@ -30,10 +30,24 @@ def registry_catalog(request, db, base)
       return [400, {"Content-Type": "application/json"}, JSON.stringify({"protocol": 1, "error": "invalid_request", "message": "invalid cursor"})]
     end
   end
-  rows = db.query("SELECT releases.id, cuts.name, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE releases.id > ? AND releases.takedown_reason IS NULL ORDER BY releases.id LIMIT 101", [after])
-  more = rows.length() > 100
-  if more then rows.pop() end
+  # One row per cut: its newest unyanked release, or its newest release when
+  # every version is yanked. The cursor is the cut id.
+  cuts = db.query("SELECT id FROM cuts WHERE id > ? AND EXISTS (SELECT 1 FROM releases WHERE releases.cut_id = cuts.id AND releases.takedown_reason IS NULL) ORDER BY id LIMIT 101", [after])
+  more = cuts.length() > 100
+  if more then cuts.pop() end
+  rows = []
+  if cuts.length() > 0
+    releases = db.query("SELECT cuts.id, cuts.name, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.id >= ? AND cuts.id <= ? AND releases.takedown_reason IS NULL ORDER BY cuts.id", [cuts[0]["id"], cuts[cuts.length() - 1]["id"]])
+    releases.each() do |release|
+      last = if rows.length() > 0 then rows[rows.length() - 1] else nil end
+      if last == nil || last["id"] != release["id"]
+        rows.push(release)
+      elsif (last["yanked"] == 1 && release["yanked"] == 0) || (last["yanked"] == release["yanked"] && api.before?(last["version"], release["version"]))
+        rows[rows.length() - 1] = release
+      end
+    end
+  end
   next_after = nil
-  if more then next_after = rows[rows.length() - 1]["id"] end
+  if more then next_after = cuts[cuts.length() - 1]["id"] end
   [200, {"Content-Type": "application/json", "Cache-Control": "no-store"}, JSON.stringify({"protocol": 1, "releases": rows, "next_after": next_after})]
 end

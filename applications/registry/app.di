@@ -24,7 +24,7 @@ def dispatch_registry(request, context)
     context["registry_db"] = db
     context["registry_base"] = base
   end
-  catalog = registry_catalog(request, context["registry_db"], context["registry_base"])
+  catalog = registry_catalog(request, context["registry_db"], context["registry_base"], api)
   if catalog != nil then return catalog end
   api.call(request)
 end

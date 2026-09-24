@@ -264,7 +264,8 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         assert json.loads(stored['1.0.0']) == [{'name': 'Test', 'contact': 'test@example.com'}]
         status, catalog = request('/catalog.json')
         listed = {(row['name'], row['version']): row['maintainers'] for row in catalog['releases']}
-        assert status == 200 and listed[('greeter', '0.9.0')] is None
+        # The catalog lists only each cut's newest release.
+        assert status == 200 and ('greeter', '0.9.0') not in listed
         assert json.loads(listed[('greeter', '1.0.0')])[0]['contact'] == 'test@example.com'
         db.execute("DELETE FROM releases WHERE cut_id = ? AND version = '0.9.0'", (cut_id,))
         db.commit()
@@ -443,26 +444,40 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         inventory = credential('list')
         assert any(item['id'] == rotated['id'] and item['revoked_at'] is not None for item in inventory)
         assert all('token' not in item and 'token_digest' not in item for item in inventory)
-        # Exercise bounded catalog pagination without creating public artifacts.
-        temporary_cut = db.execute("INSERT INTO cuts (name, created_at) VALUES ('catalog_page_test', 1)").lastrowid
+        # Exercise bounded, one-row-per-cut catalog pagination without creating
+        # public artifacts: SemVer order picks 1.0.10 over 1.0.9, an unyanked
+        # release beats a newer yanked one, and an all-yanked cut still appears.
+        temporary_cuts = []
         for index in range(105):
-            db.execute('INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (?, ?, ?, ?, 1, 1)',
-                       (temporary_cut, f'1.0.{index}', '{}', hashlib.sha256(f'catalog-{index}'.encode()).hexdigest()))
+            cut_id = db.execute("INSERT INTO cuts (name, created_at) VALUES (?, 1)", (f'catalog_page_{index}',)).lastrowid
+            temporary_cuts.append(cut_id)
+            for version, yanked in (('1.0.9', 0), ('1.0.10', 1 if index == 0 else 0), ('1.1.0', 1)):
+                db.execute('INSERT INTO releases (cut_id, version, dependencies, sha256, size, yanked, created_at) VALUES (?, ?, ?, ?, 1, ?, 1)',
+                           (cut_id, version, '{}', hashlib.sha256(f'catalog-{index}-{version}'.encode()).hexdigest(), yanked))
         db.commit()
         seen = []
         after = 0
         while True:
             status, page = request('/catalog.json?after=' + str(after))
             assert status == 200 and len(page['releases']) <= 100
-            seen.extend(row['id'] for row in page['releases'])
+            seen.extend(page['releases'])
             if page['next_after'] is None:
                 break
             assert page['next_after'] > after
             after = page['next_after']
-        expected = [row[0] for row in db.execute('SELECT id FROM releases WHERE takedown_reason IS NULL ORDER BY id')]
-        assert seen == expected
-        db.execute('DELETE FROM releases WHERE cut_id = ?', (temporary_cut,))
-        db.execute('DELETE FROM cuts WHERE id = ?', (temporary_cut,))
+        listed_cuts = [row['id'] for row in seen]
+        assert listed_cuts == sorted(set(listed_cuts))
+        expected_cuts = [row[0] for row in db.execute('SELECT DISTINCT cut_id FROM releases WHERE takedown_reason IS NULL ORDER BY cut_id')]
+        assert listed_cuts == expected_cuts
+        latest = {row['name']: (row['version'], row['yanked']) for row in seen}
+        assert latest['catalog_page_0'] == ('1.0.9', 0)
+        assert all(latest[f'catalog_page_{index}'] == ('1.0.10', 0) for index in range(1, 105))
+        db.execute('UPDATE releases SET yanked = 1 WHERE cut_id = ?', (temporary_cuts[1],))
+        db.commit()
+        assert {row['name']: row['version'] for row in request('/catalog.json')[1]['releases']}['catalog_page_1'] == '1.1.0'
+        for cut_id in temporary_cuts:
+            db.execute('DELETE FROM releases WHERE cut_id = ?', (cut_id,))
+            db.execute('DELETE FROM cuts WHERE id = ?', (cut_id,))
         db.commit()
         dump = '\n'.join(db.iterdump())
         for raw in (token, outsider['token'], publisher_only['token'], admin['token'], rotated['token']):
