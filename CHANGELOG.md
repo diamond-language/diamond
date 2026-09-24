@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Runtime
 
+- Bytecode caches (`.dic`) and the embedded compiled prelude are far smaller:
+  string constants are now stored as length-prefixed bytes instead of fixed 4 KB
+  records. The guestbook example's cache dropped from 29 MB to 3.5 MB, and apps
+  that produced 100 MB+ caches now produce a few MB. Old caches are rebuilt
+  automatically.
 - `Int` and `Float` gain `to_s`, `to_i`, `to_f`, and `abs`; `Float` gains
   `floor`, `ceil`, `round`, and `round(digits)`. Conversions follow the global
   `to_i`: `NaN`/`Infinity` raise `RangeError`, larger values promote past

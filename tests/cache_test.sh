@@ -81,4 +81,19 @@ rm -f "$work"/*.dic
 [[ -z "$(find "$work" -name '*.dic' 2>/dev/null)" ]]
 count=$((count + 1))
 
+# --- string constants are stored compactly: 400 distinct string
+# literals used to cost 4KB each (1.6MB on top of the prelude); the whole
+# cache must stay a small fraction of that, and still load correctly ---
+{
+    printf 'words = []\n'
+    for i in $(seq 1 400); do printf 'words.push("literal number %s")\n' "$i"; done
+    printf 'words.length()\n'
+} > "$work/strings.di"
+(cd "$work" && "$diamond" strings.di >/dev/null)
+prelude_only="$(cd "$work" && printf '1\n' > tiny.di && "$diamond" tiny.di >/dev/null && stat -c %s tiny.dic 2>/dev/null || stat -f %z tiny.dic)"
+with_strings="$(stat -c %s "$work/strings.dic" 2>/dev/null || stat -f %z "$work/strings.dic")"
+(( with_strings - prelude_only < 400 * 1024 ))
+[[ "$(cd "$work" && "$diamond" strings.di)" == "400" ]]
+count=$((count + 1))
+
 echo "$count cache tests passed"

@@ -72,7 +72,14 @@ static bool write_function(FILE *file, const DiamondFunction *function) {
     if (!write_all(file, function->lines, function->code_count * sizeof *function->lines)) return false;
     if (!write_all(file, function->columns, function->code_count * sizeof *function->columns)) return false;
     if (!write_all(file, function->constants, function->constant_count * sizeof *function->constants)) return false;
-    if (!write_all(file, function->strings, function->string_count * sizeof *function->strings)) return false;
+    /* A DiamondStringConstant is a fixed DIAMOND_MAX_STRING_LENGTH buffer in
+     * memory, almost all padding; on disk each is just its length and bytes.
+     * Writing whole structs made a small program's cache tens of megabytes. */
+    for (size_t index = 0; index < function->string_count; index++) {
+        const uint64_t length = (uint64_t)function->strings[index].length;
+        if (!write_all(file, &length, sizeof length)) return false;
+        if (!write_all(file, function->strings[index].chars, (size_t)length)) return false;
+    }
     if (!write_all(file, function->type_sets, function->type_set_count * sizeof *function->type_sets)) return false;
     return true;
 }
@@ -253,20 +260,43 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
     const uint8_t *lines_bytes = take(cursor, end, view.code_count * sizeof *view.lines);
     const uint8_t *columns_bytes = take(cursor, end, view.code_count * sizeof *view.columns);
     const uint8_t *constants_bytes = take(cursor, end, view.constant_count * sizeof *view.constants);
-    const uint8_t *strings_bytes = take(cursor, end, view.string_count * sizeof *view.strings);
-    const uint8_t *type_sets_bytes = take(cursor, end, view.type_set_count * sizeof *view.type_sets);
     if ((view.code_count > 0 && (code == nullptr || lines_bytes == nullptr || columns_bytes == nullptr)) ||
-        (view.constant_count > 0 && constants_bytes == nullptr) ||
-        (view.string_count > 0 && strings_bytes == nullptr) ||
-        (view.type_set_count > 0 && type_sets_bytes == nullptr))
+        (view.constant_count > 0 && constants_bytes == nullptr))
         return false;
+    /* Expand the length-prefixed strings back into fixed in-memory records. */
+    if (view.string_count > (size_t)(end - *cursor) / sizeof(uint64_t)) return false;
+    DiamondStringConstant *strings = nullptr;
+    if (view.string_count > 0) {
+        strings = calloc(view.string_count, sizeof *strings);
+        if (strings == nullptr) return false;
+    }
+    for (size_t index = 0; index < view.string_count; index++) {
+        uint64_t length = 0;
+        const uint8_t *length_bytes = take(cursor, end, sizeof length);
+        if (length_bytes != nullptr) memcpy(&length, length_bytes, sizeof length);
+        const uint8_t *chars = length_bytes != nullptr && length <= DIAMOND_MAX_STRING_LENGTH ?
+            take(cursor, end, (size_t)length) : nullptr;
+        if (chars == nullptr && !(length_bytes != nullptr && length == 0)) {
+            free(strings);
+            return false;
+        }
+        if (length > 0) memcpy(strings[index].chars, chars, (size_t)length);
+        strings[index].length = (size_t)length;
+    }
+    const uint8_t *type_sets_bytes = take(cursor, end, view.type_set_count * sizeof *view.type_sets);
+    if (view.type_set_count > 0 && type_sets_bytes == nullptr) {
+        free(strings);
+        return false;
+    }
     view.code = (uint8_t *)code;
     view.lines = (uint32_t *)(const void *)lines_bytes;
     view.columns = (uint32_t *)(const void *)columns_bytes;
     view.constants = (DiamondValue *)(const void *)constants_bytes;
-    view.strings = (DiamondStringConstant *)(const void *)strings_bytes;
+    view.strings = strings;
     view.type_sets = (DiamondTypeSet *)(const void *)type_sets_bytes;
-    return diamond_function_copy(destination, &view);
+    const bool copied = diamond_function_copy(destination, &view);
+    free(strings);
+    return copied;
 }
 
 static bool read_u64(const uint8_t **cursor, const uint8_t *end, uint64_t *out) {
@@ -453,7 +483,8 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
  * bytes actually go on disk" fact lives. */
 static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
 enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
-enum { DIAMOND_CACHE_FORMAT_VERSION = 1 };
+/* 2: string constants are length-prefixed instead of fixed 4KB records. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 2 };
 
 DiamondCacheFingerprint diamond_cache_fingerprint(void) {
     return (DiamondCacheFingerprint){

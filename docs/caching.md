@@ -63,5 +63,13 @@ stderr, useful for confirming the feature is actually doing something.
   fingerprint-compatible cache surviving between two test runs could otherwise mask a
   real compiler regression the test suite exists to catch.
 
+## Size
+
+A `.dic` holds the whole compiled program, prelude included, so even a one-line
+script's cache is about 2 MB; application code adds comparatively little (the
+guestbook example's is about 3.5 MB). Format version 2 stores string constants as
+length-prefixed bytes rather than fixed 4 KB records; version 1 caches were tens
+to hundreds of megabytes for ordinary apps and are simply ignored and rebuilt.
+
 See [the roadmap](roadmap.md#bytecode-caching) for possible follow-ups,
 including cache removal and read-only deployments.
