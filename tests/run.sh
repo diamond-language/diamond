@@ -2605,13 +2605,8 @@ fi
 grep -q "unrecognized TLSServer.listen option 'bogus'" "$error_file"
 rm -f "$error_file"
 
-error_file="$(mktemp)"
-if "$diamond" -e '5.abs()' >/dev/null 2>"$error_file"; then
-    echo "Int literal .abs() unexpectedly succeeded (Int has no method dispatch)" >&2
-    exit 1
-fi
-grep -q "runtime error" "$error_file"
-rm -f "$error_file"
+# `5.abs()` must parse as a method call on 5, not as a float literal "5.".
+[[ "$($diamond -e '5.abs()')" == "5" ]]
 
 error_file="$(mktemp)"
 if "$diamond" -e $'def f(x: Float) -> Float = x\nf(3)' >/dev/null 2>"$error_file"; then

@@ -16,11 +16,7 @@ def logstat_latency(durations: Array[Float]) -> Latency
     logstat_percentile(sorted, 99), sorted[sorted.length() - 1])
 end
 
-# One decimal place; Float has no rounding methods, so this rounds by hand.
-def logstat_ms(value: Float) -> String
-  tenths = to_i(value * 10.0 + 0.5)
-  "#{tenths / 10}.#{tenths % 10}"
-end
+def logstat_ms(value: Float) -> String = value.round(1).to_s()
 
 def logstat_increment(counts, key)
   counts[key] = if counts[key] == nil then 1 else counts[key] + 1 end
@@ -84,7 +80,7 @@ class Tally
     if @levels.length() > 0
       out.append("\nLevels\n")
       self.level_order().each() do |level|
-        out.append("  #{level.ljust(8, " ")}#{"#{@levels[level]}".rjust(8, " ")}\n")
+        out.append("  #{level.ljust(8, " ")}#{@levels[level].to_s().rjust(8, " ")}\n")
       end
     end
     if @durations.length() > 0
@@ -98,7 +94,7 @@ class Tally
     if top.length() > 0
       out.append("\nTop messages\n")
       top.each() do |pair|
-        out.append("  #{"#{pair[1]}".rjust(8, " ")}  #{pair[0]}\n")
+        out.append("  #{pair[1].to_s().rjust(8, " ")}  #{pair[0]}\n")
       end
     end
     if @unparsed.length() > 0

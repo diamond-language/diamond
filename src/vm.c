@@ -8994,6 +8994,18 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_ARRAY,"pop",0,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
+    {DIAMOND_TYPE_INT,"to_s",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_INT,"to_i",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_INT,"to_f",0,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_INT,"abs",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_FLOAT,"to_s",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_FLOAT,"to_i",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_FLOAT,"to_f",0,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_FLOAT,"abs",0,DIAMOND_TYPE_FLOAT},
+    {DIAMOND_TYPE_FLOAT,"floor",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_FLOAT,"ceil",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_FLOAT,"round",0,DIAMOND_TYPE_INT},
+    {DIAMOND_TYPE_FLOAT,"round",1,DIAMOND_TYPE_FLOAT},
 };
 
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
@@ -11262,6 +11274,25 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
  * was missing entirely, so an exception that outlived an ensure block
  * before going uncaught printed a bare "uncaught exception" with no
  * class name or detail at all. */
+/* The Int value of an already-whole Float: RangeError (INTEGER_OVERFLOW) for
+ * NaN and infinities, which have none, and bignum promotion beyond int64_t,
+ * matching every other overflow site. `what` names the caller in errors. */
+static DiamondVmStatus float_to_int(DiamondVm *vm,double whole,const char *what,
+                                    DiamondValue *out) {
+    if(isnan(whole)||isinf(whole)) {
+        snprintf(vm->error,sizeof vm->error,"%s argument must be a finite Float",what);
+        return DIAMOND_VM_INTEGER_OVERFLOW;
+    }
+    if(whole>=9223372036854775808.0||whole<-9223372036854775808.0) {
+        const DiamondValue bignum=diamond_bignum_from_double(vm,whole);
+        if(bignum.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=bignum;
+        return DIAMOND_VM_OK;
+    }
+    *out=DIAMOND_INT((int64_t)whole);
+    return DIAMOND_VM_OK;
+}
+
 /* Whether `instance` is an Exception or a subclass of one, resolving its class
  * chain in the chunk that owns the instance (or the root chunk). */
 static bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *instance) {
@@ -18373,6 +18404,38 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_PROPAGATE(frozen_status);break;
                     }
                 }
+                /* An Int past 64 bits is a bignum object; give it the same
+                 * conversions as a small Int. */
+                if(value_is_bignum(registers[recv])&&argc==0&&
+                   ((method_name->length==4&&(memcmp(method_name->chars,"to_s",4)==0||
+                     memcmp(method_name->chars,"to_i",4)==0||
+                     memcmp(method_name->chars,"to_f",4)==0))||
+                    (method_name->length==3&&memcmp(method_name->chars,"abs",3)==0))) {
+                    DiamondIntView view;
+                    diamond_int_view(registers[recv],&view);
+                    if(method_name->chars[0]=='a') {
+                        if(view.negative) {
+                            const DiamondValue positive=diamond_bignum_negate(vm,view);
+                            if(positive.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=positive;
+                        } else registers[dest]=registers[recv];
+                    } else if(method_name->chars[3]=='i') {
+                        registers[dest]=registers[recv];
+                    } else if(method_name->chars[3]=='f') {
+                        registers[dest]=DIAMOND_FLOAT(diamond_bignum_to_double(
+                            (const DiamondBignum *)registers[recv].as.object));
+                    } else {
+                        StringBuilder text={};
+                        if(!builder_format_value(&text,registers[recv])) {
+                            free(text.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                        DiamondString *formatted=allocate_string(vm,text.chars,text.length);
+                        free(text.chars);
+                        if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(formatted);
+                    }
+                    break;
+                }
                 if(registers[recv].kind==DIAMOND_VALUE_INT||
                    registers[recv].kind==DIAMOND_VALUE_FLOAT) {
                     const bool ago_method=method_name->length==3&&
@@ -18427,6 +18490,74 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             &duration_result);
                         VM_PROPAGATE(duration_status);
                         registers[dest]=duration_result;break;
+                    }
+                    /* Conversions and rounding shared by Int and Float.
+                     * to_s matches string interpolation exactly; floor/ceil/
+                     * round() return Int (promoting past 64 bits like to_i,
+                     * RangeError for NaN/Infinity) and round(digits) returns
+                     * Float. */
+                    {
+                        const bool is_float=registers[recv].kind==DIAMOND_VALUE_FLOAT;
+                        const double real=is_float?registers[recv].as.real:
+                            (double)registers[recv].as.integer;
+                        #define NUMERIC_METHOD(text) (method_name->length==sizeof(text)-1&& \
+                            memcmp(method_name->chars,text,sizeof(text)-1)==0)
+                        if(NUMERIC_METHOD("to_s")) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            StringBuilder text={};
+                            if(!builder_format_value(&text,registers[recv])) {
+                                free(text.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                            DiamondString *formatted=allocate_string(vm,text.chars,text.length);
+                            free(text.chars);
+                            if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(formatted);break;
+                        }
+                        if(NUMERIC_METHOD("to_f")) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            registers[dest]=DIAMOND_FLOAT(real);break;
+                        }
+                        if(NUMERIC_METHOD("abs")) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(is_float) {registers[dest]=DIAMOND_FLOAT(fabs(real));break;}
+                            const int64_t integer=registers[recv].as.integer;
+                            if(integer==INT64_MIN) {
+                                /* Its magnitude needs a bignum, as with negation. */
+                                DiamondIntView view;
+                                diamond_int_view_int64(integer,&view);
+                                const DiamondValue promoted=diamond_bignum_negate(vm,view);
+                                if(promoted.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                registers[dest]=promoted;break;
+                            }
+                            registers[dest]=DIAMOND_INT(integer<0?-integer:integer);break;
+                        }
+                        if(NUMERIC_METHOD("round")&&is_float&&argc==1) {
+                            const DiamondValue digits=registers[base];
+                            if(digits.kind!=DIAMOND_VALUE_INT||digits.as.integer<-15||
+                               digits.as.integer>15) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "Float#round digits must be an Int from -15 to 15");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            const double scale=pow(10.0,(double)digits.as.integer);
+                            registers[dest]=DIAMOND_FLOAT(isfinite(real)?round(real*scale)/scale:real);
+                            break;
+                        }
+                        const bool to_int=NUMERIC_METHOD("to_i");
+                        const bool floor_method=NUMERIC_METHOD("floor");
+                        const bool ceil_method=NUMERIC_METHOD("ceil");
+                        const bool round_method=NUMERIC_METHOD("round");
+                        #undef NUMERIC_METHOD
+                        if(to_int||(is_float&&(floor_method||ceil_method||round_method))) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(!is_float) {registers[dest]=registers[recv];break;}
+                            const double whole=floor_method?floor(real):ceil_method?ceil(real):
+                                round_method?round(real):trunc(real);
+                            DiamondValue converted=DIAMOND_NIL;
+                            VM_PROPAGATE(float_to_int(vm,whole,floor_method?"floor":
+                                ceil_method?"ceil":round_method?"round":"to_i",&converted));
+                            registers[dest]=converted;break;
+                        }
                     }
                     if(registers[recv].kind==DIAMOND_VALUE_FLOAT) {
                         snprintf(vm->error,sizeof vm->error,
@@ -23098,23 +23229,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     snprintf(vm->error,sizeof vm->error,"to_i argument must be a Float");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const double real=registers[source].as.real;
-                if(isnan(real)||isinf(real)) {
-                    snprintf(vm->error,sizeof vm->error,
-                             "to_i argument must be a finite Float");
-                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
-                }
-                if(real>=9223372036854775808.0||real<-9223372036854775808.0) {
-                    /* Outside int64_t range: promote instead of raising,
-                     * matching every other overflow site now that Int
-                     * auto-promotes to a bignum. */
-                    const DiamondValue bignum_result=diamond_bignum_from_double(vm,real);
-                    if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[dest]=bignum_result;
-                    break;
-                }
-                registers[dest]=DIAMOND_INT((int64_t)real);
+                DiamondValue converted=DIAMOND_NIL;
+                VM_PROPAGATE(float_to_int(vm,trunc(registers[source].as.real),"to_i",
+                                          &converted));
+                registers[dest]=converted;
                 break;
             }
             case DIAMOND_OP_TO_SYMBOL: {

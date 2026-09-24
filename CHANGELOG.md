@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Runtime
 
+- `Int` and `Float` gain `to_s`, `to_i`, `to_f`, and `abs`; `Float` gains
+  `floor`, `ceil`, `round`, and `round(digits)`. Conversions follow the global
+  `to_i`: `NaN`/`Infinity` raise `RangeError`, larger values promote past
+  64 bits.
 - `warn(value)` writes a value and a newline to stderr, so programs can report
   diagnostics without mixing them into stdout.
 - Uncaught exceptions now report their message as well as their class

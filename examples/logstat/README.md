@@ -71,8 +71,3 @@ It needs no cuts, so there is no `diamond.cut`.
 ```sh
 bash smoke_test.sh
 ```
-
-## Notes
-
-- `Float` has no rounding methods; `logstat_ms` rounds to one decimal place
-  by hand.

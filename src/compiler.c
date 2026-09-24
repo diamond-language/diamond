@@ -7307,7 +7307,8 @@ static void publish_native_scalar_method_return_type(Compiler *compiler,
         receiver_type=compiler->known_types[receiver];
     }
     if(receiver_type!=DIAMOND_TYPE_STRING&&receiver_type!=DIAMOND_TYPE_ARRAY&&
-       receiver_type!=DIAMOND_TYPE_HASH)return;
+       receiver_type!=DIAMOND_TYPE_HASH&&receiver_type!=DIAMOND_TYPE_INT&&
+       receiver_type!=DIAMOND_TYPE_FLOAT)return;
     char method_name[DIAMOND_MAX_FUNCTION_NAME];
     if(name.length>=sizeof method_name)return;
     for(size_t index=0;index<name.length;index++)

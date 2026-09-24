@@ -496,6 +496,31 @@ count), so every `Float` prints exactly and unambiguously — including
 values that need the full 17 significant digits a `double` can carry,
 which a naive fixed-precision format can silently get wrong.
 
+Both numeric types have conversion methods, and `Float` has rounding:
+
+```ruby
+42.to_s()            # => "42", the same text interpolation produces
+2.5.to_s()           # => "2.5"
+3.to_f()             # => 3.0
+2.9.to_i()           # => 2, truncating toward zero
+7.abs()              # => 7; 1.5.abs() is 1.5
+2.7.floor()          # => 2
+2.1.ceil()           # => 3
+2.5.round()          # => 3, halves round away from zero
+2.345.round(1)       # => 2.3, a Float
+1234.5.round(-2)     # => 1200.0
+```
+
+`floor`, `ceil`, `round()`, and `to_i` return an `Int` and follow the same
+rules as the global `to_i`: `NaN` and `Infinity` raise a rescuable
+`RangeError`, and a value beyond 64 bits promotes to an arbitrary-precision
+`Int`. `round(digits)` takes an `Int` from -15 to 15 and returns a `Float`;
+because it scales by a power of ten, results inherit ordinary binary
+floating-point imprecision. `to_s`, `to_i`, `to_f`, and `abs` also work on
+`Int`s that have promoted past 64 bits. Unary minus binds after a method
+call, so `-2.5.round()` is `-(2.5.round())`; write `(0 - 2.5).round()` or
+use a variable for a negative receiver.
+
 `Int` has three block-consuming iteration methods, dispatched natively
 straight to ordinary prelude functions rather than through any class —
 `Int` isn't a class and can't be reopened:
