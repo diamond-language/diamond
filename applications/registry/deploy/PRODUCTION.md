@@ -4,9 +4,9 @@ The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
 The corrected A record is **142.93.192.149**. Caddy issued a publicly trusted
 HTTPS certificate, and external health and catalog requests succeeded.
 
-Runtime revision: `8f7481d638bb3d6504380c2d943902a50a5de54b` (upgraded
-2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, `518251b1`, and `c8c55b20`,
-from the launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
+Runtime revision: `822114807fbc9cbdd579f29fec4e0958da8b78df` (upgraded
+2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, `518251b1`, `c8c55b20`, and
+`8f7481d6`, from the launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
 flags. Only the current release is kept on the host; git is the rollback. Schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
 snapshot was taken immediately before the upgrade. Registry files live under
