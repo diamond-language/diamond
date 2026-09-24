@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Upgrade an installed registry to a new bundle by swapping the `current`
-# symlink. Take and verify a backup first. Schema migrations run on startup and
-# must be additive: a rollback restarts the previous binaries on the same data.
+# symlink. Take and verify a backup first. The previous release is kept only
+# until the new one passes its health check; after that, git is the rollback.
+# Schema migrations run on startup and must be additive.
 set -euo pipefail
 [[ $EUID == 0 && $# == 2 && "$2" =~ ^[0-9a-f]{64}$ ]] || {
     echo 'usage (as root): upgrade.sh <bundle.tar.gz> <sha256>' >&2; exit 64;
@@ -49,5 +50,7 @@ if ! healthy; then
     exit 1
 fi
 curl -fsS -H 'Host: cuts.dilang.tech' http://127.0.0.1:18121/health
+for old in "$base"/releases/*; do
+    [[ "$old" == "$release" ]] || rm -rf -- "$old"
+done
 printf '\nUpgraded registry from %s to %s.\n' "$(basename "$previous")" "$revision"
-printf 'The previous release remains under %s/releases for rollback.\n' "$base"

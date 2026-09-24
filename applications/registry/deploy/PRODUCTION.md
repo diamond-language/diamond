@@ -7,7 +7,7 @@ HTTPS certificate, and external health and catalog requests succeeded.
 Runtime revision: `c8c55b20a81379a6fac1655a6b5c8e9d350a586b` (upgraded
 2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22` and `518251b1`, from the
 launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
-flags. Both earlier releases remain under `releases/` for rollback; schema
+flags. Only the current release is kept on the host; git is the rollback. Schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
 snapshot was taken immediately before the upgrade. Registry files live under
 `/opt/diamond-registry/releases/<revision>` with a `current` symlink; application
@@ -48,6 +48,16 @@ External HTTPS verification confirmed exactly 18 catalog releases, 404 responses
 for each removed release's metadata and archive, and successful facet resolution,
 digest checks, loading, and locked reinstall of every retained cut. The revised
 seed also passed local reproducibility and dependency-closure checks.
+
+## Fit the existing proxy
+
+## Host disk and logs
+
+The droplet has 25 GB. As of 2026-09-24 the journal is capped at 100M (10M files,
+14 days) via `/etc/systemd/journald.conf.d/size.conf`; rsyslog and nginx logs
+rotate daily or at 10M, keeping 2 and 3 copies, with logrotate running hourly
+(`logrotate.timer.d/hourly.conf`). Do not keep old application binaries or
+releases on the host. Skindicate's uploads (~8.3G) are the largest real data.
 
 ## Fit the existing proxy
 
@@ -149,8 +159,8 @@ checksums, installs the dedicated service and loopback nginx layer, and backs up
 and validates Caddy configuration before reload. It refuses existing registry
 state. Upgrade an installed registry with
 `applications/registry/deploy/upgrade.sh <bundle.tar.gz> <sha256>` after a verified
-backup: it stages the release, swaps `current`, restarts, and restores the previous
-release if the health check fails.
+backup: it stages the release, swaps `current`, restarts, restores the previous
+release if the health check fails, and otherwise deletes older releases.
 It does not publish packages or configure backup destinations and alert delivery.
 
 For an explicitly approved new seed, use `tools/publish_registry_seed.py` with the
