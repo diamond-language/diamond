@@ -94,7 +94,8 @@ sandbox.
 - `packages/`: independently consumable Diamond libraries (HTTP, Rack-style
   middleware, Arel-style SQL builder, ActiveRecord-style ORM, GraphQL, ...)
 - `examples/`, `applications/`: runnable sample apps, from a two-table CRUD
-  app to a from-scratch GPT-style transformer
+  app and a WebSocket chat room to a standalone log-summary CLI and a
+  from-scratch GPT-style transformer
 - `fuzz/`: compiler and bytecode-execution fuzz targets
 - `bench/`: performance and GC evidence
 

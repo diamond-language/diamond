@@ -1,0 +1,7 @@
+{
+  "name": "chat",
+  "dependencies": {
+    "gremlin": {"registry": "https://cuts.dilang.tech", "version": "^0.2.2"},
+    "websocket": {"registry": "https://cuts.dilang.tech", "version": "^0.1.1"}
+  }
+}
