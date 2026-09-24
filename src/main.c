@@ -17,7 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "0.7.0";
+static constexpr char DIAMOND_VERSION[] = "0.8.0";
 
 static char *absolute_path(const char *path);
 

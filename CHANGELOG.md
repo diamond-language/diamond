@@ -6,6 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.8.0 — 2026-09-24
+
+Diamond remains pre-1.0. It has been exercised mainly on Fedora and Ubuntu
+(plus CI on FreeBSD, macOS, Alpine/musl, and arm64); treat it as unaudited
+for security-sensitive use.
+
+### Upgrade note
+
+- facet 0.7.0 rejects the `maintainers` field that every current cut on
+  cuts.dilang.tech declares, and the launch versions it could read have been
+  taken down. Upgrade to facet 0.8.0 to install cuts from the registry.
+
 ### Runtime
 
 - Bytecode caches (`.dic`) and the embedded compiled prelude are far smaller:
@@ -46,8 +58,20 @@ authoritative fine-grained record.
   unchanged for facet 0.7.0 compatibility.
 - All bundled cuts name Chad 'Matrix9180' Ingram as maintainer. The 18
   published cuts have new patch versions carrying it, and the seed inventory
-  now lists them. Production still serves
-  the launch versions.
+  now lists them. The launch versions, which predate the field, were taken
+  down on cuts.dilang.tech.
+- The cuts.dilang.tech catalog matches the dilang.tech design, lists one card
+  per cut (its newest unyanked release), and shows package sizes in KB/MB.
+- `upgrade.sh` upgrades an installed registry in place and keeps only the
+  current release on the host.
+
+### Examples
+
+- `examples/chat`: a browser chat room on gremlin and websocket, installed from
+  the registry via a committed `facet.lock`, with a supervised bot thread
+  talking to the server over Channels.
+- `examples/logstat`: a JSON-log summary CLI built as a standalone binary with
+  `diamond build`, showing sealed classes with exhaustive `case` and structs.
 
 ## 0.7.0 — 2026-09-23
 
