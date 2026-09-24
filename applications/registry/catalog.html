@@ -41,18 +41,8 @@ svg{display:block}
 .btn-sm{padding:7px 14px;font-size:14.5px}
 .btn:disabled{opacity:.5;cursor:default;transform:none}
 
-.hero{position:relative;overflow:hidden;padding:96px 0 80px}
-.hero-glow{position:absolute;inset:-20% -10% auto -10%;height:640px;background:radial-gradient(45% 55% at 25% 20%,rgba(79,70,229,.30),transparent 60%),radial-gradient(35% 45% at 75% 10%,rgba(34,211,238,.22),transparent 60%),radial-gradient(30% 40% at 50% 60%,rgba(59,130,246,.18),transparent 60%);pointer-events:none}
-.hero-facets{position:absolute;inset:0;opacity:.5;pointer-events:none;width:100%;height:100%}
-.hero .container{position:relative;z-index:1}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:15px;font-weight:600;letter-spacing:.02em;color:var(--cyan);background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.22);padding:6px 12px;border-radius:999px;margin-bottom:22px}
 .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
-.hero h1{font-size:clamp(2.2rem,4.4vw,3.4rem);line-height:1.08;letter-spacing:-.02em;margin:0 0 22px;font-weight:800;max-width:18ch}
-.grad{background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent}
-.lead{font-size:19px;color:var(--text-dim);max-width:56ch;margin:0 0 34px}
-.hero-ctas{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:34px}
-.hero-meta{display:flex;gap:22px;flex-wrap:wrap;font-size:15px;color:var(--text-faint)}
-.hero-meta strong{color:var(--text-dim);font-weight:600}
 
 section{padding:92px 0}
 .section-head{max-width:640px;margin:0 auto 44px;text-align:center}
@@ -60,6 +50,7 @@ section{padding:92px 0}
 .section-head h2{font-size:clamp(1.8rem,3vw,2.4rem);letter-spacing:-.02em;margin:0 0 14px;font-weight:800}
 .section-head p{color:var(--text-dim);font-size:18px;margin:0}
 .raised{background:var(--bg-raised)}
+#browse{padding-top:56px}
 .inline-code,p code,li code{font-size:.92em;color:var(--tok-fn);background:rgba(107,198,255,.08);padding:1px 5px;border-radius:4px}
 .prose a,.status a{color:var(--cyan);font-weight:600}
 
@@ -114,7 +105,7 @@ section{padding:92px 0}
 .footer-bottom{display:flex;justify-content:center;text-align:center;padding-top:28px;border-top:1px solid var(--border-soft);color:var(--text-faint);font-size:14.5px}
 
 @media (max-width:920px){.grid{grid-template-columns:repeat(2,1fr)}.footer-top{grid-template-columns:1fr 1fr}.nav-links a:not(.btn){display:none}}
-@media (max-width:680px){section{padding:64px 0}.hero{padding:56px 0}.grid{grid-template-columns:1fr}.footer-top{grid-template-columns:1fr}.nav-actions .btn-ghost{display:none}.logo-mark{width:40px;height:40px}.terminal{font-size:13.5px}}
+@media (max-width:680px){section{padding:64px 0}.grid{grid-template-columns:1fr}.footer-top{grid-template-columns:1fr}.nav-actions .btn-ghost{display:none}.logo-mark{width:40px;height:40px}.terminal{font-size:13.5px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
@@ -141,54 +132,17 @@ section{padding:92px 0}
     </a>
     <nav class="nav-links" aria-label="Primary">
       <a href="#browse">Browse</a>
-      <a href="#getting-started">Get started</a>
       <a href="#publishing">Publishing</a>
       <div class="nav-actions">
         <a class="btn btn-ghost btn-sm" href="https://dilang.tech">dilang.tech</a>
-        <a class="btn btn-primary btn-sm" href="#getting-started">Install a cut</a>
+        <a class="btn btn-primary btn-sm" href="#getting-started">Get started</a>
       </div>
     </nav>
   </div>
 </header>
 
 <main id="main">
-  <section class="hero">
-    <div class="hero-glow" aria-hidden="true"></div>
-    <svg class="hero-facets" viewBox="0 0 1200 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <linearGradient id="facetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#4f46e5"/>
-          <stop offset="100%" stop-color="#22d3ee"/>
-        </linearGradient>
-      </defs>
-      <g fill="none" stroke="url(#facetGrad)" stroke-width="1" opacity="0.35">
-        <polygon points="980,40 1120,140 1040,280 900,220"/>
-        <polygon points="1040,280 1120,140 1200,220 1160,360"/>
-        <polygon points="900,220 1040,280 980,400 840,340"/>
-        <polygon points="1040,280 1160,360 1080,460 980,400"/>
-        <polygon points="980,40 900,220 780,120 840,10"/>
-        <line x1="980" y1="40" x2="1040" y2="280"/>
-        <line x1="900" y1="220" x2="980" y2="400"/>
-      </g>
-    </svg>
-    <div class="container">
-      <span class="eyebrow"><span class="dot"></span> The Diamond package registry</span>
-      <h1>Small packages. <span class="grad">Reproducible</span> builds.</h1>
-      <p class="lead">Find reusable Diamond libraries, inspect their published releases, and install
-        them with <code class="inline-code">facet</code>. Every archive is pinned by SHA-256 in your lockfile.</p>
-      <div class="hero-ctas">
-        <a class="btn btn-primary" href="#browse">Browse cuts</a>
-        <a class="btn btn-ghost" href="#getting-started">Get started</a>
-      </div>
-      <div class="hero-meta">
-        <span><strong>Immutable</strong> versions</span>
-        <span><strong>SHA-256</strong> verified archives</span>
-        <span>Locked, <strong>reproducible</strong> installs</span>
-      </div>
-    </div>
-  </section>
-
-  <section id="browse" class="raised">
+  <section id="browse">
     <div class="container">
       <div class="section-head">
         <span class="eyebrow"><span class="dot"></span> Catalog</span>
@@ -205,7 +159,7 @@ section{padding:92px 0}
     </div>
   </section>
 
-  <section id="getting-started">
+  <section id="getting-started" class="raised">
     <div class="container">
       <div class="section-head">
         <span class="eyebrow"><span class="dot"></span> Get started</span>
@@ -229,7 +183,7 @@ section{padding:92px 0}
     </div>
   </section>
 
-  <section id="publishing" class="raised">
+  <section id="publishing">
     <div class="container">
       <div class="section-head">
         <span class="eyebrow"><span class="dot"></span> Publishing</span>
