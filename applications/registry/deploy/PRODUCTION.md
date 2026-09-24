@@ -17,7 +17,19 @@ Skindicate application's restricted `/opt/diamond` directory.
 The registry, nginx, and Caddy services are active and enabled. The registry runs
 as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
 Existing dilang.tech, skindicate.art, and modartist.app routes were checked after
-activation. Production reboot and certificate-renewal drills have not been run.
+activation.
+
+**Reboot drill, 2026-09-24:** after a verified snapshot, the host was rebooted at
+05:40:15Z and booted at 05:40:24Z. Caddy, nginx, `diamond-registry`, and
+`skindicate` started unattended with no failed units; the registry passed its
+loopback health check; all four sites returned their usual statuses externally;
+and `verify_registry_launch.py` reinstalled all 18 cuts. Outage was about 30 s.
+
+**Certificate renewal:** Caddy's ACME renewal-info checks run cleanly for all four
+names, with no TLS errors logged. No certificate has yet been renewed on this
+host; the first scheduled renewal is modartist.app around 2026-10-30, then
+dilang.tech (~11-17), skindicate.art (~11-18), and cuts.dilang.tech (~11-22),
+each expiring about a month later. Confirm the new expiry after the first one.
 
 The initial seed contained 24 cuts. At the operator's request, `dials`,
 `active_auth`, `active_discussion`, `active_karma`, `active_social`, and
@@ -71,9 +83,8 @@ headers. Validate the installed configuration and public traffic again on the ho
 - Automatic alerts are deferred by the operator as of 2026-09-23. Continue
   manual probes; selecting a receiver and verifying delivery is follow-up work,
   not a blocker for this release.
-- Perform a planned production reboot check and monitor certificate renewal.
-  Service enablement and a successfully issued certificate do not establish
-  evidence of those future events.
+- Reboot drill passed 2026-09-24 (above). Certificate renewal is scheduled but
+  not yet observed: check the modartist.app expiry after 2026-10-30.
 - Finalize 0.7 versus 0.8, release notes, tag, and announcement after verification.
 
 The catalog reads live published rows; the checked-in inventory records the

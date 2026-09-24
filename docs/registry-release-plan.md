@@ -54,8 +54,8 @@ The public registry and catalog are live at `https://cuts.dilang.tech` on the
 existing droplet. See the [production record](../applications/registry/deploy/PRODUCTION.md)
 for the installed revision, service layout, verification, and operational limits.
 The first manual laptop snapshot has passed restore verification. Automatic
-alerts are deferred by the operator. Diamond 0.7.0 is tagged. Production reboot
-and certificate-renewal drills were deferred past the release and remain outstanding.
+alerts are deferred by the operator. Diamond 0.7.0 is tagged. The production reboot drill passed on 2026-09-24; the
+first certificate renewal (~2026-10-30) remains to be confirmed.
 
 ## Public launch inventory
 
@@ -125,9 +125,9 @@ The selected version is 0.7.0.
   see the production record for its verification timestamp and retained state.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
   `monitor.py` probes remain available; automatic notification is not a release gate.
-- **Deferred past 0.7.0:** production reboot and certificate-renewal checks are
-  not yet scheduled. They are not release gates for 0.7.0 and remain outstanding
-  operational work.
+- **Deferred past 0.7.0, since resolved in part:** the production reboot drill
+  passed on 2026-09-24. The first certificate renewal (modartist.app, ~2026-10-30)
+  has not yet happened; confirm it afterwards.
 - [x] Choose 0.7.0 and finalize the release notes.
 - [x] Update `DIAMOND_VERSION` in `src/main.c` and move the selected Unreleased
   changelog entries under the version/date heading.
