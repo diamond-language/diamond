@@ -4,9 +4,9 @@ The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
 The corrected A record is **142.93.192.149**. Caddy issued a publicly trusted
 HTTPS certificate, and external health and catalog requests succeeded.
 
-Runtime revision: `518251b1c7f02ed19194fdaecc251dcdaa325157` (upgraded
-2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, from the launch revision
-`f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
+Runtime revision: `c8c55b20a81379a6fac1655a6b5c8e9d350a586b` (upgraded
+2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22` and `518251b1`, from the
+launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
 flags. Both earlier releases remain under `releases/` for rollback; schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
 snapshot was taken immediately before the upgrade. Registry files live under
@@ -22,7 +22,10 @@ activation. Production reboot and certificate-renewal drills have not been run.
 The initial seed contained 24 cuts. At the operator's request, `dials`,
 `active_auth`, `active_discussion`, `active_karma`, `active_social`, and
 `active_tagging` were subsequently unpublished through audited takedowns.
-The public launch inventory now contains **18 cuts**. No retained cut depends
+The public launch inventory now contains **18 cuts**. On 2026-09-24 each gained a
+patch release declaring `maintainers` (the current seed inventory), published with
+a one-hour name-scoped credential that was then revoked; the launch versions remain
+available. `verify_registry_launch.py` passed against the new inventory. No retained cut depends
 on the removed cuts. Takedowns hide metadata and archive downloads while retaining
 internal audit records and immutable version tombstones; those exact versions
 cannot be republished. The source packages remain in the repository.
