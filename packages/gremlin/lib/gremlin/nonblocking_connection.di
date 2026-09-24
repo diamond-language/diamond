@@ -4,6 +4,7 @@ class NonblockingConnection
     @buffer = ""
     @eof = false
     @want_write = false
+    @closed = false
     @deadline = nil
     @request_id = nil
     if limits != nil
@@ -15,6 +16,7 @@ class NonblockingConnection
   def deadline() = @deadline
   def request_id() = @request_id
   def socket() = @socket
+  def closed?() = @closed
 
   # Whether #write is currently mid-flight, blocked on a prior
   # WouldBlockError -- the caller's poll loop should only ask the OS for
@@ -102,7 +104,12 @@ class NonblockingConnection
     nil
   end
 
+  # Idempotent: another fiber (a WebSocket broadcast dropping a slow member,
+  # say) may close a connection whose own fiber is still parked on it.
   def close()
-    @socket.close()
+    unless @closed
+      @closed = true
+      @socket.close()
+    end
   end
 end

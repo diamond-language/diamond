@@ -84,9 +84,9 @@
         "logger": "^0.4.0"
       },
       "name": "gremlin",
-      "sha256": "2bd640bc96c700ddcc957c6e3e7a2b96e411ee1253834e41b4aeb40f9fe7b534",
-      "size": 43008,
-      "version": "0.2.1"
+      "sha256": "eec134bcbf3267f5e0ad30b483bba29d3d5b118a6c40e857fa4149f12b517202",
+      "size": 44544,
+      "version": "0.2.2"
     },
     {
       "archive": "jobs.tar",

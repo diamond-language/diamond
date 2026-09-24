@@ -420,4 +420,64 @@ status="${status:-0}"
 grep -q '"message":"server.shutdown_complete"' "$out"
 rm -f "$out" "$out.di"
 
-echo "16 gremlin tests passed"
+# Another connection's fiber may close a connection whose own fiber is still
+# parked waiting to read -- a WebSocket broadcast dropping a slow member does
+# exactly this (websocket_try_send_text's force_close). The worker must drop
+# that entry rather than hand a closed socket to IO.poll, which would raise
+# and take the whole server down.
+port=19420
+out="$(mktemp)"
+cat >"$out.di" <<SRCEOF
+require "$package_root/lib/gremlin"
+class Parked
+  def self.set(conn)
+    @@conn = conn
+  end
+  def self.close()
+    @@conn.close()
+  end
+end
+def run()
+  def handler(request, context)
+    if request["path"] == "/park"
+      Parked.set(context["gremlin_connection"])
+      context["gremlin_connection"].read(1)
+      nil
+    elsif request["path"] == "/close-parked"
+      Parked.close()
+      [200, {"Content-Type": "text/plain"}, "closed"]
+    else
+      [200, {"Content-Type": "text/plain"}, "hello, #{request["path"]}"]
+    end
+  end
+  gremlin_serve($port, handler)
+end
+run()
+SRCEOF
+timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 4<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n' >&4
+sleep 0.2
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /close-parked HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == *"closed" ]]
+sleep 0.2
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /survives HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+{ exec 4<&- 4>&-; } 2>/dev/null || true
+[[ "$response" == *"hello, /survives" ]]
+! grep -q 'cannot poll a closed' "$out"
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$out.di"
+
+echo "17 gremlin tests passed"

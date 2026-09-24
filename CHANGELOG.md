@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Packages
+
+- gremlin 0.2.2: a connection closed by another fiber while its own fiber was
+  parked (a WebSocket broadcast dropping a slow member) no longer crashes the
+  worker with "cannot poll a closed listener/socket"; its fiber is resumed so
+  the handler can clean up, then dropped. Shutdown no longer indexes an empty
+  poll result when no connections remain.
+
 ### Tooling
 
 - `make install PREFIX=...` installs the built tools and a prebuilt AOT kit.

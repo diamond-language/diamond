@@ -140,6 +140,29 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
     # own matching offset back out of GremlinShutdown.requested?()
     # rather than a captured local, for the same reason as everywhere
     # else in this function.
+    # A connection closed by another fiber while its own fiber was parked
+    # can't be polled: IO.poll rejects a closed socket and would take the whole
+    # worker down. Resume that fiber once so its pending read raises IOError
+    # and the handler can clean up, then drop the entry.
+    open_connections = []
+    index = 0
+    while index < connections.length()
+      entry = connections[index]
+      if entry["conn"].closed?()
+        if entry["fiber"].alive?()
+          begin
+            entry["fiber"].resume()
+          rescue error: StandardError
+            log.info("connection.closed_elsewhere", {"error": error.message()})
+          end
+        end
+      else
+        open_connections.push(entry)
+      end
+      index += 1
+    end
+    connections = open_connections
+
     read_list = if GremlinShutdown.requested?() then [] else [listener] end
     write_list = []
     # A connection only goes into write_list while its own #write is
@@ -217,7 +240,10 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
     # race, not a hypothetical one.
     newly_spawned = []
     accepted_this_tick = 0
-    if ready["readable"][0] && !GremlinShutdown.requested?()
+    # The listener sits at read_list[0] only while it was polled at all:
+    # read_list is empty once shutdown has begun and no connections remain.
+    listener_polled = read_list.length() > connections.length()
+    if listener_polled && ready["readable"][0] && !GremlinShutdown.requested?()
       begin
       loop do
         client_socket = listener.accept()
