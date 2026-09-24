@@ -16,8 +16,13 @@ Skindicate application's restricted `/opt/diamond` directory.
 
 The registry, nginx, and Caddy services are active and enabled. The registry runs
 as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
-Existing dilang.tech, skindicate.art, and modartist.app routes were checked after
-activation.
+The droplet's other sites (the Skindicate app on skindicate.art and
+modartist.app) were checked after activation.
+
+**Always address the host as `root@dilang.tech`** in Diamond tooling, scripts,
+and docs. The droplet currently also hosts Skindicate, which is expected to move
+to its own server; Diamond deployments must keep working when it does and must
+never target a Skindicate hostname.
 
 **Reboot drill, 2026-09-24:** after a verified snapshot, the host was rebooted at
 05:40:15Z and booted at 05:40:24Z. Caddy, nginx, `diamond-registry`, and
@@ -25,11 +30,11 @@ activation.
 loopback health check; all four sites returned their usual statuses externally;
 and `verify_registry_launch.py` reinstalled all 18 cuts. Outage was about 30 s.
 
-**Certificate renewal:** Caddy's ACME renewal-info checks run cleanly for all four
-names, with no TLS errors logged. No certificate has yet been renewed on this
-host; the first scheduled renewal is modartist.app around 2026-10-30, then
-dilang.tech (~11-17), skindicate.art (~11-18), and cuts.dilang.tech (~11-22),
-each expiring about a month later. Confirm the new expiry after the first one.
+**Certificate renewal:** Caddy's ACME renewal-info checks run cleanly, with no
+TLS errors logged. No certificate has yet been renewed on this host. The Diamond
+certificates are scheduled for dilang.tech around 2026-11-17 and
+cuts.dilang.tech around 2026-11-22, each expiring about a month later; confirm
+the new expiry after each.
 
 The initial seed contained 24 cuts. At the operator's request, `dials`,
 `active_auth`, `active_discussion`, `active_karma`, `active_social`, and
@@ -98,7 +103,8 @@ headers. Validate the installed configuration and public traffic again on the ho
   manual probes; selecting a receiver and verifying delivery is follow-up work,
   not a blocker for this release.
 - Reboot drill passed 2026-09-24 (above). Certificate renewal is scheduled but
-  not yet observed: check the modartist.app expiry after 2026-10-30.
+  not yet observed: check the dilang.tech expiry after 2026-11-17 and the
+  cuts.dilang.tech expiry after 2026-11-22.
 - Finalize 0.7 versus 0.8, release notes, tag, and announcement after verification.
 
 The catalog reads live published rows; the checked-in inventory records the
@@ -122,7 +128,7 @@ With Python 3.12+ on the laptop, select a new private destination yourself and u
 
 ```sh
 python3 tools/fetch_registry_backup.py /your/chosen/new-backup-directory \
-  --host root@modartist.app \
+  --host root@dilang.tech \
   --app /opt/diamond-registry/current/app \
   --data /var/lib/diamond-registry
 ```
