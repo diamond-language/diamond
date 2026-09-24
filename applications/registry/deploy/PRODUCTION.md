@@ -4,8 +4,12 @@ The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
 The corrected A record is **142.93.192.149**. Caddy issued a publicly trusted
 HTTPS certificate, and external health and catalog requests succeeded.
 
-Runtime revision: `f90c10bd5eddb8dc0faf8debf894934c89cf7c25`, built in the local
-Ubuntu 26.04 QEMU guest with x86-64-v3 release flags. Registry files live under
+Runtime revision: `518251b1c7f02ed19194fdaecc251dcdaa325157` (upgraded
+2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, from the launch revision
+`f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
+flags. Both earlier releases remain under `releases/` for rollback; schema
+migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
+snapshot was taken immediately before the upgrade. Registry files live under
 `/opt/diamond-registry/releases/<revision>` with a `current` symlink; application
 state is `/var/lib/diamond-registry`. This separate root avoids the existing
 Skindicate application's restricted `/opt/diamond` directory.
@@ -129,7 +133,10 @@ The QEMU guest must match Ubuntu 26.04 x86_64; the target CPU must support x86-6
 root-only initial-install helper for the existing Caddy host. It verifies bundle
 checksums, installs the dedicated service and loopback nginx layer, and backs up
 and validates Caddy configuration before reload. It refuses existing registry
-state; use a separately reviewed procedure for upgrades or a partial installation.
+state. Upgrade an installed registry with
+`applications/registry/deploy/upgrade.sh <bundle.tar.gz> <sha256>` after a verified
+backup: it stages the release, swaps `current`, restarts, and restores the previous
+release if the health check fails.
 It does not publish packages or configure backup destinations and alert delivery.
 
 For an explicitly approved new seed, use `tools/publish_registry_seed.py` with the
