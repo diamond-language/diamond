@@ -1,0 +1,21 @@
+9 lines, 2 unparsed
+
+Levels
+  debug          1
+  info           3
+  warn           2
+  error          1
+
+Requests: 4
+  2xx 2  3xx 0  4xx 1  5xx 1
+  latency ms  p50 1.5  p95 40.0  p99 40.0  max 40.0
+
+Top messages
+         4  registry request.completed
+         1  registry server.starting
+         1  gremlin request.rejected
+         1  jobs job.claimed
+
+Unparsed lines
+  line 6: not JSON
+  line 9: not a JSON object

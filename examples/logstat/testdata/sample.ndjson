@@ -1,0 +1,10 @@
+{"level":"info","tag":"registry","message":"server.starting","port":18120}
+{"request_id":"a","method":"GET","status":200,"duration_ms":1.5,"level":"info","tag":"registry","message":"request.completed"}
+{"request_id":"b","method":"GET","status":200,"duration_ms":2.25,"level":"info","tag":"registry","message":"request.completed"}
+{"request_id":"c","method":"POST","status":404,"duration_ms":0.75,"level":"warn","tag":"registry","message":"request.completed"}
+{"request_id":"d","method":"POST","status":503,"duration_ms":40,"level":"error","tag":"registry","message":"request.completed"}
+not json at all
+{"level":"warn","tag":"gremlin","message":"request.rejected","status":413}
+
+[1,2,3]
+{"level":"debug","tag":"jobs","message":"job.claimed"}
