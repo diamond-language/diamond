@@ -32,13 +32,17 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   with a trailing `.di` extension stripped (`app.di` -> `app`; no extension
   at all if `SOURCE` has none).
 - `--cc=COMPILER` overrides the C compiler used to link the binary (`gcc`,
-  `clang`, a full path, ...). Defaults to whatever `$(CC)` resolves to for
-  an ordinary `make` invocation in this checkout.
+  `clang`, a full path, ...). Defaults to the compiler recorded in the
+  installed AOT kit, or to whatever `$(CC)` resolves to for an ordinary
+  `make` invocation in a checkout.
 - A compile error (a real syntax/type/name error in `SOURCE` or anything it
   `require`s) prints the same diagnostic `diamond program.di` would and
   exits 65 -- the C compiler and `make` are never invoked in this case.
 - A `make`/link failure (a missing toolchain or system library) exits 74.
 - On success, prints `diamond: built 'OUTPUT'` and exits 0.
+- An installed `diamond` (see "Installed AOT kit" below) links with a single
+  compiler invocation against its prebuilt kit and needs neither this
+  checkout nor `make`. Without a kit it uses the checkout, as follows.
 - The compiler finds its own build checkout from the Diamond executable,
   while `SOURCE` and relative `OUTPUT` paths resolve from the caller's
   working directory. The checkout still supplies the C sources and
@@ -54,6 +58,28 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]
   Set `AOT_CACHE_ROOT` to an absolute path to keep the archive outside an
   ephemeral checkout; remove that directory explicitly when no longer
   needed. Container builds should key this path to their image/toolchain.
+
+## Installed AOT kit
+
+`make aot-kit` collects everything `diamond build` needs to link into
+`build/aot-kit/`: the runtime archive `libdiamond-aot.a` (compiled at `-O2`),
+`libreginold.a`, and one-argument-per-line files recording the compiler,
+compile flags, link flags, and Diamond version. `make install` copies the
+built tools to `PREFIX/bin` and the kit to `PREFIX/lib/diamond/aot`:
+
+```sh
+make release facet lsp dap
+make install PREFIX="$HOME/.local"
+```
+
+An installed `diamond build` finds the kit at `<bin>/../lib/diamond/aot`
+(`DIAMOND_AOT_KIT` overrides the location), refuses a kit recorded for a
+different Diamond version, and runs one `cc` command: the generated program
+data plus the two archives and the recorded link flags. It still needs a C23
+compiler with `#embed` support (GCC 15+ or Clang 19+) and the development
+libraries named in the link flags, but not the Diamond sources, headers, or
+`make`. The kit is specific to the platform and library versions it was built
+against.
 
 ## JIT in standalone programs
 

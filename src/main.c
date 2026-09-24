@@ -329,6 +329,137 @@ static int run_make_aot_build(const char *embed_path, const char *output_path,
     return 0;
 }
 
+/* Installed layout: <prefix>/bin/diamond with its prebuilt AOT kit (`make
+ * aot-kit`/`make install`) at <prefix>/lib/diamond/aot. $DIAMOND_AOT_KIT
+ * overrides the location. Returns nullptr when there is no kit, so a source
+ * checkout keeps using its Makefile. */
+static char *find_aot_kit(const char *argv0) {
+    const char *override = getenv("DIAMOND_AOT_KIT");
+    if (override != nullptr && override[0] != '\0') return absolute_path(override);
+    char *exe = executable_path(argv0);
+    if (exe == nullptr) return nullptr;
+    char *slash = strrchr(exe, '/');
+    if (slash != nullptr) *slash = '\0';
+    const size_t length = strlen(exe) + sizeof "/../lib/diamond/aot/libdiamond-aot.a";
+    char *kit = malloc(length);
+    if (kit == nullptr) { free(exe); return nullptr; }
+    snprintf(kit, length, "%s/../lib/diamond/aot/libdiamond-aot.a", exe);
+    free(exe);
+    char *resolved = realpath(kit, nullptr);
+    free(kit);
+    if (resolved == nullptr) return nullptr;
+    *strrchr(resolved, '/') = '\0';
+    return resolved;
+}
+
+static char *kit_path(const char *kit, const char *name) {
+    const size_t length = strlen(kit) + 1 + strlen(name) + 1;
+    char *path = malloc(length);
+    if (path != nullptr) snprintf(path, length, "%s/%s", kit, name);
+    return path;
+}
+
+/* Kit metadata files hold one argument per line; blank lines are ignored.
+ * Appends each line to `args` (capacity `capacity`), returning false if the
+ * file is unreadable or there is no room. The strings live in `*storage`. */
+static bool append_kit_lines(const char *kit, const char *name, char **args,
+        size_t *count, size_t capacity, char **storage) {
+    char *path = kit_path(kit, name);
+    char *text = path != nullptr ? read_file(path) : nullptr;
+    free(path);
+    if (text == nullptr) return false;
+    *storage = text;
+    for (char *line = strtok(text, "\n"); line != nullptr; line = strtok(nullptr, "\n")) {
+        if (line[0] == '\0') continue;
+        if (*count + 1 >= capacity) return false;
+        args[(*count)++] = line;
+    }
+    return true;
+}
+
+static int wait_for_child(pid_t child, const char *tool) {
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) {
+        fprintf(stderr, "diamond: waitpid failed: %s\n", strerror(errno));
+        return 74;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "diamond: %s failed\n", tool);
+        return 74;
+    }
+    return 0;
+}
+
+/* Links the generated embed-data file against a prebuilt kit with a single
+ * compiler invocation: no make, runtime sources, or headers are needed. */
+static int run_kit_aot_build(const char *kit, const char *embed_path,
+        const char *output_path, const char *cc_override) {
+    char *version_path = kit_path(kit, "version");
+    char *version = version_path != nullptr ? read_file(version_path) : nullptr;
+    free(version_path);
+    if (version == nullptr) {
+        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        return 74;
+    }
+    version[strcspn(version, "\n")] = '\0';
+    if (strcmp(version, DIAMOND_VERSION) != 0) {
+        fprintf(stderr, "diamond: AOT kit '%s' is for Diamond %s, not %s\n",
+                kit, version, DIAMOND_VERSION);
+        free(version);
+        return 74;
+    }
+    free(version);
+
+    enum { MAX_ARGS = 256 };
+    char *args[MAX_ARGS];
+    size_t count = 0;
+    char *cc_text = nullptr, *compile_text = nullptr, *link_text = nullptr;
+    char *runtime = kit_path(kit, "libdiamond-aot.a");
+    char *reginold = kit_path(kit, "libreginold.a");
+    int result = 74;
+    if (cc_override != nullptr) {
+        args[count++] = (char *)cc_override;
+    } else if (!append_kit_lines(kit, "cc", args, &count, 2, &cc_text) || count != 1) {
+        fprintf(stderr, "diamond: AOT kit '%s' does not name a compiler\n", kit);
+        goto done;
+    }
+    if (runtime == nullptr || reginold == nullptr ||
+        !append_kit_lines(kit, "compile.args", args, &count, MAX_ARGS, &compile_text) ||
+        count + 3 >= MAX_ARGS) {
+        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        goto done;
+    }
+    args[count++] = (char *)embed_path;
+    args[count++] = runtime;
+    args[count++] = reginold;
+    if (!append_kit_lines(kit, "link.args", args, &count, MAX_ARGS - 2, &link_text)) {
+        fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
+        goto done;
+    }
+    args[count++] = (char *)"-o";
+    args[count++] = (char *)output_path;
+    args[count] = nullptr;
+
+    const pid_t child = fork();
+    if (child < 0) {
+        fprintf(stderr, "diamond: fork failed: %s\n", strerror(errno));
+        goto done;
+    }
+    if (child == 0) {
+        execvp(args[0], args);
+        fprintf(stderr, "diamond: cannot exec '%s': %s\n", args[0], strerror(errno));
+        _exit(127);
+    }
+    result = wait_for_child(child, "link");
+done:
+    free(cc_text);
+    free(compile_text);
+    free(link_text);
+    free(runtime);
+    free(reginold);
+    return result;
+}
+
 /* `diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]` -- compiles SOURCE
  * exactly the way ordinary execution would (diamond_compile_source,
  * src/run_source.h), serializes the result, generates a temp embed-data
@@ -408,7 +539,11 @@ static int handle_build_command(int argc, char **argv) {
         return 74;
     }
 
-    const int status = run_make_aot_build(embed_path, output_path, cc, argv[0]);
+    char *kit = find_aot_kit(argv[0]);
+    const int status = kit != nullptr
+        ? run_kit_aot_build(kit, embed_path, output_path, cc)
+        : run_make_aot_build(embed_path, output_path, cc, argv[0]);
+    free(kit);
     unlink(bin_path);
     unlink(embed_path);
     if (status == 0) printf("diamond: built '%s'\n", output_path);

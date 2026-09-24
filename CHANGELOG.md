@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `make install PREFIX=...` installs the built tools and a prebuilt AOT kit.
+  An installed `diamond build` links against the kit with one compiler call
+  and no longer needs the Diamond checkout or `make`; checkouts without a kit
+  keep the existing Makefile path.
+
 - Publishable cut manifests now require `maintainers`: 1-8 public name and
   contact entries (email or `https://` URL). `facet check`, `pack`, and
   `publish` enforce it; `facet verify` still accepts older archives and its

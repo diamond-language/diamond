@@ -223,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build test-repl test-repl-completion fuzz test-fuzz test-cache clean
+.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -631,8 +631,46 @@ aot-build: $(AOT_RUNTIME_LIB)
 	$(CC) $(CPPFLAGS) $(AOT_CFLAGS) $(AOT_EMBED) \
 	    $(AOT_RUNTIME_LIB) $(LDLIBS) -o $(AOT_OUTPUT)
 
+# A prebuilt AOT kit lets an installed `diamond build` link without this
+# checkout or make: the runtime archive, reginold, and the exact compile and
+# link arguments (one per line) used to produce them. `diamond` uses a kit at
+# <bin>/../lib/diamond/aot (or $DIAMOND_AOT_KIT) and falls back to the
+# aot-build target above when none exists.
+AOT_KIT_DIR := $(BUILD_DIR)/aot-kit
+AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) \
+	-lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
+DIAMOND_VERSION := $(shell sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)
+
+.PHONY: aot-kit
+aot-kit: $(AOT_RUNTIME_LIB) $(REGINOLD_LIB)
+	@rm -rf $(AOT_KIT_DIR)
+	@mkdir -p $(AOT_KIT_DIR)
+	cp $(AOT_RUNTIME_LIB) $(REGINOLD_LIB) $(AOT_KIT_DIR)/
+	@printf '%s\n' '$(DIAMOND_VERSION)' > $(AOT_KIT_DIR)/version
+	@printf '%s\n' '$(CC)' > $(AOT_KIT_DIR)/cc
+	@printf '%s\n' $(AOT_CFLAGS) > $(AOT_KIT_DIR)/compile.args
+	@printf '%s\n' $(AOT_KIT_LINK_ARGS) > $(AOT_KIT_DIR)/link.args
+
+# Installs the tools that have been built plus the AOT kit. Build first, e.g.
+# `make release facet lsp dap && make install PREFIX=$HOME/.local`.
+PREFIX ?= /usr/local
+INSTALL_TOOLS := $(TARGET) $(BUILD_DIR)/facet $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/diamond-dap
+
+.PHONY: install
+install: aot-kit
+	@test -x $(TARGET) || { echo 'Build diamond first, e.g. make release' >&2; exit 1; }
+	mkdir -p $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/diamond/aot
+	for tool in $(INSTALL_TOOLS); do \
+		if [ -x "$$tool" ]; then cp "$$tool" $(DESTDIR)$(PREFIX)/bin/; fi; \
+	done
+	rm -rf $(DESTDIR)$(PREFIX)/lib/diamond/aot
+	cp -R $(AOT_KIT_DIR) $(DESTDIR)$(PREFIX)/lib/diamond/aot
+
 test-aot-cache: debug
 	bash tests/build_from_app_dir.sh
+
+test-aot-kit: debug
+	bash tests/aot_kit_test.sh
 
 test-repl: debug
 	bash tests/repl_test.sh
@@ -696,6 +734,7 @@ test-all:
 	$(MAKE) test-incremental-compile
 	$(MAKE) test-compiled-prelude
 	$(MAKE) test-aot-cache
+	$(MAKE) test-aot-kit
 	$(MAKE) test-fibers
 	$(MAKE) test-fiber-guards
 	$(MAKE) test-fiber-run
