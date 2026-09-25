@@ -98,6 +98,12 @@ none is planned. Every other Diamond control construct (`if`, `while`,
 literal, so `arr.each { |x| ... }` would collide with a bare Hash
 argument the way it does in Ruby.
 
+Inside a block, `next` (or `next value`) ends the current call of the block,
+the same as `return` does there: `.map() do |x| next 0 if x < 0; x end`.
+Inside a loop within the block, `next` continues that loop as usual. A
+block's inferred result type includes the values of any early `next` or
+`return`, not just its final expression.
+
 Block parameters are bare identifiers only — no `: Type` annotations, no
 `= default`. `do |x, y| ... end`, or `do ... end` with no parameters at
 all for a zero-arity block. A block captures every local visible at the

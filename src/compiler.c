@@ -200,6 +200,10 @@ typedef struct Compiler {
     bool has_index_provenance[DIAMOND_REGISTER_COUNT];
     uint16_t index_provenance_root[DIAMOND_REGISTER_COUNT];
     bool in_function;
+    /* True while compiling a `do ... end` block body (and not a def nested
+     * in one). There `next` outside any loop ends the block's current call,
+     * like `return`, instead of being an error. */
+    bool in_block;
     /* The explicit `&name` parameter for the function currently being
      * compiled. In that lexical context `yield(...)` invokes this Callable;
      * without one, yield retains its fiber-suspension meaning. */
@@ -3673,12 +3677,14 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     const uint16_t outer_next_register=compiler->next_register;
     const size_t outer_local_count=compiler->local_count;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_in_block=compiler->in_block;
     const size_t outer_begin_depth=compiler->begin_depth;
 
     compiler->function=function;
     compiler->next_register=0;
     compiler->local_count=0;
     compiler->in_function=true;
+    compiler->in_block=false;
     compiler->begin_depth=0;
 
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
@@ -3720,6 +3726,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;
     compiler->in_function=outer_in_function;
+    compiler->in_block=outer_in_block;
     compiler->begin_depth=outer_begin_depth;
 
     const uint16_t result=allocate_register(compiler);
@@ -7857,6 +7864,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const uint16_t outer_next_register=compiler->next_register;
     const size_t outer_local_count=compiler->local_count;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_in_block=compiler->in_block;
     uint8_t *outer_types=malloc(outer_next_register*sizeof *outer_types);
     int32_t *outer_type_sets=malloc(outer_next_register*sizeof *outer_type_sets);
     if((outer_types==nullptr||outer_type_sets==nullptr)&&outer_next_register>0) {
@@ -7869,6 +7877,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     const size_t outer_begin_depth=compiler->begin_depth;
     compiler->function=wrapper;compiler->next_register=0;
     compiler->local_count=0;compiler->in_function=true;
+    compiler->in_block=false;
     compiler->begin_depth=0;
     uint16_t arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
     const size_t argument_count=typed_wrapper?wrapper->arity:1;
@@ -7929,6 +7938,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
 
     compiler->function=outer_function;compiler->next_register=outer_next_register;
     compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
+    compiler->in_block=outer_in_block;
     compiler->begin_depth=outer_begin_depth;
     memcpy(compiler->known_types,outer_types,outer_next_register);
     memcpy(compiler->known_type_sets,outer_type_sets,
@@ -11802,6 +11812,12 @@ static uint16_t compile_retry(Compiler *compiler) {
 static uint16_t compile_loop_control(Compiler *compiler) {
     const DiamondTokenKind kind=compiler->current.kind;
     const DiamondSpan keyword=compiler->current.span;
+    /* `next` in a do-block, outside any loop inside that block, ends this
+     * call of the block -- with a value, if given -- which is exactly what
+     * `return` already does there. */
+    if(compiler->current_loop==nullptr&&kind==DIAMOND_TOKEN_NEXT&&
+       compiler->in_block)
+        return compile_return(compiler);
     if(compiler->current_loop==nullptr) {
         fail(compiler,keyword,kind==DIAMOND_TOKEN_BREAK
             ? "'break' used outside a loop":kind==DIAMOND_TOKEN_NEXT
@@ -11935,6 +11951,7 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_in_block=compiler->in_block;
     const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
@@ -12198,7 +12215,22 @@ static uint16_t compile_block(Compiler *compiler) {
     }
 
     compiler->in_function=true;
+    compiler->in_block=true;
     const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
+    if(!compiler->failed&&declared_return_set==DIAMOND_NO_TYPE_SET&&
+       compiler->return_flow_seen) {
+        /* An early `return`/`next` can hand back a different type than the
+         * body's final expression, so the block's inferred result is the
+         * union of both -- the same join compile_definition makes. The
+         * merge lands on body_result's own facts, which the inference
+         * below reads. */
+        uint8_t merged_type=TYPE_UNKNOWN;int32_t merged_set=-1;
+        merge_flow_types(compiler,compiler->known_types[body_result],
+            compiler->known_type_sets[body_result],compiler->return_flow_type,
+            compiler->return_flow_set,&merged_type,&merged_set);
+        compiler->known_types[body_result]=merged_type;
+        compiler->known_type_sets[body_result]=merged_set;
+    }
     if(!compiler->failed) {
         if(declared_return_set!=DIAMOND_NO_TYPE_SET) {
             emit_type_check(compiler,body_result,declared_return_set,
@@ -12266,6 +12298,7 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
+    compiler->in_block=outer_in_block;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
     compiler->current_block_type_set=outer_current_block_type_set;
@@ -12608,6 +12641,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_in_method = compiler->in_method;
     const bool outer_in_singleton_method = compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_in_block=compiler->in_block;
     const size_t outer_begin_depth=compiler->begin_depth;
     const bool outer_has_current_block=compiler->has_current_block;
     const uint16_t outer_current_block_register=
@@ -13175,6 +13209,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         function->return_type_set=(uint8_t)return_type;
     }
     compiler->in_function=true;
+    compiler->in_block=false;
     compiler->current_return_type=return_type;
     compiler->current_return_type_span=return_type_span;
     const bool endless=!compiler->failed&&
@@ -13334,6 +13369,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
+    compiler->in_block=outer_in_block;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
     compiler->current_block_type_set=outer_current_block_type_set;
@@ -14218,6 +14254,7 @@ static void compile_delegate(Compiler *compiler) {
     const bool outer_in_method=compiler->in_method;
     const bool outer_in_singleton_method=compiler->in_singleton_method;
     const bool outer_in_function=compiler->in_function;
+    const bool outer_in_block=compiler->in_block;
     const size_t outer_begin_depth=compiler->begin_depth;
     const int outer_return_type=compiler->current_return_type;
     const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
@@ -14270,6 +14307,7 @@ static void compile_delegate(Compiler *compiler) {
     compiler->in_method=true;
     compiler->in_singleton_method=false;
     compiler->in_function=false;
+    compiler->in_block=false;
     compiler->current_return_type=-1;
     compiler->current_return_type_span=(DiamondSpan){};
     compiler->current_exception=-1;
@@ -14391,6 +14429,7 @@ static void compile_delegate(Compiler *compiler) {
     compiler->in_method=outer_in_method;
     compiler->in_singleton_method=outer_in_singleton_method;
     compiler->in_function=outer_in_function;
+    compiler->in_block=outer_in_block;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->current_exception=outer_exception;
