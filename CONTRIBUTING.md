@@ -76,6 +76,7 @@ make test           # debug build + native/case suite -- run this before every c
 make test-lsp        # tests/lsp_test.sh, if lsp/ changed
 make test-repl        # tests/repl_test.sh, if src/repl.c changed
 make test-<package>   # e.g. make test-rack-package -- if one package changed
+make test-examples    # the standalone examples' smoke tests, if a language feature changed
 make test-all          # debug, release, sanitizers, packages, LSP, REPL, fuzz smoke,
                         # self-host bootstrap -- slow; CI runs this, not every local commit
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push

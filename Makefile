@@ -223,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-cache clean
 
 all: debug
 
@@ -686,6 +686,15 @@ test-repl: debug
 
 test-exit: debug
 	bash tests/exit_test.sh
+
+# The standalone example programs (examples/*/smoke_test.sh), each run
+# interpreted and as a `diamond build` binary. The web and chat examples
+# need databases or cuts and have their own instructions.
+EXAMPLE_SMOKE_TESTS := calc generators ledger logstat markdown parallel
+test-examples: debug
+	@for example in $(EXAMPLE_SMOKE_TESTS); do \
+		bash examples/$$example/smoke_test.sh || exit 1; \
+	done
 
 test-cache: debug
 	# The Makefile-wide DIAMOND_NO_CACHE=1 export above exists specifically
