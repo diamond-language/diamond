@@ -1,0 +1,43 @@
+opened 10 accounts
+power bill $187.00 split: $62.34 + $62.33 + $62.33 = $187.00
+16 entries posted
+
+Trial balance
+-------------
+asset: checking            $7,287.66
+asset: savings             $8,028.00
+liability: credit card       $246.09
+equity: opening balance    $9,500.00
+income: interest              $28.00
+income: salary            $12,600.00
+expense: dining              $103.68
+expense: groceries         $1,342.41
+expense: rent              $5,550.00
+expense: utilities            $62.34
+
+Net income by month
+-------------------
+2026-07                    $1,937.63
+2026-08                    $1,840.19
+2026-09                    $1,791.75
+
+Largest expenses
+----------------
+Sep 02 Rent                $1,850.00
+Aug 02 Rent                $1,850.00
+Jul 02 Rent                $1,850.00
+Sep 15 Groceries             $482.57
+Aug 15 Groceries             $447.47
+
+checking_balance: $7,287.66
+credit_card_balance: $246.09
+net worth: $15,069.57
+largest asset: savings (asset)
+
+unbalanced entry: UnbalancedEntry: 'Typo' is off by $90.00
+unknown account: UnknownAccount: no account named yacht
+mixed currencies: CurrencyMismatch: cannot combine USD with EUR
+unknown method: NoMethodError: undefined method 'checking_total' for Ledger
+ledger frozen? true, money frozen? true
+posting after close: FrozenError: frozen object cannot be modified
+still 16 entries
