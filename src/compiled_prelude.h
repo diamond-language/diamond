@@ -66,6 +66,7 @@ typedef struct DiamondCacheFingerprint {
     uint32_t builtin_class_count;
     uint32_t max_classes;
     uint32_t max_methods;
+    uint32_t build_id;
 } DiamondCacheFingerprint;
 
 /* Computes this build's own fingerprint fresh, from sizeof()/enum-count

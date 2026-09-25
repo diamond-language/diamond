@@ -13,6 +13,18 @@ authoritative fine-grained record.
   ``diamond 0.8.0 (debug build: unoptimized, much slower than `make release`)``.
   Those builds run Diamond code roughly 10x slower than `make release`.
   Release builds still print the bare version.
+- The bytecode cache no longer reuses a `.dic` written by a different
+  compiler. Its fingerprint only covered the file layout, so after a rebuild
+  or upgrade that changed code generation, an unchanged script kept running
+  bytecode from the old compiler. It now also includes a checksum of the
+  compiler's sources and prelude; existing caches recompile once.
+
+### Language
+
+- `self.private_method(args) do ... end` works. The trailing block made the
+  call look like one on an explicit receiver, so it raised "private method
+  called with an explicit receiver" while the same call without a block
+  worked.
 
 ### Registry
 

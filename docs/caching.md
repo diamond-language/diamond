@@ -31,9 +31,10 @@ Caching only ever skips the **compile** step (lexing, parsing, bytecode generati
 is no way around that without caching the load step separately, which this doesn't
 attempt.
 
-A `.dic` file that's missing, truncated, hand-edited, or was written by an
-incompatible build of `diamond` (a build fingerprint covering the exact struct layouts
-and opcode count the file format depends on is checked on every read) is treated
+A `.dic` file that's missing, truncated, hand-edited, or was written by a
+different build of `diamond` (a build fingerprint covering the exact struct layouts
+and opcode count the file format depends on, plus a checksum of the compiler's own
+sources and prelude, is checked on every read) is treated
 exactly like a cache miss: `diamond` falls back to a clean recompile and, on success,
 overwrites the stale file. This never crashes and never affects a script's own
 observable behavior -- caching is a pure optimization.

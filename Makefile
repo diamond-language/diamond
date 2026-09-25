@@ -269,6 +269,15 @@ $(REGINOLD_LIB):
 $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
 	$(CC) $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
 
+# The bytecode cache (docs/caching.md) must not reuse a .dic compiled by a
+# different compiler, even when the file format is unchanged. A checksum of
+# the compiler's sources and prelude goes into the cache fingerprint, and
+# compiled_prelude.o rebuilds whenever any of them change. cksum is POSIX,
+# so this works on every platform CI covers.
+DIAMOND_BUILD_ID := $(shell cat src/*.c src/*.h lib/core.di | cksum | cut -d' ' -f1)
+$(BUILD_DIR)/compiled_prelude.o: CPPFLAGS += -DDIAMOND_BUILD_ID=$(DIAMOND_BUILD_ID)u
+$(BUILD_DIR)/compiled_prelude.o: $(SOURCES) $(wildcard src/*.h) lib/core.di
+
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@

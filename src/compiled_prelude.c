@@ -483,8 +483,20 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
  * bytes actually go on disk" fact lives. */
 static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
 enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
-/* 2: string constants are length-prefixed instead of fixed 4KB records. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 2 };
+/* 2: string constants are length-prefixed instead of fixed 4KB records.
+ * 3: the fingerprint carries build_id. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 3 };
+
+/* A checksum of the compiler's own sources and prelude (every .c and .h
+ * file under src/, plus lib/core.di), passed in by the Makefile. The
+ * layout fields above only notice a change to the file format; a compiler
+ * fix that changes the bytecode generated for the same source leaves them
+ * all identical, and without this a rebuilt or upgraded `diamond` would
+ * keep running bytecode its predecessor compiled. A build that doesn't
+ * define it (a test harness compiling the sources directly) uses 0. */
+#ifndef DIAMOND_BUILD_ID
+#define DIAMOND_BUILD_ID 0u
+#endif
 
 DiamondCacheFingerprint diamond_cache_fingerprint(void) {
     return (DiamondCacheFingerprint){
@@ -497,6 +509,7 @@ DiamondCacheFingerprint diamond_cache_fingerprint(void) {
         .builtin_class_count=(uint32_t)DIAMOND_BUILTIN_CLASS_COUNT,
         .max_classes=(uint32_t)DIAMOND_MAX_CLASSES,
         .max_methods=(uint32_t)DIAMOND_MAX_METHODS,
+        .build_id=(uint32_t)DIAMOND_BUILD_ID,
     };
 }
 
@@ -514,6 +527,7 @@ static bool write_cache_fingerprint(FILE *file, const DiamondCacheFingerprint *f
     if (!write_all(file, &fingerprint->builtin_class_count, sizeof fingerprint->builtin_class_count)) return false;
     if (!write_all(file, &fingerprint->max_classes, sizeof fingerprint->max_classes)) return false;
     if (!write_all(file, &fingerprint->max_methods, sizeof fingerprint->max_methods)) return false;
+    if (!write_all(file, &fingerprint->build_id, sizeof fingerprint->build_id)) return false;
     return true;
 }
 
@@ -528,6 +542,7 @@ static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
     if (!read_bytes(cursor, end, &out->builtin_class_count, sizeof out->builtin_class_count)) return false;
     if (!read_bytes(cursor, end, &out->max_classes, sizeof out->max_classes)) return false;
     if (!read_bytes(cursor, end, &out->max_methods, sizeof out->max_methods)) return false;
+    if (!read_bytes(cursor, end, &out->build_id, sizeof out->build_id)) return false;
     return true;
 }
 
