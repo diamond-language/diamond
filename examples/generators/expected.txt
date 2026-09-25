@@ -1,0 +1,40 @@
+== infinite generators
+naturals:  0 1 2 3 4 5 6 7
+fibonacci: 0 1 1 2 3 5 8 13 21 34 55 89
+primes:    2 3 5 7 11 13 17 19 23 29 31 37 41 43 47
+fib(150):  9969216677189303386214405760200
+
+== lazy pipelines
+square palindromes: 1 4 9 121 484 676 10201
+palindromic primes: 11 101 131 151 181 191
+fibonacci < 100:    0 1 1 2 3 5 8 13 21 34 55 89
+  sum 232, evens 0,2,8,34
+  grouped by digits: {1: [0, 1, 1, 2, 3, 5, 8], 2: [13, 21, 34, 55, 89]}
+cubes = 1 (mod 7):  1 8 64 512 729
+
+== coroutines
+sample 10 -> running average 10.0
+sample 20 -> running average 15.0
+sample 60 -> running average 30.0
+sample 30 -> running average 30.0
+status: suspended
+word: fibers
+word: keep
+word: their
+word: place
+status: completed, alive? false
+resuming again: FiberError (cannot resume a fiber that is not runnable or suspended)
+
+== scheduler
+t=0 kettle: heating
+t=0 toaster: slice 1 in
+t=0 ticker: 1
+t=1 ticker: 2
+t=2 toaster: slice 2 in
+t=2 ticker: 3
+t=2 smoke alarm failed: false alarm
+t=3 kettle: boiled
+t=3 kettle finished -> tea
+t=3 ticker: 4
+t=4 toaster finished -> toast
+t=4 ticker finished -> 4
