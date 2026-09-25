@@ -112,9 +112,11 @@ section{padding:92px 0}
 .cut-head .version{font-size:15px;padding:4px 12px}
 .cut-summary{color:var(--text-dim);font-size:21px;margin:0 0 32px;max-width:60ch}
 .cut-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:32px;align-items:start}
+.cut-layout[hidden]{display:none}
 .panel{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px}
-.panel h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:0 0 14px;font-weight:700}
-.side{display:grid;gap:20px}
+.panel>h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:0 0 14px;font-weight:700}
+.side{display:grid;grid-template-columns:minmax(0,1fr);gap:20px;min-width:0}
+.panel{min-width:0}
 .side .panel p{margin:0 0 10px;color:var(--text-dim);font-size:17px}
 .side .panel p:last-child{margin-bottom:0}
 .side .panel a{color:var(--cyan);font-weight:600}
@@ -127,7 +129,7 @@ section{padding:92px 0}
 .readme ul,.readme ol{padding-left:1.4em}
 .readme li{margin:.25em 0}
 .readme a{color:var(--cyan);font-weight:600}
-.readme pre{background:var(--bg-raised);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:14px 16px;overflow-x:auto;font-size:15.5px;line-height:1.6;margin:0 0 1.2em}
+.readme pre{scrollbar-width:thin;scrollbar-color:var(--border) transparent;background:var(--bg-raised);border:1px solid var(--border-soft);border-radius:var(--radius-sm);padding:14px 16px;overflow-x:auto;font-size:15.5px;line-height:1.6;margin:0 0 1.2em}
 .readme code{font-size:.9em;color:var(--tok-fn);background:rgba(107,198,255,.08);padding:1px 5px;border-radius:4px}
 .readme pre code{background:none;padding:0;color:var(--text);font-size:inherit}
 .readme blockquote{border-left:3px solid var(--border);padding-left:14px;color:var(--text-dim)}
@@ -145,4 +147,4 @@ section{padding:92px 0}
 .versions .tag.latest{color:var(--cyan);background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25)}
 .versions .tag.yanked-tag{color:var(--warn);background:rgba(240,184,110,.08);border:1px solid rgba(240,184,110,.3)}
 .empty{color:var(--text-faint);font-style:italic}
-@media (max-width:920px){.cut-layout{grid-template-columns:1fr}}
+@media (max-width:920px){.cut-layout{grid-template-columns:minmax(0,1fr)}}

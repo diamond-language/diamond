@@ -81,7 +81,11 @@ function render() {
     return card;
   });
   document.querySelector('#releases').replaceChildren(...cards);
-  status.textContent = releases.length ? `${visible.length} matching releases of ${releases.length} loaded.` : 'No releases have been published yet.';
+  const plural = count => `${count} ${count === 1 ? 'cut' : 'cuts'}`;
+  const loaded = cursor === null ? '' : ' loaded';
+  if (!releases.length) status.textContent = 'No cuts have been published yet.';
+  else if (query) status.textContent = `${visible.length} matching ${visible.length === 1 ? 'cut' : 'cuts'} of ${plural(releases.length)}${loaded}.`;
+  else status.textContent = `${plural(releases.length)}${loaded}.`;
 }
 async function load() {
   more.disabled = true;
@@ -92,12 +96,12 @@ async function load() {
     releases.push(...page.releases);
     cursor = page.next_after;
     more.hidden = cursor === null;
-    more.textContent = 'Load more releases';
+    more.textContent = 'Load more cuts';
     render();
   } catch {
-    status.textContent = 'Could not load releases. Please retry.';
+    status.textContent = 'Could not load cuts. Please retry.';
     more.hidden = false;
-    more.textContent = 'Retry loading releases';
+    more.textContent = 'Retry loading cuts';
   } finally {
     more.disabled = false;
   }

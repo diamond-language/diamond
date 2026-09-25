@@ -187,11 +187,12 @@ function render(cut) {
 }
 
 async function load() {
+  document.querySelector('#cut-name').textContent = name;
+  document.querySelector('#crumb-name').textContent = name;
   status.textContent = 'Loading…';
   try {
     const response = await fetch(new URL(`catalog/${encodeURIComponent(name)}.json`, base));
     if (response.status === 404) {
-      document.querySelector('#cut-name').textContent = name;
       status.textContent = 'No published cut has this name.';
       return;
     }
