@@ -25,6 +25,7 @@ authoritative fine-grained record.
   optional value), as in Ruby. It used to be a compile error outside a
   loop. A block's inferred result type now also includes early
   `next`/`return` values.
+- `String#empty?`, matching `Array#empty?` and `Hash#empty?`.
 - `Hash#delete(key)` removes a key and returns its value, or `nil` when the
   key is absent. Hash previously had no way to remove an entry.
 - A program that fails with an uncaught exception while a spawned thread or

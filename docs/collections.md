@@ -79,7 +79,8 @@ whitespace, and `"nan"`/`"inf"` parse as `0.0`, matching Ruby's
 conversion), and
 `.reverse()` (byte-level, not UTF-8-grapheme-aware — consistent with
 the rest of the language having no other Unicode awareness), and
-`.strip()` (trims leading/trailing ASCII whitespace). `.split(separator)`
+`.strip()` (trims leading/trailing ASCII whitespace), and `.empty?()`
+(zero length, like Array's and Hash's own `empty?`). `.split(separator)`
 returns an `Array` of every piece around non-overlapping occurrences of
 `separator` (an empty `separator` splits into one-character strings);
 unlike Ruby, it keeps every piece including empty ones from consecutive

@@ -9043,6 +9043,7 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_STRING,"ord",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_STRING,"split",1,DIAMOND_TYPE_ARRAY},
     {DIAMOND_TYPE_STRING,"strip",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"empty?",0,DIAMOND_TYPE_BOOL},
     {DIAMOND_TYPE_STRING,"reverse",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"downcase",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"upcase",0,DIAMOND_TYPE_STRING},
@@ -19042,6 +19043,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             memcmp(method_name->chars,"parse_json",10)==0;
                         const DiamondString *source=
                             (const DiamondString *)registers[recv].as.object;
+                        /* Same name and meaning as Array#empty?/Hash#empty?. */
+                        if(method_name->length==6&&
+                           memcmp(method_name->chars,"empty?",6)==0) {
+                            if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            registers[dest]=DIAMOND_BOOL(source->length==0);break;
+                        }
                         if(parse_json_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             const size_t protect_mark=vm->gc_protected_count;
