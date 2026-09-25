@@ -49,7 +49,7 @@ if ! healthy; then
     healthy
     exit 1
 fi
-curl -fsS -H 'Host: cuts.dilang.tech' http://127.0.0.1:18121/health
+curl -fsS --resolve cuts.dilang.tech:443:127.0.0.1 https://cuts.dilang.tech/health
 for old in "$base"/releases/*; do
     [[ "$old" == "$release" ]] || rm -rf -- "$old"
 done

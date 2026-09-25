@@ -5,9 +5,10 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `822114807fbc9cbdd579f29fec4e0958da8b78df` (upgraded
-2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, `518251b1`, `c8c55b20`, and
-`8f7481d6`, from the launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
+Runtime revision: `26758cbfdd516860c21944d4bbfbcb2321947f18` (upgraded
+2026-09-25 with `deploy/upgrade.sh` for cut show pages, after a verified
+laptop snapshot; previously `822114807fbc9cbdd579f29fec4e0958da8b78df` from
+2026-09-24, launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
 flags. Only the current release is kept on the host; git is the rollback. Schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
 snapshot was taken immediately before the upgrade. Registry files live under
