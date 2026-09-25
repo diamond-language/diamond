@@ -1,4 +1,0 @@
-# Add this block to the existing Caddyfile; preserve existing sites.
-cuts.dilang.tech {
-    reverse_proxy 127.0.0.1:18121
-}

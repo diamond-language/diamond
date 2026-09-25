@@ -35,7 +35,7 @@ cp build/diamond build/facet payload/bin/
 cp applications/registry/{app.di,catalog.di,catalog.html,catalog.js,catalog.css,cut.html,cut.js,credentials.di,backup.py,monitor.py} payload/app/
 FACET_BIN="$PWD/build/facet" tools/install_local_cuts.sh payload/app
 python3 tools/prepare_registry_seed.py "$PWD/payload/seed" --expect docs/registry-launch-inventory.json
-cp applications/registry/deploy/{registry.service,registry.env.example,nginx-loopback.conf.example,Caddyfile.registry} payload/deploy/
+cp applications/registry/deploy/{registry.service,registry.env.example,nginx.conf.example,nginx-host.conf.example} payload/deploy/
 printf '%s\n' "$2" > payload/REVISION
 (cd payload && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > payload/SHA256SUMS
 tar -C payload -czf registry-deployment.tar.gz .

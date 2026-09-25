@@ -6,6 +6,17 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Registry
+
+- The cuts catalog has a show page per cut (`/cuts/<name>`): summary, rendered
+  README, install command, maintainers, dependencies, links, and every served
+  version newest first with yanked releases marked. Catalog type is larger.
+- `facet verify --json` also reports `summary`, `license`, and display links;
+  `facet verify --readme` prints a verified archive's README.
+- Deployment: nginx now terminates TLS directly with certbot certificates
+  (`nginx-host.conf.example` plus the registry's `nginx.conf.example`). The
+  Caddy site block and loopback nginx template are gone.
+
 ## 0.8.0 — 2026-09-24
 
 Diamond remains pre-1.0. It has been exercised mainly on Fedora and Ubuntu

@@ -1,0 +1,55 @@
+# Host-wide nginx configuration for the dilang.tech droplet: the port-80
+# ACME/redirect server, a TLS default that refuses unknown names, and the
+# static dilang.tech site. Installed as /etc/nginx/conf.d/00-common.conf and
+# dilang.conf; the registry block is nginx.conf.example (diamond-registry.conf).
+
+# Shared settings for every site on this host. TLS certificates come from
+# certbot (webroot /var/www/letsencrypt); renewal is certbot.timer plus
+# /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 1d;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    "" close;
+}
+
+# Port 80: ACME HTTP-01 challenges for renewal, everything else to HTTPS.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type text/plain;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Unknown hostnames on 443 are refused rather than served another site.
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    ssl_reject_handshake on;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name dilang.tech;
+    ssl_certificate /etc/letsencrypt/live/dilang.tech/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dilang.tech/privkey.pem;
+
+    root /var/www/dilang.tech;
+    index index.html;
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml text/plain text/xml;
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

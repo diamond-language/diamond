@@ -1,5 +1,7 @@
-# Include inside nginx's http {} context. Replace hostname and certificate paths.
-# This example serves REGISTRY_BASE="" on a dedicated hostname.
+# cuts.dilang.tech: nginx terminates TLS directly (certbot certificate).
+# Serves REGISTRY_BASE="" on a dedicated hostname.
+# TLS protocol/session settings and the port-80 ACME server live in
+# nginx-host.conf.example; certificates come from certbot (webroot).
 map $request_method $registry_write_key {
     default $binary_remote_addr;
     GET "";
@@ -15,10 +17,11 @@ log_format registry_json escape=json
 
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name cuts.dilang.tech;
-    ssl_certificate /etc/ssl/registry/fullchain.pem;
-    ssl_certificate_key /etc/ssl/registry/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate /etc/letsencrypt/live/cuts.dilang.tech/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cuts.dilang.tech/privkey.pem;
     access_log /var/log/nginx/registry-access.log registry_json;
     # nginx error logs can contain request URLs: restrict access and retention.
     error_log /var/log/nginx/registry-error.log warn;

@@ -40,7 +40,7 @@ if [[ "$2" == all ]]; then
     make test-registry-http
 fi
 if [[ "$2" == all || "$2" == proxy ]]; then
-    REGISTRY_PROXY_CHAIN=1 python3 packages/registry/nginx_test.py
+    python3 packages/registry/nginx_test.py
 fi
 if [[ "$2" == all || "$2" == systemd ]]; then
     sudo -n env REGISTRY_QEMU_STAGING=1 python3 packages/registry/systemd_test.py

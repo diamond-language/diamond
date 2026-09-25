@@ -1,8 +1,9 @@
 # cuts.dilang.tech production record
 
 The public registry is live at **https://cuts.dilang.tech** as of 2026-09-23.
-The corrected A record is **142.93.192.149**. Caddy issued a publicly trusted
-HTTPS certificate, and external health and catalog requests succeeded.
+The corrected A record is **142.93.192.149**. External health and catalog
+requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
+certificates (see "Proxy and certificates" below); Caddy was retired.
 
 Runtime revision: `822114807fbc9cbdd579f29fec4e0958da8b78df` (upgraded
 2026-09-24 with `deploy/upgrade.sh`, via `c93b7f22`, `518251b1`, `c8c55b20`, and
@@ -14,7 +15,7 @@ snapshot was taken immediately before the upgrade. Registry files live under
 state is `/var/lib/diamond-registry`. This separate root avoids the existing
 Skindicate application's restricted `/opt/diamond` directory.
 
-The registry, nginx, and Caddy services are active and enabled. The registry runs
+The registry and nginx services are active and enabled. The registry runs
 as `diamond-registry` with `ProtectSystem=strict` and `NoNewPrivileges=yes`.
 The droplet's other sites (the Skindicate app on skindicate.art and
 modartist.app) were checked after activation.
@@ -25,16 +26,18 @@ to its own server; Diamond deployments must keep working when it does and must
 never target a Skindicate hostname.
 
 **Reboot drill, 2026-09-24:** after a verified snapshot, the host was rebooted at
-05:40:15Z and booted at 05:40:24Z. Caddy, nginx, `diamond-registry`, and
+05:40:15Z and booted at 05:40:24Z. Caddy (since retired), nginx, `diamond-registry`, and
 `skindicate` started unattended with no failed units; the registry passed its
 loopback health check; all four sites returned their usual statuses externally;
 and `verify_registry_launch.py` reinstalled all 18 cuts. Outage was about 30 s.
 
-**Certificate renewal:** Caddy's ACME renewal-info checks run cleanly, with no
-TLS errors logged. No certificate has yet been renewed on this host. The Diamond
-certificates are scheduled for dilang.tech around 2026-11-17 and
-cuts.dilang.tech around 2026-11-22, each expiring about a month later; confirm
-the new expiry after each.
+**Certificate renewal:** certbot's `certbot.timer` renews each certificate about
+30 days before expiry through the `/var/www/letsencrypt` webroot, and
+`/etc/letsencrypt/renewal-hooks/deploy/reload-nginx` reloads nginx afterwards.
+The certificates issued 2026-09-25 expire 2026-12-24, so the first real renewals
+are due around 2026-11-24. `certbot renew --dry-run --no-random-sleep-on-renew`
+succeeded for all four names on 2026-09-25; confirm the new expiry
+(`certbot certificates`) after the first real renewal.
 
 The initial seed contained 24 cuts. At the operator's request, `dials`,
 `active_auth`, `active_discussion`, `active_karma`, `active_social`, and
@@ -58,8 +61,6 @@ for each removed release's metadata and archive, and successful facet resolution
 digest checks, loading, and locked reinstall of every retained cut. The revised
 seed also passed local reproducibility and dependency-closure checks.
 
-## Fit the existing proxy
-
 ## Host disk and logs
 
 The droplet has 25 GB. As of 2026-09-24 the journal is capped at 100M (10M files,
@@ -68,28 +69,28 @@ rotate daily or at 10M, keeping 2 and 3 copies, with logrotate running hourly
 (`logrotate.timer.d/hourly.conf`). Do not keep old application binaries or
 releases on the host. Skindicate's uploads (~8.3G) are the largest real data.
 
-## Fit the existing proxy
+## Proxy and certificates
 
-Keep Caddy on ports 80 and 443. `Caddyfile.registry` is an additive site block;
-it must be merged with, not replace, the existing Caddyfile. Caddy handles
-[automatic HTTPS and certificate renewal](https://caddyserver.com/docs/automatic-https).
-Verify the issued certificate and external probe after activation and monitor
-expiry and renewal errors; merely enabling Caddy is not a renewal drill.
+nginx owns ports 80 and 443 for every site on the host: skindicate.art,
+modartist.app (a redirect), dilang.tech (static files), and cuts.dilang.tech.
+Files in `/etc/nginx/conf.d/`:
 
-Use `nginx-loopback.conf.example` inside nginx's `http` context. It listens only
-on 127.0.0.1:18121 and applies the same upload/read/write policy as the directly
-terminated HTTPS template. Disable nginx's default public listener before starting
-it: Caddy already owns 80/443. The registry stays on port 18120. Do not open either
-backend port in the host firewall.
+- `00-common.conf` (from `nginx-host.conf.example`): TLS settings, the port-80
+  server that answers ACME HTTP-01 challenges from `/var/www/letsencrypt` and
+  redirects everything else to HTTPS, and a TLS default that refuses unknown names.
+- `dilang.conf` (also in `nginx-host.conf.example`): the static dilang.tech site.
+- `diamond-registry.conf` (from `nginx.conf.example`): cuts.dilang.tech with the
+  upload/read/write rate limits and request buffering.
+- `skindicate.conf`: Skindicate's own sites, kept in that application's repository.
 
-The loopback nginx layer trusts forwarded client identity only from 127.0.0.1.
-Caddy's default reverse proxy behavior
-[replaces untrusted incoming forwarded headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
-Do not add broad trusted-proxy networks or expose the intermediate nginx listener.
-Validate the complete configuration with `nginx -t` and `caddy validate` before
-reload. The complete Caddy → nginx → registry chain passed in QEMU on 2026-09-23,
-including HTTPS publishing/installing and rate limits under spoofed forwarded-IP
-headers. Validate the installed configuration and public traffic again on the host.
+Each hostname has its own certbot certificate (`certbot certificates`). To add a
+hostname, point DNS at the host, run `certbot certonly --webroot -w
+/var/www/letsencrypt -d <name> --cert-name <name>`, then add its server block.
+Validate with `nginx -t` before `systemctl reload nginx`. Client identity for
+rate limits is the TCP peer; no forwarded headers are trusted. The registry stays
+on port 18120 and Skindicate on 18110; the host firewall allows only SSH, 80, and
+443. Caddy is installed but stopped and disabled; its last configuration and the
+pre-migration nginx/Caddy configs are in `/root/proxy-migration-20260925T050335Z`.
 
 ## Remaining inputs and checks
 
@@ -102,9 +103,8 @@ headers. Validate the installed configuration and public traffic again on the ho
 - Automatic alerts are deferred by the operator as of 2026-09-23. Continue
   manual probes; selecting a receiver and verifying delivery is follow-up work,
   not a blocker for this release.
-- Reboot drill passed 2026-09-24 (above). Certificate renewal is scheduled but
-  not yet observed: check the dilang.tech expiry after 2026-11-17 and the
-  cuts.dilang.tech expiry after 2026-11-22.
+- Reboot drill passed 2026-09-24 (above). certbot renewal is scheduled and
+  dry-run tested but not yet observed: check the expiries after 2026-11-24.
 - Finalize 0.7 versus 0.8, release notes, tag, and announcement after verification.
 
 The catalog reads live published rows; the checked-in inventory records the
@@ -164,9 +164,9 @@ seed, and produces `registry-deployment.tar.gz`, `SHA256SUMS`, and `REVISION`.
 The QEMU guest must match Ubuntu 26.04 x86_64; the target CPU must support x86-64-v3.
 
 `applications/registry/deploy/install_initial.sh <bundle.tar.gz> <sha256>` is a
-root-only initial-install helper for the existing Caddy host. It verifies bundle
-checksums, installs the dedicated service and loopback nginx layer, and backs up
-and validates Caddy configuration before reload. It refuses existing registry
+root-only initial-install helper for the nginx host. It verifies bundle
+checksums, installs the dedicated service and the registry's nginx server block,
+and removes that block again if `nginx -t` or the reload fails. It refuses existing registry
 state. Upgrade an installed registry with
 `applications/registry/deploy/upgrade.sh <bundle.tar.gz> <sha256>` after a verified
 backup: it stages the release, swaps `current`, restarts, restores the previous

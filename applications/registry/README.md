@@ -224,9 +224,11 @@ most 100 cuts, with `next_after` as an ascending cut-ID cursor. Search filters t
 to search additional pages. The catalog uses text rendering for metadata and a
 same-origin script policy. It contains no publishing credential or administration UI.
 
-Keep `catalog.di`, `catalog.html`, and `catalog.js` beside `app.di` when deploying.
+Keep `catalog.di`, `catalog.html`, `catalog.js`, `catalog.css`, `cut.html`, and
+`cut.js` beside `app.di` when deploying. `/cuts/<name>` is a cut's show page
+(README, install command, and version history), backed by `catalog/<name>.json`.
 `REGISTRY_BASE` prefixes the catalog and its assets as well as the API. Install
 commands use the catalog's origin/base; the public quickstart uses cuts.dilang.tech.
-See [production preparation](deploy/PRODUCTION.md) for the existing Caddy droplet
+See [production preparation](deploy/PRODUCTION.md) for the nginx host
 integration and unresolved launch inputs. Providing the hostname in docs does not
 mean the public service is deployed.

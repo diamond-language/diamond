@@ -2,8 +2,9 @@
 
 ## Proxy configuration
 
-Use `nginx.conf.example` in the proxy's `http` context on a dedicated hostname.
-Replace the hostname and certificate paths. The example assumes an empty
+Use `nginx.conf.example` in the proxy's `http` context on a dedicated hostname,
+together with `nginx-host.conf.example` (TLS settings and the port-80 ACME
+challenge/redirect server). Replace the hostname and certificate paths. The example assumes an empty
 `REGISTRY_BASE`; a nonempty base must match the application's public URL. Forward
 that prefix unchanged. Run `nginx -t` on the deployment host before reloading.
 The template is not installed automatically.
@@ -170,15 +171,13 @@ This service drill uses HTTP inside the isolated guest; the nginx gate separatel
 covers HTTPS. Production reboot activation, host firewall, DNS, certificate
 renewal, and external alert delivery remain deployment checks.
 
-## Existing Caddy host and manual laptop backups
+## Production host and manual laptop backups
 
-The selected production endpoint is `https://cuts.dilang.tech`. The existing host
-uses Caddy; see [production preparation](PRODUCTION.md) for its additive site
-block and loopback nginx configuration. `tools/test_registry_vm.sh proxy` tests
-Caddy → nginx → registry with a verified local certificate, actual facet workflows,
-and forged forwarded-IP headers. Install Caddy in the QEMU guest first. The test
-uses temporary ports and state and does not rely on the guest's default Caddy unit.
-The default `all` gate includes this proxy-chain drill.
+The selected production endpoint is `https://cuts.dilang.tech`. nginx terminates
+TLS for every site on the host, with certbot certificates; see [production
+preparation](PRODUCTION.md). `tools/test_registry_vm.sh proxy` runs the nginx
+template against a verified local certificate with actual facet workflows and
+forged forwarded-IP headers. The default `all` gate includes it.
 
 Launch publishing is operator-approved with scoped credentials. The current
 backup preference is manual download to the laptop; the verified-download helper
