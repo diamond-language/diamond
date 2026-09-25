@@ -343,7 +343,11 @@ API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 PRELUDE_BIN := $(BUILD_DIR)/compiled_prelude.bin
 GEN_PRELUDE_SOURCES := $(filter-out src/compiled_prelude_data.c src/run_source.c,$(API_SOURCES))
 
-$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) $(REGINOLD_LIB)
+# lib/core.di too: src/prelude.c #embeds it, and this generator compiles
+# the sources directly, so no .d file records that dependency. Without it,
+# editing the prelude left compiled_prelude.bin -- the prelude bytecode
+# every diamond binary actually runs -- stale.
+$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) lib/core.di $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_PRELUDE_SOURCES) $< $(LDLIBS) -o $@
 
