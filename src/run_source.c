@@ -161,6 +161,7 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
         const char *detail=diamond_vm_error(&vm);
         fprintf(stderr, "%s: runtime error: %s\n", name,
                 detail != nullptr ? detail : diamond_vm_status_name(status));
+        diamond_vm_exit_if_threads_running(70);
         diamond_vm_free(&vm);
         free(owned_buffer);
         diamond_source_bundle_free(bundle);

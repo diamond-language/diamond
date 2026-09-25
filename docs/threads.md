@@ -29,6 +29,13 @@ Diamond does not support detached or fire-and-forget threads. If an unjoined
 Thread becomes unreachable, garbage collection waits for it to finish before
 reclaiming its resources.
 
+The one exception is a program that fails: if the main program ends with an
+uncaught exception while any spawned thread or supervised child is still
+running, Diamond reports the error and exits with status 70 immediately, the
+way `exit()` does, rather than waiting for workers that may never finish
+(for example, one blocked sending to a channel only the failed program
+would have drained).
+
 ## Isolated heaps
 
 Every spawned thread has its own VM and heap. Threads do not share mutable

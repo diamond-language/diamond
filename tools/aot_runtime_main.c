@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
         return 74;
     }
 
+    diamond_vm_set_exit_on_threaded_failure(true);
     DiamondVm vm;
     diamond_vm_init(&vm);
     diamond_vm_configure_jit_from_env(&vm);
@@ -53,6 +54,7 @@ int main(int argc, char **argv) {
     if (status != DIAMOND_VM_OK) {
         fprintf(stderr, "%s: %s\n", argv[0],
             vm.error[0] != '\0' ? vm.error : diamond_vm_status_name(status));
+        diamond_vm_exit_if_threads_running(70);
         diamond_vm_free(&vm);
         diamond_program_free(program);
         free(program);

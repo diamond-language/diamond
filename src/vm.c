@@ -2771,6 +2771,33 @@ static DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,DiamondFiber *fib
 enum { DIAMOND_MAX_THREADS = 64 };
 static atomic_size_t diamond_active_thread_count = 0;
 
+/* OS threads currently running Diamond code: Thread.new workers and
+ * supervised children, counted from just before pthread_create until their
+ * entry function returns. Unlike diamond_active_thread_count, a finished
+ * but not yet reaped thread doesn't count. See diamond_vm_running_threads. */
+static atomic_size_t diamond_running_thread_count = 0;
+
+size_t diamond_vm_running_threads(void) {
+    return atomic_load(&diamond_running_thread_count);
+}
+
+/* Off unless the process owner turns it on: an embedder running many
+ * programs in one process (tests/run_cases.c) must not be exited by one of
+ * them. */
+static atomic_bool diamond_exit_on_threaded_failure = false;
+
+void diamond_vm_set_exit_on_threaded_failure(bool enabled) {
+    atomic_store(&diamond_exit_on_threaded_failure,enabled);
+}
+
+void diamond_vm_exit_if_threads_running(int status) {
+    if(!atomic_load(&diamond_exit_on_threaded_failure))return;
+    if(atomic_load(&diamond_running_thread_count)==0)return;
+    fflush(stdout);
+    fflush(stderr);
+    exit(status);
+}
+
 /* run_chunk's deliberately fixed-size interpreter frame is large (see the
  * native-recursion-limit comment near the top of this file), so libc's
  * pthread default is part of the VM's effective call-depth contract unless
@@ -2791,7 +2818,13 @@ static int create_vm_thread(pthread_t *handle,
     int status=pthread_attr_init(&attributes);
     if(status!=0)return status;
     status=pthread_attr_setstacksize(&attributes,DIAMOND_VM_THREAD_STACK_SIZE);
-    if(status==0)status=pthread_create(handle,&attributes,entry,argument);
+    if(status==0) {
+        /* Counted before the thread can possibly finish, and uncounted by
+         * the entry function itself on its way out. */
+        atomic_fetch_add(&diamond_running_thread_count,1);
+        status=pthread_create(handle,&attributes,entry,argument);
+        if(status!=0)atomic_fetch_sub(&diamond_running_thread_count,1);
+    }
     pthread_attr_destroy(&attributes);
     return status;
 }
@@ -2905,6 +2938,7 @@ static void *thread_entry_trampoline(void *argument) {
         thread->result=run_result;
     }
     atomic_store(&thread->finished,true);
+    atomic_fetch_sub(&diamond_running_thread_count,1);
     return nullptr;
 }
 
@@ -3097,6 +3131,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         nanosleep(&delay,nullptr);
     }
     atomic_fetch_sub(&diamond_active_thread_count,1);
+    atomic_fetch_sub(&diamond_running_thread_count,1);
     return nullptr;
 }
 

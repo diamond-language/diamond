@@ -21,6 +21,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- A program that fails with an uncaught exception while a spawned thread or
+  supervised child is still running now exits with status 70 right away.
+  It used to wait for every thread first, and hung forever when one was
+  blocked on a channel. Applies to `diamond build` binaries too.
 - `self.private_method(args) do ... end` works. The trailing block made the
   call look like one on an explicit receiver, so it raised "private method
   called with an explicit receiver" while the same call without a block

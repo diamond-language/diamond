@@ -1774,6 +1774,24 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
                                DiamondValue *result);
 const char *diamond_vm_status_name(DiamondVmStatus status);
 const char *diamond_vm_error(const DiamondVm *vm);
+
+/* How many spawned OS threads (Thread.new workers and supervised children)
+ * are still running Diamond code, process-wide. */
+size_t diamond_vm_running_threads(void);
+
+/* Lets diamond_vm_exit_if_threads_running below actually exit. Only a
+ * process that runs exactly one program -- the `diamond` CLI and `diamond
+ * build` binaries -- should enable it. */
+void diamond_vm_set_exit_on_threaded_failure(bool enabled);
+
+/* For a program that has already failed and reported its error: if exiting
+ * is enabled and any spawned thread is still running, flush stdio and exit
+ * the process with `status` now; otherwise return so the caller can clean
+ * up normally.
+ * Freeing the VM joins every thread it spawned, and after a failure that
+ * can wait forever -- a worker blocked sending to a channel the dead main
+ * program would have drained. Exiting is what exit() already does. */
+void diamond_vm_exit_if_threads_running(int status);
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
                                      uint8_t arity,uint8_t *return_type);
 /* Writes `value`'s bare runtime type name ("String", "Int", "Tensor", a

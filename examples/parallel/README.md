@@ -49,13 +49,8 @@ Everything a thread runs lives in `lib/work.di` as a plain top-level
 `def` with no captures, which is what `Thread.new` and
 `Supervisor#add_child` require.
 
-Two things to know when writing code like this:
-
-- `Channel` (like `Thread`, `Fiber`, and `Time`) has no type name, so its
-  parameters stay unannotated.
-- If the main thread dies with an uncaught exception while a worker is
-  blocked on a channel, the process waits for that worker forever. Close
-  channels (or call `exit`) on failure paths.
+`Channel` (like `Thread`, `Fiber`, and `Time`) has no type name, so those
+parameters stay unannotated.
 
 ## Test
 

@@ -7,6 +7,7 @@
 #include "compiler.h"
 #include "repl.h"
 #include "run_source.h"
+#include "vm.h"
 
 #include <errno.h>
 #include <stdint.h>
@@ -613,6 +614,9 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "build") == 0) {
         return handle_build_command(argc, argv);
     }
+    /* This process runs one program, so a failed program with threads
+     * still running may exit instead of waiting on them (see vm.h). */
+    diamond_vm_set_exit_on_threaded_failure(true);
     if (argc >= 3 && strcmp(argv[1], "-e") == 0) {
         return diamond_run_source("-e", argv[2], false, argc - 3, argv + 3);
     }

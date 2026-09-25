@@ -70,4 +70,34 @@ set -e
 [[ "$error_output" == *"exit code must be an Int"* ]]
 count=$((count + 1))
 
+# --- an uncaught exception exits promptly even while a thread is still
+# running: here the worker is blocked forever sending to a full channel
+# nobody will drain, and joining it on teardown used to hang ---
+blocked_worker='def fill(ch)
+  loop do ch.send(1) end
+end
+ch = Channel.new(1)
+worker = Thread.new(fill, ch)
+raise ArgumentError.new("main failed")'
+set +e
+error_output="$(timeout 20 "$diamond" -e "$blocked_worker" 2>&1)"
+status=$?
+set -e
+[[ "$status" == 70 ]]
+[[ "$error_output" == *"main failed"* ]]
+count=$((count + 1))
+
+# --- ...and a failure with no thread left running still cleans up and
+# exits normally ---
+set +e
+error_output="$("$diamond" -e 'def work() = 1
+t = Thread.new(work)
+t.join()
+raise ArgumentError.new("after join")' 2>&1)"
+status=$?
+set -e
+[[ "$status" == 70 ]]
+[[ "$error_output" == *"after join"* ]]
+count=$((count + 1))
+
 echo "$count exit tests passed"
