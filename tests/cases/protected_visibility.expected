@@ -3,6 +3,5 @@ true
 true
 protected method 'code' called outside its class hierarchy
 protected method 'code' called outside its class hierarchy
-  at read:27:16
 42
 nil

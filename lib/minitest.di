@@ -275,7 +275,13 @@ class Minitest
         @failures.push("FAIL: #{name}\n  #{error.message()}")
       rescue error: StandardError
         @errored = @errored + 1
-        @failures.push("ERROR: #{name} (#{error.class()})\n  #{error.message()}")
+        report = "ERROR: #{name} (#{error.class()})\n  #{error.message()}"
+        trace = error.backtrace()
+        # Where the error happened: the innermost frame.
+        if trace != nil && trace.length() > 0
+          report = "#{report}\n  at #{trace[0]}"
+        end
+        @failures.push(report)
       ensure
         unless teardown_hook == nil
           teardown_hook()

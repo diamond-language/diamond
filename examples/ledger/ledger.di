@@ -95,9 +95,7 @@ def attempt(label: String, &action)
     yield()
     puts("#{label}: ok")
   rescue error: UnbalancedEntry | UnknownAccount | CurrencyMismatch | FrozenError | NoMethodError
-    # Errors raised by the runtime append their source location on a
-    # second line; the first line is enough here.
-    puts("#{label}: #{error.class()}: #{error.message().split("\n")[0]}")
+    puts("#{label}: #{error.class()}: #{error.message()}")
   end
 end
 

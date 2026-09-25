@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- An error raised by the runtime (`ZeroDivisionError`, `TypeError`,
+  `IOError`, ...) has a plain `message()` -- it used to end with one
+  `at file:line:col` line per frame it passed through -- and a real
+  `backtrace()` instead of `nil`. Re-raising an exception keeps its original
+  backtrace, and an uncaught re-raised exception's report names where it
+  was first raised. minitest's ERROR lines now include the location.
 - `next` works in a `do` block, ending that call of the block (with an
   optional value), as in Ruby. It used to be a compile error outside a
   loop. A block's inferred result type now also includes early

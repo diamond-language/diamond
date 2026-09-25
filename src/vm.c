@@ -491,7 +491,10 @@ static void populate_default_argv_env(DiamondVm *vm);
 /* diamond_format_value_type itself is declared in vm.h now (exported for
  * src/value.c's own reuse) -- this forward declaration would otherwise
  * conflict with that extern one (mismatched static/extern storage class). */
-static void format_uncaught_exception_message(DiamondVm *vm, DiamondValue exception);
+static void format_uncaught_exception_message(DiamondVm *vm, DiamondValue exception,
+                                              bool show_origin);
+static DiamondArray *install_backtrace(DiamondVm *vm,DiamondInstance *raised);
+static void backtrace_append_live_frames(DiamondVm *vm,DiamondArray *backtrace);
 static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
                                const DiamondClass *rebase_source_classes,
@@ -3106,7 +3109,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         }
         child->restart_count++;
         if(status==DIAMOND_VM_EXCEPTION) {
-            format_uncaught_exception_message(run_vm,run_vm->exception);
+            format_uncaught_exception_message(run_vm,run_vm->exception,false);
             snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
         } else {
             const char *message=run_vm->error[0]!='\0'?run_vm->error:
@@ -9935,6 +9938,12 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     char message[sizeof vm->error];
     (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
                    diamond_vm_status_name(status));
+    /* vm->error collects an "\n  at name:line:col" line from every frame
+     * the failure unwound through (RECORD_ERROR), for the uncaught-error
+     * report. The exception's message is just the first part, the same
+     * text a raised Exception.new(message) carries. */
+    char *location=strstr(message,"\n  at ");
+    if(location!=nullptr)*location='\0';
     DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index],nullptr);
     if(exception==nullptr)return false;
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
@@ -9949,6 +9958,22 @@ static bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
          * it needs its own barrier call rather than relying on the
          * opcode-level one. */
         if(!gc_write_barrier(vm,(DiamondObject *)exception))return false;
+    }
+    /* Its backtrace, like a raised exception's: the frames the failure
+     * already unwound through (their "at" lines, innermost first), then
+     * the frames still live, starting with this rescuing one. */
+    DiamondArray *backtrace=install_backtrace(vm,exception);
+    if(backtrace!=nullptr) {
+        const char *line=location!=nullptr?strstr(vm->error,"\n  at "):nullptr;
+        while(line!=nullptr) {
+            line+=6;
+            const char *end=strchr(line,'\n');
+            const size_t length=end!=nullptr?(size_t)(end-line):strlen(line);
+            DiamondString *entry=allocate_string(vm,line,length);
+            if(entry==nullptr||!array_push(vm,backtrace,DIAMOND_OBJECT(entry)))break;
+            line=end!=nullptr&&strncmp(end,"\n  at ",6)==0?end:nullptr;
+        }
+        backtrace_append_live_frames(vm,backtrace);
     }
     /* Only fill in a generic header when vm->error is still empty (no
      * RECORD_ERROR has run yet for this failure, e.g. the origin frame
@@ -11369,7 +11394,11 @@ static bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *ins
     return false;
 }
 
-static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue exception) {
+/* show_origin: the exception is being re-raised away from where it was
+ * first raised, so name that place too -- the "at" lines that follow only
+ * start from here. */
+static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue exception,
+                                              bool show_origin) {
     if(exception.kind==DIAMOND_VALUE_INT)
         snprintf(vm->error,sizeof vm->error,"uncaught exception: %" PRId64,
                  exception.as.integer);
@@ -11406,6 +11435,19 @@ static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue excepti
                      instance->class->name);
         }
     } else snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
+    if(!show_origin||exception.kind!=DIAMOND_VALUE_OBJECT||
+       exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return;
+    const DiamondInstance *raised=(const DiamondInstance *)exception.as.object;
+    if(raised->field_count<=2||raised->fields[2].kind!=DIAMOND_VALUE_OBJECT||
+       raised->fields[2].as.object->kind!=DIAMOND_OBJECT_ARRAY)return;
+    const DiamondArray *backtrace=(const DiamondArray *)raised->fields[2].as.object;
+    if(backtrace->count==0||backtrace->values[0].kind!=DIAMOND_VALUE_OBJECT||
+       backtrace->values[0].as.object->kind!=DIAMOND_OBJECT_STRING)return;
+    const DiamondString *origin=(const DiamondString *)backtrace->values[0].as.object;
+    const size_t used=strlen(vm->error);
+    if(used<sizeof vm->error)
+        (void)snprintf(vm->error+used,sizeof vm->error-used," (raised at %.*s)",
+                       (int)origin->length,origin->chars);
 }
 
 static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
@@ -14863,26 +14905,9 @@ static DiamondVmStatus string_format_helper(DiamondVm *vm,const DiamondChunk *ch
  * point that can see them is the raise itself. Best-effort -- an
  * allocation failure here just truncates the backtrace early rather than
  * failing the raise. */
-static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
-    /* See invoke_operator_method's own comment on this same pattern. */
-    (void)chunk;
-    if(vm->exception.kind!=DIAMOND_VALUE_OBJECT||
-       vm->exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return;
-    DiamondInstance *raised=(DiamondInstance *)vm->exception.as.object;
-    if(!instance_is_exception(vm,raised)||raised->field_count<=2)return;
-    DiamondArray *backtrace=allocate_array(vm,nullptr,0);
-    if(backtrace==nullptr)return;
-    /* Root immediately: vm->exception (already set, has_exception=true by
-     * the caller) keeps `raised` alive, so assigning here makes
-     * `backtrace` itself reachable before any allocation below can
-     * trigger a GC -- same pattern String#split uses for its pieces. */
-    raised->fields[2]=DIAMOND_OBJECT(backtrace);
-    /* allocate_array above can itself have triggered a minor collection
-     * that promoted `raised` (reachable via vm->exception) before this
-     * assignment ran -- this raw field write bypasses DIAMOND_OP_SET_IVAR
-     * entirely, so it needs its own barrier call rather than relying on
-     * the opcode-level one. */
-    if(!gc_write_barrier(vm,(DiamondObject *)raised))return;
+/* Appends one "chunk:line:column" String per live frame (innermost first).
+ * Best-effort: stops early on allocation failure. */
+static void backtrace_append_live_frames(DiamondVm *vm,DiamondArray *backtrace) {
     for(const DiamondFrame *frame=vm->frames;frame!=nullptr;frame=frame->previous) {
         if(frame->chunk==nullptr||frame->instruction_offset==nullptr)continue;
         const char *name=frame->chunk->name!=nullptr?frame->chunk->name:"<chunk>";
@@ -14900,6 +14925,46 @@ static void raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chu
         if(entry==nullptr)return;
         if(!array_push(vm,backtrace,DIAMOND_OBJECT(entry)))return;
     }
+}
+
+/* Installs a fresh, empty backtrace Array on `raised` (rooted through
+ * vm->exception, which the caller has already set) and returns it, or
+ * nullptr when `raised` has no backtrace field or allocation fails. */
+static DiamondArray *install_backtrace(DiamondVm *vm,DiamondInstance *raised) {
+    if(!instance_is_exception(vm,raised)||raised->field_count<=2)return nullptr;
+    DiamondArray *backtrace=allocate_array(vm,nullptr,0);
+    if(backtrace==nullptr)return nullptr;
+    raised->fields[2]=DIAMOND_OBJECT(backtrace);
+    /* allocate_array above can itself have triggered a minor collection
+     * that promoted `raised` (reachable via vm->exception) before this
+     * assignment ran -- this raw field write bypasses DIAMOND_OP_SET_IVAR
+     * entirely, so it needs its own barrier call rather than relying on
+     * the opcode-level one. */
+    if(!gc_write_barrier(vm,(DiamondObject *)raised))return nullptr;
+    return backtrace;
+}
+
+/* Snapshots the live call-stack chain (vm->frames) into a backtrace Array
+ * of "chunk:line:column" Strings, attached to the raised Exception
+ * instance's own hidden `backtrace` field (its 3rd reserved field, after
+ * message/cause -- see diamond_program_init). Called at DIAMOND_OP_RAISE,
+ * not lazily from Exception#backtrace itself: by the time a rescue clause
+ * later reads #backtrace, the deeper frames that were live at the raise
+ * site are long gone from vm->frames, so the only point that can see them
+ * is the raise itself. Only the first raise records one: re-raising an
+ * exception -- explicitly, or when no rescue clause matched -- keeps where
+ * it came from, as in Ruby. Returns whether this raise was the first. */
+static bool raise_capture_backtrace_helper(DiamondVm *vm,const DiamondChunk *chunk) {
+    /* See invoke_operator_method's own comment on this same pattern. */
+    (void)chunk;
+    if(vm->exception.kind!=DIAMOND_VALUE_OBJECT||
+       vm->exception.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return true;
+    DiamondInstance *raised=(DiamondInstance *)vm->exception.as.object;
+    if(raised->field_count>2&&raised->fields[2].kind==DIAMOND_VALUE_OBJECT&&
+       raised->fields[2].as.object->kind==DIAMOND_OBJECT_ARRAY)return false;
+    DiamondArray *backtrace=install_backtrace(vm,raised);
+    if(backtrace!=nullptr)backtrace_append_live_frames(vm,backtrace);
+    return true;
 }
 
 enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
@@ -21766,7 +21831,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_RAISE: {
                 uint16_t source=0;READ_SHORT(source);
                 vm->exception=registers[source];vm->has_exception=true;
-                raise_capture_backtrace_helper(vm,chunk);
+                const bool first_raise=raise_capture_backtrace_helper(vm,chunk);
                 if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
                                    registers,&ip))break;
                 /* Only fill in a message when vm->error is still empty --
@@ -21782,7 +21847,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * helper without each needing to reason about the other's
                  * invariants. */
                 if(vm->error[0]=='\0')
-                    format_uncaught_exception_message(vm,vm->exception);
+                    format_uncaught_exception_message(vm,vm->exception,!first_raise);
                 VM_RETURN(DIAMOND_VM_EXCEPTION);
             }
             case DIAMOND_OP_PUSH_RESCUE: {
@@ -21861,7 +21926,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      * place), so this guard only ever changes behavior
                      * for the status-code-originated case. */
                     if(vm->error[0]=='\0')
-                        format_uncaught_exception_message(vm,vm->exception);
+                        format_uncaught_exception_message(vm,vm->exception,true);
                     VM_RETURN(DIAMOND_VM_EXCEPTION);
                 }
                 VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);

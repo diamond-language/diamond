@@ -150,4 +150,12 @@ still-live call frame, captured at the moment `raise` runs (not lazily
 when `.backtrace()` is called) — it reflects where the exception was
 raised even after the frames that were active then have long since
 returned by the time a `rescue` clause inspects it. `nil` before an
-instance is ever raised.
+instance is ever raised. Only the first raise records it: raising the
+same exception again (`raise error` in a rescue clause, or a `rescue`
+whose types don't match) keeps the original, and an uncaught re-raised
+exception's report adds `(raised at chunk:line:column)`.
+
+Errors the runtime raises itself (`ZeroDivisionError`, `TypeError`,
+`IOError`, ...) behave the same way: `.message()` is just the message, and
+`.backtrace()` lists where the error happened and every frame it passed
+through.

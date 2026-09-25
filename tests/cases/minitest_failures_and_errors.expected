@@ -5,6 +5,7 @@ ERROR: division by zero (ZeroDivisionError)
   at test_division_by_zero:12:9
 ERROR: raises wrong type (RuntimeError)
   boom
+  at raises_runtime_error:16:34
 FAIL: raises not caught
   expected an exception to be raised
 6 tests, 2 passed, 2 failed, 2 errors, 0 skipped

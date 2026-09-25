@@ -52,7 +52,7 @@ def markdown_main(args: Array) -> Int
   begin
     text = read_input(paths.first_or(nil))
   rescue error: IOError
-    warn("markdown: #{error.message().split("\n")[0]}")
+    warn("markdown: #{error.message()}")
     return 66
   end
   blocks = BlockParser.parse(text)
