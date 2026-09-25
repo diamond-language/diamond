@@ -3141,6 +3141,12 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,callable,0,0,1);
             const uint16_t loaded=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
+            /* Keep the local's type facts, as parse_identifier's own
+             * captured read does, so a trailing block still gets its
+             * Callable parameter types. */
+            compiler->known_types[loaded]=compiler->known_types[callable];
+            compiler->known_type_sets[loaded]=compiler->known_type_sets[callable];
+            compiler->tooling_type_sets[loaded]=compiler->tooling_type_sets[callable];
             callable=loaded;
         }
         return parse_closure_call_arguments(compiler, callable);
@@ -9231,6 +9237,50 @@ static bool loop_body_may_capture(const Compiler *compiler) {
 static void mark_locals_captured(Compiler *compiler) {
     for(size_t index=0;index<compiler->local_count;index++)
         compiler->locals[index].captured=true;
+}
+
+/* The statement-level twin of loop_body_may_capture: does the statement
+ * starting at the current token contain a `do` block (or a def/closure)
+ * before its first line ends? Brackets are tracked so a call whose
+ * arguments span lines still counts as one statement. Stops at a newline
+ * (or `;`, which lexes as one) outside any bracket.
+ *
+ * Why this matters: reading a not-yet-captured local yields that local's
+ * own register, and the value is only consumed later in the statement.
+ * A block compiled in between boxes that register in place, so the
+ * consumer would find the Cell instead of the value -- `[x, list.map() do
+ * |v| v end]` built [#<Cell>, ...]. Marking the locals captured before the
+ * statement compiles makes every read in it go through GET_CELL instead.
+ * It costs nothing extra in practice: the block captures every visible
+ * local anyway, so they would all be boxed moments later. */
+static bool statement_may_capture(const Compiler *compiler) {
+    DiamondLexer lookahead=compiler->lexer;
+    DiamondToken token=compiler->current;
+    size_t depth=0;
+    while(token.kind!=DIAMOND_TOKEN_EOF) {
+        switch(token.kind) {
+        case DIAMOND_TOKEN_DO:
+        case DIAMOND_TOKEN_DEF:
+        case DIAMOND_TOKEN_CLOSURE:
+            return true;
+        case DIAMOND_TOKEN_LEFT_PAREN:
+        case DIAMOND_TOKEN_LEFT_BRACKET:
+        case DIAMOND_TOKEN_LEFT_BRACE:
+            depth++;break;
+        case DIAMOND_TOKEN_RIGHT_PAREN:
+        case DIAMOND_TOKEN_RIGHT_BRACKET:
+        case DIAMOND_TOKEN_RIGHT_BRACE:
+            if(depth==0)return false;
+            depth--;break;
+        case DIAMOND_TOKEN_NEWLINE:
+            if(depth==0)return false;
+            break;
+        default:
+            break;
+        }
+        token=diamond_lexer_next(&lookahead);
+    }
+    return false;
 }
 
 static uint16_t parse_while(Compiler *compiler,bool inverted) {
@@ -16513,6 +16563,10 @@ static uint16_t compile_sequence(Compiler *compiler) {
                 compiler->function->columns[check_offset]=(uint32_t)statement_span.column;
             }
         }
+        if(compiler->current.kind!=DIAMOND_TOKEN_DEF&&
+           compiler->current.kind!=DIAMOND_TOKEN_CLOSURE&&
+           statement_may_capture(compiler))
+            mark_locals_captured(compiler);
         bool statement_is_raise = false;
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
