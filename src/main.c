@@ -19,6 +19,17 @@
 
 static constexpr char DIAMOND_VERSION[] = "0.8.0";
 
+/* Appended to --version output. The default `make` target is an unoptimized
+ * debug build (so are `make sanitize`/`make tsan`), which runs Diamond code
+ * roughly 10x slower than `make release`; saying so up front keeps anyone
+ * benchmarking a debug binary from concluding the language is that slow. */
+#ifdef DIAMOND_DEBUG
+static constexpr char DIAMOND_BUILD_NOTE[] =
+    " (debug build: unoptimized, much slower than `make release`)";
+#else
+static constexpr char DIAMOND_BUILD_NOTE[] = "";
+#endif
+
 static char *absolute_path(const char *path);
 
 static char *read_file(const char *path) {
@@ -591,7 +602,7 @@ int main(int argc, char **argv) {
     }
     if (argc == 2 && (strcmp(argv[1], "-v") == 0 ||
                       strcmp(argv[1], "--version") == 0)) {
-        printf("diamond %s\n", DIAMOND_VERSION);
+        printf("diamond %s%s\n", DIAMOND_VERSION, DIAMOND_BUILD_NOTE);
         return 0;
     }
     if (argc == 2 && (strcmp(argv[1], "-h") == 0 ||

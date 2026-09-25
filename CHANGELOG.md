@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- `diamond --version` on a debug-family build (the default `make`, plus
+  `make sanitize`/`make tsan`) now says so:
+  ``diamond 0.8.0 (debug build: unoptimized, much slower than `make release`)``.
+  Those builds run Diamond code roughly 10x slower than `make release`.
+  Release builds still print the bare version.
+
 ### Registry
 
 - The cuts catalog has a show page per cut (`/cuts/<name>`): summary, rendered
