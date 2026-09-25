@@ -7936,6 +7936,21 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     return result;
 }
 
+/* A trailing `do` block may box the receiver's local in place (see the
+ * comment at parse_invoke's plain-argument DIAMOND_TOKEN_DO branch), so the
+ * receiver is copied into a fresh temp first. `self` inside a method is the
+ * exception: it lives in register 0, which a block never boxes in place (it
+ * boxes a copy -- see compile_block's self_copy_register), and the VM only
+ * lets a private method be called on register 0. Copying it would turn
+ * `self.helper() do ... end` into an "explicit receiver" call and reject it. */
+static uint16_t snapshot_block_call_receiver(Compiler *compiler,
+        uint16_t receiver) {
+    if(receiver==0&&compiler->in_method)return receiver;
+    const uint16_t snapshot=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,receiver,0,2);
+    return snapshot;
+}
+
 static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
     uint16_t mutation_receiver=receiver;
     if(compiler->previous.kind==DIAMOND_TOKEN_IDENTIFIER) {
@@ -8107,9 +8122,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                 contextual_target->type_variable_count;
         bool has_block=false;uint16_t block=0;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            const uint16_t receiver_snapshot=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
-                receiver,0,2);receiver=receiver_snapshot;
+            receiver=snapshot_block_call_receiver(compiler,receiver);
             for(size_t index=0;index<keyword_count;index++) {
                 const uint16_t snapshot=allocate_register(compiler);
                 emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
@@ -8158,10 +8171,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         const size_t resolved_count=type_argument_count>0?
             type_argument_count:inferred_count;
         if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            const uint16_t receiver_snapshot=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,
-                receiver,0,2);
-            receiver=receiver_snapshot;
+            receiver=snapshot_block_call_receiver(compiler,receiver);
             const uint16_t spread_snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
                 spread,0,2);
@@ -8233,9 +8243,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
          * every argument into fresh temps first: a temp is never a
          * registered local, so BOX_LOCAL's locals-table lookup can never
          * retarget it. */
-        const uint16_t receiver_snapshot=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,receiver_snapshot,receiver,0,2);
-        receiver=receiver_snapshot;
+        receiver=snapshot_block_call_receiver(compiler,receiver);
         for(size_t i=0;i<count;i++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[i],0,2);
