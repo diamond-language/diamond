@@ -1,0 +1,33 @@
+== fan-out
+  range 1: 3711 runs for 238 steps
+  range 2: 10971 runs for 268 steps
+  range 3: 17647 runs for 279 steps
+  range 4: 23529 runs for 282 steps
+longest Collatz sequence below 24001: 23529, 282 steps
+
+== worker pool
+8 documents, 8 handled by 3 workers
+  document 1: 12 words
+  document 2: 11 words
+  document 3: 23 words
+  document 4: 14 words
+  document 5: 15 words
+  document 6: 10 words
+  document 7: 14 words
+  document 8: 18 words
+most common: the (9), a (8), of (7), in (6), it (6), was (6)
+
+== pipeline
+square:digit-sum 1:1 4:4 9:9 16:7 25:7 36:9 49:13 64:10 81:9 100:1 121:4 144:9
+channel closed? true, size 0
+try_receive on an empty channel: WouldBlockError
+
+== isolation
+parent array: [mine], worker's copy: [mine, added by worker]
+parent Tally count: 3, worker's: 1
+capturing closure: TypeError
+
+== failure
+join re-raised: worker rejected -1
+succeeded on attempt 3
+restarts: 2, last error: uncaught exception: RuntimeError: flaked on attempt 2
