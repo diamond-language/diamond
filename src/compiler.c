@@ -7128,6 +7128,7 @@ typedef enum CollectionRelay {
     COLLECTION_RELAY_ARRAY_SAME,
     COLLECTION_RELAY_KEYS,
     COLLECTION_RELAY_VALUES,
+    COLLECTION_RELAY_NULLABLE_VALUE,
     COLLECTION_RELAY_FALLBACK,
     COLLECTION_RELAY_CONCAT,
     COLLECTION_RELAY_MAP,
@@ -7167,6 +7168,7 @@ static CollectionRelay collection_relay(const Compiler *compiler,
         {"each_with_index",COLLECTION_RELAY_ARRAY_SAME},
         {"take",COLLECTION_RELAY_ARRAY_SAME},{"drop",COLLECTION_RELAY_ARRAY_SAME},
         {"keys",COLLECTION_RELAY_KEYS},{"values",COLLECTION_RELAY_VALUES},
+        {"delete",COLLECTION_RELAY_NULLABLE_VALUE},
         {"first_or",COLLECTION_RELAY_FALLBACK},
         {"last_or",COLLECTION_RELAY_FALLBACK},
         {"concat",COLLECTION_RELAY_CONCAT},{"map",COLLECTION_RELAY_MAP},
@@ -7264,6 +7266,11 @@ static void publish_collection_method_return_type(Compiler *compiler,
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,first,-1);
     else if(relay==COLLECTION_RELAY_VALUES)
         record_collection_type_set(compiler,reg,DIAMOND_TYPE_ARRAY,second,-1);
+    else if(relay==COLLECTION_RELAY_NULLABLE_VALUE) {
+        /* Hash#delete: the removed value, or nil for a missing key. */
+        const int32_t nullable=type_set_with_nil(compiler,(uint16_t)second);
+        if(nullable>=0)publish_known_type_set(compiler,reg,(uint16_t)nullable);
+    }
 }
 
 /* A small number of native String/Array/Hash methods (.length, .to_i,

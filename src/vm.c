@@ -7128,8 +7128,9 @@ static uint64_t hash_value_at_depth(DiamondValue value, int depth) {
 /* Rebuilds only the bucket index table from entries[]'s already-cached
  * per-entry hash -- entries[] itself is never reordered, which is what
  * keeps insertion order (and "update doesn't move position") intact
- * across any number of rehashes. No tombstones: nothing ever deletes a
- * Hash entry, so an empty slot (SIZE_MAX) always safely ends a probe. */
+ * across any number of rehashes. No tombstones: hash_delete closes the gap
+ * in entries[] and rebuilds the buckets, so an empty slot (SIZE_MAX)
+ * always safely ends a probe. */
 static bool hash_rehash(DiamondVm *vm,DiamondHash *hash,size_t new_capacity) {
     size_t *buckets=malloc(new_capacity*sizeof(size_t));
     if(buckets==nullptr)return false;
@@ -7193,6 +7194,30 @@ static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     while(hash->buckets[slot]!=SIZE_MAX)slot=(slot+1)&(hash->bucket_capacity-1);
     hash->buckets[slot]=new_index;
     return gc_write_barrier_index(vm,(DiamondObject *)hash,new_index);
+}
+
+/* Hash#delete: removes `key`'s entry, storing its value in *removed and
+ * returning true, or returns false when the key is absent. Later entries
+ * shift down one place, so insertion order is kept, and the bucket table is
+ * rebuilt at its current capacity since every shifted entry's index
+ * changed. O(count), not O(1): a deliberate trade for keeping entries[]
+ * dense rather than adding tombstones to every probe and iteration. The
+ * shifted entries' GC cards are re-dirtied, since dirty_cards is keyed by
+ * entry index and a young value may have moved into a clean card. */
+static bool hash_delete(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
+                        DiamondValue *removed,bool *found) {
+    *found=false;
+    const ptrdiff_t existing=hash_find(hash,key);
+    if(existing<0)return true;
+    const size_t index=(size_t)existing;
+    *removed=hash->entries[index].value;
+    *found=true;
+    memmove(&hash->entries[index],&hash->entries[index+1],
+            (hash->count-index-1)*sizeof(DiamondHashEntry));
+    hash->count--;
+    if(!hash_rehash(vm,hash,hash->bucket_capacity))return false;
+    return gc_write_barrier_range(vm,(DiamondObject *)hash,index,
+                                  hash->count-index);
 }
 
 /* JIT trampoline for DIAMOND_OP_HASH -- extracted from that case's own
@@ -9029,6 +9054,7 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_ARRAY,"pop",0,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
+    {DIAMOND_TYPE_HASH,"delete",1,UINT8_MAX},
     {DIAMOND_TYPE_INT,"to_s",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_INT,"to_i",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_INT,"to_f",0,DIAMOND_TYPE_FLOAT},
@@ -15755,7 +15781,7 @@ static const NativeKeywordSignature native_keyword_signatures[]={
     {"concat",{"other"},1},{"delete_at",{"index"},1},
     {"fetch",{"key","fallback"},2},{"include_key?",{"needle"},1},
     {"map_values",{"callback"},1},{"merge",{"other"},1},
-    {"key_at",{"index"},1},{"value_at",{"index"},1},
+    {"key_at",{"index"},1},{"value_at",{"index"},1},{"delete",{"key"},1},
     {"index_of",{"needle"},1},{"slice",{"start","length"},2},
     {"split",{"separator"},1},{"repeat",{"count"},1},
     {"gsub",{"pattern","replacement"},2},{"sub",{"pattern","replacement"},2},
@@ -18924,6 +18950,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             VM_PROPAGATE(status);
                             registers[dest]=call_result;break;
                         }
+                    }
+                    if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                       method_name->length==6&&
+                       memcmp(method_name->chars,"delete",6)==0) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
+                        if(hash->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
+                        DiamondValue removed=DIAMOND_NIL;bool found=false;
+                        if(!hash_delete(vm,hash,registers[base],&removed,&found))
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=found?removed:DIAMOND_NIL;break;
                     }
                     if(receiver_kind==DIAMOND_OBJECT_HASH) {
                         const bool key_method=method_name->length==6&&

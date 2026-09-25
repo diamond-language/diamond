@@ -230,6 +230,12 @@ flattened (recursively, matching Ruby's default);
 `.push`/`.pop`), removing and returning the element at `index`, or `nil`
 without mutating if `index` is out of bounds.
 
+`hash.delete(key)` removes `key` and returns its value, or `nil` when
+`key` is absent (a frozen Hash raises `FrozenError`). The remaining entries
+keep their insertion order, and a deleted key added again goes to the end.
+It is native and O(n) in the Hash's size, since later entries move down to
+keep the Hash dense; the result's static type is the Hash's value type or
+`Nil`.
 `hash.fetch(key, fallback)` returns the value at `key`, or `fallback`
 (not raising) when `key` is absent; `hash.keys()`/`hash.values()` return
 an `Array` of the hash's keys/values respectively, both in insertion

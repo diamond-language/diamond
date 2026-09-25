@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `Hash#delete(key)` removes a key and returns its value, or `nil` when the
+  key is absent. Hash previously had no way to remove an entry.
 - A program that fails with an uncaught exception while a spawned thread or
   supervised child is still running now exits with status 70 right away.
   It used to wait for every thread first, and hung forever when one was
