@@ -32,7 +32,7 @@ make CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' facet
 FACET_BIN="$PWD/build/facet" DIAMOND_BIN="$PWD/build/diamond" python3 packages/registry/http_test.py
 mkdir -p payload/bin payload/app payload/deploy
 cp build/diamond build/facet payload/bin/
-cp applications/registry/{app.di,catalog.di,catalog.html,catalog.js,credentials.di,backup.py,monitor.py} payload/app/
+cp applications/registry/{app.di,catalog.di,catalog.html,catalog.js,catalog.css,cut.html,cut.js,credentials.di,backup.py,monitor.py} payload/app/
 FACET_BIN="$PWD/build/facet" tools/install_local_cuts.sh payload/app
 python3 tools/prepare_registry_seed.py "$PWD/payload/seed" --expect docs/registry-launch-inventory.json
 cp applications/registry/deploy/{registry.service,registry.env.example,nginx-loopback.conf.example,Caddyfile.registry} payload/deploy/

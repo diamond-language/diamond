@@ -2886,19 +2886,20 @@ static bool audit_cut_imports(const char *root, const FacetFileList *files,
 }
 
 static int cmd_verify(int argc, char **argv) {
-    bool json = false;
+    bool json = false, readme = false;
     const char *expected = NULL;
     for (int i = 3; i < argc; i++) {
-        if (strcmp(argv[i], "--json") == 0 && !json) json = true;
+        if (strcmp(argv[i], "--json") == 0 && !json && !readme) json = true;
+        else if (strcmp(argv[i], "--readme") == 0 && !json && !readme) readme = true;
         else if (strcmp(argv[i], "--sha256") == 0 && expected == NULL && i + 1 < argc)
             expected = argv[++i];
         else {
-            fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json]\n", stderr);
+            fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n", stderr);
             return 64;
         }
     }
     if (argc < 3) {
-        fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json]\n", stderr);
+        fputs("usage: facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n", stderr);
         return 64;
     }
     char error[512];
@@ -2931,6 +2932,9 @@ static int cmd_verify(int argc, char **argv) {
         return 65;
     }
     char *manifest_source = NULL;
+    /* Only read into memory for --readme; display is capped at 1 MiB. */
+    char *readme_source = NULL;
+    size_t readme_length = 0;
     unsigned long long total_bytes = 0;
     bool ok = true, ended = false;
     while (ok && !ended) {
@@ -3022,6 +3026,15 @@ static int cmd_verify(int argc, char **argv) {
                 ok = false;
                 break;
             }
+        } else if (readme && strcmp(path, "README.md") == 0 && size <= 1024 * 1024) {
+            readme_source = malloc((size_t)size + 1);
+            if (readme_source == NULL ||
+                fread(readme_source, 1, (size_t)size, archive) != (size_t)size) {
+                (void)snprintf(error, sizeof error, "truncated archive entry: %s", path);
+                ok = false;
+                break;
+            }
+            readme_length = (size_t)size;
         } else if (runtime_source_path(path)) {
             char *source = malloc((size_t)size + 1);
             if (source == NULL || fread(source, 1, (size_t)size, archive) != (size_t)size) {
@@ -3183,7 +3196,17 @@ static int cmd_verify(int argc, char **argv) {
         printf("{\"protocol\":1,\"name\":\"%s\",\"version\":\"%s\",\"size\":%lld,\"sha256\":\"",
                name->string, version->string, (long long)archive_before.st_size);
         for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
-        fputs("\",\"dependencies\":{", stdout);
+        /* Catalog display fields; the registry ignores keys it does not use. */
+        const char *display_keys[] = {"summary", "license", "homepage", "source",
+                                      "documentation", "issues"};
+        fputs("\"", stdout);
+        for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
+            const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
+            if (display == NULL) continue;
+            printf(",\"%s\":", display_keys[i]);
+            print_json_string(display->string);
+        }
+        fputs(",\"dependencies\":{", stdout);
         const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
         bool first = true;
         for (const DiamondManifestValue *dep = dependencies ? dependencies->children : NULL;
@@ -3204,6 +3227,13 @@ static int cmd_verify(int argc, char **argv) {
             putchar('}');
         }
         fputs("]}\n", stdout);
+    } else if (ok && readme) {
+        if (readme_source == NULL) {
+            fputs("facet: README.md exceeds 1 MiB\n", stderr);
+            ok = false;
+        } else if (readme_length > 0 && fwrite(readme_source, 1, readme_length, stdout) != readme_length) {
+            ok = false;
+        }
     } else if (ok) {
         printf("facet: verified %s %s (%zu files)\nsha256: ",
                name->string, version->string, files.count);
@@ -3214,6 +3244,7 @@ static int cmd_verify(int argc, char **argv) {
     }
     diamond_manifest_free(manifest);
     free(manifest_source);
+    free(readme_source);
     for (size_t i = 0; i < files.count; i++) free(runtime_sources[i]);
     free(runtime_sources);
     free_file_list(&files);
@@ -3511,7 +3542,7 @@ static void print_usage(void) {
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
-          "       facet verify <archive.tar> [--sha256 <digest>] [--json]\n"
+          "       facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n"
           "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
           "       facet add <name> (--git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "

@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-nginx-') as temporary:
     internal_port = port() if proxy_chain else proxy_port
     assert backend_port != proxy_port
     run(str(source / 'tools/install_local_cuts.sh'), str(work))
-    for name in ('app.di', 'credentials.di', 'catalog.di', 'catalog.html', 'catalog.js'):
+    for name in ('app.di', 'credentials.di', 'catalog.di', 'catalog.html', 'catalog.js', 'catalog.css', 'cut.html', 'cut.js'):
         shutil.copy(source / 'applications/registry' / name, work / name)
     (work / 'data/blobs').mkdir(parents=True)
     (work / 'data/staging').mkdir()

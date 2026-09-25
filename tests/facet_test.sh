@@ -925,6 +925,13 @@ printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "li
 maintained_archive="$(mktemp -d)/checkcut.tar"
 "$facet" pack checkcut "$maintained_archive" >/dev/null
 [[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[{"name":"Test \"Q\"","contact":"test@example.com"},{"name":"Site","contact":"https://example.com/issues"}]}' ]]
+# Catalog display fields and the README come from the verified archive.
+[[ "$("$facet" verify "$maintained_archive" --json)" == *'"summary":"A checked cut","license":"MIT","dependencies":'* ]]
+[[ "$("$facet" verify "$maintained_archive" --readme)" == "$(cat checkcut/README.md)" ]]
+if "$facet" verify "$maintained_archive" --json --readme >/dev/null 2>&1; then
+    echo "facet verify accepted --json with --readme" >&2
+    exit 1
+fi
 # Archives published before the field existed still verify, reporting none.
 python3 - "$maintained_archive" <<'PY'
 import re, sys

@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
     data = work / 'data'
     (data / 'blobs').mkdir(parents=True)
     (data / 'staging').mkdir()
-    for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js'):
+    for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js', 'catalog.css', 'cut.html', 'cut.js'):
         shutil.copy(source / 'applications/registry' / name, work / name)
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
@@ -306,6 +306,20 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         assert status == 200 and any(row['name'] == 'greeter' for row in catalog['releases'])
         for cursor in ('bad', '', '-1', '01', '1&after=2', '999999999999999999999999'):
             assert request('/catalog.json?after=' + cursor)[0] == 400, cursor
+        # Show pages: every served version newest first, plus the latest
+        # release's summary and README read from its verified archive.
+        assert request('/catalog.css')[0] == 200 and request('/cut.js')[0] == 200
+        status, page = request('/cuts/helper')
+        assert status == 200 and b'cut.js' in page
+        assert request('/cuts/Not-A-Name')[0] == 404
+        status, shown = request('/catalog/helper.json')
+        assert status == 200 and shown['name'] == 'helper' and shown['latest'] == '2.0.0'
+        assert [v['version'] for v in shown['versions']] == [
+            '2.0.0', '2.0.0-beta.10', '2.0.0-beta.2', '1.10.0', '1.2.0', '1.0.0']
+        assert shown['summary'] == 'test cut' and shown['license'] == 'MIT' and shown['readme'] == 'test\n'
+        assert shown['versions'][0]['maintainers'] == [{'name': 'Test', 'contact': 'test@example.com'}]
+        assert request('/catalog/missing.json')[0] == 404
+        assert request('/catalog/..%2Fx.json')[0] == 404
         consumer = work / 'consumer'
         consumer.mkdir()
         run(str(facet), 'init', 'consumer', cwd=consumer, env=env)

@@ -44,7 +44,11 @@ function render() {
   const cards = visible.map(release => {
     const card = node('article', '', 'release-card');
     const head = node('div', '', 'release-head');
-    head.append(node('h3', release.name), node('span', release.version, 'version'));
+    const title = node('h3');
+    const show = node('a', release.name);
+    show.href = new URL(`cuts/${encodeURIComponent(release.name)}`, base).href;
+    title.append(show);
+    head.append(title, node('span', release.version, 'version'));
     card.append(head);
     if (release.yanked) card.append(node('span', 'Yanked', 'yanked'));
     const dependencies = Object.entries(JSON.parse(release.dependencies)).map(([name, range]) => name + ' ' + range).join(', ');
@@ -71,8 +75,8 @@ function render() {
     box.append(node('pre', text));
     card.append(box);
     card.append(field('Size', formatSize(release.size)), node('p', 'sha256 ' + release.sha256, 'digest'));
-    const link = node('a', 'Release metadata →');
-    link.href = new URL(`v1/cuts/${encodeURIComponent(release.name)}/versions/${encodeURIComponent(release.version)}`, base);
+    const link = node('a', 'Readme and version history →');
+    link.href = show.href;
     card.append(link);
     return card;
   });

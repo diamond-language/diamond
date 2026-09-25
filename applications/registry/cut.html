@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diamond cuts · Package registry</title>
+<title>Cut · Diamond cuts</title>
 <meta name="description" content="Find, install, and publish reusable Diamond libraries with facet. Immutable versions, SHA-256 verified archives, and reproducible locked installs.">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%234f46e5'/%3E%3Cstop offset='55%25' stop-color='%232563eb'/%3E%3Cstop offset='100%25' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' fill='%23090c14'/%3E%3Cg transform='translate(-2.4 0) scale(1.15 1)'%3E%3Cpath d='M11 5 L21 5 L28 13 L16 28 L4 13 Z' fill='url(%23g)'/%3E%3Cpath d='M21 5 L28 13 L16 28 L4 13 L11 5' fill='none' stroke='%2302040a' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3Cpath d='M11 5 L16 13 M21 5 L16 13 M4 13 L28 13 M16 13 L16 28' stroke='%23090c14' stroke-width='1' stroke-opacity='0.32' stroke-linecap='round'/%3E%3Cpath d='M11 5 L21 5' stroke='%23fff' stroke-width='1' stroke-opacity='0.4' stroke-linecap='round'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="catalog.css">
+<link rel="stylesheet" href="../catalog.css">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 
 <header class="site-header">
   <div class="container">
-    <a class="brand" href="./">
+    <a class="brand" href="../">
       <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
         <defs>
           <linearGradient id="logoGradHeader" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -33,96 +33,45 @@
       Diamond <span class="sub">/ cuts</span>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#browse">Browse</a>
-      <a href="#publishing">Publishing</a>
+      <a href="../#browse">Browse</a>
+      <a href="../#publishing">Publishing</a>
       <div class="nav-actions">
         <a class="btn btn-ghost btn-sm" href="https://dilang.tech">dilang.tech</a>
-        <a class="btn btn-primary btn-sm" href="#getting-started">Get started</a>
+        <a class="btn btn-primary btn-sm" href="../#getting-started">Get started</a>
       </div>
     </nav>
   </div>
 </header>
 
 <main id="main">
-  <section id="browse">
+  <section class="cut-page">
     <div class="hero-glow" aria-hidden="true"></div>
-    <svg class="hero-facets" viewBox="0 0 1200 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <linearGradient id="facetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#4f46e5"/>
-          <stop offset="100%" stop-color="#22d3ee"/>
-        </linearGradient>
-      </defs>
-      <g fill="none" stroke="url(#facetGrad)" stroke-width="1" opacity="0.35">
-        <polygon points="980,40 1120,140 1040,280 900,220"/>
-        <polygon points="1040,280 1120,140 1200,220 1160,360"/>
-        <polygon points="900,220 1040,280 980,400 840,340"/>
-        <polygon points="1040,280 1160,360 1080,460 980,400"/>
-        <polygon points="980,40 900,220 780,120 840,10"/>
-        <line x1="980" y1="40" x2="1040" y2="280"/>
-        <line x1="900" y1="220" x2="980" y2="400"/>
-      </g>
-    </svg>
     <div class="container">
-      <div class="section-head">
-        <span class="eyebrow"><span class="dot"></span> Catalog</span>
-        <h2>Published releases</h2>
-        <p>Each card is one immutable release. Copy its command to add it to your project.</p>
+      <p class="crumbs"><a href="../">All cuts</a> / <span id="crumb-name"></span></p>
+      <div class="cut-head">
+        <h1 id="cut-name">Loading…</h1>
+        <span id="cut-version" class="version" hidden></span>
       </div>
-      <div class="search">
-        <label for="search">Filter by cut name</label>
-        <input id="search" type="search" placeholder="Search published cuts…" autocomplete="off">
-      </div>
-      <p id="status" role="status" aria-live="polite">Loading releases…</p>
-      <div id="releases" class="grid"></div>
-      <div class="more"><button id="more" class="btn btn-ghost" type="button" hidden>Load more releases</button></div>
-    </div>
-  </section>
-
-  <section id="getting-started" class="raised">
-    <div class="container">
-      <div class="section-head">
-        <span class="eyebrow"><span class="dot"></span> Get started</span>
-        <h2>Start with a cut</h2>
-        <p class="prose">Install Diamond and facet using the <a href="https://github.com/diamond-language/diamond#readme">build instructions</a>, then in a new project:</p>
-      </div>
-      <div class="terminal-window">
-        <div class="titlebar">
-          <div class="dots"><span></span><span></span><span></span></div>
-          <span class="filename">my_app</span>
-          <button class="copy-btn" type="button" data-copy-target="quickstart">Copy</button>
-        </div>
-        <pre class="terminal" id="quickstart"><code><span class="line">facet init my_app</span>
-<span class="line">facet add logger --registry https://cuts.dilang.tech --version '^0.4.0'</span>
-<span class="line">facet update</span></code></pre>
-      </div>
-      <div class="notes">
-        <p class="note">Commit <code>diamond.cut</code> and <code>facet.lock</code>. On another machine, <code>facet install</code> reproduces the locked versions and verified archives. Use <code>facet update</code> when you intend to resolve newer versions.</p>
-        <p class="note"><strong>Yanked</strong> releases stay available to existing locks but are excluded from new resolution. A <strong>taken-down</strong> release is unavailable.</p>
-      </div>
-    </div>
-  </section>
-
-  <section id="publishing">
-    <div class="container">
-      <div class="section-head">
-        <span class="eyebrow"><span class="dot"></span> Publishing</span>
-        <h2>Publish your own cut</h2>
-        <p class="prose">Publishing is limited to operator-approved maintainers with scoped credentials. <a href="https://github.com/diamond-language/diamond/blob/main/docs/registry-maintainership.md">Request maintainership</a>, then check your cut:</p>
-      </div>
-      <div class="terminal-window">
-        <div class="titlebar">
-          <div class="dots"><span></span><span></span><span></span></div>
-          <span class="filename">my_cut</span>
-          <button class="copy-btn" type="button" data-copy-target="publish-check">Copy</button>
-        </div>
-        <pre class="terminal" id="publish-check"><code><span class="line">facet check path/to/my_cut</span>
-<span class="line">facet pack path/to/my_cut my_cut.tar</span>
-<span class="line">facet verify my_cut.tar</span></code></pre>
-      </div>
-      <div class="notes">
-        <p class="note">Declare public <code>maintainers</code> in <code>diamond.cut</code>; the catalog shows them. Versions are <strong>immutable</strong>: publish changed contents under a new cut version.</p>
-        <p class="note prose">See the <a href="https://github.com/diamond-language/diamond/blob/main/docs/cut-contract.md">cut contract</a> for dependency, archive, and publishing requirements.</p>
+      <p id="cut-summary" class="cut-summary"></p>
+      <p id="status" role="status" aria-live="polite"></p>
+      <div id="cut" class="cut-layout" hidden>
+        <article class="panel">
+          <h2>Readme</h2>
+          <div id="readme" class="readme"></div>
+        </article>
+        <aside class="side">
+          <div class="panel">
+            <h2>Install</h2>
+            <div id="install"></div>
+          </div>
+          <div class="panel" id="about">
+            <h2>About</h2>
+          </div>
+          <div class="panel">
+            <h2>Versions</h2>
+            <ul id="versions" class="versions"></ul>
+          </div>
+        </aside>
       </div>
     </div>
   </section>
@@ -132,7 +81,7 @@
   <div class="container">
     <div class="footer-top">
       <div class="footer-brand">
-        <a class="brand" href="./">
+        <a class="brand" href="../">
           <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
             <defs>
               <linearGradient id="logoGradFooter" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -153,9 +102,9 @@
       <div class="footer-col">
         <h4>Registry</h4>
         <ul>
-          <li><a href="#browse">Browse cuts</a></li>
-          <li><a href="#getting-started">Get started</a></li>
-          <li><a href="#publishing">Publishing</a></li>
+          <li><a href="../#browse">Browse cuts</a></li>
+          <li><a href="../#getting-started">Get started</a></li>
+          <li><a href="../#publishing">Publishing</a></li>
         </ul>
       </div>
       <div class="footer-col">
@@ -178,6 +127,6 @@
     <div class="footer-bottom"><span>The Diamond project. MIT licensed.</span></div>
   </div>
 </footer>
-<script src="catalog.js" defer></script>
+<script src="../cut.js" defer></script>
 </body>
 </html>
