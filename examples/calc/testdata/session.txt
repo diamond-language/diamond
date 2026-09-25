@@ -1,0 +1,36 @@
+# arithmetic and precedence
+1 + 2 * 3
+(1 + 2) * 3
+2 ^ 3 ^ 2
+-2 ^ 2
+7 / 2
+8 / 2
+-7 % 3
+2 ^ 100
+:tree 1 + 2 * 3 - 4
+:tree 2 ^ 3 ^ 2
+
+# variables and functions
+r = 3
+area = pi * r ^ 2
+round(area)
+max(4, r * 2, 5)
+sqrt(2)
+:vars
+
+# simplification
+:simplify x * 1 + 0
+:simplify (y - y) * z + 2 * 3
+:simplify --q ^ 1
+:simplify 0 * (a + b) + c / 1
+
+# errors
+1 +
+2 * (3 + 4
+3 $ 4
+10 / (5 - 5)
+nope + 1
+min()
+sqrt(-1)
+4 = 5
+:tree 1 + * 2
