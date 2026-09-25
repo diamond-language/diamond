@@ -25,6 +25,14 @@ authoritative fine-grained record.
   optional value), as in Ruby. It used to be a compile error outside a
   loop. A block's inferred result type now also includes early
   `next`/`return` values.
+- Fixed: a local read earlier in a statement than a `do` block came out as
+  `#<Cell>` (for example `[x, list.map() do |v| v end]`), because the
+  block's capture boxed the local in between.
+- `sort` and `sort_by` are stable O(n log n) merge sorts. They were
+  insertion sorts, and `sort_by` called its block on every comparison:
+  4,000 elements took 1.16s in a release build and now take 0.07s.
+- Arrays can be `sort`/`sort_by`/`min`/`max`/`min_by`/`max_by` keys. They
+  compare element by element, then by length, as in Ruby.
 - `String#empty?`, matching `Array#empty?` and `Hash#empty?`.
 - `Hash#delete(key)` removes a key and returns its value, or `nil` when the
   key is absent. Hash previously had no way to remove an entry.

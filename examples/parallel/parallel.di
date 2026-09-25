@@ -71,9 +71,8 @@ puts("#{documents.length()} documents, #{handled.sum()} handled by #{pool.length
 per_document.sort_by() do |pair| pair[0] end.each() do |pair|
   puts("  document #{pair[0] + 1}: #{pair[1]} words")
 end
-# Most frequent first, ties alphabetical. Arrays aren't ordered, so the sort
-# key is one String: the count's distance below 9999, padded, then the word.
-top = totals.keys().sort_by() do |word| "%04d %s".format([9999 - totals[word], word]) end.take(6)
+# Most frequent first, ties alphabetical: Arrays compare element by element.
+top = totals.keys().sort_by() do |word| [0 - totals[word], word] end.take(6)
 puts("most common: #{top.map() do |word| "#{word} (#{totals[word]})" end.join(", ")}")
 
 # --- 3. A pipeline: one thread per stage ---------------------------------

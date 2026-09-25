@@ -434,54 +434,113 @@ def array_each_with_index(values: Array, callback: Callable[2]) -> Array
   values
 end
 
-def enumerable_sort(values: Array) -> Array
-  result = []
+# Ordering support for sort, sort_by, min, max, min_by, and max_by. Two
+# Arrays compare element by element, then by length, like Ruby's Array#<=>,
+# so [count, name] pairs work as sort keys. Anything else uses the same
+# operator each method always used (> for sort and max, < for min), so a
+# class defining only that one operator keeps working. These are top-level
+# functions rather than a module because they recurse, and the diamond_
+# prefix isn't a collection-bridge prefix, so none becomes a method.
+def diamond_sort_greater(a, b) -> Bool
+  return a > b unless a is Array && b is Array
   index = 0
-  while index < values.length()
-    result.push(values[index])
+  while index < a.length() && index < b.length()
+    return true if diamond_sort_greater(a[index], b[index])
+    return false if diamond_sort_greater(b[index], a[index])
     index += 1
   end
-  i = 1
-  while i < result.length()
-    key = result[i]
-    j = i - 1
-    while j >= 0 && result[j] > key
-      result[j + 1] = result[j]
-      j -= 1
+  a.length() > b.length()
+end
+
+def diamond_sort_less(a, b) -> Bool
+  return a < b unless a is Array && b is Array
+  index = 0
+  while index < a.length() && index < b.length()
+    return true if diamond_sort_less(a[index], b[index])
+    return false if diamond_sort_less(b[index], a[index])
+    index += 1
+  end
+  a.length() < b.length()
+end
+
+# The stable ascending order of `keys`, as indices. A bottom-up merge
+# sort: O(n log n) comparisons, and iterative, since Diamond's call depth
+# is bounded.
+def diamond_sort_order(keys: Array) -> Array
+  count = keys.length()
+  order = []
+  index = 0
+  while index < count
+    order.push(index)
+    index += 1
+  end
+  width = 1
+  while width < count
+    merged = []
+    start = 0
+    while start < count
+      # Not min(): a program may define its own function by that name.
+      middle = if start + width < count then start + width else count end
+      stop = if start + width * 2 < count then start + width * 2 else count end
+      left = start
+      right = middle
+      while left < middle && right < stop
+        # Take from the right only when strictly smaller, so equal keys
+        # keep their original order.
+        if diamond_sort_greater(keys[order[left]], keys[order[right]])
+          merged.push(order[right])
+          right += 1
+        else
+          merged.push(order[left])
+          left += 1
+        end
+      end
+      while left < middle
+        merged.push(order[left])
+        left += 1
+      end
+      while right < stop
+        merged.push(order[right])
+        right += 1
+      end
+      start = stop
     end
-    result[j + 1] = key
-    i += 1
+    order = merged
+    width *= 2
+  end
+  order
+end
+
+def diamond_sort_pick(values: Array, order: Array) -> Array
+  result = []
+  index = 0
+  while index < order.length()
+    result.push(values[order[index]])
+    index += 1
   end
   result
 end
 
+def enumerable_sort(values: Array) -> Array
+  diamond_sort_pick(values, diamond_sort_order(values))
+end
+
+# Calls the block once per element, not once per comparison.
 def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
-  result = []
+  keys = []
   index = 0
   while index < values.length()
-    result.push(values[index])
+    keys.push(callback(values[index]))
     index += 1
   end
-  i = 1
-  while i < result.length()
-    key = result[i]
-    key_value = callback(key)
-    j = i - 1
-    while j >= 0 && callback(result[j]) > key_value
-      result[j + 1] = result[j]
-      j -= 1
-    end
-    result[j + 1] = key
-    i += 1
-  end
-  result
+  diamond_sort_pick(values, diamond_sort_order(keys))
 end
 
 def enumerable_min(values: Array)
   result = values[0]
   index = 1
   while index < values.length()
-    if values[index] < result
+    if diamond_sort_less(values[index], result)
       result = values[index]
     end
     index += 1
@@ -493,7 +552,7 @@ def enumerable_max(values: Array)
   result = values[0]
   index = 1
   while index < values.length()
-    if values[index] > result
+    if diamond_sort_greater(values[index], result)
       result = values[index]
     end
     index += 1
@@ -507,7 +566,7 @@ def array_min_by(values: Array, callback: Callable[1])
   index = 1
   while index < values.length()
     key = callback(values[index])
-    if key < result_key
+    if diamond_sort_less(key, result_key)
       result = values[index]
       result_key = key
     end
@@ -522,7 +581,7 @@ def array_max_by(values: Array, callback: Callable[1])
   index = 1
   while index < values.length()
     key = callback(values[index])
-    if key > result_key
+    if diamond_sort_greater(key, result_key)
       result = values[index]
       result_key = key
     end

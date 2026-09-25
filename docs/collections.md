@@ -52,7 +52,11 @@ Array's Enumerable-style methods: `.each`/`.select`/`.map`/`.reduce`/
 `.sort`/`.sort_by`/`.min`/`.max`/`.min_by`/`.max_by`/`.reject`/`.find`/
 `.each_with_index`/`.sum`, and `.take(n)`/`.drop(n)`/`.flat_map`/
 `.partition`/`.group_by`/`.zip(other)`/`.each_slice(n)`/`.each_cons(n)`/
-`.tally`. Calling `.lazy()` on an Array, Range, or other Enumerable
+`.tally`. `sort` and `sort_by` are stable merge sorts (O(n log n), and
+`sort_by` calls its block once per element). Arrays compare element by
+element and then by length when sorting or taking a min/max, so
+`words.sort_by() do |w| [w.length(), w] end` orders by length, then
+alphabetically. Calling `.lazy()` on an Array, Range, or other Enumerable
 returns a `LazyEnumerator`. Its `map`, `select`, and `reject` operations are
 composable and deferred until a terminal runs; chained transforms do not
 allocate intermediate Arrays. `each`, `to_a`, and `force` drain the pipeline.
