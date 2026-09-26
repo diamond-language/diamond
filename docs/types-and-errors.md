@@ -75,6 +75,13 @@ A one-line guard that exits narrows everything after it:
 `break`, `next`, `redo`, and `retry` guards, and for the block form of
 `if`.
 
+Native values can be named too: `Time`, `Fiber`, `Channel`, `Thread`,
+`Supervisor`, `File`, `Socket`, `Listener`, `UDPSocket`, `TLSSocket`,
+`Regexp`, `Tensor`, `SQLite3`, `Statement`, `PostgreSQL`, `MySQL`,
+`ProcessResult`, `ProcessHandle`, `ProcessStream`, and `ProgramBuilder`
+work in annotations, struct fields, unions (`Time | Nil`), `is`, and
+`is_a?`. A program's own class of the same name takes precedence.
+
 `x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
 the whole condition is true (and `unless ... || ...`'s branch narrows
 both operands where the whole condition is false) — composed the same

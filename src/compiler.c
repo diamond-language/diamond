@@ -581,6 +581,8 @@ static bool type_set_satisfies(const Compiler *compiler,uint16_t known_index,
 static bool type_members_satisfy_across(const Compiler *compiler,
     const DiamondTypeSet *known_sets,DiamondTypeMember known,
     const DiamondTypeSet *expected_sets,DiamondTypeMember expected) {
+    if(known.id==DIAMOND_TYPE_NATIVE||expected.id==DIAMOND_TYPE_NATIVE)
+        return known.id==expected.id&&known.callable_arity==expected.callable_arity;
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
@@ -628,6 +630,10 @@ static bool type_sets_satisfy_across(const Compiler *compiler,
 static bool type_member_satisfies(const Compiler *compiler,
                                   DiamondTypeMember known,
                                   DiamondTypeMember expected) {
+    /* A native type (Time, Fiber, ...) matches only the same native kind,
+     * which the member keeps in callable_arity. */
+    if(known.id==DIAMOND_TYPE_NATIVE||expected.id==DIAMOND_TYPE_NATIVE)
+        return known.id==expected.id&&known.callable_arity==expected.callable_arity;
     if(!known_type_satisfies_one(compiler,known.id,expected.id))return false;
     if(expected.id==DIAMOND_TYPE_CALLABLE) {
         if(expected.callable_arity!=UINT8_MAX&&
@@ -687,6 +693,7 @@ static const char *compiler_type_name(const Compiler *compiler,uint8_t type) {
     if(type==DIAMOND_TYPE_HASH)return "Hash";
     if(type==DIAMOND_TYPE_CALLABLE)return "Callable";
     if(type==DIAMOND_TYPE_SIZED)return "Sized";
+    if(type==DIAMOND_TYPE_NATIVE)return "Native";
     if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t index=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
         return index<compiler->function->type_variable_count?
@@ -717,7 +724,9 @@ static void format_compiler_type_set(char *buffer,size_t capacity,
     for(size_t index=0;index<set->count&&used<capacity;index++) {
         const DiamondTypeMember member=set->members[index];
         const int name=snprintf(buffer+used,capacity-used,"%s%s",
-            index==0?"":" | ",compiler_type_name(compiler,member.id));
+            index==0?"":" | ",member.id==DIAMOND_TYPE_NATIVE?
+                diamond_native_type_name(member.callable_arity):
+                compiler_type_name(compiler,member.id));
         if(name<0)return;
         used+=(size_t)name;
         if(member.argument_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
@@ -1987,6 +1996,12 @@ static int resolve_type_name(Compiler *compiler,const char *name,
     if(found>=0)return DIAMOND_TYPE_INTERFACE_BASE+found;
     found=find_class_qualified_or_scoped(compiler,name);
     if(found>=0)return DIAMOND_TYPE_CLASS_BASE+found;
+    /* Native types come after classes, so a program's own class named
+     * Channel or Statement still wins. Encoded above every real id; see
+     * DIAMOND_NATIVE_TYPE_OPERAND_BASE. */
+    uint8_t native_kind=0;
+    if(diamond_native_type_kind(name,&native_kind))
+        return DIAMOND_NATIVE_TYPE_OPERAND_BASE+native_kind;
     /* During diamond_compile's own discovery pass only: a type annotation
      * naming a class/interface declared *later* in the source hasn't
      * been discovered yet by this point in discovery's own walk (that's
@@ -2020,13 +2035,16 @@ static int parse_type_annotation(Compiler *compiler) {
                                    sizeof type_name_buffer)) {
             fail(compiler,member_span,"type name is too long");break;
         }
-        const uint8_t type=(uint8_t)resolve_type_name(
-            compiler,type_name_buffer,member_span);
+        const int resolved=resolve_type_name(compiler,type_name_buffer,member_span);
+        const bool native=resolved>=DIAMOND_NATIVE_TYPE_OPERAND_BASE;
+        const uint8_t type=native?DIAMOND_TYPE_NATIVE:(uint8_t)resolved;
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
         }
         uint16_t argument_set=DIAMOND_NO_TYPE_SET,second_argument_set=DIAMOND_NO_TYPE_SET;
-        uint8_t callable_arity=UINT8_MAX;
+        /* For a native type this byte is the object kind, not an arity. */
+        uint8_t callable_arity=native?
+            (uint8_t)(resolved-DIAMOND_NATIVE_TYPE_OPERAND_BASE):UINT8_MAX;
         uint16_t callable_return_set=DIAMOND_NO_TYPE_SET;
         bool callable_parameters_typed=false;
         uint16_t callable_parameter_sets[16];
@@ -8192,7 +8210,7 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
             fail(compiler,type_span,"type name is too long");
             return 0;
         }
-        const uint8_t resolved_type=(uint8_t)resolve_type_name(
+        const uint16_t resolved_type=(uint16_t)resolve_type_name(
             compiler,type_name,type_span);
         skip_newlines(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
@@ -11061,17 +11079,21 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
                 fail(compiler,tested_type_span,"type name is too long");
                 return left;
             }
-            const uint8_t tested_type=(uint8_t)resolve_type_name(
+            const int tested=resolve_type_name(
                 compiler,tested_type_name,tested_type_span);
+            const bool tested_native=tested>=DIAMOND_NATIVE_TYPE_OPERAND_BASE;
+            const uint8_t tested_type=tested_native?DIAMOND_TYPE_NATIVE:(uint8_t)tested;
             if(tested_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                tested_type<DIAMOND_TYPE_INTERFACE_BASE)
                 fail(compiler,tested_type_span,
                      "generic type variables cannot be used with 'is' before binding");
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,left,
-                             tested_type,3);
+                             (uint16_t)tested,3);
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
-            if(compiler->known_type_sets[left]>=0) {
+            /* Narrowing splits by type id alone, which can't tell native
+             * kinds apart; a native test doesn't narrow. */
+            if(!tested_native&&compiler->known_type_sets[left]>=0) {
                 int32_t matching=-1,remaining=-1;
                 if(split_type_set(compiler,
                    (uint16_t)compiler->known_type_sets[left],tested_type,
@@ -11987,8 +12009,13 @@ static uint16_t compile_begin(Compiler *compiler) {
                                            sizeof rescue_type_name)) {
                     fail(compiler,rescue_type_span,"rescue type name is too long");break;
                 }
-                const uint8_t rescue_type=(uint8_t)resolve_type_name(
+                const int rescue_resolved=resolve_type_name(
                     compiler,rescue_type_name,rescue_type_span);
+                if(rescue_resolved>=DIAMOND_NATIVE_TYPE_OPERAND_BASE) {
+                    fail(compiler,rescue_type_span,"rescue type must be an exception class");
+                    break;
+                }
+                const uint8_t rescue_type=(uint8_t)rescue_resolved;
                 for(size_t existing=0;existing<type_count;existing++)
                     if(rescue_types[existing]==rescue_type)
                         fail(compiler,rescue_type_span,
@@ -15379,6 +15406,7 @@ static uint16_t compile_struct(Compiler *compiler) {
             for(size_t field=0;field<field_count;field++)
                 field_known_classes[field]=
                     type_set_single_class(compiler,field_type_sets[field]);
+            const DiamondFunction *struct_outer=compiler->function;
             StructMethodState state;
             if(!begin_struct_method(compiler,init,&state)) {
                 fail(compiler,name,"out of memory compiling initialize");
@@ -15386,6 +15414,19 @@ static uint16_t compile_struct(Compiler *compiler) {
                 (void)allocate_register(compiler);
                 for(size_t field=0;field<field_count;field++) {
                     const uint16_t value_register=allocate_register(compiler);
+                    /* Check each argument against its field's declared type,
+                     * as a hand-written initialize(x: Int, ...) would -- at
+                     * construction, not first when the reader is called.
+                     * Recording it as the parameter's type also gives calls
+                     * the compile-time argument check. */
+                    const uint16_t parameter_set=clone_type_set_into_current(compiler,
+                        struct_outer->type_sets,struct_outer->type_set_count,
+                        (uint16_t)field_type_sets[field]);
+                    if(parameter_set!=DIAMOND_NO_TYPE_SET) {
+                        init->parameter_type_sets[field]=parameter_set;
+                        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value_register,
+                            parameter_set,0,2);
+                    }
                     emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
                         (uint16_t)field,value_register,3);
                     /* See record_field_known_type's own comment: a struct

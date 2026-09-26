@@ -582,7 +582,8 @@ runtime class synthesis -- see [roadmap.md](roadmap.md)'s "Explicitly
 deferred" section on why that approach was ruled out) with one field per
 declared member, and generates four methods for it automatically:
 
-- `initialize` -- assigns each argument to its matching field, in order.
+- `initialize` -- checks each argument against its field's type and
+  assigns it to its matching field, in order.
   `Point.new(1, 2)` and the keyword form `Point.new(x: 1, y: 2)` both
   work, the same as a hand-written `def initialize(x: Int, y: Int)`.
 - One reader per field (`x`, `y` above) -- exactly what `attr_reader`

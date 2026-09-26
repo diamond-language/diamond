@@ -617,9 +617,25 @@ typedef enum DiamondTypeId : uint8_t {
      * Keep generic variables and interfaces above that full advertised
      * range: the old 96/128 split caused programs with more than 86 classes
      * to reinterpret ordinary class ids as generic/interface ids. */
+    /* A native object type (Time, Fiber, Channel, File, ...). One id for
+     * all of them; a DiamondTypeMember with this id stores which object
+     * kind in its callable_arity byte (meaningless for anything but
+     * Callable otherwise). It sits in the gap after the class range. */
+    DIAMOND_TYPE_NATIVE = 190,
     DIAMOND_TYPE_VARIABLE_BASE = 192,
     DIAMOND_TYPE_INTERFACE_BASE = 224,
 } DiamondTypeId;
+
+static_assert(DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES <= DIAMOND_TYPE_NATIVE,
+              "class type ids must not reach DIAMOND_TYPE_NATIVE");
+
+/* DIAMOND_OP_IS_TYPE's operand for `x is Time`: this base plus the object
+ * kind, above every real type id (which fit in a byte). */
+enum { DIAMOND_NATIVE_TYPE_OPERAND_BASE = 256 };
+
+/* The native types an annotation can name, and their object kinds. */
+bool diamond_native_type_kind(const char *name, uint8_t *kind);
+const char *diamond_native_type_name(uint8_t kind);
 
 enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };

@@ -9035,6 +9035,7 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *expected_sets,
                                   uint16_t expected_index);
 
+static bool value_is_native_kind(DiamondValue value,uint8_t kind);
 static bool value_matches_type(const DiamondChunk *chunk,DiamondValue value,
                                uint8_t type);
 
@@ -9147,6 +9148,13 @@ static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue valu
 
 static bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                uint8_t type) {
+    /* A bare id can't say which native kind; any native object will do.
+     * (Members check the kind -- see value_matches_member.) */
+    if(type==DIAMOND_TYPE_NATIVE) {
+        if(value.kind!=DIAMOND_VALUE_OBJECT)return false;
+        const char *name=diamond_native_type_name((uint8_t)value.as.object->kind);
+        return strcmp(name,"<native>")!=0;
+    }
     if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
         if(variable>=chunk->type_variable_count||
@@ -9439,6 +9447,8 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
 
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                                  DiamondTypeMember member,bool attach) {
+    if(member.id==DIAMOND_TYPE_NATIVE)
+        return value_is_native_kind(value,member.callable_arity);
     if(!value_matches_type(chunk,value,member.id))return false;
     if(member.id==DIAMOND_TYPE_CALLABLE) {
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
@@ -10033,6 +10043,7 @@ static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
     else if(type==DIAMOND_TYPE_HASH) name="Hash";
     else if(type==DIAMOND_TYPE_CALLABLE) name="Callable";
     else if(type==DIAMOND_TYPE_SIZED) name="Sized";
+    else if(type==DIAMOND_TYPE_NATIVE) name="Native";
     else if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
         const DiamondTypeBinding *binding=chunk->type_variable_bindings;
@@ -10060,7 +10071,9 @@ static void format_type_set_index(char *buffer,size_t capacity,
     size_t used=0;buffer[0]='\0';
     for(size_t index=0;index<set->count && used<capacity;index++) {
         const int written=snprintf(buffer+used,capacity-used,"%s%s",
-            index==0?"":" | ",type_name(chunk,set->members[index].id));
+            index==0?"":" | ",set->members[index].id==DIAMOND_TYPE_NATIVE?
+                diamond_native_type_name(set->members[index].callable_arity):
+                type_name(chunk,set->members[index].id));
         if(written<0)return;
         used+=(size_t)written;
         if(set->members[index].argument_set!=DIAMOND_NO_TYPE_SET&&used<capacity) {
@@ -10116,6 +10129,42 @@ static void format_type_set_index(char *buffer,size_t capacity,
             }
         }
     }
+}
+
+/* Annotation name <-> object kind for native values. The names match what
+ * diamond_format_value_type prints for a value of that kind, so an error
+ * reads "expected Time, got Fiber". */
+static const struct {const char *name;DiamondObjectKind kind;} native_type_names[]={
+    {"Fiber",DIAMOND_OBJECT_FIBER},{"File",DIAMOND_OBJECT_FILE},
+    {"Listener",DIAMOND_OBJECT_LISTENER},{"Socket",DIAMOND_OBJECT_SOCKET},
+    {"UDPSocket",DIAMOND_OBJECT_UDP_SOCKET},{"TLSSocket",DIAMOND_OBJECT_TLS_SOCKET},
+    {"Regexp",DIAMOND_OBJECT_REGEXP},{"ProgramBuilder",DIAMOND_OBJECT_PROGRAM_BUILDER},
+    {"Thread",DIAMOND_OBJECT_THREAD},{"SQLite3",DIAMOND_OBJECT_SQLITE3},
+    {"Statement",DIAMOND_OBJECT_SQLITE3_STATEMENT},{"PostgreSQL",DIAMOND_OBJECT_POSTGRES},
+    {"MySQL",DIAMOND_OBJECT_MYSQL},{"Time",DIAMOND_OBJECT_TIME},
+    {"ProcessResult",DIAMOND_OBJECT_PROCESS_RESULT},
+    {"ProcessHandle",DIAMOND_OBJECT_PROCESS_HANDLE},
+    {"ProcessStream",DIAMOND_OBJECT_PROCESS_STREAM},{"Tensor",DIAMOND_OBJECT_TENSOR},
+    {"Channel",DIAMOND_OBJECT_CHANNEL},{"Supervisor",DIAMOND_OBJECT_SUPERVISOR},
+};
+
+bool diamond_native_type_kind(const char *name, uint8_t *kind) {
+    for(size_t index=0;index<sizeof native_type_names/sizeof native_type_names[0];index++)
+        if(strcmp(name,native_type_names[index].name)==0) {
+            *kind=(uint8_t)native_type_names[index].kind;
+            return true;
+        }
+    return false;
+}
+
+const char *diamond_native_type_name(uint8_t kind) {
+    for(size_t index=0;index<sizeof native_type_names/sizeof native_type_names[0];index++)
+        if((uint8_t)native_type_names[index].kind==kind)return native_type_names[index].name;
+    return "<native>";
+}
+
+static bool value_is_native_kind(DiamondValue value,uint8_t kind) {
+    return value.kind==DIAMOND_VALUE_OBJECT&&(uint8_t)value.as.object->kind==kind;
 }
 
 void diamond_format_value_type(char *buffer, size_t capacity,
@@ -21965,7 +22014,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t destination=0,source=0,type=0;
                 READ_SHORT(destination);READ_SHORT(source);READ_SHORT(type);
-                registers[destination]=DIAMOND_BOOL(
+                registers[destination]=DIAMOND_BOOL(type>=DIAMOND_NATIVE_TYPE_OPERAND_BASE?
+                    value_is_native_kind(registers[source],
+                        (uint8_t)(type-DIAMOND_NATIVE_TYPE_OPERAND_BASE)):
                     value_matches_type(chunk,registers[source],(uint8_t)type));
                 break;
             }

@@ -21,6 +21,11 @@ authoritative fine-grained record.
 
 ### Language
 
+- Native types can be used in type annotations: `Time`, `Fiber`, `Channel`,
+  `File`, `Regexp`, `Thread`, `Tensor`, sockets, database handles, and
+  more, including struct fields, unions, `is`, and `is_a?`.
+- Struct constructors check field types when called; a wrong type used to
+  go unnoticed until the field was read.
 - Modules can use `@@class_variables`, shared by the module's singleton
   functions and the instance methods it mixes in.
 - `:name=` is a Symbol literal (naming a writer method), as in Ruby.
