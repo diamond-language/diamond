@@ -11397,6 +11397,13 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         if(!builder_append(builder,scalar,(size_t)length))return false;
         return has_marker||builder_append(builder,".0",2);
     }
+    if(value.kind==DIAMOND_VALUE_CLASS&&builder->format_context!=nullptr&&
+       (size_t)value.as.class_index<builder->format_context->chunk->class_count) {
+        /* With a chunk to look it up in, a class prints as its name. */
+        const char *class_name=
+            builder->format_context->chunk->classes[value.as.class_index].name;
+        return builder_append(builder,class_name,strlen(class_name));
+    }
     if(value.kind==DIAMOND_VALUE_CLASS) {
         /* No chunk/program context reaches this value-only formatting
          * path (unlike DIAMOND_OBJECT_INSTANCE below, which prints its
@@ -22400,6 +22407,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondStringConstant *method_name=&chunk->strings[name_index];
                 const DiamondMethod *method=lookup_singleton_method(chunk,class,
                     method_name->chars,method_name->length);
+                /* self.name() / self.to_s(): the class's own name, unless
+                 * the class defines a singleton of that name itself. */
+                if(method==nullptr&&argc==0&&
+                   ((method_name->length==4&&memcmp(method_name->chars,"name",4)==0)||
+                    (method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0))) {
+                    DiamondString *class_name=allocate_string(vm,class->name,strlen(class->name));
+                    if(class_name==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[dest]=DIAMOND_OBJECT(class_name);break;
+                }
                 if(method==nullptr) {
                     snprintf(vm->error,sizeof vm->error,
                         "undefined class singleton method '%.*s' for %s",

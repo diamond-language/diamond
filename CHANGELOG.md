@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- A class value prints as its name (it printed `#<Class:28>`), and
+  `self.name()` / `self.to_s()` in a class method return it.
 - `self.define_method` / `self.compile_method` / `self.redefine_method`
   inside a class's `def self.` method act on the class `self` holds at
   run time, so a base class can generate methods for each subclass.

@@ -250,8 +250,9 @@ Model.describe()    # => "model_default"
 ```
 
 `self` also works as an ordinary value with no following call (it holds
-the class itself, comparable with `==` and usable anywhere a value is
-expected) -- but a Class value has no general-purpose literal syntax of
+the class itself, comparable with `==`, printing as its name, and usable
+anywhere a value is expected; `self.name()` and `self.to_s()` return the
+name as a String unless the class defines its own singleton of that name) -- but a Class value has no general-purpose literal syntax of
 its own. `self` inside a class-owned singleton method is one way to
 obtain one; a bare class name as a `case`/`when` pattern (`when Dog`,
 [core syntax](core-syntax.md)) is the other. Neither is a general
