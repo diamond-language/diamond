@@ -10144,6 +10144,65 @@ void diamond_format_value_type(char *buffer, size_t capacity,
     snprintf(buffer,capacity,"%s",name);
 }
 
+/* Appends the distinct element type names of `values` to `buffer`,
+ * joined with " | ", at most four and then "...". */
+static void append_element_types(char *buffer,size_t capacity,
+        const DiamondValue *values,size_t count) {
+    char seen[4][80];size_t seen_count=0;bool more=false;
+    for(size_t index=0;index<count;index++) {
+        char name[80];
+        diamond_format_value_type(name,sizeof name,values[index]);
+        bool known=false;
+        for(size_t earlier=0;earlier<seen_count;earlier++)
+            if(strcmp(seen[earlier],name)==0){known=true;break;}
+        if(known)continue;
+        if(seen_count==4){more=true;break;}
+        snprintf(seen[seen_count++],sizeof seen[0],"%s",name);
+    }
+    for(size_t index=0;index<seen_count;index++) {
+        const size_t used=strlen(buffer);
+        if(used>=capacity)return;
+        snprintf(buffer+used,capacity-used,"%s%s",index>0?" | ":"",seen[index]);
+    }
+    const size_t used=strlen(buffer);
+    if(more&&used<capacity)snprintf(buffer+used,capacity-used," | ...");
+}
+
+/* diamond_format_value_type, plus the element types a non-empty Array or
+ * Hash actually holds -- "Array[String]" rather than just "Array" -- so a
+ * failed `values: Array[Int]` check says what was in the Array. */
+static void format_value_type_detailed(char *buffer,size_t capacity,
+        DiamondValue value) {
+    diamond_format_value_type(buffer,capacity,value);
+    if(value.kind!=DIAMOND_VALUE_OBJECT)return;
+    if(value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *array=(const DiamondArray *)value.as.object;
+        if(array->count==0)return;
+        snprintf(buffer,capacity,"Array[");
+        append_element_types(buffer,capacity,array->values,array->count);
+    } else if(value.as.object->kind==DIAMOND_OBJECT_HASH) {
+        const DiamondHash *hash=(const DiamondHash *)value.as.object;
+        if(hash->count==0)return;
+        /* Entries hold key, value, and hash together; gather the keys and
+         * the values into their own arrays. */
+        DiamondValue *keys=malloc(hash->count*sizeof(DiamondValue));
+        DiamondValue *values=malloc(hash->count*sizeof(DiamondValue));
+        if(keys==nullptr||values==nullptr){free(keys);free(values);return;}
+        for(size_t index=0;index<hash->count;index++) {
+            keys[index]=hash->entries[index].key;
+            values[index]=hash->entries[index].value;
+        }
+        snprintf(buffer,capacity,"Hash[");
+        append_element_types(buffer,capacity,keys,hash->count);
+        size_t used=strlen(buffer);
+        if(used<capacity)snprintf(buffer+used,capacity-used,", ");
+        append_element_types(buffer,capacity,values,hash->count);
+        free(keys);free(values);
+    } else return;
+    const size_t used=strlen(buffer);
+    if(used<capacity)snprintf(buffer+used,capacity-used,"]");
+}
+
 /* "X does not support 'op' with Y" -- shared by every arithmetic/
  * comparison operator's type-mismatch error site. When either operand
  * is a Callable, appends a hint: a bare `obj.method` (no parens) is a
@@ -21236,9 +21295,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const bool matches=value_matches_set(chunk,registers[source],
                     set_index,true);
                 if(!matches) {
-                    char expected[80]; char actual[80];
+                    char expected[256]; char actual[256];
                     format_type_set_index(expected,sizeof expected,chunk,set_index);
-                    diamond_format_value_type(actual,sizeof actual,registers[source]);
+                    format_value_type_detailed(actual,sizeof actual,registers[source]);
                     snprintf(vm->error,sizeof vm->error,"expected %s, got %s",
                              expected,actual);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);

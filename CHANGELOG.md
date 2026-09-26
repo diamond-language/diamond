@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- A failed type check on an Array or Hash names what it held:
+  `expected Array[Int], got Array[String | Int]` instead of `got Array`.
 - A call to a known top-level function with a provably wrong argument type
   is a compile error naming the parameter
   (`argument 'x' of f: expected Int, got String`). It used to compile and
