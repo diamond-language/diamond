@@ -1,0 +1,103 @@
+$ notes add Groceries home errands
+added 1
+[exit 0]
+$ notes add Standup work
+added 2
+[exit 0]
+$ notes add Omelette cooking home
+added 3
+[exit 0]
+$ notes list
+   1  2026-08-14  Groceries  [errands, home]
+   2  2026-09-02  Standup  [work]
+   3  2026-09-20  Omelette  [cooking, home]
+[exit 0]
+$ notes list home
+   1  2026-08-14  Groceries  [errands, home]
+   3  2026-09-20  Omelette  [cooking, home]
+[exit 0]
+$ notes show 2
+#2 Standup
+2026-09-02  [work]
+
+Standup notes.
+The deploy is blocked on the flaky gremlin test.
+Follow up with the database team.
+[exit 0]
+$ notes search butter
+   1  Groceries
+      Pick up flour, eggs, and the good [butter].
+   3  Omelette
+      [Butter] the pan before the eggs go in.
+[exit 0]
+$ notes search "flaky gremlin"
+   2  Standup
+      ...The deploy is blocked on the [flaky gremlin]...
+[exit 0]
+$ notes tag 2 Ops
+tagged 2
+[exit 0]
+$ notes untag 1 errands
+untagged 1
+[exit 0]
+$ notes import testdata/import.json
+imported 2
+[exit 0]
+$ notes import testdata/bad_import.json
+notes: entry 2: needs a title
+[exit 1]
+$ notes list
+   1  2026-08-14  Groceries  [home]
+   2  2026-09-02  Standup  [ops, work]
+   3  2026-09-20  Omelette  [cooking, home]
+   4  2026-07-30  Reading list  [books, work]
+   5  2026-09-05  Bike  [errands]
+[exit 0]
+$ notes search brake OR websockets
+   4  Reading list
+      Finish the gremlin chapter on [websockets].
+   5  Bike
+      Replace the rear [brake] pads before the ride.
+[exit 0]
+$ notes rm 5
+removed 5
+[exit 0]
+$ notes search brake
+no matches
+[exit 0]
+$ notes stats
+4 notes
+
+Tags
+  home        2
+  work        2
+  books       1
+  cooking     1
+  ops         1
+
+By month
+  2026-07  1
+  2026-08  1
+  2026-09  2
+[exit 0]
+$ notes export
+[{"id":1,"title":"Groceries","body":"Pick up flour, eggs, and the good butter.","created":"2026-08-14","tags":["home"]},{"id":2,"title":"Standup","body":"Standup notes.\nThe deploy is blocked on the flaky gremlin test.\nFollow up with the database team.","created":"2026-09-02","tags":["ops","work"]},{"id":3,"title":"Omelette","body":"Butter the pan before the eggs go in.","created":"2026-09-20","tags":["cooking","home"]},{"id":4,"title":"Reading list","body":"Finish the gremlin chapter on websockets.","created":"2026-07-30","tags":["books","work"]}]
+[exit 0]
+$ notes show 99
+notes: no note 99
+[exit 1]
+$ notes show abc
+notes: not a note id: abc
+[exit 1]
+$ notes untag 1 nope
+notes: note 1 has no tag nope
+[exit 1]
+$ notes search AND
+notes: bad search: fts5: syntax error near "AND"
+[exit 1]
+$ notes import testdata/missing.json
+notes: cannot open 'testdata/missing.json': No such file or directory
+[exit 66]
+$ notes frobnicate
+usage: notes [--db FILE] add|list|show|search|tag|untag|rm|import|export|stats ...
+[exit 64]

@@ -1,0 +1,4 @@
+[
+  {"title": "Fine", "body": "This one is valid, but it shouldn't survive.", "tags": ["x"]},
+  {"title": "", "body": "No title, so the whole import rolls back."}
+]
