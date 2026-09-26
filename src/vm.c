@@ -10144,6 +10144,13 @@ void diamond_format_value_type(char *buffer, size_t capacity,
     snprintf(buffer,capacity,"%s",name);
 }
 
+/* strcat that stops at `capacity`, keeping `buffer` terminated. */
+static void append_bounded(char *buffer,size_t capacity,const char *text) {
+    size_t used=strlen(buffer);
+    while(*text!='\0'&&used+1<capacity)buffer[used++]=*text++;
+    buffer[used]='\0';
+}
+
 /* Appends the distinct element type names of `values` to `buffer`,
  * joined with " | ", at most four and then "...". */
 static void append_element_types(char *buffer,size_t capacity,
@@ -10160,12 +10167,10 @@ static void append_element_types(char *buffer,size_t capacity,
         snprintf(seen[seen_count++],sizeof seen[0],"%s",name);
     }
     for(size_t index=0;index<seen_count;index++) {
-        const size_t used=strlen(buffer);
-        if(used>=capacity)return;
-        snprintf(buffer+used,capacity-used,"%s%s",index>0?" | ":"",seen[index]);
+        if(index>0)append_bounded(buffer,capacity," | ");
+        append_bounded(buffer,capacity,seen[index]);
     }
-    const size_t used=strlen(buffer);
-    if(more&&used<capacity)snprintf(buffer+used,capacity-used," | ...");
+    if(more)append_bounded(buffer,capacity," | ...");
 }
 
 /* diamond_format_value_type, plus the element types a non-empty Array or
