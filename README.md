@@ -96,7 +96,7 @@ sandbox.
 - `examples/`, `applications/`: runnable sample apps, from a two-table CRUD
   app and a WebSocket chat room to a standalone log-summary CLI and a
   from-scratch GPT-style transformer, plus smaller tours of one area each:
-  `calc` (parsing and pattern matching), `generators` (fibers), `grades`
+  `agenda` (Time and calendars), `calc` (parsing and pattern matching), `generators` (fibers), `grades`
   (the type system), `ledger`
   (the object model), `markdown` (strings and Regexp), `parallel`
   (threads, channels, supervisors), `taskrun` (processes), and `vault`
