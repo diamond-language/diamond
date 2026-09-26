@@ -445,6 +445,9 @@ class Lexer
       end
       if self.code_at(@current) == "?".ord() || self.code_at(@current) == "!".ord()
         self.advance()
+      elsif self.code_at(@current) == "=".ord() && self.code_at(@current + 1) != "=".ord() && self.code_at(@current + 1) != ">".ord() && self.code_at(@current + 1) != "~".ord()
+        # :name= (a writer's name), matching src/lexer.c.
+        self.advance()
       end
       return self.make_token(:symbol)
     end

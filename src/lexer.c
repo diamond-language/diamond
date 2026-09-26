@@ -339,6 +339,12 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
                 while (identifier_part(lexer->source[lexer->current])) advance(lexer);
                 if(lexer->source[lexer->current]=='?'||
                    lexer->source[lexer->current]=='!')advance(lexer);
+                /* :name= names a writer method, as in Ruby -- but not
+                 * :a==b, :a=>b, or :a=~b, where the = starts an operator. */
+                else if(lexer->source[lexer->current]=='='&&
+                        lexer->source[lexer->current+1]!='='&&
+                        lexer->source[lexer->current+1]!='>'&&
+                        lexer->source[lexer->current+1]!='~')advance(lexer);
                 return token(lexer, DIAMOND_TOKEN_SYMBOL);
             }
             return token(lexer, DIAMOND_TOKEN_COLON);

@@ -21,6 +21,7 @@ authoritative fine-grained record.
 
 ### Language
 
+- `:name=` is a Symbol literal (naming a writer method), as in Ruby.
 - `self.new(...)` in a class's `def self.` method builds whichever class
   `self` is, so inherited factory methods work.
 - `redefine_method` accepts a `compile_method` callable, so an existing
