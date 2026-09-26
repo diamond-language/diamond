@@ -8983,6 +8983,9 @@ static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
         publish_known_type_set(compiler,destination,(uint16_t)indexed);
 }
 
+static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
+                                  uint16_t left, uint16_t right);
+
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t index=parse_expression(compiler);
@@ -8990,6 +8993,51 @@ static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
         fail(compiler,compiler->current.span,"expected ']' after index"); return 0;
     }
     advance_token(compiler);
+    /* `expr[index] = value` (and `+=` and friends) where expr isn't a
+     * plain local/@ivar/@@cvar -- `obj.table()[key] = value`,
+     * `lookup()[key] += 1`. Those three simple receivers are handled
+     * before expression parsing starts (compile_index_assignment and
+     * compile_index_compound_assignment); any other receiver reaches here
+     * as an ordinary value, and storing into it is the same INDEX_SET.
+     * Only the receiver object is mutated, so there's no local whose
+     * collection type facts need widening. */
+    const DiamondTokenKind assign=compiler->current.kind;
+    if(assign==DIAMOND_TOKEN_EQUAL) {
+        advance_token(compiler);
+        const uint16_t value=parse_expression(compiler);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,value,3);
+        return value;
+    }
+    if(assign==DIAMOND_TOKEN_OR_OR_EQUAL||assign==DIAMOND_TOKEN_AND_AND_EQUAL||
+       assign==DIAMOND_TOKEN_PLUS_EQUAL||assign==DIAMOND_TOKEN_MINUS_EQUAL||
+       assign==DIAMOND_TOKEN_STAR_EQUAL||assign==DIAMOND_TOKEN_SLASH_EQUAL||
+       assign==DIAMOND_TOKEN_PERCENT_EQUAL) {
+        advance_token(compiler);
+        const uint16_t left=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_GET,left,receiver,index,3);
+        const uint16_t destination=allocate_register(compiler);
+        if(assign==DIAMOND_TOKEN_OR_OR_EQUAL||assign==DIAMOND_TOKEN_AND_AND_EQUAL) {
+            emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
+            const size_t end_jump=emit_jump(compiler,
+                assign==DIAMOND_TOKEN_AND_AND_EQUAL?DIAMOND_OP_JUMP_IF_FALSE:
+                    DIAMOND_OP_JUMP_IF_TRUE,left);
+            const uint16_t right=parse_expression(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
+            emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,destination,3);
+            patch_jump(compiler,end_jump,compiler->function->code_count);
+            return destination;
+        }
+        const DiamondTokenKind plain_op=
+            assign==DIAMOND_TOKEN_PLUS_EQUAL?DIAMOND_TOKEN_PLUS:
+            assign==DIAMOND_TOKEN_MINUS_EQUAL?DIAMOND_TOKEN_MINUS:
+            assign==DIAMOND_TOKEN_STAR_EQUAL?DIAMOND_TOKEN_STAR:
+            assign==DIAMOND_TOKEN_SLASH_EQUAL?DIAMOND_TOKEN_SLASH:
+            DIAMOND_TOKEN_PERCENT;
+        const uint16_t right=parse_expression(compiler);
+        const uint16_t result=compile_binary_op(compiler,plain_op,left,right);
+        emit_instruction(compiler,DIAMOND_OP_INDEX_SET,receiver,index,result,3);
+        return result;
+    }
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_INDEX_GET,destination,receiver,index,3);
     set_index_provenance(compiler,destination,receiver);

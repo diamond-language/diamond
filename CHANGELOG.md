@@ -21,6 +21,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- Indexed assignment (`=`, `+=`, `||=`, ...) works on any receiver
+  expression, such as `obj.table()[key] = value`; it used to accept only a
+  plain local, `@ivar`, or `@@cvar`.
 - `sealed` is a keyword only directly before `class`, so it works as an
   ordinary local or parameter name elsewhere.
 - An object pattern that only binds or ignores its readers
