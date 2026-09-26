@@ -274,9 +274,10 @@ $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
 # the compiler's sources and prelude goes into the cache fingerprint, and
 # compiled_prelude.o rebuilds whenever any of them change. cksum is POSIX,
 # so this works on every platform CI covers.
-DIAMOND_BUILD_ID := $(shell cat src/*.c src/*.h lib/core.di | cksum | cut -d' ' -f1)
+PRELUDE_SOURCES := lib/core.di $(wildcard lib/core/*.di)
+DIAMOND_BUILD_ID := $(shell cat src/*.c src/*.h $(PRELUDE_SOURCES) | cksum | cut -d' ' -f1)
 $(BUILD_DIR)/compiled_prelude.o: CPPFLAGS += -DDIAMOND_BUILD_ID=$(DIAMOND_BUILD_ID)u
-$(BUILD_DIR)/compiled_prelude.o: $(SOURCES) $(wildcard src/*.h) lib/core.di
+$(BUILD_DIR)/compiled_prelude.o: $(SOURCES) $(wildcard src/*.h) $(PRELUDE_SOURCES)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(BUILD_DIR)
@@ -343,11 +344,12 @@ API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 PRELUDE_BIN := $(BUILD_DIR)/compiled_prelude.bin
 GEN_PRELUDE_SOURCES := $(filter-out src/compiled_prelude_data.c src/run_source.c,$(API_SOURCES))
 
-# lib/core.di too: src/prelude.c #embeds it, and this generator compiles
-# the sources directly, so no .d file records that dependency. Without it,
-# editing the prelude left compiled_prelude.bin -- the prelude bytecode
-# every diamond binary actually runs -- stale.
-$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) lib/core.di $(REGINOLD_LIB)
+# The prelude sources too (lib/core.di and lib/core/*.di): src/prelude.c
+# #embeds them, and this generator compiles the sources directly, so no .d
+# file records that dependency. Without it, editing the prelude left
+# compiled_prelude.bin -- the prelude bytecode every diamond binary
+# actually runs -- stale.
+$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) $(PRELUDE_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_PRELUDE_SOURCES) $< $(LDLIBS) -o $@
 
@@ -379,7 +381,7 @@ $(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
 # "compiled_prelude.bin: No such file or directory" on an otherwise
 # clean build -- reproduced directly under `-j$(nproc)`, gone once this
 # rule moved below the real definition).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) lib/core.di $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) $(PRELUDE_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
 

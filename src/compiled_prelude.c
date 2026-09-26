@@ -488,7 +488,8 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
 enum { DIAMOND_CACHE_FORMAT_VERSION = 3 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
- * file under src/, plus lib/core.di), passed in by the Makefile. The
+ * file under src/, plus lib/core.di and lib/core/), passed in by the
+ * Makefile. The
  * layout fields above only notice a change to the file format; a compiler
  * fix that changes the bytecode generated for the same source leaves them
  * all identical, and without this a rebuilt or upgraded `diamond` would
