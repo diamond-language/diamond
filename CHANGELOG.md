@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- `break` and `return` inside a do-block now work as in Ruby. `break value`
+  ends the call the block was passed to, which evaluates to `value`.
+  `return value` returns from the enclosing `def`. `ensure` clauses in
+  between still run. Previously `break` in a block was a compile error, and
+  `return` only ended the current call of the block, which `next` still
+  does.
 - Native types can be used in type annotations: `Time`, `Fiber`, `Channel`,
   `File`, `Regexp`, `Thread`, `Tensor`, sockets, database handles, and
   more, including struct fields, unions, `is`, and `is_a?`.

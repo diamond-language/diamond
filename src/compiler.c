@@ -209,6 +209,23 @@ typedef struct Compiler {
      * marks it calls_itself. See DiamondFunction.calls_itself. */
     DiamondFunction *current_definition;
     DiamondSpan current_definition_name;
+    /* The def whose body (or a do-block within it) is being compiled, and
+     * its declared return type (an index into that def's own type sets, or
+     * -1): a `return` inside a block returns from this def, so it's checked
+     * against this type and marks the def as a non-local landing site.
+     * Unchanged by compile_block; nullptr outside any def. */
+    DiamondFunction *method_function;
+    int method_return_type;
+    DiamondSpan method_return_type_span;
+    /* A block inside method_function returns from it: its unannotated
+     * return type can't be inferred from its own body and returns. */
+    bool method_has_block_return;
+    /* Set while compiling a do-block body when it contains a `break` that
+     * leaves the block (see compile_loop_control). */
+    bool block_has_break;
+    /* A call whose block can `break` returns the break value instead of
+     * its usual result; parse_precedence drops that call's type facts. */
+    bool block_break_pending;
     /* The explicit `&name` parameter for the function currently being
      * compiled. In that lexical context `yield(...)` invokes this Callable;
      * without one, yield retains its fiber-suspension meaning. */
@@ -11023,8 +11040,18 @@ static uint16_t parse_case(Compiler *compiler) {
     return result;
 }
 
+/* A call whose do-block can `break` returns the break value instead of its
+ * usual result, so none of the call's type facts hold. */
+static void drop_facts_after_block_break(Compiler *compiler,uint16_t reg) {
+    if(!compiler->block_break_pending)return;
+    compiler->block_break_pending=false;
+    compiler->known_types[reg]=TYPE_UNKNOWN;
+    compiler->known_type_sets[reg]=-1;
+}
+
 static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     uint16_t left = parse_prefix(compiler);
+    drop_facts_after_block_break(compiler,left);
     while (!compiler->failed &&
            (compiler->current.kind == DIAMOND_TOKEN_DOT ||
             compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET ||
@@ -11050,6 +11077,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
             left = compiler->current.kind == DIAMOND_TOKEN_DOT
                 ? parse_invoke(compiler,left) : parse_index(compiler,left);
         }
+        drop_facts_after_block_break(compiler,left);
     }
     while (!compiler->failed &&
            token_precedence(compiler->current.kind) >= precedence) {
@@ -11768,23 +11796,66 @@ static void maybe_rewrite_self_tail_call(Compiler *compiler,
         DIAMOND_OP_TAIL_CALL;
 }
 
+static bool at_statement_end(Compiler *compiler) {
+    return compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
+           compiler->current.kind==DIAMOND_TOKEN_END ||
+           compiler->current.kind==DIAMOND_TOKEN_ELSE ||
+           compiler->current.kind==DIAMOND_TOKEN_IF ||
+           compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
+           compiler->current.kind==DIAMOND_TOKEN_EOF;
+}
+
+static uint16_t nil_register(Compiler *compiler) {
+    const uint16_t value=allocate_register(compiler);
+    /* Sole writer; run_chunk's zero-init already covers this. */
+    compiler->known_types[value]=DIAMOND_TYPE_NIL;
+    return value;
+}
+
+/* `return` inside a do-block returns from the enclosing def, Ruby-style:
+ * DIAMOND_OP_BLOCK_RETURN unwinds every frame between the block and that
+ * def's frame, running their ensure handlers on the way. The value is
+ * checked against the def's `-> Type` here, in the block, since the def's
+ * own RETURN is skipped. */
+static uint16_t compile_block_return(Compiler *compiler) {
+    const DiamondSpan keyword=compiler->current.span;
+    if(compiler->method_function==nullptr) {
+        fail(compiler,keyword,
+             "'return' in a block outside any def; use 'next' to end the block");
+        return 0;
+    }
+    advance_token(compiler);
+    int32_t expected=-1;
+    if(compiler->method_return_type>=0)
+        expected=clone_type_set_into_current(compiler,
+            compiler->method_function->type_sets,
+            compiler->method_function->type_set_count,
+            (uint16_t)compiler->method_return_type);
+    if(expected==DIAMOND_NO_TYPE_SET)expected=-1;
+    const uint16_t value=at_statement_end(compiler)?nil_register(compiler):
+        expected>=0?parse_with_expected_set(compiler,(uint16_t)expected):
+        parse_expression(compiler);
+    if(expected>=0)
+        emit_type_check(compiler,value,(uint8_t)expected,
+                        compiler->method_return_type_span);
+    compiler->method_function->nonlocal_landing=true;
+    compiler->method_has_block_return=true;
+    emit_instruction(compiler,DIAMOND_OP_BLOCK_RETURN,value,0,0,1);
+    return value;
+}
+
 static uint16_t compile_return(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
     if(!compiler->in_function) {
         fail(compiler,keyword,"'return' used outside a function");
         return 0;
     }
+    if(compiler->in_block&&compiler->current.kind==DIAMOND_TOKEN_RETURN)
+        return compile_block_return(compiler);
     advance_token(compiler);
     uint16_t value=0;
-    if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
-       compiler->current.kind==DIAMOND_TOKEN_END ||
-       compiler->current.kind==DIAMOND_TOKEN_ELSE ||
-       compiler->current.kind==DIAMOND_TOKEN_IF ||
-       compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
-       compiler->current.kind==DIAMOND_TOKEN_EOF) {
-        value=allocate_register(compiler);
-        /* Sole writer; run_chunk's zero-init already covers this. */
-        compiler->known_types[value]=DIAMOND_TYPE_NIL;
+    if(at_statement_end(compiler)) {
+        value=nil_register(compiler);
     } else {
         value=compiler->current_return_type>=0?
             parse_with_expected_set(compiler,
@@ -12129,6 +12200,17 @@ static uint16_t compile_loop_control(Compiler *compiler) {
     if(compiler->current_loop==nullptr&&kind==DIAMOND_TOKEN_NEXT&&
        compiler->in_block)
         return compile_return(compiler);
+    /* `break` in a do-block, outside any loop inside it, ends the call the
+     * block was passed to: that call's result becomes the break value. */
+    if(compiler->current_loop==nullptr&&kind==DIAMOND_TOKEN_BREAK&&
+       compiler->in_block) {
+        advance_token(compiler);
+        const uint16_t value=at_statement_end(compiler)?nil_register(compiler):
+            parse_expression(compiler);
+        compiler->block_has_break=true;
+        emit_instruction(compiler,DIAMOND_OP_BLOCK_BREAK,value,0,0,1);
+        return value;
+    }
     if(compiler->current_loop==nullptr) {
         fail(compiler,keyword,kind==DIAMOND_TOKEN_BREAK
             ? "'break' used outside a loop":kind==DIAMOND_TOKEN_NEXT
@@ -12281,6 +12363,8 @@ static uint16_t compile_block(Compiler *compiler) {
     const uint8_t outer_return_flow_type=compiler->return_flow_type;
     const int32_t outer_return_flow_set=compiler->return_flow_set;
     compiler->return_flow_seen=false;
+    const bool outer_block_has_break=compiler->block_has_break;
+    compiler->block_has_break=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
     LoopContext *outer_loop=compiler->current_loop;
@@ -12642,6 +12726,13 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
     compiler->in_block=outer_in_block;
+    if(compiler->block_has_break) {
+        /* The break lands in outer_function's frame, so outer_function
+         * stays out of the JIT; the call's result type is unknown. */
+        outer_function->nonlocal_landing=true;
+        compiler->block_break_pending=true;
+    }
+    compiler->block_has_break=outer_block_has_break;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
     compiler->current_block_type_set=outer_current_block_type_set;
@@ -13573,6 +13664,14 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_block=false;
     compiler->current_return_type=return_type;
     compiler->current_return_type_span=return_type_span;
+    DiamondFunction *const outer_method_function=compiler->method_function;
+    const int outer_method_return_type=compiler->method_return_type;
+    const DiamondSpan outer_method_return_type_span=compiler->method_return_type_span;
+    const bool outer_method_has_block_return=compiler->method_has_block_return;
+    compiler->method_function=function;
+    compiler->method_return_type=return_type;
+    compiler->method_return_type_span=return_type_span;
+    compiler->method_has_block_return=false;
     const bool endless=!compiler->failed&&
         compiler->current.kind==DIAMOND_TOKEN_EQUAL;
     uint16_t body_result=0;
@@ -13650,12 +13749,12 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
              * can never see). */
             uint8_t inferred_type=TYPE_UNKNOWN;int32_t inferred_set=-1;
             bool have_inference=false;
-            if(!body_diverges) {
+            if(!body_diverges&&!compiler->method_has_block_return) {
                 inferred_type=compiler->known_types[body_result];
                 inferred_set=compiler->known_type_sets[body_result];
                 have_inference=inferred_set>=0||inferred_type!=TYPE_UNKNOWN;
             }
-            if(compiler->return_flow_seen) {
+            if(compiler->return_flow_seen&&!compiler->method_has_block_return) {
                 if(have_inference)
                     merge_flow_types(compiler,inferred_type,inferred_set,
                         compiler->return_flow_type,compiler->return_flow_set,
@@ -13736,6 +13835,10 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
     compiler->current_block_type_set=outer_current_block_type_set;
+    compiler->method_function=outer_method_function;
+    compiler->method_return_type=outer_method_return_type;
+    compiler->method_return_type_span=outer_method_return_type_span;
+    compiler->method_has_block_return=outer_method_has_block_return;
     compiler->current_return_type=outer_return_type;
     compiler->current_return_type_span=outer_return_type_span;
     compiler->return_flow_seen=outer_return_flow_seen;

@@ -47,6 +47,9 @@ Rejected
 - **Typed structs and collections.** `Score` is a struct with typed fields;
   parameters such as `values: Array[Int]` are checked element by element
   when the call runs.
+- **`return` from a block.** `grades_main` reads its files in a
+  `paths.each() do ... end` block. A `return 66` in that block when a file
+  can't be read returns from `grades_main`, not just from the block.
 
 ### What gets checked when
 
@@ -60,10 +63,6 @@ Rejected
 
 `rejected/` has one program for each compile-time row;
 `smoke_test.sh` checks each fails with its message.
-
-One Diamond-specific detail: `return` inside a `do` block ends that call of
-the block, not the enclosing method, so `grades_main` loops over files with
-`while` where it may need to `return` an exit code early.
 
 ## Test
 

@@ -203,6 +203,9 @@ typedef enum PendingKind : uint8_t {
     PENDING_NORMAL,
     PENDING_RETURN,
     PENDING_EXCEPTION,
+    /* An ensure block run while a block's non-local return/break unwinds
+     * through this frame; END_ENSURE resumes the unwinding. */
+    PENDING_NONLOCAL,
 } PendingKind;
 
 typedef struct PendingUnwind {
@@ -225,6 +228,14 @@ typedef struct DiamondFrame {
      * frame's own lifetime, same as the frame struct itself. */
     const DiamondChunk *chunk;
     const size_t *instruction_offset;
+    /* This activation's serial, and its method's (its own, unless it's a
+     * do-block, whose method is the one its closure was created in). */
+    uint64_t serial;
+    uint64_t home;
+    /* What this activation was called with, for a break's landing check. */
+    const DiamondValue *arguments;
+    size_t argument_count;
+    const DiamondClosure *closure;
 } DiamondFrame;
 
 /* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
@@ -261,6 +272,9 @@ void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
         .register_count = register_count,
         .chunk = chunk,
         .instruction_offset = offset_storage,
+        /* The JIT'd function's parameters are in its first registers. */
+        .arguments = registers,
+        .argument_count = register_count,
     };
     vm->frames = frame;
 }
@@ -712,6 +726,8 @@ static void mark_adopted_programs(void *list, bool minor);
  * regardless of which collection triggered this walk. */
 static void mark_roots(DiamondVm *vm, bool minor) {
     if(vm->has_exception)mark_value(vm->exception,minor);
+    mark_value(vm->nonlocal_value,minor);
+    mark_value(vm->nonlocal_block,minor);
     mark_adopted_programs(vm->adopted_programs,minor);
     mark_value(vm->argv_value,minor);
     mark_value(vm->env_value,minor);
@@ -16412,6 +16428,122 @@ DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
 
+typedef enum NonlocalOutcome {
+    NONLOCAL_CONTINUE,   /* landed at a call (break) or entered an ensure block */
+    NONLOCAL_RETURNED,   /* this frame returns the value (*result set) */
+    NONLOCAL_PASS_ON,    /* not for this frame: keep unwinding */
+    NONLOCAL_INVALID,    /* can't land here; vm->error explains */
+} NonlocalOutcome;
+
+/* Is `opcode` a call whose first operand is its destination register and
+ * which reads every operand before invoking anything? A block's break
+ * lands in exactly such an instruction: the one that passed the block. */
+static bool nonlocal_break_can_land(uint8_t opcode) {
+    switch((DiamondOpCode)opcode) {
+        case DIAMOND_OP_CALL: case DIAMOND_OP_CALL_TYPED: case DIAMOND_OP_CALL_CLOSURE:
+        case DIAMOND_OP_NEW: case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO:
+        case DIAMOND_OP_INVOKE_TYPED: case DIAMOND_OP_SUPER:
+        case DIAMOND_OP_INVOKE_SELF_METHOD: case DIAMOND_OP_CALL_SPREAD:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_CALL_SINGLETON_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: case DIAMOND_OP_CALL_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: case DIAMOND_OP_INVOKE_KEYWORDS:
+        case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_KEYWORDS:
+        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void clear_nonlocal_exit(DiamondVm *vm) {
+    vm->nonlocal_value=DIAMOND_NIL;vm->nonlocal_block=DIAMOND_NIL;
+    vm->nonlocal_target=0;
+}
+
+/* Was the call `caller` is executing -- the one `callee` is running for --
+ * passed `block`? Either the callee received it as an argument, or the
+ * callee is the block itself run by a native method (each, sort_by, ...),
+ * as opposed to a direct call of a stored block. */
+static bool break_block_passed_to_call(const DiamondFrame *callee,
+        const DiamondFrame *caller,DiamondValue block) {
+    for(size_t index=0;index<callee->argument_count;index++)
+        if(callee->arguments[index].kind==block.kind&&
+           callee->arguments[index].as.object==block.as.object)
+            return true;
+    if(block.kind!=DIAMOND_VALUE_OBJECT||
+       (const void *)callee->closure!=block.as.object)
+        return false;
+    const DiamondOpCode opcode=
+        (DiamondOpCode)caller->chunk->code[*caller->instruction_offset];
+    return opcode!=DIAMOND_OP_CALL_CLOSURE&&opcode!=DIAMOND_OP_CALL_CLOSURE_SPREAD&&
+           opcode!=DIAMOND_OP_CALL_CLOSURE_KEYWORDS;
+}
+
+/* A DIAMOND_VM_NONLOCAL_EXIT reaching `frame` on its way out. The target
+ * frame either lands a break -- the call instruction it's inside receives
+ * the value and execution continues after it, since every call opcode has
+ * read all its operands before invoking anything -- or returns the value
+ * as `return` would, running ensure handlers first. Any other frame runs
+ * its own ensure handlers and passes the exit on. */
+static NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFrame *frame,DiamondValue *registers,UnwindHandler *handlers,
+        size_t *handler_count,PendingUnwind *pending,size_t *ip,
+        size_t instruction_offset,DiamondValue *result) {
+    const bool here=vm->nonlocal_target==frame->serial;
+    if(here&&vm->nonlocal_is_break) {
+        const uint8_t opcode=chunk->code[instruction_offset];
+        if(!nonlocal_break_can_land(opcode)||instruction_offset+3>chunk->code_count) {
+            snprintf(vm->error,sizeof vm->error,
+                "break from a block that wasn't passed to a method call here");
+            return NONLOCAL_INVALID;
+        }
+        const uint16_t destination=(uint16_t)(
+            ((unsigned)chunk->code[instruction_offset+1]<<8)|
+            chunk->code[instruction_offset+2]);
+        if(destination>=frame->register_count) {
+            snprintf(vm->error,sizeof vm->error,"invalid break destination");
+            return NONLOCAL_INVALID;
+        }
+        registers[destination]=vm->nonlocal_value;
+        clear_nonlocal_exit(vm);
+        return NONLOCAL_CONTINUE;
+    }
+    while(*handler_count>0&&handlers[*handler_count-1].kind!=HANDLER_ENSURE)
+        (*handler_count)--;
+    if(*handler_count>0) {
+        const UnwindHandler handler=handlers[--*handler_count];
+        *pending=here?(PendingUnwind){.kind=PENDING_RETURN,.value=vm->nonlocal_value}:
+                      (PendingUnwind){.kind=PENDING_NONLOCAL};
+        if(here) {clear_nonlocal_exit(vm);}
+        *ip=handler.target;
+        return NONLOCAL_CONTINUE;
+    }
+    if(here) {
+        *result=vm->nonlocal_value;
+        clear_nonlocal_exit(vm);
+        return NONLOCAL_RETURNED;
+    }
+    if(vm->nonlocal_is_break&&frame->previous!=nullptr&&
+       frame->previous->serial==vm->nonlocal_target&&
+       !break_block_passed_to_call(frame,frame->previous,vm->nonlocal_block)) {
+        clear_nonlocal_exit(vm);
+        snprintf(vm->error,sizeof vm->error,
+            "break from a block outside the call it was passed to");
+        return NONLOCAL_INVALID;
+    }
+    if(frame->previous==nullptr) {
+        clear_nonlocal_exit(vm);
+        snprintf(vm->error,sizeof vm->error,vm->nonlocal_is_break?
+            "break from a block outside the call it was passed to":
+            "return from a block outside the method it was written in");
+        return NONLOCAL_INVALID;
+    }
+    return NONLOCAL_PASS_ON;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -16505,6 +16637,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     PendingUnwind pending={};
     size_t ip = 0;
     size_t instruction_offset = 0;
+    const uint64_t frame_serial=++vm->frame_serial;
     DiamondFrame frame = {
         .previous = vm->frames,
         .registers = registers,
@@ -16512,6 +16645,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .register_count = live_register_count,
         .chunk = chunk,
         .instruction_offset = &instruction_offset,
+        .serial = frame_serial,
+        .home = closure!=nullptr&&closure->is_block&&closure->return_target!=0?
+            closure->return_target:frame_serial,
+        .arguments = arguments,
+        .argument_count = argument_count,
+        .closure = closure,
     };
     vm->frames = &frame;
     UnwindHandler handlers[16];
@@ -16539,7 +16678,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 
 #define VM_RETURN(status_)                                           \
     do {                                                             \
-        const DiamondVmStatus return_status_=(status_);               \
+        DiamondVmStatus return_status_=(status_);                     \
+        if(return_status_==DIAMOND_VM_NONLOCAL_EXIT) {                \
+            switch(nonlocal_exit_arrives(vm,chunk,&frame,registers,   \
+                    handlers,&handler_count,&pending,&ip,             \
+                    instruction_offset,result)) {                     \
+                case NONLOCAL_CONTINUE: goto dispatch_continue;       \
+                case NONLOCAL_RETURNED: return_status_=DIAMOND_VM_OK;  \
+                    break;                                           \
+                case NONLOCAL_PASS_ON: break;                         \
+                case NONLOCAL_INVALID:                                \
+                    return_status_=DIAMOND_VM_TYPE_ERROR; break;      \
+            }                                                        \
+            if(return_status_!=DIAMOND_VM_TYPE_ERROR) {               \
+                vm->frames = frame.previous;                         \
+                free(heap_registers);                                \
+                return return_status_;                               \
+            }                                                        \
+        }                                                            \
         if(handler_count>0 && catch_runtime_error(vm,chunk,           \
            return_status_,handlers,&handler_count,&pending,registers,&ip))\
             goto dispatch_continue;                                  \
@@ -17996,6 +18152,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondClosure *created=allocate_closure(vm,index,captures,count);
                 if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
+                if(created->is_block) {
+                    created->break_target=frame.serial;
+                    created->return_target=frame.home;
+                }
                 registers[dest]=DIAMOND_OBJECT(created);break;
             }
             case DIAMOND_OP_GET_CAPTURE: {
@@ -22143,6 +22303,47 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                         .continuation=continuation};
                 ip=handler.target;break;
             }
+            case DIAMOND_OP_BLOCK_RETURN:
+            case DIAMOND_OP_BLOCK_BREAK: {
+                uint16_t source=0;READ_SHORT(source);
+                const bool is_break=chunk->code[instruction_offset]==DIAMOND_OP_BLOCK_BREAK;
+                const uint64_t target=closure==nullptr?0:
+                    (is_break?closure->break_target:closure->return_target);
+                if(target==0) {
+                    /* A block copied into another VM (Thread.new) has no
+                     * frame to go back to there. */
+                    snprintf(vm->error,sizeof vm->error,is_break?
+                        "break from a block outside the call it was passed to":
+                        "return from a block outside the method it was written in");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const DiamondValue block=DIAMOND_OBJECT((DiamondClosure *)closure);
+                /* Check the target is still live on this stack (and, for a
+                 * break, still inside the call it was passed to) before
+                 * unwinding anything, so a stale target is an ordinary
+                 * rescuable error raised right here. */
+                const DiamondFrame *callee=nullptr;
+                for(const DiamondFrame *walk=&frame;walk!=nullptr;walk=walk->previous) {
+                    if(walk->previous!=nullptr&&walk->previous->serial==target) {
+                        callee=walk;break;
+                    }
+                    if(walk->serial==target) {callee=walk;break;}
+                }
+                const bool live=callee!=nullptr&&(is_break?
+                    callee->serial!=target&&
+                    break_block_passed_to_call(callee,callee->previous,block):true);
+                if(!live) {
+                    snprintf(vm->error,sizeof vm->error,is_break?
+                        "break from a block outside the call it was passed to":
+                        "return from a block outside the method it was written in");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                vm->nonlocal_value=registers[source];
+                vm->nonlocal_block=block;
+                vm->nonlocal_target=target;
+                vm->nonlocal_is_break=is_break;
+                VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
+            }
             case DIAMOND_OP_END_ENSURE: {
                 const PendingUnwind resume=pending;pending=(PendingUnwind){};
                 if(resume.kind==PENDING_NORMAL) {ip=resume.continuation;break;}
@@ -22156,6 +22357,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     *result=resume.value;VM_RETURN(DIAMOND_VM_OK);
                 }
+                if(resume.kind==PENDING_NONLOCAL) VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
                 if(resume.kind==PENDING_EXCEPTION) {
                     vm->exception=resume.value;vm->has_exception=true;
                     if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
@@ -23789,6 +23991,8 @@ const char *diamond_vm_error(const DiamondVm *vm) {
 
 const char *diamond_vm_status_name(DiamondVmStatus status) {
     switch (status) {
+        case DIAMOND_VM_NONLOCAL_EXIT:
+            return "break or return from a block that can't reach its target";
         case DIAMOND_VM_OK:
             return "ok";
         case DIAMOND_VM_INVALID_BYTECODE:

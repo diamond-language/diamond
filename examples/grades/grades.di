@@ -27,13 +27,10 @@ def grades_main(paths: Array[String]) -> Int
   scores = []
   rejected = []
   number = 0
-  # A while loop, not paths.each(): `return 66` inside a do-block would
-  # only end that call of the block, not grades_main.
-  index = 0
-  while index < paths.length()
+  paths.each() do |path|
     lines = []
     begin
-      lines = read_lines(paths[index])
+      lines = read_lines(path)
     rescue error: IOError
       warn("grades: #{error.message()}")
       return 66
@@ -46,7 +43,6 @@ def grades_main(paths: Array[String]) -> Int
       when Rejected{number: at, reason: reason} then rejected.push("line #{at}: #{reason}")
       end
     end
-    index += 1
   end
 
   students = group_by_key(scores, student_of)

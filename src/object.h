@@ -303,6 +303,11 @@ typedef struct DiamondClosure {
      * variadic prologues can distinguish an optional block from a final rest
      * argument without overloading positional value kinds. */
     bool is_block;
+    /* For a do-block: the serial of the frame that created it (where a
+     * `break` inside it lands) and of that frame's method (where a
+     * `return` inside it returns from). 0 for anything else. */
+    uint64_t break_target;
+    uint64_t return_target;
     DiamondValue captures[DIAMOND_MAX_CAPTURES];
     /* Non-null only for a value returned by ClassName.compile_method
      * (src/vm.c's DIAMOND_OP_COMPILE_METHOD) -- function_index above is

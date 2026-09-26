@@ -98,11 +98,38 @@ none is planned. Every other Diamond control construct (`if`, `while`,
 literal, so `arr.each { |x| ... }` would collide with a bare Hash
 argument the way it does in Ruby.
 
-Inside a block, `next` (or `next value`) ends the current call of the block,
-the same as `return` does there: `.map() do |x| next 0 if x < 0; x end`.
-Inside a loop within the block, `next` continues that loop as usual. A
-block's inferred result type includes the values of any early `next` or
-`return`, not just its final expression.
+Inside a block, `next` (or `next value`) ends the current call of the block:
+`.map() do |x| next 0 if x < 0; x end`. Inside a loop within the block,
+`next` continues that loop as usual. A block's inferred result type
+includes the values of any early `next`, not just its final expression.
+
+`break` and `return` in a block reach past it, as in Ruby:
+
+```diamond
+def first_negative(values: Array[Int]) -> Int | Nil
+  values.each() do |v|
+    return v if v < 0    # returns from first_negative
+  end
+  nil
+end
+
+found = [3, 8, 12].each() do |v|
+  break v if v > 5       # ends the each() call; found is 8
+end
+```
+
+`break value` ends the call the block was passed to, which evaluates to
+`value` (`nil` without one). `return value` returns from the `def` the
+block is written in, checked against that def's `-> Type`. Both unwind
+every call in between, running their `ensure` clauses on the way, and
+`rescue` never catches them. Inside a loop within the block, `break` ends
+that loop instead. A `return` in a block outside any `def` is a compile
+error — use `next`.
+
+A block called after that call or method has finished — stored and called
+later, handed to a `Fiber`, or copied into a `Thread` — raises a runtime
+error on `break` or `return` instead ("break from a block outside the call
+it was passed to").
 
 Block parameters are bare identifiers only — no `: Type` annotations, no
 `= default`. `do |x, y| ... end`, or `do ... end` with no parameters at

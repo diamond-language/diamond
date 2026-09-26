@@ -2046,6 +2046,7 @@ static void compile_body(JitCompiler *jc) {
 void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size) {
     *out_size = 0;
     if (function->has_variadic || function->type_variable_count != 0 ||
+        function->nonlocal_landing ||
         function->code_count == 0 ||
         function->register_count > DIAMOND_JIT_MAX_REGISTERS ||
         (size_t)function->arity + 1 > DIAMOND_JIT_MAX_REGISTERS) {

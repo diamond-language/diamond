@@ -25,17 +25,14 @@ def main(args: Array[String]) -> Int
     return 69
   end
   failed = false
-  # A while loop so a closed connection can stop it: `break` inside a
-  # do-block isn't supported.
-  index = 0
-  while index < requests.length()
-    socket.write("#{requests[index]}\n")
+  requests.each() do |request|
+    socket.write("#{request}\n")
     reply = socket.gets()
+    # A closed connection ends the whole each(), not just this request.
     break if reply == nil
     reply = reply.rstrip()
     puts(reply)
     failed = true if reply.start_with?("-")
-    index += 1
   end
   socket.close()
   if failed then 1 else 0 end

@@ -552,6 +552,13 @@ typedef enum DiamondOpCode : uint8_t {
      * for the same stable-numbering reason as DIAMOND_OP_TAIL_CALL
      * just above. */
     DIAMOND_OP_BREAKPOINT_CHECK,
+    /* `return value` / `break value` inside a do-block: leave the block
+     * and unwind to the frame the exit targets -- the enclosing method for
+     * return, the frame that passed the block to a call for break -- as
+     * DIAMOND_VM_NONLOCAL_EXIT, running ensure handlers on the way. One
+     * register operand (the value). See run_chunk's VM_RETURN. */
+    DIAMOND_OP_BLOCK_RETURN,
+    DIAMOND_OP_BLOCK_BREAK,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -1102,6 +1109,10 @@ typedef struct DiamondFunction {
      * capture it. Other nested defs stay capture-free of themselves, which
      * define_method factories and Thread.new callables rely on. */
     bool calls_itself;
+    /* This function may be the target of a block's non-local return or
+     * break, which lands in the interpreter's frame handling; the JIT
+     * leaves such functions alone. */
+    bool nonlocal_landing;
     /* A function slot copied from diamond_compile's discovery pass and not
      * yet claimed by the real pass. Preserving every discovery-time index
      * keeps early CALL operands and class/module method tables stable. */
@@ -1319,6 +1330,11 @@ typedef enum DiamondVmStatus : uint8_t {
      * neighbors DIAMOND_VM_STACK_OVERFLOW/DIAMOND_VM_OUT_OF_MEMORY, this
      * is never a resource-exhaustion signal. */
     DIAMOND_VM_FROZEN_ERROR,
+    /* A block's non-local return/break unwinding toward its target frame
+     * (DiamondVm.nonlocal_*). Never an exception: rescue can't catch it,
+     * though ensure handlers still run. Reaching the top means the target
+     * frame had already returned. */
+    DIAMOND_VM_NONLOCAL_EXIT,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -1588,6 +1604,19 @@ struct DiamondVm {
     DiamondValue *class_variables;
     DiamondValue exception;
     bool has_exception;
+    /* Every run_chunk activation gets the next serial; block closures
+     * remember which activations their break/return target. While a
+     * DIAMOND_VM_NONLOCAL_EXIT unwinds, nonlocal_target is the serial it's
+     * headed for, nonlocal_value its value (a GC root), and
+     * nonlocal_is_break whether it lands at a call (break) or returns from
+     * the target frame (return). */
+    uint64_t frame_serial;
+    uint64_t nonlocal_target;
+    DiamondValue nonlocal_value;
+    /* The block a break came from: it lands only in a call that was
+     * passed that block. Also a GC root. */
+    DiamondValue nonlocal_block;
+    bool nonlocal_is_break;
     char error[1024];
     const DiamondFiberQueue *root_queue;
     DiamondFiber *running_fiber;

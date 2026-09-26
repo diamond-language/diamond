@@ -1428,6 +1428,12 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             case DIAMOND_OP_RETURN:
                 offset = one_register(stream, chunk, "RETURN", offset, &valid);
                 break;
+            case DIAMOND_OP_BLOCK_RETURN:
+                offset = one_register(stream, chunk, "BLOCK_RETURN", offset, &valid);
+                break;
+            case DIAMOND_OP_BLOCK_BREAK:
+                offset = one_register(stream, chunk, "BLOCK_BREAK", offset, &valid);
+                break;
             case DIAMOND_OP_RAISE:
                 offset = one_register(stream, chunk, "RAISE", offset, &valid);
                 break;
