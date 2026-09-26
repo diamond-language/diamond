@@ -20,6 +20,11 @@ config = {
 }
 ```
 
+An array literal can splat one Array into place: `[head, *rest]`,
+`[*items, last]`, or `[first, *middle, last]` build a new Array (a
+non-Array operand raises `TypeError`). Only one splat per literal is
+supported; join more with `concat`.
+
 `.push`, `.pop`, and `.length()` are native on both. Array additionally
 has `.join(separator = "")`, native and O(n) total (a `StringBuilder`-
 backed accumulator internally, not repeated string concatenation) —

@@ -21,6 +21,7 @@ authoritative fine-grained record.
 
 ### Language
 
+- Array literals accept one `*splat`: `[command, *rest]`.
 - One-line exiting guards narrow types for the code after them
   (`return "none" if x == nil`, `raise ... unless x is String`), as the
   block form of `if` already did.

@@ -8531,11 +8531,30 @@ static uint16_t parse_array_literal(Compiler *compiler,
             expected_element=expected->members[0].argument_set;
     }
     skip_newlines(compiler);
+    /* `[head, *rest, tail]`: at most one splat, whose Array's elements are
+     * spliced in place. spread_at is its position among `elements`. */
+    size_t spread_at=SIZE_MAX;
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         do {
             if(count==DIAMOND_MAX_ARGUMENTS) {
                 fail(compiler,compiler->current.span,"array literal has too many elements");
                 return 0;
+            }
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR&&expected_function==nullptr) {
+                if(spread_at!=SIZE_MAX) {
+                    fail(compiler,compiler->current.span,
+                        "an array literal can splat only one array");
+                    return 0;
+                }
+                advance_token(compiler);
+                spread_at=count;
+                elements[count++]=parse_expression(compiler);
+                skip_newlines(compiler);
+                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) break;
+                advance_token(compiler);
+                skip_newlines(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET) break;
+                continue;
             }
             if(expected_function!=nullptr&&
                first_parameter+count<parameter_count)
@@ -8556,6 +8575,12 @@ static uint16_t parse_array_literal(Compiler *compiler,
         return 0;
     }
     advance_token(compiler);
+    if(spread_at!=SIZE_MAX) {
+        /* The same builder a call's `f(a, *rest, z)` uses: fixed prefix,
+         * one spread Array (TypeError if it isn't one), fixed suffix. */
+        return emit_build_spread_arguments(compiler,elements,spread_at,
+            elements[spread_at],elements+spread_at+1,count-spread_at-1,false);
+    }
     const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<count;i++) (void)allocate_register(compiler);
     for(size_t i=0;i<count;i++) emit_instruction(compiler,DIAMOND_OP_MOVE,
