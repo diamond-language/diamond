@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `File.rename(from, to)` renames a file, atomically replacing an existing
+  destination -- the write-temporary-then-rename way to update a file.
 - Array literals accept one `*splat`: `[command, *rest]`.
 - One-line exiting guards narrow types for the code after them
   (`return "none" if x == nil`, `raise ... unless x is String`), as the

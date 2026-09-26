@@ -11727,6 +11727,26 @@ static DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path)
  * The containing directory must be trusted and already exist. A failed final
  * directory sync can leave a complete published file: never remove that file
  * on failure, since another process may already have observed it. */
+/* File.rename(from, to): rename(2), so an existing `to` is replaced
+ * atomically -- a reader sees the old file or the new one, never a
+ * partial write. Both paths must be on the same filesystem. */
+static DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from,
+                                         const DiamondString *to) {
+    if(to==nullptr||from->length==0||to->length==0||
+       memchr(from->chars,'\0',from->length)!=nullptr||
+       memchr(to->chars,'\0',to->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "File.rename requires two nonempty paths without NUL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(rename(from->chars,to->chars)!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot rename '%.*s' to '%.*s': %s",
+            (int)from->length,from->chars,(int)to->length,to->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path,
                                           const DiamondString *bytes) {
     if(bytes==nullptr||path->length==0||
@@ -22504,6 +22524,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_SANDBOX_GUARD("File.publish", "filesystem");
                         path_status=file_publish_helper(vm,path,second);
                         path_result=registers[arg1];
+                        break;
+                    case DIAMOND_FILE_PATH_RENAME:
+                        VM_SANDBOX_GUARD("File.rename", "filesystem");
+                        path_status=file_rename_helper(vm,path,second);
+                        path_result=registers[arg2];
                         break;
                     case DIAMOND_FILE_PATH_DIRNAME:
                         path_status=file_path_dirname_helper(vm,path,&path_result);break;

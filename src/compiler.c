@@ -4617,6 +4617,10 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
             fail(compiler,compiler->current.span,"File.publish requires path and bytes");
             return 0;
         }
+        if(id==DIAMOND_FILE_PATH_RENAME) {
+            fail(compiler,compiler->current.span,"File.rename requires a source and destination path");
+            return 0;
+        }
         second_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
     }
@@ -4656,6 +4660,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
     if(name_equals(compiler,"publish",method,false)) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_PUBLISH);
+    }
+    if(name_equals(compiler,"rename",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_RENAME);
     }
     if(name_equals(compiler,"delete",method,false)) {
         advance_token(compiler);

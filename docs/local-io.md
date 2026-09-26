@@ -265,6 +265,25 @@ these only with writers stopped. Errors after the link can leave a complete
 published destination; callers must inspect it before retrying. Durability
 is subject to the filesystem and storage device honoring synchronization.
 
+## Atomic replacement: `File.rename(from, to)`
+
+Renames `from` to `to` with `rename(2)` and returns `to`. An existing file at
+`to` is replaced atomically: a reader sees the old contents or the new ones,
+never a partial write. That makes it the way to update a file safely --
+write the new contents to a temporary file in the same directory, then
+rename it over the original. Both paths must be nonempty Strings without NUL
+(`TypeError` otherwise) and on the same filesystem; any failure (missing
+source, permission denied, a cross-device rename, ...) raises `IOError`. It
+is gated by the `filesystem` sandbox capability.
+
+```ruby
+temporary = "#{path}.tmp"
+file = File.open(temporary, "w")
+file.write(contents)
+file.close()
+File.rename(temporary, path)
+```
+
 ## Recovery synchronization: `File.sync(path)`
 
 Synchronizes an existing regular file and its containing directory, returning

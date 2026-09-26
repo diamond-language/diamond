@@ -70,16 +70,19 @@ class Vault
   # True when the entries still match the HMAC written with them.
   def intact?() -> Bool = HMAC.verify(self.canonical(), @key, @data["mac"])
 
+  # Writes a temporary file beside the vault, then renames it over the
+  # vault, so a crash mid-save leaves the old vault intact rather than a
+  # half-written one.
   def save()
     @data["mac"] = HMAC.sha256(@key, self.canonical())
-    # File.publish refuses to replace an existing file and there is no
-    # File.rename, so this rewrites in place rather than atomically.
-    file = File.open(@path, "w")
+    temporary = "#{@path}.tmp-#{SecureRandom.hex(4)}"
+    file = File.open(temporary, "w")
     begin
       file.write(JSON.stringify(@data))
     ensure
       file.close()
     end
+    File.rename(temporary, @path)
   end
 
   private

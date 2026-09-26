@@ -54,12 +54,12 @@ The vault file is JSON (`JSON.stringify` / `JSON.parse`):
   (`raise ... if secret == nil`) before returning a plain `String`.
 - **A command dispatcher** that matches `[command, *rest]` against Array
   patterns such as `["add", name]`.
+- **Atomic updates** with `File.rename`.
 - **Error handling** through one rescue in `main` for `VaultError` or
   `JSONError` (exit 1) and `IOError` (exit 66).
 
-Two gaps this example works around: `File.publish` won't replace an
-existing file and there's no `File.rename`, so `save` rewrites the file in
-place rather than atomically; and there's no no-echo password prompt.
+`Vault#save` writes a temporary file and `File.rename`s it over the vault,
+so an interrupted save leaves the previous vault intact.
 
 ## Test
 

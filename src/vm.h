@@ -574,6 +574,9 @@ typedef enum {
     DIAMOND_FILE_PATH_DIRECTORY,
     DIAMOND_FILE_PATH_PUBLISH,
     DIAMOND_FILE_PATH_SYNC,
+    /* rename(2): replaces an existing destination atomically, the usual
+     * way to update a file (write a temporary, then rename it over). */
+    DIAMOND_FILE_PATH_RENAME,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

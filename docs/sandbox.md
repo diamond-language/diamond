@@ -22,7 +22,7 @@ a `diamond build`-produced [standalone binary](deployment.md), behave identicall
 Every one of these raises `SandboxError` (a rescuable `StandardError`) instead of doing
 anything:
 
-- `File.open`, `File.publish`, `File.sync`, `File.delete`, `File.directory?`, `File.expand_path`
+- `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.delete`, `File.directory?`, `File.expand_path`
 - `Dir.entries`
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`

@@ -36,6 +36,7 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_EXPAND: return "expand_path";
         case DIAMOND_FILE_PATH_PUBLISH: return "publish";
         case DIAMOND_FILE_PATH_SYNC: return "sync";
+        case DIAMOND_FILE_PATH_RENAME: return "rename";
         default: return "<invalid file path function>";
     }
 }
