@@ -9059,6 +9059,7 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"delete",1,UINT8_MAX},
+    {DIAMOND_TYPE_HASH,"include_key?",1,DIAMOND_TYPE_BOOL},
     {DIAMOND_TYPE_INT,"to_s",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_INT,"to_i",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_INT,"to_f",0,DIAMOND_TYPE_FLOAT},
@@ -18940,6 +18941,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             registers[dest]=joined;break;
                         }
                     }
+                    /* A hash lookup, O(1). This was a prelude loop over
+                     * every key, which made include_key? -- and fetch, and
+                     * anything checking membership in a loop -- linear.
+                     * Checked before the prelude bridges below, since the
+                     * free-function spelling hash_include_key still exists
+                     * and calls this method. */
+                    if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                       method_name->length==12&&
+                       memcmp(method_name->chars,"include_key?",12)==0) {
+                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondHash *hash=(const DiamondHash *)registers[recv].as.object;
+                        registers[dest]=DIAMOND_BOOL(hash_find(hash,registers[base])>=0);
+                        break;
+                    }
                     if(receiver_kind==DIAMOND_OBJECT_ARRAY||receiver_kind==DIAMOND_OBJECT_HASH) {
                         const char *target_name=nullptr;
                         if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)
@@ -19103,10 +19118,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==6&&
                                 memcmp(method_name->chars,"values",6)==0)
                             target_name="hash_values";
-                        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                                method_name->length==12&&
-                                memcmp(method_name->chars,"include_key?",12)==0)
-                            target_name="hash_include_key";
                         else if(receiver_kind==DIAMOND_OBJECT_HASH&&
                                 method_name->length==10&&
                                 memcmp(method_name->chars,"map_values",10)==0)

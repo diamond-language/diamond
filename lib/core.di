@@ -144,12 +144,25 @@ def array_compact(values: Array) -> Array
   result
 end
 
+# Scalars are remembered in a Hash, whose key equality matches == for
+# them (1 and 1.0 are one key), so the common case is linear. Anything
+# else -- an instance may define its own ==, which Hash keys don't use --
+# is compared against the kept elements with ==.
 def array_uniq(values: Array) -> Array
   result = []
+  seen = {}
+  others = []
   index = 0
   while index < values.length()
     item = values[index]
-    unless result.include?(item)
+    if item == nil || item is Bool || item is Int || item is Float ||
+       item is String || item is Symbol
+      unless seen.include_key?(item)
+        seen[item] = true
+        result.push(item)
+      end
+    elsif !others.include?(item)
+      others.push(item)
       result.push(item)
     end
     index += 1
@@ -159,17 +172,23 @@ end
 
 def array_flatten(values: Array) -> Array
   result = []
+  diamond_flatten_into(values, result)
+  result
+end
+
+# Appends `values`, recursively flattened, onto `result` -- in place, so
+# flattening is linear rather than re-copying the result per nested Array.
+def diamond_flatten_into(values: Array, result: Array)
   index = 0
   while index < values.length()
     item = values[index]
     if item is Array
-      result = result.concat(item.flatten())
+      diamond_flatten_into(item, result)
     else
       result.push(item)
     end
     index += 1
   end
-  result
 end
 
 def array_delete_at(values: Array, index: Int)
@@ -188,13 +207,14 @@ def array_delete_at(values: Array, index: Int)
   end
 end
 
+# The free-function spelling of the native Hash#include_key?.
+def hash_include_key(values: Hash, needle) -> Bool = values.include_key?(needle)
+
+# The value for `key`, or `fallback` only when the key is absent -- a key
+# present with a nil value returns nil. include_key? is a native hash
+# lookup, so this is O(1).
 def hash_fetch(values: Hash, key, fallback)
-  found = values[key]
-  if found == nil
-    fallback
-  else
-    found
-  end
+  if values.include_key?(key) then values[key] else fallback end
 end
 
 def hash_empty(values: Hash) -> Bool
@@ -239,17 +259,6 @@ def hash_values(values: Hash) -> Array
     index += 1
   end
   result
-end
-
-def hash_include_key(values: Hash, needle) -> Bool
-  index = 0
-  while index < values.length()
-    if values.key_at(index) == needle
-      return true
-    end
-    index += 1
-  end
-  false
 end
 
 def hash_map_values(values: Hash, callback: Callable[1]) -> Hash

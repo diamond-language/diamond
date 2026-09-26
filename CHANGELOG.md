@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- `Hash#include_key?` is a native O(1) lookup; it scanned every key, which
+  also made `Array#uniq` quadratic (20,000 strings took 30s; now 12ms).
+  `uniq` remembers scalars in a Hash and still uses `==` for other values.
+- Fixed: `Hash#fetch(key, fallback)` returned the fallback for a key that
+  is present with a `nil` value; it now falls back only when the key is
+  absent, as documented.
 - `JSON.stringify` is linear in its output: it concatenated Strings, so a
   200 KB string took 2.4s (now about 2ms). It raises `JSONError` for `NaN`
   and `Infinity`, which it used to write as invalid JSON. `JSON.stringify`
