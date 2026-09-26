@@ -39,6 +39,17 @@ def array_include(values: Array, needle) -> Bool
   false
 end
 
+# The position of the first element == needle, or nil -- the Array
+# counterpart of String#index_of.
+def array_index_of(values: Array, needle) -> Int | Nil
+  index = 0
+  while index < values.length()
+    return index if values[index] == needle
+    index += 1
+  end
+  nil
+end
+
 def array_each(values: Array, callback: Callable[1]) -> Array
   index = 0
   while index < values.length()

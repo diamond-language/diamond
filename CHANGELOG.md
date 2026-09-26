@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `Array#index_of(needle)`: the first matching position, or `nil`, like
+  `String#index_of`.
 - `Hash#include_key?` is a native O(1) lookup; it scanned every key, which
   also made `Array#uniq` quadratic (20,000 strings took 30s; now 12ms).
   `uniq` remembers scalars in a Hash and still uses `==` for other values.

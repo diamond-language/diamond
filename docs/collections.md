@@ -229,7 +229,9 @@ array's `IndexError` propagates straight from the underlying `[]`);
 `values.first_or(fallback)`/`values.last_or(fallback)` are the safe form,
 returning `fallback` instead when `values` is empty; `values.empty?()`
 returns whether the array has zero elements; `values.include?(needle)`
-returns whether any element `==` `needle`; `values.reverse()` returns a new
+returns whether any element `==` `needle`;
+`values.index_of(needle)` returns the position of the first such element,
+or `nil` (like `String#index_of`); `values.reverse()` returns a new
 array in reverse order; `values.concat(other)` returns a new array with
 `other`'s elements appended; `values.compact()` returns a new array with
 any `nil` elements dropped; `values.uniq()` returns a new array with only
