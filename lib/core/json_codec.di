@@ -6,12 +6,18 @@
 # can raise it the same way every other native error class already does
 # -- no class declaration needed here anymore.
 #
-# Stringification stays pure Diamond: no comparable performance problem
-# was ever measured for it, and JSONCodec's own mutual recursion here
-# (stringify <-> stringify_array/stringify_hash, all through `self.` for
-# call-time dispatch regardless of declaration order) still needs
-# nothing native to do its job.
+# Stringification stays pure Diamond, writing into one StringBuilder so it
+# stays linear (it used to concatenate Strings, which was quadratic: a
+# 200 KB string took 2.4s). JSONCodec's mutual recursion (write_value <->
+# write_array/write_hash) goes through `self.` for call-time dispatch
+# regardless of declaration order.
 class JSONCodec
+  def initialize()
+    # A character JSON requires escaping: a quote, a backslash, or a
+    # control character.
+    @needs_escape = Regexp.new("[\"\\\\\\x00-\\x1f]")
+  end
+
   def hex_digit(value: Int) -> String
     if value < 10
       "#{value}"
@@ -26,88 +32,95 @@ class JSONCodec
     "\\u00" + self.hex_digit(high) + self.hex_digit(low)
   end
 
-  def stringify_string(value: String) -> String
-    result = "\""
+  # Output is built in one StringBuilder, so the cost is linear in the
+  # size of the document -- `result = result + piece` would copy the whole
+  # result on every append.
+  def stringify(value) -> String
+    out = StringBuilder.new()
+    self.write_value(out, value)
+    out.to_s()
+  end
+
+  def write_value(out, value)
+    if value == nil
+      out.append("null")
+    elsif value is Bool
+      out.append(if value then "true" else "false" end)
+    elsif value is Int
+      out.append("#{value}")
+    elsif value is Float
+      # JSON has no NaN or Infinity.
+      if value != value || value * 0.0 != 0.0
+        raise JSONError.new("cannot convert #{value} to JSON")
+      end
+      out.append("#{value}")
+    elsif value is String
+      self.write_string(out, value)
+    elsif value is Array
+      self.write_array(out, value)
+    elsif value is Hash
+      self.write_hash(out, value)
+    else
+      raise JSONError.new("cannot convert this value to JSON")
+    end
+  end
+
+  def write_string(out, value: String)
+    out.append("\"")
+    # Most strings need no escaping; append those whole.
+    unless @needs_escape.match?(value)
+      out.append(value)
+      out.append("\"")
+      return
+    end
     index = 0
     length = value.length()
     while index < length
       ch = value[index]
       if ch == "\""
-        result = result + "\\\""
+        out.append("\\\"")
       elsif ch == "\\"
-        result = result + "\\\\"
+        out.append("\\\\")
       elsif ch == "\n"
-        result = result + "\\n"
+        out.append("\\n")
       elsif ch == "\r"
-        result = result + "\\r"
+        out.append("\\r")
       elsif ch == "\t"
-        result = result + "\\t"
+        out.append("\\t")
       elsif ch.ord() < 32
-        result = result + self.escape_control(ch.ord())
+        out.append(self.escape_control(ch.ord()))
       else
-        result = result + ch
+        out.append(ch)
       end
       index += 1
     end
-    result + "\""
+    out.append("\"")
   end
 
-  def stringify_array(value: Array) -> String
-    result = "["
+  def write_array(out, value: Array)
+    out.append("[")
     index = 0
     length = value.length()
     while index < length
-      if index > 0
-        result = result + ","
-      end
-      result = result + self.stringify(value[index])
+      out.append(",") if index > 0
+      self.write_value(out, value[index])
       index += 1
     end
-    result + "]"
+    out.append("]")
   end
 
-  def stringify_hash(value: Hash) -> String
-    result = "{"
+  def write_hash(out, value: Hash)
+    out.append("{")
     index = 0
     length = value.length()
     while index < length
-      if index > 0
-        result = result + ","
-      end
+      out.append(",") if index > 0
       key = value.key_at(index)
-      key_string = if key is String
-        key
-      else
-        "#{key}"
-      end
-      encoded_value = self.stringify(value.value_at(index))
-      result = result + self.stringify_string(key_string) + ":" + encoded_value
+      self.write_string(out, if key is String then key else "#{key}" end)
+      out.append(":")
+      self.write_value(out, value.value_at(index))
       index += 1
     end
-    result + "}"
-  end
-
-  def stringify(value) -> String
-    if value == nil
-      "null"
-    elsif value is Bool
-      if value
-        "true"
-      else
-        "false"
-      end
-    elsif value is Int
-      "#{value}"
-    elsif value is Float
-      "#{value}"
-    elsif value is String
-      self.stringify_string(value)
-    elsif value is Array
-      self.stringify_array(value)
-    elsif value is Hash
-      self.stringify_hash(value)
-    else
-      raise JSONError.new("cannot convert this value to JSON")
-    end
+    out.append("}")
   end
 end

@@ -9,6 +9,7 @@ Choose the guide for the service you are using:
 - [Time](time.md) — construction, parsing, formatting, timezones, arithmetic,
   comparisons, durations, and monotonic time.
 - [Processes](processes.md) — completed commands and live subprocess handles.
+- [JSON](runtime-reference.md#json) — `JSON.stringify` and `JSON.parse`.
 
 All native-resource objects require explicit cleanup where their topic guide
 documents `close()`. Use `ensure` when a resource must be released after an

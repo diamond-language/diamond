@@ -176,6 +176,32 @@ and capture-group handling of its own — see the
 [Collections guide](collections.md) for those; `Regexp.new` +
 `.match`/`.match?` plus that String quartet is the whole surface for now.
 
+## JSON
+
+```ruby
+text = JSON.stringify({"name": "Ada", "scores": [98, 91.5], "admin": false, "note": nil})
+# => {"name":"Ada","scores":[98,91.5],"admin":false,"note":null}
+
+data = JSON.parse(text)
+data["scores"][1]   # => 91.5
+```
+
+`JSON.stringify(value)` accepts `nil`, `Bool`, `Int` (including big
+integers), finite `Float`, `String`, and any `Array` or `Hash` built from
+those. Hash keys that aren't Strings are written as their string form
+(`{1: 2}` becomes `{"1":2}`); Hash entries keep their insertion order.
+Strings are escaped as JSON requires (quotes, backslashes, and control
+characters) and otherwise written byte for byte. Anything else -- a
+`Symbol`, an instance, `NaN`, `Infinity` -- raises a rescuable `JSONError`.
+Output is compact, with no whitespace.
+
+`JSON.parse(text)` (also `text.parse_json()`) returns the value a JSON
+document describes: objects become Hashes with String keys, arrays become
+Arrays, `null` becomes `nil`, numbers without a fraction or exponent become
+`Int` (promoting past 64 bits as needed), other numbers become `Float`, and
+`\uXXXX` escapes are decoded to UTF-8. Invalid input raises `JSONError`
+(for example "unexpected end of input").
+
 ## No AST
 
 The compiler is a Pratt parser that emits register bytecode directly;

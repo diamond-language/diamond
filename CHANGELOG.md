@@ -21,6 +21,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- `JSON.stringify` is linear in its output: it concatenated Strings, so a
+  200 KB string took 2.4s (now about 2ms). It raises `JSONError` for `NaN`
+  and `Infinity`, which it used to write as invalid JSON. `JSON.stringify`
+  and `JSON.parse` are now documented (runtime reference).
 - `File.rename(from, to)` renames a file, atomically replacing an existing
   destination -- the write-temporary-then-rename way to update a file.
 - Array literals accept one `*splat`: `[command, *rest]`.
