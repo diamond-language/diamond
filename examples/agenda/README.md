@@ -62,10 +62,8 @@ rule, 66 when the file can't be opened.
   (`when ["every", count, "weeks", "from", start, *rest]`) and exhaustively
   by class in `occurs_on?`.
 - **Sorting by a composite key**: `[event.at().to_i(), event.title()]`.
-
-`Occurrence` is a plain class rather than a struct because struct fields
-need a type, and native values such as `Time` have no type name to
-annotate with.
+- **Native types in annotations**: `Occurrence` is a struct with an
+  `at: Time` field, and every date parameter is typed `Time`.
 
 ## Test
 

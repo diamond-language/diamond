@@ -3,25 +3,15 @@
 # in whatever offset the caller asks for.
 require "./rules"
 
-# A class, not a struct: struct fields need a type, and Time (a native
-# value) has no type name to annotate with.
-class Occurrence
-  attr_reader title: String
-  attr_predicate all_day: Bool
-  def initialize(at, title: String, all_day: Bool)
-    @at = at
-    @title = title
-    @all_day = all_day
-  end
-  def at() = @at
+struct Occurrence(at: Time, title: String, all_day: Bool)
 end
 
-def midnight(date: String) = Time.parse("#{date}T00:00:00Z")
+def midnight(date: String) -> Time = Time.parse("#{date}T00:00:00Z")
 
-def date_text(day) -> String = day.strftime("%Y-%m-%d")
+def date_text(day: Time) -> String = day.strftime("%Y-%m-%d")
 
 # Does `rule` fall on the UTC day `day`?
-def occurs_on?(rule: Rule, day) -> Bool
+def occurs_on?(rule: Rule, day: Time) -> Bool
   case rule
   when Once then date_text(day) == rule.date()
   when Weekly then rule.days().include?(day.wday())
@@ -40,7 +30,7 @@ def occurs_on?(rule: Rule, day) -> Bool
   end
 end
 
-def occurrence(rule: Rule, day) -> Occurrence
+def occurrence(rule: Rule, day: Time) -> Occurrence
   return Occurrence.new(day, rule.title(), true) if rule.clock().empty?()
   hours = rule.clock().slice(0, 2).to_i()
   minutes = rule.clock().slice(3, 2).to_i()
@@ -48,7 +38,7 @@ def occurrence(rule: Rule, day) -> Occurrence
 end
 
 # Every occurrence from `first` through `last` (UTC midnights), in order.
-def expand(rules: Array, first, last) -> Array
+def expand(rules: Array, first: Time, last: Time) -> Array
   found = []
   day = first
   while day <= last

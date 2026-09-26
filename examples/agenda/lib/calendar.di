@@ -2,7 +2,7 @@
 # days with events are starred.
 require "./expand"
 
-def month_grid(today, busy: Hash) -> Array[String]
+def month_grid(today: Time, busy: Hash) -> Array[String]
   first = today.beginning_of_month()
   last = today.end_of_month()
   title = first.strftime("%B %Y")

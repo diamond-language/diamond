@@ -6,14 +6,14 @@
 
 class Task
   attr_reader name: String
+  attr_reader fiber: Fiber
   attr_accessor wake_at: Int
 
-  def initialize(name: String, fiber)
+  def initialize(name: String, fiber: Fiber)
     @name = name
     @fiber = fiber
     @wake_at = 0
   end
-  def fiber() = @fiber
 end
 
 class Scheduler

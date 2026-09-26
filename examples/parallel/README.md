@@ -49,8 +49,8 @@ Everything a thread runs lives in `lib/work.di` as a plain top-level
 `def` with no captures, which is what `Thread.new` and
 `Supervisor#add_child` require.
 
-`Channel` (like `Thread`, `Fiber`, and `Time`) has no type name, so those
-parameters stay unannotated.
+Channel parameters are annotated `Channel`, so passing anything else to a
+worker fails at the call.
 
 ## Test
 

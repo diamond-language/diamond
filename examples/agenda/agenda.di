@@ -47,7 +47,7 @@ def print_agenda(events: Array, offset: String)
       puts(heading)
       current = heading
     end
-    time = if event.all_day?() then "all day" else shown.strftime("%H:%M") end
+    time = if event.all_day() then "all day" else shown.strftime("%H:%M") end
     puts("  #{time.ljust(8, " ")}#{event.title()}")
   end
   puts("(nothing scheduled)") if events.empty?()

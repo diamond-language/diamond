@@ -33,7 +33,7 @@ end
 # --- Worker-pool pieces --------------------------------------------------
 
 # Sends each job, then closes the channel so the workers know to stop.
-def feed(jobs, documents: Array)
+def feed(jobs: Channel, documents: Array)
   documents.each_with_index() do |text, index|
     jobs.send([index, text])
   end
@@ -42,7 +42,7 @@ end
 
 # Takes jobs until the channel is closed and drained, sends back one result
 # per job, and returns how many it handled.
-def word_worker(jobs, results) -> Int
+def word_worker(jobs: Channel, results: Channel) -> Int
   handled = 0
   loop do
     job = jobs.receive()
@@ -56,12 +56,12 @@ end
 
 # --- Pipeline stages: each reads one channel and writes the next ---------
 
-def stage_numbers(output, limit: Int)
+def stage_numbers(output: Channel, limit: Int)
   1.upto(limit) do |n| output.send(n) end
   output.close()
 end
 
-def stage_squares(input, output)
+def stage_squares(input: Channel, output: Channel)
   loop do
     n = input.receive()
     break if n == nil
@@ -70,7 +70,7 @@ def stage_squares(input, output)
   output.close()
 end
 
-def stage_digit_sums(input, output)
+def stage_digit_sums(input: Channel, output: Channel)
   loop do
     n = input.receive()
     break if n == nil
@@ -82,7 +82,7 @@ end
 
 # --- Isolation and failure -----------------------------------------------
 
-class Tally
+module Tally
   def self.bump() -> Int
     @@count = (@@count || 0) + 1
   end
@@ -101,7 +101,7 @@ end
 
 # Crashes on its first two attempts. Each attempt starts in a fresh heap, so
 # it learns which attempt it is from a ticket channel the parent filled.
-def flaky_worker(tickets, done)
+def flaky_worker(tickets: Channel, done: Channel)
   attempt = tickets.receive()
   raise RuntimeError.new("flaked on attempt #{attempt}") if attempt < 3
   done.send("succeeded on attempt #{attempt}")

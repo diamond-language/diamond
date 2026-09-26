@@ -10,10 +10,10 @@
 require "./lib/protocol"
 
 class Connection
-  attr_reader socket
+  attr_reader socket: Socket
   attr_predicate closing: Bool
 
-  def initialize(socket)
+  def initialize(socket: Socket)
     @socket = socket
     @input = ""
     @output = ""
