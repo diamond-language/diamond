@@ -1,0 +1,22 @@
+Students
+  name         mean median grade
+  ada          92.3   91.0 A     3 course(s): math, physics, poetry
+  edsger       58.5   58.5 F     2 course(s): math, physics
+  grace        91.0   95.0 A     3 course(s): math, physics, poetry
+  linus        75.0   71.0 C     3 course(s): math, physics, poetry
+  margaret     83.5   83.5 B     2 course(s): math, poetry
+
+Courses
+  name         mean median grade
+  math         82.2   85.0 B     top: ada (98)
+  physics      77.2   77.5 C     top: grace (99)
+  poetry       84.8   85.0 B     top: linus (90)
+
+Honor roll: ada, grace
+13 scores from 5 students in 3 courses
+
+Rejected
+  line 13: score '' is not a whole number
+  line 15: score 'one hundred' is not a whole number
+  line 16: expected 3 fields, got 4
+  line 17: score 103 is over 100

@@ -1,0 +1,19 @@
+student,course,score
+# Fall term
+ada,math,98
+ada,physics,91
+ada,poetry,88
+grace,math,95
+grace,physics,99
+Grace,Poetry,79
+linus,math,71
+linus,physics,64
+linus,poetry,90
+margaret,math,85
+margaret,physics,
+margaret,poetry,82
+alan,math,one hundred
+alan,physics,58,extra
+alan,poetry,103
+edsger,math,62
+edsger,physics,55

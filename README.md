@@ -96,7 +96,8 @@ sandbox.
 - `examples/`, `applications/`: runnable sample apps, from a two-table CRUD
   app and a WebSocket chat room to a standalone log-summary CLI and a
   from-scratch GPT-style transformer, plus smaller tours of one area each:
-  `calc` (parsing and pattern matching), `generators` (fibers), `ledger`
+  `calc` (parsing and pattern matching), `generators` (fibers), `grades`
+  (the type system), `ledger`
   (the object model), `markdown` (strings and Regexp), and `parallel`
   (threads, channels, supervisors); `make test-examples` runs their tests
 - `fuzz/`: compiler and bytecode-execution fuzz targets
