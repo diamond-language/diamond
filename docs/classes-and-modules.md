@@ -353,9 +353,11 @@ the same way indexing a plain local already did — there's no extra
 "write the mutated value back to the ivar/cvar" step needed, since
 Hash/Array are heap-allocated reference values in the first place.
 
-`@@cvar` used anywhere outside a class body (a bare top-level `def`, a
-`module`) is a compile error — there's no implicit global scope it could
-fall back to. That's also why a `threads: N` server (see
+In a `module`, `@@cvar` belongs to the module: its `def self.` functions
+and the instance methods it mixes into classes all share the same
+variables (each module has its own). `@@cvar` outside any class or module
+(a bare top-level `def`) is a compile error — there's no implicit global
+scope it could fall back to. That's also why a `threads: N` server (see
 `packages/gremlin/README.md`) can't use a class variable to share state
 across `Thread.new`-spawned workers: each spawned thread gets its own
 completely independent copy of every class variable, the same way it

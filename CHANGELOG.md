@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- Modules can use `@@class_variables`, shared by the module's singleton
+  functions and the instance methods it mixes in.
 - `:name=` is a Symbol literal (naming a writer method), as in Ruby.
 - `self.new(...)` in a class's `def self.` method builds whichever class
   `self` is, so inherited factory methods work.

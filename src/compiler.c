@@ -2171,12 +2171,49 @@ static bool class_variable_name_equals(const Compiler *compiler,
     return true;
 }
 
-static int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
-    if (compiler->current_class < 0) {
-        fail(compiler, name, "class variable used outside a class");
+/* The class whose storage `@@var` refers to here: the enclosing class, or,
+ * in a module's own body (its `def self.` functions and the instance
+ * methods it contributes to including classes), a hidden class named
+ * "<Module>.@@" that exists only to hold that module's class variables --
+ * shared by all of them, as in Ruby. Source can't name the hidden class
+ * (it isn't a valid constant). Created on the module's first @@ use; the
+ * real pass finds the copy the discovery pass made by that same name.
+ * -1 (after failing) outside any class or module. */
+static int class_variable_owner(Compiler *compiler, DiamondSpan name) {
+    if (compiler->current_class >= 0) return compiler->current_class;
+    if (compiler->current_module < 0) {
+        fail(compiler, name, "class variable used outside a class or module");
         return -1;
     }
-    DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
+    char hidden[DIAMOND_MAX_FUNCTION_NAME];
+    const int written = snprintf(hidden, sizeof hidden, "%s.@@",
+        compiler->program->modules[(size_t)compiler->current_module].name);
+    if (written < 0 || (size_t)written >= sizeof hidden) {
+        fail(compiler, name, "module name is too long for class variables");
+        return -1;
+    }
+    for (size_t index = 0; index < compiler->program->class_count; index++) {
+        DiamondClass *existing = &compiler->program->classes[index];
+        if (strcmp(existing->name, hidden) != 0) continue;
+        if (!compiler->discovery_pass) existing->declared_by_discovery = false;
+        return (int)index;
+    }
+    if (compiler->program->class_count == DIAMOND_MAX_CLASSES) {
+        fail(compiler, name, "too many classes");
+        return -1;
+    }
+    const size_t index = compiler->program->class_count++;
+    DiamondClass *class = &compiler->program->classes[index];
+    memset(class, 0, sizeof *class);
+    memcpy(class->name, hidden, (size_t)written + 1);
+    class->superclass = UINT8_MAX;
+    return (int)index;
+}
+
+static int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
+    const int owner = class_variable_owner(compiler, name);
+    if (owner < 0) return -1;
+    DiamondClass *class = &compiler->program->classes[(size_t)owner];
     for (size_t index = 0; index < class->class_variable_count; index++) {
         if (class_variable_name_equals(compiler, class->class_variables[index], name))
             return (int)index;
@@ -9640,7 +9677,7 @@ static uint16_t parse_prefix(Compiler *compiler) {
             const uint16_t destination = allocate_register(compiler);
             const int slot = class_variable_index(compiler,compiler->previous.span,true);
             emit_instruction(compiler,DIAMOND_OP_GET_CVAR,destination,
-                             (uint8_t)compiler->current_class,(uint8_t)slot,3);
+                             (uint8_t)class_variable_owner(compiler,compiler->previous.span),(uint8_t)slot,3);
             if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
                 return parse_closure_call_arguments(compiler,destination);
             return destination;
@@ -11511,7 +11548,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-                         (uint8_t)compiler->current_class,(uint8_t)slot,3);
+                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
@@ -11599,7 +11636,7 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-                         (uint8_t)compiler->current_class,(uint8_t)slot,3);
+                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
@@ -16211,7 +16248,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     if (class_variable) {
         const int slot = class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_SET_CVAR,
-                         (uint8_t)compiler->current_class,(uint8_t)slot,value,3);
+                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,value,3);
         return value;
     }
     int local = find_local(compiler, name);
@@ -16402,7 +16439,7 @@ static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
         const uint16_t receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-            (uint8_t)compiler->current_class,(uint8_t)slot,3);
+            (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         return receiver;
     }
     const int local=find_local(compiler,name);
