@@ -10598,9 +10598,20 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
          * guard already zeroes covered_id_count further down regardless
          * of how it got populated, so a guarded `when Circle{} if ...`
          * still correctly never counts. */
-        if(success_count==1&&array_nodes[array_root].kind==CASE_OBJECT_GROUP&&
-           array_nodes[array_root].child_count==0&&
-           covered_id_count<DIAMOND_MAX_UNION_TYPES)
+        /* The same holds when every reader is only bound to a name or
+         * ignored with `_` -- `Parsed{score: score}` constrains nothing,
+         * so it matches every Parsed just as `Parsed{}` does. Any literal,
+         * pin, or nested pattern among the readers still disqualifies it. */
+        bool unconstrained_object=success_count==1&&
+            array_nodes[array_root].kind==CASE_OBJECT_GROUP;
+        for(uint8_t child=0;unconstrained_object&&
+            child<array_nodes[array_root].child_count;child++) {
+            const CaseArrayNodeKind kind=
+                array_nodes[array_nodes[array_root].children[child]].kind;
+            if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
+                unconstrained_object=false;
+        }
+        if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
             covered_ids[covered_id_count++]=(uint8_t)
                 (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
     } else {
@@ -12152,6 +12163,12 @@ static uint16_t compile_block(Compiler *compiler) {
         declared_return_set=clone_type_set_into_current(compiler,
             outer_function->type_sets,outer_function->type_set_count,
             (uint16_t)contextual_return_set);
+    /* A `return`/`next` in this block returns from the block, so it's
+     * checked against the block's own expected result -- never the
+     * enclosing function's `-> Type`, whose set index belongs to that
+     * function's type-set table, not this one. */
+    compiler->current_return_type=declared_return_set==DIAMOND_NO_TYPE_SET?
+        -1:(int)declared_return_set;
     compiler->has_current_block=false;
     compiler->current_block_register=0;
     compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;

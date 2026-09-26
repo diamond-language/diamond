@@ -1,3 +1,5 @@
+# A pattern that constrains a reader (here r must be 1) matches only some
+# Circles, so it doesn't cover Circle. (A binding-only Circle{r: r} does.)
 class Circle
   def initialize(r: Int)
     @r = r
@@ -11,8 +13,8 @@ class Square
 end
 def area(shape: Circle | Square)
   case shape
-  when Circle{r: r}
-    r
+  when Circle{r: 1}
+    1
   when Square
     4
   end

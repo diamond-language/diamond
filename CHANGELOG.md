@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- An object pattern that only binds or ignores its readers
+  (`when Parsed{score: score}`) counts as covering its class for `case`
+  exhaustiveness, as `Parsed{}` already did.
+- Fixed: `return`/`next` inside a `do` block was checked against the
+  enclosing function's `-> Type` through the wrong type table, which could
+  report a bogus mismatch.
 - A failed type check on an Array or Hash names what it held:
   `expected Array[Int], got Array[String | Int]` instead of `got Array`.
 - A call to a known top-level function with a provably wrong argument type

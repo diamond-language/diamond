@@ -261,8 +261,10 @@ own specific shape of subject:
   a member, and so does a single, top-level, empty `Circle{}` object
   pattern** — an empty `Circle{}` is already "any `Circle` instance" per
   this same section's own case/when semantics, so it covers `Circle` the
-  same way a bare `when Circle` does. A *non-empty* object pattern
-  (`Circle{radius: r}`) does not, since it only matches a subset of
+  same way a bare `when Circle` does. So does an object pattern whose
+  readers are all plain bindings or `_` (`Circle{radius: r}`), since it
+  constrains nothing. One with a literal, pin, or nested pattern among its
+  readers (`Circle{radius: 0}`) does not, since it only matches a subset of
   `Circle`; neither does an Array/Hash pattern (they never name a class
   at all, so there's no member for them to cover), an empty `Circle{}`
   nested inside something else (`[Circle{}, x]`'s own top-level shape is
