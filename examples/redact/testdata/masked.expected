@@ -1,0 +1,8 @@
+2026-09-26T10:00:01Z INFO login ok user=***.********@*******.*** ip=***.*.***.**
+2026-09-26T10:00:02Z INFO GET /api/orders Authorization: Bearer ********************.***************.************
+2026-09-26T10:00:03Z WARN payment declined card=**** **** **** 1111 user=***.********@*******.***
+2026-09-26T10:00:04Z INFO order 1234567890123 shipped to *****@****.*******.***
+2026-09-26T10:00:05Z DEBUG config loaded: db_url=postgres://app@**.*.*.*/prod password=*******&retries=3
+2026-09-26T10:00:06Z INFO build 1.2.3.4000 from 999.1.1.1 not an address; ******************** rotated
+2026-09-26T10:00:07Z ERROR key dump -----***** *** ******* ***----- truncated
+2026-09-26T10:00:08Z INFO ticket #4412 opened by EMP-004217 via ***.*.***.**

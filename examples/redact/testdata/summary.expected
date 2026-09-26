@@ -1,0 +1,9 @@
+aws_key        1
+bearer         1
+card           1
+email          3
+employee_id    1
+ipv4           3
+private_key    1
+secret         1
+ticket         1

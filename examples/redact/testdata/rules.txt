@@ -1,0 +1,3 @@
+# Site-specific rules, on top of the built-in ones.
+employee_id  -  \bEMP-[0-9]{6}\b
+ticket       i  \bticket #[0-9]+

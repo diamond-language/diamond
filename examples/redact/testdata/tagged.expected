@@ -1,0 +1,8 @@
+2026-09-26T10:00:01Z INFO login ok user=[email-1] ip=[ipv4-1]
+2026-09-26T10:00:02Z INFO GET /api/orders Authorization: Bearer [bearer-1]
+2026-09-26T10:00:03Z WARN payment declined card=[card-1] user=[email-1]
+2026-09-26T10:00:04Z INFO order 1234567890123 shipped to [email-2]
+2026-09-26T10:00:05Z DEBUG config loaded: db_url=postgres://app@[ipv4-2]/prod password=[secret-1]&retries=3
+2026-09-26T10:00:06Z INFO build 1.2.3.4000 from 999.1.1.1 not an address; [aws_key-1] rotated
+2026-09-26T10:00:07Z ERROR key dump [private_key-1] truncated
+2026-09-26T10:00:08Z INFO [ticket-1] opened by [employee_id-1] via [ipv4-1]
