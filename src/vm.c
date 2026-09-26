@@ -22195,31 +22195,39 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "redefine_method callable must not capture any variables");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                /* Unlike define_method, redefine_method doesn't accept a
-                 * compile_method result -- v1 scope, see docs/design.md.
-                 * Rejected explicitly here rather than left to fall
-                 * through to the owner_class check below, which would
-                 * still reject it, but for a confusing reason (comparing
-                 * against a same-named function from the wrong chunk). */
-                if(replacement->foreign_chunk!=nullptr) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "a compile_method callable can only be passed to define_method");
-                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                }
-                if((size_t)replacement->function_index>=chunk->function_count)
+                /* A compile_method result carries its own chunk and bound
+                 * values and was compiled for one specific class; it's
+                 * installed the same way define_method installs one (see
+                 * that handler's comment), just into the existing slot. */
+                const DiamondChunk *function_chunk=
+                    replacement->foreign_chunk!=nullptr?replacement->foreign_chunk:chunk;
+                if((size_t)replacement->function_index>=function_chunk->function_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondFunction *new_function=chunk->functions[replacement->function_index];
-                if(new_function->owner_class!=class_operand) {
+                const DiamondFunction *new_function=
+                    function_chunk->functions[replacement->function_index];
+                if(replacement->foreign_chunk!=nullptr) {
+                    if(replacement->intended_class!=class) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "redefine_method callable was compiled for a different class than '%s'",
+                            class->name);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                } else if(new_function->owner_class!=class_operand) {
                     snprintf(vm->error,sizeof vm->error,
                              "redefine_method callable must be a method of '%s'",class->name);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const uint8_t new_arity=(uint8_t)(new_function->arity-1);
-                const uint8_t new_required_arity=(uint8_t)(new_function->required_arity-1);
+                const uint8_t new_arity=
+                    (uint8_t)(new_function->arity-1-replacement->bound_value_count);
+                const uint8_t new_required_arity=
+                    (uint8_t)(new_function->required_arity-1-replacement->bound_value_count);
                 if(new_arity!=target->arity||new_required_arity!=target->required_arity||
                    new_function->has_variadic!=target->has_variadic)
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 target->function_index=replacement->function_index;
+                target->source_chunk=replacement->foreign_chunk;
+                target->bound_values=replacement->bound_values;
+                target->bound_value_count=replacement->bound_value_count;
                 diamond_vm_invalidate_method_caches(vm);
                 registers[dest]=DIAMOND_NIL;break;
             }
@@ -22407,6 +22415,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondStringConstant *method_name=&chunk->strings[name_index];
                 const DiamondMethod *method=lookup_singleton_method(chunk,class,
                     method_name->chars,method_name->length);
+                /* self.new(...): an instance of whichever class self is, so
+                 * an inherited factory method builds the subclass it was
+                 * called on. Unless the class defines its own `new`. */
+                if(method==nullptr&&method_name->length==3&&
+                   memcmp(method_name->chars,"new",3)==0) {
+                    if(class->sealed) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "cannot instantiate sealed class %s directly -- "
+                            "use one of its subclasses",class->name);
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    const DiamondVmStatus new_status=diamond_jit_new_instance(vm,chunk,
+                        registers,dest,class_operand,base,argc,depth);
+                    VM_PROPAGATE(new_status);
+                    break;
+                }
                 /* self.name() / self.to_s(): the class's own name, unless
                  * the class defines a singleton of that name itself. */
                 if(method==nullptr&&argc==0&&

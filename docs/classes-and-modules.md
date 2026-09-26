@@ -25,7 +25,8 @@ end
 via `<`, and `super(...)`. Classes are compile-time metadata, not
 first-class heap values, with two narrow exceptions:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
-compiled body at runtime, and `ClassName.define_method(name, callable)`
+compiled body at runtime (the callable may come from `compile_method`, as
+long as its arity matches), and `ClassName.define_method(name, callable)`
 adds a brand-new method under a name the class didn't already have. Both
 take the same "patch-factory" shaped `callable` -- a nested, named
 function (Diamond has no anonymous closure literal) that captures no
@@ -61,7 +62,10 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
-Inside a class's own `def self.x` method, `self.define_method`,
+Inside a class's own `def self.x` method, `self.new(...)` builds an
+instance of whichever class `self` is (so an inherited factory builds the
+subclass it was called on; a sealed class still refuses), and
+`self.define_method`,
 `self.redefine_method`, and `self.compile_method` act on whichever class
 `self` is at run time -- so a base class can generate methods for each
 subclass it's called on:

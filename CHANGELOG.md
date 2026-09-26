@@ -21,6 +21,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- `self.new(...)` in a class's `def self.` method builds whichever class
+  `self` is, so inherited factory methods work.
+- `redefine_method` accepts a `compile_method` callable, so an existing
+  method can be replaced with generated code.
 - A class value prints as its name (it printed `#<Class:28>`), and
   `self.name()` / `self.to_s()` in a class method return it.
 - `self.define_method` / `self.compile_method` / `self.redefine_method`
