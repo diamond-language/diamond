@@ -99,7 +99,8 @@ sandbox.
   `calc` (parsing and pattern matching), `generators` (fibers), `grades`
   (the type system), `ledger`
   (the object model), `markdown` (strings and Regexp), `parallel`
-  (threads, channels, supervisors), and `vault` (crypto and encoding); `make test-examples` runs their tests
+  (threads, channels, supervisors), `taskrun` (processes), and `vault`
+  (crypto and encoding); `make test-examples` runs their tests
 - `fuzz/`: compiler and bytecode-execution fuzz targets
 - `bench/`: performance and GC evidence
 

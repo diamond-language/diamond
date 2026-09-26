@@ -1,0 +1,22 @@
+== clean: ok
+  $ echo removing build/
+  removing build/
+== compile: ok
+  $ echo compiling main.c
+  compiling main.c
+  $ echo compiling util.c
+  compiling util.c
+== assets: ok
+  $ echo bundling styles
+  bundling styles
+  $ echo "warning: 1 unused image" 1>&2
+  warning: 1 unused image
+== package: ok
+  $ echo "packing $(echo 2) files"
+  packing 2 files
+== docs: ok
+  $ printf 'writing docs\nwriting index\n'
+  writing docs
+  writing index
+== all: ok
+6 ok, 0 failed, 0 skipped

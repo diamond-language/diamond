@@ -1,0 +1,31 @@
+# A small build: two independent steps feed a package step.
+all: package docs
+
+clean:
+  echo removing build/
+
+compile: clean
+  echo compiling main.c
+  echo compiling util.c
+
+assets: clean
+  echo bundling styles
+  echo "warning: 1 unused image" 1>&2
+
+package: compile assets
+  echo "packing $(echo 2) files"
+
+docs:
+  printf 'writing docs\nwriting index\n'
+
+broken: compile
+  echo about to fail
+  exit 3
+  echo never printed
+
+after-broken: broken
+  echo never runs
+
+loop-a: loop-b
+loop-b: loop-c
+loop-c: loop-a

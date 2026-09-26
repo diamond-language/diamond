@@ -1,0 +1,15 @@
+== clean: ok
+  $ echo removing build/
+  removing build/
+== compile: ok
+  $ echo compiling main.c
+  compiling main.c
+  $ echo compiling util.c
+  compiling util.c
+== broken: FAILED (exit 3)
+  $ echo about to fail
+  about to fail
+  $ exit 3
+== after-broken: skipped
+== docs: skipped
+2 ok, 1 failed, 2 skipped
