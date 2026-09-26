@@ -61,6 +61,24 @@ instance immediately, including ones already constructed before the
 call, since dispatch looks the method up by class and name at call time
 rather than snapshotting anything at construction time.
 
+Inside a class's own `def self.x` method, `self.define_method`,
+`self.redefine_method`, and `self.compile_method` act on whichever class
+`self` is at run time -- so a base class can generate methods for each
+subclass it's called on:
+
+```ruby
+class Record
+  def self.fields(names)
+    names.each() do |name|
+      self.define_method(name, self.compile_method(name, [], "self.data()[key]", {"key": name}))
+    end
+  end
+end
+class Book < Record
+end
+Book.fields(["title"])   # only Book gains #title
+```
+
 ### `compile_method`
 
 `ClassName.compile_method(name, params, body_source, bound_values)` closes
@@ -86,6 +104,8 @@ Greeter.define_method("greeting", callable)
 Greeter.new("Ada").greeting("Hello, ")  # => "Hello, Ada"
 ```
 
+The name may end in `=`, `?`, or `!` like any `def` (`"title="` generates a
+writer that `record.title = value` calls).
 `params` is a plain list of parameter names (`String`s) -- no types,
 defaults, splats, or block parameters. `body_source` can reference `self`,
 call other methods on it, and read/write the class's *existing* `@fields`,

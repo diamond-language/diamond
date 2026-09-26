@@ -593,6 +593,14 @@ typedef enum DiamondMathFunction : uint8_t {
     DIAMOND_MATH_TANH,
 } DiamondMathFunction;
 
+/* The class operand of DIAMOND_OP_DEFINE_METHOD/REDEFINE_METHOD/
+ * COMPILE_METHOD when the call was `self.define_method(...)` (etc.) inside
+ * a class singleton method: the class is whichever one `self` holds at run
+ * time, so a base class's `def self.fields(...)` can add methods to the
+ * subclass it's called on. Above every real class index (at most
+ * DIAMOND_MAX_CLASSES - 1). */
+enum { DIAMOND_CLASS_FROM_SELF = 0xFF };
+
 typedef enum DiamondTypeId : uint8_t {
     DIAMOND_TYPE_INT,
     DIAMOND_TYPE_FLOAT,

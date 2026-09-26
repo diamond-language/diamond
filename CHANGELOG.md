@@ -21,6 +21,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- `self.define_method` / `self.compile_method` / `self.redefine_method`
+  inside a class's `def self.` method act on the class `self` holds at
+  run time, so a base class can generate methods for each subclass.
 - `compile_method` accepts writer (`name=`) and predicate (`name?`, `name!`)
   names, so setters can be generated at run time.
 - Fixed: a `case` Array/Hash/object pattern binding was typed as whatever

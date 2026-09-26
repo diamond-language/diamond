@@ -8823,6 +8823,21 @@ static DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_valu
     return DIAMOND_VM_OK;
 }
 
+/* Resolves DIAMOND_CLASS_FROM_SELF to the class in register 0 (`self` in a
+ * class singleton method), leaving a literal class operand unchanged.
+ * False, with vm->error set, when self isn't a class. */
+static bool resolve_class_operand(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,const char *operation,uint8_t *class_operand) {
+    if(*class_operand!=DIAMOND_CLASS_FROM_SELF)return true;
+    if(chunk->parameter_offset!=1||registers[0].kind!=DIAMOND_VALUE_CLASS) {
+        snprintf(vm->error,sizeof vm->error,
+            "self.%s works only in a class's own def self. method",operation);
+        return false;
+    }
+    *class_operand=registers[0].as.class_index;
+    return true;
+}
+
 /* exit(code = 0) -- validation only returns; a valid code calls libc
  * exit() directly and never returns at all. This is a hard, immediate,
  * whole-process exit (like Ruby's Kernel#exit!, not Kernel#exit): no
@@ -22141,6 +22156,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_REDEFINE_METHOD: {
                 uint16_t dest=0,name_reg=0,callable_reg=0;uint8_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);READ_SHORT(callable_reg);
+                if(!resolve_class_operand(vm,chunk,registers,"redefine_method",&class_operand))
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if((size_t)class_operand>=chunk->class_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
@@ -22217,6 +22234,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_DEFINE_METHOD: {
                 uint16_t dest=0,name_reg=0,callable_reg=0;uint8_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);READ_SHORT(callable_reg);
+                if(!resolve_class_operand(vm,chunk,registers,"define_method",&class_operand))
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if((size_t)class_operand>=chunk->class_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
@@ -22313,6 +22332,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint8_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);
                 READ_SHORT(params_reg);READ_SHORT(body_reg);READ_SHORT(bound_values_reg);
+                if(!resolve_class_operand(vm,chunk,registers,"compile_method",&class_operand))
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 if((size_t)class_operand>=chunk->class_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[name_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {

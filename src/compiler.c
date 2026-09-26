@@ -8418,6 +8418,19 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
         fail(compiler,compiler->current.span,"expected method name after 'self.'");
         return 0;
     }
+    /* self.define_method / compile_method / redefine_method: the class is
+     * self's, resolved at run time (DIAMOND_CLASS_FROM_SELF), so a base
+     * class's singleton method can add methods to the subclass it's called
+     * on. The parse helpers take the class index as an int and emit it as a
+     * byte, so passing the sentinel is all it takes. */
+    if(name_equals(compiler,"define_method",compiler->current.span,false))
+        return parse_define_method_call(compiler,DIAMOND_CLASS_FROM_SELF);
+    if(name_equals(compiler,"compile_method",compiler->current.span,false))
+        return parse_compile_method_call(compiler,DIAMOND_CLASS_FROM_SELF);
+    if(name_equals(compiler,"redefine_method",compiler->current.span,false)) {
+        compiler->program->uses_redefine_method=true;
+        return parse_redefine_method_call(compiler,DIAMOND_CLASS_FROM_SELF);
+    }
     const DiamondSpan name=compiler->current.span;
     advance_token(compiler);
     bool writer_name=false;
