@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- A call to a known top-level function with a provably wrong argument type
+  is a compile error naming the parameter
+  (`argument 'x' of f: expected Int, got String`). It used to compile and
+  raise `TypeError` when called. Calls whose argument types aren't
+  statically certain, and generic or variadic callees, are still checked
+  at run time.
 - `yield` inside a `do` block calls the enclosing method's `&block`; it used
   to fail with "yield outside a fiber".
 - Instances inside an Array or Hash print with their class's `to_s` (a

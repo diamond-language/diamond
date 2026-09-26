@@ -332,7 +332,8 @@ if "$diamond" -e $'def typed(x: String | Nil)\n x\nend\ntyped(42)' \
     rm -f "$error_file"
     exit 1
 fi
-grep -q 'runtime error: expected String | Nil, got Int' "$error_file"
+# Provably wrong, so rejected at compile time now.
+grep -q "argument 'x' of typed: expected String | Nil, got Int" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
@@ -342,7 +343,7 @@ if "$diamond" -e $'class Animal\nend\nclass Rock\nend\ndef adopt(x: Animal)\n x\
     rm -f "$error_file"
     exit 1
 fi
-grep -q 'runtime error: expected Animal, got Rock' "$error_file"
+grep -q "argument 'x' of adopt: expected Animal, got Rock" "$error_file"
 rm -f "$error_file"
 
 actual="$("$diamond" --dump-bytecode -e $'def literal() -> Int\n  42\nend\nliteral()')"
@@ -850,7 +851,9 @@ rm -rf "$files_dir" "$files_error"
 
 actual="$($diamond -e $'require "tests/multifile/math"\ndouble(21)')"
 [[ "$actual" == "42" ]]
-runtime_stack="$($diamond -e $'require "tests/multifile/math"\ndouble("bad")' 2>&1 || true)"
+# The argument's type isn't statically known, so this fails at run time
+# (a literal "bad" would now be rejected at compile time).
+runtime_stack="$($diamond -e $'require "tests/multifile/math"\nbad = if ARGV.length() == 0 then "bad" else 1 end\ndouble(bad)' 2>&1 || true)"
 grep -q 'at double:' <<<"$runtime_stack"
 runtime_stack="$($diamond tests/multifile/runtime_broken_main.di 2>&1 || true)"
 grep -q 'at explode:' <<<"$runtime_stack"

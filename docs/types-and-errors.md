@@ -61,6 +61,14 @@ annotation populates, not the separate, tooling-only return-type inference
 compile_definition also computes for every function (see docs/roadmap.md's
 "Improve receiver-aware tooling").
 
+A call to a known top-level function is checked at compile time where
+the compiler can prove an argument is the wrong type -- `f("s")` for
+`def f(x: Int)` is a compile error naming the parameter
+(`argument 'x' of f: expected Int, got String`). Anything short of proof
+(a value whose type depends on a branch, an untyped function's result, a
+generic or variadic callee) is still checked when the call runs, as a
+rescuable `TypeError`.
+
 `x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
 the whole condition is true (and `unless ... || ...`'s branch narrows
 both operands where the whole condition is false) — composed the same

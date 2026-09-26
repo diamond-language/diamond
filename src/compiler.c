@@ -776,34 +776,94 @@ static void fail_type_mismatch(Compiler *compiler,DiamondSpan span,
     fail(compiler,span,message);
 }
 
-static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
-                            DiamondSpan span) {
-    if(type_set_contains_variable(compiler,set_index)) {
-        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
-        return;
-    }
+/* What the compiler can prove about `reg` against the annotation
+ * `set_index`: it certainly satisfies it, only a runtime check can tell,
+ * or it certainly doesn't. Shared by emit_type_check (annotations checked
+ * where the value is produced) and check_call_argument_types (arguments to
+ * a statically known callee). */
+typedef enum TypeCheckVerdict {
+    TYPE_CHECK_SATISFIED,
+    TYPE_CHECK_NEEDS_RUNTIME,
+    TYPE_CHECK_VIOLATED,
+} TypeCheckVerdict;
+
+static TypeCheckVerdict type_check_verdict(Compiler *compiler,uint16_t reg,
+        uint16_t set_index) {
+    if(type_set_contains_variable(compiler,set_index))return TYPE_CHECK_NEEDS_RUNTIME;
     if(compiler->known_type_sets[reg]>=0) {
         const uint16_t known_set=(uint16_t)compiler->known_type_sets[reg];
-        if(type_set_satisfies(compiler,known_set,set_index))return;
-        if(compiler->function->type_sets[known_set].inferred) {
-            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
-            return;
-        }
-        fail_type_mismatch(compiler,span,reg,set_index);return;
+        if(type_set_satisfies(compiler,known_set,set_index))return TYPE_CHECK_SATISFIED;
+        if(compiler->function->type_sets[known_set].inferred)
+            return TYPE_CHECK_NEEDS_RUNTIME;
+        return TYPE_CHECK_VIOLATED;
     }
     const uint8_t known=compiler->known_types[reg];
-    if(known==TYPE_UNKNOWN) {
-        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
-        return;
-    }
+    if(known==TYPE_UNKNOWN)return TYPE_CHECK_NEEDS_RUNTIME;
     const DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     for(size_t index=0;index<set->count;index++) {
         if(!known_type_satisfies_one(compiler,known,set->members[index].id))continue;
-        if(set->members[index].argument_set!=DIAMOND_NO_TYPE_SET)
-            emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+        return set->members[index].argument_set!=DIAMOND_NO_TYPE_SET?
+            TYPE_CHECK_NEEDS_RUNTIME:TYPE_CHECK_SATISFIED;
+    }
+    return TYPE_CHECK_VIOLATED;
+}
+
+static void emit_type_check(Compiler *compiler, uint16_t reg, uint16_t set_index,
+                            DiamondSpan span) {
+    switch(type_check_verdict(compiler,reg,set_index)) {
+    case TYPE_CHECK_SATISFIED:
+        return;
+    case TYPE_CHECK_NEEDS_RUNTIME:
+        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,reg,set_index,0,2);
+        return;
+    case TYPE_CHECK_VIOLATED:
+        fail_type_mismatch(compiler,span,reg,set_index);
         return;
     }
-    fail_type_mismatch(compiler,span,reg,set_index);
+}
+
+/* Compile-time check of positional arguments to a statically known,
+ * non-generic callee: an argument whose known type provably can't satisfy
+ * its parameter's annotation is an error here rather than when the call
+ * runs. Anything short of proof is left to the callee's own entry check,
+ * exactly as before. */
+static uint16_t clone_type_set_into_current(Compiler *compiler,
+        const DiamondTypeSet *source_sets,size_t source_count,uint16_t source_index);
+
+static void check_call_argument_types(Compiler *compiler,const DiamondFunction *callee,
+        const uint16_t *arguments,size_t count,size_t parameter_offset,
+        DiamondSpan span) {
+    /* A variadic callee's positional arguments don't map one-to-one onto
+     * its parameter slots (extras go into the rest Array), so it's left to
+     * the runtime check. */
+    if(compiler->discovery_pass||callee==nullptr||callee->type_variable_count>0||
+       callee->has_variadic)return;
+    for(size_t index=0;index<count;index++) {
+        const size_t parameter=index+parameter_offset;
+        if(parameter>=callee->arity||parameter>=DIAMOND_MAX_DECLARED_PARAMETERS)break;
+        const uint16_t declared=callee->parameter_type_sets[parameter];
+        if(declared==DIAMOND_NO_TYPE_SET||declared>=callee->type_set_count)continue;
+        const uint16_t reg=arguments[index];
+        if(compiler->known_type_sets[reg]<0&&compiler->known_types[reg]==TYPE_UNKNOWN)
+            continue;
+        const uint16_t expected=clone_type_set_into_current(compiler,
+            callee->type_sets,callee->type_set_count,declared);
+        if(expected==DIAMOND_NO_TYPE_SET)continue;
+        if(type_check_verdict(compiler,reg,expected)!=TYPE_CHECK_VIOLATED)continue;
+        char expected_text[384],actual[384];
+        format_compiler_type_set(expected_text,sizeof expected_text,compiler,expected);
+        if(compiler->known_type_sets[reg]>=0)
+            format_compiler_type_set(actual,sizeof actual,compiler,
+                (uint16_t)compiler->known_type_sets[reg]);
+        else
+            snprintf(actual,sizeof actual,"%s",
+                compiler_type_name(compiler,compiler->known_types[reg]));
+        char message[sizeof compiler->diagnostic->message];
+        snprintf(message,sizeof message,"argument '%s' of %s: expected %s, got %s",
+            callee->parameter_names[parameter],callee->name,expected_text,actual);
+        fail(compiler,span,message);
+        return;
+    }
 }
 
 static uint16_t add_constant(Compiler *compiler, DiamondValue value) {
@@ -3428,6 +3488,8 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         return 0;
     }
 
+    if(type_argument_count==0)
+        check_call_argument_types(compiler,function,slot_registers,argument_count,0,name);
     const uint16_t argument_base = allocate_register(compiler);
     for (size_t index = 1; index < argument_count; index++) {
         (void)allocate_register(compiler);
