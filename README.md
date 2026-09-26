@@ -97,7 +97,7 @@ sandbox.
   app and a WebSocket chat room to a standalone log-summary CLI and a
   from-scratch GPT-style transformer, plus smaller tours of one area each:
   `agenda` (Time and calendars), `calc` (parsing and pattern matching), `generators` (fibers), `grades`
-  (the type system), `ledger`
+  (the type system), `kvstore` (TCP and IO.poll), `ledger`
   (the object model), `markdown` (strings and Regexp), `parallel`
   (threads, channels, supervisors), `taskrun` (processes), and `vault`
   (crypto and encoding); `make test-examples` runs their tests
