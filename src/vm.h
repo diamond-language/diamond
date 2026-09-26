@@ -1069,6 +1069,12 @@ typedef struct DiamondFunction {
     char type_variables[8][DIAMOND_MAX_FUNCTION_NAME];
     uint8_t type_variable_count;
     bool uses_instance_state;
+    /* A nested def whose own body calls or names it (a recursive local
+     * helper). Set by the compiler's discovery pass; the real pass then
+     * declares the def's name before compiling its body, so the body can
+     * capture it. Other nested defs stay capture-free of themselves, which
+     * define_method factories and Thread.new callables rely on. */
+    bool calls_itself;
     /* A function slot copied from diamond_compile's discovery pass and not
      * yet claimed by the real pass. Preserving every discovery-time index
      * keeps early CALL operands and class/module method tables stable. */

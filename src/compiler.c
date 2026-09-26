@@ -204,6 +204,11 @@ typedef struct Compiler {
      * in one). There `next` outside any loop ends the block's current call,
      * like `return`, instead of being an error. */
     bool in_block;
+    /* The nested def whose body is being compiled (nullptr outside one),
+     * and its name: during discovery, a call to or reference of that name
+     * marks it calls_itself. See DiamondFunction.calls_itself. */
+    DiamondFunction *current_definition;
+    DiamondSpan current_definition_name;
     /* The explicit `&name` parameter for the function currently being
      * compiled. In that lexical context `yield(...)` invokes this Callable;
      * without one, yield retains its fiber-suspension meaning. */
@@ -1629,6 +1634,8 @@ static uint16_t parse_literal(Compiler *compiler) {
     return destination;
 }
 
+static void note_self_reference(Compiler *compiler,DiamondSpan name);
+
 static uint16_t parse_identifier(Compiler *compiler) {
     const int local = find_local(compiler, compiler->previous.span);
     if (local < 0) {
@@ -1674,6 +1681,7 @@ static uint16_t parse_identifier(Compiler *compiler) {
             return destination;
         }
         if(compiler->discovery_pass) {
+            note_self_reference(compiler,compiler->previous.span);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
             return destination;
@@ -1754,8 +1762,10 @@ static DiamondFunction *compiler_add_function(Compiler *compiler,
          * clones it from `discovery` via diamond_function_copy -- always
          * combined-allocated, template or not -- so this must go through
          * the combined-aware free, not raw free() on each field. */
+        const bool calls_itself=function->calls_itself;
         diamond_function_free_arrays(function);
         memset(function,0,sizeof *function);
+        function->calls_itself=calls_itself;
         return function;
     }
     DiamondFunction *function=diamond_program_add_function(compiler->program);
@@ -2670,6 +2680,16 @@ static uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callab
  * that later declaration; the real pass will validate the call against the
  * copied signature. Parse the complete call shape here without emitting a
  * callable function index that does not exist in this throwaway program yet. */
+/* Discovery pass only: an unresolved `name` inside a nested def's body
+ * that is that def's own name makes it a recursive local helper. */
+static void note_self_reference(Compiler *compiler,DiamondSpan name) {
+    if(!compiler->discovery_pass||compiler->current_definition==nullptr)return;
+    const DiamondSpan own=compiler->current_definition_name;
+    if(own.length==name.length&&
+       memcmp(compiler->source+own.start,compiler->source+name.start,name.length)==0)
+        compiler->current_definition->calls_itself=true;
+}
+
 static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);skip_newlines(compiler);
@@ -3235,6 +3255,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     }
     const int function_index = find_function(compiler, name);
     if (function_index < 0) {
+        note_self_reference(compiler,name);
         if(compiler->discovery_pass)
             return parse_discovery_unknown_call(compiler);
         fail(compiler, name, "undefined function");
@@ -12866,6 +12887,24 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     }
     advance_token(compiler);
 
+    /* A recursive local helper (see DiamondFunction.calls_itself): declare
+     * its name in the enclosing scope first, holding nil, so the body
+     * captures it like any other enclosing local. Once the closure exists
+     * it's stored into that same (by then boxed) cell, which the body's
+     * calls read through. */
+    int self_local=-1;
+    if(!at_top_level&&!compiler->discovery_pass&&function->calls_itself&&
+       find_local(compiler,name)<0&&compiler->local_count<DIAMOND_MAX_LOCALS) {
+        const uint16_t self_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,self_register,0,0,1);
+        self_local=(int)compiler->local_count;
+        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=self_register};
+    }
+    DiamondFunction *const outer_definition=compiler->current_definition;
+    const DiamondSpan outer_definition_name=compiler->current_definition_name;
+    compiler->current_definition=at_top_level?nullptr:function;
+    compiler->current_definition_name=name;
+
     DiamondFunction *outer_function = compiler->function;
     Local outer_locals[DIAMOND_MAX_LOCALS];
     const size_t outer_local_count = compiler->local_count;
@@ -13606,6 +13645,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_singleton_method = outer_in_singleton_method;
     compiler->in_function=outer_in_function;
     compiler->in_block=outer_in_block;
+    compiler->current_definition=outer_definition;
+    compiler->current_definition_name=outer_definition_name;
     compiler->has_current_block=outer_has_current_block;
     compiler->current_block_register=outer_current_block_register;
     compiler->current_block_type_set=outer_current_block_type_set;
@@ -13845,8 +13886,15 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
         emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
         for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
-        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result,
-            .captured=compiler->loop_captures_pending};
+        if(self_local>=0) {
+            const uint16_t self_register=compiler->locals[(size_t)self_local].reg;
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_register,0,0,1);
+            emit_instruction(compiler,DIAMOND_OP_SET_CELL,self_register,result,0,2);
+            compiler->locals[(size_t)self_local].captured=true;
+        } else {
+            compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result,
+                .captured=compiler->loop_captures_pending};
+        }
     }
     /* else: top-level def -- no NIL needed. A genuine top-level def's
      * `result` is the sole writer of its (allocated) register, already

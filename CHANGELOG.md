@@ -21,6 +21,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- A nested `def` can call itself, so recursive local helpers work; it
+  used to be "undefined function". Nested defs that don't refer to
+  themselves still capture nothing extra.
 - `Array#index_of(needle)`: the first matching position, or `nil`, like
   `String#index_of`.
 - `Hash#include_key?` is a native O(1) lookup; it scanned every key, which
