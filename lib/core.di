@@ -626,7 +626,13 @@ def array_flat_map(values: Array, callback: Callable[1]) -> Array
   while index < values.length()
     mapped = callback(values[index])
     if mapped is Array
-      result = result.concat(mapped)
+      # Append in place: result.concat(mapped) would copy all of result
+      # again for every element, making flat_map quadratic.
+      inner = 0
+      while inner < mapped.length()
+        result.push(mapped[inner])
+        inner += 1
+      end
     else
       result.push(mapped)
     end
