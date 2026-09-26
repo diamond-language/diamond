@@ -21,6 +21,11 @@ authoritative fine-grained record.
 
 ### Language
 
+- `yield` inside a `do` block calls the enclosing method's `&block`; it used
+  to fail with "yield outside a fiber".
+- Instances inside an Array or Hash print with their class's `to_s` (a
+  struct shows `Point(x: 1, y: 2)`, not `#<Point>`), as they already did on
+  their own.
 - An error raised by the runtime (`ZeroDivisionError`, `TypeError`,
   `IOError`, ...) has a plain `message()` -- it used to end with one
   `at file:line:col` line per frame it passed through -- and a real

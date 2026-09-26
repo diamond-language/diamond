@@ -10177,12 +10177,24 @@ static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
     }
 }
 
+/* Set on a StringBuilder by stringify_value so builder_format_value can
+ * call a user-defined to_s on instances nested in an Array or Hash. Without
+ * one (every other caller), nested instances print as #<ClassName>. */
+typedef struct FormatContext {
+    DiamondVm *vm;
+    const DiamondChunk *chunk;
+    size_t depth;
+    /* Why formatting stopped, when builder_format_value returns false. */
+    DiamondVmStatus status;
+} FormatContext;
+
 typedef struct StringBuilder {
     char *chars;
     size_t length;
     size_t capacity;
     const DiamondObject *active[32];
     size_t active_count;
+    FormatContext *format_context;
 } StringBuilder;
 
 static bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
@@ -11206,6 +11218,10 @@ static DiamondVmStatus tls_read_line(DiamondVm *vm,SSL *ssl,StringBuilder *build
     return DIAMOND_VM_OK;
 }
 
+static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
+                                        size_t depth,DiamondValue value,
+                                        DiamondValue *out);
+
 static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     char scalar[96];int length=0;
     if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
@@ -11306,9 +11322,11 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         builder->active[builder->active_count++]=object;
         const bool hash=object->kind==DIAMOND_OBJECT_HASH;
         if(!builder_append(builder,hash?"{":"[",1))return false;
-        const size_t count=hash?((const DiamondHash *)object)->count:
-                                ((const DiamondArray *)object)->count;
-        for(size_t index=0;index<count;index++) {
+        /* The count is re-read every step: an element's to_s is arbitrary
+         * code and may shrink this very collection. */
+        for(size_t index=0;index<(hash?((const DiamondHash *)object)->count:
+                                        ((const DiamondArray *)object)->count);
+            index++) {
             if(index>0&&!builder_append(builder,", ",2))return false;
             if(hash) {
                 const DiamondHashEntry entry=((const DiamondHash *)object)->entries[index];
@@ -11320,6 +11338,19 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
         }
         builder->active_count--;
         return builder_append(builder,hash?"}":"]",1);
+    }
+    if(object->kind==DIAMOND_OBJECT_INSTANCE&&builder->format_context!=nullptr&&
+       builder->active_count>0) {
+        /* Nested in a collection: use the class's to_s, as a top-level
+         * value already does. (At the top level, stringify_value has
+         * already handled an instance with a to_s before calling here.) */
+        FormatContext *context=builder->format_context;
+        DiamondValue text=DIAMOND_NIL;
+        context->status=stringify_value(context->vm,context->chunk,context->depth,
+                                        value,&text);
+        if(context->status!=DIAMOND_VM_OK)return false;
+        const DiamondString *string=(const DiamondString *)text.as.object;
+        return builder_append(builder,string->chars,string->length);
     }
     if(object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *instance=(const DiamondInstance *)object;
@@ -11499,9 +11530,11 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
             *out=converted;return DIAMOND_VM_OK;
         }
     }
-    StringBuilder builder={};
+    FormatContext context={.vm=vm,.chunk=chunk,.depth=depth,.status=DIAMOND_VM_OK};
+    StringBuilder builder={.format_context=&context};
     if(!builder_format_value(&builder,value)) {
-        free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+        free(builder.chars);
+        return context.status!=DIAMOND_VM_OK?context.status:DIAMOND_VM_OUT_OF_MEMORY;
     }
     DiamondString *string=allocate_string(vm,builder.chars,builder.length);
     free(builder.chars);
