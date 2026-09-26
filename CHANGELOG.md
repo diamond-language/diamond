@@ -21,6 +21,11 @@ authoritative fine-grained record.
 
 ### Language
 
+- Bad Time values raise `ArgumentError` with a message naming them
+  (`no such date or time: 2026-02-30 00:00:00`); they raised `TypeError`
+  with "invalid Time calendar fields" or a format message even for a
+  well-formed impossible date. Non-String/non-Int arguments stay
+  `TypeError`.
 - `String#lstrip` and `String#rstrip`, trimming one side like `strip`.
 - A nested `def` can call itself, so recursive local helpers work; it
   used to be "undefined function". Nested defs that don't refer to

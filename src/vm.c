@@ -10826,6 +10826,10 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
     const int hour=valid?parse_decimal_digits(chars,11,2):-1;
     const int minute=valid?parse_decimal_digits(chars,14,2):-1;
     const int second=valid?parse_decimal_digits(chars,17,2):-1;
+    /* Well-formed digits that name no real moment (month 13, hour 24,
+     * February 30) are a different mistake from a malformed string, and
+     * get their own message below. */
+    const bool shaped=valid&&year>=0&&month>=0&&day>=0&&hour>=0&&minute>=0&&second>=0;
     valid=valid&&year>=1&&month>=1&&month<=12&&day>=1&&day<=31&&
         hour>=0&&hour<=23&&minute>=0&&minute<=59&&second>=0&&second<=59;
     size_t zone_start=19;double fraction=0.0;
@@ -10836,9 +10840,11 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
         }
         if(zone_start==fraction_start)valid=false;
     }
+    const bool in_range=valid;
     int32_t utc_offset=0;
     if(valid&&!parse_time_utc_offset_chars(chars+zone_start,length-zone_start,&utc_offset))
         valid=false;
+    const bool zone_ok=valid;
     struct tm calendar={.tm_year=year-1900,.tm_mon=month-1,.tm_mday=day,
         .tm_hour=hour,.tm_min=minute,.tm_sec=second,.tm_isdst=0};
     const time_t calendar_epoch=valid?timegm(&calendar):(time_t)0;
@@ -10848,9 +10854,19 @@ static DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input,
        round_trip.tm_mday!=day||round_trip.tm_hour!=hour||
        round_trip.tm_min!=minute||round_trip.tm_sec!=second))valid=false;
     if(!valid) {
+        /* The right type with the wrong contents: ArgumentError, as for any
+         * other bad value. */
+        /* Digits out of range, or in range but naming no real day
+         * (February 30) -- as opposed to a malformed string or zone. */
+        if(shaped&&(!in_range||zone_ok)) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time.parse: no such date or time: %.19s",chars);
+            return DIAMOND_VM_ARITY_ERROR;
+        }
         snprintf(vm->error,sizeof vm->error,
-            "Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM[:SS])");
-        return DIAMOND_VM_TYPE_ERROR;
+            "Time.parse expects YYYY-MM-DDTHH:MM:SS[.fraction](Z or signed HH:MM[:SS]), got '%.*s'",
+            (int)(length<64?length:64),chars);
+        return DIAMOND_VM_ARITY_ERROR;
     }
     const bool explicit_utc=length-zone_start==1;
     DiamondTime *time=allocate_time(vm,(double)calendar_epoch-(double)utc_offset+fraction,
@@ -10872,7 +10888,7 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
             if(supplied<=-86400||supplied>=86400) {
                 snprintf(vm->error,sizeof vm->error,
                     "Time.fixed offset must be between -86399 and 86399 seconds");
-                return DIAMOND_VM_TYPE_ERROR;
+                return DIAMOND_VM_ARITY_ERROR;
             }
             utc_offset=(int32_t)supplied;
         } else if(arguments[0].kind==DIAMOND_VALUE_OBJECT&&
@@ -10881,7 +10897,7 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
                 (const DiamondString *)arguments[0].as.object,&utc_offset)) {
                 snprintf(vm->error,sizeof vm->error,
                     "Time.fixed offset must be 'Z' or a signed 'HH:MM[:SS]'");
-                return DIAMOND_VM_TYPE_ERROR;
+                return DIAMOND_VM_ARITY_ERROR;
             }
         } else {
             snprintf(vm->error,sizeof vm->error,"Time.fixed offset must be an Int or String");
@@ -10916,8 +10932,11 @@ static DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *argum
        round_trip.tm_mday!=(int)day||round_trip.tm_hour!=(int)hour||
        round_trip.tm_min!=(int)minute||round_trip.tm_sec!=(int)second))))valid=false;
     if(!valid) {
-        snprintf(vm->error,sizeof vm->error,"invalid Time calendar fields");
-        return DIAMOND_VM_TYPE_ERROR;
+        snprintf(vm->error,sizeof vm->error,
+            "no such date or time: %04" PRId64 "-%02" PRId64 "-%02" PRId64
+            " %02" PRId64 ":%02" PRId64 ":%02" PRId64,
+            year,month,day,hour,minute,second);
+        return DIAMOND_VM_ARITY_ERROR;
     }
     DiamondTime *time=allocate_time(vm,(double)calendar_epoch-
         (fixed?(double)utc_offset:0.0),
@@ -14638,14 +14657,14 @@ static DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
                     (const DiamondString *)registers[base].as.object,&utc_offset)) {
                     snprintf(vm->error,sizeof vm->error,
                         "Time#localtime offset must be 'Z' or a signed 'HH:MM[:SS]'");
-                    return DIAMOND_VM_TYPE_ERROR;
+                    return DIAMOND_VM_ARITY_ERROR;
                 }
             } else if(registers[base].kind==DIAMOND_VALUE_INT) {
                 const int64_t supplied=registers[base].as.integer;
                 if(supplied<=-86400||supplied>=86400) {
                     snprintf(vm->error,sizeof vm->error,
                         "Time#localtime offset must be between -86399 and 86399 seconds");
-                    return DIAMOND_VM_TYPE_ERROR;
+                    return DIAMOND_VM_ARITY_ERROR;
                 }
                 utc_offset=(int32_t)supplied;
             } else {

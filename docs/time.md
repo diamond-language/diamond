@@ -43,7 +43,8 @@ offset_seconds = Time.fixed(19800, 2026, 8, 30, 12, 30, 0)
 ```
 
 Calendar constructors require all six `Int` fields. Impossible dates such as
-February 30 are rejected. `Time.local` asks libc to resolve daylight-saving
+February 30 are rejected with an `ArgumentError` naming the date
+(`no such date or time: 2026-02-30 00:00:00`). `Time.local` asks libc to resolve daylight-saving
 transitions: a nonexistent local time may normalize forward, and an ambiguous
 time uses the platform's choice.
 
@@ -64,7 +65,11 @@ The accepted grammar is:
 YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM[:SS]|-HH:MM[:SS])
 ```
 
-Dates are validated rather than silently normalized. A `Z` input produces UTC
+Dates are validated rather than silently normalized. A malformed string, or a
+well-formed one naming no real date (`Time.parse: no such date or time:
+2026-02-30T00:00:00`), raises `ArgumentError`; a non-String raises
+`TypeError`. An invalid offset String or out-of-range offset for
+`localtime`/`Time.fixed` is likewise an `ArgumentError`. A `Z` input produces UTC
 mode; a signed input preserves that fixed offset.
 
 Use `iso8601` for canonical, round-trippable output:
