@@ -16721,6 +16721,17 @@ static uint16_t compile_sequence(Compiler *compiler) {
            statement_may_capture(compiler))
             mark_locals_captured(compiler);
         bool statement_is_raise = false;
+        /* A statement that never falls through to the next one. With a
+         * postfix condition (`return x if y == nil`), everything after it
+         * runs only when the condition didn't hold -- see the narrowing
+         * applied after the postfix condition below. */
+        const bool statement_exits =
+            compiler->current.kind == DIAMOND_TOKEN_RETURN ||
+            compiler->current.kind == DIAMOND_TOKEN_RAISE ||
+            compiler->current.kind == DIAMOND_TOKEN_BREAK ||
+            compiler->current.kind == DIAMOND_TOKEN_NEXT ||
+            compiler->current.kind == DIAMOND_TOKEN_REDO ||
+            compiler->current.kind == DIAMOND_TOKEN_RETRY;
         const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
                                  postfix == DIAMOND_TOKEN_UNLESS;
@@ -16796,7 +16807,12 @@ static uint16_t compile_sequence(Compiler *compiler) {
                              result, 0, 2);
             const size_t body_exit = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
             const size_t condition_start = compiler->function->code_count;
+            compiler->narrowing=(Narrowing){};
             const uint16_t condition = parse_expression(compiler);
+            const Narrowing postfix_narrowing=
+                compiler->narrowing.valid&&compiler->narrowing.condition==condition?
+                    compiler->narrowing:(Narrowing){};
+            compiler->narrowing=(Narrowing){};
             const size_t body_jump = emit_jump(
                 compiler,
                 postfix == DIAMOND_TOKEN_IF
@@ -16809,6 +16825,16 @@ static uint16_t compile_sequence(Compiler *compiler) {
             patch_jump(compiler, body_exit, compiler->function->code_count);
             patch_jump(compiler, body_jump, body_start);
             result = postfix_result;
+            /* `return "none" if x == nil`: past this line x isn't nil.
+             * `raise ... unless x is String`: past it, x is a String. */
+            if(statement_exits&&postfix_narrowing.valid) {
+                if(postfix==DIAMOND_TOKEN_IF)
+                    apply_narrowing_facts(compiler,postfix_narrowing.when_false,
+                        postfix_narrowing.when_false_count);
+                else
+                    apply_narrowing_facts(compiler,postfix_narrowing.when_true,
+                        postfix_narrowing.when_true_count);
+            }
         }
         last_statement_diverges = statement_is_raise && !has_postfix;
         if (!has_postfix && declaration_statement &&

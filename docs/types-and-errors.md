@@ -69,6 +69,12 @@ the compiler can prove an argument is the wrong type -- `f("s")` for
 generic or variadic callee) is still checked when the call runs, as a
 rescuable `TypeError`.
 
+A one-line guard that exits narrows everything after it:
+`return "none" if x == nil` leaves `x` non-nil below it, and
+`raise ... unless x is String` leaves it a `String`. The same holds for
+`break`, `next`, `redo`, and `retry` guards, and for the block form of
+`if`.
+
 `x is Foo && y is Bar` narrows both `x` and `y` inside the branch where
 the whole condition is true (and `unless ... || ...`'s branch narrows
 both operands where the whole condition is false) — composed the same

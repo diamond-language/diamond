@@ -21,6 +21,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- One-line exiting guards narrow types for the code after them
+  (`return "none" if x == nil`, `raise ... unless x is String`), as the
+  block form of `if` already did.
 - Indexed assignment (`=`, `+=`, `||=`, ...) works on any receiver
   expression, such as `obj.table()[key] = value`; it used to accept only a
   plain local, `@ivar`, or `@@cvar`.
