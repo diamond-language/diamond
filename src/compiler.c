@@ -12264,6 +12264,32 @@ static uint16_t compile_block(Compiler *compiler) {
         }
     }
 
+    /* `yield` inside this block still means the enclosing method's own
+     * &block, as in Ruby: `def any?(&test) = items.find() do |x| yield(x)
+     * end` calls `test`. That parameter is an ordinary local, captured
+     * above like every other, so point this block's current block at its
+     * captured cell -- unless a block parameter of the same name shadows it
+     * (find_local then resolves to the parameter, which isn't captured). */
+    if(!compiler->failed&&outer_has_current_block) {
+        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+            if(compiler->enclosing_locals[i].reg!=outer_current_block_register)
+                continue;
+            const int inner=find_local(compiler,compiler->enclosing_locals[i].name);
+            if(inner>=0&&compiler->locals[(size_t)inner].captured) {
+                compiler->has_current_block=true;
+                compiler->current_block_register=
+                    compiler->locals[(size_t)inner].reg;
+                if(outer_current_block_type_set!=DIAMOND_NO_TYPE_SET&&
+                   outer_current_block_type_set<outer_function->type_set_count)
+                    compiler->current_block_type_set=clone_type_set_into_current(
+                        compiler,outer_function->type_sets,
+                        outer_function->type_set_count,
+                        outer_current_block_type_set);
+            }
+            break;
+        }
+    }
+
     compiler->in_function=true;
     compiler->in_block=true;
     const uint16_t body_result=compiler->failed?0:compile_sequence(compiler);
