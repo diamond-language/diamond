@@ -10650,31 +10650,35 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                     bindings[binding].name=array_nodes[indices[binding]].name;
                     bindings[binding].reg=allocate_register(compiler);
                     aligned[binding]=indices[binding];
-                    compiler->known_types[bindings[binding].reg]=
-                        compiler->known_types[array_nodes[aligned[binding]].subject_register];
-                    compiler->known_type_sets[bindings[binding].reg]=
-                        compiler->known_type_sets[array_nodes[aligned[binding]].subject_register];
                 }
             } else if(!align_case_alternative_bindings(compiler,array_nodes,
                     indices,alternative_binding_count,bindings,binding_count,
                     aligned))return destination;
-            if(!first_pattern)
-                for(size_t binding=0;binding<binding_count;binding++) {
-                    const uint16_t source=
-                        array_nodes[aligned[binding]].subject_register;
-                    if(compiler->known_types[bindings[binding].reg]!=
-                           compiler->known_types[source]||
-                       compiler->known_type_sets[bindings[binding].reg]!=
-                           compiler->known_type_sets[source]) {
-                        compiler->known_types[bindings[binding].reg]=TYPE_UNKNOWN;
-                        compiler->known_type_sets[bindings[binding].reg]=-1;
-                    }
-                }
             emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
             compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
             size_t failure_jumps[128];size_t failure_count=0;
             emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
                 failure_jumps,&failure_count);
+            /* Each binding's type is whatever the matcher proved about the
+             * element it binds. This must come after emit_case_array_match:
+             * that's what assigns each node's subject_register (before it,
+             * every one is still 0, which would hand bindings the facts of
+             * whatever lives in register 0). A later alternative that binds
+             * a differently typed element makes the binding untyped. */
+            for(size_t binding=0;binding<binding_count;binding++) {
+                const uint16_t source=array_nodes[aligned[binding]].subject_register;
+                if(first_pattern) {
+                    compiler->known_types[bindings[binding].reg]=compiler->known_types[source];
+                    compiler->known_type_sets[bindings[binding].reg]=
+                        compiler->known_type_sets[source];
+                } else if(compiler->known_types[bindings[binding].reg]!=
+                              compiler->known_types[source]||
+                          compiler->known_type_sets[bindings[binding].reg]!=
+                              compiler->known_type_sets[source]) {
+                    compiler->known_types[bindings[binding].reg]=TYPE_UNKNOWN;
+                    compiler->known_type_sets[bindings[binding].reg]=-1;
+                }
+            }
             for(size_t binding=0;binding<binding_count;binding++)
                 emit_instruction(compiler,DIAMOND_OP_MOVE,bindings[binding].reg,
                     array_nodes[aligned[binding]].subject_register,0,2);

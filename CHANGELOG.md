@@ -21,6 +21,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- Fixed: a `case` Array/Hash/object pattern binding was typed as whatever
+  sat in register 0 (often the function's first parameter), which could
+  cause bogus compile-time type errors when the binding was passed on or
+  returned.
 - `File#flush`, so buffered writes reach the OS before `close()`, and
   `File.exist?(path)`.
 - Bad Time values raise `ArgumentError` with a message naming them
