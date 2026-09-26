@@ -181,14 +181,10 @@ def array_uniq(values: Array) -> Array
   result
 end
 
-def array_flatten(values: Array) -> Array
-  result = []
-  diamond_flatten_into(values, result)
-  result
-end
-
 # Appends `values`, recursively flattened, onto `result` -- in place, so
 # flattening is linear rather than re-copying the result per nested Array.
+# Defined above array_flatten: selfhost/parser.di needs a def before its
+# first call.
 def diamond_flatten_into(values: Array, result: Array)
   index = 0
   while index < values.length()
@@ -200,6 +196,12 @@ def diamond_flatten_into(values: Array, result: Array)
     end
     index += 1
   end
+end
+
+def array_flatten(values: Array) -> Array
+  result = []
+  diamond_flatten_into(values, result)
+  result
 end
 
 def array_delete_at(values: Array, index: Int)
