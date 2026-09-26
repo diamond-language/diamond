@@ -67,7 +67,10 @@ the compiler can prove an argument is the wrong type -- `f("s")` for
 (`argument 'x' of f: expected Int, got String`). Anything short of proof
 (a value whose type depends on a branch, an untyped function's result, a
 generic or variadic callee) is still checked when the call runs, as a
-rescuable `TypeError`.
+rescuable `TypeError`. That includes a bare `Array` or `Hash`, which says
+nothing about its elements: returning one where `Array[String]` is
+expected checks the elements at run time, while returning a `Hash` there
+is a compile error.
 
 A one-line guard that exits narrows everything after it:
 `return "none" if x == nil` leaves `x` non-nil below it, and

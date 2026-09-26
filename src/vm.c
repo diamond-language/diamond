@@ -12930,6 +12930,19 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         if(tap_status!=DIAMOND_VM_OK) return tap_status;
         *out=registers[recv];return DIAMOND_VM_OK;
     }
+    /* Every object answers to_s(), with the text interpolation gives it,
+     * unless its class defines its own. */
+    if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
+       lookup_method(owner,instance->class,"to_s",4)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return stringify_value(vm,chunk,depth,registers[recv],out);
+    }
     if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
        lookup_method(owner,instance->class,"dup",3)==nullptr) {
         if(type_argument_count!=0) {
@@ -18926,6 +18939,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             called,tap_argument,0,1,depth,&tap_result);
                         VM_PROPAGATE(tap_status);
                         registers[dest]=registers[recv];break;
+                    }
+                    /* to_s() on any built-in value: the same text string
+                     * interpolation produces. (Int, Float, and Time also
+                     * have their own to_s further down; this matches them.) */
+                    if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
+                       (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                        registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        DiamondValue text=DIAMOND_NIL;
+                        const DiamondVmStatus to_s_status=
+                            stringify_value(vm,chunk,depth,registers[recv],&text);
+                        VM_PROPAGATE(to_s_status);
+                        registers[dest]=text;break;
                     }
                     /* dup only where a real (or trivially self-returning)
                      * shallow copy is well-defined -- everything else

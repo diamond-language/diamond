@@ -14,10 +14,19 @@ class Greeter < Base
 
   def loud(name: String) -> String = shout(greet(name))
 
+  # A bare call can take a trailing block too.
+  def twice(name: String) -> Array[String]
+    repeat(2) do |i| "#{i}:#{greet(name)}" end
+  end
+
+  def repeat(count: Int, &body) -> Array[String]
+    (0...count).map() do |i| body(i) end
+  end
+
   private
 
   def decorate(text: String) -> String = "<#{text}>"
 end
 
 g = Greeter.new()
-[g.all(["ada", "bo"]), g.loud("cy")]
+[g.all(["ada", "bo"]), g.loud("cy"), g.twice("di")]

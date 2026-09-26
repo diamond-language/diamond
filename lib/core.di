@@ -985,6 +985,11 @@ class Range
   def last() -> Int = @end
   def exclusive?() -> Bool = @exclusive
 
+  def to_s() -> String
+    dots = if @exclusive then "..." else ".." end
+    "#{@start}#{dots}#{@end}"
+  end
+
   def length() -> Int
     n = @end - @start
     n = n + 1 unless @exclusive

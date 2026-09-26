@@ -849,13 +849,40 @@ typedef enum TypeCheckVerdict {
     TYPE_CHECK_VIOLATED,
 } TypeCheckVerdict;
 
+/* Could a value of `known_set` still satisfy `expected_set` once its
+ * contents are checked? True when every member that doesn't already
+ * satisfy is a bare container (`Array`, `Hash`, with no element types)
+ * of a kind the expected set accepts with element types: a bare Array
+ * says nothing about its elements, so whether it's an Array[String] is
+ * the runtime check's call, as for an untyped value. */
+static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
+        uint16_t expected_set) {
+    const DiamondTypeSet *known=&compiler->function->type_sets[known_set];
+    const DiamondTypeSet *expected=&compiler->function->type_sets[expected_set];
+    for(size_t source=0;source<known->count;source++) {
+        const DiamondTypeMember member=known->members[source];
+        bool possible=false;
+        for(size_t target=0;target<expected->count&&!possible;target++) {
+            const DiamondTypeMember wanted=expected->members[target];
+            possible=type_member_satisfies(compiler,member,wanted)||
+                (member.argument_set==DIAMOND_NO_TYPE_SET&&
+                 wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
+                 (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH)&&
+                 member.id==wanted.id);
+        }
+        if(!possible)return false;
+    }
+    return true;
+}
+
 static TypeCheckVerdict type_check_verdict(Compiler *compiler,uint16_t reg,
         uint16_t set_index) {
     if(type_set_contains_variable(compiler,set_index))return TYPE_CHECK_NEEDS_RUNTIME;
     if(compiler->known_type_sets[reg]>=0) {
         const uint16_t known_set=(uint16_t)compiler->known_type_sets[reg];
         if(type_set_satisfies(compiler,known_set,set_index))return TYPE_CHECK_SATISFIED;
-        if(compiler->function->type_sets[known_set].inferred)
+        if(compiler->function->type_sets[known_set].inferred||
+           type_set_may_satisfy(compiler,known_set,set_index))
             return TYPE_CHECK_NEEDS_RUNTIME;
         return TYPE_CHECK_VIOLATED;
     }
@@ -2846,6 +2873,14 @@ static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    /* A trailing block (an implicit-self call such as `transaction() do
+     * ... end`, resolved in the real pass) still has to be parsed. No
+     * call is emitted for it here, so nothing may claim its break site. */
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        (void)compile_block(compiler);
+        compiler->pending_block_call=nullptr;
+        compiler->block_break_pending=false;
+    }
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     return destination;

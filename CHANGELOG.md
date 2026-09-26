@@ -21,6 +21,13 @@ authoritative fine-grained record.
 
 ### Language
 
+- Every value answers `to_s()`, with the same text string interpolation
+  gives it. It used to exist only on Int, Float, and Time. Ranges print as
+  `1..4` / `0...3`.
+- A bare `Array` or `Hash` where `Array[T]` or `Hash[K, V]` is expected is
+  checked at run time instead of rejected at compile time, since its
+  element types are unknown, like an untyped value's.
+- A bare implicit-self call can take a trailing `do` block.
 - Inside an instance method, a bare `name(...)` calls the object's own
   method when no function of that name exists, as `self.name(...)` would,
   so `self.` is optional there. Private methods can be called this way.
