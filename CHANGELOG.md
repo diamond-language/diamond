@@ -21,6 +21,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- Inside an instance method, a bare `name(...)` calls the object's own
+  method when no function of that name exists, as `self.name(...)` would,
+  so `self.` is optional there. Private methods can be called this way.
+- `sub`/`gsub` take a block: each match is passed to it and replaced by
+  what it returns.
+- `Array + Array` returns a new array with both arrays' elements.
 - `break` and `return` inside a do-block now work as in Ruby. `break value`
   ends the call the block was passed to, which evaluates to `value`.
   `return value` returns from the enclosing `def`. `ensure` clauses in

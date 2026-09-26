@@ -3313,6 +3313,31 @@ static uint16_t compile_callable_value_block(Compiler *compiler,
     return block;
 }
 
+static const DiamondFunction *class_instance_signature(
+        const Compiler *compiler,uint8_t type,DiamondSpan name);
+static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
+        uint16_t mutation_receiver, int32_t receiver_set_index, DiamondSpan name);
+
+static bool singleton_call_name_equals(const Compiler *compiler,
+        const char *method_name,DiamondSpan name);
+
+/* Does the class being compiled have an instance method `name` -- one
+ * already registered (its own so far, a superclass's, an included
+ * module's), or one the discovery pass found further down the class? */
+static bool self_has_method(const Compiler *compiler,DiamondSpan name) {
+    const uint8_t type=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+compiler->current_class);
+    if(class_instance_signature(compiler,type,name)!=nullptr)return true;
+    const DiamondClass *class=&compiler->program->classes[(size_t)compiler->current_class];
+    for(size_t index=0;index<class->discovered_method_count;index++) {
+        const uint16_t function=class->discovered_methods[index];
+        if(function<compiler->program->function_count&&
+           singleton_call_name_equals(compiler,
+               compiler->program->functions[function]->name,name))
+            return true;
+    }
+    return false;
+}
+
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -3357,6 +3382,18 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         return destination;
     }
     const int function_index = find_function(compiler, name);
+    /* `name(...)` inside an instance method (or a block or closure that
+     * has its self in register 0 -- a plain nested def doesn't), with no
+     * function of that name, calls self's method `name` if its class (or
+     * a superclass) has one -- `self.` is optional there, as in Ruby. A function of
+     * the same name still wins, so this never changes what an existing
+     * call means. */
+    if(function_index<0&&!compiler->discovery_pass&&compiler->in_method&&
+       !compiler->in_singleton_method&&compiler->current_class>=0&&
+       compiler->function->owner_class!=UINT8_MAX&&
+       self_has_method(compiler,name)) {
+        return parse_invoke_named(compiler,0,0,compiler->known_type_sets[0],name);
+    }
     if (function_index < 0) {
         note_self_reference(compiler,name);
         if(compiler->discovery_pass)
@@ -8197,11 +8234,20 @@ static uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
         fail(compiler, compiler->current.span, "expected method name after '.'"); return 0;
     }
     const DiamondSpan name = compiler->current.span;
+    advance_token(compiler);
+    return parse_invoke_named(compiler,receiver,mutation_receiver,
+                              receiver_set_index,name);
+}
+
+/* parse_invoke after `.name` has been consumed -- also reached from
+ * parse_call for a bare `name(...)` inside a method, with self as the
+ * receiver. */
+static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
+        uint16_t mutation_receiver, int32_t receiver_set_index, DiamondSpan name) {
     const DiamondFunction *contextual_target=
         instance_call_signature(compiler,receiver,name,false);
     const DiamondFunction *return_target=
         instance_call_signature(compiler,receiver,name,true);
-    advance_token(compiler);
     /* `value.class()`/`value.is_a?(Type)` -- compiler-recognized special
      * forms, not real methods on any class (no DiamondFunction/method-
      * table entry exists for either name anywhere), so they're
@@ -15145,6 +15191,11 @@ static uint16_t compile_class(Compiler *compiler) {
                 sizeof class->field_type_status);
             memcpy(class->discovered_field_known_class,class->field_known_class,
                 sizeof class->field_known_class);
+            class->discovered_method_count=0;
+            for(size_t method=0;method<class->method_count;method++)
+                if(!class->methods[method].included)
+                    class->discovered_methods[class->discovered_method_count++]=
+                        class->methods[method].function_index;
             memset(class->methods,0,sizeof class->methods);
             memset(class->singleton_methods,0,sizeof class->singleton_methods);
             memset(class->fields,0,sizeof class->fields);
@@ -15193,6 +15244,7 @@ static uint16_t compile_class(Compiler *compiler) {
             sizeof class->discovered_field_type_status);
         memset(class->discovered_field_known_class,0,
             sizeof class->discovered_field_known_class);
+        class->discovered_method_count=0;
         memset(class->class_variables,0,sizeof class->class_variables);
         class->method_count=0;
         class->singleton_method_count=0;
@@ -17524,6 +17576,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
             sizeof class->discovered_field_type_status);
         memset(class->discovered_field_known_class,0,
             sizeof class->discovered_field_known_class);
+        class->discovered_method_count=0;
         memset(class->class_variables,0,sizeof class->class_variables);
         class->method_count=0;
         class->singleton_method_count=0;

@@ -4751,6 +4751,89 @@ static DiamondVmStatus regexp_replace_helper(DiamondVm *vm,const DiamondRegexp *
     return DIAMOND_VM_OK;
 }
 
+static DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondFunction *fn,const DiamondClosure *called,
+        const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *result);
+static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,DiamondValue value,DiamondValue *result);
+
+/* String#sub/#gsub with a block: each match's text is passed to `block`,
+ * and what it returns (converted with to_s) replaces the match, as in
+ * Ruby. `subject`, `regexp`, and `block` are rooted by the caller's
+ * registers; each match String is protected while the block runs. */
+static DiamondVmStatus regexp_replace_block_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,size_t depth,const DiamondRegexp *regexp,
+        const DiamondString *subject,const DiamondClosure *block,
+        bool replace_all,DiamondValue *result) {
+    if(block->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(block->function_index>=chunk->function_count)return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFunction *fn=chunk->functions[block->function_index];
+    ByteBuffer output={0};
+    size_t cursor=0;
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    while(cursor<=subject->length) {
+        reginold_match match_result={0};
+        const reginold_status search_status=reginold_search(regexp->handle,
+            subject->chars,subject->length,cursor,&match_result);
+        if(search_status==REGINOLD_ERROR) {
+            snprintf(vm->error,sizeof vm->error,"regexp match failed");
+            status=DIAMOND_VM_REGEXP_ERROR;break;
+        }
+        if(search_status==REGINOLD_MISMATCH)break;
+        const size_t match_begin=(size_t)match_result.overall.beg;
+        const size_t match_end=(size_t)match_result.overall.end;
+        reginold_match_free(&match_result);
+        if(!byte_buffer_append(&output,subject->chars+cursor,match_begin-cursor)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        const size_t protect_mark=vm->gc_protected_count;
+        DiamondString *found=allocate_string(vm,subject->chars+match_begin,
+            match_end-match_begin);
+        if(found==nullptr||!gc_protect(vm,DIAMOND_OBJECT(found))) {
+            gc_unprotect(vm,protect_mark);status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        DiamondValue argument[1]={DIAMOND_OBJECT(found)};
+        DiamondValue replacement=DIAMOND_NIL;
+        status=call_closure_helper(vm,chunk,fn,block,argument,0,1,depth,&replacement);
+        if(status==DIAMOND_VM_OK&&(replacement.kind!=DIAMOND_VALUE_OBJECT||
+           replacement.as.object->kind!=DIAMOND_OBJECT_STRING)) {
+            if(!gc_protect(vm,replacement))status=DIAMOND_VM_OUT_OF_MEMORY;
+            else status=stringify_value(vm,chunk,depth,replacement,&replacement);
+        }
+        gc_unprotect(vm,protect_mark);
+        if(status!=DIAMOND_VM_OK)break;
+        const DiamondString *text=(const DiamondString *)replacement.as.object;
+        if(!byte_buffer_append(&output,text->chars,text->length)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+        if(match_end==match_begin) {
+            if(match_end<subject->length&&
+               !byte_buffer_append(&output,subject->chars+match_end,1)) {
+                status=DIAMOND_VM_OUT_OF_MEMORY;break;
+            }
+            cursor=match_end+1;
+        } else {
+            cursor=match_end;
+        }
+        if(!replace_all)break;
+    }
+    if(status==DIAMOND_VM_OK&&cursor<subject->length&&
+       !byte_buffer_append(&output,subject->chars+cursor,subject->length-cursor))
+        status=DIAMOND_VM_OUT_OF_MEMORY;
+    if(status!=DIAMOND_VM_OK) {free(output.data);return status;}
+    DiamondString *replaced=allocate_string(vm,
+        output.data!=nullptr?output.data:"",output.length);
+    free(output.data);
+    if(replaced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *result=DIAMOND_OBJECT(replaced);
+    return DIAMOND_VM_OK;
+}
+
 /* String#scan: every non-overlapping match, leftmost to rightmost, same
  * zero-length-match advance as regexp_replace_helper above. Each entry is
  * the whole matched String if the pattern has no capture groups, or an
@@ -7669,6 +7752,25 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         free(chars);
         if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         *out_result=DIAMOND_OBJECT(string);
+        return DIAMOND_VM_OK;
+    }
+    /* Array + Array: a new Array with left's elements, then right's. */
+    if (left_value.kind==DIAMOND_VALUE_OBJECT && right_value.kind==DIAMOND_VALUE_OBJECT &&
+        left_value.as.object->kind==DIAMOND_OBJECT_ARRAY &&
+        right_value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *left_array=(const DiamondArray *)left_value.as.object;
+        const DiamondArray *right_array=(const DiamondArray *)right_value.as.object;
+        const size_t count=left_array->count+right_array->count;
+        DiamondValue *values=count==0?nullptr:malloc(count*sizeof *values);
+        if(count>0&&values==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<left_array->count;index++)
+            values[index]=left_array->values[index];
+        for(size_t index=0;index<right_array->count;index++)
+            values[left_array->count+index]=right_array->values[index];
+        DiamondArray *joined=allocate_array(vm,values,count);
+        free(values);
+        if(joined==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=DIAMOND_OBJECT(joined);
         return DIAMOND_VM_OK;
     }
     if (left_value.kind==DIAMOND_VALUE_OBJECT &&
@@ -19485,10 +19587,21 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                     gsub_method?"gsub":"sub");
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
+                            if(registers[(size_t)base+1].kind==DIAMOND_VALUE_OBJECT&&
+                               registers[(size_t)base+1].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
+                                DiamondValue replace_result=DIAMOND_NIL;
+                                const DiamondVmStatus replace_status=
+                                    regexp_replace_block_helper(vm,chunk,depth,
+                                    (const DiamondRegexp *)registers[base].as.object,source,
+                                    (const DiamondClosure *)registers[(size_t)base+1].as.object,
+                                    gsub_method,&replace_result);
+                                VM_PROPAGATE(replace_status);
+                                registers[dest]=replace_result;break;
+                            }
                             if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
                                registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
                                 snprintf(vm->error,sizeof vm->error,
-                                    "String#%s replacement argument must be a String",
+                                    "String#%s replacement must be a String or a block",
                                     gsub_method?"gsub":"sub");
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }

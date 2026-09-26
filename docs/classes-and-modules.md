@@ -22,7 +22,11 @@ end
 ```
 
 `@ivar` instance fields, `initialize` as the constructor, single inheritance
-via `<`, and `super(...)`. Classes are compile-time metadata, not
+via `<`, and `super(...)`. Inside an instance method, `self.` is optional
+when calling another method of the same object: `render_row(item)` means
+`self.render_row(item)` when the class, a superclass, or an included module
+has a `render_row` method, including a private one. A top-level function of
+the same name takes precedence. Classes are compile-time metadata, not
 first-class heap values, with two narrow exceptions:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
 compiled body at runtime (the callable may come from `compile_method`, as

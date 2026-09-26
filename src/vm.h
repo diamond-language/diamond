@@ -845,6 +845,11 @@ struct DiamondClass {
      * later call-return chaining without depending on source order. */
     uint8_t discovered_field_type_status[DIAMOND_MAX_FIELDS];
     uint8_t discovered_field_known_class[DIAMOND_MAX_FIELDS];
+    /* The instance methods the discovery pass found (function indices),
+     * kept when the real pass resets `methods`: a bare `name(...)` call
+     * in one method can then resolve to a method defined further down. */
+    uint16_t discovered_methods[DIAMOND_MAX_METHODS];
+    uint16_t discovered_method_count;
     DiamondShape shapes[DIAMOND_MAX_FIELDS + 1];
     /* Class variable *names* only -- compile-time, pointer-free metadata
      * exactly like `fields` above, so it costs nothing extra in

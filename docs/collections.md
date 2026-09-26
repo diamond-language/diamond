@@ -177,6 +177,10 @@ first/every match of `pattern` (a `Regexp` -- a `String` pattern raises
 `TypeError`, there's no implicit `Regexp.new` coercion) with
 `replacement`, which may contain Ruby-style backreferences (`\0` the
 whole match, `\1`.. a capture group; a literal backslash is `\\`).
+Given a block instead of a replacement String, they pass each matched
+String to the block and substitute what it returns (converted with
+`to_s`): `"a1 b22".gsub(Regexp.new("[0-9]+")) do |n| n.to_i() * 2 end`
+gives `"a2 b44"`.
 `.scan(pattern)` (`Regexp` only, same `TypeError` on a `String`) returns
 an `Array` of every match: the matched `String` itself when `pattern`
 has no capture groups, or an `Array` of that match's captures when it
@@ -233,8 +237,8 @@ returns whether the array has zero elements; `values.include?(needle)`
 returns whether any element `==` `needle`;
 `values.index_of(needle)` returns the position of the first such element,
 or `nil` (like `String#index_of`); `values.reverse()` returns a new
-array in reverse order; `values.concat(other)` returns a new array with
-`other`'s elements appended; `values.compact()` returns a new array with
+array in reverse order; `values.concat(other)` (or `values + other`)
+returns a new array with `other`'s elements appended; `values.compact()` returns a new array with
 any `nil` elements dropped; `values.uniq()` returns a new array with only
 the first occurrence of each distinct (`==`) element, order preserved;
 `values.flatten()` returns a new array with nested arrays fully
