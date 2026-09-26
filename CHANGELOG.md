@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `compile_method` accepts writer (`name=`) and predicate (`name?`, `name!`)
+  names, so setters can be generated at run time.
 - Fixed: a `case` Array/Hash/object pattern binding was typed as whatever
   sat in register 0 (often the function's first parameter), which could
   cause bogus compile-time type errors when the binding was passed on or

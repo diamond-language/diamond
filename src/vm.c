@@ -4244,6 +4244,14 @@ static bool is_valid_identifier(const char *chars,size_t length) {
     return true;
 }
 
+/* A method name as `def` accepts one: an identifier, optionally ending in
+ * one `?` (predicate), `!`, or `=` (writer, as `obj.name = value` calls). */
+static bool is_valid_method_name(const char *chars,size_t length) {
+    if(length>1&&(chars[length-1]=='?'||chars[length-1]=='!'||chars[length-1]=='='))
+        length--;
+    return is_valid_identifier(chars,length);
+}
+
 typedef struct GrowBuffer {
     char *data;
     size_t length;
@@ -4287,7 +4295,7 @@ static bool build_compiled_method_source(GrowBuffer *buffer,const DiamondClass *
         const DiamondString *body_string,const DiamondHash *bound_values_hash,
         DiamondVm *vm,bool *validation_failed) {
     *validation_failed=false;
-    if(!is_valid_identifier(name_string->chars,name_string->length)) {
+    if(!is_valid_method_name(name_string->chars,name_string->length)) {
         snprintf(vm->error,sizeof vm->error,"compile_method name must be a valid method name");
         *validation_failed=true;return false;
     }
