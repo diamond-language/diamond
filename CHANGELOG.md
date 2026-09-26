@@ -21,6 +21,7 @@ authoritative fine-grained record.
 
 ### Language
 
+- `String#lstrip` and `String#rstrip`, trimming one side like `strip`.
 - A nested `def` can call itself, so recursive local helpers work; it
   used to be "undefined function". Nested defs that don't refer to
   themselves still capture nothing extra.

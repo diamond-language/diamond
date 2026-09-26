@@ -9047,6 +9047,8 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_STRING,"split",1,DIAMOND_TYPE_ARRAY},
     {DIAMOND_TYPE_STRING,"strip",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"empty?",0,DIAMOND_TYPE_BOOL},
+    {DIAMOND_TYPE_STRING,"lstrip",0,DIAMOND_TYPE_STRING},
+    {DIAMOND_TYPE_STRING,"rstrip",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"reverse",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"downcase",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"upcase",0,DIAMOND_TYPE_STRING},
@@ -19387,14 +19389,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             }
                             break;
                         }
-                        if(strip_method) {
+                        /* lstrip/rstrip trim one side only, the same ASCII
+                         * whitespace strip removes. */
+                        const bool lstrip_method=method_name->length==6&&
+                            memcmp(method_name->chars,"lstrip",6)==0;
+                        const bool rstrip_method=method_name->length==6&&
+                            memcmp(method_name->chars,"rstrip",6)==0;
+                        if(strip_method||lstrip_method||rstrip_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             size_t start=0;
-                            while(start<source->length&&
-                                  isspace((unsigned char)source->chars[start]))start++;
+                            if(!rstrip_method)
+                                while(start<source->length&&
+                                      isspace((unsigned char)source->chars[start]))start++;
                             size_t end=source->length;
-                            while(end>start&&
-                                  isspace((unsigned char)source->chars[end-1]))end--;
+                            if(!lstrip_method)
+                                while(end>start&&
+                                      isspace((unsigned char)source->chars[end-1]))end--;
                             DiamondString *stripped=
                                 allocate_string(vm,source->chars+start,end-start);
                             if(stripped==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
