@@ -276,6 +276,18 @@ class Lexer
     @source.slice(@start, @current - @start) == text
   end
 
+  # `sealed` is only a keyword directly before `class` on the same line,
+  # matching src/lexer.c's followed_by_class.
+  def followed_by_class?()
+    index = @current
+    while self.code_at(index) == " ".ord() || self.code_at(index) == "\t".ord()
+      index += 1
+    end
+    return false unless index + 5 <= @source.length()
+    return false unless @source.slice(index, 5) == "class"
+    !self.identifier_part?(self.code_at(index + 5))
+  end
+
   def identifier_kind()
     return :if if self.text_equals?("if")
     return :unless if self.text_equals?("unless")
@@ -298,7 +310,7 @@ class Lexer
     return :def if self.text_equals?("def")
     return :closure if self.text_equals?("closure")
     return :class if self.text_equals?("class")
-    return :sealed if self.text_equals?("sealed")
+    return :sealed if self.text_equals?("sealed") && self.followed_by_class?()
     return :struct if self.text_equals?("struct")
     return :interface if self.text_equals?("interface")
     return :module if self.text_equals?("module")

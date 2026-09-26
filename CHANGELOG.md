@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `sealed` is a keyword only directly before `class`, so it works as an
+  ordinary local or parameter name elsewhere.
 - An object pattern that only binds or ignores its readers
   (`when Parsed{score: score}`) counts as covering its class for `case`
   exhaustiveness, as `Parsed{}` already did.

@@ -46,6 +46,17 @@ static bool text_equals(const DiamondLexer *lexer, const char *text,
     return true;
 }
 
+/* `sealed` is only a keyword directly before `class` (on the same line);
+ * anywhere else it's an ordinary name, so `sealed` still works as a local
+ * or parameter. */
+static bool followed_by_class(const DiamondLexer *lexer) {
+    size_t index = lexer->current;
+    while (lexer->source[index] == ' ' || lexer->source[index] == '\t') index++;
+    for (size_t offset = 0; offset < 5; offset++)
+        if (lexer->source[index + offset] != "class"[offset]) return false;
+    return !identifier_part(lexer->source[index + 5]);
+}
+
 static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "if", 2)) return DIAMOND_TOKEN_IF;
     if (text_equals(lexer, "unless", 6)) return DIAMOND_TOKEN_UNLESS;
@@ -68,7 +79,8 @@ static DiamondTokenKind identifier_kind(const DiamondLexer *lexer) {
     if (text_equals(lexer, "def", 3)) return DIAMOND_TOKEN_DEF;
     if (text_equals(lexer, "closure", 7)) return DIAMOND_TOKEN_CLOSURE;
     if (text_equals(lexer, "class", 5)) return DIAMOND_TOKEN_CLASS;
-    if (text_equals(lexer, "sealed", 6)) return DIAMOND_TOKEN_SEALED;
+    if (text_equals(lexer, "sealed", 6) && followed_by_class(lexer))
+        return DIAMOND_TOKEN_SEALED;
     if (text_equals(lexer, "struct", 6)) return DIAMOND_TOKEN_STRUCT;
     if (text_equals(lexer, "interface", 9)) return DIAMOND_TOKEN_INTERFACE;
     if (text_equals(lexer, "module", 6)) return DIAMOND_TOKEN_MODULE;
