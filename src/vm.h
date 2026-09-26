@@ -577,6 +577,9 @@ typedef enum {
     /* rename(2): replaces an existing destination atomically, the usual
      * way to update a file (write a temporary, then rename it over). */
     DIAMOND_FILE_PATH_RENAME,
+    /* stat() succeeds: a file, directory, or anything else is there.
+     * Like DIRECTORY, a failure reads as false rather than raising. */
+    DIAMOND_FILE_PATH_EXIST,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

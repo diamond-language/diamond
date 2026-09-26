@@ -21,6 +21,8 @@ authoritative fine-grained record.
 
 ### Language
 
+- `File#flush`, so buffered writes reach the OS before `close()`, and
+  `File.exist?(path)`.
 - Bad Time values raise `ArgumentError` with a message naming them
   (`no such date or time: 2026-02-30 00:00:00`); they raised `TypeError`
   with "invalid Time calendar fields" or a format message even for a

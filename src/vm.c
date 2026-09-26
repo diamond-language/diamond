@@ -20415,7 +20415,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"write",5)==0;
                     const bool close_method=method_name->length==5&&
                         memcmp(method_name->chars,"close",5)==0;
-                    if(!read_method&&!gets_method&&!write_method&&!close_method) {
+                    const bool flush_method=method_name->length==5&&
+                        memcmp(method_name->chars,"flush",5)==0;
+                    if(!read_method&&!gets_method&&!write_method&&!close_method&&
+                       !flush_method) {
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"File");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -20431,6 +20434,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(target_file->stream==nullptr) {
                         snprintf(vm->error,sizeof vm->error,"file is closed");
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    /* Hands buffered writes to the OS now rather than at
+                     * close -- what an append-only log needs after each
+                     * record. (It doesn't fsync; see File.sync for that.) */
+                    if(flush_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        if(fflush(target_file->stream)!=0) {
+                            snprintf(vm->error,sizeof vm->error,"flush failed: %s",
+                                strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        registers[dest]=registers[recv];break;
                     }
                     if(read_method) {
                         if(argc>1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -22581,6 +22596,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     case DIAMOND_FILE_PATH_EXPAND:
                         VM_SANDBOX_GUARD("File.expand_path", "filesystem");
                         path_status=file_path_expand_helper(vm,path,second,&path_result);break;
+                    case DIAMOND_FILE_PATH_EXIST: {
+                        VM_SANDBOX_GUARD("File.exist?", "filesystem");
+                        struct stat path_stat;
+                        path_result=DIAMOND_BOOL(stat(path->chars,&path_stat)==0);
+                        break;
+                    }
                     case DIAMOND_FILE_PATH_DIRECTORY: {
                         VM_SANDBOX_GUARD("File.directory?", "filesystem");
                         struct stat path_stat;

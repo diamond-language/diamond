@@ -4609,7 +4609,8 @@ static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFun
     emit_register(compiler,dest);emit_register(compiler,path_register);
     emit_register(compiler,second_register);emit_byte(compiler,(uint8_t)id);
     compiler->known_types[dest]=
-        (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY)?
+        (id==DIAMOND_FILE_PATH_ABSOLUTE||id==DIAMOND_FILE_PATH_DIRECTORY||
+         id==DIAMOND_FILE_PATH_EXIST)?
         DIAMOND_TYPE_BOOL:DIAMOND_TYPE_STRING;
     return dest;
 }
@@ -4681,6 +4682,10 @@ static uint16_t parse_file_call(Compiler *compiler) {
     if(name_equals(compiler,"publish",method,false)) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_PUBLISH);
+    }
+    if(name_equals(compiler,"exist?",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_EXIST);
     }
     if(name_equals(compiler,"rename",method,false)) {
         advance_token(compiler);

@@ -215,9 +215,11 @@ second).
   segment on `".."` — kept literally only when there is nothing left to
   pop, so this can never climb above the root, matching Ruby.
 
-## Filesystem: `File.directory?`/`.delete`, `Dir.entries`
+## Filesystem: `File.exist?`/`.directory?`/`.delete`, `Dir.entries`
 
 ```ruby
+File.exist?("README.md")             # => true -- a file, directory, or anything else
+File.exist?("/no/such/path")         # => false -- not an error
 File.directory?(".")                 # => true
 File.directory?("README.md")         # => false
 File.directory?("/no/such/path")     # => false -- not an error
@@ -228,7 +230,7 @@ Dir.entries("/tmp")                  # => ["a.txt", "b.txt", ...] -- excludes ".
 ```
 
 Unlike the pure-string path helpers above, these three touch the
-filesystem. `File.directory?(path)` is `stat()`-backed; a `stat()`
+filesystem. `File.exist?(path)` and `File.directory?(path)` are `stat()`-backed; a `stat()`
 failure (the path doesn't exist, permission denied, ...) reads as
 `false`, not an error, matching Ruby's own `File.directory?` and
 letting it sit directly in a condition with nothing to rescue.
@@ -264,6 +266,13 @@ An interrupted process may leave `.diamond-publish-*` temporary files. Remove
 these only with writers stopped. Errors after the link can leave a complete
 published destination; callers must inspect it before retrying. Durability
 is subject to the filesystem and storage device honoring synchronization.
+
+## Flushing writes: `File#flush`
+
+`file.flush()` hands everything written so far to the operating system
+(`fflush`) and returns the file, so another reader -- or the same program
+after a crash -- sees it without waiting for `close()`. It doesn't force
+the data to disk; `File.sync(path)` does that. A failure raises `IOError`.
 
 ## Atomic replacement: `File.rename(from, to)`
 
