@@ -129,7 +129,8 @@ error — use `next`.
 A block called after that call or method has finished — stored and called
 later, handed to a `Fiber`, or copied into a `Thread` — raises a runtime
 error on `break` or `return` instead ("break from a block outside the call
-it was passed to").
+it was passed to"). So does a `break` from a block that was passed on to
+some other call: it can only end the call it was written for.
 
 Block parameters are bare identifiers only — no `: Type` annotations, no
 `= default`. `do |x, y| ... end`, or `do ... end` with no parameters at

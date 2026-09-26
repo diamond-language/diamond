@@ -226,6 +226,9 @@ typedef struct Compiler {
     /* A call whose block can `break` returns the break value instead of
      * its usual result; parse_precedence drops that call's type facts. */
     bool block_break_pending;
+    /* A do-block with a `break`, compiled but not yet handed to its call:
+     * the next call opcode emitted is that call (see emit_opcode). */
+    DiamondFunction *pending_block_call;
     /* The explicit `&name` parameter for the function currently being
      * compiled. In that lexical context `yield(...)` invokes this Callable;
      * without one, yield retains its fiber-suspension meaning. */
@@ -409,8 +412,36 @@ static bool emit_byte(Compiler *compiler, uint8_t byte) {
     return true;
 }
 
+static bool is_call_opcode(DiamondOpCode opcode) {
+    switch(opcode) {
+        case DIAMOND_OP_CALL: case DIAMOND_OP_CALL_TYPED: case DIAMOND_OP_CALL_CLOSURE:
+        case DIAMOND_OP_NEW: case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO:
+        case DIAMOND_OP_INVOKE_TYPED: case DIAMOND_OP_SUPER:
+        case DIAMOND_OP_INVOKE_SELF_METHOD: case DIAMOND_OP_CALL_SPREAD:
+        case DIAMOND_OP_INVOKE_SPREAD: case DIAMOND_OP_CALL_CLOSURE_SPREAD:
+        case DIAMOND_OP_NEW_SPREAD: case DIAMOND_OP_CALL_SINGLETON_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_SPREAD: case DIAMOND_OP_INVOKE_TYPED_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: case DIAMOND_OP_CALL_KEYWORD_SPREAD:
+        case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: case DIAMOND_OP_INVOKE_KEYWORDS:
+        case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: case DIAMOND_OP_CALL_CLOSURE_KEYWORDS:
+        case DIAMOND_OP_NEW_KEYWORDS: case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
+        case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: case DIAMOND_OP_TAIL_CALL:
+        case DIAMOND_OP_FIBER_NEW: case DIAMOND_OP_THREAD_NEW:
+        case DIAMOND_OP_SUPERVISOR_NEW: case DIAMOND_OP_CHANNEL_NEW:
+        case DIAMOND_OP_PROGRAM_BUILDER_NEW: case DIAMOND_OP_REGEXP_NEW:
+        case DIAMOND_OP_YIELD:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool emit_opcode(Compiler *compiler, DiamondOpCode opcode) {
     const size_t offset = compiler->function->code_count;
+    if(compiler->pending_block_call!=nullptr&&is_call_opcode(opcode)) {
+        compiler->pending_block_call->block_call_offset=(uint32_t)offset;
+        compiler->pending_block_call=nullptr;
+    }
     if (!emit_byte(compiler, (uint8_t)opcode)) return false;
     compiler->function->lines[offset] = (uint32_t)compiler->previous.span.line;
     compiler->function->columns[offset] = (uint32_t)compiler->previous.span.column;
@@ -11772,6 +11803,8 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
 static void maybe_rewrite_self_tail_call(Compiler *compiler,
         uint16_t return_value_register) {
     if(compiler->begin_depth>0)return;
+    /* A block's break lands in its call, which a tail call would replace. */
+    if(compiler->function->nonlocal_landing)return;
     if(compiler->function->type_variable_count>0)return;
     /* A variadic function's own overflow arguments (beyond its fixed
      * arity) live in run_chunk's own `arguments`/`argument_count`
@@ -12731,6 +12764,7 @@ static uint16_t compile_block(Compiler *compiler) {
          * stays out of the JIT; the call's result type is unknown. */
         outer_function->nonlocal_landing=true;
         compiler->block_break_pending=true;
+        compiler->pending_block_call=function;
     }
     compiler->block_has_break=outer_block_has_break;
     compiler->has_current_block=outer_has_current_block;

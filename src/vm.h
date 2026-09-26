@@ -1113,6 +1113,10 @@ typedef struct DiamondFunction {
      * break, which lands in the interpreter's frame handling; the JIT
      * leaves such functions alone. */
     bool nonlocal_landing;
+    /* For a do-block containing `break`: the offset, in the enclosing
+     * function's code, of the call the block is passed to. 0 if none (a
+     * block's CLOSURE always precedes its call, so 0 is never a call). */
+    uint32_t block_call_offset;
     /* A function slot copied from diamond_compile's discovery pass and not
      * yet claimed by the real pass. Preserving every discovery-time index
      * keeps early CALL operands and class/module method tables stable. */
@@ -1613,9 +1617,6 @@ struct DiamondVm {
     uint64_t frame_serial;
     uint64_t nonlocal_target;
     DiamondValue nonlocal_value;
-    /* The block a break came from: it lands only in a call that was
-     * passed that block. Also a GC root. */
-    DiamondValue nonlocal_block;
     bool nonlocal_is_break;
     char error[1024];
     const DiamondFiberQueue *root_queue;

@@ -232,10 +232,6 @@ typedef struct DiamondFrame {
      * do-block, whose method is the one its closure was created in). */
     uint64_t serial;
     uint64_t home;
-    /* What this activation was called with, for a break's landing check. */
-    const DiamondValue *arguments;
-    size_t argument_count;
-    const DiamondClosure *closure;
 } DiamondFrame;
 
 /* JIT trampolines for Phase 2c (docs/internal/jit-design.md) -- DiamondFrame
@@ -272,9 +268,6 @@ void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
         .register_count = register_count,
         .chunk = chunk,
         .instruction_offset = offset_storage,
-        /* The JIT'd function's parameters are in its first registers. */
-        .arguments = registers,
-        .argument_count = register_count,
     };
     vm->frames = frame;
 }
@@ -727,7 +720,6 @@ static void mark_adopted_programs(void *list, bool minor);
 static void mark_roots(DiamondVm *vm, bool minor) {
     if(vm->has_exception)mark_value(vm->exception,minor);
     mark_value(vm->nonlocal_value,minor);
-    mark_value(vm->nonlocal_block,minor);
     mark_adopted_programs(vm->adopted_programs,minor);
     mark_value(vm->argv_value,minor);
     mark_value(vm->env_value,minor);
@@ -16459,27 +16451,8 @@ static bool nonlocal_break_can_land(uint8_t opcode) {
 }
 
 static void clear_nonlocal_exit(DiamondVm *vm) {
-    vm->nonlocal_value=DIAMOND_NIL;vm->nonlocal_block=DIAMOND_NIL;
+    vm->nonlocal_value=DIAMOND_NIL;
     vm->nonlocal_target=0;
-}
-
-/* Was the call `caller` is executing -- the one `callee` is running for --
- * passed `block`? Either the callee received it as an argument, or the
- * callee is the block itself run by a native method (each, sort_by, ...),
- * as opposed to a direct call of a stored block. */
-static bool break_block_passed_to_call(const DiamondFrame *callee,
-        const DiamondFrame *caller,DiamondValue block) {
-    for(size_t index=0;index<callee->argument_count;index++)
-        if(callee->arguments[index].kind==block.kind&&
-           callee->arguments[index].as.object==block.as.object)
-            return true;
-    if(block.kind!=DIAMOND_VALUE_OBJECT||
-       (const void *)callee->closure!=block.as.object)
-        return false;
-    const DiamondOpCode opcode=
-        (DiamondOpCode)caller->chunk->code[*caller->instruction_offset];
-    return opcode!=DIAMOND_OP_CALL_CLOSURE&&opcode!=DIAMOND_OP_CALL_CLOSURE_SPREAD&&
-           opcode!=DIAMOND_OP_CALL_CLOSURE_KEYWORDS;
 }
 
 /* A DIAMOND_VM_NONLOCAL_EXIT reaching `frame` on its way out. The target
@@ -16525,14 +16498,6 @@ static NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *c
         *result=vm->nonlocal_value;
         clear_nonlocal_exit(vm);
         return NONLOCAL_RETURNED;
-    }
-    if(vm->nonlocal_is_break&&frame->previous!=nullptr&&
-       frame->previous->serial==vm->nonlocal_target&&
-       !break_block_passed_to_call(frame,frame->previous,vm->nonlocal_block)) {
-        clear_nonlocal_exit(vm);
-        snprintf(vm->error,sizeof vm->error,
-            "break from a block outside the call it was passed to");
-        return NONLOCAL_INVALID;
     }
     if(frame->previous==nullptr) {
         clear_nonlocal_exit(vm);
@@ -16648,9 +16613,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .serial = frame_serial,
         .home = closure!=nullptr&&closure->is_block&&closure->return_target!=0?
             closure->return_target:frame_serial,
-        .arguments = arguments,
-        .argument_count = argument_count,
-        .closure = closure,
     };
     vm->frames = &frame;
     UnwindHandler handlers[16];
@@ -18155,6 +18117,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(created->is_block) {
                     created->break_target=frame.serial;
                     created->return_target=frame.home;
+                    created->break_call_offset=
+                        chunk->functions[index]->block_call_offset;
                 }
                 registers[dest]=DIAMOND_OBJECT(created);break;
             }
@@ -22317,7 +22281,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "return from a block outside the method it was written in");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const DiamondValue block=DIAMOND_OBJECT((DiamondClosure *)closure);
                 /* Check the target is still live on this stack (and, for a
                  * break, still inside the call it was passed to) before
                  * unwinding anything, so a stale target is an ordinary
@@ -22329,9 +22292,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(walk->serial==target) {callee=walk;break;}
                 }
+                /* A break lands only in the very call the block was
+                 * written for, not a later one it was handed to. */
                 const bool live=callee!=nullptr&&(is_break?
-                    callee->serial!=target&&
-                    break_block_passed_to_call(callee,callee->previous,block):true);
+                    callee->serial!=target&&closure->break_call_offset!=0&&
+                    *callee->previous->instruction_offset==
+                        closure->break_call_offset:true);
                 if(!live) {
                     snprintf(vm->error,sizeof vm->error,is_break?
                         "break from a block outside the call it was passed to":
@@ -22339,7 +22305,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 vm->nonlocal_value=registers[source];
-                vm->nonlocal_block=block;
                 vm->nonlocal_target=target;
                 vm->nonlocal_is_break=is_break;
                 VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);

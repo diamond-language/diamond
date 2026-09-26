@@ -308,6 +308,9 @@ typedef struct DiamondClosure {
      * `return` inside it returns from). 0 for anything else. */
     uint64_t break_target;
     uint64_t return_target;
+    /* Offset, in that frame's code, of the call the block was written
+     * for: the one place its `break` can land. */
+    uint32_t break_call_offset;
     DiamondValue captures[DIAMOND_MAX_CAPTURES];
     /* Non-null only for a value returned by ClassName.compile_method
      * (src/vm.c's DIAMOND_OP_COMPILE_METHOD) -- function_index above is
