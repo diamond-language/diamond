@@ -98,8 +98,8 @@ sandbox.
   from-scratch GPT-style transformer, plus smaller tours of one area each:
   `calc` (parsing and pattern matching), `generators` (fibers), `grades`
   (the type system), `ledger`
-  (the object model), `markdown` (strings and Regexp), and `parallel`
-  (threads, channels, supervisors); `make test-examples` runs their tests
+  (the object model), `markdown` (strings and Regexp), `parallel`
+  (threads, channels, supervisors), and `vault` (crypto and encoding); `make test-examples` runs their tests
 - `fuzz/`: compiler and bytecode-execution fuzz targets
 - `bench/`: performance and GC evidence
 

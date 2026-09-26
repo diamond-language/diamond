@@ -694,7 +694,7 @@ test-exit: debug
 # The standalone example programs (examples/*/smoke_test.sh), each run
 # interpreted and as a `diamond build` binary. The web and chat examples
 # need databases or cuts and have their own instructions.
-EXAMPLE_SMOKE_TESTS := calc generators grades ledger logstat markdown parallel
+EXAMPLE_SMOKE_TESTS := calc generators grades ledger logstat markdown parallel vault
 test-examples: debug
 	@for example in $(EXAMPLE_SMOKE_TESTS); do \
 		bash examples/$$example/smoke_test.sh || exit 1; \
