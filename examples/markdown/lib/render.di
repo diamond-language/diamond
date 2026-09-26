@@ -36,7 +36,7 @@ class Renderer
       items = block.items().map() do |item| "  <li>#{@inline.render(item)}</li>" end
       "<#{tag}>\n#{items.join("\n")}\n</#{tag}>"
     when CodeBlock
-      attribute = if block.language().length() == 0 then "" else " class=\"language-#{block.language()}\"" end
+      attribute = if block.language().empty?() then "" else " class=\"language-#{block.language()}\"" end
       "<pre><code#{attribute}>#{@inline.escape(block.lines().join("\n"))}</code></pre>"
     when Quote
       "<blockquote>\n#{self.render(block.blocks())}</blockquote>"
@@ -54,7 +54,7 @@ def assign_heading_ids(blocks: Array)
   headings = blocks.select() do |block| block is Heading end
   headings.each() do |heading|
     slug = heading.text().downcase().gsub(non_word, "-").gsub(edges, "")
-    slug = "section" if slug.length() == 0
+    slug = "section" if slug.empty?()
     seen[slug] = seen.fetch(slug, 0) + 1
     heading.id = if seen[slug] == 1 then slug else "#{slug}-#{seen[slug]}" end
   end

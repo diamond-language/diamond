@@ -56,6 +56,9 @@ t=3 kettle: boiled
   matches the request with an array pattern and an `if` guard. A task that
   raises is rescued at `resume`, logged, and dropped without disturbing the
   others. Because nothing is preempted, the trace is identical every run.
+- **An unbounded sieve.** `primes()` is an incremental Sieve of
+  Eratosthenes: a Hash maps each upcoming composite to the primes that
+  produce it, and `Hash#delete` drops each entry once it's reached.
 - **Big integers.** The 150th Fibonacci number needs more than 64 bits, and
   Diamond's `Int` promotes on its own.
 

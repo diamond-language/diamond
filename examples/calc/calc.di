@@ -45,7 +45,7 @@ def calc_main() -> Int
     text = gets()
     break if text == nil
     line = text.strip()
-    next if line.length() == 0 || line.start_with?("#")
+    next if line.empty?() || line.start_with?("#")
     puts("> #{line}")
     begin
       calc_line(line, evaluator)

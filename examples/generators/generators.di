@@ -66,13 +66,13 @@ def make_tokenizer(text: String)
     word = ""
     text.split("").each() do |char|
       if char == " "
-        Fiber.yield(word) if word.length() > 0
+        Fiber.yield(word) unless word.empty?()
         word = ""
       else
         word += char
       end
     end
-    Fiber.yield(word) if word.length() > 0
+    Fiber.yield(word) unless word.empty?()
     :done
   end
   tokenizer

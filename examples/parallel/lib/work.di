@@ -27,7 +27,7 @@ end
 # Word counts for one document, lowercased, punctuation dropped.
 def count_words(text: String) -> Hash
   words = text.downcase().gsub(Regexp.new("[^a-z' ]"), " ").split(" ")
-  words.reject() do |word| word.length() == 0 end.tally()
+  words.reject() do |word| word.empty?() end.tally()
 end
 
 # --- Worker-pool pieces --------------------------------------------------

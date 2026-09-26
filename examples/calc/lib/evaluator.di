@@ -88,7 +88,7 @@ class Evaluator
     end
     [function, arity] = entry
     args = expr.args().map() do |arg| self.eval(arg) end
-    if (arity >= 0 && args.length() != arity) || args.length() == 0
+    if (arity >= 0 && args.length() != arity) || args.empty?()
       wanted = if arity >= 0 then "#{arity}" else "at least 1" end
       raise EvalError.new("#{expr.name()} takes #{wanted} argument(s), got #{args.length()}", expr.column())
     end

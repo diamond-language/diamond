@@ -90,23 +90,24 @@ def fibonacci() -> Generator
   end
 end
 
-# Trial division by the primes found so far, stopping at the square root.
-# `found` is created when the block starts, so every `first`/`each` call
-# begins a fresh search in its own fiber.
+# An incremental Sieve of Eratosthenes that needs no upper bound:
+# `composites` maps each upcoming composite number to the primes that
+# produce it. Reaching a number in the table means it's composite -- its
+# entry moves on to each prime's next multiple and is deleted, so the table
+# only ever holds about one entry per prime found so far.
 def primes() -> Generator
   Generator.new() do
-    found = []
+    composites = {}
     n = 2
     loop do
-      prime = true
-      i = 0
-      while prime && i < found.length() && found[i] * found[i] <= n
-        prime = n % found[i] != 0
-        i += 1
-      end
-      if prime
-        found.push(n)
+      factors = composites.delete(n)
+      if factors == nil
         Fiber.yield(n)
+        composites[n * n] = [n]
+      else
+        factors.each() do |p|
+          composites[n + p] = composites.fetch(n + p, []).push(p)
+        end
       end
       n += 1
     end

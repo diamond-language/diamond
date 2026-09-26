@@ -20,7 +20,7 @@ def logstat_read(file, tally, number)
     text = if file == nil then gets() else file.gets() end
     break if text == nil
     number += 1
-    if text.strip().length() > 0
+    unless text.strip().empty?()
       tally.record(logstat_parse(text, number))
     end
   end
@@ -54,7 +54,7 @@ def logstat_main(args) -> Int
     end
     index += 1
   end
-  if paths.length() == 0 then paths = ["-"] end
+  paths = ["-"] if paths.empty?()
 
   tally = Tally.new()
   number = 0

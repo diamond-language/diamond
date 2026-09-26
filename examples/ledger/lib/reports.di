@@ -24,10 +24,10 @@ class TrialBalance
   end
   def title() -> String = "Trial balance"
   def rows() -> Array
+    # By kind in balance-sheet order, then by name.
     kinds = ["asset", "liability", "equity", "income", "expense"]
-    accounts = kinds.flat_map() do |kind|
-      of_kind = @ledger.accounts().select() do |account| account.kind() == kind end
-      of_kind.sort_by() do |account| account.name() end
+    accounts = @ledger.accounts().sort_by() do |account|
+      [kinds.index_of(account.kind()), account.name()]
     end
     accounts.map() do |account|
       ["#{account.kind()}: #{account.name()}", @ledger.balance(account.name())]
