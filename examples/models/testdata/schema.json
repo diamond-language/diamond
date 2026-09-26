@@ -1,0 +1,12 @@
+{
+  "Book": {
+    "title": {"type": "String", "required": true, "max": 40},
+    "pages": {"type": "Int", "min": 1},
+    "isbn": {"type": "String", "required": true},
+    "in_print": {"type": "Bool"}
+  },
+  "Author": {
+    "name": {"type": "String", "required": true},
+    "born": {"type": "Int"}
+  }
+}

@@ -1,0 +1,31 @@
+== generated methods
+  Book responds to title: true
+  Book responds to title=: true
+  Book responds to in_print?: true
+  Book responds to name: false
+  Book responds to born: false
+  Author responds to born: true
+
+== building records
+  Book(title: Dune, pages: 412, isbn: 978-0441013593, in_print: true)
+  Book(title: The Left Hand of Darkness, pages: 304, isbn: 978-0441478125, in_print: true)
+  Book(title: Babel-17, pages: 173, isbn: 978-0375706691, in_print: false)
+  Dune in print? true
+
+== change tracking
+  changes: {pages: [412, 896]}
+
+== type checks, read-only fields, validation
+  set pages to a String: TypeError: Book.pages must be Int, got String
+  change the isbn: FrozenError: Book.isbn is read-only once set
+  draft valid? false
+    title is longer than 40 characters
+    pages must be at least 1
+    isbn is required
+
+== dynamic finders
+  find_by_pages(173): Book(title: Babel-17, pages: 173, isbn: 978-0375706691, in_print: false)
+  where_in_print(true): [Dune, The Left Hand of Darkness]
+  find_by_title("Nope"): nil
+  books.count_by_title("Dune"): NoMethodError: undefined method 'count_by_title' for Collection
+  Author(name: Ursula K. Le Guin, born: 1929); public_send("born") = 1929
