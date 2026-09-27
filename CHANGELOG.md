@@ -213,6 +213,14 @@ for security-sensitive use.
 
 ### Runtime
 
+- Deep recursion (`depth(5000)`-shaped programs) could crash with a real
+  segfault instead of raising the intended, rescuable `call stack
+  overflow` error, on a release (`-O3`) build under GCC 15.2.0 (Ubuntu
+  26.04's own packaged version) specifically -- its larger per-call stack
+  frame for `run_chunk` left almost no margin below the guard's previous
+  threshold. Recalibrated (found and verified via a container matching
+  that exact toolchain, not guessed); every other build variant and
+  compiler this project ships was already safe and remains so.
 - `Array + Array` copies each side once now, straight into the result's
   own storage, instead of building a throwaway buffer and letting the
   array constructor copy that a second time.

@@ -137,14 +137,31 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
  * ASan stack-overflow -- exactly the redzone-per-named-local amplification
  * the READ_SHORT incident just below already documents, not a byte-count
  * story. Empirically, every value from 91 through 99 passed cleanly
- * against the post-Time frame size (100 was the only one that didn't);
- * 95 was chosen to sit in the middle of that window rather than right
- * back at the wall, leaving margin both above `legacy_0091.di`'s own
- * `depth(90)` (which must keep succeeding -- this is a hard floor, not
- * just a preference) and below wherever the next opcode addition's own
- * growth lands. If a future change reopens this margin again, re-run the
- * same empirical sweep (rebuild at a range of candidate values under
- * `make sanitize`, check `depth(5000)` at each) rather than guessing.
+ * against the post-Time frame size (100 was the only one that didn't).
+ *
+ * Recalibrated 95 -> 92 (2026-09-27) when Ubuntu 26.04's own apt-packaged
+ * GCC moved to 15.2.0: at 95, a plain `make release` (-O3, no
+ * instrumentation at all) segfaulted on `depth(5000)` under that specific
+ * compiler -- this project's own GCC (Fedora, 16.2.1) still passed at 95,
+ * so this was invisible until CI's `ubuntu:26.04` image actually ran it
+ * (found via a local Docker container matching that image and toolchain
+ * exactly, not a hunch). The safe window this time was only {92, 93} --
+ * confirmed against `main` at the commit before this recalibration too,
+ * so this was newly exposed by the toolchain, not by anything this
+ * project changed -- much narrower than the 91-99 window above, so
+ * there is very little margin left for the next opcode/local addition to
+ * this function; a future recalibration may need to shrink run_chunk's
+ * own stack footprint directly rather than only retuning this constant
+ * again. 92 sits at the low end of that narrow window rather than the
+ * middle, since a smaller value only ever makes a real overflow *less*
+ * likely to be reached before this guard trips -- the one thing that
+ * must still hold is `legacy_0091.di`'s own `depth(90)` succeeding (a
+ * hard floor, confirmed at 92). If a future change reopens this margin
+ * again, re-run the same empirical sweep -- across every build variant
+ * this project ships (debug, release, sanitize, and a container image
+ * matching whatever CI target regressed), not just the one you're
+ * sitting at -- rebuild at a range of candidate values, check
+ * `depth(5000)` at each, rather than guessing.
  *
  * run_chunk's own `registers` array (below) stays a fixed
  * DIAMOND_INLINE_REGISTER_COUNT-wide C-stack array, at the same 256 this
@@ -166,7 +183,7 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
  * like an oversized array would have. Rewriting READ_SHORT to read
  * straight out of chunk->code[] into `target_` without any named
  * intermediate restored the original margin. */
-enum { DIAMOND_MAX_CALL_DEPTH = 95 };
+enum { DIAMOND_MAX_CALL_DEPTH = 92 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
 /* How often run_chunk's own dispatch loop actually calls clock_gettime to
