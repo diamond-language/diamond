@@ -362,7 +362,8 @@ static int find_function(const Compiler *compiler, DiamondSpan name);
 static void record_scope_type_fact(Compiler *compiler,uint16_t reg,
         size_t effective_start);
 static uint16_t compile_assignment_store(Compiler *compiler,DiamondSpan name,
-        bool instance_variable,bool class_variable,uint16_t value);
+        bool instance_variable,bool class_variable,uint16_t value,
+        uint16_t rhs_start_register);
 
 static void fail(Compiler *compiler, DiamondSpan span, const char *message) {
     if (!compiler->failed) {
@@ -1605,12 +1606,40 @@ static int find_local(const Compiler *compiler, DiamondSpan name) {
     return -1;
 }
 
-static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
+/* Whether `reg` is already some existing local's home -- covers every
+ * named entity that lives in compiler->locals[], not just ordinary
+ * locals: self (registered with .reg=self_register) and every parameter
+ * (registered the same way as its own parameter register) both go
+ * through this same table (see their own `compiler->locals[...++]=`
+ * sites), so one scan here also protects those, with no separate check
+ * needed. Used by compile_assignment_store's own "reuse the RHS's
+ * temporary register as a brand-new local's home" optimization (see its
+ * own comment) to confirm a candidate register is a genuine, freshly
+ * computed temporary rather than a bare reference to an existing name
+ * (`x = y`, `x = self`, `x = some_param`) -- reusing one of *those*
+ * registers as `x`'s own home would alias two different variables onto
+ * one register. */
+static bool register_is_named(const Compiler *compiler, uint16_t reg) {
+    for (size_t index = 0; index < compiler->local_count; index++)
+        if (compiler->locals[index].reg == reg) return true;
+    return false;
+}
+
+/* `preferred_register` lets a caller that already has a register ready to
+ * become this local's home skip allocate_register entirely --
+ * compile_assignment_store's own "reuse the RHS's temporary register
+ * directly" optimization (see its own comment) is the one user of this
+ * today. DIAMOND_REGISTER_COUNT (4096) never reaches UINT16_MAX, so that
+ * value unambiguously means "no preference, allocate a fresh one" -- the
+ * plain define_local wrapper below, every other caller's own case. */
+static uint16_t define_local_with_register(Compiler *compiler, DiamondSpan name,
+                                            uint16_t preferred_register) {
     if (compiler->local_count == DIAMOND_MAX_LOCALS) {
         fail(compiler, name, "too many local variables");
         return 0;
     }
-    const uint16_t reg = allocate_register(compiler);
+    const uint16_t reg = preferred_register == UINT16_MAX
+        ? allocate_register(compiler) : preferred_register;
     /* .captured starts true, rather than the usual false, whenever this
      * declaration happens inside a loop body a def/closure was found
      * somewhere in (loop_captures_pending) -- a local declared fresh
@@ -1622,6 +1651,10 @@ static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
     compiler->locals[compiler->local_count++] =
         (Local){.name = name, .reg = reg, .captured = compiler->loop_captures_pending};
     return reg;
+}
+
+static uint16_t define_local(Compiler *compiler, DiamondSpan name) {
+    return define_local_with_register(compiler, name, UINT16_MAX);
 }
 
 static Precedence token_precedence(DiamondTokenKind kind) {
@@ -10839,8 +10872,14 @@ static size_t push_case_guard_bindings(Compiler *compiler,
 static void commit_case_bindings(Compiler *compiler,
         const CaseBinding *bindings,size_t binding_count) {
     for(size_t binding=0;binding<binding_count;binding++)
+        /* rhs_start_register=compiler->next_register (the current, not an
+         * earlier, high-water mark): bindings[binding].reg was resolved
+         * well before this point (pattern matching, not a fresh RHS
+         * expression), so this unconditionally disables compile_
+         * assignment_store's own register-reuse optimization here,
+         * exactly as intended -- see that function's own comment. */
         (void)compile_assignment_store(compiler,bindings[binding].name,
-            false,false,bindings[binding].reg);
+            false,false,bindings[binding].reg,compiler->next_register);
 }
 
 static void merge_case_new_locals(Compiler *compiler,CaseFlowJoin *join,
@@ -16846,7 +16885,8 @@ static uint16_t compile_interface(Compiler *compiler) {
  * unchanged behavior lifted verbatim out of what used to be
  * compile_assignment's own body. */
 static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
-        bool instance_variable, bool class_variable, uint16_t value) {
+        bool instance_variable, bool class_variable, uint16_t value,
+        uint16_t rhs_start_register) {
     if (instance_variable) {
         if(compiler->current_module>=0&&compiler->current_class<0) {
             const uint16_t field=module_field_name(compiler,name);
@@ -16908,10 +16948,50 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
             return value;
         }
     }
-    const uint16_t destination = local < 0
-        ? define_local(compiler, name)
+    /* A brand-new local's first assignment (local < 0): if `value` is a
+     * genuine, freshly computed temporary rather than a bare reference to
+     * an existing register, it can simply BECOME this local's home
+     * instead of allocating a second register and MOVE-ing the value
+     * into it -- whatever produced it a moment ago already finished, and
+     * nothing else needs that specific register for its own sake. Skips
+     * both the extra register and the MOVE for every `x = <expression>`
+     * that introduces `x`, likely the single most common shape of
+     * register waste in ordinary code (see docs/internal/register-
+     * recycling-design.md's own motivating numbers). Deliberately scoped
+     * to *first* assignment only -- see that design doc for why reusing
+     * an *existing* local's register this way is a materially bigger
+     * change, not attempted here.
+     *
+     * Two independent guards, both required:
+     * - register_is_named rules out an ordinary named local/parameter
+     *   (`x = y`, `x = some_param`) -- reusing one of *those* registers
+     *   as `x`'s own home would alias two different variables onto one.
+     * - `value >= rhs_start_register` (the register high-water mark from
+     *   immediately before this statement's own RHS started evaluating,
+     *   threaded in by every caller) additionally catches registers
+     *   register_is_named alone can miss: `self` inside an ordinary
+     *   method reads as a bare, hardcoded register 0 (parse_prefix's own
+     *   DIAMOND_TOKEN_SELF case) with no compiler->locals[] entry at all
+     *   for that method, so `x = self` slipped past register_is_named
+     *   alone and later crashed once `x` was captured into a block and
+     *   boxed -- boxing register 0 in place corrupted `self` for the
+     *   rest of the method, surfacing as "undefined method ... for Cell"
+     *   at a completely unrelated later `self.foo(...)` call (found via
+     *   tests/cases/active_record_batches.di, an existing, not new,
+     *   test). This second guard doesn't need to know about `self`
+     *   specifically, or about any other such case -- anything that
+     *   existed before this statement's RHS began is, by this compiler's
+     *   own strictly-monotonic register allocation, necessarily below
+     *   the high-water mark captured at that point, named local or not. */
+    const bool reuse_as_new_local =
+        local < 0 && value >= rhs_start_register &&
+        !register_is_named(compiler, value);
+    const uint16_t destination = reuse_as_new_local
+        ? define_local_with_register(compiler, name, value)
+        : local < 0 ? define_local(compiler, name)
         : compiler->locals[(size_t)local].reg;
-    emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
+    if (!reuse_as_new_local)
+        emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
     compiler->tooling_type_sets[destination]=compiler->tooling_type_sets[value];
@@ -16931,8 +17011,10 @@ static uint16_t compile_assignment(Compiler *compiler) {
         compiler->current.kind == DIAMOND_TOKEN_CLASS_VARIABLE;
     advance_token(compiler);
     advance_token(compiler);
+    const uint16_t rhs_start_register = compiler->next_register;
     const uint16_t value = parse_expression(compiler);
-    return compile_assignment_store(compiler, name, instance_variable, class_variable, value);
+    return compile_assignment_store(compiler, name, instance_variable, class_variable, value,
+        rhs_start_register);
 }
 
 /* `x += y`/`x -= y`/.../`x ||= y`/`x &&= y` -- pure sugar, expanded here
@@ -16966,8 +17048,15 @@ static uint16_t compile_compound_assignment(Compiler *compiler) {
         const uint16_t right = parse_expression(compiler);
         emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
         patch_jump(compiler,end_jump,compiler->function->code_count);
+        /* rhs_start_register=compiler->next_register: a no-op threshold
+         * that always disables compile_assignment_store's own register-
+         * reuse optimization here, same as this function's other call
+         * just below -- compound assignment's target always already
+         * exists (parse_prefix's own read would fail otherwise, see this
+         * function's own comment), so `local < 0` never holds for either
+         * call and the passed value is moot either way. */
         return compile_assignment_store(compiler,name,instance_variable,
-            class_variable,destination);
+            class_variable,destination,compiler->next_register);
     }
     const DiamondTokenKind plain_op =
         op_kind==DIAMOND_TOKEN_PLUS_EQUAL?DIAMOND_TOKEN_PLUS:
@@ -16978,7 +17067,7 @@ static uint16_t compile_compound_assignment(Compiler *compiler) {
     const uint16_t right = parse_expression(compiler);
     const uint16_t destination = compile_binary_op(compiler, plain_op, left, right);
     return compile_assignment_store(compiler, name, instance_variable,
-        class_variable, destination);
+        class_variable, destination, compiler->next_register);
 }
 
 /* Finds (or, the first time in this function, registers) a one-member
@@ -17338,8 +17427,15 @@ static uint16_t emit_destructure_stores(Compiler *compiler,
                 node->target_member,true,nullptr,0,&value,1);
             return value;
         }
+        /* rhs_start_register=compiler->next_register: node_values[...] was
+         * resolved earlier (destructuring the already-evaluated source),
+         * not a fresh RHS expression here, so this unconditionally
+         * disables compile_assignment_store's own register-reuse
+         * optimization for a destructuring target -- see that function's
+         * own comment. */
         return compile_assignment_store(compiler,node->name,
-            node->instance_variable,node->class_variable,node_values[node_index]);
+            node->instance_variable,node->class_variable,node_values[node_index],
+            compiler->next_register);
     }
     uint16_t last=node_values[node_index];
     for(size_t index=0;index<node->child_count;index++)

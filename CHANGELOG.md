@@ -213,6 +213,17 @@ for security-sensitive use.
 
 ### Runtime
 
+- A brand-new local's first assignment (`x = <expression>`, `x` not
+  previously declared) reuses the expression's own result register
+  directly instead of allocating a second register and copying into it,
+  when that's safe -- about 25% faster for a function with many such
+  declarations, and a smaller `register_count` means less to zero on
+  every call. See docs/internal/register-recycling-design.md for the
+  measurements and a real bug the safety check for this had to catch:
+  `x = self` inside a method could alias `x` onto `self`'s own register
+  (which has no name-table entry to check against, unlike an ordinary
+  local or parameter), and boxing `x` for a later block capture then
+  corrupted `self` itself.
 - `Array + Array` copies each side once now, straight into the result's
   own storage, instead of building a throwaway buffer and letting the
   array constructor copy that a second time.
