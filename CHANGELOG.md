@@ -213,6 +213,9 @@ for security-sensitive use.
 
 ### Runtime
 
+- `Array + Array` copies each side once now, straight into the result's
+  own storage, instead of building a throwaway buffer and letting the
+  array constructor copy that a second time.
 - The Ruby-compatible methods added earlier in this series (`max`, `sum`,
   `reverse`, `select`, ...) dispatch through a cache now instead of
   rescanning every prelude function by name on each call: `arr.max()` went

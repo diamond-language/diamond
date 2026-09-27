@@ -1833,8 +1833,18 @@ static DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondClass *clas
     vm->young_objects=&instance->object; vm->bytes_allocated+=size; return instance;
 }
 
-static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
-                                    size_t count) {
+/* Same allocation as allocate_array below, minus populating `values` --
+ * for a caller that already has (or is about to build) exactly `count`
+ * DiamondValues and would otherwise have to stage them in a throwaway
+ * buffer first just to hand them to allocate_array for a second copy
+ * (add_fallback's Array+Array, below, used to do exactly that). Safe to
+ * defer reading any *other* array's contents until after this returns,
+ * the same way allocate_array's own copy loop already runs after its
+ * maybe_collect: DiamondArray objects are never moved by GC, so a source
+ * still reachable from a live register (this VM has no other kind of
+ * temporary) stays exactly where it was regardless of what maybe_collect
+ * did meanwhile. */
+static DiamondArray *allocate_array_uninitialized(DiamondVm *vm,size_t count) {
     if (!maybe_collect(vm)) return nullptr;
     const size_t capacity=count;
     const size_t size=sizeof(DiamondArray)+capacity*sizeof(DiamondValue);
@@ -1844,8 +1854,15 @@ static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     array->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_ARRAY};
     array->count=count;array->capacity=capacity;array->constraint_count=0;
     array->dirty_cards=nullptr;array->dirty_card_capacity=0;
-    for(size_t i=0;i<count;i++) array->values[i]=values[i];
     vm->young_objects=&array->object;vm->bytes_allocated+=size;return array;
+}
+
+static DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
+                                    size_t count) {
+    DiamondArray *array=allocate_array_uninitialized(vm,count);
+    if(array==nullptr)return nullptr;
+    if(count>0)memcpy(array->values,values,count*sizeof *values);
+    return array;
 }
 
 /* Zero-filled rows x cols DiamondTensor -- struct + payload in one
@@ -7794,22 +7811,26 @@ static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size
         *out_result=DIAMOND_OBJECT(string);
         return DIAMOND_VM_OK;
     }
-    /* Array + Array: a new Array with left's elements, then right's. */
+    /* Array + Array: a new Array with left's elements, then right's.
+     * Writes both halves straight into the new array's own storage with
+     * allocate_array_uninitialized (see its own comment) instead of
+     * building a throwaway buffer and letting allocate_array copy that a
+     * second time -- this used to copy every element of both arrays
+     * twice. */
     if (left_value.kind==DIAMOND_VALUE_OBJECT && right_value.kind==DIAMOND_VALUE_OBJECT &&
         left_value.as.object->kind==DIAMOND_OBJECT_ARRAY &&
         right_value.as.object->kind==DIAMOND_OBJECT_ARRAY) {
         const DiamondArray *left_array=(const DiamondArray *)left_value.as.object;
         const DiamondArray *right_array=(const DiamondArray *)right_value.as.object;
         const size_t count=left_array->count+right_array->count;
-        DiamondValue *values=count==0?nullptr:malloc(count*sizeof *values);
-        if(count>0&&values==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        for(size_t index=0;index<left_array->count;index++)
-            values[index]=left_array->values[index];
-        for(size_t index=0;index<right_array->count;index++)
-            values[left_array->count+index]=right_array->values[index];
-        DiamondArray *joined=allocate_array(vm,values,count);
-        free(values);
+        DiamondArray *joined=allocate_array_uninitialized(vm,count);
         if(joined==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(left_array->count>0)
+            memcpy(joined->values,left_array->values,
+                   left_array->count*sizeof *joined->values);
+        if(right_array->count>0)
+            memcpy(joined->values+left_array->count,right_array->values,
+                   right_array->count*sizeof *joined->values);
         *out_result=DIAMOND_OBJECT(joined);
         return DIAMOND_VM_OK;
     }
