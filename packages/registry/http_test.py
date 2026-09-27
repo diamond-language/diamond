@@ -46,7 +46,13 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
     server = subprocess.Popen([str(diamond), 'app.di'], cwd=work, env=env, stdout=log, stderr=log)
     proxy = None
     try:
-        for _ in range(100):
+        # 300 * .05s = 15s, not the 5s this loop used before: a loaded CI
+        # runner can take much longer than a local machine to schedule the
+        # freshly-spawned server process's first few timeslices, and this
+        # loop already bails out immediately (via server.poll()) if the
+        # process actually died, so a longer budget only costs time on a
+        # real hang, never masks one.
+        for _ in range(300):
             if server.poll() is not None:
                 log.seek(0)
                 raise AssertionError(log.read())
@@ -546,7 +552,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
         server.wait(timeout=5)
         env['REGISTRY_ROOT'] = str(restored)
         server = subprocess.Popen([str(diamond), 'app.di'], cwd=work, env=env, stdout=log, stderr=log)
-        for _ in range(100):
+        for _ in range(300):  # see the matching startup-wait loop above for why 300, not 100
             try:
                 conn = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
                 conn.request('GET', '/registry/health')
