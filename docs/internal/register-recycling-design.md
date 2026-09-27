@@ -1,6 +1,6 @@
-# Register recycling: design and status (Stage 1 landed, Stage 2+ planned)
+# Register recycling: design and status (Stages 1-2 landed, Stage 3 planned)
 
-**Status: Stage 1 implemented.** The compiler's register allocator
+**Status: Stages 1-2 implemented.** The compiler's register allocator
 (`allocate_register`, `src/compiler.c`) never reuses a slot within one
 function body -- every temporary and every local, however short-lived,
 claims a fresh register number and keeps it for the rest of the function.
@@ -140,48 +140,121 @@ corpus (253/253 positive; the 2 pre-existing `require_*_manifest` failures
 are unrelated drift, see [[project_diamond_examples_batch]]), and
 `make test-sanitize`, all clean.
 
-## Stage 2 (planned, not implemented): reassigning an existing local
+## Stage 2 (landed): reassigning an existing local
 
 The pattern that actually motivated this investigation -- `total =
 total + 1` in a loop, unboundedly repeated -- reassigns an *existing*
 local, so Stage 1's approach doesn't apply: `destination` (the local's own
 permanent register, fixed since its first declaration) is not something
-a later statement can just relabel. The available fix there is different
-in kind: **rewrite the producing instruction's own destination operand**
-from the temporary to `destination` in place, delete the trailing `MOVE`,
-and let `next_register` shrink back down -- safe only when:
+a later statement can just relabel. The fix is different in kind:
+**rewrite the producing instruction's own destination operand** from the
+temporary to `destination` in place (`try_rewrite_producer_destination`,
+`src/compiler.c`), skip emitting the trailing `MOVE` entirely, and let
+`next_register` shrink back down when possible. Safe only when all of:
 
-- `value == compiler->next_register - 1` (it's the most recently
-  allocated register; nothing higher still needs to survive).
-- The most recently emitted instruction actually wrote `value` as its
-  first operand (every value-producing opcode in this compiler writes its
-  result there; confirmed via `emit_instruction`'s uniform 2-byte-operand
-  encoding, `compiler->last_instruction_offset` would need to be added
-  and updated in `emit_opcode` to make this checkable without unsafely
-  scanning backward through variable-length bytecode).
-- That instruction's own opcode is on an explicit, narrow allowlist,
-  vetted opcode by opcode against `compiler->narrowing` and any other
-  lasting per-register compiler state -- **not a blanket rule.** Already
-  vetted: the plain arithmetic family compile_binary_op can emit (`ADD`,
-  `SUBTRACT`, `MULTIPLY`, `DIVIDE`, `MODULO`, `SHIFT_LEFT`, `SHIFT_RIGHT`,
+- `!register_is_named(compiler, value)` (Stage 1's own first guard,
+  reused here): `value` isn't an existing local's/parameter's/self's own
+  register -- rules out `total = other_local`, whose "value" is `other`'s
+  own permanent register, not a throwaway one.
+- `compiler->last_instruction_offset < compiler->function->code_count`
+  (a new field, updated on every `emit_opcode` call and reset to
+  `SIZE_MAX` -- an always-out-of-bounds sentinel, always checked, never
+  assumed in range -- at every place `next_register` itself is reset or
+  restored around a nested function body): there genuinely is a
+  most-recent instruction to inspect.
+- That instruction's own opcode is on an explicit, narrow allowlist
+  (`opcode_is_rewritable_arithmetic`), vetted opcode by opcode against
+  `compiler->narrowing` and any other lasting per-register compiler
+  state -- **not a blanket rule.** Vetted and included: the plain
+  arithmetic family `compile_binary_op` can emit (`ADD`, `SUBTRACT`,
+  `MULTIPLY`, `DIVIDE`, `MODULO`, `SHIFT_LEFT`, `SHIFT_RIGHT`,
   `BITWISE_AND`/`_OR`/`_XOR`, and their `_INT` fast-path forms) --
   confirmed none of these touch `compiler->narrowing` (only `EQUAL`/
   `NOT_EQUAL`/`EQUAL_INT`/`NOT_EQUAL_INT` do, and only conditionally; the
   full comparison family is excluded from the allowlist for this reason,
   not because it's unsafe for some other reason not yet found).
-- Given Stage 1's own near-miss: re-run the *same* register-provenance
-  reasoning (does this register predate the statement, self included)
-  before trusting any new allowlist entry, rather than assuming
-  `register_is_named`-style name-table checks are complete.
+- That instruction's own first operand -- read back from the bytecode
+  itself, not assumed from control flow -- equals `value` exactly:
+  confirms this is truly `value`'s own producer, not merely the most
+  recently emitted instruction for an unrelated reason.
+
+Reclaiming `value`'s register slot (`next_register--`) is gated
+separately on `value == compiler->next_register - 1` (nothing
+higher-numbered still needs to survive) -- always safe to skip when it
+doesn't apply, just less optimal; skipping the `MOVE` is unconditional
+once the checks above pass.
+
+**In-place aliasing, checked explicitly**: this is the first mechanism in
+this compiler to ever make an instruction's destination equal one of its
+own source operands (`ADD_INT r2, r2, r8` instead of a fresh destination),
+since `allocate_register` never did that before. Confirmed correct in both
+the interpreter (C's own evaluation order reads both operands before the
+assignment, even when they alias) and the JIT (`DIAMOND_JIT=1`,
+`DIAMOND_JIT_THRESHOLD=1`, forcing tier-up almost immediately) -- both
+produce identical output to the non-aliased case across every opcode on
+the allowlist; see `tests/cases/register_recycling_reassignment_chain_jit.di`.
+
+**A real, if unrelated, bug found while verifying this**: `--dump-bytecode`
+on the first test program in this codebase's history to use `>>`,
+`&`, `|`, or `^` produced `<unknown opcode N>` followed by garbled,
+out-of-range register numbers for everything after it --
+`src/disassemble.c`'s own switch never had a case for `SHIFT_RIGHT` or
+`BITWISE_AND`/`_OR`/`_XOR` at all (confirmed via a full opcode-enum-vs-
+switch diff, which also turned up `CHANNEL_NEW`, `SUPERVISOR_NEW`,
+`DIR_ENTRIES`, and all three `TENSOR_*` constructors missing too -- fixed
+alongside). A debug-tool-only gap: `run_chunk`'s own dispatch
+(`src/vm.c`) reads each opcode's real operands directly and was never
+affected, and the actual program output was correct throughout -- this
+briefly looked like Stage 2 corrupting bytecode, and the only way to tell
+the two apart was fixing the disassembler and re-reading the (now
+correct) dump. See `tests/cases/disassemble_shift_bitwise_opcodes.di`.
+
+**Measured impact** (`total = total + 1`-shaped chains up to 1300
+statements, alternated binaries against `main` (pre-Stage-1) 3 rounds):
+about 30% faster across every tier from 200 to 1300 statements (e.g.
+1300: ~22,800 ns/call before, ~16,100 ns/call after). More importantly,
+`register_count` for a 1300-statement chain of eleven different
+reassignment operators dropped from ~3900 (the original motivating
+number, see "The problem, measured" above) to under 20, *independent of
+the chain length* -- a repeated reassignment to the same local no longer
+costs any register at all past the first one, closing the actually
+unbounded case Stage 1 left open.
+
+**Verified**: full suite (1663, including three new regression tests: the
+reassignment chain, its JIT-forced twin, and the disassembler fix), all 17
+examples, self-host smoke, the full self-host parser differential corpus
+(253/253 positive, 126/126 error cases -- see "A stale test fixture found
+along the way" below), and `make test-sanitize`, all clean.
+
+## A stale test fixture found along the way
+
+While re-running the parser differential corpus during Stage 2's own
+verification, `tests/parser_error_cases/require_broken_manifest.di` and
+`require_nonhash_manifest.di` failed -- both predate this session and
+were unrelated to register recycling, but investigating rather than
+citing them as pre-existing turned up a real, fixable problem: their
+`.err` fixture files (`"failed to compile"` / `"must evaluate to a
+Hash"`) were stale, left over from before this project's package system
+was reworked (`diamond_packages`/`package.di` -> `cuts`/`diamond.cut`,
+August 2026). The *current* native and self-hosted compilers already
+agree with each other and produce clear, correct messages (`cut manifest
+'...' must be data only: line 1: expected data literal` / `... expected
+Hash literal`) -- neither contained the old expected substrings, so the
+test was comparing against wording nobody produces anymore. Updated both
+`.err` files to the current wording; the full corpus (253 positive + 126
+error cases) now passes with zero failures.
 
 ## Stage 3+ (aspirational): the general post-pass
 
 Still the eventual right answer for the cases Stage 1/2 don't reach
-(reassignment via a non-arithmetic RHS, recycling across statement
-boundaries generally) -- a real liveness-tracked allocator over the full
-opcode set, as sketched in "Why a general fix is a bigger project than it
-looks" above. Not scheduled; revisit once Stage 2 has shipped and this
-document's own risk assessment has been through one more real landing.
+(reassignment via a non-arithmetic RHS -- a call, an `if`-expression, a
+comparison; recycling across statement boundaries generally, including a
+brand-new temporary that could reuse a slot a *different*, already-dead
+temporary vacated earlier in the same expression). Not scheduled: Stage 2
+landed cleanly, but the two allowlist-vetting near-misses it took to get
+there (Stage 1's `self`, Stage 2's disassembler-shaped scare) argue for
+banking more real-world mileage on Stages 1/2 before taking on a
+general-purpose allocator's much larger surface.
 
 Related: [[project_diamond_register_pool_gc_threshold_negative]] (the
 *runtime* register-buffer pooling attempt this same investigation also

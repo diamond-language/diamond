@@ -551,14 +551,18 @@ Before extending past the current narrow slice:
 
 `allocate_register` (`src/compiler.c`) never reuses a slot within one
 function body, so every temporary and every local claims a register for the
-rest of the function regardless of how quickly it becomes dead. Stage 1 (a
-brand-new local reusing its own RHS expression's temporary register, no
-general liveness analysis needed) is implemented -- see
+rest of the function regardless of how quickly it becomes dead. Stages 1
+(a brand-new local reusing its own RHS expression's temporary register) and
+2 (reassigning an existing local by rewriting the producing instruction's
+own destination in place, closing the originally-unbounded `total = total
++ 1`-in-a-loop case) are both implemented -- see
 [`docs/internal/register-recycling-design.md`](internal/register-recycling-design.md)
 for the measurements, the invariants a recycler has to respect (`self`,
-boxed/captured locals), a real bug that design doc's own Stage 1 found and
-fixed, and the staged plan for reassignment (Stage 2) and a general
-liveness-based post-pass (Stage 3, aspirational, not scheduled).
+boxed/captured locals), two real bugs found and fixed along the way (one
+in Stage 1's own safety check, one a long-unrelated gap in
+`disassemble.c`), and the case for holding off on a general liveness-based
+post-pass (Stage 3, aspirational, not scheduled) until more real-world
+mileage has been banked on the narrower stages.
 
 ### Compiler representation
 

@@ -154,6 +154,16 @@ typedef struct Compiler {
     size_t local_count;
     uint32_t next_alias_identity;
     uint16_t next_register;
+    /* The byte offset (into compiler->function->code[]) of the most
+     * recently emitted instruction, updated on every emit_opcode call --
+     * see compile_assignment_store's own "reassigning an existing local"
+     * comment (register recycling Stage 2) for the one thing that reads
+     * this. Reset to SIZE_MAX (an always-out-of-bounds sentinel, checked
+     * against code_count before ever being used to index code[]) at
+     * every one of next_register's own resets, so a stale offset from an
+     * outer/sibling function body being compiled can never be read
+     * against a *different* function's own code array. */
+    size_t last_instruction_offset;
     int current_class;
     int current_module;
     bool methods_private;
@@ -450,6 +460,7 @@ static bool emit_opcode(Compiler *compiler, DiamondOpCode opcode) {
     if (!emit_byte(compiler, (uint8_t)opcode)) return false;
     compiler->function->lines[offset] = (uint32_t)compiler->previous.span.line;
     compiler->function->columns[offset] = (uint32_t)compiler->previous.span.column;
+    compiler->last_instruction_offset = offset;
     return true;
 }
 
@@ -1623,6 +1634,89 @@ static bool register_is_named(const Compiler *compiler, uint16_t reg) {
     for (size_t index = 0; index < compiler->local_count; index++)
         if (compiler->locals[index].reg == reg) return true;
     return false;
+}
+
+/* Register recycling Stage 2 (docs/internal/register-recycling-design.md):
+ * is `opcode` one this compiler already knows never touches
+ * compiler->narrowing or any other lasting per-register compiler state
+ * beyond compiler->known_types/known_type_sets/tooling_type_sets (which
+ * compile_assignment_store's own caller already copies from `value` to
+ * `destination` regardless of how `destination` got its value, so
+ * rewriting the producer changes nothing there)? Deliberately a narrow,
+ * individually-vetted allowlist, not "every opcode compile_binary_op can
+ * emit" -- EQUAL/NOT_EQUAL (and their _INT forms) are excluded because
+ * compile_binary_op sets compiler->narrowing.condition to their own
+ * destination register for a nil-comparison, and a later `if`/`unless`
+ * reading that field expects it to still refer to a live, meaningful
+ * condition register, not one a rewrite silently repurposed. The rest of
+ * the comparison family (LESS*, GREATER*, COMPARE) is excluded too, on
+ * the same "don't extend the allowlist past what's actually been
+ * checked" principle -- see the design doc for why Stage 1 alone getting
+ * this kind of check wrong already cost a real, if different, bug. */
+static bool opcode_is_rewritable_arithmetic(DiamondOpCode opcode) {
+    switch (opcode) {
+        case DIAMOND_OP_ADD: case DIAMOND_OP_ADD_INT:
+        case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_SUBTRACT_INT:
+        case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_MULTIPLY_INT:
+        case DIAMOND_OP_DIVIDE: case DIAMOND_OP_DIVIDE_INT:
+        case DIAMOND_OP_MODULO:
+        case DIAMOND_OP_SHIFT_LEFT: case DIAMOND_OP_SHIFT_RIGHT:
+        case DIAMOND_OP_BITWISE_AND: case DIAMOND_OP_BITWISE_OR:
+        case DIAMOND_OP_BITWISE_XOR:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* Register recycling Stage 2: reassigning an *existing* local
+ * (`total = total + 1`) can't reuse Stage 1's trick (`destination` is
+ * `total`'s own permanent register, fixed since it was first declared,
+ * not something this statement can relabel) -- but if `value` is a
+ * fresh arithmetic result about to be thrown away after one MOVE, the
+ * instruction that produced it can be rewritten to write `destination`
+ * directly instead, and the MOVE skipped entirely. Every check here is
+ * required and independently necessary (see the design doc for the
+ * reasoning behind each, including a near-miss found while writing it):
+ *
+ * - `!register_is_named(compiler, value)`: `value` isn't any existing
+ *   local's/parameter's/self's own register -- rules out `total = y`
+ *   (`value` would be `y`'s own permanent register, not a throwaway one).
+ * - `compiler->last_instruction_offset < compiler->function->code_count`:
+ *   there genuinely is a most-recent instruction to inspect (defends
+ *   against a stale offset even though every entry/exit to a nested
+ *   function body already resets this to SIZE_MAX -- always checked
+ *   before code[] is ever indexed with it, never just assumed).
+ * - The instruction at that offset actually is `opcode_is_rewritable_
+ *   arithmetic` and its own first operand -- read back from the bytecode
+ *   itself, not assumed from control flow -- equals `value` exactly:
+ *   confirms this is truly `value`'s own producer, not merely the most
+ *   recently emitted instruction for an unrelated reason.
+ *
+ * Returns whether the rewrite happened (the MOVE must be skipped, not
+ * just made optional, when it did -- `value` is no longer meaningful
+ * once its producer's own destination has been repointed). Reclaiming
+ * `value`'s register slot for reuse (decrementing next_register) is a
+ * separate, additional step, gated on `value` being the current
+ * highest-numbered register -- always safe to skip when it doesn't
+ * apply, just less optimal. */
+static bool try_rewrite_producer_destination(Compiler *compiler, uint16_t value,
+                                              uint16_t destination) {
+    if (register_is_named(compiler, value)) return false;
+    const size_t offset = compiler->last_instruction_offset;
+    if (offset >= compiler->function->code_count) return false;
+    const size_t operand_offset = offset + 1;
+    if (operand_offset + 1 >= compiler->function->code_count) return false;
+    if (!opcode_is_rewritable_arithmetic(
+            (DiamondOpCode)compiler->function->code[offset])) return false;
+    const uint16_t written = (uint16_t)(
+        ((uint16_t)compiler->function->code[operand_offset] << 8) |
+        compiler->function->code[operand_offset + 1]);
+    if (written != value) return false;
+    compiler->function->code[operand_offset] = (uint8_t)(destination >> 8);
+    compiler->function->code[operand_offset + 1] = (uint8_t)(destination & UINT8_MAX);
+    if (value == compiler->next_register - 1) compiler->next_register--;
+    return true;
 }
 
 /* `preferred_register` lets a caller that already has a register ready to
@@ -4107,6 +4201,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
 
     compiler->function=function;
     compiler->next_register=0;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->local_count=0;
     compiler->in_function=true;
     compiler->in_block=false;
@@ -4149,6 +4244,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
 
     compiler->function=outer_function;
     compiler->next_register=outer_next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->local_count=outer_local_count;
     compiler->in_function=outer_in_function;
     compiler->in_block=outer_in_block;
@@ -8379,6 +8475,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
         outer_next_register*sizeof *outer_type_sets);
     const size_t outer_begin_depth=compiler->begin_depth;
     compiler->function=wrapper;compiler->next_register=0;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->local_count=0;compiler->in_function=true;
     compiler->in_block=false;
     compiler->begin_depth=0;
@@ -8440,6 +8537,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     wrapper->register_count=compiler->next_register;
 
     compiler->function=outer_function;compiler->next_register=outer_next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->local_count=outer_local_count;compiler->in_function=outer_in_function;
     compiler->in_block=outer_in_block;
     compiler->begin_depth=outer_begin_depth;
@@ -12864,6 +12962,7 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->current_retry_target=SIZE_MAX;
     compiler->local_count = 0;
     compiler->next_register = 0;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->enclosing_local_count=outer_local_count;
     for(size_t i=0;i<compiler->enclosing_local_count;i++)
         compiler->enclosing_locals[i]=outer_locals[i];
@@ -13136,6 +13235,7 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->locals[index] = outer_locals[index];
     }
     compiler->next_register = outer_next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->current_method = outer_method;
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
@@ -13623,6 +13723,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->current_retry_target=SIZE_MAX;
     compiler->local_count = 0;
     compiler->next_register = 0;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->enclosing_local_count=at_top_level ? 0 : outer_local_count;
     for(size_t i=0;i<compiler->enclosing_local_count;i++)
         compiler->enclosing_locals[i]=outer_locals[i];
@@ -14241,6 +14342,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->locals[index] = outer_locals[index];
     }
     compiler->next_register = outer_next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->current_method = outer_method;
     compiler->in_method = outer_in_method;
     compiler->in_singleton_method = outer_in_singleton_method;
@@ -15198,6 +15300,7 @@ static void compile_delegate(Compiler *compiler) {
     compiler->begin_depth=0;
     compiler->local_count=0;
     compiler->next_register=0;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->current_method=method_name;
     compiler->in_method=true;
     compiler->in_singleton_method=false;
@@ -15320,6 +15423,7 @@ static void compile_delegate(Compiler *compiler) {
     for(size_t index=0;index<outer_local_count;index++)
         compiler->locals[index]=outer_locals[index];
     compiler->next_register=outer_next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
     compiler->current_method=outer_method;
     compiler->in_method=outer_in_method;
     compiler->in_singleton_method=outer_in_singleton_method;
@@ -15748,6 +15852,7 @@ static bool begin_struct_method(Compiler *compiler,DiamondFunction *function,
     }
     compiler->function=function;
     compiler->next_register=0;
+    compiler->last_instruction_offset=SIZE_MAX;
     return true;
 }
 
@@ -16990,7 +17095,19 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
         ? define_local_with_register(compiler, name, value)
         : local < 0 ? define_local(compiler, name)
         : compiler->locals[(size_t)local].reg;
-    if (!reuse_as_new_local)
+    /* Register recycling Stage 2 (try_rewrite_producer_destination's own
+     * comment): reassigning an *existing* local (local >= 0, so `destination`
+     * is that local's own already-fixed register, never `value` itself --
+     * Stage 1's reuse_as_new_local already covers local < 0 and the two
+     * never overlap). `value != destination` is implied by the rewrite
+     * helper's own register_is_named check (a bare `x = x` would have
+     * `value` equal to `destination`, which is always a named register),
+     * kept explicit here anyway as a second, independent reason to refuse
+     * rather than relying on that implication alone. */
+    const bool rewrote_producer = !reuse_as_new_local && local >= 0 &&
+        value != destination &&
+        try_rewrite_producer_destination(compiler, value, destination);
+    if (!reuse_as_new_local && !rewrote_producer)
         emit_instruction(compiler, DIAMOND_OP_MOVE, destination, value, 0, 2);
     compiler->known_types[destination]=compiler->known_types[value];
     compiler->known_type_sets[destination]=compiler->known_type_sets[value];
@@ -18250,6 +18367,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .current_return_type = -1,
         .current_exception = -1,
         .current_retry_target = SIZE_MAX,
+        .last_instruction_offset = SIZE_MAX,
         .diagnostic = diagnostic,
         .discovery_pass = discovery_pass,
         .next_function_claim = function_claim_start,
