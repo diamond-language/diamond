@@ -1769,7 +1769,14 @@ static DiamondString *allocate_string(DiamondVm *vm, const char *chars,
         .kind = DIAMOND_OBJECT_STRING,
     };
     string->length = length;
-    memcpy(string->chars, chars, length);
+    /* `chars` can be nullptr here with length 0 -- an empty StringBuilder
+     * (File#read at EOF, an empty gets() line, ...) never allocates its
+     * `chars` buffer at all. memcpy's first two arguments are declared
+     * never-null regardless of the length passed, so calling it with a
+     * null source is undefined behavior even when it would copy zero
+     * bytes (confirmed live under UBSan: "null pointer passed as
+     * argument 2, which is declared to never be null"). */
+    if (length > 0) memcpy(string->chars, chars, length);
     string->chars[length] = '\0';
     vm->young_objects = &string->object;
     vm->bytes_allocated += sizeof(DiamondString) + length + 1;
@@ -1802,7 +1809,12 @@ static DiamondSymbol *allocate_symbol(DiamondVm *vm, const char *chars,
         .kind = DIAMOND_OBJECT_SYMBOL,
     };
     symbol->length = length;
-    memcpy(symbol->chars, chars, length);
+    /* See allocate_string's own comment just above: a null `chars` with
+     * length 0 is well-defined for every current caller (a String/Symbol
+     * object's own `chars` is never null, even empty), but the same
+     * memcpy-is-UB-on-null rule applies here too, so guard it identically
+     * rather than relying on that staying true. */
+    if (length > 0) memcpy(symbol->chars, chars, length);
     symbol->chars[length] = '\0';
     vm->young_objects = &symbol->object;
     vm->bytes_allocated += sizeof(DiamondSymbol) + length + 1;
