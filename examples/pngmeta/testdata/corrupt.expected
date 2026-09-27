@@ -1,0 +1,9 @@
+testdata/corrupt.png: 4x3, 8-bit RGB
+  IHDR     13
+  gAMA      4
+  tEXt     19  Author: Ada Lovelace
+  tEXt     23  software: PaintThing 2.1  CRC MISMATCH
+  tIME      7  2026-09-26 14:30:05 UTC
+  IDAT     47
+  tEXt     42  Comment: taken on the pier, GPS 51.5N 0.12W
+  IEND      0
