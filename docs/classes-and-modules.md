@@ -26,7 +26,11 @@ via `<`, and `super(...)`. Inside an instance method, `self.` is optional
 when calling another method of the same object: `render_row(item)` means
 `self.render_row(item)` when the class, a superclass, or an included module
 has a `render_row` method, including a private one. A top-level function of
-the same name takes precedence. Classes are compile-time metadata, not
+the same name takes precedence.
+
+A program can reopen a built-in (prelude) class or module to add to it,
+the same as its own: `class Range ... def middle() ... end` or
+`module Math ... def self.double(x) = x * 2 ... end`. Classes are compile-time metadata, not
 first-class heap values, with two narrow exceptions:
 `ClassName.redefine_method(name, callable)` repoints an existing method's
 compiled body at runtime (the callable may come from `compile_method`, as
@@ -814,7 +818,10 @@ itself.
 `module Name ... end` declares a module; `include Name` copies its method
 descriptors into the receiving class (mixin-style composition, not
 inheritance). `def self.name` inside a module declares a namespace
-singleton function rather than an instance method. Like a class (see
+singleton function rather than an instance method: `Name.name(...)`, or a
+bare `name(...)` from inside the module itself -- never a bare call from
+outside it, so `module Geometry ... def self.sqrt(x)` doesn't hijack the
+global `sqrt`. Like a class (see
 "Reopening" above), a module can be reopened -- a second `module Name`
 adds more methods/nested classes to the same module instead of erroring,
 the usual way to split a module's classes across several files while

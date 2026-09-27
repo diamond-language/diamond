@@ -4991,6 +4991,9 @@ class Parser
     return true if name == "sqrt"
     return true if name == "sin"
     return true if name == "cos"
+    return true if name == "exp"
+    return true if name == "log"
+    return true if name == "tanh"
     name == "tan"
   end
 
@@ -5003,6 +5006,9 @@ class Parser
     return 0 if name == "sqrt"
     return 1 if name == "sin"
     return 2 if name == "cos"
+    return 5 if name == "exp"
+    return 6 if name == "log"
+    return 7 if name == "tanh"
     3
   end
 

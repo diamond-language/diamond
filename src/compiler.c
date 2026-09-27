@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,6 +32,9 @@ typedef enum Precedence {
     PREC_TERM,
     PREC_FACTOR,
     PREC_PREFIX,
+    /* `**`: tighter than unary minus (`-2 ** 2` is -4) and
+     * right-associative, as in Ruby. */
+    PREC_POWER,
 } Precedence;
 
 typedef struct Local {
@@ -852,9 +856,10 @@ typedef enum TypeCheckVerdict {
 /* Could a value of `known_set` still satisfy `expected_set` once its
  * contents are checked? True when every member that doesn't already
  * satisfy is a bare container (`Array`, `Hash`, with no element types)
- * of a kind the expected set accepts with element types: a bare Array
- * says nothing about its elements, so whether it's an Array[String] is
- * the runtime check's call, as for an untyped value. */
+ * of a kind the expected set accepts with element types, or a bare
+ * `Callable` where a `Callable[N]` is expected: a bare Array says nothing
+ * about its elements, so whether it's an Array[String] is the runtime
+ * check's call, as for an untyped value. */
 static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
         uint16_t expected_set) {
     const DiamondTypeSet *known=&compiler->function->type_sets[known_set];
@@ -868,7 +873,10 @@ static bool type_set_may_satisfy(const Compiler *compiler,uint16_t known_set,
                 (member.argument_set==DIAMOND_NO_TYPE_SET&&
                  wanted.argument_set!=DIAMOND_NO_TYPE_SET&&
                  (member.id==DIAMOND_TYPE_ARRAY||member.id==DIAMOND_TYPE_HASH)&&
-                 member.id==wanted.id);
+                 member.id==wanted.id)||
+                /* Likewise a bare Callable, whose arity isn't known. */
+                (member.id==DIAMOND_TYPE_CALLABLE&&wanted.id==DIAMOND_TYPE_CALLABLE&&
+                 member.callable_arity==UINT8_MAX);
         }
         if(!possible)return false;
     }
@@ -1348,6 +1356,29 @@ static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
     compiler->known_type_sets[reg]=(int32_t)set_index;
 }
 
+static unsigned hex_digit_value(char digit) {
+    if(digit>='0'&&digit<='9')return (unsigned)(digit-'0');
+    if(digit>='a'&&digit<='f')return (unsigned)(digit-'a'+10);
+    return (unsigned)(digit-'A'+10);
+}
+
+/* Writes `code_point` (already checked to be a Unicode scalar value) as
+ * UTF-8 into `out`, returning how many bytes that took. */
+static size_t utf8_encode_code_point(unsigned long code_point,char out[4]) {
+    if(code_point<0x80) {out[0]=(char)code_point;return 1;}
+    if(code_point<0x800) {
+        out[0]=(char)(0xC0|(code_point>>6));out[1]=(char)(0x80|(code_point&0x3F));
+        return 2;
+    }
+    if(code_point<0x10000) {
+        out[0]=(char)(0xE0|(code_point>>12));out[1]=(char)(0x80|((code_point>>6)&0x3F));
+        out[2]=(char)(0x80|(code_point&0x3F));return 3;
+    }
+    out[0]=(char)(0xF0|(code_point>>18));out[1]=(char)(0x80|((code_point>>12)&0x3F));
+    out[2]=(char)(0x80|((code_point>>6)&0x3F));out[3]=(char)(0x80|(code_point&0x3F));
+    return 4;
+}
+
 static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
                                 DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
@@ -1364,6 +1395,8 @@ static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
         &compiler->function->strings[compiler->function->string_count];
     for(size_t index=0;index<length;index++) {
         char character=compiler->source[start+index];
+        char encoded[4];
+        size_t encoded_length=0;
         if (character == '\\') {
             index++;
             if(index==length) {fail(compiler,span,"incomplete string escape");return 0;}
@@ -1372,19 +1405,59 @@ static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
                 case 'n': character = '\n'; break;
                 case 'r': character = '\r'; break;
                 case 't': character = '\t'; break;
+                case '0': character = '\0'; break;
+                case 'e': character = '\x1b'; break;
                 case '"': character = '"'; break;
                 case '\\': character = '\\'; break;
                 case '#': character = '#'; break;
+                case 'x': {
+                    /* \xH or \xHH: one byte, as in Ruby. */
+                    unsigned value=0;size_t digits=0;
+                    while(digits<2&&index+1<length&&
+                          isxdigit((unsigned char)compiler->source[start+index+1])) {
+                        value=value*16+hex_digit_value(compiler->source[start+index+1]);
+                        index++;digits++;
+                    }
+                    if(digits==0) {fail(compiler,span,"\\x needs a hex digit");return 0;}
+                    character=(char)value;
+                    break;
+                }
+                case 'u': {
+                    /* \uHHHH or \u{H...}: a code point, stored as UTF-8. */
+                    unsigned long value=0;size_t digits=0;
+                    const bool braced=index+1<length&&compiler->source[start+index+1]=='{';
+                    if(braced)index++;
+                    while((braced?digits<6:digits<4)&&index+1<length&&
+                          isxdigit((unsigned char)compiler->source[start+index+1])) {
+                        value=value*16+hex_digit_value(compiler->source[start+index+1]);
+                        index++;digits++;
+                    }
+                    if(braced) {
+                        if(index+1>=length||compiler->source[start+index+1]!='}') {
+                            fail(compiler,span,"\\u{ needs hex digits and a closing }");
+                            return 0;
+                        }
+                        index++;
+                    }
+                    if(digits==0||(!braced&&digits!=4)||value>0x10FFFF||
+                       (value>=0xD800&&value<=0xDFFF)) {
+                        fail(compiler,span,"invalid \\u escape");return 0;
+                    }
+                    encoded_length=utf8_encode_code_point(value,encoded);
+                    break;
+                }
                 default:
                     fail(compiler, span, "unsupported string escape");
                     return 0;
             }
         }
-        if (string->length == DIAMOND_MAX_STRING_LENGTH) {
+        if(encoded_length==0) {encoded[0]=character;encoded_length=1;}
+        if (string->length+encoded_length > DIAMOND_MAX_STRING_LENGTH) {
             fail(compiler, span, "string literal is too long");
             return 0;
         }
-        string->chars[string->length++] = character;
+        for(size_t byte=0;byte<encoded_length;byte++)
+            string->chars[string->length++] = encoded[byte];
     }
     string->chars[string->length] = '\0';
     return (uint16_t)compiler->function->string_count++;
@@ -1592,19 +1665,42 @@ static Precedence token_precedence(DiamondTokenKind kind) {
 
 static uint16_t parse_precedence(Compiler *compiler, Precedence precedence);
 static uint16_t parse_case(Compiler *compiler);
+
+/* `**` lexes as two `*` tokens (a hash-rest pattern `{**rest}` needs them
+ * separate); in operator position, two touching `*`s are exponentiation. */
+static bool power_operator_ahead(const Compiler *compiler) {
+    if(compiler->current.kind!=DIAMOND_TOKEN_STAR)return false;
+    DiamondLexer lookahead=compiler->lexer;
+    const DiamondToken next=diamond_lexer_next(&lookahead);
+    return next.kind==DIAMOND_TOKEN_STAR&&
+        next.span.start==compiler->current.span.start+1;
+}
+
+static Precedence infix_precedence(const Compiler *compiler) {
+    return power_operator_ahead(compiler)?PREC_POWER:
+        token_precedence(compiler->current.kind);
+}
 static uint16_t compile_block(Compiler *compiler);
 
 static uint16_t parse_integer(Compiler *compiler) {
     const DiamondSpan span = compiler->previous.span;
     int64_t value = 0;
-    for (size_t index = 0; index < span.length; index++) {
+    int base = 10;
+    size_t first = 0;
+    if (span.length > 2 && compiler->source[span.start] == '0') {
+        const char prefix = compiler->source[span.start + 1];
+        base = prefix == 'x' || prefix == 'X' ? 16 : prefix == 'b' || prefix == 'B' ? 2 :
+               prefix == 'o' || prefix == 'O' ? 8 : 10;
+        if (base != 10) first = 2;
+    }
+    for (size_t index = first; index < span.length; index++) {
         if(compiler->source[span.start+index]=='_') continue;
-        const int digit = compiler->source[span.start + index] - '0';
-        if (value > (INT64_MAX - digit) / 10) {
+        const int digit = (int)hex_digit_value(compiler->source[span.start + index]);
+        if (value > (INT64_MAX - digit) / base) {
             fail(compiler, span, "integer literal is too large");
             return 0;
         }
-        value = value * 10 + digit;
+        value = value * base + digit;
     }
     const uint16_t destination = allocate_register(compiler);
     const uint16_t constant = add_constant(compiler, DIAMOND_INT(value));
@@ -1794,6 +1890,23 @@ static uint16_t parse_identifier(Compiler *compiler) {
     return destination;
 }
 
+/* Is `function_index` a `def self.x` function of a module other than the
+ * one being compiled? Those are reached as `Module.x(...)`; a bare `x(...)`
+ * outside the module must not find one (it would shadow a builtin such
+ * as sqrt, or a top-level function of the same name). */
+static bool function_belongs_to_other_module(const Compiler *compiler,
+                                             size_t function_index) {
+    for(size_t module=0;module<compiler->program->module_count;module++) {
+        if((int)module==compiler->current_module)continue;
+        const DiamondModule *owner=&compiler->program->modules[module];
+        for(size_t index=0;index<owner->singleton_method_count;index++)
+            if(owner->singleton_methods[index].function_index==function_index&&
+               !owner->singleton_methods[index].needs_receiver)
+                return true;
+    }
+    return false;
+}
+
 static int find_function(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = compiler->program->function_count; index > 0; index--) {
         const size_t function_index = index - 1;
@@ -1810,7 +1923,8 @@ static int find_function(const Compiler *compiler, DiamondSpan name) {
                 break;
             }
         }
-        if (equal) return (int)function_index;
+        if (equal && !function_belongs_to_other_module(compiler, function_index))
+            return (int)function_index;
     }
     return -1;
 }
@@ -3433,6 +3547,20 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         note_self_reference(compiler,name);
         if(compiler->discovery_pass)
             return parse_discovery_unknown_call(compiler);
+        /* A module function of that name is reached through its module. */
+        for(size_t module=0;module<compiler->program->module_count;module++) {
+            const DiamondModule *owner=&compiler->program->modules[module];
+            for(size_t index=0;index<owner->singleton_method_count;index++) {
+                if(!name_equals(compiler,owner->singleton_methods[index].name,name,false))
+                    continue;
+                char message[sizeof compiler->diagnostic->message];
+                snprintf(message,sizeof message,
+                    "undefined function; did you mean %s.%.*s(...)?",owner->name,
+                    (int)name.length,compiler->source+name.start);
+                fail(compiler,name,message);
+                return 0;
+            }
+        }
         fail(compiler, name, "undefined function");
         return 0;
     }
@@ -4814,6 +4942,10 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
             fail(compiler,compiler->current.span,"File.publish requires path and bytes");
             return 0;
         }
+        if(id==DIAMOND_FILE_PATH_WRITE) {
+            fail(compiler,compiler->current.span,"File.write requires a path and data");
+            return 0;
+        }
         if(id==DIAMOND_FILE_PATH_RENAME) {
             fail(compiler,compiler->current.span,"File.rename requires a source and destination path");
             return 0;
@@ -4898,8 +5030,18 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_EXPAND);
     }
-    fail(compiler,method,"unknown File method (expected open/delete/publish/sync/join/dirname/basename/"
-        "extname/absolute?/directory?/expand_path)");
+    if(name_equals(compiler,"read",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_READ);
+    }
+    if(name_equals(compiler,"write",method,false)) {
+        advance_token(compiler);
+        const uint16_t written=parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_WRITE);
+        compiler->known_types[written]=DIAMOND_TYPE_INT;
+        return written;
+    }
+    fail(compiler,method,"unknown File method (expected open/read/write/exist?/delete/rename/"
+        "publish/sync/join/dirname/basename/extname/absolute?/directory?/expand_path)");
     return 0;
 }
 
@@ -7028,15 +7170,14 @@ static uint16_t parse_name(Compiler *compiler) {
  * `delegate` always calls this with writer_name=false, type_arguments=
  * nullptr, type_argument_count=0, since neither writer-call syntax nor
  * generics apply to its scope. */
+static uint16_t emit_invoke_with_name(Compiler *compiler, uint16_t receiver,
+        uint16_t method, const uint16_t *type_arguments, size_t type_argument_count,
+        const uint16_t *args, size_t count);
+
 static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
         DiamondSpan method_name, bool writer_name,
         const uint16_t *type_arguments, size_t type_argument_count,
         const uint16_t *args, size_t count) {
-    const uint16_t base = allocate_register(compiler);
-    for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
-    for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
-        (uint16_t)(base+i), args[i], 0, 2);
-    const uint16_t dest=allocate_register(compiler);
     const uint16_t method=add_name_string(compiler,method_name);
     if(writer_name&&!compiler->failed) {
         DiamondStringConstant *string=&compiler->function->strings[method];
@@ -7047,6 +7188,43 @@ static uint16_t emit_invoke_call(Compiler *compiler, uint16_t receiver,
             string->chars[string->length]='\0';
         }
     }
+    return emit_invoke_with_name(compiler,receiver,method,type_arguments,
+                                 type_argument_count,args,count);
+}
+
+/* A method call whose name the compiler supplies (desugaring, such as
+ * `value[start, length]` into value.slice(start, length)), not source. */
+static uint16_t emit_invoke_named(Compiler *compiler, uint16_t receiver,
+        const char *name, const uint16_t *args, size_t count) {
+    const size_t length=strlen(name);
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,compiler->previous.span,"out of memory growing function strings");
+        return 0;
+    }
+    if(compiler->function->string_count==DIAMOND_MAX_STRING_CONSTANTS) {
+        fail(compiler,compiler->previous.span,"too many or oversized names in function");
+        return 0;
+    }
+    DiamondStringConstant *string=
+        &compiler->function->strings[compiler->function->string_count];
+    memcpy(string->chars,name,length);
+    string->length=length;
+    string->chars[length]='\0';
+    const uint16_t method=(uint16_t)compiler->function->string_count++;
+    return emit_invoke_with_name(compiler,receiver,method,nullptr,0,args,count);
+}
+
+static uint16_t emit_invoke_with_name(Compiler *compiler, uint16_t receiver,
+        uint16_t method, const uint16_t *type_arguments, size_t type_argument_count,
+        const uint16_t *args, size_t count) {
+    const uint16_t base = allocate_register(compiler);
+    for (size_t i=1;i<count;i++) (void)allocate_register(compiler);
+    for (size_t i=0;i<count;i++) emit_instruction(compiler, DIAMOND_OP_MOVE,
+        (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t dest=allocate_register(compiler);
     /* Phases 15 and 17 (docs/internal/jit-design.md): record this specific
      * call site's own receiver type, if the compiler's real known_types
      * tracking already proves one right here -- narrowing included, via
@@ -7476,9 +7654,24 @@ static CollectionRelay collection_relay(const Compiler *compiler,
  * instance signature, so its result cannot use the declared-return path above.
  * Preserve the receiver's nested collection graphs for the small family whose
  * result is structurally determined without inspecting arguments or blocks. */
+/* Was the call just emitted into `reg` a plain INVOKE with no arguments?
+ * first/last/sum mean something else with one (first(n) is an Array,
+ * sum with a block sums the block's results). */
+static bool invoke_had_no_arguments(const Compiler *compiler,uint16_t reg) {
+    const size_t count=compiler->function->code_count;
+    if(count<10)return false;
+    const uint8_t *code=compiler->function->code+count-10;
+    return code[0]==DIAMOND_OP_INVOKE&&
+        (uint16_t)((code[1]<<8)|code[2])==reg&&code[9]==0;
+}
+
 static void publish_collection_method_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name) {
-    const CollectionRelay relay=collection_relay(compiler,name);
+    CollectionRelay relay=collection_relay(compiler,name);
+    if((relay==COLLECTION_RELAY_SUM||name_equals(compiler,"first",name,false)||
+        name_equals(compiler,"last",name,false))&&
+       !invoke_had_no_arguments(compiler,reg))
+        relay=COLLECTION_RELAY_NONE;
     if(receiver_set_index<0||
        (size_t)receiver_set_index>=compiler->function->type_set_count)return;
     const DiamondTypeSet receiver=
@@ -9245,6 +9438,18 @@ static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
     const uint16_t index=parse_expression(compiler);
+    /* `value[start, length]` reads a run, as value.slice(start, length)
+     * does (Array and String both have slice). */
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        const uint16_t arguments[2]={index,parse_expression(compiler)};
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            fail(compiler,compiler->current.span,"expected ']' after index"); return 0;
+        }
+        advance_token(compiler);
+        return emit_invoke_named(compiler,receiver,"slice",arguments,2);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
         fail(compiler,compiler->current.span,"expected ']' after index"); return 0;
     }
@@ -11191,8 +11396,22 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
         }
         drop_facts_after_block_break(compiler,left);
     }
-    while (!compiler->failed &&
-           token_precedence(compiler->current.kind) >= precedence) {
+    while (!compiler->failed && infix_precedence(compiler) >= precedence) {
+        /* `base ** exponent`: a call of the `**` method, so Int/Float get
+         * it from the prelude (numeric_pow) and a class can define its
+         * own. The right side parses at the same precedence, making it
+         * right-associative. */
+        if(power_operator_ahead(compiler)) {
+            const DiamondSpan operator_span={.start=compiler->current.span.start,
+                .length=2,.line=compiler->current.span.line,
+                .column=compiler->current.span.column};
+            advance_token(compiler);advance_token(compiler);
+            skip_newlines(compiler);
+            const uint16_t exponent=parse_precedence(compiler,PREC_POWER);
+            left=emit_invoke_call(compiler,left,operator_span,false,nullptr,0,
+                                  &exponent,1);
+            continue;
+        }
         const DiamondTokenKind operator = compiler->current.kind;
         const Precedence operator_precedence = token_precedence(operator);
         advance_token(compiler);
@@ -11640,8 +11859,10 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
     /* An if/unless immediately after '=' is the start of the
      * assignment's own RHS expression (`x = if ... end`), not a
      * trailing postfix modifier on a value that hasn't been parsed yet.
-     * Deliberately NOT extended to 'return'/'raise': `return if cond`/
-     * `raise if cond` already have an established, different meaning
+     * Deliberately NOT extended to 'return'/'raise' in general (a
+     * one-line if-expression with `then` is the exception, see below):
+     * `return if cond`/`raise if cond` already have an established,
+     * different meaning
      * (a bare return/raise, postfix-conditioned on cond -- see
      * compile_return/compile_raise's own current.kind==IF/UNLESS
      * branches) that this function's callers already rely on; treating
@@ -11651,6 +11872,11 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
      * operator, e.g. `x = y && if ... end`, is still misread the old
      * way), but covers the position this most commonly comes up in. */
     bool expression_expected = false;
+    /* do...end blocks opened after the statement's start: an if/unless
+     * inside one belongs to that block's own body. An `end` with none open
+     * closes whatever this statement is inside (a one-line block's body,
+     * `do |x| x * 10 end, ...`), so the statement stops there. */
+    size_t block_depth = 0;
     for (;;) {
         DiamondToken token = diamond_lexer_next(&lookahead);
         if (token.kind == DIAMOND_TOKEN_EOF ||
@@ -11658,10 +11884,28 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
             token.kind == DIAMOND_TOKEN_NEWLINE) {
             return DIAMOND_TOKEN_EOF;
         }
+        if (token.kind == DIAMOND_TOKEN_DO) {
+            block_depth++;
+            continue;
+        }
+        if (token.kind == DIAMOND_TOKEN_END) {
+            if (block_depth == 0) return DIAMOND_TOKEN_EOF;
+            block_depth--;
+            continue;
+        }
+        if (block_depth > 0) continue;
         if (depth == 0 && seen &&
             (token.kind == DIAMOND_TOKEN_IF ||
              token.kind == DIAMOND_TOKEN_UNLESS)) {
             if (expression_expected) return DIAMOND_TOKEN_EOF;
+            /* `return if ok then 0 else 1 end`: a `then` later on the line
+             * makes this a one-line if-expression -- the value -- since a
+             * trailing modifier's condition never contains `then`. */
+            DiamondLexer rest = lookahead;
+            for (DiamondToken after = diamond_lexer_next(&rest);
+                 after.kind != DIAMOND_TOKEN_NEWLINE && after.kind != DIAMOND_TOKEN_EOF;
+                 after = diamond_lexer_next(&rest))
+                if (after.kind == DIAMOND_TOKEN_THEN) return DIAMOND_TOKEN_EOF;
             return token.kind;
         }
         switch (token.kind) {
@@ -11910,12 +12154,28 @@ static void maybe_rewrite_self_tail_call(Compiler *compiler,
         DIAMOND_OP_TAIL_CALL;
 }
 
+/* Is the `if`/`unless` at the current token a one-line if-expression
+ * (`if ok then 0 else 1 end`) rather than a trailing modifier? A modifier's
+ * condition never contains `then`, so a `then` later on the same line
+ * settles it. */
+static bool if_expression_follows(const Compiler *compiler) {
+    DiamondLexer lookahead=compiler->lexer;
+    for(DiamondToken token=diamond_lexer_next(&lookahead);
+        token.kind!=DIAMOND_TOKEN_NEWLINE&&token.kind!=DIAMOND_TOKEN_EOF;
+        token=diamond_lexer_next(&lookahead))
+        if(token.kind==DIAMOND_TOKEN_THEN)return true;
+    return false;
+}
+
+/* Is there no value after `return`/`break`/`next`? A trailing modifier
+ * (`return if done`) starts no value; an if-expression does. */
 static bool at_statement_end(Compiler *compiler) {
+    if(compiler->current.kind==DIAMOND_TOKEN_IF||
+       compiler->current.kind==DIAMOND_TOKEN_UNLESS)
+        return !if_expression_follows(compiler);
     return compiler->current.kind==DIAMOND_TOKEN_NEWLINE ||
            compiler->current.kind==DIAMOND_TOKEN_END ||
            compiler->current.kind==DIAMOND_TOKEN_ELSE ||
-           compiler->current.kind==DIAMOND_TOKEN_IF ||
-           compiler->current.kind==DIAMOND_TOKEN_UNLESS ||
            compiler->current.kind==DIAMOND_TOKEN_EOF;
 }
 
@@ -15210,7 +15470,28 @@ static uint16_t compile_class(Compiler *compiler) {
     if(existing_class>=0) {
         index=existing_class;
         class=&compiler->program->classes[(size_t)index];
-        if(class->declared_by_discovery) {
+        if(class->declared_by_discovery&&class->from_template) {
+            /* A reopened template (prelude) class: back to the template's
+             * own methods, fields, and superclass, dropping only what the
+             * discovery pass added (see diamond_compile_impl). */
+            class->discovered_method_count=0;
+            for(size_t method=class->template_method_count;method<class->method_count;method++)
+                if(!class->methods[method].included)
+                    class->discovered_methods[class->discovered_method_count++]=
+                        class->methods[method].function_index;
+            memset(&class->methods[class->template_method_count],0,
+                (class->method_count-class->template_method_count)*sizeof class->methods[0]);
+            memset(&class->singleton_methods[class->template_singleton_method_count],0,
+                (class->singleton_method_count-class->template_singleton_method_count)*
+                    sizeof class->singleton_methods[0]);
+            class->method_count=class->template_method_count;
+            class->singleton_method_count=class->template_singleton_method_count;
+            class->field_count=class->template_field_count;
+            class->class_variable_count=class->template_class_variable_count;
+            class->declared_by_discovery=false;
+            class->from_template=false;
+            superclass_decided=true;
+        } else if(class->declared_by_discovery) {
             /* First time *this* compile pass touches a slot the *other*
              * (already-finished) pass populated -- see diamond_compile's
              * own comment on declared_by_discovery. Full zero, not just
@@ -15916,6 +16197,44 @@ static DiamondToken prescan_parameter_arity(DiamondLexer *lookahead,
  * later, unaffected by anything this function does) is what actually
  * validates and runs the source -- this can only ever add forward-
  * visibility, never subtract correctness. */
+/* Does the `def` just read (the lookahead is positioned after it) use the
+ * endless `def name(params) = expr` form, which has no `end`? True when an
+ * `=` follows the parameter list on the same line. */
+static bool prescan_def_is_endless(DiamondLexer lookahead) {
+    size_t paren_depth=0;
+    bool seen_parameters=false;
+    for(DiamondToken token=diamond_lexer_next(&lookahead);
+        token.kind!=DIAMOND_TOKEN_NEWLINE&&token.kind!=DIAMOND_TOKEN_EOF;
+        token=diamond_lexer_next(&lookahead)) {
+        if(token.kind==DIAMOND_TOKEN_LEFT_PAREN) paren_depth++;
+        else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN&&paren_depth>0) {
+            if(--paren_depth==0)seen_parameters=true;
+        } else if(token.kind==DIAMOND_TOKEN_EQUAL&&paren_depth==0&&seen_parameters)
+            return true;
+    }
+    return false;
+}
+
+/* Can a token of this kind end an expression? An if/unless/while/until
+ * right after one is a trailing modifier (`x = 1 if y`, `return if done`),
+ * which has no `end` of its own. */
+static bool prescan_ends_value(DiamondTokenKind kind) {
+    switch(kind) {
+        case DIAMOND_TOKEN_IDENTIFIER: case DIAMOND_TOKEN_INTEGER:
+        case DIAMOND_TOKEN_FLOAT: case DIAMOND_TOKEN_STRING:
+        case DIAMOND_TOKEN_SYMBOL: case DIAMOND_TOKEN_RIGHT_PAREN:
+        case DIAMOND_TOKEN_RIGHT_BRACKET: case DIAMOND_TOKEN_RIGHT_BRACE:
+        case DIAMOND_TOKEN_TRUE: case DIAMOND_TOKEN_FALSE: case DIAMOND_TOKEN_NIL:
+        case DIAMOND_TOKEN_SELF: case DIAMOND_TOKEN_END:
+        case DIAMOND_TOKEN_INSTANCE_VARIABLE: case DIAMOND_TOKEN_CLASS_VARIABLE:
+        case DIAMOND_TOKEN_RETURN: case DIAMOND_TOKEN_BREAK: case DIAMOND_TOKEN_NEXT:
+        case DIAMOND_TOKEN_REDO: case DIAMOND_TOKEN_RETRY:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static void prescan_module_function_signatures(Compiler *compiler,
         DiamondModule *module) {
     DiamondLexer lookahead=compiler->lexer;
@@ -15923,9 +16242,16 @@ static void prescan_module_function_signatures(Compiler *compiler,
     size_t depth=0;
     bool module_function_mode=false;
     bool pending_loop_do=false;
+    DiamondTokenKind previous=DIAMOND_TOKEN_NEWLINE;
     while(token.kind!=DIAMOND_TOKEN_EOF) {
+        const bool modifier_position=prescan_ends_value(previous);
+        previous=token.kind;
         if(token.kind==DIAMOND_TOKEN_NEWLINE) {
             pending_loop_do=false;
+        } else if((token.kind==DIAMOND_TOKEN_WHILE||token.kind==DIAMOND_TOKEN_UNTIL||
+                   token.kind==DIAMOND_TOKEN_IF||token.kind==DIAMOND_TOKEN_UNLESS)&&
+                  modifier_position) {
+            /* A trailing modifier: no body, no `end`. */
         } else if(token.kind==DIAMOND_TOKEN_WHILE||
                    token.kind==DIAMOND_TOKEN_UNTIL||
                    token.kind==DIAMOND_TOKEN_LOOP) {
@@ -15955,8 +16281,12 @@ static void prescan_module_function_signatures(Compiler *compiler,
                 token=next;continue;
             }
         } else if(token.kind==DIAMOND_TOKEN_DEF) {
-            depth++;
-            if(depth==1) {
+            /* An endless def has no `end` to balance: register it the same
+             * way at depth 0, but don't count it as opening a body. */
+            const bool endless=prescan_def_is_endless(lookahead);
+            const bool top_level_def=depth==0;
+            if(!endless)depth++;
+            if(top_level_def) {
                 DiamondToken next=diamond_lexer_next(&lookahead);
                 bool is_module_singleton=false;
                 if(next.kind==DIAMOND_TOKEN_SELF) {
@@ -15997,7 +16327,16 @@ static void prescan_module_function_signatures(Compiler *compiler,
                     if(after_name.kind==DIAMOND_TOKEN_LEFT_PAREN)
                         past_parameters=prescan_parameter_arity(&lookahead,
                             &arity,&required_arity,&has_variadic);
-                    if(module->singleton_method_count<DIAMOND_MAX_METHODS) {
+                    /* A second def of the same name is a duplicate the real
+                     * definition pass reports; don't pre-register it too. */
+                    bool already_registered=false;
+                    for(size_t existing=0;existing<module->singleton_method_count;existing++) {
+                        const char *known=module->singleton_methods[existing].name;
+                        if(strlen(known)==name_span.length&&
+                           memcmp(known,compiler->source+name_span.start,name_span.length)==0)
+                            already_registered=true;
+                    }
+                    if(!already_registered&&module->singleton_method_count<DIAMOND_MAX_METHODS) {
                         DiamondMethod *entry=
                             &module->singleton_methods[module->singleton_method_count++];
                         *entry=(DiamondMethod){0};
@@ -16075,7 +16414,19 @@ static uint16_t compile_module(Compiler *compiler) {
     if(existing_module>=0) {
         index=existing_module;
         module=&compiler->program->modules[(size_t)index];
-        if(module->declared_by_discovery) {
+        if(module->declared_by_discovery&&module->from_template) {
+            /* A reopened template (prelude) module: back to the template's
+             * own methods and fields; singleton functions stay (discovery
+             * appended the program's after the template's) and are claimed
+             * from just past the template's own. */
+            memset(&module->methods[module->template_method_count],0,
+                (module->method_count-module->template_method_count)*sizeof module->methods[0]);
+            module->method_count=module->template_method_count;
+            module->field_count=module->template_field_count;
+            module->next_singleton_claim=module->template_singleton_method_count;
+            module->declared_by_discovery=false;
+            module->from_template=false;
+        } else if(module->declared_by_discovery) {
             /* First time *this* compile pass touches a slot the *other*
              * (already-finished) pass populated -- see diamond_compile's
              * own comment on declared_by_discovery. Full zero, not just
@@ -18046,6 +18397,39 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     for(size_t index=template!=nullptr?template->module_count:0;
         index<program->module_count;index++)
         program->modules[index].declared_by_discovery=true;
+    /* A program can also reopen a template (prelude) class or module --
+     * `class Range ... def middle() ... end`. Discovery added those methods
+     * to its copy of the entry, and the real pass adds them again as it
+     * reaches them, so such an entry is reset too -- but only back to what
+     * the template itself had (from_template), not to empty. */
+    if(template!=nullptr) {
+        for(size_t index=0;index<template->class_count;index++) {
+            DiamondClass *class=&program->classes[index];
+            const DiamondClass *original=&template->classes[index];
+            if(class->method_count==original->method_count&&
+               class->singleton_method_count==original->singleton_method_count&&
+               class->field_count==original->field_count&&
+               class->class_variable_count==original->class_variable_count)continue;
+            class->declared_by_discovery=true;
+            class->from_template=true;
+            class->template_method_count=original->method_count;
+            class->template_singleton_method_count=original->singleton_method_count;
+            class->template_field_count=original->field_count;
+            class->template_class_variable_count=original->class_variable_count;
+        }
+        for(size_t index=0;index<template->module_count;index++) {
+            DiamondModule *module=&program->modules[index];
+            const DiamondModule *original=&template->modules[index];
+            if(module->method_count==original->method_count&&
+               module->singleton_method_count==original->singleton_method_count&&
+               module->field_count==original->field_count)continue;
+            module->declared_by_discovery=true;
+            module->from_template=true;
+            module->template_method_count=original->method_count;
+            module->template_singleton_method_count=original->singleton_method_count;
+            module->template_field_count=original->field_count;
+        }
+    }
 
     diamond_program_free(discovery);
     free(discovery);

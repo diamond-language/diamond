@@ -74,10 +74,9 @@ behavior. The last group returns its result directly —
 non_matching]`, `.group_by` a `Hash` keyed on the block's own result,
 `.tally` a `Hash` of element to occurrence count, and `.zip` pads the
 shorter array with `Nil` out to the *receiver's* own length (`[1, 2,
-3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]`), matching Ruby. None of
-these are defined on `Hash` — a deliberate, narrower scope than Ruby's
-own Enumerable, matching the existing asymmetry `.min`/`.max`/`.sort`
-already have (Array-only, not Hash).
+3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]`), matching Ruby. The
+Hash versions are listed under [Ruby-compatible
+methods](#ruby-compatible-methods) below.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even
@@ -139,14 +138,13 @@ relationship to what a positionally-matched C conversion expects.
 
 Strings also support `[]` with a single `Int` index, returning a new
 one-character `String` (bounds-checked, `IndexError` outside the
-string — the same as `.slice()`); unlike Array/Hash, `[]=` on a String
-is rejected outright with a `TypeError` (strings are immutable).
-`.repeat(n)` returns a new `String` with the receiver repeated `n`
-times (`n == 0` → `""`); a negative `n` raises a rescuable `RangeError`.
-This is deliberately a method, not `*` — `"x" * 3` isn't supported,
-since making the `*` operator polymorphic over String would need a
-new deoptimization mechanism for the compiler's Int-only fast path
-(`MULTIPLY_INT`) that doesn't otherwise exist for it.
+string — the same as `.slice()`; a negative index counts from the end,
+so `s[-1]` is the last byte), and `s[start, length]`, the same as
+`s.slice(start, length)`. Unlike Array/Hash, `[]=` on a String is
+rejected outright with a `TypeError` (strings are immutable).
+`.repeat(n)` (or `s * n`) returns a new `String` with the receiver
+repeated `n` times (`n == 0` → `""`); a negative `n` raises a rescuable
+`RangeError`.
 
 `.start_with?(prefix)`/`.end_with?(suffix)` are plain literal String
 checks (no `Regexp` support). `.ljust(width, padding)`/`.rjust(width,
@@ -510,3 +508,51 @@ It's a plain Diamond class, not a native object — `#append` pushes
 `#to_s` calls the native `.join("")` above once, so the total cost of
 building a string this way is O(n), the same complexity `Array#join`
 already has for a pre-collected array of pieces.
+
+## Ruby-compatible methods
+
+Beyond the methods above, built-in values answer most of the methods a Ruby
+programmer reaches for. They're ordinary Diamond functions in the prelude
+(`lib/core.di`, named `diamond_array_…`, `diamond_hash_…`, and so on) that
+the VM finds when a value has no native method of that name. A program can
+define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
+`float_`, `numeric_`) function to add a method, or to replace one of these.
+
+- **Array**: `size`, `insert(i, x)`, `unshift(x)`, `shift`, `clear`,
+  `replace(other)`, `delete(x)`, `delete_if`, `keep_if`, `fill(x)`,
+  `first(n)`, `last(n)`, `count()` / `count(x)` / `count { }`,
+  `find_index`/`index`/`rindex` (a value or a block), `values_at`, `dig`,
+  `to_h`, `transpose`, `minmax`, `sum { }`, `filter_map`, `each_with_object`,
+  `none?`, `one?`, `inject`, `product`, `combination(k)`, `chunk_while`,
+  `rotate`, `shuffle`, `sample`, `to_a`. Operators: `a + b`, `a - b` (elements
+  not in `b`), `a & b`, `a | b`, `a * n`, `a * ", "` (join), and a negative
+  index (`a[-1]`) or `a[start, length]`.
+- **Hash**: a block that takes two parameters gets `(key, value)`, as in
+  Ruby; a one-parameter block still gets the value, as Hash iteration always
+  has. `map`, `select`/`filter` and `reject` (a `Hash` for a two-parameter
+  block), `any?`, `all?`, `none?`, `count`, `find`, `sum`, `min_by`, `max_by`,
+  `sort_by`, `sort`, `group_by`, `partition`, `filter_map`,
+  `each_with_object`, `each_with_index`, `to_a`, `size`, `key?`/`has_key?`/
+  `include?`/`member?`, `value?`, `dig`, `transform_values`, `transform_keys`,
+  `invert`, `update`, `slice`, `except`, `compact`, and `fetch(key)` without
+  a fallback (an `IndexError` for a missing key).
+- **String**: `size`, `bytesize`, `index`, `rindex`, `count(chars)`,
+  `delete(chars)`, `squeeze`, `swapcase`, `lines`, `each_line`,
+  `each_char`, `each_byte`, `center`, `chop`, `partition`, `delete_prefix`,
+  `delete_suffix`, `casecmp?`, `between?`, `match?(regexp)`, `to_sym`, `hex`,
+  `oct`, `to_i(base)`, `getbyte(i)`, `split()` (on whitespace),
+  `split(separator, limit)`, and `ljust`/`rjust` with a default space pad.
+- **Int and Float**: `**` (exact for an `Int` base and a non-negative `Int`
+  exponent, a `Float` otherwise), `pow`, `clamp`, `between?`, `divmod`,
+  `fdiv`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `succ`,
+  `pred`, `gcd`, `lcm`, `digits`, `to_s(base)`, and on Float `truncate`,
+  `nan?`, `infinite?`, `finite?`.
+- **Every value**: `to_s()` (the text interpolation gives it) and `nil?()`;
+  `Callable#arity`.
+- **Math**: `Math.sqrt`, `cbrt`, `sin`, `cos`, `tan`, `exp`, `log`, `log2`,
+  `log10`, `tanh`, `hypot`, `pi`, `e`. The same builtins are also plain
+  functions (`sqrt(x)`).
+- **Range**: `step(n)`, `first(n)`, `reverse_each`.
+
+`values_at`, `dig`, `slice`, and `except` take up to six arguments.
+

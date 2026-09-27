@@ -21,6 +21,38 @@ authoritative fine-grained record.
 
 ### Language
 
+- About 120 common Ruby methods on built-in values: Array (`insert`,
+  `shift`, `delete`, `first(n)`, `count`, `index`, `to_h`, `transpose`,
+  `combination`, `shuffle`, `sample`, ...), Hash (`map`/`select`/`reject`/
+  `any?`/`find`/`min_by`/`sort_by`/... with `|key, value|` blocks, `key?`,
+  `dig`, `transform_values`, `slice`, `except`, ...), String (`index`,
+  `lines`, `split()`, `center`, `delete`, `partition`, `to_i(16)`, ...), and
+  Int/Float (`**`, `clamp`, `divmod`, `gcd`, `digits`, `even?`,
+  `to_s(2)`, ...), plus `Math.sqrt` and friends, `Range#step`, `nil?`, and
+  `Callable#arity`. See docs/collections.md, "Ruby-compatible methods".
+  They're prelude functions reached through the extension protocol, which
+  now covers String, Int, and Float as well as Array and Hash.
+- Operators: `**`; `Array - & | *`; `String * n`; negative indexes
+  (`xs[-1]`, `s[-1]`); `value[start, length]`.
+- Literals: `0x`/`0b`/`0o` Ints, and `\0`, `\e`, `\xHH`, `\uHHHH`,
+  `\u{H...}` string escapes.
+- `File.read(path)` and `File.write(path, data)`.
+- A program can reopen a built-in class or module (`class Range`, `module
+  Math`); adding a method used to fail as a duplicate.
+- A module's `def self.x` is no longer callable as a bare `x()` outside the
+  module, where it shadowed builtins and top-level functions of the same
+  name; the error now suggests `Module.x(...)`.
+- `return if ok then 0 else 1 end` returns the if-expression's value
+  instead of parsing as a bare `return` with a trailing `if`.
+- A one-line block's trailing `if` modifier (`do |x| x * 2 if x > 1 end`)
+  no longer leaks into an earlier block on the same line.
+- Forward references between a module's singleton functions work when an
+  earlier one uses a trailing `if` modifier or the endless `def x() = ...`
+  form.
+- A bare `Callable` where `Callable[N]` is expected is checked at run time
+  instead of rejected at compile time.
+- "wrong number of arguments" errors from a method call name the method,
+  the receiver's type, and the argument count.
 - Every value answers `to_s()`, with the same text string interpolation
   gives it. It used to exist only on Int, Float, and Time. Ranges print as
   `1..4` / `0...3`.

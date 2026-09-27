@@ -134,6 +134,14 @@ void diamond_lexer_init(DiamondLexer *lexer, const char *source) {
     };
 }
 
+static bool is_base_digit(char character, int base) {
+    if (base == 16)
+        return (character >= '0' && character <= '9') ||
+               (character >= 'a' && character <= 'f') ||
+               (character >= 'A' && character <= 'F');
+    return character >= '0' && character < (char)('0' + base);
+}
+
 DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
     while (!at_end(lexer)) {
         const char character = lexer->source[lexer->current];
@@ -169,6 +177,33 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
     }
 
     const char character = advance(lexer);
+    /* 0x1F, 0b1010, 0o17: an Int in another base, with the same `_`
+     * separators a decimal literal allows. The prefix counts only when a
+     * digit of that base follows it. */
+    if (character == '0') {
+        const char prefix = lexer->source[lexer->current];
+        const int base = prefix == 'x' || prefix == 'X' ? 16 :
+                         prefix == 'b' || prefix == 'B' ? 2 :
+                         prefix == 'o' || prefix == 'O' ? 8 : 0;
+        if (base != 0 && is_base_digit(lexer->source[lexer->current + 1], base)) {
+            advance(lexer);
+            while (true) {
+                const char next = lexer->source[lexer->current];
+                if (is_base_digit(next, base)) {
+                    advance(lexer);
+                    continue;
+                }
+                if (next == '_') {
+                    advance(lexer);
+                    if (!is_base_digit(lexer->source[lexer->current], base))
+                        return token(lexer, DIAMOND_TOKEN_ERROR);
+                    continue;
+                }
+                break;
+            }
+            return token(lexer, DIAMOND_TOKEN_INTEGER);
+        }
+    }
     if (character >= '0' && character <= '9') {
         while (true) {
             const char next=lexer->source[lexer->current];

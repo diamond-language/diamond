@@ -1,4 +1,4 @@
-module Math
+module Calc
   def add(left, right)
     left + right
   end
@@ -6,4 +6,4 @@ module Math
   module_function add
 end
 
-puts(Math.add(20, 22))
+puts(Calc.add(20, 22))

@@ -7713,6 +7713,34 @@ static DiamondVmStatus method_missing_helper(DiamondVm *vm,const DiamondChunk *o
  * spurious TypeError instead of promoting to Float, because only ADD's
  * own block had ever had the Float check. Confirmed with
  * DIAMOND_QUICKEN=1 DIAMOND_QUICKEN_THRESHOLD=1 before this fix. */
+static const DiamondFunction *find_top_level_function(
+        const DiamondChunk *chunk, const char *name, size_t length);
+static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,const DiamondFunction *target,
+        const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
+        size_t depth,DiamondValue *result);
+
+/* Array - & | * and String * are written in the prelude: `left OP right`
+ * with an Array or String on the left calls diamond_array_op_WORD(left,
+ * right) or diamond_string_op_WORD(left, right) when that function exists. Returns false,
+ * with nothing called, when it doesn't. */
+static bool operator_prelude_fallback(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,DiamondValue left,DiamondValue right,const char *word,
+        DiamondValue *out,DiamondVmStatus *status) {
+    if(left.kind!=DIAMOND_VALUE_OBJECT)return false;
+    const char *prefix=left.as.object->kind==DIAMOND_OBJECT_ARRAY?"diamond_array_op_":
+        left.as.object->kind==DIAMOND_OBJECT_STRING?"diamond_string_op_":nullptr;
+    if(prefix==nullptr)return false;
+    char bridge[DIAMOND_MAX_FUNCTION_NAME];
+    const int written=snprintf(bridge,sizeof bridge,"%s%s",prefix,word);
+    if(written<=0||(size_t)written>=sizeof bridge)return false;
+    const DiamondFunction *target=find_top_level_function(chunk,bridge,(size_t)written);
+    if(target==nullptr)return false;
+    const DiamondValue arguments[2]={left,right};
+    *status=forward_to_top_level_helper(vm,chunk,target,arguments,0,1,1,depth,out);
+    return true;
+}
+
 static DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
         size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
         DiamondValue *out_result) {
@@ -7980,6 +8008,12 @@ static DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,
             const DiamondVmStatus time_status=
                 time_subtract_fallback(vm,left_value,right_value,out_result);
             if(time_status!=DIAMOND_VM_TYPE_ERROR)return time_status;
+        }
+        if(generic==DIAMOND_OP_SUBTRACT||generic==DIAMOND_OP_MULTIPLY) {
+            DiamondVmStatus prelude_status=DIAMOND_VM_OK;
+            if(operator_prelude_fallback(vm,chunk,depth,left_value,right_value,
+                   generic==DIAMOND_OP_SUBTRACT?"minus":"times",out_result,&prelude_status))
+                return prelude_status;
         }
         format_operator_type_error(vm,left_value,right_value,name);
         return DIAMOND_VM_TYPE_ERROR;
@@ -9013,6 +9047,15 @@ static const DiamondFunction *find_collection_extension(
             chunk,bridge,(size_t)written);
         if(specific!=nullptr)return specific;
     }
+    /* The prelude's own Ruby-compatible methods live under diamond_, so
+     * they never collide with a program's own array_x/hash_x functions --
+     * which, being probed first, can still extend or replace them. */
+    written=snprintf(bridge,sizeof bridge,"diamond_%s%.*s",prefix,(int)length,name);
+    if(written>0&&(size_t)written<sizeof bridge) {
+        const DiamondFunction *builtin=find_top_level_function(
+            chunk,bridge,(size_t)written);
+        if(builtin!=nullptr)return builtin;
+    }
     if(kind==DIAMOND_OBJECT_HASH) {
         const bool shared=
             (length==4&&memcmp(name,"lazy",4)==0)||
@@ -9027,6 +9070,28 @@ static const DiamondFunction *find_collection_extension(
     written=snprintf(bridge,sizeof bridge,"enumerable_%.*s",(int)length,name);
     if(written<=0||(size_t)written>=sizeof bridge)return nullptr;
     return find_top_level_function(chunk,bridge,(size_t)written);
+}
+
+/* The same extension protocol for String, Int, and Float: `"s".foo(x)`
+ * probes string_foo(s, x); `5.foo(x)` probes integer_foo, then
+ * numeric_foo; a Float probes float_foo, then numeric_foo -- each first
+ * as a program's own function, then as the prelude's diamond_ version.
+ * `**` maps to the name `pow`, since a function name can't contain
+ * symbols. */
+static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
+        const char *const *prefixes,size_t prefix_count,const char *name,size_t length) {
+    if(length==2&&memcmp(name,"**",2)==0) {name="pow";length=3;}
+    if(length>0&&name[length-1]=='?')length--;
+    for(size_t pass=0;pass<2;pass++)
+        for(size_t index=0;index<prefix_count;index++) {
+            char bridge[DIAMOND_MAX_FUNCTION_NAME];
+            const int written=snprintf(bridge,sizeof bridge,"%s%s%.*s",
+                pass==0?"":"diamond_",prefixes[index],(int)length,name);
+            if(written<=0||(size_t)written>=sizeof bridge)continue;
+            const DiamondFunction *found=find_top_level_function(chunk,bridge,(size_t)written);
+            if(found!=nullptr)return found;
+        }
+    return nullptr;
 }
 
 static bool record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
@@ -9851,11 +9916,13 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
             return DIAMOND_VM_TYPE_ERROR;
         }
         const DiamondString *source = (const DiamondString *)receiver->as.object;
-        const int64_t char_index = index->as.integer;
+        /* A negative index counts from the end: s[-1] is the last byte. */
+        int64_t char_index = index->as.integer;
+        if (char_index < 0) char_index += (int64_t)source->length;
         if (char_index < 0 || (uint64_t)char_index >= source->length) {
             snprintf(vm->error, sizeof vm->error,
                      "index %" PRId64 " out of bounds for String of length %zu",
-                     char_index, source->length);
+                     index->as.integer, source->length);
             return DIAMOND_VM_INDEX_ERROR;
         }
         DiamondString *character = allocate_string(vm, source->chars + (size_t)char_index, 1);
@@ -9897,11 +9964,13 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
         snprintf(vm->error, sizeof vm->error, "Array#[] index must be an Int or Range, got %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int64_t array_index = index->as.integer;
+    /* A negative index counts from the end: xs[-1] is the last element. */
+    int64_t array_index = index->as.integer;
+    if (array_index < 0) array_index += (int64_t)array->count;
     if (array_index < 0 || (uint64_t)array_index >= array->count) {
         snprintf(vm->error, sizeof vm->error,
                  "index %" PRId64 " out of bounds for Array of length %zu",
-                 array_index, array->count);
+                 index->as.integer, array->count);
         return DIAMOND_VM_INDEX_ERROR;
     }
     *out = array->values[(size_t)array_index];
@@ -9989,11 +10058,13 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
         snprintf(vm->error, sizeof vm->error, "Array#[]= index must be an Int or Range, got %s", actual);
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int64_t array_index = index->as.integer;
+    /* A negative index counts from the end: xs[-1] is the last element. */
+    int64_t array_index = index->as.integer;
+    if (array_index < 0) array_index += (int64_t)array->count;
     if (array_index < 0 || (uint64_t)array_index >= array->count) {
         snprintf(vm->error, sizeof vm->error,
                  "index %" PRId64 " out of bounds for Array of length %zu",
-                 array_index, array->count);
+                 index->as.integer, array->count);
         return DIAMOND_VM_INDEX_ERROR;
     }
     if (!array_value_satisfies_constraints(array, *source)) {
@@ -11941,6 +12012,66 @@ static DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path)
 /* File.rename(from, to): rename(2), so an existing `to` is replaced
  * atomically -- a reader sees the old file or the new one, never a
  * partial write. Both paths must be on the same filesystem. */
+static DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path,
+                                        DiamondValue *result) {
+    if(memchr(path->chars,'\0',path->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"File.read path must not contain NUL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    FILE *file=fopen(path->chars,"rb");
+    if(file==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+            (int)path->length,path->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    ByteBuffer contents={0};
+    char chunk[65536];
+    bool ok=true;
+    size_t got=0;
+    while(ok&&(got=fread(chunk,1,sizeof chunk,file))>0)
+        ok=byte_buffer_append(&contents,chunk,got);
+    const bool read_failed=ferror(file)!=0;
+    const int saved_errno=errno;
+    fclose(file);
+    if(!ok) {free(contents.data);return DIAMOND_VM_OUT_OF_MEMORY;}
+    if(read_failed) {
+        free(contents.data);
+        snprintf(vm->error,sizeof vm->error,"cannot read '%.*s': %s",
+            (int)path->length,path->chars,strerror(saved_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    DiamondString *string=allocate_string(vm,
+        contents.data!=nullptr?contents.data:"",contents.length);
+    free(contents.data);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *result=DIAMOND_OBJECT(string);
+    return DIAMOND_VM_OK;
+}
+
+static DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path,
+                                         const DiamondString *data,DiamondValue *result) {
+    if(data==nullptr||memchr(path->chars,'\0',path->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "File.write requires a path without NUL and String data");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    FILE *file=fopen(path->chars,"wb");
+    if(file==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+            (int)path->length,path->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    const size_t written=fwrite(data->chars,1,data->length,file);
+    const int saved_errno=errno;
+    if(fclose(file)!=0||written!=data->length) {
+        snprintf(vm->error,sizeof vm->error,"cannot write '%.*s': %s",
+            (int)path->length,path->chars,strerror(saved_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    *result=DIAMOND_INT((int64_t)written);
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from,
                                          const DiamondString *to) {
     if(to==nullptr||from->length==0||to->length==0||
@@ -12582,7 +12713,8 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
         const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
         size_t depth,DiamondValue *result) {
     const size_t total_argc=(size_t)argc+1;
-    if(total_argc<target->required_arity||total_argc>target->arity)
+    if(total_argc<target->required_arity||
+       (total_argc>target->arity&&!target->has_variadic))
         return DIAMOND_VM_ARITY_ERROR;
     DiamondValue forward_args[DIAMOND_MAX_ARGUMENTS+1];
     forward_args[0]=registers[recv];
@@ -12929,6 +13061,10 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
             called,tap_argument,0,1,depth,&tap_result);
         if(tap_status!=DIAMOND_VM_OK) return tap_status;
         *out=registers[recv];return DIAMOND_VM_OK;
+    }
+    if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
+       argc==0&&lookup_method(owner,instance->class,"nil?",4)==nullptr) {
+        *out=DIAMOND_BOOL(false);return DIAMOND_VM_OK;
     }
     /* Every object answers to_s(), with the text interpolation gives it,
      * unless its class defines its own. */
@@ -16192,7 +16328,7 @@ static const NativeKeywordSignature native_keyword_signatures[]={
     {"index_of",{"needle"},1},{"slice",{"start","length"},2},
     {"split",{"separator"},1},{"repeat",{"count"},1},
     {"gsub",{"pattern","replacement"},2},{"sub",{"pattern","replacement"},2},
-    {"scan",{"pattern"},1},{"start_with?",{"prefix"},1},
+    {"scan",{"pattern"},1},{"getbyte",{"index"},1},{"start_with?",{"prefix"},1},
     {"end_with?",{"suffix"},1},{"ljust",{"width","padding"},2},
     {"rjust",{"width","padding"},2},{"tr",{"from","to"},2},
     {"format",{"values"},1},{"push",{"value"},1},
@@ -16535,6 +16671,29 @@ DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
 
+/* A bare "wrong number of arguments" doesn't say which call. When the
+ * failing instruction is a method call, name the method, the receiver's
+ * type, and how many arguments it got. Returns the message length, or 0
+ * when the instruction isn't a method call. */
+static size_t describe_invoke_arity_error(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondValue *registers,size_t offset) {
+    if(offset+10>chunk->code_count)return 0;
+    const DiamondOpCode opcode=(DiamondOpCode)chunk->code[offset];
+    if(opcode!=DIAMOND_OP_INVOKE&&opcode!=DIAMOND_OP_INVOKE_MONO&&
+       opcode!=DIAMOND_OP_INVOKE_TYPED)return 0;
+    const uint16_t recv=(uint16_t)((chunk->code[offset+3]<<8)|chunk->code[offset+4]);
+    const uint16_t name=(uint16_t)((chunk->code[offset+5]<<8)|chunk->code[offset+6]);
+    const uint8_t argc=chunk->code[offset+9];
+    if(name>=chunk->string_count)return 0;
+    const DiamondStringConstant *method_name=&chunk->strings[name];
+    char receiver[80];
+    diamond_format_value_type(receiver,sizeof receiver,registers[recv]);
+    const int written=snprintf(vm->error,sizeof vm->error,
+        "wrong number of arguments for '%.*s' on %s (given %u)",
+        (int)method_name->length,method_name->chars,receiver,argc);
+    return written<0?0:strlen(vm->error);
+}
+
 typedef enum NonlocalOutcome {
     NONLOCAL_CONTINUE,   /* landed at a call (break) or entered an ensure block */
     NONLOCAL_RETURNED,   /* this frame returns the value (*result set) */
@@ -16736,6 +16895,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     #define RECORD_ERROR(status_) do {                                      \
         if ((status_) != DIAMOND_VM_OK) {                                   \
             size_t used = strlen(vm->error);                                \
+            if (used == 0 && (status_) == DIAMOND_VM_ARITY_ERROR)           \
+                used = describe_invoke_arity_error(vm, chunk, registers,    \
+                                                   instruction_offset);     \
             if (used == 0) {                                                \
                 used = (size_t)snprintf(vm->error, sizeof(vm->error), "%s", \
                                         diamond_vm_status_name(status_));    \
@@ -17327,6 +17489,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
                     const char *name=bitwise_opcode==DIAMOND_OP_BITWISE_AND?"&":
                         bitwise_opcode==DIAMOND_OP_BITWISE_OR?"|":"^";
+                    DiamondValue prelude_result=DIAMOND_NIL;
+                    DiamondVmStatus prelude_status=DIAMOND_VM_OK;
+                    if(bitwise_opcode!=DIAMOND_OP_BITWISE_XOR&&
+                       operator_prelude_fallback(vm,chunk,depth,registers[left],
+                           registers[right],bitwise_opcode==DIAMOND_OP_BITWISE_AND?
+                           "and":"or",&prelude_result,&prelude_status)) {
+                        VM_PROPAGATE(prelude_status);
+                        registers[destination]=prelude_result;break;
+                    }
                     format_operator_type_error(vm,registers[left],registers[right],name);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
@@ -18940,14 +19111,77 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_PROPAGATE(tap_status);
                         registers[dest]=registers[recv];break;
                     }
+                    /* Array#shuffle and #sample: uniform choices from
+                     * OpenSSL's RAND_bytes (as SecureRandom uses), with
+                     * rejection sampling so no index is favoured. */
+                    if(registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                       registers[recv].as.object->kind==DIAMOND_OBJECT_ARRAY&&
+                       argc==0&&type_argument_count==0&&
+                       ((method_name->length==7&&memcmp(method_name->chars,"shuffle",7)==0)||
+                        (method_name->length==6&&memcmp(method_name->chars,"sample",6)==0))) {
+                        const DiamondArray *source=(const DiamondArray *)registers[recv].as.object;
+                        const bool sample=method_name->length==6;
+                        if(sample&&source->count==0) {registers[dest]=DIAMOND_NIL;break;}
+                        DiamondArray *shuffled=sample?nullptr:
+                            allocate_array(vm,source->values,source->count);
+                        if(!sample&&shuffled==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        const size_t rounds=sample?1:(shuffled->count>0?shuffled->count-1:0);
+                        for(size_t round=0;round<rounds;round++) {
+                            const uint64_t bound=sample?(uint64_t)source->count:
+                                (uint64_t)(shuffled->count-round);
+                            const uint64_t limit=UINT64_MAX-UINT64_MAX%bound;
+                            uint64_t draw=0;
+                            do {
+                                if(RAND_bytes((unsigned char *)&draw,sizeof draw)!=1) {
+                                    snprintf(vm->error,sizeof vm->error,
+                                        "Array#%s: RAND_bytes failed",sample?"sample":"shuffle");
+                                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                                }
+                            } while(draw>=limit);
+                            const size_t pick=(size_t)(draw%bound);
+                            if(sample) {registers[dest]=source->values[pick];break;}
+                            const size_t last=shuffled->count-1-round;
+                            const DiamondValue held=shuffled->values[last];
+                            shuffled->values[last]=shuffled->values[pick];
+                            shuffled->values[pick]=held;
+                        }
+                        if(!sample)registers[dest]=DIAMOND_OBJECT(shuffled);
+                        break;
+                    }
+                    /* nil?() on any built-in value, as in Ruby. */
+                    if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
+                       argc==0&&type_argument_count==0&&
+                       (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                        registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+                        registers[dest]=DIAMOND_BOOL(registers[recv].kind==DIAMOND_VALUE_NIL);
+                        break;
+                    }
+                    /* Callable#arity: how many arguments it declares (its
+                     * required ones, for a callable with optional or rest
+                     * parameters -- no Ruby-style negative encoding). */
+                    if(method_name->length==5&&memcmp(method_name->chars,"arity",5)==0&&
+                       argc==0&&type_argument_count==0&&
+                       registers[recv].kind==DIAMOND_VALUE_OBJECT&&
+                       registers[recv].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
+                        const DiamondClosure *callable=
+                            (const DiamondClosure *)registers[recv].as.object;
+                        const DiamondChunk *owner=callable->foreign_chunk!=nullptr?
+                            callable->foreign_chunk:chunk;
+                        if(callable->function_index>=owner->function_count)
+                            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                        const DiamondFunction *fn=owner->functions[callable->function_index];
+                        const uint8_t declared=fn->has_variadic?fn->required_arity:fn->arity;
+                        registers[dest]=DIAMOND_INT((int64_t)declared-
+                            (int64_t)diamond_function_self_offset(fn));
+                        break;
+                    }
                     /* to_s() on any built-in value: the same text string
                      * interpolation produces. (Int, Float, and Time also
                      * have their own to_s further down; this matches them.) */
                     if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
-                       (registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                       argc==0&&(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
                         registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         DiamondValue text=DIAMOND_NIL;
                         const DiamondVmStatus to_s_status=
                             stringify_value(vm,chunk,depth,registers[recv],&text);
@@ -19100,6 +19334,32 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             (double)registers[recv].as.integer;
                         #define NUMERIC_METHOD(text) (method_name->length==sizeof(text)-1&& \
                             memcmp(method_name->chars,text,sizeof(text)-1)==0)
+                        /* Int#to_s(base): digits in base 2..36, lowercase,
+                         * with a leading '-' when negative -- as in Ruby. */
+                        if(NUMERIC_METHOD("to_s")&&argc==1&&!is_float) {
+                            if(registers[base].kind!=DIAMOND_VALUE_INT||
+                               registers[base].as.integer<2||registers[base].as.integer>36) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "Int#to_s base must be an Int from 2 to 36");
+                                VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            }
+                            const uint64_t radix=(uint64_t)registers[base].as.integer;
+                            const int64_t integer=registers[recv].as.integer;
+                            uint64_t magnitude=integer<0?(uint64_t)0-(uint64_t)integer:
+                                (uint64_t)integer;
+                            char digits[72];size_t length=0;
+                            do {
+                                digits[length++]="0123456789abcdefghijklmnopqrstuvwxyz"[magnitude%radix];
+                                magnitude/=radix;
+                            } while(magnitude>0);
+                            if(integer<0)digits[length++]='-';
+                            for(size_t low=0,high=length-1;low<high;low++,high--) {
+                                const char swap=digits[low];digits[low]=digits[high];digits[high]=swap;
+                            }
+                            DiamondString *formatted=allocate_string(vm,digits,length);
+                            if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(formatted);break;
+                        }
                         if(NUMERIC_METHOD("to_s")) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             StringBuilder text={};
@@ -19158,6 +19418,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         }
                     }
                     if(registers[recv].kind==DIAMOND_VALUE_FLOAT) {
+                        static const char *const float_prefixes[]={"float_","numeric_"};
+                        const DiamondFunction *extension=find_value_extension(chunk,
+                            float_prefixes,2,method_name->chars,method_name->length);
+                        if(extension!=nullptr) {
+                            DiamondValue call_result=DIAMOND_NIL;
+                            const DiamondVmStatus status=forward_to_top_level_helper(vm,
+                                chunk,extension,registers,recv,base,argc,depth,&call_result);
+                            VM_PROPAGATE(status);
+                            registers[dest]=call_result;break;
+                        }
                         snprintf(vm->error,sizeof vm->error,
                             "undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"Float");
@@ -19196,14 +19466,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     else if(method_name->length==6&&
                             memcmp(method_name->chars,"downto",6)==0)
                         target_name="integer_downto";
-                    if(target_name==nullptr) {
+                    static const char *const integer_prefixes[]={"integer_","numeric_"};
+                    const DiamondFunction *target=target_name!=nullptr?
+                        find_top_level_function(chunk,target_name,strlen(target_name)):
+                        find_value_extension(chunk,integer_prefixes,2,
+                            method_name->chars,method_name->length);
+                    if(target==nullptr&&target_name==nullptr) {
                         snprintf(vm->error,sizeof vm->error,
                             "undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"Int");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
-                    const DiamondFunction *target=
-                        find_top_level_function(chunk,target_name,strlen(target_name));
                     if(target==nullptr) {
                         snprintf(vm->error,sizeof vm->error,
                             "internal error: missing standard library function '%s'",
@@ -19317,24 +19590,33 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==4&&
                                 memcmp(method_name->chars,"lazy",4)==0)
                             target_name="enumerable_lazy";
+                        /* A Hash's select/count/any?/all?/map pass a
+                         * two-parameter block (key, value); the hash_
+                         * versions check the block's arity. count() on
+                         * either takes no block at all. */
                         else if(method_name->length==6&&
                                 memcmp(method_name->chars,"select",6)==0)
-                            target_name="enumerable_select";
+                            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
+                                "diamond_hash_select":"enumerable_select";
                         else if(method_name->length==5&&
                                 memcmp(method_name->chars,"count",5)==0)
-                            target_name="enumerable_count";
+                            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
+                                "diamond_hash_count":"diamond_array_count";
                         else if(method_name->length==4&&
                                 memcmp(method_name->chars,"any?",4)==0)
-                            target_name="enumerable_any";
+                            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
+                                "diamond_hash_any":"enumerable_any";
                         else if(method_name->length==4&&
                                 memcmp(method_name->chars,"all?",4)==0)
-                            target_name="enumerable_all";
+                            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
+                                "diamond_hash_all":"enumerable_all";
                         else if(method_name->length==6&&
                                 memcmp(method_name->chars,"reduce",6)==0)
                             target_name="enumerable_reduce";
                         else if(method_name->length==3&&
                                 memcmp(method_name->chars,"map",3)==0)
-                            target_name="enumerable_map";
+                            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
+                                "diamond_hash_map":"enumerable_map";
                         else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
                                 method_name->length==3&&
                                 memcmp(method_name->chars,"sum",3)==0)
@@ -19684,6 +19966,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             if(repeated==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                             registers[dest]=DIAMOND_OBJECT(repeated);break;
                         }
+                        /* getbyte(i): the byte at i (0-255), counting from
+                         * the end when negative, or nil past either end --
+                         * byte access without copying the String, as in
+                         * Ruby. */
+                        if(method_name->length==7&&
+                           memcmp(method_name->chars,"getbyte",7)==0) {
+                            if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            if(registers[base].kind!=DIAMOND_VALUE_INT) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#getbyte index must be an Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            int64_t at=registers[base].as.integer;
+                            if(at<0)at+=(int64_t)source->length;
+                            registers[dest]=at<0||(uint64_t)at>=source->length?DIAMOND_NIL:
+                                DIAMOND_INT((unsigned char)source->chars[at]);
+                            break;
+                        }
                         if(ord_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(source->length==0) {
@@ -19694,6 +19994,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             registers[dest]=
                                 DIAMOND_INT((unsigned char)source->chars[0]);
                             break;
+                        }
+                        /* split() on whitespace, and split(separator, limit):
+                         * in the prelude (diamond_string_split_extended). */
+                        if(split_method&&argc!=1) {
+                            const DiamondFunction *extended=find_top_level_function(
+                                chunk,"diamond_string_split_extended",29);
+                            if(extended==nullptr)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            DiamondValue split_result=DIAMOND_NIL;
+                            const DiamondVmStatus split_status=forward_to_top_level_helper(vm,
+                                chunk,extended,registers,recv,base,argc,depth,&split_result);
+                            VM_PROPAGATE(split_status);
+                            registers[dest]=split_result;break;
                         }
                         if(split_method) {
                             if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -19804,6 +20116,41 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 raised->chars[index]=
                                     (char)toupper((unsigned char)raised->chars[index]);
                             registers[dest]=DIAMOND_OBJECT(raised);break;
+                        }
+                        /* to_i(base): digits in base 2..36 (either case, `_`
+                         * separators allowed) after an optional sign, up to
+                         * the first character that isn't one -- 0 if there
+                         * are none, as with to_i(). */
+                        if(to_i_method&&argc==1) {
+                            if(registers[base].kind!=DIAMOND_VALUE_INT||
+                               registers[base].as.integer<2||registers[base].as.integer>36) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "String#to_i base must be an Int from 2 to 36");
+                                VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            }
+                            const int64_t radix=registers[base].as.integer;
+                            size_t position=0;bool negative=false;
+                            while(position<source->length&&
+                                  (source->chars[position]==' '||source->chars[position]=='\t'))
+                                position++;
+                            if(position<source->length&&
+                               (source->chars[position]=='-'||source->chars[position]=='+')) {
+                                negative=source->chars[position]=='-';position++;
+                            }
+                            int64_t value=0;
+                            for(;position<source->length;position++) {
+                                const char c=source->chars[position];
+                                if(c=='_')continue;
+                                const int digit=c>='0'&&c<='9'?c-'0':
+                                    c>='a'&&c<='z'?c-'a'+10:c>='A'&&c<='Z'?c-'A'+10:99;
+                                if(digit>=radix)break;
+                                if(ckd_mul(&value,value,radix)||ckd_add(&value,value,(int64_t)digit)) {
+                                    snprintf(vm->error,sizeof vm->error,
+                                        "String#to_i result doesn't fit in 64 bits");
+                                    VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
+                                }
+                            }
+                            registers[dest]=DIAMOND_INT(negative?-value:value);break;
                         }
                         if(to_i_method) {
                             if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -20009,16 +20356,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             registers[dest]=DIAMOND_OBJECT(chomped);break;
                         }
                         if(ljust_method||rjust_method) {
-                            if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                            /* The padding defaults to one space, as in Ruby. */
+                            if(argc!=2&&argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             if(registers[base].kind!=DIAMOND_VALUE_INT) {
                                 snprintf(vm->error,sizeof vm->error,
                                     "String#%s width argument must be an Int",
                                     ljust_method?"ljust":"rjust");
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
-                            if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+                            if(argc==2&&(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
                                registers[(size_t)base+1].as.object->kind!=
-                                   DIAMOND_OBJECT_STRING) {
+                                   DIAMOND_OBJECT_STRING)) {
                                 snprintf(vm->error,sizeof vm->error,
                                     "String#%s padding argument must be a String",
                                     ljust_method?"ljust":"rjust");
@@ -20031,7 +20379,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                     ljust_method?"ljust":"rjust");
                                 VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                             }
-                            const DiamondString *pad=(const DiamondString *)
+                            DiamondString *default_pad=nullptr;
+                            if(argc==1) {
+                                default_pad=allocate_string(vm," ",1);
+                                if(default_pad==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                            const DiamondString *pad=argc==1?default_pad:(const DiamondString *)
                                 registers[(size_t)base+1].as.object;
                             if((uint64_t)width<=source->length) {
                                 DiamondString *unchanged=
@@ -20148,6 +20501,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 vm,chunk,depth,source,registers[base],&formatted);
                             VM_PROPAGATE(format_status);
                             registers[dest]=formatted;break;
+                        }
+                        static const char *const string_prefixes[]={"string_"};
+                        const DiamondFunction *extension=find_value_extension(chunk,
+                            string_prefixes,1,method_name->chars,method_name->length);
+                        if(extension!=nullptr) {
+                            DiamondValue call_result=DIAMOND_NIL;
+                            const DiamondVmStatus status=forward_to_top_level_helper(vm,
+                                chunk,extension,registers,recv,base,argc,depth,&call_result);
+                            VM_PROPAGATE(status);
+                            registers[dest]=call_result;break;
                         }
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"String");
@@ -23029,6 +23392,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         path_result=DIAMOND_BOOL(stat(path->chars,&path_stat)==0);
                         break;
                     }
+                    case DIAMOND_FILE_PATH_READ:
+                        VM_SANDBOX_GUARD("File.read", "filesystem");
+                        path_status=file_read_helper(vm,path,&path_result);break;
+                    case DIAMOND_FILE_PATH_WRITE:
+                        VM_SANDBOX_GUARD("File.write", "filesystem");
+                        path_status=file_write_helper(vm,path,second,&path_result);break;
                     case DIAMOND_FILE_PATH_DIRECTORY: {
                         VM_SANDBOX_GUARD("File.directory?", "filesystem");
                         struct stat path_stat;

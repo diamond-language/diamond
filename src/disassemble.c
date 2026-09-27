@@ -38,6 +38,8 @@ static const char *file_path_function_name(uint8_t id) {
         case DIAMOND_FILE_PATH_SYNC: return "sync";
         case DIAMOND_FILE_PATH_RENAME: return "rename";
         case DIAMOND_FILE_PATH_EXIST: return "exist?";
+        case DIAMOND_FILE_PATH_READ: return "read";
+        case DIAMOND_FILE_PATH_WRITE: return "write";
         default: return "<invalid file path function>";
     }
 }

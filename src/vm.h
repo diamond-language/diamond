@@ -587,6 +587,11 @@ typedef enum {
     /* stat() succeeds: a file, directory, or anything else is there.
      * Like DIRECTORY, a failure reads as false rather than raising. */
     DIAMOND_FILE_PATH_EXIST,
+    /* File.read(path): the whole file as one (binary-safe) String.
+     * File.write(path, data): replaces the file's contents, returning the
+     * byte count. Both raise IOError when the file can't be opened. */
+    DIAMOND_FILE_PATH_READ,
+    DIAMOND_FILE_PATH_WRITE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {
@@ -793,6 +798,12 @@ typedef struct DiamondModule {
     size_t field_count;
     /* See DiamondInterface's own copy of this field just above. */
     bool declared_by_discovery;
+    /* A template (prelude) module this program reopens: the real pass
+     * resets it to these template counts rather than to empty. */
+    bool from_template;
+    size_t template_method_count;
+    size_t template_singleton_method_count;
+    size_t template_field_count;
 } DiamondModule;
 
 typedef struct DiamondClass DiamondClass;
@@ -866,6 +877,13 @@ struct DiamondClass {
     size_t class_variable_count;
     /* See DiamondInterface's own copy of this field (this file, above). */
     bool declared_by_discovery;
+    /* A template (prelude) class this program reopens: the real pass
+     * resets it to these template counts rather than to empty. */
+    bool from_template;
+    size_t template_method_count;
+    size_t template_singleton_method_count;
+    size_t template_field_count;
+    size_t template_class_variable_count;
 };
 
 /* One local variable or parameter's name and the byte range (in the

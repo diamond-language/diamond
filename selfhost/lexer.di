@@ -370,7 +370,44 @@ class Lexer
     true
   end
 
+  # Is `code` a digit in `base` (2, 8, or 16)? Mirrors lexer.c's
+  # is_base_digit.
+  def base_digit?(code, base)
+    return (code >= "0".ord() && code <= "9".ord()) || (code >= "a".ord() && code <= "f".ord()) || (code >= "A".ord() && code <= "F".ord()) if base == 16
+    code >= "0".ord() && code < "0".ord() + base
+  end
+
+  # 0x1F, 0b1010, 0o17 -- the prefix counts only when a digit of that
+  # base follows it, exactly as in lexer.c.
+  def prefixed_base()
+    return 0 unless self.code_at(@current - 1) == "0".ord()
+    prefix = self.code_at(@current)
+    base = 0
+    base = 16 if prefix == "x".ord() || prefix == "X".ord()
+    base = 2 if prefix == "b".ord() || prefix == "B".ord()
+    base = 8 if prefix == "o".ord() || prefix == "O".ord()
+    return 0 if base == 0
+    return 0 unless self.base_digit?(self.code_at(@current + 1), base)
+    base
+  end
+
   def scan_number()
+    base = self.prefixed_base()
+    if base != 0
+      self.advance()
+      loop do
+        next_code = self.code_at(@current)
+        if self.base_digit?(next_code, base)
+          self.advance()
+        elsif next_code == "_".ord()
+          self.advance()
+          return self.make_token(:error) unless self.base_digit?(self.code_at(@current), base)
+        else
+          break
+        end
+      end
+      return self.make_token(:integer)
+    end
     return self.make_token(:error) unless self.scan_digits()
     is_float = false
     if self.code_at(@current) == ".".ord() && self.code_at(@current + 1) >= "0".ord() && self.code_at(@current + 1) <= "9".ord()

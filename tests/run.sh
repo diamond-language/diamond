@@ -385,13 +385,15 @@ if "$diamond" -e $'def typed(value: Array)\n value\nend\ntyped("not an array")' 
     exit 1
 fi
 
+# A negative index counts from the end; one past the start still raises.
+[[ "$("$diamond" -e $'values = [1]\nvalues[-1] = 2\nvalues')" == "[2]" ]]
 error_file="$(mktemp)"
-if "$diamond" -e $'values = [1]\nvalues[-1] = 2' >/dev/null 2>"$error_file"; then
-    echo "negative indexed assignment unexpectedly succeeded" >&2
+if "$diamond" -e $'values = [1]\nvalues[-2] = 2' >/dev/null 2>"$error_file"; then
+    echo "negative indexed assignment past the start unexpectedly succeeded" >&2
     rm -f "$error_file"
     exit 1
 fi
-grep -q 'index -1 out of bounds for Array of length 1' "$error_file"
+grep -q 'index -2 out of bounds for Array of length 1' "$error_file"
 rm -f "$error_file"
 
 if "$diamond" -e $'def bad(flag) -> Int\n  if flag\n    return "bad"\n  end\n  0\nend' \
@@ -1560,11 +1562,19 @@ grep -q "TCPServer.listen argument must be an Int port" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-if "$diamond" -e 'File.write("x")' >/dev/null 2>"$error_file"; then
-    echo "malformed File.write unexpectedly compiled" >&2
+if "$diamond" -e 'File.frobnicate("x")' >/dev/null 2>"$error_file"; then
+    echo "unknown File method unexpectedly compiled" >&2
     exit 1
 fi
 grep -q "unknown File method" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e 'File.write("x")' >/dev/null 2>"$error_file"; then
+    echo "File.write without data unexpectedly compiled" >&2
+    exit 1
+fi
+grep -q "File.write requires a path and data" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
@@ -1615,12 +1625,14 @@ fi
 grep -q "index 10 out of bounds for String of length 5" "$error_file"
 rm -f "$error_file"
 
+# A negative String index counts from the end; past the start raises.
+[[ "$("$diamond" -e '"hello"[-1]')" == "o" ]]
 error_file="$(mktemp)"
-if "$diamond" -e '"hello"[-1]' >/dev/null 2>"$error_file"; then
-    echo "String index -1 unexpectedly succeeded" >&2
+if "$diamond" -e '"hello"[-6]' >/dev/null 2>"$error_file"; then
+    echo "String index -6 unexpectedly succeeded" >&2
     exit 1
 fi
-grep -q "index -1 out of bounds for String of length 5" "$error_file"
+grep -q "index -6 out of bounds for String of length 5" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

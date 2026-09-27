@@ -31,6 +31,11 @@ end
 block is its value. Blocks are `end`-delimited throughout; there are no
 braces. `next`/`break` work inside loops.
 
+Strings are double-quoted, with `#{expression}` interpolation and the
+escapes `\n`, `\r`, `\t`, `\0`, `\e` (escape), `\"`, `\\`, `\#`,
+`\xHH` (one byte), and `\uHHHH` or `\u{H...}` (a Unicode code point,
+stored as UTF-8): `"\x89PNG\r\n"`, `"caf\u00e9"`, `"\u{1F600}"`.
+
 ## Case/when
 
 ```ruby
@@ -454,7 +459,10 @@ still cap at 64-bit, though — only runtime arithmetic overflow promotes, not
 literal syntax. `Float` is an IEEE-754 double. Float
 literals need a digit on both sides of the `.` (`2.5`, not `.5` or `2.`),
 so `5.abs()` still parses as a method call rather than a float literal.
-Both accept `_` digit separators (`1_234.567_8`). Exponent notation
+Both accept `_` digit separators (`1_234.567_8`). `Int` literals can
+also be written in hexadecimal, binary, or octal: `0xFF`, `0b1010_1010`,
+`0o17`. `**` is exponentiation, binding tighter than unary minus and
+right-associative (`-2 ** 2` is `-4`, `2 ** 3 ** 2` is `512`). Exponent notation
 (`1e10`, `1.5e-3`, `2E+7`) is also accepted, with or without a `.`
 fraction, and always produces a `Float`; an `e`/`E` not followed by a
 valid exponent (no digits, e.g. `5e`) is left for the next token
