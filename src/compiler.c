@@ -11856,7 +11856,8 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
                    compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACKET ||
                    compiler->current.kind == DIAMOND_TOKEN_LEFT_BRACE ? 1 : 0;
     bool seen = true;
-    /* An if/unless immediately after '=' is the start of the
+    /* An if/unless immediately after '=' (or a compound `+=`, `||=`, ...)
+     * is the start of the
      * assignment's own RHS expression (`x = if ... end`), not a
      * trailing postfix modifier on a value that hasn't been parsed yet.
      * Deliberately NOT extended to 'return'/'raise' in general (a
@@ -11922,7 +11923,8 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
             default:
                 break;
         }
-        expression_expected = depth == 0 && token.kind == DIAMOND_TOKEN_EQUAL;
+        expression_expected = depth == 0 &&
+            (token.kind == DIAMOND_TOKEN_EQUAL || compound_assignment_token(token.kind));
         seen = true;
     }
 }

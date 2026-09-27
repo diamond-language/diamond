@@ -183,6 +183,10 @@ authoritative fine-grained record.
   passing one array through a fifth function (or as three parameters of
   one) failed with "expected Array[String], got Array[String]". A
   constraint that an existing one already implies is no longer recorded.
+- A multi-line `if` can be the right-hand side of a compound assignment:
+  `total += if ... end`, and likewise `-=`, `*=`, `||=`, and an indexed
+  target. It failed with "expected postfix condition" at the `end`, because
+  only the `if` after a plain `=` was recognized as a value.
 
 ### Registry
 
