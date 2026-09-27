@@ -14670,6 +14670,12 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     function->code[code++]=DIAMOND_OP_RETURN;
     function->code[code++]=0;function->code[code++]=1;
     function->code_count=code;
+    /* The body above only ever touches register 0 (self) and register 1
+     * (the argument, or the value read). Left at 0 -- "unset" -- run_chunk
+     * zeroes a full DIAMOND_REGISTER_COUNT-wide (4096 x 16 = 64 KB) register
+     * file for every call, which made each attr_reader/attr_writer/struct
+     * field access about four times slower than a hand-written reader. */
+    function->register_count=2;
     (void)snprintf(method->name,sizeof method->name,"%s",method_name);
     method->function_index=function_index;method->arity=writer?1:0;
     method->required_arity=method->arity;method->is_private=compiler->methods_private;
@@ -18170,6 +18176,19 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         program->entry.body_end=strlen(source);
         emit_instruction(&compiler, DIAMOND_OP_RETURN, result, 0, 0, 1);
         diamond_program_recompute_shapes(program);
+#ifdef DIAMOND_DEBUG
+        /* run_chunk treats register_count==0 as "unset" and zeroes a full
+         * 4096-register (64 KB) file on every call to that function -- a
+         * silent ~4x slowdown on hand-built bodies (the generated attr_*
+         * and struct readers shipped that way). Debug builds, which the
+         * test suite runs, refuse a function that never recorded its count. */
+        for(size_t function_index=0;function_index<program->function_count;function_index++)
+            if(program->functions[function_index]->register_count==0) {
+                fprintf(stderr,"internal compiler error: function '%s' has no register count\n",
+                        program->functions[function_index]->name);
+                abort();
+            }
+#endif
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
             DiamondClass *class=&program->classes[class_index];
             /* Resolved by name, once, here -- never hardcoded, since a

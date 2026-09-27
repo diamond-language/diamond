@@ -213,6 +213,16 @@ for security-sensitive use.
 
 ### Runtime
 
+- Method calls are cheaper. A generated `attr_reader`/`attr_writer`/
+  `attr_accessor` or `struct` field reader recorded no register count, so
+  every call zeroed a full 64 KB register file: about 2.2 us a call against
+  0.5 us for the same reader written by hand. Both are now about 0.17 us.
+  Every instance-method call also zeroed 3 KB of type-binding storage that
+  only explicit type arguments use, and looking up a method like `max` or
+  `sum` on an array compared its name against every prelude function with
+  `strlen` (`[a, b].max()` went from 2.6 us to 0.8 us). A debug build now
+  refuses to compile a function that never recorded its register count, so
+  the first cannot come back unnoticed.
 - Bytecode caches (`.dic`) and the embedded compiled prelude are far smaller:
   string constants are now stored as length-prefixed bytes instead of fixed 4 KB
   records. The guestbook example's cache dropped from 29 MB to 3.5 MB, and apps

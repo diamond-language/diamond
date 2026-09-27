@@ -9022,9 +9022,19 @@ static DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value) {
  * top-level prelude function. */
 static const DiamondFunction *find_top_level_function(
         const DiamondChunk *chunk, const char *name, size_t length) {
+    /* A function name is NUL-terminated inside its DIAMOND_MAX_FUNCTION_NAME
+     * array, so nothing that long can match. */
+    if (length >= DIAMOND_MAX_FUNCTION_NAME) return nullptr;
     for (size_t index = chunk->function_count; index > 0; index--) {
         const DiamondFunction *candidate = chunk->functions[index - 1];
         if (candidate->owner_class != UINT8_MAX || candidate->nested) continue;
+        /* The extension protocol probes this table two or three times per
+         * call on a native collection, and the table holds every prelude
+         * function: reject on the first and last character (both inside the
+         * zero-filled name array) before paying for strlen on each one. A
+         * real match always agrees on both, so this never skips one. */
+        if (length > 0 && (candidate->name[0] != name[0] ||
+                           candidate->name[length - 1] != name[length - 1])) continue;
         if (strlen(candidate->name) == length &&
             memcmp(candidate->name, name, length) == 0) return candidate;
     }
@@ -12938,8 +12948,12 @@ static DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
     const DiamondFunction *fn=function_chunk->functions[method->function_index];
     if(typed&&type_argument_count!=fn->type_variable_count)
         return DIAMOND_VM_TYPE_ERROR;
-    DiamondTypeBinding explicit_bindings[8]={};
+    /* Only the first type_argument_count entries are ever read (below,
+     * and through .type_variable_bindings); zeroing all eight cost about
+     * 3 KB of memset on every call, typed or not. */
+    DiamondTypeBinding explicit_bindings[8];
     for(size_t index=0;index<type_argument_count;index++) {
+        explicit_bindings[index]=(DiamondTypeBinding){};
         if((size_t)type_arguments[index]>=caller_chunk->type_set_count)
             return DIAMOND_VM_INVALID_BYTECODE;
         (void)binding_node(&explicit_bindings[index]);
@@ -16838,12 +16852,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         return DIAMOND_VM_STACK_OVERFLOW;
     }
     DiamondChunk execution;
-    DiamondTypeBinding bindings[8]={};
+    /* Only the first chunk->type_variable_count entries are ever read:
+     * copied from the chunk's own bindings just below, or zeroed for
+     * inference in the unbound-generic branch after it. Zero-initializing
+     * all eight here cost about 3 KB of memset at the top of every call,
+     * generic or not. */
+    DiamondTypeBinding bindings[8];
     if(chunk->type_variable_count>0&&chunk->type_variable_bindings!=nullptr)
         memcpy(bindings,chunk->type_variable_bindings,
                chunk->type_variable_count*sizeof(DiamondTypeBinding));
     if(chunk->type_variable_count>0&&chunk->parameter_type_sets!=nullptr&&
        chunk->type_variable_bindings==nullptr) {
+        memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
         /* Only copy `*chunk` when this generic-function-with-unbound-
          * type-variable path is actually taken -- the common case
          * (type_variable_count==0, essentially every non-generic call)
@@ -18045,8 +18065,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    call_argument_count<function->required_arity||
                    (call_argument_count>function->arity && !function->has_variadic))
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondTypeBinding explicit_bindings[8]={};
+                /* Only the first type_argument_count entries are ever read (below,
+                 * and through .type_variable_bindings); zeroing all eight cost about
+                 * 3 KB of memset on every call, typed or not. */
+                DiamondTypeBinding explicit_bindings[8];
                 for(size_t index=0;index<type_argument_count;index++) {
+                    explicit_bindings[index]=(DiamondTypeBinding){};
                     uint16_t set_index=0;READ_SHORT(set_index);
                     if((size_t)set_index>=chunk->type_set_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -18129,8 +18153,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(type_argument_count>0&&
                    type_argument_count!=function->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondTypeBinding explicit_bindings[8]={};
+                /* Only the first type_argument_count entries are ever read (below,
+                 * and through .type_variable_bindings); zeroing all eight cost about
+                 * 3 KB of memset on every call, typed or not. */
+                DiamondTypeBinding explicit_bindings[8];
                 for(size_t index=0;index<type_argument_count;index++) {
+                    explicit_bindings[index]=(DiamondTypeBinding){};
                     if((size_t)type_arguments[index]>=chunk->type_set_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     (void)binding_node(&explicit_bindings[index]);
@@ -18313,8 +18341,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for(size_t index=0;index<merged_count;index++)
                     singleton_arguments[index+needs_receiver]=merged[index];
                 free(merged);
-                DiamondTypeBinding singleton_bindings[8]={0};
+                DiamondTypeBinding singleton_bindings[8];
                 for(size_t index=0;index<type_count;index++) {
+                    singleton_bindings[index]=(DiamondTypeBinding){};
                     if((size_t)type_arguments[index]>=chunk->type_set_count) {
                         free(singleton_arguments);VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);}
                     (void)binding_node(&singleton_bindings[index]);
@@ -18373,8 +18402,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(type_argument_count>0&&
                    type_argument_count!=function->type_variable_count)
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                DiamondTypeBinding explicit_bindings[8]={};
+                /* Only the first type_argument_count entries are ever read (below,
+                 * and through .type_variable_bindings); zeroing all eight cost about
+                 * 3 KB of memset on every call, typed or not. */
+                DiamondTypeBinding explicit_bindings[8];
                 for(size_t index=0;index<type_argument_count;index++) {
+                    explicit_bindings[index]=(DiamondTypeBinding){};
                     if((size_t)type_arguments[index]>=chunk->type_set_count)
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     (void)binding_node(&explicit_bindings[index]);
@@ -19065,8 +19098,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    type_argument_count!=fn->type_variable_count) {
                     free(args);VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                DiamondTypeBinding explicit_bindings[8]={};
+                /* Only the first type_argument_count entries are ever read (below,
+                 * and through .type_variable_bindings); zeroing all eight cost about
+                 * 3 KB of memset on every call, typed or not. */
+                DiamondTypeBinding explicit_bindings[8];
                 for(size_t index=0;index<type_argument_count;index++) {
+                    explicit_bindings[index]=(DiamondTypeBinding){};
                     if((size_t)type_arguments[index]>=chunk->type_set_count) {
                         free(args);VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     }
