@@ -1383,6 +1383,31 @@ typedef struct DiamondFieldCacheEntry {
     const DiamondShape *output_shape;
     bool materialized;
 } DiamondFieldCacheEntry;
+/* Site-keyed cache for the collection/value extension protocol
+ * (find_collection_extension/find_value_extension, src/vm.c): resolving
+ * `arr.max()` and similar means scanning every top-level function in the
+ * chunk by name, which is what every Ruby-compat method added straight as
+ * a prelude function (rather than a dedicated opcode) falls back to on
+ * every call. The result depends only on (chunk, receiver kind, method
+ * name) -- never on anything define_method/redefine_method can change,
+ * since those touch class methods, not a *top-level* function's identity
+ * -- so a call site's resolution for a given kind is permanent for the
+ * chunk's whole life. `found` distinguishes a cached "no such method"
+ * (function left nullptr) from an empty slot, since a miss costs exactly
+ * as much to compute as a hit and is exactly as stable. */
+typedef struct DiamondExtensionCacheEntry {
+    uint8_t kind;
+    bool found;
+    const DiamondFunction *function;
+} DiamondExtensionCacheEntry;
+
+typedef struct DiamondExtensionCache {
+    const uint8_t *site;
+    DiamondExtensionCacheEntry entries[DIAMOND_INLINE_CACHE_WIDTH];
+    uint8_t entry_count;
+    uint8_t next_replace;
+} DiamondExtensionCache;
+
 
 typedef struct DiamondFieldCache {
     const uint8_t *site;
@@ -1547,6 +1572,7 @@ struct DiamondVm {
     size_t gc_minor_collection_count;
     double gc_minor_total_seconds;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;

@@ -213,6 +213,16 @@ for security-sensitive use.
 
 ### Runtime
 
+- The Ruby-compatible methods added earlier in this series (`max`, `sum`,
+  `reverse`, `select`, ...) dispatch through a cache now instead of
+  rescanning every prelude function by name on each call: `arr.max()` went
+  from about 0.8 us to about 0.45 us, `arr.reverse()` from about 4.7 us to
+  about 0.5 us. Fixed along the way: `arr.method(*args)` on a native
+  receiver re-enters dispatch through a synthetic bytecode buffer reused at
+  the same address for every such call in the program, so the cache's first
+  version (keyed by that address) could return one spread call's resolved
+  method to a completely different one; keying it by the method name's own
+  stable string constant instead fixed it for every dispatch path.
 - Method calls are cheaper. A generated `attr_reader`/`attr_writer`/
   `attr_accessor` or `struct` field reader recorded no register count, so
   every call zeroed a full 64 KB register file: about 2.2 us a call against

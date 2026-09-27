@@ -9116,6 +9116,66 @@ static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
     return nullptr;
 }
 
+/* Tags for DiamondExtensionCache's `kind` field at the three
+ * find_value_extension call sites (Float/Int/String): each is gated on
+ * registers[recv].kind before it runs, so a polymorphic call site (a
+ * union-typed receiver) can legitimately store more than one of these,
+ * plus a DiamondObjectKind entry from the collection protocol below --
+ * chosen well outside DiamondObjectKind's own range (src/object.h) so
+ * none of the four can ever collide. */
+enum {
+    DIAMOND_EXTENSION_KIND_FLOAT = 250,
+    DIAMOND_EXTENSION_KIND_INT = 251,
+    DIAMOND_EXTENSION_KIND_STRING = 252,
+};
+
+/* Cache lookup/store for find_collection_extension/find_value_extension --
+ * see DiamondExtensionCache's own comment (src/vm.h). `kind` is whatever
+ * distinguishes the receiver at that one call site: a DiamondObjectKind
+ * for the collection protocol (DIAMOND_OBJECT_ARRAY/_HASH), or a small
+ * fixed tag the three value-extension call sites each pick for their own
+ * receiver type (Int/Float/String can never collide at the same site,
+ * so any distinct values work). Mirrors lookup_method_cached's hashing
+ * and replacement policy exactly, just against a value/bool pair instead
+ * of a DiamondMethod pointer. */
+static bool cached_extension_lookup(DiamondVm *vm,const uint8_t *site,
+        uint8_t kind,const DiamondFunction **out_function) {
+    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    DiamondExtensionCache *cache=&vm->extension_caches[slot];
+    if(cache->site!=site) {
+        *cache=(DiamondExtensionCache){.site=site};
+        return false;
+    }
+    for(size_t index=0;index<cache->entry_count;index++)
+        if(cache->entries[index].found&&cache->entries[index].kind==kind) {
+            *out_function=cache->entries[index].function;
+            return true;
+        }
+    return false;
+}
+
+static void store_extension_lookup(DiamondVm *vm,const uint8_t *site,
+        uint8_t kind,const DiamondFunction *function) {
+    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    DiamondExtensionCache *cache=&vm->extension_caches[slot];
+    if(cache->site!=site) *cache=(DiamondExtensionCache){.site=site};
+    for(size_t index=0;index<cache->entry_count;index++)
+        if(cache->entries[index].kind==kind) {
+            cache->entries[index]=(DiamondExtensionCacheEntry){
+                .kind=kind,.found=true,.function=function};
+            return;
+        }
+    size_t entry=cache->entry_count;
+    if(entry<DIAMOND_INLINE_CACHE_WIDTH) {
+        cache->entry_count++;
+    } else {
+        entry=cache->next_replace;
+        cache->next_replace=(uint8_t)((cache->next_replace+1)%DIAMOND_INLINE_CACHE_WIDTH);
+    }
+    cache->entries[entry]=(DiamondExtensionCacheEntry){
+        .kind=kind,.found=true,.function=function};
+}
+
 static bool record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
     for (size_t index=0;index<vm->rewritten_site_count;index++)
         if (vm->rewritten_sites[index]==site)return true;
@@ -19512,9 +19572,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         }
                     }
                     if(registers[recv].kind==DIAMOND_VALUE_FLOAT) {
-                        static const char *const float_prefixes[]={"float_","numeric_"};
-                        const DiamondFunction *extension=find_value_extension(chunk,
-                            float_prefixes,2,method_name->chars,method_name->length);
+                        /* Not chunk->code+instruction_offset (an ordinary call site's
+                         * own would be stable, but the native-spread synthetic re-entry
+                         * just above builds its own tiny bytecode buffer fresh on the C
+                         * stack every time -- a different logical call site, same reused
+                         * stack address, which collided two unrelated method names onto
+                         * one cache entry and returned the wrong function). method_name
+                         * itself is a pointer into the calling function's own permanent,
+                         * never-reallocated string-constant table (fn->strings, set at
+                         * compile time), stable and correctly distinct per method name
+                         * regardless of which of the several dispatch paths reaches it. */
+                        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+                        const DiamondFunction *extension=nullptr;
+                        if(!cached_extension_lookup(vm,extension_site,
+                                DIAMOND_EXTENSION_KIND_FLOAT,&extension)) {
+                            static const char *const float_prefixes[]={"float_","numeric_"};
+                            extension=find_value_extension(chunk,
+                                float_prefixes,2,method_name->chars,method_name->length);
+                            store_extension_lookup(vm,extension_site,
+                                DIAMOND_EXTENSION_KIND_FLOAT,extension);
+                        }
                         if(extension!=nullptr) {
                             DiamondValue call_result=DIAMOND_NIL;
                             const DiamondVmStatus status=forward_to_top_level_helper(vm,
@@ -19560,11 +19637,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     else if(method_name->length==6&&
                             memcmp(method_name->chars,"downto",6)==0)
                         target_name="integer_downto";
-                    static const char *const integer_prefixes[]={"integer_","numeric_"};
-                    const DiamondFunction *target=target_name!=nullptr?
-                        find_top_level_function(chunk,target_name,strlen(target_name)):
-                        find_value_extension(chunk,integer_prefixes,2,
-                            method_name->chars,method_name->length);
+                    /* Not chunk->code+instruction_offset (an ordinary call site's
+                     * own would be stable, but the native-spread synthetic re-entry
+                     * just above builds its own tiny bytecode buffer fresh on the C
+                     * stack every time -- a different logical call site, same reused
+                     * stack address, which collided two unrelated method names onto
+                     * one cache entry and returned the wrong function). method_name
+                     * itself is a pointer into the calling function's own permanent,
+                     * never-reallocated string-constant table (fn->strings, set at
+                     * compile time), stable and correctly distinct per method name
+                     * regardless of which of the several dispatch paths reaches it. */
+                    const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+                    const DiamondFunction *target=nullptr;
+                    if(!cached_extension_lookup(vm,extension_site,
+                            DIAMOND_EXTENSION_KIND_INT,&target)) {
+                        static const char *const integer_prefixes[]={"integer_","numeric_"};
+                        target=target_name!=nullptr?
+                            find_top_level_function(chunk,target_name,strlen(target_name)):
+                            find_value_extension(chunk,integer_prefixes,2,
+                                method_name->chars,method_name->length);
+                        store_extension_lookup(vm,extension_site,
+                            DIAMOND_EXTENSION_KIND_INT,target);
+                    }
                     if(target==nullptr&&target_name==nullptr) {
                         snprintf(vm->error,sizeof vm->error,
                             "undefined method '%.*s' for %s",
@@ -19855,10 +19949,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 method_name->length==5&&
                                 memcmp(method_name->chars,"merge",5)==0)
                             target_name="hash_merge";
-                        const DiamondFunction *target=target_name!=nullptr?
-                            find_top_level_function(chunk,target_name,strlen(target_name)):
-                            find_collection_extension(chunk,receiver_kind,
-                                method_name->chars,method_name->length);
+                        /* Not chunk->code+instruction_offset (an ordinary call site's
+                         * own would be stable, but the native-spread synthetic re-entry
+                         * just above builds its own tiny bytecode buffer fresh on the C
+                         * stack every time -- a different logical call site, same reused
+                         * stack address, which collided two unrelated method names onto
+                         * one cache entry and returned the wrong function). method_name
+                         * itself is a pointer into the calling function's own permanent,
+                         * never-reallocated string-constant table (fn->strings, set at
+                         * compile time), stable and correctly distinct per method name
+                         * regardless of which of the several dispatch paths reaches it. */
+                        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+                        const DiamondFunction *target=nullptr;
+                        if(!cached_extension_lookup(vm,extension_site,
+                                (uint8_t)receiver_kind,&target)) {
+                            target=target_name!=nullptr?
+                                find_top_level_function(chunk,target_name,strlen(target_name)):
+                                find_collection_extension(chunk,receiver_kind,
+                                    method_name->chars,method_name->length);
+                            store_extension_lookup(vm,extension_site,
+                                (uint8_t)receiver_kind,target);
+                        }
                         if(target==nullptr&&target_name!=nullptr) {
                                 snprintf(vm->error,sizeof vm->error,
                                     "internal error: missing standard library function '%s'",
@@ -20596,9 +20707,26 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             VM_PROPAGATE(format_status);
                             registers[dest]=formatted;break;
                         }
-                        static const char *const string_prefixes[]={"string_"};
-                        const DiamondFunction *extension=find_value_extension(chunk,
-                            string_prefixes,1,method_name->chars,method_name->length);
+                        /* Not chunk->code+instruction_offset (an ordinary call site's
+                         * own would be stable, but the native-spread synthetic re-entry
+                         * just above builds its own tiny bytecode buffer fresh on the C
+                         * stack every time -- a different logical call site, same reused
+                         * stack address, which collided two unrelated method names onto
+                         * one cache entry and returned the wrong function). method_name
+                         * itself is a pointer into the calling function's own permanent,
+                         * never-reallocated string-constant table (fn->strings, set at
+                         * compile time), stable and correctly distinct per method name
+                         * regardless of which of the several dispatch paths reaches it. */
+                        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+                        const DiamondFunction *extension=nullptr;
+                        if(!cached_extension_lookup(vm,extension_site,
+                                DIAMOND_EXTENSION_KIND_STRING,&extension)) {
+                            static const char *const string_prefixes[]={"string_"};
+                            extension=find_value_extension(chunk,
+                                string_prefixes,1,method_name->chars,method_name->length);
+                            store_extension_lookup(vm,extension_site,
+                                DIAMOND_EXTENSION_KIND_STRING,extension);
+                        }
                         if(extension!=nullptr) {
                             DiamondValue call_result=DIAMOND_NIL;
                             const DiamondVmStatus status=forward_to_top_level_helper(vm,
@@ -24542,6 +24670,13 @@ DiamondVmStatus diamond_vm_run(DiamondVm *vm, const DiamondChunk *chunk,
     vm->has_exception=false;
     diamond_vm_invalidate_method_caches(vm);
     memset(vm->field_caches,0,sizeof(vm->field_caches));
+    /* Never strictly needed to invalidate for correctness (see
+     * DiamondExtensionCache's own comment, src/vm.h -- its resolution
+     * never changes after compilation), but cleared here for the same
+     * reason field_caches is: a fresh diamond_vm_run (a DIAMOND_REPEAT
+     * rerun, the REPL, ...) starts with predictable, empty caches rather
+     * than ones a previous run happened to warm. */
+    memset(vm->extension_caches,0,sizeof(vm->extension_caches));
     vm->direct_dispatch_rewrites=0;
     vm->field_cache_hits=0;
     vm->field_cache_misses=0;
