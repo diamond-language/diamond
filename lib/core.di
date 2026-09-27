@@ -1410,10 +1410,17 @@ def diamond_array_op_times(values: Array, times)
   return values.join(times) if times is String
   raise TypeError.new("Array * needs an Int or a String, got #{times}") unless times is Int
   raise ArgumentError.new("negative argument to Array *") if times < 0
+  # Appended in place: `result = result + values` copies everything so far
+  # (twice) on each pass, which made `[0] * n` quadratic -- minutes for a
+  # few hundred thousand elements.
   result = []
   count = 0
   while count < times
-    result = result + values
+    index = 0
+    while index < values.length()
+      result.push(values[index])
+      index += 1
+    end
     count += 1
   end
   result
