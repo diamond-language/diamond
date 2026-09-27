@@ -1,0 +1,10 @@
+--- testdata/old.txt
++++ testdata/new.txt
+@@ -4 +4 @@
+-Pack my box with five
++Pack my box with six
+@@ -8,0 +9,2 @@
++Bright vixens jump;
++dozy fowl quack.
+@@ -11,0 +14 @@
++And one more line.
