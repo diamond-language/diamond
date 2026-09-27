@@ -177,6 +177,12 @@ authoritative fine-grained record.
   call look like one on an explicit receiver, so it raised "private method
   called with an explicit receiver" while the same call without a block
   worked.
+- A typed array or hash can now travel down any number of typed calls.
+  Each function that declared, say, `Array[String]` recorded its own
+  constraint on the array it received, and an array held only four, so
+  passing one array through a fifth function (or as three parameters of
+  one) failed with "expected Array[String], got Array[String]". A
+  constraint that an existing one already implies is no longer recorded.
 
 ### Registry
 

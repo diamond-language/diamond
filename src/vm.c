@@ -9620,6 +9620,28 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
     return true;
 }
 
+/* Whether a container that already carries a constraint (its element/key/
+ * value type sets, resolved against `held_sets`) needs no further one for
+ * `wanted_set` in `chunk`: everything the held constraint admits, the
+ * wanted one admits too, so recording it would add nothing. Without this,
+ * every distinct function that declares the same `Array[String]` (each has
+ * its own type_sets table, so the exact-match test in the attach code
+ * never sees them as the same) took one of the container's four slots,
+ * and passing one array down a chain of five such functions failed with
+ * "expected Array[String], got Array[String]". Only compared when neither
+ * side has type variables (their meaning depends on per-call bindings)
+ * and both resolve class/interface indexes against the same tables. */
+static bool constraint_already_implies(const DiamondChunk *chunk,
+        const DiamondTypeSet *held_sets,size_t held_set_count,uint16_t held_set,
+        const DiamondClass *held_classes,const DiamondInterface *held_interfaces,
+        size_t held_type_variable_count,uint16_t wanted_set) {
+    if(held_type_variable_count!=0||chunk->type_variable_count!=0)return false;
+    if(held_classes!=chunk->classes||held_interfaces!=chunk->interfaces)return false;
+    if((size_t)held_set>=held_set_count||(size_t)wanted_set>=chunk->type_set_count)
+        return false;
+    return runtime_set_satisfies(chunk,held_sets,held_set,chunk->type_sets,wanted_set);
+}
+
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                                  DiamondTypeMember member,bool attach) {
     if(member.id==DIAMOND_TYPE_NATIVE)
@@ -9676,6 +9698,14 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         for(size_t index=0;index<array->constraint_count;index++)
             if(array->constraints[index].type_sets==chunk->type_sets&&
                array->constraints[index].set_index==member.argument_set)return true;
+        for(size_t index=0;index<array->constraint_count;index++)
+            if(constraint_already_implies(chunk,array->constraints[index].type_sets,
+                   array->constraints[index].type_set_count,
+                   array->constraints[index].set_index,
+                   array->constraints[index].classes,
+                   array->constraints[index].interfaces,
+                   array->constraints[index].type_variable_count,
+                   member.argument_set))return true;
         if(array->constraint_count==4)return false;
         array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
             .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
@@ -9712,6 +9742,21 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         if(hash->constraints[index].type_sets==chunk->type_sets&&
            hash->constraints[index].key_set==member.argument_set&&
            hash->constraints[index].value_set==member.second_argument_set)return true;
+    for(size_t index=0;index<hash->constraint_count;index++)
+        if(constraint_already_implies(chunk,hash->constraints[index].type_sets,
+               hash->constraints[index].type_set_count,
+               hash->constraints[index].key_set,
+               hash->constraints[index].classes,
+               hash->constraints[index].interfaces,
+               hash->constraints[index].type_variable_count,
+               member.argument_set)&&
+           constraint_already_implies(chunk,hash->constraints[index].type_sets,
+               hash->constraints[index].type_set_count,
+               hash->constraints[index].value_set,
+               hash->constraints[index].classes,
+               hash->constraints[index].interfaces,
+               hash->constraints[index].type_variable_count,
+               member.second_argument_set))return true;
     if(hash->constraint_count==4)return false;
     hash->constraints[hash->constraint_count++]=(typeof(hash->constraints[0])){
         .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
