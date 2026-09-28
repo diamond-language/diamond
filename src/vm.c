@@ -10520,20 +10520,37 @@ void diamond_format_value_type(char *buffer, size_t capacity,
     else if(value.kind==DIAMOND_VALUE_BOOL) name="Bool";
     else if(value.kind==DIAMOND_VALUE_INT) name="Int";
     else if(value.kind==DIAMOND_VALUE_FLOAT) name="Float";
-    /* value.as.object can be null here even though value.kind claims
-     * DIAMOND_VALUE_OBJECT: this function's job is to describe whatever a
-     * register holds well enough for an error message, including a
-     * register a caller only trusts is well-formed -- exit_helper's own
-     * "exit code must be an Int, got %s" is exactly that boundary, and
-     * fuzz/execute_fuzzer.c's raw, hand-assembled bytecode found a chunk
-     * that reaches it with a null object pointer (SEGV, confirmed on
-     * main before this fix too -- not a regression, a pre-existing gap
-     * this defensive check closes). Every real DiamondObject kind
-     * (object.h) still needs an explicit branch below: the catch-all
-     * reads the object through DiamondInstance's own layout, which is
-     * only valid for DIAMOND_OBJECT_INSTANCE -- any other kind reaching
-     * it is a garbage-pointer read on whatever that kind's struct happens
-     * to place at the same offset as DiamondInstance's `class` field. */
+    /* DIAMOND_VALUE_CLASS needs its own branch, checked before the
+     * object switch below: DIAMOND_CLASS() (value.h) stores a small
+     * `class_index` in the same union slot the object switch reads as
+     * `value.as.object`, so a real class value -- reachable from
+     * ordinary Diamond source, not just adversarial bytecode; `self`
+     * inside a `def self.x` singleton method already *is* one, and
+     * exit(Foo.bar()) crashed here confirming it -- would otherwise get
+     * its class_index byte reinterpreted as a pointer and dereferenced.
+     * Mirrors the same guard this file's own builder_format_value
+     * already has for its DIAMOND_VALUE_CLASS branch (which has a chunk
+     * to look the real class name up in; this function only reports a
+     * value's type, like "String" or "Int", not the class's own name,
+     * so "Class" is the right level of detail regardless). */
+    else if(value.kind==DIAMOND_VALUE_CLASS) name="Class";
+    /* value.as.object can also be null (or, after a single-bit fuzzer
+     * mutation of the same input, any other small non-pointer value)
+     * even though value.kind claims DIAMOND_VALUE_OBJECT: unverified,
+     * hand-assembled bytecode (fuzz/execute_fuzzer.c, which deliberately
+     * calls diamond_vm_run beneath diamond_verify_bytecode's own
+     * trust boundary -- see that file's own doc comment) can still
+     * reach exit_helper's "exit code must be an Int, got %s" with a
+     * register holding whatever garbage bit pattern an earlier
+     * instruction happened to produce. Not reachable from real Diamond
+     * source (ProgramBuilder#run always verifies first), but cheap
+     * insurance against a second SEGV in this same function regardless.
+     * Every real DiamondObject kind (object.h) still needs an explicit
+     * branch below: the catch-all reads the object through
+     * DiamondInstance's own layout, which is only valid for
+     * DIAMOND_OBJECT_INSTANCE -- any other kind reaching it is a
+     * garbage-pointer read on whatever that kind's struct happens to
+     * place at the same offset as DiamondInstance's `class` field. */
     else if(value.as.object==nullptr) name="<unknown>";
     else switch(value.as.object->kind) {
         case DIAMOND_OBJECT_STRING: name="String"; break;

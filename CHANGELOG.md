@@ -6,6 +6,24 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.9.1 — 2026-09-27
+
+### Runtime
+
+- Fixed a real SEGV in `exit(code)`'s own error path, reachable from
+  ordinary Diamond source, not just fuzzing: `self` inside a `def self.x`
+  singleton method is a class value, and passing one to `exit` (say,
+  `exit(Foo.bar())` where `bar` returns `self`) crashed instead of
+  raising `exit code must be an Int, got Class`. The formatting function
+  behind that message had no branch for a class value, so its
+  `class_index` byte -- stored in the same union slot as an object
+  pointer -- got dereferenced as one. This corrects 0.9.0's own release
+  notes for the same underlying formatting function, which understated
+  it as reachable "only through hand-assembled bytecode": the null-
+  pointer case fixed there was real too (still fixed), but a single-bit
+  mutation of that same fuzz input found this second, more serious gap
+  in the same missing-case bug within minutes of 0.9.0 being tagged.
+
 ## 0.9.0 — 2026-09-27
 
 Diamond remains pre-1.0. It has been exercised mainly on Fedora and Ubuntu
