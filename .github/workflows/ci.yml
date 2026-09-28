@@ -1,7 +1,18 @@
 name: test
 
 on:
+  # tags-ignore: a release tag always points at a commit whose branch
+  # push already ran this same workflow (see the release process in
+  # CHANGELOG.md's own "Cut X.Y.Z" commits -- the tag is a marker on
+  # already-tested code, never pushed before the branch is). Without
+  # this, `git push origin vX.Y.Z` starts a second, fully redundant
+  # 9-job run for the identical commit, and the two together contend
+  # for the same shared runner pool hard enough to push a job (or two)
+  # past its own timeout -- confirmed happening on both the
+  # register-recycling->main cherry-pick push and the 0.9.0 tag push,
+  # each needing a manual rerun once the duplicate was cancelled.
   push:
+    tags-ignore: ['**']
   pull_request:
 
 env:
