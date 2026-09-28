@@ -1231,6 +1231,38 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"TIME_AT",offset, &valid);break;
             case DIAMOND_OP_SHIFT_LEFT:
                 offset=three_registers(stream,chunk,"SHIFT_LEFT",offset, &valid);break;
+            case DIAMOND_OP_SHIFT_RIGHT:
+                offset=three_registers(stream,chunk,"SHIFT_RIGHT",offset, &valid);break;
+            case DIAMOND_OP_BITWISE_AND:
+                offset=three_registers(stream,chunk,"BITWISE_AND",offset, &valid);break;
+            case DIAMOND_OP_BITWISE_OR:
+                offset=three_registers(stream,chunk,"BITWISE_OR",offset, &valid);break;
+            case DIAMOND_OP_BITWISE_XOR:
+                offset=three_registers(stream,chunk,"BITWISE_XOR",offset, &valid);break;
+            /* The six cases below (SHIFT_RIGHT and BITWISE_AND/OR/XOR just
+             * above too) were simply never added when their opcodes were --
+             * found via a full enum-vs-switch diff while tracking down what
+             * turned out to be a genuine, if different, register-recycling
+             * bug (docs/internal/register-recycling-design.md): every
+             * unhandled opcode falls to this switch's own default case
+             * (`<unknown opcode N>`, below) and, having no idea how many
+             * operand bytes to skip, leaves every instruction after it
+             * misaligned and unreadable for the rest of the dump -- a
+             * debug-tool-only problem (run_chunk's own dispatch, src/vm.c,
+             * reads each opcode's real operands directly and was never
+             * affected), but worth closing now that it's been found. */
+            case DIAMOND_OP_CHANNEL_NEW:
+                offset=two_registers(stream,chunk,"CHANNEL_NEW",offset, &valid);break;
+            case DIAMOND_OP_SUPERVISOR_NEW:
+                offset=one_register(stream,chunk,"SUPERVISOR_NEW",offset, &valid);break;
+            case DIAMOND_OP_DIR_ENTRIES:
+                offset=two_registers(stream,chunk,"DIR_ENTRIES",offset, &valid);break;
+            case DIAMOND_OP_TENSOR_ZEROS:
+                offset=three_registers(stream,chunk,"TENSOR_ZEROS",offset, &valid);break;
+            case DIAMOND_OP_TENSOR_RANDOM:
+                offset=four_registers(stream,chunk,"TENSOR_RANDOM",offset, &valid);break;
+            case DIAMOND_OP_TENSOR_FROM_ARRAY:
+                offset=two_registers(stream,chunk,"TENSOR_FROM_ARRAY",offset, &valid);break;
             case DIAMOND_OP_PROCESS_RUN:
                 offset=two_registers(stream,chunk,"PROCESS_RUN",offset, &valid);break;
             case DIAMOND_OP_PROCESS_SPAWN:

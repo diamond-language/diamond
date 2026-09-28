@@ -221,6 +221,34 @@ for security-sensitive use.
   threshold. Recalibrated (found and verified via a container matching
   that exact toolchain, not guessed); every other build variant and
   compiler this project ships was already safe and remains so.
+- A brand-new local's first assignment (`x = <expression>`, `x` not
+  previously declared) reuses the expression's own result register
+  directly instead of allocating a second register and copying into it,
+  when that's safe -- about 25% faster for a function with many such
+  declarations, and a smaller `register_count` means less to zero on
+  every call. See docs/internal/register-recycling-design.md for the
+  measurements and a real bug the safety check for this had to catch:
+  `x = self` inside a method could alias `x` onto `self`'s own register
+  (which has no name-table entry to check against, unlike an ordinary
+  local or parameter), and boxing `x` for a later block capture then
+  corrupted `self` itself.
+- Reassigning an existing local with an arithmetic right-hand side
+  (`total = total + 1`) rewrites the producing instruction's own
+  destination in place instead of computing into a throwaway register and
+  copying it in, when that's safe -- about 30% faster for a function with
+  many such statements, and the register a repeated reassignment used to
+  burn on every single pass is no longer burned at all: a 1300-statement
+  reassignment chain's `register_count` dropped from about 3900 (once
+  heap-allocating and zeroing its register file on every call) to under
+  20, independent of the chain length. See docs/internal/register-
+  recycling-design.md for the safety reasoning and a real, unrelated bug
+  found while verifying it: `--dump-bytecode` had no case at all for
+  `SHIFT_RIGHT` or `BITWISE_AND`/`_OR`/`_XOR` (nor `CHANNEL_NEW`,
+  `SUPERVISOR_NEW`, `DIR_ENTRIES`, or the three `TENSOR_*` constructors),
+  so dumping a program using any of them printed `<unknown opcode N>`
+  followed by garbled register numbers for everything after -- a
+  debug-tool-only gap (`run_chunk`'s own dispatch was never affected), now
+  fixed for all nine.
 - `Array + Array` copies each side once now, straight into the result's
   own storage, instead of building a throwaway buffer and letting the
   array constructor copy that a second time.
