@@ -6,6 +6,82 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.9.0 — 2026-09-27
+
+Diamond remains pre-1.0. It has been exercised mainly on Fedora and Ubuntu
+(plus CI on FreeBSD, macOS, Alpine/musl, and arm64); treat it as unaudited
+for security-sensitive use.
+
+### Runtime
+
+- Deep recursion (`depth(5000)`-shaped programs) could crash with a real
+  segfault instead of raising the intended, rescuable `call stack
+  overflow` error, on a release (`-O3`) build under GCC 15.2.0 (Ubuntu
+  26.04's own packaged version) specifically -- its larger per-call stack
+  frame for `run_chunk` left almost no margin below the guard's previous
+  threshold. Recalibrated (found and verified via a container matching
+  that exact toolchain, not guessed); every other build variant and
+  compiler this project ships was already safe and remains so.
+- A brand-new local's first assignment (`x = <expression>`, `x` not
+  previously declared) reuses the expression's own result register
+  directly instead of allocating a second register and copying into it,
+  when that's safe -- about 25% faster for a function with many such
+  declarations, and a smaller `register_count` means less to zero on
+  every call. See docs/internal/register-recycling-design.md for the
+  measurements and a real bug the safety check for this had to catch:
+  `x = self` inside a method could alias `x` onto `self`'s own register
+  (which has no name-table entry to check against, unlike an ordinary
+  local or parameter), and boxing `x` for a later block capture then
+  corrupted `self` itself.
+- Reassigning an existing local with an arithmetic right-hand side
+  (`total = total + 1`) rewrites the producing instruction's own
+  destination in place instead of computing into a throwaway register and
+  copying it in, when that's safe -- about 30% faster for a function with
+  many such statements, and the register a repeated reassignment used to
+  burn on every single pass is no longer burned at all: a 1300-statement
+  reassignment chain's `register_count` dropped from about 3900 (once
+  heap-allocating and zeroing its register file on every call) to under
+  20, independent of the chain length. See docs/internal/register-
+  recycling-design.md for the safety reasoning and a real, unrelated bug
+  found while verifying it: `--dump-bytecode` had no case at all for
+  `SHIFT_RIGHT` or `BITWISE_AND`/`_OR`/`_XOR` (nor `CHANNEL_NEW`,
+  `SUPERVISOR_NEW`, `DIR_ENTRIES`, or the three `TENSOR_*` constructors),
+  so dumping a program using any of them printed `<unknown opcode N>`
+  followed by garbled register numbers for everything after -- a
+  debug-tool-only gap (`run_chunk`'s own dispatch was never affected), now
+  fixed for all nine.
+- `Array + Array` copies each side once now, straight into the result's
+  own storage, instead of building a throwaway buffer and letting the
+  array constructor copy that a second time.
+- The Ruby-compatible methods added earlier in this series (`max`, `sum`,
+  `reverse`, `select`, ...) dispatch through a cache now instead of
+  rescanning every prelude function by name on each call: `arr.max()` went
+  from about 0.8 us to about 0.45 us, `arr.reverse()` from about 4.7 us to
+  about 0.5 us. Fixed along the way: `arr.method(*args)` on a native
+  receiver re-enters dispatch through a synthetic bytecode buffer reused at
+  the same address for every such call in the program, so the cache's first
+  version (keyed by that address) could return one spread call's resolved
+  method to a completely different one; keying it by the method name's own
+  stable string constant instead fixed it for every dispatch path.
+- Method calls are cheaper. A generated `attr_reader`/`attr_writer`/
+  `attr_accessor` or `struct` field reader recorded no register count, so
+  every call zeroed a full 64 KB register file: about 2.2 us a call against
+  0.5 us for the same reader written by hand. Both are now about 0.17 us.
+  Every instance-method call also zeroed 3 KB of type-binding storage that
+  only explicit type arguments use, and looking up a method like `max` or
+  `sum` on an array compared its name against every prelude function with
+  `strlen` (`[a, b].max()` went from 2.6 us to 0.8 us). A debug build now
+  refuses to compile a function that never recorded its register count, so
+  the first cannot come back unnoticed.
+- Fixed a real SEGV a fuzzing run found in `exit(code)`'s own error path:
+  formatting a non-Int argument's type for the "exit code must be an Int,
+  got %s" message dereferenced a null object pointer when the value's
+  `kind` claimed `DIAMOND_VALUE_OBJECT` but held no actual object -- reachable
+  only through hand-assembled bytecode (`ProgramBuilder#run`, or this
+  project's own `execute_fuzzer`), not through compiling real Diamond
+  source. Pre-existing on `main`, confirmed unrelated to register
+  recycling; now formats as `<unknown>` instead of crashing.
+
 ### Tooling
 
 - `diamond --version` on a debug-family build (the default `make`, plus
@@ -187,6 +263,20 @@ authoritative fine-grained record.
   `total += if ... end`, and likewise `-=`, `*=`, `||=`, and an indexed
   target. It failed with "expected postfix condition" at the `end`, because
   only the `if` after a plain `=` was recognized as a value.
+- Fixed: a block passed on to a later call (`run_it(b)`) could still
+  `break` out of that later call, since the landing check only asked
+  whether the block was among the callee's own arguments. A `break` now
+  lands only in the exact call instruction the block was originally passed
+  to; anywhere else raises the usual rescuable "break from a block outside
+  the call it was passed to".
+- Fixed a real, UBSan-confirmed undefined-behavior bug: an empty
+  StringBuilder never allocates its buffer, so it stays a null pointer at
+  length 0 -- and `File#read` at EOF, a second read past a file's end, and
+  `gets()` on a line with no content before its newline all built one this
+  way and passed it straight into `memcpy`, whose first two arguments are
+  declared non-null regardless of length. No observable effect on any
+  currently supported platform, but undefined behavior nonetheless; fixed
+  by skipping the copy when length is 0.
 
 ### Registry
 
@@ -198,6 +288,56 @@ authoritative fine-grained record.
 - Deployment: nginx now terminates TLS directly with certbot certificates
   (`nginx-host.conf.example` plus the registry's `nginx.conf.example`). The
   Caddy site block and loopback nginx template are gone.
+- The cuts catalog and its show pages read better on phones.
+- A platform report tool (`tools/platform_report`) runs Diamond's own test
+  suite and a small benchmark set on a new machine and prints a summary,
+  for comparing performance and portability across hardware.
+
+### Examples
+
+- `examples/calc`: an interactive calculator built the way a small language
+  is: a tokenizer, a Pratt parser, a sealed syntax tree, an evaluator, and a
+  simplifier, with errors that point at the column that caused them.
+- `examples/generators`: fibers used four ways -- generators of infinite
+  sequences, lazy pipelines built from those generators, two-way coroutines,
+  and tasks under a small cooperative scheduler.
+- `examples/ledger`: three months of personal finances in a double-entry
+  ledger that must balance to the cent, as a tour of the object model.
+- `examples/parallel`: real parallelism on OS threads -- `Thread.new`, a
+  worker pool and a pipeline wired together with `Channel`s, what thread
+  isolation means in practice, and what happens when a worker fails.
+- `examples/markdown`: a Markdown-to-HTML converter for a practical subset
+  (headings, lists, fenced code, blockquotes, inline formatting and links),
+  touring String and `Regexp` handling.
+- `examples/vault`: an encrypted secrets file built entirely from Diamond's
+  crypto and encoding builtins -- `BCrypt`, `Cipher` (AES-256-GCM), `HMAC`,
+  `Digest`, `SecureRandom`, `Base64`, `Gzip`, and `JSON`.
+- `examples/grades`: a grade report from CSV that tours what the gradual
+  type system checks and when; `rejected/` holds four programs the compiler
+  refuses to run, one per kind of mistake it catches.
+- `examples/taskrun`: a make-like task runner where tasks declare
+  dependencies and shell commands in a `Taskfile`, run in dependency order
+  up to `-j N` at a time.
+- `examples/agenda`: recurring events expanded into a dated agenda or a
+  month calendar, touring the `Time` API.
+- `examples/kvstore`: a single-threaded TCP key-value server on non-blocking
+  sockets and one `IO.poll` loop, with expiring keys, an append-only log
+  that survives restarts, and a clean shutdown on SIGTERM.
+- `examples/models`: record classes (`Book`, `Author`) whose accessors are
+  generated at run time from a JSON schema, touring metaprogramming.
+- `examples/redact`: scrubs secrets and personal data out of logs --
+  emails, IPs, card numbers, bearer tokens, AWS keys, `password=`-style
+  values, private key headers -- plus any rules you add.
+- `examples/notes`: a command-line notebook kept in one SQLite file via the
+  `SQLite3` builtin directly, no ORM, just SQL and bind parameters.
+- `examples/pngmeta`: reads and edits PNG metadata at the byte level,
+  parsing the whole file into chunks, checking each chunk's CRC-32, and
+  writing edited files back with freshly computed CRCs.
+- `examples/udiff`: a unified diff and patch tool -- compares two text files
+  like `diff -u` and applies a unified diff forwards or backwards.
+- `examples/pathfinder`: shortest routes across an ASCII map three ways --
+  breadth-first search, Dijkstra's algorithm, and A* -- with the route drawn
+  on the map as `*`.
 
 ## 0.8.0 — 2026-09-24
 
@@ -213,65 +353,6 @@ for security-sensitive use.
 
 ### Runtime
 
-- Deep recursion (`depth(5000)`-shaped programs) could crash with a real
-  segfault instead of raising the intended, rescuable `call stack
-  overflow` error, on a release (`-O3`) build under GCC 15.2.0 (Ubuntu
-  26.04's own packaged version) specifically -- its larger per-call stack
-  frame for `run_chunk` left almost no margin below the guard's previous
-  threshold. Recalibrated (found and verified via a container matching
-  that exact toolchain, not guessed); every other build variant and
-  compiler this project ships was already safe and remains so.
-- A brand-new local's first assignment (`x = <expression>`, `x` not
-  previously declared) reuses the expression's own result register
-  directly instead of allocating a second register and copying into it,
-  when that's safe -- about 25% faster for a function with many such
-  declarations, and a smaller `register_count` means less to zero on
-  every call. See docs/internal/register-recycling-design.md for the
-  measurements and a real bug the safety check for this had to catch:
-  `x = self` inside a method could alias `x` onto `self`'s own register
-  (which has no name-table entry to check against, unlike an ordinary
-  local or parameter), and boxing `x` for a later block capture then
-  corrupted `self` itself.
-- Reassigning an existing local with an arithmetic right-hand side
-  (`total = total + 1`) rewrites the producing instruction's own
-  destination in place instead of computing into a throwaway register and
-  copying it in, when that's safe -- about 30% faster for a function with
-  many such statements, and the register a repeated reassignment used to
-  burn on every single pass is no longer burned at all: a 1300-statement
-  reassignment chain's `register_count` dropped from about 3900 (once
-  heap-allocating and zeroing its register file on every call) to under
-  20, independent of the chain length. See docs/internal/register-
-  recycling-design.md for the safety reasoning and a real, unrelated bug
-  found while verifying it: `--dump-bytecode` had no case at all for
-  `SHIFT_RIGHT` or `BITWISE_AND`/`_OR`/`_XOR` (nor `CHANNEL_NEW`,
-  `SUPERVISOR_NEW`, `DIR_ENTRIES`, or the three `TENSOR_*` constructors),
-  so dumping a program using any of them printed `<unknown opcode N>`
-  followed by garbled register numbers for everything after -- a
-  debug-tool-only gap (`run_chunk`'s own dispatch was never affected), now
-  fixed for all nine.
-- `Array + Array` copies each side once now, straight into the result's
-  own storage, instead of building a throwaway buffer and letting the
-  array constructor copy that a second time.
-- The Ruby-compatible methods added earlier in this series (`max`, `sum`,
-  `reverse`, `select`, ...) dispatch through a cache now instead of
-  rescanning every prelude function by name on each call: `arr.max()` went
-  from about 0.8 us to about 0.45 us, `arr.reverse()` from about 4.7 us to
-  about 0.5 us. Fixed along the way: `arr.method(*args)` on a native
-  receiver re-enters dispatch through a synthetic bytecode buffer reused at
-  the same address for every such call in the program, so the cache's first
-  version (keyed by that address) could return one spread call's resolved
-  method to a completely different one; keying it by the method name's own
-  stable string constant instead fixed it for every dispatch path.
-- Method calls are cheaper. A generated `attr_reader`/`attr_writer`/
-  `attr_accessor` or `struct` field reader recorded no register count, so
-  every call zeroed a full 64 KB register file: about 2.2 us a call against
-  0.5 us for the same reader written by hand. Both are now about 0.17 us.
-  Every instance-method call also zeroed 3 KB of type-binding storage that
-  only explicit type arguments use, and looking up a method like `max` or
-  `sum` on an array compared its name against every prelude function with
-  `strlen` (`[a, b].max()` went from 2.6 us to 0.8 us). A debug build now
-  refuses to compile a function that never recorded its register count, so
-  the first cannot come back unnoticed.
 - Bytecode caches (`.dic`) and the embedded compiled prelude are far smaller:
   string constants are now stored as length-prefixed bytes instead of fixed 4 KB
   records. The guestbook example's cache dropped from 29 MB to 3.5 MB, and apps

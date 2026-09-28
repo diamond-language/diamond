@@ -47,6 +47,16 @@ execute_corpus="$work/execute_corpus"
 mkdir -p "$execute_corpus"
 printf '\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
 
+# Seeded the same way, for the diamond_format_value_type null-object-
+# pointer SEGV a 2026-09-27 fuzzing run found (exit_helper's "exit code
+# must be an Int, got %s" formatting a register whose value.kind claims
+# DIAMOND_VALUE_OBJECT but whose value.as.object is null) -- pre-existing
+# on main before the register-recycling merge that happened to surface
+# it, not caused by it. Fixed by treating a null object pointer as
+# "<unknown>" instead of dereferencing it.
+printf '\x45\x6e\x00\x00\x00\x80\x00\x00\x09\x92\xff' \
+    > "$execute_corpus/format_value_type_null_object"
+
 execute_artifacts="$work/execute_artifacts"
 mkdir -p "$execute_artifacts"
 

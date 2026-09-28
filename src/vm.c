@@ -10520,12 +10520,21 @@ void diamond_format_value_type(char *buffer, size_t capacity,
     else if(value.kind==DIAMOND_VALUE_BOOL) name="Bool";
     else if(value.kind==DIAMOND_VALUE_INT) name="Int";
     else if(value.kind==DIAMOND_VALUE_FLOAT) name="Float";
-    /* Every DiamondObject kind (object.h) needs an explicit branch here:
-     * the catch-all below reads the object through DiamondInstance's own
-     * layout, which is only valid for DIAMOND_OBJECT_INSTANCE -- any
-     * other kind reaching it is a null/garbage-pointer read on whatever
-     * that kind's struct happens to place at the same offset as
-     * DiamondInstance's `class` field. */
+    /* value.as.object can be null here even though value.kind claims
+     * DIAMOND_VALUE_OBJECT: this function's job is to describe whatever a
+     * register holds well enough for an error message, including a
+     * register a caller only trusts is well-formed -- exit_helper's own
+     * "exit code must be an Int, got %s" is exactly that boundary, and
+     * fuzz/execute_fuzzer.c's raw, hand-assembled bytecode found a chunk
+     * that reaches it with a null object pointer (SEGV, confirmed on
+     * main before this fix too -- not a regression, a pre-existing gap
+     * this defensive check closes). Every real DiamondObject kind
+     * (object.h) still needs an explicit branch below: the catch-all
+     * reads the object through DiamondInstance's own layout, which is
+     * only valid for DIAMOND_OBJECT_INSTANCE -- any other kind reaching
+     * it is a garbage-pointer read on whatever that kind's struct happens
+     * to place at the same offset as DiamondInstance's `class` field. */
+    else if(value.as.object==nullptr) name="<unknown>";
     else switch(value.as.object->kind) {
         case DIAMOND_OBJECT_STRING: name="String"; break;
         case DIAMOND_OBJECT_SYMBOL: name="Symbol"; break;
