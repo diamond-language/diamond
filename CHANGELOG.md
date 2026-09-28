@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.9.2 — 2026-09-28
+
 ### Runtime
 
 - Fixed a crash when a class value was raised (`raise Foo.bar()` where the
