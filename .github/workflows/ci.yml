@@ -2,6 +2,19 @@ name: test
 
 on:
   push:
+    # A release tag always points at a commit whose branch push already ran
+    # this full matrix; without this, `git push origin vX.Y.Z` starts a
+    # second, fully redundant run for the identical commit, and the two
+    # runs contend hard enough for the shared runner pool to push a job
+    # past its own timeout. `branches: ['**']` must stay alongside
+    # `tags-ignore` -- an earlier attempt with `tags-ignore` alone (commit
+    # 6e0f10f4) silently broke push-triggering entirely, not just for
+    # tags; root cause undiagnosed, so don't drop this pairing without
+    # re-verifying an ordinary branch push still triggers a run.
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
   pull_request:
 
 env:
