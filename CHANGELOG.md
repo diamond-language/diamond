@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Runtime
+
+- Fixed a crash when a class value was raised (`raise Foo.bar()` where the
+  method returns `self` from a singleton method). It was a third consumer of
+  the bug fixed in 0.9.1: the uncaught-exception formatter read a class
+  value's index as an object pointer.
+
 ## 0.9.1 — 2026-09-27
 
 ### Runtime

@@ -11975,14 +11975,20 @@ static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue excepti
                  exception.as.boolean?"true":"false");
     else if(exception.kind==DIAMOND_VALUE_NIL)
         snprintf(vm->error,sizeof vm->error,"uncaught exception: nil");
-    else if(exception.kind==DIAMOND_VALUE_FLOAT) {
+    else if(exception.kind==DIAMOND_VALUE_FLOAT||
+            exception.kind==DIAMOND_VALUE_CLASS) {
+        /* A class value keeps its index in the same union slot as an object
+         * pointer, so it must not fall through to the object branches. */
         StringBuilder message_builder={};
         if(builder_format_value(&message_builder,exception))
             snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",
                      (int)message_builder.length,message_builder.chars);
         else
-            snprintf(vm->error,sizeof vm->error,"uncaught exception: <float>");
+            snprintf(vm->error,sizeof vm->error,"uncaught exception: <%s>",
+                     exception.kind==DIAMOND_VALUE_CLASS?"class":"float");
         free(message_builder.chars);
+    } else if(exception.kind!=DIAMOND_VALUE_OBJECT) {
+        snprintf(vm->error,sizeof vm->error,"uncaught exception: object");
     } else if(exception.as.object->kind==DIAMOND_OBJECT_STRING) {
         const DiamondString *string=(const DiamondString *)exception.as.object;
         snprintf(vm->error,sizeof vm->error,"uncaught exception: %.*s",

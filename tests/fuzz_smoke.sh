@@ -62,6 +62,13 @@ printf '\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
 printf '\x45\x6e\x00\x00\x00\x80\x00\x00\x09\x92\xff' \
     > "$execute_corpus/format_value_type_null_object"
 
+# A third consumer of the same CLASS-kind-read-as-object-pointer bug:
+# raising a class value (`raise Foo.bar()`, tests/cases/raise_class_value.di)
+# reached format_uncaught_exception_message's unconditional `.as.object`
+# read. Found by libFuzzer on CI after the fix above shipped.
+printf '\x9b\x6e\x00\x00\x10\x3a\x00\x00\x0b\x4c\x16' \
+    > "$execute_corpus/uncaught_exception_class_value"
+
 execute_artifacts="$work/execute_artifacts"
 mkdir -p "$execute_artifacts"
 
