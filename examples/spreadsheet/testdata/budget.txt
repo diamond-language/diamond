@@ -1,0 +1,16 @@
+# A small household budget. Column A holds the raw numbers, column B
+# labels and totals, column C a couple of derived stats.
+A1 = 1200
+A2 = 340.5
+A3 = 89
+A4 = 15
+B1 = "rent"
+B2 = "groceries"
+B3 = "internet"
+B4 = "streaming"
+C1 = =SUM(A1:A4)
+C2 = =AVG(A1:A4)
+C3 = =MAX(A1:A4)
+C4 = =MIN(A1:A4)
+D1 = =C1 / 2
+D2 = =(C1 - A1) * 2
