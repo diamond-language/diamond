@@ -1,0 +1,1 @@
+Only a plugin the host trusts with filesystem access can read this file.

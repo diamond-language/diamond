@@ -1,0 +1,44 @@
+{
+  "plugins": [
+    {
+      "name": "wordcount",
+      "path": "plugins/wordcount.di",
+      "arg": "the quick brown fox jumps over the lazy dog",
+      "allow": [],
+      "max_instructions": 2000000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "peek (untrusted)",
+      "path": "plugins/peek.di",
+      "arg": "plugins/data/notice.txt",
+      "allow": [],
+      "max_instructions": 2000000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "peek (trusted reader)",
+      "path": "plugins/peek.di",
+      "arg": "plugins/data/notice.txt",
+      "allow": ["filesystem"],
+      "max_instructions": 2000000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "tidy (untrusted)",
+      "path": "plugins/tidy.di",
+      "arg": "plugins/data/notice.txt",
+      "allow": [],
+      "max_instructions": 2000000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "spinloop",
+      "path": "plugins/spinloop.di",
+      "arg": "",
+      "allow": [],
+      "max_instructions": 300000,
+      "max_wall_ms": 2000
+    }
+  ]
+}
