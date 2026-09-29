@@ -1,0 +1,6 @@
+shape                                 depth   result
+self tail call                       100000   ok
+non-tail: 1 + f(n - 1)               100000   stack overflow
+tail call inside begin/rescue        100000   stack overflow
+mutual tail calls (ping/pong)        100000   stack overflow
+non-tail, within the limit               80   ok
