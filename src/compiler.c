@@ -17088,8 +17088,15 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
      *   existed before this statement's RHS began is, by this compiler's
      *   own strictly-monotonic register allocation, necessarily below
      *   the high-water mark captured at that point, named local or not. */
+    /* - A nil literal is excluded: parse_literal emits no instruction for
+     *   it (the register is assumed to stay at its zero-initialised nil),
+     *   so nothing ever writes that register on a later pass. Adopted as a
+     *   local's home, `seen = nil` at the top of a loop body would then
+     *   never reset `seen` once the loop assigned it later in the body --
+     *   the next iteration would still see the previous one's value. */
     const bool reuse_as_new_local =
         local < 0 && value >= rhs_start_register &&
+        compiler->known_types[value] != DIAMOND_TYPE_NIL &&
         !register_is_named(compiler, value);
     const uint16_t destination = reuse_as_new_local
         ? define_local_with_register(compiler, name, value)
