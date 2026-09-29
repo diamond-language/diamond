@@ -1,0 +1,50 @@
+. . .
+. . .
+. . .
+
+x plays 0
+X . .
+. . .
+. . .
+
+o plays 4
+X . .
+. O .
+. . .
+
+x plays 1
+X X .
+. O .
+. . .
+
+o plays 2
+X X O
+. O .
+. . .
+
+x plays 6
+X X O
+. O .
+X . .
+
+o plays 3
+X X O
+O O .
+X . .
+
+x plays 5
+X X O
+O O X
+X . .
+
+o plays 7
+X X O
+O O X
+X O .
+
+x plays 8
+X X O
+O O X
+X O X
+
+draw
