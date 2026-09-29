@@ -1,0 +1,10 @@
+{
+  "customer": {"name": "Ada Lovelace"},
+  "items": [
+    {"quantity": 2, "name": "widget", "price": 5},
+    {"quantity": 1, "name": "gadget", "price": 12}
+  ],
+  "total": 22,
+  "paid": false,
+  "note": "<b>call before shipping</b>"
+}

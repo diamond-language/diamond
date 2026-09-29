@@ -1,0 +1,15 @@
+Invoice for {{customer.name}}
+
+{{#items}}
+  {{quantity}}x {{name}} @ ${{price}}
+{{/items}}
+{{^items}}
+  (no items)
+{{/items}}
+
+Total: ${{total}}
+{{#paid}}Paid in full. Thanks, {{customer.name}}!{{/paid}}
+{{^paid}}Balance due.{{/paid}}
+
+Raw HTML note: {{{note}}}
+Escaped note: {{note}}
