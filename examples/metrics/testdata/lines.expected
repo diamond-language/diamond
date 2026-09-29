@@ -1,0 +1,7 @@
+counters
+  errors             1.00
+  requests           8.00
+gauges
+  queue_depth        4.00
+timers (ms)
+  latency            n=5 min=8.00 mean=17.70 p90=31.00 max=31.00

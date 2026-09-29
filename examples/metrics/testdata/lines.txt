@@ -1,0 +1,12 @@
+# one batch of everything: counters (one sampled), gauges, timers
+requests:1|c
+requests:1|c
+requests:3|c|@0.5
+errors:1|c
+queue_depth:9|g
+queue_depth:4|g
+latency:12.5|ms
+latency:8|ms
+latency:31|ms
+latency:15|ms
+latency:22|ms
