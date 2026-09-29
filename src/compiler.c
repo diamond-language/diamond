@@ -168,6 +168,13 @@ typedef struct Compiler {
     int current_module;
     bool methods_private;
     bool methods_protected;
+    /* While a struct's hand-written body compiles: the class whose
+     * *generated* == / to_s a same-named `def` may replace (rather than
+     * collide with). -1 outside a struct body; each flag clears once
+     * replaced. */
+    int struct_replaceable_class;
+    bool struct_replaceable_eq;
+    bool struct_replaceable_to_s;
     bool module_function_mode;
     DiamondSpan current_method;
     bool in_method;
@@ -14401,10 +14408,36 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
        !compiler->failed&&at_top_level) {
         DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
         bool duplicate=false;
+        size_t duplicate_index=0;
         for(size_t existing=0;existing<class->method_count;existing++)
             if(!class->methods[existing].included&&
-               strcmp(class->methods[existing].name,function->name)==0)
-                duplicate=true;
+               strcmp(class->methods[existing].name,function->name)==0) {
+                duplicate=true;duplicate_index=existing;
+            }
+        /* A struct's own generated == or to_s may be replaced by a
+         * hand-written one in its body (never initialize or a field
+         * reader): the generated entry is overwritten in place, so
+         * dispatch finds the user's method under the same name. */
+        bool replacing_generated=false;
+        if(duplicate&&compiler->struct_replaceable_class==compiler->current_class) {
+            if(compiler->struct_replaceable_eq&&strcmp(function->name,"==")==0) {
+                compiler->struct_replaceable_eq=false;replacing_generated=true;
+            } else if(compiler->struct_replaceable_to_s&&
+                      strcmp(function->name,"to_s")==0) {
+                compiler->struct_replaceable_to_s=false;replacing_generated=true;
+            }
+        }
+        if(replacing_generated) {
+            /* Drop the generated entry and let the ordinary append below
+             * add the user's method, so it sits where any hand-written
+             * method would: dispatch prefers the latest match by name, and
+             * an `include Comparable` earlier in the body has already
+             * appended its own derived == after the generated one. */
+            for(size_t shift=duplicate_index+1;shift<class->method_count;shift++)
+                class->methods[shift-1]=class->methods[shift];
+            class->method_count--;
+            duplicate=false;
+        }
         if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
             fail(compiler, name, "duplicate or excessive method definition");
         } else {
@@ -16209,12 +16242,22 @@ static uint16_t compile_struct(Compiler *compiler) {
         }
     }
     /* A hand-written def/attr/include supplementing the generated
-     * members above -- see compile_class_body's own comment. A
-     * colliding name (a def or attr matching a generated reader/
-     * initialize/==/to_s) already fails via compile_definition's/
-     * compile_attribute_named's own existing duplicate-method checks,
-     * with nothing struct-specific needed here. */
+     * members above -- see compile_class_body's own comment. A def named
+     * == or to_s replaces the generated one (struct_replaceable_*; see
+     * compile_definition's duplicate check). Any other colliding name (a
+     * def or attr matching a generated reader or initialize) still fails
+     * via compile_definition's/compile_attribute_named's own existing
+     * duplicate-method checks. */
+    const int outer_replaceable_class=compiler->struct_replaceable_class;
+    const bool outer_replaceable_eq=compiler->struct_replaceable_eq;
+    const bool outer_replaceable_to_s=compiler->struct_replaceable_to_s;
+    compiler->struct_replaceable_class=(int)index;
+    compiler->struct_replaceable_eq=true;
+    compiler->struct_replaceable_to_s=true;
     if(!compiler->failed) compile_class_body(compiler,class);
+    compiler->struct_replaceable_class=outer_replaceable_class;
+    compiler->struct_replaceable_eq=outer_replaceable_eq;
+    compiler->struct_replaceable_to_s=outer_replaceable_to_s;
     if(compiler->current.kind==DIAMOND_TOKEN_END) advance_token(compiler);
     compiler->current_class=outer_class;
     compiler->methods_private=outer_private;
@@ -18361,6 +18404,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .program = program,
         .function = &program->entry,
         .current_class = -1,
+        .struct_replaceable_class = -1,
         .current_module = -1,
         .contextual_block_return_set = -1,
         .expected_expression_type_set = -1,

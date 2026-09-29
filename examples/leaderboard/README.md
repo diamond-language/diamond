@@ -57,9 +57,9 @@ file can't be read.
   gets `<`, `max`, `sort` from `<=>`. But Comparable's derived `==` passes
   whatever it is compared to straight into `<=>`, so `entry == nil` would
   reach a method whose parameter insists on an `Entry` and fail. `Entry`
-  therefore defines its own `==`, as `examples/ledger`'s `Money` does. It is
-  a plain class rather than a `struct` because a struct generates its own `==`
-  and refuses a replacement.
+  therefore defines its own `==`, as `examples/ledger`'s `Money` does. `Entry`
+  is a `struct`, and a struct's hand-written `def ==` replaces the generated
+  field-by-field one.
 - **Structural `case`.** `describe` matches `[event, details]` against
   `[:joined, [name, score]]` and friends, binding names out of the nested
   array.

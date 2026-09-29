@@ -9,18 +9,8 @@ require "./observable"
 
 # Highest score is the "greatest" entry; ties break toward the name that
 # sorts first, so a ranking is always fully determined.
-# A class rather than a `struct`: a struct generates its own == and won't
-# let a hand-written one replace it.
-class Entry
+struct Entry(name: String, score: Int)
   include Comparable
-
-  attr_reader name: String
-  attr_reader score: Int
-
-  def initialize(name: String, score: Int)
-    @name = name
-    @score = score
-  end
 
   def <=>(other: Entry)
     return @score <=> other.score() unless @score == other.score()
@@ -28,7 +18,8 @@ class Entry
   end
 
   # Comparable's derived == would hand `x == nil` to <=>, which insists on
-  # an Entry; this answers false for anything that isn't one.
+  # an Entry. A struct's own def == replaces its generated field-by-field
+  # one, so this answers false for anything that isn't an Entry.
   def ==(other)
     other is Entry && @score == other.score() && @name == other.name()
   end

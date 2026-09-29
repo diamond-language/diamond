@@ -636,13 +636,22 @@ struct Point(x: Int, y: Int)
 end
 ```
 
-A hand-written member can only *add*, not override: `def to_s`/`def ==`/
-`def initialize`, or a `def`/`attr` matching a field's own generated
-reader name, is a compile error ("duplicate or excessive method
-definition" / "attribute method is already defined") -- the same error
-an ordinary `class` already gives for defining the same method twice,
-since a struct's generated methods are registered before its own body
-compiles and nothing distinguishes how a method got its name.
+A hand-written `def ==` or `def to_s` **replaces** the generated one (the
+generated `==` compares every field; a struct that should compare by
+identity of some fields only, or print differently, says so in its body):
+
+```ruby
+struct Point(x: Int, y: Int, label: String)
+  def ==(other) = other is Point && @x == other.x() && @y == other.y()
+  def to_s() = "(#{@x}, #{@y})"
+end
+```
+
+Everything else stays add-only: `def initialize`, or a `def`/`attr`
+matching a field's own generated reader name, is still a compile error
+("duplicate or excessive method definition" / "attribute method is already
+defined"), since replacing the constructor or a reader would break the
+field list the rest of the struct relies on.
 
 **Deliberately narrow for this first pass:**
 
@@ -659,7 +668,7 @@ compiles and nothing distinguishes how a method got its name.
   compile error -- this is what lets the generated readers carry a real
   return type and keeps `==`/`to_s` simple.
 - A field cannot be named `initialize`, `==`, or `to_s` (it would
-  collide with one of the four generated methods).
+  collide with a generated method).
 
 ## Operator overloading
 
