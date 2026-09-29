@@ -11180,6 +11180,32 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
             array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
             if(compiler->failed||!validate_case_array_bindings(
                     compiler,array_nodes,node_count))return destination;
+            /* Exhaustiveness, per alternative: an object pattern whose
+             * readers are all bare bindings or `_` (including an empty
+             * `Class{}`) matches every instance of that class exactly as
+             * a bare scalar `when Class` does, so it soundly covers that
+             * union/sealed-hierarchy member -- and when several such
+             * alternatives are comma-joined, each one covers its own
+             * class, since any of them matching selects this same
+             * branch. A literal, pin, or nested pattern among the
+             * readers only matches a subset of the class and never
+             * counts; neither does an Array/Hash pattern (it names no
+             * class). A trailing `if` guard zeroes covered_id_count
+             * further down regardless, so a guarded clause never counts. */
+            {
+                bool unconstrained_object=
+                    array_nodes[array_root].kind==CASE_OBJECT_GROUP;
+                for(uint8_t child=0;unconstrained_object&&
+                    child<array_nodes[array_root].child_count;child++) {
+                    const CaseArrayNodeKind kind=
+                        array_nodes[array_nodes[array_root].children[child]].kind;
+                    if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
+                        unconstrained_object=false;
+                }
+                if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                    covered_ids[covered_id_count++]=(uint8_t)
+                        (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
+            }
             size_t indices[64],aligned[64];
             const size_t alternative_binding_count=
                 collect_case_bindings(array_nodes,node_count,indices);
@@ -11231,39 +11257,6 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         }
         for(size_t success=0;success<success_count;success++)
             patch_jump(compiler,success_jumps[success],compiler->function->code_count);
-        /* Exhaustiveness: an empty `Class{}` object pattern -- no reader
-         * fields at all -- matches any instance of that class exactly
-         * the way a bare scalar `when Class` already does (docs/core-
-         * syntax.md's own case/when semantics: empty `Class{}` is "any
-         * Class instance"), so it can soundly count as covering that
-         * union/sealed-hierarchy member the same way. Scoped narrowly on
-         * purpose, matching docs/roadmap.md's own "keep the initial
-         * change small" stance: only a *single* pattern (no `,`-joined
-         * alternatives -- success_count==1 means the loop above never
-         * looped a second time) whose whole top-level shape is exactly
-         * one empty object group, never a nested or non-empty one (a
-         * non-empty `Circle{radius: r}` only matches a subset of
-         * Circle, and covered_ids has no representation for "matches
-         * some Circles" short of the class id itself). A trailing `if`
-         * guard already zeroes covered_id_count further down regardless
-         * of how it got populated, so a guarded `when Circle{} if ...`
-         * still correctly never counts. */
-        /* The same holds when every reader is only bound to a name or
-         * ignored with `_` -- `Parsed{score: score}` constrains nothing,
-         * so it matches every Parsed just as `Parsed{}` does. Any literal,
-         * pin, or nested pattern among the readers still disqualifies it. */
-        bool unconstrained_object=success_count==1&&
-            array_nodes[array_root].kind==CASE_OBJECT_GROUP;
-        for(uint8_t child=0;unconstrained_object&&
-            child<array_nodes[array_root].child_count;child++) {
-            const CaseArrayNodeKind kind=
-                array_nodes[array_nodes[array_root].children[child]].kind;
-            if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
-                unconstrained_object=false;
-        }
-        if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
-            covered_ids[covered_id_count++]=(uint8_t)
-                (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
     } else {
         bool first_value=true;size_t skip_jump=0;
         for(;;) {

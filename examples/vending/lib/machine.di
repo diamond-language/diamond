@@ -29,7 +29,7 @@ class Machine
         [Idle.new(), ["service mode off; ready"]]
       when Service{}
         [state, ["wrong service key"]]
-      when Coin, Select, Refund, Restock
+      when Coin{}, Select{}, Refund{}, Restock{}
         [state, ["out of service"]]
       end
     when Idle

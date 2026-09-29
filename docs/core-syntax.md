@@ -273,15 +273,15 @@ own specific shape of subject:
   `Circle`; neither does an Array/Hash pattern (they never name a class
   at all, so there's no member for them to cover), an empty `Circle{}`
   nested inside something else (`[Circle{}, x]`'s own top-level shape is
-  an Array pattern), one of several comma-separated alternatives in a
-  single `when` (`when Circle{}, Square{}` — conservative, not
-  incorrect: this would soundly cover both, but isn't credited), or a
-  guarded `when Circle if ...`/`when Circle{} if ...` clause (the guard
-  could reject the match at runtime, so the type isn't unconditionally
-  covered). Comma-separated *scalar* values in one `when`
-  (`when Circle, Square`) each still count independently — the
-  alternatives restriction above is specific to structural patterns.
-  Applies identically to both forms.
+  an Array pattern), or a guarded `when Circle if ...`/`when Circle{} if
+  ...` clause (the guard could reject the match at runtime, so the type
+  isn't unconditionally covered). Comma-separated alternatives in one
+  `when` are judged one at a time: `when Circle{}, Square{}` covers both
+  classes, and so does `when Circle, Square`, but in `when Circle{r: 1},
+  Square{}` only `Square` is covered, because the `Circle` alternative
+  matches just some circles. (Alternatives must bind the same names, so
+  use `_` for a reader the other alternatives don't have: `when
+  Coin{cents: _}, Select{}`.) Applies identically to both forms.
 - **A superclass `when` does not cover a subclass member** — for
   `shape: Circle | Square` (both `< Shape`), `when Shape` does not
   count as covering either `Circle` or `Square`; each member needs its

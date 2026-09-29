@@ -56,10 +56,11 @@ and 66 when the script can't be read.
 - **Multiple assignment and rest.** `[price, count] = @stock[slot]`,
   `[_, before] = ...`, and `[state, messages] = machine.step(state, event)`
   unpack results.
-- **Exhaustiveness has rules worth knowing.** Comma-separated *object
-  patterns* in one `when` (`Coin{}, Select{}`) are not credited as covering
-  those classes, but comma-separated class names (`Coin, Select`) are, so the
-  out-of-service branch spells the latter.
+- **Exhaustiveness credits each alternative.** In the out-of-service branch,
+  `when Coin{}, Select{}, Refund{}, Restock{}` covers all four classes in one
+  clause: comma-joined object patterns count one at a time. An alternative
+  that constrains a reader (`Coin{cents: 25}`) or sits under an `if` guard
+  would not count.
 - **`protected`.** `Machine#maintenance` and the rest of the private machinery
   are only callable from inside the class hierarchy, while `step` is the one
   public transition.
