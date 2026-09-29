@@ -150,7 +150,10 @@ that let a fiber's own I/O yield back to a scheduler instead:
   `NonblockingConnection#write`) is expected to retry the remainder.
 - **`IO.poll(readables, writables, timeout_ms)`** — a `poll(2)` wrapper
   accepting two Arrays (of `TCPServer.listen_nonblocking`
-  listeners/`Socket`s, or a `Process.spawn` handle's `Process::Stream`
+  listeners/`Socket`s, `UDPSocket`s (readable once a datagram is queued,
+  so the following `.receive()` cannot block — this is how a UDP server
+  or client gets a receive timeout), or a `Process.spawn` handle's
+  `Process::Stream`
   (see the Process section below) — an ordinary blocking listener/File
   is rejected, since polling a blocking-mode fd is meaningless: nothing
   in this VM ever puts one in non-blocking mode, so it would always

@@ -3,8 +3,8 @@
 # a live UDP server (built with `diamond build`) that is fed datagrams,
 # queried, reset, and shut down both by SIGTERM (whose trapped handler prints
 # the final totals and exits 0 while the server is blocked in receive) and by
-# a !stop datagram. Every client call is wrapped in `timeout`: UDP has no
-# delivery guarantee and the client has no receive timeout of its own.
+# a !stop datagram. Client calls are still wrapped in `timeout` as a
+# backstop, though the client's own IO.poll timeout should fire first.
 # Set DIAMOND_BIN to use a diamond other than ../../build/diamond, and
 # METRICS_PORT to pick the port.
 set -euo pipefail
@@ -70,6 +70,10 @@ status=0; wait "$server_pid" || status=$?; server_pid=""
 [[ "$status" == 0 ]]
 grep -qx "stopped by !stop; final totals:" "$work/server.out"
 grep -qx "  hits               2.00" "$work/server.out"
+
+# With no server listening, the client gives up after its own 2 s timeout.
+[[ "$(client send "$port" '!ping' 2>&1 || true)" == "no reply from the server within 2 seconds" ]]
+[[ "$(status_of client send "$port" '!ping')" == 66 ]]
 
 [[ "$(status_of "$m")" == 64 ]]
 [[ "$(status_of "$m" serve notaport)" == 64 ]]

@@ -69,15 +69,21 @@ def serve(port: Int) -> Int
   0
 end
 
-# Each line is its own datagram, and each is answered before the next is
-# sent. UDP has no delivery guarantee and IO.poll doesn't take UDP sockets,
-# so there is no timeout: with no server listening this would wait forever.
+# Waits up to two seconds for a reply. UDP has no delivery guarantee, so a
+# silent server (or none at all) is reported instead of waited on forever.
+def await_reply(socket, size: Int) -> String
+  ready = IO.poll([socket], [], 2000)
+  raise IOError.new("no reply from the server within 2 seconds") unless ready["readable"][0]
+  socket.receive(size)["data"]
+end
+
+# Each line is its own datagram, and each is answered before the next is sent.
 def send_lines(port: Int, lines: Array) -> Int
   socket = UDPSocket.open()
   failed = 0
   lines.each() do |line|
     socket.send(line, "127.0.0.1", port)
-    reply = socket.receive(4096)["data"]
+    reply = await_reply(socket, 4096)
     puts(reply)
     failed += 1 if reply.start_with?("error")
   end
@@ -88,7 +94,7 @@ end
 def fetch_report(port: Int, json: Bool) -> Int
   socket = UDPSocket.open()
   socket.send(json ? "!report" : "!text", "127.0.0.1", port)
-  puts(socket.receive(65535)["data"])
+  puts(await_reply(socket, 65535))
   socket.close()
   0
 end

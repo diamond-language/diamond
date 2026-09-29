@@ -4046,10 +4046,12 @@ static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
     return DIAMOND_VM_OK;
 }
 
-/* IO.poll accepts only the two object kinds that actually own a pollable
+/* IO.poll accepts only the object kinds that actually own a pollable
  * fd -- a TCPServer.listen_nonblocking listener (interesting for
- * readability: a pending connection) or one of its accepted Sockets
- * (interesting for either). A blocking TCPServer.listen listener/
+ * readability: a pending connection), one of its accepted Sockets
+ * (interesting for either), a UDPSocket (readable once a datagram is
+ * queued, so a following .receive() cannot block), or a Process.spawn
+ * stream. A blocking TCPServer.listen listener/
  * TCPSocket.connect File is deliberately not accepted: poll()ing a
  * blocking-mode fd is meaningless here, since nothing in this VM ever
  * puts one in non-blocking mode, so it would always appear either always-
@@ -4059,9 +4061,10 @@ static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd)
     if(value.kind!=DIAMOND_VALUE_OBJECT||
        (value.as.object->kind!=DIAMOND_OBJECT_LISTENER&&
         value.as.object->kind!=DIAMOND_OBJECT_SOCKET&&
+        value.as.object->kind!=DIAMOND_OBJECT_UDP_SOCKET&&
         value.as.object->kind!=DIAMOND_OBJECT_PROCESS_STREAM)) {
         snprintf(vm->error,sizeof vm->error,"IO.poll arguments must be nonblocking "
-            "TCPServer listeners, their accepted Sockets, or a Process.spawn stream");
+            "TCPServer listeners, their accepted Sockets, UDPSockets, or a Process.spawn stream");
         return DIAMOND_VM_TYPE_ERROR;
     }
     int fd=-1;
@@ -4070,7 +4073,10 @@ static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd)
         fd=((DiamondListenerHandle *)value.as.object)->fd;
     else if(value.as.object->kind==DIAMOND_OBJECT_SOCKET)
         fd=((DiamondSocketHandle *)value.as.object)->fd;
-    else {
+    else if(value.as.object->kind==DIAMOND_OBJECT_UDP_SOCKET) {
+        fd=((DiamondUdpSocketHandle *)value.as.object)->fd;
+        closed_message="cannot poll a closed UDP socket";
+    } else {
         fd=((DiamondProcessStream *)value.as.object)->fd;
         closed_message="cannot poll a closed process stream";
     }

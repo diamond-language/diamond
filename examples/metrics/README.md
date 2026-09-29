@@ -49,10 +49,10 @@ be read or the port can't be bound.
   handler, and the handler prints the totals and calls `exit(0)`. The handler
   is a nested `def` (a closure value) that reads the server's `aggregator`
   local, which is how it sees the live state.
-- **A limit worth knowing.** `IO.poll` accepts non-blocking TCP sockets and
-  spawned-process streams, not UDP sockets, so a UDP `receive` can't be given
-  a timeout. `send` therefore waits forever for a reply if nothing is
-  listening, and the smoke test wraps every client call in `timeout`.
+- **A receive timeout via `IO.poll`.** `IO.poll` accepts `UDPSocket`s, readable
+  once a datagram is queued, so the client waits at most two seconds for a
+  reply and reports `no reply from the server within 2 seconds` (exit 66)
+  instead of blocking forever when nothing is listening.
 - **A `struct` as a parsed record.** `Sample(name, value, kind)`, produced by a
   small hand-written parser that validates names, numbers, types and sample
   rates with `Regexp` and raises `MetricError` naming exactly what was wrong.
