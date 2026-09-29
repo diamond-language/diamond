@@ -53,6 +53,10 @@ DiamondValue diamond_bignum_multiply(DiamondVm *vm, DiamondIntView left,
  * themselves first, same as the existing int64 division path. */
 DiamondValue diamond_bignum_divide_truncated(DiamondVm *vm,
     DiamondIntView left, DiamondIntView right);
+/* Floored modulo: the result takes the divisor's sign, matching Int's `%`
+ * (and Ruby), not C's truncating remainder. `right` must not be zero. */
+DiamondValue diamond_bignum_modulo_floored(DiamondVm *vm,
+    DiamondIntView left, DiamondIntView right);
 DiamondValue diamond_bignum_negate(DiamondVm *vm, DiamondIntView value);
 
 /* Sign-then-magnitude comparison: <0, 0, or >0. */

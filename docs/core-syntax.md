@@ -486,8 +486,8 @@ result always takes the divisor's sign, not the dividend's — `-7 % 3` is
 promotion rule as the other arithmetic operators); `Int % 0` raises
 `ZeroDivisionError`, `Float % 0.0` is `NaN` like IEEE-754 division above.
 User-overloadable like `+`/`-`/`*`/`/` (see "Operator overloading"
-below) — unlike bignums, which `%` doesn't support at all yet, a
-deliberate v1 scope cut.
+below). Arbitrary-precision `Int`s work on either side, with the same
+floored result (`-(10 ** 30) % 7` is `3`, not `-3`).
 
 `to_f`/`to_i` convert explicitly between the two. `to_i` rejects `NaN` and
 `Infinity` with a rescuable `RangeError` (there's no finite integer to

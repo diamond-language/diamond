@@ -86,12 +86,12 @@ def magnitude(n: Int) -> Int
   if n < 0 then -n else n end
 end
 
-# Euclid's algorithm as a self-recursive tail call. `%` isn't defined for
-# arbitrary-precision Ints, so the remainder is spelled out with `/`; both
-# arguments are non-negative here, where truncating and floored division agree.
+# Euclid's algorithm as a self-recursive tail call. Both arguments are
+# non-negative here; `%` also works on arbitrary-precision Ints, which the
+# numerators and denominators become.
 def gcd(a: Int, b: Int) -> Int
   return a if b == 0
-  return gcd(b, a - (a / b) * b)
+  return gcd(b, a % b)
 end
 
 def integer_text?(text: String) -> Bool

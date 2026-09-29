@@ -321,6 +321,41 @@ DiamondValue diamond_bignum_divide_truncated(DiamondVm *vm,
     return value;
 }
 
+DiamondValue diamond_bignum_modulo_floored(DiamondVm *vm,
+        DiamondIntView left, DiamondIntView right) {
+    uint32_t *quotient = malloc((left.limb_count == 0 ? 1 : left.limb_count) *
+                                sizeof(uint32_t));
+    uint32_t *remainder = malloc((right.limb_count + 1) * sizeof(uint32_t));
+    uint32_t *complement = malloc((right.limb_count + 1) * sizeof(uint32_t));
+    if (quotient == nullptr || remainder == nullptr || complement == nullptr) {
+        free(quotient); free(remainder); free(complement);
+        return DIAMOND_NIL;
+    }
+    size_t quotient_count = 0, remainder_count = 0;
+    const bool ok = magnitude_divide(left.limbs, left.limb_count,
+        right.limbs, right.limb_count, quotient, &quotient_count,
+        remainder, &remainder_count);
+    DiamondValue value = DIAMOND_NIL;
+    if (ok) {
+        remainder_count = magnitude_trim(remainder, remainder_count);
+        if (remainder_count == 0) {
+            value = DIAMOND_INT(0);
+        } else if (left.negative == right.negative) {
+            /* The truncated remainder already takes the divisor's sign. */
+            value = bignum_canonicalize(vm, right.negative, remainder,
+                                        remainder_count);
+        } else {
+            /* Opposite signs: floored modulo is |right| - |remainder|,
+             * carrying the divisor's sign (-7 % 3 == 3 - 1 == 2). */
+            const size_t count = magnitude_subtract(right.limbs,
+                right.limb_count, remainder, remainder_count, complement);
+            value = bignum_canonicalize(vm, right.negative, complement, count);
+        }
+    }
+    free(quotient); free(remainder); free(complement);
+    return value;
+}
+
 int diamond_bignum_compare(DiamondIntView left, DiamondIntView right) {
     if (left.negative != right.negative) return left.negative ? -1 : 1;
     const int magnitude_comparison = magnitude_compare(

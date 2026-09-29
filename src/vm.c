@@ -17737,10 +17737,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * the dividend's sign). User-overloadable like the other
                  * arithmetic operators (unlike `<<`): an Instance left
                  * operand tries a `%` method the same way ADD/SUBTRACT/
-                 * etc. do. No bignum support -- kept simple like `<<`,
-                 * a deliberate v1 scope cut (see docs/syntax.md); a
-                 * bignum operand falls through to the Instance/TypeError
-                 * path below like any other unsupported type would. */
+                 * etc. do. Arbitrary-precision Ints are supported through
+                 * diamond_bignum_modulo_floored (the remainder falls out
+                 * of the same limb division `/` uses). */
                 uint16_t destination=0,left=0,right=0;
                 READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
                 if(registers[left].kind==DIAMOND_VALUE_INT&&
@@ -17764,6 +17763,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     registers[destination]=DIAMOND_INT(remainder);
                     break;
+                }
+                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+                    /* Reaching here with two Ints means at least one is a
+                     * bignum (the plain-int64 case broke out above). */
+                    DiamondIntView left_view, right_view, zero_view;
+                    diamond_int_view(registers[left],&left_view);
+                    diamond_int_view(registers[right],&right_view);
+                    diamond_int_view_int64(0,&zero_view);
+                    if(diamond_bignum_compare(right_view,zero_view)==0)
+                        VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
+                    const DiamondValue modulus=
+                        diamond_bignum_modulo_floored(vm,left_view,right_view);
+                    if(modulus.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=modulus;break;
                 }
                 if((registers[left].kind==DIAMOND_VALUE_FLOAT||
                     registers[left].kind==DIAMOND_VALUE_INT)&&

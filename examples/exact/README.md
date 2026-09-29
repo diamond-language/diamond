@@ -49,10 +49,9 @@ a bad matrix (ragged rows, non-square for `det`/`inverse`, singular for
   replaces one (checking the length), so elimination swaps and rewrites rows
   with plain assignment and reads entries as `matrix[i][j]`.
 - **Arbitrary-precision `Int`s used for real.** Numerators and denominators
-  grow past 64 bits during elimination and simply keep working. One
-  limit shows: `%` is not defined for arbitrary-precision `Int`s, so the
-  GCD spells the remainder as `a - (a / b) * b`. Since Euclid's algorithm
-  is a self-recursive tail call, that GCD also runs in constant stack.
+  grow past 64 bits during elimination and simply keep working, including
+  through `%` in the GCD. Since Euclid's algorithm is a self-recursive tail
+  call, that GCD also runs in constant stack.
 - **No coercion.** `fraction + 1` works because the operators accept an `Int`
   on the right; `1 + fraction` would raise `TypeError`, since operator
   dispatch is by the left operand only. The code always keeps the fraction
