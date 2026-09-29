@@ -1,0 +1,30 @@
+2: insert coins first
+3: credit $1.00
+4: dispensed A1 for $0.75
+4: returned $0.25: 25c
+5: credit $0.25
+6: rejected a 3c coin
+6: credit $0.25
+7: credit $1.25
+8: dispensed B2 for $1.25
+9: credit $1.00
+10: B2 is sold out
+12: credit $1.25
+13: credit $1.35
+14: returned $1.35: 100c 25c 10c
+15: nothing to refund
+16: credit $1.00
+17: wrong service key
+18: service mode on
+18: returned $1.00: 100c
+19: out of service
+20: wrong service key
+21: service mode off; ready
+22: restocked B2 x2 @ $1.25
+23: restocked C3 x5 @ $0.90
+24: credit $1.00
+25: credit $2.00
+26: dispensed C3 for $0.90
+26: returned $1.10: 100c 10c
+27: insert coins first
+stock: A1 x1 @ $0.75; B2 x2 @ $1.25; C3 x4 @ $0.90

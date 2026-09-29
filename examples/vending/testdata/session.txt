@@ -1,0 +1,27 @@
+# a normal purchase with change, then an over-priced pick and a sold-out slot
+{"cmd": "select", "slot": "A1"}
+{"cmd": "coin", "cents": 100}
+{"cmd": "select", "slot": "A1"}
+{"cmd": "coin", "cents": 25}
+{"cmd": "coin", "cents": 3}
+{"cmd": "coin", "cents": 100}
+{"cmd": "select", "slot": "B2"}
+{"cmd": "coin", "cents": 100}
+{"cmd": "select", "slot": "B2"}
+# credit then refund, then service mode swallows leftover credit
+{"cmd": "coin", "cents": 25}
+{"cmd": "coin", "cents": 10}
+{"cmd": "cancel"}
+{"cmd": "refund"}
+{"cmd": "coin", "cents": 100}
+{"cmd": "service", "key": "0000"}
+{"cmd": "service", "key": "1234"}
+{"cmd": "coin", "cents": 25}
+{"cmd": "service", "key": "0000"}
+{"cmd": "service", "key": "1234"}
+{"cmd": "restock", "slot": "B2", "count": 2, "price": 125}
+{"cmd": "restock", "slot": "C3", "count": 5, "price": 90}
+{"cmd": "coin", "cents": 100}
+{"cmd": "coin", "cents": 100}
+{"cmd": "select", "slot": "C3"}
+{"cmd": "select", "slot": "Z9"}

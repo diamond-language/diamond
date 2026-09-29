@@ -1,0 +1,9 @@
+{"cmd": "coin", "cents": 25}
+not json at all
+{"cmd": "dance"}
+{"cmd": "coin"}
+{"cmd": "coin", "cents": "25"}
+{"cmd": "coin", "cents": 25, "colour": "red"}
+{"cmd": "refund", "now": true}
+[1, 2, 3]
+{"cmd": "select", "slot": "A1"}
