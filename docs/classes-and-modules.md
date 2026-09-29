@@ -826,7 +826,15 @@ itself.
 
 `module Name ... end` declares a module; `include Name` copies its method
 descriptors into the receiving class (mixin-style composition, not
-inheritance). `def self.name` inside a module declares a namespace
+inheritance). A class's (or module's) own methods always beat
+the ones it includes, whichever comes first in the source: `include` skips a
+module method the receiver already defines itself, so `def ==` written before
+`include Comparable` still wins over Comparable's derived `==`. Two included
+modules that define the same method resolve to the later `include`. (A
+struct's *generated* `==`/`to_s` are defaults, not own methods: an included
+`Comparable`'s derived `==` still replaces the generated one, while a
+hand-written `def ==` in the struct body wins over both.) `super` from a
+method reaches the superclass chain, not an included module. `def self.name` inside a module declares a namespace
 singleton function rather than an instance method: `Name.name(...)`, or a
 bare `name(...)` from inside the module itself -- never a bare call from
 outside it, so `module Geometry ... def self.sqrt(x)` doesn't hijack the

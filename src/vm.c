@@ -4578,6 +4578,18 @@ static DiamondClass *program_builder_class(DiamondProgram *program,
     return &program->classes[class_index];
 }
 
+/* Whether `methods` already holds a method defined directly on the class or
+ * module (not copied in by an earlier include) under `name`. An include skips
+ * such names so a class's own method always beats an included module's, as in
+ * the compiler's own `include` handling (has_own_method_named there). */
+static bool methods_have_own_named(const DiamondMethod *methods,size_t count,
+        const char *name) {
+    for(size_t index=0;index<count;index++)
+        if(!methods[index].included&&strcmp(methods[index].name,name)==0)
+            return true;
+    return false;
+}
+
 /* Recomputes shapes[0..field_count] for a class -- mirrors the loop
  * diamond_compile itself runs once, over every class, right after
  * compilation finishes (src/compiler.c). ProgramBuilder#declare_field
@@ -6341,6 +6353,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             }
         }
         for(size_t method=0;method<module->method_count;method++) {
+            if(methods_have_own_named(class->methods,class->method_count,
+                                      module->methods[method].name))continue;
             class->methods[class->method_count]=module->methods[method];
             class->methods[class->method_count++].included=true;
         }
@@ -6375,6 +6389,8 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             }
         }
         for(size_t method=0;method<source->method_count;method++) {
+            if(methods_have_own_named(target->methods,target->method_count,
+                                      source->methods[method].name))continue;
             target->methods[target->method_count]=source->methods[method];
             target->methods[target->method_count++].included=true;
         }

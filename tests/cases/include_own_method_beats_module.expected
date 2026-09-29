@@ -1,0 +1,17 @@
+own hello (after include)
+own hello (before include)
+module shared
+own shared
+module hello
+module hello
+loud shared
+derived (before include)
+base extra
+derived2 (after include)
+false
+true
+true
+true
+false
+false
+nil

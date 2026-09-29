@@ -15528,6 +15528,27 @@ static void snapshot_ivar_known_classes(Compiler *compiler, DiamondClass *class)
     }
 }
 
+/* Whether `methods` already holds a method the class/module itself defines
+ * (or aliases) under `name`, as opposed to one copied in by `include`.
+ * Method lookup takes the LAST matching entry, so an include that appended a
+ * same-named module method after an own method would silently shadow it;
+ * `include` skips those instead, so a class's own methods always beat its
+ * included modules' regardless of source order -- as in Ruby. A struct's
+ * still-replaceable generated == / to_s do not count as "own": they are
+ * defaults, and an included Comparable's derived == has always overridden
+ * the generated one (as it does for a Ruby Struct). */
+static bool has_own_method_named(const Compiler *compiler,int owner,
+        const DiamondMethod *methods,size_t count,const char *name) {
+    if(owner==compiler->struct_replaceable_class&&
+       ((compiler->struct_replaceable_eq&&strcmp(name,"==")==0)||
+        (compiler->struct_replaceable_to_s&&strcmp(name,"to_s")==0)))
+        return false;
+    for(size_t index=0;index<count;index++)
+        if(!methods[index].included&&strcmp(methods[index].name,name)==0)
+            return true;
+    return false;
+}
+
 static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
@@ -15596,6 +15617,9 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                      "included module adds too many methods");break;
             }
             for(size_t method=0;method<module->method_count;method++) {
+                if(has_own_method_named(compiler,compiler->current_class,
+                        class->methods,class->method_count,
+                        module->methods[method].name))continue;
                 class->methods[class->method_count]=module->methods[method];
                 class->methods[class->method_count++].included=true;
             }
@@ -16803,6 +16827,8 @@ static uint16_t compile_module(Compiler *compiler) {
                      "included module adds too many methods");break;
             }
             for(size_t method=0;method<source->method_count;method++) {
+                if(has_own_method_named(compiler,-2,module->methods,
+                        module->method_count,source->methods[method].name))continue;
                 module->methods[module->method_count]=source->methods[method];
                 module->methods[module->method_count++].included=true;
             }
