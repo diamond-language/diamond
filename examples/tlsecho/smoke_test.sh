@@ -6,7 +6,9 @@
 # and that certificate verification cannot be talked out of: an untrusted CA,
 # a wrong host name, and the system trust store (which doesn't know this
 # certificate) are all refused, and the server carries on. Ends the server
-# with SIGTERM. Set DIAMOND_BIN to use a diamond other than
+# with SIGTERM. A second server run with --client-ca then does mutual TLS: a
+# client certificate from the trusted CA is admitted and identified, while no
+# certificate and one from another CA are refused. Set DIAMOND_BIN to use a diamond other than
 # ../../build/diamond, and TLSECHO_PORT to pick the port.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,6 +26,16 @@ cert() { # name common-name [extra req args]
 }
 cert server localhost -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 cert stranger stranger
+cert clientca "Test Client CA" -addext "basicConstraints=critical,CA:TRUE"
+cert evilca "Evil CA" -addext "basicConstraints=critical,CA:TRUE"
+client_cert() { # ca name subject
+  openssl req -newkey rsa:2048 -nodes -keyout "$work/$2.key" -out "$work/$2.csr" \
+    -subj "$3" > /dev/null 2>&1
+  openssl x509 -req -in "$work/$2.csr" -CA "$work/$1.pem" -CAkey "$work/$1.key" \
+    -CAcreateserial -out "$work/$2.pem" -days 2 > /dev/null 2>&1
+}
+client_cert clientca alice "/CN=alice/O=Acme"
+client_cert evilca mallory "/CN=mallory"
 
 "$diamond" build tlsecho.di -o "$work/tlsecho" > "$work/build.log"
 t="$work/tlsecho"
@@ -72,6 +84,47 @@ status=0; wait "$server_pid" || status=$?; server_pid=""
 grep -q "^handshake failed" "$work/server.out"
 grep -q "^connection 1: tlsecho/2, 2 requests" "$work/server.out"
 grep -q "^stopping after 7 connections" "$work/server.out"
+
+# Mutual TLS: the same service, now demanding a client certificate.
+mport=$((port + 1))
+(trap - INT TERM; exec "$t" serve "$mport" "$work/server.pem" "$work/server.key" \
+  --client-ca "$work/clientca.pem") > "$work/mserver.out" 2>&1 &
+server_pid=$!
+for _ in $(seq 50); do
+  grep -q "listening on" "$work/mserver.out" 2> /dev/null && break
+  sleep 0.1
+done
+grep -q "listening on" "$work/mserver.out" || { echo "mutual-TLS server didn't start" >&2; cat "$work/mserver.out" >&2; exit 1; }
+
+# An admitted client is identified by its certificate's subject (RFC 2253,
+# most specific name first).
+[[ "$(client localhost "$mport" --ca "$ca" --cert "$work/alice.pem" --key "$work/alice.key" WHOAMI | tail -1)" == "WHOAMI -> O=Acme,CN=alice" ]]
+# No certificate, or one from a CA the server doesn't trust, is refused:
+# exit 66 with a TLS error, and the server keeps serving afterwards.
+[[ "$(status_of client localhost "$mport" --ca "$ca" WHOAMI)" == 66 ]]
+[[ "$(client localhost "$mport" --ca "$ca" WHOAMI 2>&1 || true)" == *"TLS"* ]]
+[[ "$(status_of client localhost "$mport" --ca "$ca" --cert "$work/mallory.pem" --key "$work/mallory.key" WHOAMI)" == 66 ]]
+[[ "$(client localhost "$mport" --ca "$ca" --cert "$work/alice.pem" --key "$work/alice.key" WHOAMI 'ECHO still up' | tail -1)" == "ECHO still up -> still up" ]]
+# A certificate without its key (or the reverse) is a usage error.
+[[ "$(status_of "$t" client localhost "$mport" --ca "$ca" --cert "$work/alice.pem" WHOAMI)" == 64 ]]
+
+kill -TERM "$server_pid"
+status=0; wait "$server_pid" || status=$?; server_pid=""
+[[ "$status" == 0 ]]
+grep -q "^handshake failed" "$work/mserver.out"
+grep -q "^stopping after 2 connections" "$work/mserver.out"
+
+# Without --client-ca a server never asks, so WHOAMI can only say anonymous.
+(trap - INT TERM; exec "$t" serve "$mport" "$work/server.pem" "$work/server.key") \
+  > "$work/aserver.out" 2>&1 &
+server_pid=$!
+for _ in $(seq 50); do
+  grep -q "listening on" "$work/aserver.out" 2> /dev/null && break
+  sleep 0.1
+done
+[[ "$(client localhost "$mport" --ca "$ca" --cert "$work/alice.pem" --key "$work/alice.key" WHOAMI | tail -1)" == "WHOAMI -> anonymous" ]]
+kill -TERM "$server_pid"
+wait "$server_pid" || true; server_pid=""
 
 [[ "$(status_of "$t")" == 64 ]]
 [[ "$(status_of "$t" serve notaport a b)" == 64 ]]

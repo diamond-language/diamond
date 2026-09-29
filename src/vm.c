@@ -40,12 +40,14 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <openssl/bio.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -3948,14 +3950,17 @@ static DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
  * rather than per-connection specifically so a listener with a broken
  * cert/key pair fails loudly at TLSServer.listen time, not silently on
  * whichever connection happens to be first. */
-/* TLSServer.listen's own (much smaller) options Hash -- just `alpn` so
- * far, so this is a dedicated parser rather than reusing
- * parse_socket_connect_options_helper's table-driven approach, which
- * exists to share seven fields across two call sites; one field shared
- * by nobody else doesn't earn that machinery. */
+/* TLSServer.listen's own (much smaller) options Hash: `alpn` (an Array of
+ * protocol names) and `client_ca` (a String path to a PEM bundle of the
+ * certificate authorities client certificates must chain to; giving it makes
+ * the server request and require a verified client certificate). A
+ * dedicated parser rather than reusing parse_socket_connect_options_helper's
+ * table-driven approach, which exists to share seven fields across two call
+ * sites; two fields nobody else shares don't earn that machinery. */
 static DiamondVmStatus parse_tls_listen_options_helper(DiamondVm *vm,
-        DiamondValue options_value,const DiamondArray **out_alpn) {
-    *out_alpn=nullptr;
+        DiamondValue options_value,const DiamondArray **out_alpn,
+        const DiamondString **out_client_ca) {
+    *out_alpn=nullptr;*out_client_ca=nullptr;
     if(options_value.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OK;
     if(options_value.kind!=DIAMOND_VALUE_OBJECT||
        options_value.as.object->kind!=DIAMOND_OBJECT_HASH) {
@@ -3972,26 +3977,36 @@ static DiamondVmStatus parse_tls_listen_options_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         const DiamondString *entry_key_string=(const DiamondString *)entry_key.as.object;
-        if(entry_key_string->length!=4||memcmp(entry_key_string->chars,"alpn",4)!=0) {
+        const DiamondValue entry_value=options->entries[index].value;
+        if(entry_key_string->length==4&&memcmp(entry_key_string->chars,"alpn",4)==0) {
+            if(entry_value.kind!=DIAMOND_VALUE_OBJECT||
+               entry_value.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                snprintf(vm->error,sizeof vm->error,"TLSServer.listen option 'alpn' must be an Array");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            *out_alpn=(const DiamondArray *)entry_value.as.object;
+        } else if(entry_key_string->length==9&&
+                  memcmp(entry_key_string->chars,"client_ca",9)==0) {
+            if(entry_value.kind!=DIAMOND_VALUE_OBJECT||
+               entry_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                snprintf(vm->error,sizeof vm->error,
+                    "TLSServer.listen option 'client_ca' must be a String path");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            *out_client_ca=(const DiamondString *)entry_value.as.object;
+        } else {
             snprintf(vm->error,sizeof vm->error,
                 "unrecognized TLSServer.listen option '%.*s'",
                 (int)entry_key_string->length,entry_key_string->chars);
             return DIAMOND_VM_TYPE_ERROR;
         }
-        const DiamondValue entry_value=options->entries[index].value;
-        if(entry_value.kind!=DIAMOND_VALUE_OBJECT||
-           entry_value.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
-            snprintf(vm->error,sizeof vm->error,"TLSServer.listen option 'alpn' must be an Array");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        *out_alpn=(const DiamondArray *)entry_value.as.object;
     }
     return DIAMOND_VM_OK;
 }
 
 static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
         const char *cert_path,const char *key_path,const DiamondArray *alpn_protocols,
-        DiamondListenerHandle **out_handle) {
+        const char *client_ca_path,DiamondListenerHandle **out_handle) {
     DiamondListenerHandle *listener_handle=nullptr;
     const DiamondVmStatus listen_status=tcp_listen_helper(vm,port,false,false,&listener_handle);
     if(listen_status!=DIAMOND_VM_OK)return listen_status;
@@ -4022,6 +4037,26 @@ static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
             "TLS certificate and private key do not match: %s",detail);
         SSL_CTX_free(context);close(listener_handle->fd);listener_handle->fd=-1;
         return DIAMOND_VM_IO_ERROR;
+    }
+    if(client_ca_path!=nullptr) {
+        /* Mutual TLS: request a client certificate during the handshake and
+         * refuse the connection unless one arrives that chains to
+         * client_ca. Loaded here, once, so a bad CA file fails at listen
+         * time like a bad server cert does. SSL_load_client_CA_file also
+         * gives the CertificateRequest its list of acceptable issuers. */
+        STACK_OF(X509_NAME) *acceptable=SSL_load_client_CA_file(client_ca_path);
+        if(SSL_CTX_load_verify_locations(context,client_ca_path,nullptr)!=1||
+           acceptable==nullptr) {
+            char detail[256];tls_format_error(detail,sizeof detail);
+            snprintf(vm->error,sizeof vm->error,
+                "cannot load client CA '%s': %s",client_ca_path,detail);
+            if(acceptable!=nullptr)sk_X509_NAME_pop_free(acceptable,X509_NAME_free);
+            SSL_CTX_free(context);close(listener_handle->fd);listener_handle->fd=-1;
+            return DIAMOND_VM_IO_ERROR;
+        }
+        SSL_CTX_set_client_CA_list(context,acceptable);
+        SSL_CTX_set_verify(context,
+            SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT,nullptr);
     }
     listener_handle->tls_context=context;
     if(alpn_protocols!=nullptr) {
@@ -22015,8 +22050,13 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"session",7)==0;
                     const bool session_reused_method=method_name->length==15&&
                         memcmp(method_name->chars,"session_reused?",15)==0;
+                    const bool peer_subject_method=method_name->length==12&&
+                        memcmp(method_name->chars,"peer_subject",12)==0;
+                    const bool peer_fingerprint_method=method_name->length==16&&
+                        memcmp(method_name->chars,"peer_fingerprint",16)==0;
                     if(!read_method&&!gets_method&&!write_method&&!close_method&&
-                       !alpn_protocol_method&&!session_method&&!session_reused_method) {
+                       !alpn_protocol_method&&!session_method&&!session_reused_method&&
+                       !peer_subject_method&&!peer_fingerprint_method) {
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"TLSSocket");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -22069,6 +22109,43 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(session_reused_method) {
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         registers[dest]=DIAMOND_BOOL(SSL_session_reused(tls_handle->ssl)==1);
+                        break;
+                    }
+                    if(peer_subject_method||peer_fingerprint_method) {
+                        /* The certificate the other side presented: for an
+                         * accepted connection on a listener with a
+                         * client_ca, the verified client certificate; for a
+                         * client connection, the server's. nil when the
+                         * peer presented none (an ordinary TLS server never
+                         * asks a client for one). */
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        X509 *peer=SSL_get1_peer_certificate(tls_handle->ssl);
+                        if(peer==nullptr) {registers[dest]=DIAMOND_NIL;break;}
+                        char text[512];size_t text_length=0;
+                        if(peer_subject_method) {
+                            BIO *bio=BIO_new(BIO_s_mem());
+                            if(bio==nullptr) {
+                                X509_free(peer);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            }
+                            X509_NAME_print_ex(bio,X509_get_subject_name(peer),0,
+                                XN_FLAG_RFC2253);
+                            const int got=BIO_read(bio,text,(int)sizeof text);
+                            BIO_free(bio);
+                            text_length=got>0?(size_t)got:0;
+                        } else {
+                            unsigned char digest[EVP_MAX_MD_SIZE];unsigned int digest_length=0;
+                            if(X509_digest(peer,EVP_sha256(),digest,&digest_length)==1&&
+                               digest_length*2<sizeof text) {
+                                for(unsigned int byte=0;byte<digest_length;byte++) {
+                                    (void)snprintf(text+text_length,3,"%02x",digest[byte]);
+                                    text_length+=2;
+                                }
+                            }
+                        }
+                        X509_free(peer);
+                        DiamondString *result_string=allocate_string(vm,text,text_length);
+                        if(result_string==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[dest]=DIAMOND_OBJECT(result_string);
                         break;
                     }
                     if(read_method) {
@@ -24485,8 +24562,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const DiamondArray *alpn_protocols=nullptr;
+                const DiamondString *client_ca=nullptr;
                 const DiamondVmStatus options_status=parse_tls_listen_options_helper(
-                    vm,registers[options_reg],&alpn_protocols);
+                    vm,registers[options_reg],&alpn_protocols,&client_ca);
                 VM_PROPAGATE(options_status);
                 const DiamondString *cert_path=
                     (const DiamondString *)registers[cert_reg].as.object;
@@ -24495,7 +24573,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondListenerHandle *listener_handle=nullptr;
                 const DiamondVmStatus listen_status=tls_listen_helper(vm,
                     registers[port_reg].as.integer,cert_path->chars,key_path->chars,
-                    alpn_protocols,&listener_handle);
+                    alpn_protocols,client_ca==nullptr?nullptr:client_ca->chars,
+                    &listener_handle);
                 VM_PROPAGATE(listen_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)listener_handle};

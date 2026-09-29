@@ -450,6 +450,18 @@ zero-external-dependencies stance.
   `SSL_connect`/`SSL_accept` itself, so `#session` called immediately
   after connecting, with no read in between, can legitimately still
   return `nil` even though a ticket is about to arrive.
+- **`TLSSocket#peer_subject()`** / **`#peer_fingerprint()`** — who is on
+  the other end, from the certificate the peer presented: `peer_subject`
+  is its subject in RFC 2253 form (most specific name first, e.g.
+  `O=Acme,CN=alice`), `peer_fingerprint` its SHA-256 fingerprint as 64
+  lowercase hex characters (what `openssl x509 -fingerprint -sha256`
+  prints, minus the colons and upcasing), a stable identity to pin or look
+  up. On a connection accepted from a `TLSServer.listen` listener with
+  `client_ca` this is the client's verified certificate; on a
+  `TLSSocket.connect` connection it is the server's. Both return `nil`
+  when the peer presented no certificate (an accepted connection on a
+  listener without `client_ca`). On a closed `TLSSocket` both raise
+  `IOError`, like the other methods.
 - **`TLSSocket#session_reused?()`** — `Bool`, whether this connection
   actually resumed a previous session (`SSL_session_reused`) rather than
   performing a full handshake. The one reliable way to confirm resumption
@@ -463,9 +475,26 @@ zero-external-dependencies stance.
   `.listen()` time rather than on whichever connection happens to arrive
   first, and the (potentially expensive) cert/key parsing happens once,
   not per connection. `options` (optional, a `Hash` or `nil`) supports
-  one key so far: **`alpn`** — an Array of protocol name Strings this
-  server is willing to negotiate, in *this server's own* preference
-  order (see `#alpn_protocol` above for how a mismatch is handled).
+  two keys:
+  - **`alpn`** — an Array of protocol name Strings this server is willing
+    to negotiate, in *this server's own* preference order (see
+    `#alpn_protocol` above for how a mismatch is handled).
+  - **`client_ca`** — a String path to a PEM file of the certificate
+    authorities client certificates must chain to. Giving it turns on
+    mutual TLS: the server requests a client certificate in every
+    handshake and **refuses the connection unless one arrives that
+    verifies against this CA** (`SSL_VERIFY_PEER |
+    SSL_VERIFY_FAIL_IF_NO_PEER_CERT`; there is no "optional" mode). A
+    refusal makes the server's `.accept()` raise a rescuable `IOError`
+    ("peer did not return a certificate" / "certificate verify failed"),
+    which a server loop should rescue and carry on from. The client sees
+    it too, but under TLS 1.3 only on its first read after connecting (its
+    own handshake completes before the server has judged the certificate),
+    as an `IOError` such as "certificate required" or "unknown ca". The CA
+    file is loaded at `.listen()` time, so a bad path fails there
+    (`cannot load client CA '...'`), and a non-String value is a
+    `TypeError`. Without `client_ca` a server never asks for a client
+    certificate, as before.
   Session resumption needs no server-side option at all: reusing one
   `SSL_CTX`/session-ticket key across every `.accept()` on a listener,
   which `TLSServer.listen` already does, is the entire server-side

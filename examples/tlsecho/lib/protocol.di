@@ -6,6 +6,8 @@
 #   ECHO text     the text back
 #   UPPER text    the text upper-cased
 #   PROTO         the ALPN protocol this connection negotiated
+#   WHOAMI        who the server sees: the client certificate's subject, or
+#                 "anonymous" when the client presented none
 #   GZIP text     (tlsecho/2 only) the text repeated 20 times, gzip-compressed
 #   QUIT          BYE, then the server closes the connection
 #
@@ -17,12 +19,13 @@ def build_reply(line: String, body: String | Nil = nil, close: Bool = false) -> 
   {"line": line, "body": body, "close": close}
 end
 
-def respond(request: String, protocol: String | Nil) -> Hash
+def respond(request: String, protocol: String | Nil, peer: String | Nil = nil) -> Hash
   [command, text] = split_command(request)
   case command
   when "ECHO" then build_reply(text)
   when "UPPER" then build_reply(text.upcase())
   when "PROTO" then build_reply(if protocol == nil then "none" else protocol end)
+  when "WHOAMI" then build_reply(if peer == nil then "anonymous" else peer end)
   when "GZIP"
     if protocol != "tlsecho/2"
       build_reply("ERR GZIP needs tlsecho/2")

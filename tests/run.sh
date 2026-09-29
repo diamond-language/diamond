@@ -2624,6 +2624,130 @@ fi
 grep -q "unrecognized TLSServer.listen option 'bogus'" "$error_file"
 rm -f "$error_file"
 
+# TLSServer.listen's client_ca option: mutual TLS. The server requests a
+# client certificate and refuses the connection unless one arrives that
+# chains to client_ca; an accepted connection's #peer_subject and
+# #peer_fingerprint say who connected. Three clients connect in turn: one
+# with a certificate from the trusted CA (admitted, identity readable), one
+# with no certificate, and one whose certificate comes from a different CA
+# (both refused, on the server's accept() and on the client's first read --
+# TLS 1.3 tells the client only after its own handshake has "finished"). The
+# server survives both refusals and serves the next connection.
+mtls_dir="$(mktemp -d)"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$mtls_dir/srv.key" \
+    -out "$mtls_dir/srv.pem" -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost" >/dev/null 2>&1
+mtls_make_ca() { # name "subject"
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$mtls_dir/$1.key" \
+        -out "$mtls_dir/$1.pem" -days 1 -subj "$2" \
+        -addext "basicConstraints=critical,CA:TRUE" >/dev/null 2>&1
+}
+mtls_make_client() { # ca name "subject"
+    openssl req -newkey rsa:2048 -nodes -keyout "$mtls_dir/$2.key" \
+        -out "$mtls_dir/$2.csr" -subj "$3" >/dev/null 2>&1
+    openssl x509 -req -in "$mtls_dir/$2.csr" -CA "$mtls_dir/$1.pem" \
+        -CAkey "$mtls_dir/$1.key" -CAcreateserial -out "$mtls_dir/$2.pem" \
+        -days 1 >/dev/null 2>&1
+}
+mtls_make_ca ca "/CN=Test Client CA"
+mtls_make_ca evil_ca "/CN=Evil CA"
+mtls_make_client ca alice "/CN=alice/O=Acme"
+mtls_make_client evil_ca mallory "/CN=mallory"
+mtls_port=18761
+mtls_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s", {"client_ca": "%s"})
+puts("ready")
+i = 0
+while i < 3
+  begin
+    conn = listener.accept()
+    puts("who=#{conn.peer_subject()} fp=#{conn.peer_fingerprint()}")
+    conn.write("hello\\n")
+    conn.close()
+  rescue error: IOError
+    puts("rejected")
+  end
+  i = i + 1
+end
+listener.close()
+0' "$mtls_port" "$mtls_dir/srv.pem" "$mtls_dir/srv.key" "$mtls_dir/ca.pem")" \
+    >"$mtls_server_out" 2>&1 &
+mtls_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$mtls_server_out" && break
+    sleep 0.05
+done
+mtls_client() { # label extra-options
+    timeout 10 "$diamond" -e "$(printf 'begin
+  c = TLSSocket.connect("localhost", %d, {"ca_file": "%s"%s})
+  puts("%s: " + c.gets())
+  c.close()
+rescue error: IOError
+  puts("%s: refused")
+end
+0' "$mtls_port" "$mtls_dir/srv.pem" "$2" "$1" "$1")"
+}
+[[ "$(mtls_client alice ", \"cert\": \"$mtls_dir/alice.pem\", \"key\": \"$mtls_dir/alice.key\"" | head -n1)" == "alice: hello" ]]
+[[ "$(mtls_client nocert "" | head -n1)" == "nocert: refused" ]]
+[[ "$(mtls_client mallory ", \"cert\": \"$mtls_dir/mallory.pem\", \"key\": \"$mtls_dir/mallory.key\"" | head -n1)" == "mallory: refused" ]]
+wait "$mtls_server_pid"
+alice_fingerprint="$(openssl x509 -in "$mtls_dir/alice.pem" -noout -fingerprint -sha256 \
+    | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+# RFC 2253 order: most specific RDN first.
+grep -qx "who=O=Acme,CN=alice fp=$alice_fingerprint" "$mtls_server_out"
+[[ "$(grep -c '^rejected$' "$mtls_server_out")" == "2" ]]
+rm -f "$mtls_server_out"
+
+# Without client_ca a server never asks for a client certificate: the
+# accepted connection has no peer certificate (nil), while the client sees
+# the server's own certificate through the same accessors.
+plain_port=18762
+plain_server_out="$(mktemp)"
+"$diamond" -e "$(printf 'listener = TLSServer.listen(%d, "%s", "%s")
+puts("ready")
+conn = listener.accept()
+puts("peer_is_nil=#{conn.peer_subject() == nil}")
+conn.write("hi\\n")
+conn.close()
+listener.close()
+0' "$plain_port" "$mtls_dir/srv.pem" "$mtls_dir/srv.key")" >"$plain_server_out" 2>&1 &
+plain_server_pid=$!
+for _ in $(seq 1 200); do
+    grep -q '^ready$' "$plain_server_out" && break
+    sleep 0.05
+done
+plain_client_out="$(timeout 10 "$diamond" -e "$(printf 'c = TLSSocket.connect("localhost", %d, {"ca_file": "%s"})
+c.gets()
+puts(c.peer_subject())
+puts(c.peer_fingerprint().length())
+c.close()
+0' "$plain_port" "$mtls_dir/srv.pem")")"
+wait "$plain_server_pid"
+grep -q '^peer_is_nil=true$' "$plain_server_out"
+[[ "$plain_client_out" == $'CN=localhost\n64\n0' ]]
+rm -f "$plain_server_out"
+
+# The client_ca option validates like the rest of listen: a bad path fails at
+# listen time, a non-String is a TypeError.
+error_file="$(mktemp)"
+if "$diamond" -e "$(printf 'TLSServer.listen(0, "%s", "%s", {"client_ca": "does-not-exist.pem"})' \
+    "$mtls_dir/srv.pem" "$mtls_dir/srv.key")" >/dev/null 2>"$error_file"; then
+    echo "TLSServer.listen with a missing client_ca file unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "cannot load client CA 'does-not-exist.pem'" "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+if "$diamond" -e "$(printf 'TLSServer.listen(0, "%s", "%s", {"client_ca": 5})' \
+    "$mtls_dir/srv.pem" "$mtls_dir/srv.key")" >/dev/null 2>"$error_file"; then
+    echo "TLSServer.listen with a non-String client_ca unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -q "option 'client_ca' must be a String path" "$error_file"
+rm -f "$error_file"
+rm -rf "$mtls_dir"
+
 # `5.abs()` must parse as a method call on 5, not as a float literal "5.".
 [[ "$($diamond -e '5.abs()')" == "5" ]]
 
