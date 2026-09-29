@@ -1,0 +1,11 @@
+season2.txt: 3 players
+  1  zed          300  (gold)
+  2  ann           80  (silver)
+  3  cy            20  (bronze)
+
+total 400, mean 133, best zed, lowest cy
+above the mean: zed
+at or below:    ann, cy
+regular   1
+rookie    2
+pages of 3: zed+ann+cy

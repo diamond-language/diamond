@@ -1,0 +1,12 @@
+# season one
+ann 50
+bob 70
+cy 30
+ann 90
+dee 120
+bob 60
+cy 45
+eve 500
+fay 90
+ann 120
+ge 5

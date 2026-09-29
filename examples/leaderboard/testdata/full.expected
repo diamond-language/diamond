@@ -1,0 +1,31 @@
+ann joins with 50
+bob joins with 70
+bob takes the lead from ann
+cy joins with 30
+ann improves to 90
+ann takes the lead from bob
+dee joins with 120
+dee takes the lead from ann
+cy improves to 45
+eve joins with 500
+eve takes the lead from dee
+fay joins with 90
+ann improves to 120
+ge joins with 5
+
+season1.txt: 7 players
+  1  eve          500  (gold)
+  2  ann          120  (silver)
+  3  dee          120  (bronze)
+  4  fay           90
+     ... and 3 more
+
+total 950, mean 135, best eve, lowest ge
+above the mean: eve
+at or below:    ann, dee, fay, bob, cy, ge
+champion  1
+regular   2
+rookie    4
+pages of 3: eve+ann+dee | fay+bob+cy | ge
+
+season1.txt outscores season2.txt
