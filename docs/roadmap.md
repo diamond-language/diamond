@@ -168,8 +168,9 @@ remain, none attempted yet, none committed:
   a policy; a real "give up after N crashes in M seconds" (Erlang's own
   default) needs an actual policy object, not just a bigger fixed constant;
 - **cancel-on-timeout** -- the experimental cancellation cut now provides
-  explicit tokens and deadlines (see [design](cancellation.md)); native wait
-  wakeups and implicit interruption remain open. `Supervisor.stop` still
+  explicit tokens, deadlines, and native channel wakeups (see
+  [design](cancellation.md)); pollable I/O integration and implicit interruption
+  remain open. `Supervisor.stop` still
   requires workers to cooperate;
 - **cross-thread-transferable supervisor handles** -- `Supervisor` cannot
   currently cross a `Thread.new`/`Channel` boundary at all (see docs/

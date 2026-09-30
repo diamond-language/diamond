@@ -1,4 +1,4 @@
-# Cooperative cancellation: first implementation
+# Cooperative cancellation
 
 ## Contract
 
@@ -21,11 +21,19 @@ cleanup runs. Broad `StandardError` rescues must re-raise cancellation or handle
 it explicitly before applying retry policies. No asynchronous exception is
 injected into another thread and no thread is forcibly killed.
 
-`token.sleep`, `token.receive(channel)`, and `token.send(channel, value)` check
-at intervals of at most 10 ms of requested sleep. Scheduling, GC, and native
-work can add latency; this is not a real-time bound. Channel wrappers preserve
-close/EOF and type errors. A checkpoint precedes each operation; cancellation
-can race with a successful operation, so callers must account for side effects.
+`token.sleep`, `token.receive(channel)`, and `token.send(channel, value)` use
+native channel wakeups. Each wait registers with the target channel and every
+ancestor cancellation source, and uses the earliest absolute deadline. Closing
+any source wakes its waiters directly. Ordinary worker waits have no periodic
+polling timer. Scheduling and GC can still add latency; this is not a real-time
+guarantee. Channel wrappers preserve close/EOF and type errors. A checkpoint
+precedes each operation; cancellation can race with a successful operation,
+so callers must account for side effects.
+
+A VM with installed `Signal.trap` handlers returns from a native wait at least
+every 10 ms of requested waiting so the VM can dispatch pending handlers. An
+interrupted system call also returns to the VM. The token wrapper retries
+spurious wakeups after a checkpoint; signal handlers can safely cancel sources.
 
 `Cancellation.scope(callback, timeout)` owns every child started with
 `scope.spawn(callable, *args)`. The callable receives `(token, *args)` and must
@@ -38,9 +46,8 @@ scope's token is checked after successful joining so deadline expiry is not
 reported as success. Explicit `Scope.close()` cancels then joins, and can raise
 a child error. Scope objects are owned by their creating thread.
 
-## Boundaries and next native-runtime milestone
+## Boundaries
 
-This package deliberately proves the semantics before extending the VM.
 Existing `Channel.receive`, `Thread.join`, sockets, SQL calls, and arbitrary
 CPU loops do not gain cancellation implicitly. A scoped child must checkpoint
 and use bounded/nonblocking I/O; an uncooperative child can still hold up joining.
@@ -48,12 +55,31 @@ Supervisor.stop still waits: cancel the shared source before calling it, and
 catch expected cancellation at the supervised child's boundary so it returns
 normally instead of restarting. Process crashes do not execute ensure.
 
-The next native milestone is a shared cancellation state with registered wakeups
-for channel waits and pollable I/O. That requires a lock-order and lifetime
-protocol: register while holding the wait lock, recheck cancellation before
-sleeping, unregister before destroying the waiter, and never run user code under
-those locks. Socket/SQL interruption and implicit VM checkpoints require separate
-contracts; polling wrappers do not claim to solve those problems.
+## Native wait protocol
+
+`Channel.wait_readable(cancellations, deadline)` and `wait_writable` are
+readiness hints, not reservations. They return `nil` on readiness, target
+closure, cancellation-source closure, deadline expiry, or a spurious wakeup.
+Callers recheck cancellation and retry their nonblocking operation.
+
+Each wait owns a nonblocking pipe and registers a notification link on every
+channel. Registration and the readiness/closed check hold that channel's lock,
+so a transition either precedes the check or signals the registered pipe.
+Send, receive, and close notify registered waiters under the same lock. Cleanup
+unregisters every link before closing the pipe or freeing its storage. Only one
+channel lock is held at a time; no user code runs under it. Live receiver and
+argument handles keep the channels alive until the wait returns. Duplicate
+cancellation channels are allowed.
+
+Deadlines are absolute monotonic timestamps. The native wait recomputes its
+relative `poll` timeout from that timestamp, including after long timeout
+segments, without extending the deadline. Each active wait uses two file
+descriptors; allocation or descriptor exhaustion raises an ordinary runtime
+error and leaves no registered waiter behind.
+
+Pollable socket I/O is the next integration boundary. Socket/SQL interruption
+and implicit VM checkpoints require separate contracts; channel wakeups do not
+claim to solve those problems.
 
 ## Reference service
 

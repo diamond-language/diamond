@@ -1,7 +1,8 @@
 # cancellation
 
 Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
-Install this cut and `require_cut "cancellation"`.
+Install this cut and `require_cut "cancellation"`. Version 0.2.0 requires a
+Diamond runtime with `Channel.wait_readable` and `Channel.wait_writable`.
 
 ```ruby
 require_cut "cancellation"
@@ -39,8 +40,11 @@ sources can cross thread/channel boundaries; scopes stay in their owning thread.
 - Explicit `Scope.new(parent, timeout)`, `spawn`, `cancel`, `join`, and `close`
   support owners such as services; ensure `close()` runs when leaving the owner.
 
-Waits poll at intervals of at most 10 ms of requested sleep, not a hard response
-latency guarantee. CPU loops need checkpoints. Existing blocking native calls
+Waits use native channel notifications and the earliest inherited monotonic
+deadline. Ordinary workers do not poll periodically. A VM with `Signal.trap`
+handlers returns at most every 10 ms of requested waiting to dispatch signals;
+this is not a hard response-latency guarantee. CPU loops need checkpoints.
+Existing blocking native calls
 are not interrupted; uncooperative tasks can prevent scope exit. Cancellation
 can race with successful operations. Expected child cancellation is absorbed at
 the task boundary, while scope deadline expiry still propagates from `scope`.
@@ -48,7 +52,7 @@ the task boundary, while scope deadline expiry still propagates from `scope`.
 Use `ensure` for resource cleanup and handle cancellation before generic retry
 rescues. Scope bodies may capture locals; spawned callables must satisfy normal
 Thread transfer rules. The [design](../../docs/cancellation.md) defines error
-precedence, deadline behavior, limitations, and the next native-runtime step.
+precedence, deadline behavior, limitations, and the native wait lifetime protocol.
 
 Run `DIAMOND_BIN=/absolute/path/to/diamond bash test.sh` for interpreted and
 compiled tests. This package is experimental and is not added to the public
