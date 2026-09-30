@@ -13,13 +13,16 @@ enough POSIX-adjacent surface area to matter here.
   1543-case suite and the 277-case LSP suite both passed. This supplements,
   but does not replace, the continuous Fedora/Ubuntu CI matrix below.
 - **Fedora and Ubuntu 26.04, GCC and Clang, x86_64 (glibc)** -- CI runs the
-  full test suite (`make test-all`) across this 2x2 matrix on every push
-  (`.github/workflows/ci.yml`, `test-all` job).
+  full test suite (`make test-all`) across this 2x2 matrix, split into
+  `test-builds`, `test-integration`, and `test-fuzz` jobs with independent
+  time budgets (`.github/workflows/ci.yml`, `test-all` matrix). The workflow
+  runs on pull requests and pushes to `main`, with manual dispatch available
+  for other branches.
 - **Ubuntu 26.04, GCC, arm64 (glibc)** -- CI runs `make test` on native
   GitHub-hosted arm64 hardware plus focused API, incremental-compile,
   compiled-prelude, fiber, LSP, and REPL targets (`test-arm64` job, same
   workflow), plus the full ASan/UBSan native suite in its own
-  `test-arm64-sanitize` job, on every push. Five representative package suites
+  `test-arm64-sanitize` job, in the same workflow. Five representative package suites
   also run natively: database configuration, HTTP, Gremlin, Rack, and GraphQL.
   The x86-64-only JIT fixtures are excluded, while the portable interpreter and
   JIT-disabled fallback still compile and run. Narrower than `test-all`: TSan,

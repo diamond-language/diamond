@@ -8,6 +8,8 @@
 require "./model"
 
 class Machine
+  COIN_VALUES = [100, 25, 10, 5]
+
   def initialize(stock: Hash, service_key: String)
     @stock = stock          # slot => [price in cents, count]
     @service_key = service_key
@@ -34,7 +36,7 @@ class Machine
       end
     when Idle
       case event
-      when Coin{cents: cents} if !coin_values().include?(cents)
+      when Coin{cents: cents} if !COIN_VALUES.include?(cents)
         [state, ["rejected a #{cents}c coin"]]
       when Coin{cents: cents}
         [HasCredit.new(cents), ["credit #{money(cents)}"]]
@@ -47,7 +49,7 @@ class Machine
       end
     when HasCredit{cents: credit}
       case event
-      when Coin{cents: cents} if !coin_values().include?(cents)
+      when Coin{cents: cents} if !COIN_VALUES.include?(cents)
         [state, ["rejected a #{cents}c coin", "credit #{money(credit)}"]]
       when Coin{cents: cents}
         [HasCredit.new(credit + cents), ["credit #{money(credit + cents)}"]]
@@ -109,7 +111,7 @@ class Machine
   def give_back(amount: Int) -> Array
     coins = []
     remaining = amount
-    coin_values().each() do |coin|
+    COIN_VALUES.each() do |coin|
       while remaining >= coin
         coins.push(coin)
         remaining -= coin
@@ -118,9 +120,6 @@ class Machine
     ["returned #{money(amount)}: #{coins.map() do |c| "#{c}c" end.join(" ")}"]
   end
 end
-
-# A function, not a constant: a top-level constant isn't visible inside one.
-def coin_values() -> Array = [100, 25, 10, 5]
 
 def money(cents: Int) -> String
   "$#{cents / 100}.#{(cents % 100).to_s().rjust(2, "0")}"

@@ -6,6 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- CI splits the full compiler/distro matrix into build, integration, and fuzz
+  jobs to avoid cumulative timeouts, avoids duplicate push/PR runs, and
+  cancels superseded runs without reducing test coverage.
+
+- Class singleton declarations are visible before their definitions, including
+  calls from constant initializers, mutual recursion, and method references.
+
+- Constants now support top-level and class definitions, lexical reads from
+  functions and methods, and `Class::NAME` access. Bindings are write-once;
+  collection contents remain mutable. Updated vending, tictactoe, and tlsecho
+  to use constants instead of helper functions.
+
 ## 0.9.2 — 2026-09-28
 
 ### Runtime

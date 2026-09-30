@@ -58,10 +58,8 @@ a position that's already won or full).
   node) is the same as `maximizer` — the classic minimax trick of picking
   the move that's best for whoever is actually moving, at every level,
   while always scoring from one fixed perspective.
-- **A top-level constant isn't visible inside a function** — only a
-  module's own constant is — so the eight winning lines are `win_lines()`,
-  a function, not a `WIN_LINES = [...]` a top-level assignment would make
-  invisible to `board_winner`.
+- **A shared top-level constant.** `WIN_LINES` holds the eight winning
+  lines and is visible inside `board_winner`.
 - **A struct as a plain return-value bundle** (`MoveResult(score, move)`),
   and a union field type (`move: Int | Nil` — no move once the game's
   already over).

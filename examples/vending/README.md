@@ -47,7 +47,7 @@ and 66 when the script can't be read.
   empty, so a misspelled extra key is an error, not silently ignored. A
   final `{"cmd": name, **rest}` clause turns a known command with bad
   arguments into a precise message, and an unknown one into another.
-- **Guards, alternatives, and fall-through.** `if !coin_values().include?(cents)`
+- **Guards, alternatives, and fall-through.** `if !COIN_VALUES.include?(cents)`
   vetoes a `Coin{cents: cents}` match, which then falls to the next `when`;
   `{"cmd": "refund", **rest}, {"cmd": "cancel", **rest}` are alternatives
   binding the same names, sharing one body.

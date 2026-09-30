@@ -327,6 +327,7 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
+    bool namespace_constant_defined[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* True only for the real (discovery_pass=false) pass of a
      * diamond_compile_with_breakpoints call -- compile_sequence emits a
      * DIAMOND_OP_BREAKPOINT_CHECK at the start of *every* statement
@@ -351,13 +352,13 @@ typedef struct Compiler {
      * patching a function_index instead of a jump target, and (unlike a
      * jump, always within the same function) across function boundaries
      * -- see DIAMOND_UNRESOLVED_SINGLETON_FUNCTION and
-     * prescan_module_function_signatures's own comment for the full
+     * prescan_singleton_signatures's own comment for the full
      * design. Scoped to the whole compiler, not per-module: simpler, and
-     * a module can only be compiling one at a time regardless. */
+     * declaration identity keeps nested scopes with the same method name separate. */
     struct {
         DiamondFunction *function;
         size_t operand;
-        char name[DIAMOND_MAX_FUNCTION_NAME];
+        const DiamondMethod *method;
     } pending_singleton_fixups[64];
     size_t pending_singleton_fixup_count;
 } Compiler;
@@ -371,6 +372,7 @@ typedef struct Compiler {
 enum { DIAMOND_UNRESOLVED_SINGLETON_FUNCTION = DIAMOND_MAX_FUNCTIONS };
 
 static uint16_t parse_expression(Compiler *compiler);
+static uint16_t compile_assignment(Compiler *compiler);
 static uint16_t compile_sequence(Compiler *compiler);
 static uint16_t compile_begin(Compiler *compiler);
 static uint16_t compile_yield(Compiler *compiler);
@@ -1545,7 +1547,7 @@ static void patch_jump(Compiler *compiler, size_t operand, size_t target) {
  * DIAMOND_UNRESOLVED_SINGLETON_FUNCTION for the sentinel this exists to
  * eventually replace. */
 static void emit_pending_singleton_function_index(Compiler *compiler,
-        DiamondSpan span, const char *name, size_t name_length) {
+        DiamondSpan span, const DiamondMethod *method) {
     const size_t operand = compiler->function->code_count;
     emit_byte(compiler, 0);
     emit_byte(compiler, 0);
@@ -1553,31 +1555,25 @@ static void emit_pending_singleton_function_index(Compiler *compiler,
         sizeof compiler->pending_singleton_fixups /
         sizeof compiler->pending_singleton_fixups[0]) {
         fail(compiler, span,
-            "too many forward-referenced module_function calls pending");
+            "too many forward-referenced singleton calls pending");
         return;
     }
-    if (name_length >= DIAMOND_MAX_FUNCTION_NAME) name_length = DIAMOND_MAX_FUNCTION_NAME - 1;
     const size_t slot = compiler->pending_singleton_fixup_count++;
     compiler->pending_singleton_fixups[slot].function = compiler->function;
     compiler->pending_singleton_fixups[slot].operand = operand;
-    for (size_t index = 0; index < name_length; index++)
-        compiler->pending_singleton_fixups[slot].name[index] = name[index];
-    compiler->pending_singleton_fixups[slot].name[name_length] = '\0';
+    compiler->pending_singleton_fixups[slot].method = method;
 }
 
 /* Patches every pending call site recorded by
- * emit_pending_singleton_function_index for this exact name (there can
+ * emit_pending_singleton_function_index for this exact declaration (there can
  * be more than one -- several earlier siblings can all forward-reference
  * the same later one), now that its real function_index is known.
  * Resolved entries are removed (swap-with-last), same convention as
  * every other fixed-capacity array removal in this file. */
 static void resolve_pending_singleton_fixups(Compiler *compiler,
-        const char *name, size_t name_length, size_t function_index) {
-    if (name_length >= DIAMOND_MAX_FUNCTION_NAME) name_length = DIAMOND_MAX_FUNCTION_NAME - 1;
+        const DiamondMethod *method, size_t function_index) {
     for (size_t index = 0; index < compiler->pending_singleton_fixup_count; ) {
-        const char *pending_name = compiler->pending_singleton_fixups[index].name;
-        if (strlen(pending_name) == name_length &&
-            memcmp(pending_name, name, name_length) == 0) {
+        if (compiler->pending_singleton_fixups[index].method == method) {
             DiamondFunction *target = compiler->pending_singleton_fixups[index].function;
             const size_t operand = compiler->pending_singleton_fixups[index].operand;
             target->code[operand] = (uint8_t)(function_index >> 8);
@@ -2243,15 +2239,21 @@ static int find_namespace_constant_name(const Compiler *compiler,
     return -1;
 }
 
-static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
-    if(compiler->current_module<0)return -1;
+/* Constants use lexical namespace lookup, ending at the program scope. */
+static const char *constant_scope(const Compiler *compiler) {
+    if(compiler->current_class>=0)
+        return compiler->program->classes[(size_t)compiler->current_class].name;
+    if(compiler->current_module>=0)
+        return compiler->program->modules[(size_t)compiler->current_module].name;
+    return "";
+}
+
+static int find_lexical_constant_name(const Compiler *compiler,const char *name) {
     char scope[DIAMOND_MAX_FUNCTION_NAME];
-    (void)snprintf(scope,sizeof scope,"%s",
-        compiler->program->modules[(size_t)compiler->current_module].name);
-    while(true) {
+    (void)snprintf(scope,sizeof scope,"%s",constant_scope(compiler));
+    while(scope[0]!='\0') {
         char qualified[DIAMOND_MAX_FUNCTION_NAME];
-        const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",scope,
-            (int)name.length,compiler->source+name.start);
+        const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
         if(written>0&&(size_t)written<sizeof qualified) {
             const int found=find_namespace_constant_name(compiler,qualified);
             if(found>=0)return found;
@@ -2260,7 +2262,61 @@ static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
         if(separator==nullptr)break;
         separator[-1]='\0';
     }
-    return -1;
+    return find_namespace_constant_name(compiler,name);
+}
+
+static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
+    char text[DIAMOND_MAX_FUNCTION_NAME];
+    if(name.length>=sizeof text)return -1;
+    (void)snprintf(text,sizeof text,"%.*s",(int)name.length,
+                   compiler->source+name.start);
+    return find_lexical_constant_name(compiler,text);
+}
+
+/* Indexed writes mutate the value, not the constant binding. Discovery
+ * must tolerate forward constants here just as it does in parse_name. */
+static int load_constant_receiver(Compiler *compiler,DiamondSpan name) {
+    const int constant=find_namespace_constant(compiler,name);
+    if(constant<0&&!(compiler->discovery_pass&&
+       compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z'))
+        return -1;
+    const uint16_t receiver=allocate_register(compiler);
+    if(constant>=0)
+        emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,receiver,
+                         (uint8_t)constant,0,2);
+    else
+        emit_instruction(compiler,DIAMOND_OP_NIL,receiver,0,0,1);
+    return (int)receiver;
+}
+
+static uint16_t store_namespace_constant(Compiler *compiler,DiamondSpan name,
+                                         uint16_t value) {
+    if(compiler->in_function) {
+        fail(compiler,name,"constants cannot be defined inside functions");return value;
+    }
+    char qualified[DIAMOND_MAX_FUNCTION_NAME];
+    const char *scope=constant_scope(compiler);
+    const int written=snprintf(qualified,sizeof qualified,"%s%s%.*s",scope,
+        scope[0]=='\0'?"":"::",(int)name.length,compiler->source+name.start);
+    if(written<0||(size_t)written>=sizeof qualified) {
+        fail(compiler,name,"constant name is too long");return value;
+    }
+    int constant=find_namespace_constant_name(compiler,qualified);
+    if(constant>=0&&compiler->namespace_constant_defined[(size_t)constant]) {
+        fail(compiler,name,"constant is already defined");return value;
+    }
+    if(constant<0) {
+        if(compiler->program->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+            fail(compiler,name,"too many namespace constants");return value;
+        }
+        constant=(int)compiler->program->namespace_constant_count++;
+        (void)snprintf(compiler->program->namespace_constants[(size_t)constant],
+                       DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
+    }
+    compiler->namespace_constant_defined[(size_t)constant]=true;
+    emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
+                     (uint8_t)constant,value,0,2);
+    return value;
 }
 
 static bool append_span_name(Compiler *compiler,char *buffer,size_t capacity,
@@ -4034,7 +4090,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     emit_opcode(compiler,type_argument_count==0?DIAMOND_OP_CALL:
                 DIAMOND_OP_CALL_TYPED);
     emit_register(compiler,destination);
-    /* A module's own pre-scan (prescan_module_function_signatures) can
+    /* A module's own pre-scan (prescan_singleton_signatures) can
      * hand back a method whose real function_index isn't known yet --
      * an earlier sibling forward-referencing a later one. Reserve the
      * same two placeholder bytes emit_jump's own forward-jump case does
@@ -4045,8 +4101,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     const bool unresolved=
         method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION;
     if(unresolved)
-        emit_pending_singleton_function_index(compiler,name,
-            method->name,strlen(method->name));
+        emit_pending_singleton_function_index(compiler,name,method);
     else
         emit_function_index(compiler,method->function_index);
     emit_register(compiler,base);emit_byte(compiler,(uint8_t)call_count);
@@ -4126,15 +4181,16 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
                                          const uint16_t *type_arguments,
                                          size_t type_argument_count) {
     const DiamondFunction *target=
+        method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION?nullptr:
         compiler->program->functions[method->function_index];
     uint16_t inferred_arguments[8];
-    if(target->type_variable_count>0&&type_argument_count==0&&
+    if(target!=nullptr&&target->type_variable_count>0&&type_argument_count==0&&
        infer_reference_type_arguments(compiler,target,0,method->arity,
            inferred_arguments)) {
         type_arguments=inferred_arguments;
         type_argument_count=target->type_variable_count;
     }
-    if(target->type_variable_count>0&&type_argument_count==0) {
+    if(target!=nullptr&&target->type_variable_count>0&&type_argument_count==0) {
         fail(compiler,namespace_name,
              "generic singleton method reference requires explicit bindings");
         return 0;
@@ -4145,7 +4201,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     uint16_t return_set=DIAMOND_NO_TYPE_SET;
     bool resolved=true;
     const size_t original_type_set_count=compiler->function->type_set_count;
-    for(size_t parameter=0;parameter<method->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
+    for(size_t parameter=0;target!=nullptr&&parameter<method->arity&&parameter<DIAMOND_MAX_DECLARED_PARAMETERS;parameter++) {
         const uint16_t source=target->parameter_type_sets[parameter];
         if(source==DIAMOND_NO_TYPE_SET)continue;
         parameter_sets[parameter]=target->type_variable_count>0?
@@ -4153,7 +4209,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
                 type_argument_count,&resolved):clone_type_set_into_current(
                 compiler,target->type_sets,target->type_set_count,source);
     }
-    if(target->return_type_set!=DIAMOND_NO_TYPE_SET)
+    if(target!=nullptr&&target->return_type_set!=DIAMOND_NO_TYPE_SET)
         return_set=target->type_variable_count>0?
             clone_substituted_type_set(compiler,target,target->return_type_set,
                 type_arguments,type_argument_count,&resolved):
@@ -4196,7 +4252,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++) {
         function->parameter_type_sets[index]=parameter_sets[index];
         (void)snprintf(function->parameter_names[index],
-            DIAMOND_MAX_FUNCTION_NAME,"%s",target->parameter_names[index]);
+            DIAMOND_MAX_FUNCTION_NAME,"%s",target!=nullptr?target->parameter_names[index]:"");
     }
 
     DiamondFunction *outer_function=compiler->function;
@@ -4231,7 +4287,10 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
             DIAMOND_OP_CALL_SINGLETON_SPREAD:
             DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD);
         emit_register(compiler,body_result);
-        emit_function_index(compiler,method->function_index);
+        if(target==nullptr)
+            emit_pending_singleton_function_index(compiler,namespace_name,method);
+        else
+            emit_function_index(compiler,method->function_index);
         emit_register(compiler,spread);
         emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
             (uint8_t)receiver_class_index);
@@ -4274,7 +4333,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     }
     const DiamondSpan name=compiler->current.span;
     /* A module_function/`def self.x` signature a module's own pre-scan
-     * found ahead of the real def (prescan_module_function_signatures)
+     * found ahead of the real def (prescan_singleton_signatures)
      * has no real function yet -- method->function_index stays
      * DIAMOND_UNRESOLVED_SINGLETON_FUNCTION until the real def compiles
      * and resolves the pending call-site fixup this function's own
@@ -6831,7 +6890,7 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         class_index=find_class_name(compiler,qualified);
         module_index=find_module_name(compiler,qualified);
-        const int constant=find_namespace_constant_name(compiler,qualified);
+        const int constant=find_lexical_constant_name(compiler,qualified);
         if(constant>=0) {
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
@@ -6839,6 +6898,7 @@ static uint16_t parse_name(Compiler *compiler) {
             return destination;
         }
         if(class_index<0&&module_index<0) {
+            if(compiler->discovery_pass)return allocate_register(compiler);
             fail(compiler,name,"undefined namespaced class");return 0;
         }
     }
@@ -7051,7 +7111,7 @@ static uint16_t parse_name(Compiler *compiler) {
         return parse_math_unary_call(compiler,DIAMOND_MATH_TANH);
     /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
      * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
-     * already a complete expression. Still shadowable by a local or
+     * already a complete expression. Still shadowable by a constant or
      * user-defined function of the same name, same convention as every
      * other built-in name. See docs/syntax.md. */
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
@@ -7265,25 +7325,10 @@ static uint16_t parse_name(Compiler *compiler) {
          find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
         return parse_call(compiler, name);
     }
-    /* During diamond_compile's own discovery pass only: `class_index<0`
-     * here means this identifier isn't a known class (or module, or any
-     * of the built-in Fiber/File/SQLite3/etc. names already ruled out
-     * above) *yet* -- for a genuine forward reference (the whole reason
-     * discovery exists, see that function's own comment), the class
-     * declaration just hasn't been reached by this pass's own walk. A
-     * capitalized name immediately followed by '.' is exactly the shape
-     * `SomeClass.new(...)`/`SomeClass.someMethod(...)` -- rather than
-     * re-deriving how to parse either of those forms here, substitute a
-     * harmless NIL for the (as far as this pass knows) unresolved name
-     * and let this expression's own postfix-chain loop (parse_precedence)
-     * consume the following '.method(...)' exactly the way it already
-     * does for any other receiver, via parse_invoke -- discovery's own
-     * bytecode is discarded regardless of what it computes here. If the
-     * name is genuinely undefined (a real typo, not a forward reference),
-     * this pass simply won't record that -- the second, real pass has no
-     * such tolerance and will correctly fail on it there instead. */
+    /* Discovery may encounter a constant or class before its declaration.
+     * Its bytecode is discarded; the real pass resolves the discovered name
+     * or reports an undefined identifier. */
     if(compiler->discovery_pass&&class_index<0&&module_index<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
        compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z') {
         const uint16_t destination=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
@@ -12097,10 +12142,17 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
-        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-        receiver=compiler->locals[(size_t)local].reg;
+        if(local<0) {
+            const int constant_receiver=load_constant_receiver(compiler,name);
+            if(constant_receiver<0) {
+                fail(compiler,name,"undefined local variable");return 0;
+            }
+            receiver=(uint16_t)constant_receiver;
+        } else {
+            receiver=compiler->locals[(size_t)local].reg;
+        }
         mutation_receiver=receiver;
-        if(compiler->locals[(size_t)local].captured) {
+        if(local>=0&&compiler->locals[(size_t)local].captured) {
             /* See parse_identifier's own BOX_LOCAL re-emission for why this
              * defensive re-box is needed: `captured` doesn't imply this
              * control-flow path actually ran the boxing site. */
@@ -12185,10 +12237,17 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
-        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-        receiver=compiler->locals[(size_t)local].reg;
+        if(local<0) {
+            const int constant_receiver=load_constant_receiver(compiler,name);
+            if(constant_receiver<0) {
+                fail(compiler,name,"undefined local variable");return 0;
+            }
+            receiver=(uint16_t)constant_receiver;
+        } else {
+            receiver=compiler->locals[(size_t)local].reg;
+        }
         mutation_receiver=receiver;
-        if(compiler->locals[(size_t)local].captured) {
+        if(local>=0&&compiler->locals[(size_t)local].captured) {
             /* See compile_index_assignment's own comment on this exact
              * defensive re-box. */
             emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
@@ -14075,7 +14134,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * every discovery-carried-over entry has been claimed, any
          * further registration is a genuinely new entry (append), same
          * as it always was. */
-        /* A prescan_module_function_signatures placeholder (this exact
+        /* A prescan_singleton_signatures placeholder (this exact
          * pass, discovery only -- see that function's own comment) is
          * claimed by NAME, ahead of (and independent from) positional
          * next_singleton_claim claiming: it's how an *earlier*-compiled
@@ -14121,8 +14180,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             exported.needs_receiver=true;
             if(prescanned<early_module->singleton_method_count) {
                 early_module->singleton_methods[prescanned]=exported;
-                resolve_pending_singleton_fixups(compiler,function->name,
-                    copy_length,function_index);
+                resolve_pending_singleton_fixups(compiler,
+                    &early_module->singleton_methods[prescanned],function_index);
             } else if(early_claiming)
                 early_module->singleton_methods[
                     early_module->next_singleton_claim++]=exported;
@@ -14456,14 +14515,20 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
               !compiler->failed&&at_top_level) {
         DiamondClass *class=
             &compiler->program->classes[(size_t)compiler->current_class];
+        DiamondMethod *prescanned=nullptr;
         bool duplicate=false;
-        for(size_t existing=0;existing<class->singleton_method_count;existing++)
-            if(strcmp(class->singleton_methods[existing].name,
-                      function->name)==0)duplicate=true;
-        if(duplicate||class->singleton_method_count==DIAMOND_MAX_METHODS)
+        for(size_t existing=0;existing<class->singleton_method_count;existing++) {
+            DiamondMethod *method=&class->singleton_methods[existing];
+            if(strcmp(method->name,function->name)!=0)continue;
+            if(method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION||
+               method->function_index==function_index)
+                prescanned=method;
+            else duplicate=true;
+        }
+        if(duplicate||(prescanned==nullptr&&class->singleton_method_count==DIAMOND_MAX_METHODS))
             fail(compiler,name,"duplicate or excessive class singleton method");
         else {
-            DiamondMethod *method=
+            DiamondMethod *method=prescanned!=nullptr?prescanned:
                 &class->singleton_methods[class->singleton_method_count++];
             for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
             method->name[copy_length]='\0';method->function_index=(uint16_t)function_index;
@@ -14480,6 +14545,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             method->required_arity=(uint8_t)(function->required_arity-1);
             method->has_variadic=function->has_variadic;
             method->needs_receiver=true;
+            if(prescanned!=nullptr)
+                resolve_pending_singleton_fixups(compiler,method,function_index);
         }
     } else if(compiler->current_module>=0&&!module_singleton&&
               !compiler->failed&&at_top_level) {
@@ -14542,7 +14609,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          * in place, in source order, with no risk of masking a real
          * duplicate. */
         /* See compile_definition's own module_function early-registration
-         * comment on prescan_module_function_signatures/resolve_pending_
+         * comment on prescan_singleton_signatures/resolve_pending_
          * singleton_fixups -- identical name-based claiming for a `def
          * self.x` signature that scan already found. */
         size_t prescanned=module->singleton_method_count;
@@ -14578,8 +14645,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             method->required_arity=function->required_arity;
             method->has_variadic=function->has_variadic;
             if(prescanned<module->singleton_method_count)
-                resolve_pending_singleton_fixups(compiler,function->name,
-                    copy_length,function_index);
+                resolve_pending_singleton_fixups(compiler,method,function_index);
         }
     }
     /* A class/module member def's "value" is never read: both call sites
@@ -15549,7 +15615,12 @@ static bool has_own_method_named(const Compiler *compiler,int owner,
     return false;
 }
 
+static void prescan_singleton_signatures(Compiler *compiler,
+        DiamondMethod *methods,size_t *method_count,bool class_scope);
+
 static void compile_class_body(Compiler *compiler, DiamondClass *class) {
+    prescan_singleton_signatures(compiler,class->singleton_methods,
+        &class->singleton_method_count,true);
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
         if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
            compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
@@ -15578,6 +15649,14 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                 compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
             compile_attribute(compiler,reader,
                               shorthand||predicate?false:writer,predicate);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+                  assignment_ahead(compiler)) {
+            const char first=compiler->source[compiler->current.span.start];
+            if(first<'A'||first>'Z') {
+                fail(compiler,compiler->current.span,
+                     "class constants must begin with an uppercase letter");break;
+            }
+            (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -16348,67 +16427,16 @@ static DiamondToken prescan_parameter_arity(DiamondLexer *lookahead,
     return token;
 }
 
-/* Looks ahead through a module_function-style module body -- from right
- * after consume_block_start to the module's own matching `end` -- and
- * registers every module_function/`def self.x` method it finds into
- * module->singleton_methods[] with an accurate arity (prescan_parameter_
- * arity, above) but function_index left as DIAMOND_UNRESOLVED_SINGLETON_
- * FUNCTION, before compiling any of their bodies for real. This is what
- * lets an earlier-compiled sibling forward-reference a later one
- * (mutual/forward module_function recursion) -- a qualified call to an
- * unresolved entry gets a placeholder + a pending fixup (see
- * emit_singleton_call/emit_pending_singleton_function_index) instead of
- * "undefined module singleton function", and compile_definition's own
- * early-registration / compile_module's own `def self.x` handling
- * resolve it (by name, not position -- see resolve_pending_singleton_
- * fixups) once the real def actually compiles.
- *
- * Deliberately does NOT reserve a real function slot up front (unlike
- * discovery's own whole-program "reserve every function, claim
- * positionally later" carryover, src/compiler.c's diamond_compile) --
- * that would desync Compiler's own sequential next_function_claim
- * counter against whatever *other* declarations this module also
- * contains (attr_accessor, nested class/module, another plain def) that
- * reserve slots in between this pre-scan running and the real walk
- * reaching module_function/def self.x, since this pre-scan necessarily
- * runs before any of that normal, in-order reservation. Name-based
- * fixup resolution sidesteps that risk entirely: nothing here ever
- * calls diamond_program_add_function or otherwise touches function
- * numbering.
- *
- * Only runs during the outer discovery pass (see compile_module's own
- * call site) -- the real pass relies on cross-pass carryover instead
- * (DiamondModule's own next_singleton_claim), since by the time
- * discovery finishes every fixup from *this* mechanism is already
- * resolved and every entry already has a real (if soon-to-be-discarded)
- * function_index, carried over like any other discovery-pass data.
- *
- * Correctly skips nested `def`/`closure`/`class`/`module`/`interface`/
- * `if`/`unless`/`case`/`while`/`until`/`loop`/`do`/`begin` bodies via a
- * keyword-depth counter, closed by `end` -- with one deliberate
- * exception: `while`/`until`/`loop`'s own OPTIONAL trailing `do`
- * (`while cond do ... end`, one `end` for the pair -- confirmed real
- * Diamond syntax, tests/cases/legacy_0298.di) does NOT open a second
- * scope, unlike a `do` used as a block-call opener (`arr.each do |x|
- * ... end`, its own `end`) -- disambiguated by whether a newline was
- * seen since the while/until/loop keyword: the loop-form `do` always
- * appears before one (same logical line as the condition), a block-call
- * `do` never does.
- *
- * Deliberately conservative rather than exhaustive: only plain-
- * identifier-named defs are recognized (an operator/index-operator
- * overload inside module_function is unusual enough to not be worth the
- * extra parsing here), and any token-level surprise this scanner
- * doesn't expect just stops registering further entries -- it never
- * removes or corrupts one already found. A signature this scanner
- * misses simply doesn't get forward-reference support (falls back to
- * today's "undefined module singleton function" if something actually
- * needed it), never a wrong one: the only data it ever writes is a
- * *new*, additional singleton_methods[] entry with a name this exact
- * scan just read off a real `def` token, and the real compile (moments
- * later, unaffected by anything this function does) is what actually
- * validates and runs the source -- this can only ever add forward-
- * visibility, never subtract correctness. */
+/* Scan a class/module body without allocating function slots: reserving
+ * slots here would change the source-order numbering of generated methods,
+ * nested declarations, and closures. Discovery records signatures and patches
+ * calls once their definitions compile. Modules retain those entries for the
+ * real pass; classes rebuild their tables, so their real-pass scan recovers
+ * the reserved functions by source location to preserve type information.
+ * Only direct singleton definitions (and module_function-mode definitions in
+ * modules) are collected; nested bodies and trailing modifiers are balanced
+ * by the token walk below. The normal parser remains responsible for syntax
+ * validation and duplicate-definition diagnostics. */
 /* Does the `def` just read (the lookahead is positioned after it) use the
  * endless `def name(params) = expr` form, which has no `end`? True when an
  * `=` follows the parameter list on the same line. */
@@ -16447,8 +16475,8 @@ static bool prescan_ends_value(DiamondTokenKind kind) {
     }
 }
 
-static void prescan_module_function_signatures(Compiler *compiler,
-        DiamondModule *module) {
+static void prescan_singleton_signatures(Compiler *compiler,
+        DiamondMethod *methods,size_t *method_count,bool class_scope) {
     DiamondLexer lookahead=compiler->lexer;
     DiamondToken token=compiler->current;
     size_t depth=0;
@@ -16477,7 +16505,7 @@ static void prescan_module_function_signatures(Compiler *compiler,
                    token.kind==DIAMOND_TOKEN_CLOSURE||token.kind==DIAMOND_TOKEN_MODULE) {
             depth++;
         } else if(token.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
-            if(depth==0) {
+            if(depth==0&&!class_scope) {
                 /* Only the bare `module_function` directive (no args)
                  * toggles mode -- `module_function(:a, :b)`/`module_function
                  * a, b` marks already-declared methods explicitly and
@@ -16517,7 +16545,20 @@ static void prescan_module_function_signatures(Compiler *compiler,
                 if((is_module_singleton||module_function_mode)&&
                    next.kind==DIAMOND_TOKEN_IDENTIFIER) {
                     const DiamondSpan name_span=next.span;
+                    char method_name[DIAMOND_MAX_FUNCTION_NAME];
+                    (void)snprintf(method_name,sizeof method_name,"%.*s",
+                        (int)name_span.length,compiler->source+name_span.start);
                     DiamondToken after_name=diamond_lexer_next(&lookahead);
+                    if(after_name.kind==DIAMOND_TOKEN_EQUAL) {
+                        DiamondLexer writer_probe=lookahead;
+                        const DiamondToken parameters=diamond_lexer_next(&writer_probe);
+                        if(parameters.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+                           name_span.length+1<sizeof method_name) {
+                            method_name[name_span.length]='=';
+                            method_name[name_span.length+1]='\0';
+                            lookahead=writer_probe;after_name=parameters;
+                        }
+                    }
                     /* `def name[T](...)` -- skip an optional generic
                      * type-parameter list (nesting-aware, though a
                      * simple depth counter suffices here: this scanner
@@ -16542,22 +16583,16 @@ static void prescan_module_function_signatures(Compiler *compiler,
                     /* A second def of the same name is a duplicate the real
                      * definition pass reports; don't pre-register it too. */
                     bool already_registered=false;
-                    for(size_t existing=0;existing<module->singleton_method_count;existing++) {
-                        const char *known=module->singleton_methods[existing].name;
-                        if(strlen(known)==name_span.length&&
-                           memcmp(known,compiler->source+name_span.start,name_span.length)==0)
+                    for(size_t existing=0;existing<(*method_count);existing++) {
+                        const char *known=methods[existing].name;
+                        if(strcmp(known,method_name)==0)
                             already_registered=true;
                     }
-                    if(!already_registered&&module->singleton_method_count<DIAMOND_MAX_METHODS) {
+                    if(!already_registered&&(*method_count)<DIAMOND_MAX_METHODS) {
                         DiamondMethod *entry=
-                            &module->singleton_methods[module->singleton_method_count++];
+                            &methods[(*method_count)++];
                         *entry=(DiamondMethod){0};
-                        size_t length=name_span.length;
-                        if(length>=DIAMOND_MAX_FUNCTION_NAME)
-                            length=DIAMOND_MAX_FUNCTION_NAME-1;
-                        for(size_t index=0;index<length;index++)
-                            entry->name[index]=compiler->source[name_span.start+index];
-                        entry->name[length]='\0';
+                        (void)snprintf(entry->name,sizeof entry->name,"%s",method_name);
                         entry->arity=arity;entry->required_arity=required_arity;
                         entry->has_variadic=has_variadic;
                         /* A module_function-mode method's owner_class
@@ -16582,8 +16617,19 @@ static void prescan_module_function_signatures(Compiler *compiler,
                          * compile_module's own `def self.x` site, which
                          * never sets this field at all (defaults to
                          * false). */
-                        entry->needs_receiver=!is_module_singleton;
+                        entry->needs_receiver=class_scope||!is_module_singleton;
                         entry->function_index=DIAMOND_UNRESOLVED_SINGLETON_FUNCTION;
+                        /* The real pass already has complete discovered
+                         * functions. Match the source declaration so typed
+                         * calls and method references keep their contracts. */
+                        if(class_scope&&!compiler->discovery_pass)
+                            for(size_t function=0;function<compiler->program->function_count;function++) {
+                                const DiamondFunction *candidate=compiler->program->functions[function];
+                                if(candidate->declared_by_discovery&&
+                                   candidate->declaration_start==name_span.start) {
+                                    entry->function_index=(uint16_t)function;break;
+                                }
+                            }
                     }
                     token=past_parameters;continue;
                 }
@@ -16719,7 +16765,8 @@ static uint16_t compile_module(Compiler *compiler) {
      * function_signatures's own comment for the full design and why
      * that carryover alone can't close this gap on its own. */
     if(compiler->discovery_pass)
-        prescan_module_function_signatures(compiler,module);
+        prescan_singleton_signatures(compiler,module->singleton_methods,
+            &module->singleton_method_count,false);
     const int outer=compiler->current_module;compiler->current_module=index;
     const bool outer_private=compiler->methods_private;
     const bool outer_protected=compiler->methods_protected;
@@ -16762,28 +16809,7 @@ static uint16_t compile_module(Compiler *compiler) {
                 fail(compiler,constant_name,
                      "module constants must begin with an uppercase letter");break;
             }
-            char qualified[DIAMOND_MAX_FUNCTION_NAME];
-            const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",
-                module->name,(int)constant_name.length,
-                compiler->source+constant_name.start);
-            if(written<0||(size_t)written>=sizeof qualified) {
-                fail(compiler,constant_name,"constant name is too long");break;
-            }
-            if(find_namespace_constant_name(compiler,qualified)>=0) {
-                fail(compiler,constant_name,"constant is already defined");break;
-            }
-            if(compiler->program->namespace_constant_count==
-               DIAMOND_MAX_NAMESPACE_CONSTANTS) {
-                fail(compiler,constant_name,"too many namespace constants");break;
-            }
-            const uint8_t constant=(uint8_t)
-                compiler->program->namespace_constant_count++;
-            (void)snprintf(compiler->program->namespace_constants[constant],
-                DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
-            advance_token(compiler);advance_token(compiler);
-            const uint16_t value=parse_expression(compiler);
-            emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
-                             constant,value,0,2);
+            (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -17082,6 +17108,8 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                          (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,value,3);
         return value;
     }
+    if(compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z')
+        return store_namespace_constant(compiler,name,value);
     int local = find_local(compiler, name);
     const uint32_t value_alias_identity=
         alias_identity_for_value(compiler,value);
@@ -17343,6 +17371,8 @@ static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
     }
     const int local=find_local(compiler,name);
     if(local<0) {
+        const int receiver=load_constant_receiver(compiler,name);
+        if(receiver>=0)return (uint16_t)receiver;
         fail(compiler,name,"undefined local variable");return 0;
     }
     uint16_t receiver=compiler->locals[(size_t)local].reg;
@@ -18486,7 +18516,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
                 program->range_class_index=(uint8_t)class_index;
         }
         /* Defensive, not expected to ever actually fire: every
-         * prescan_module_function_signatures placeholder names a real
+         * prescan_singleton_signatures placeholder names a real
          * `def` token this same pass will reach before it ends (see that
          * function's own comment on why), so every pending fixup should
          * already be resolved by the time compilation otherwise
@@ -18495,7 +18525,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
          * generic, compile error instead. */
         if(compiler.pending_singleton_fixup_count>0)
             fail(&compiler,compiler.current.span,
-                "internal error: unresolved forward reference to module "
+                "internal error: unresolved forward reference to "
                 "singleton function");
     }
     return !compiler.failed;
@@ -18650,6 +18680,9 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     memcpy(program->modules, discovery->modules,
         discovery->module_count*sizeof program->modules[0]);
     program->module_count = discovery->module_count;
+    memcpy(program->namespace_constants,discovery->namespace_constants,
+        discovery->namespace_constant_count*sizeof program->namespace_constants[0]);
+    program->namespace_constant_count=discovery->namespace_constant_count;
 
     /* Reserve every compiler-created function at its discovery-pass index.
      * The real pass claims the slots in the same source order, preserving

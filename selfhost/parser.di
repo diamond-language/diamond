@@ -32,13 +32,7 @@ require "lexer"
 # way compiler.c and vm.c already implicitly do (see the ProgramBuilder
 # design note in docs/roadmap.md's Phase 1 entry). Verified against a
 # real `sizeof`/enum-dump each time this file is touched, not hand-counted.
-# Namespace constants (module-scoped, referenced as `Opcode::NAME`) rather
-# than plain top-level locals: a top-level `NAME = value` is only an
-# ordinary local variable in the top-level script's own register frame,
-# invisible from inside a class method's separate function/frame -- module
-# constants are the one Diamond mechanism that's actually readable from
-# anywhere via qualified `Module::NAME` lookup (DIAMOND_OP_GET_NAMESPACE_
-# CONSTANT), regardless of the referencing code's own lexical scope.
+# Opcode constants are grouped in a namespace and read as `Opcode::NAME`.
 module Opcode
   CONSTANT = 0
   STRING = 1
@@ -249,6 +243,7 @@ class Parser
     @locals = []
     @loops = []
     @functions = []
+    @namespace_constants = []
     # -1 targets the ProgramBuilder entry function; a real function's own
     # index once compile_definition switches into its body. Every
     # emit_byte/add_constant/add_string/patch_byte call routes through
@@ -2007,6 +2002,8 @@ class Parser
     while !@failed && @current.kind() != :end
       if @current.kind() == :def
         self.compile_method()
+      elsif @current.kind() == :identifier && self.assignment_ahead?()
+        self.compile_module_constant(name)
       elsif self.attribute_keyword?(@current.kind())
         self.compile_attribute()
       elsif @current.kind() == :private || @current.kind() == :public
@@ -2349,30 +2346,65 @@ class Parser
     end
   end
 
+  def find_namespace_constant(name)
+    index = 0
+    while index < @namespace_constants.length()
+      return @namespace_constants[index][1] if @namespace_constants[index][0] == name
+      index = index + 1
+    end
+    nil
+  end
+
+  def constant_scope()
+    return @classes[@current_class_entry][0] if @current_class_index != nil
+    return @current_module_name if @current_module_name != nil
+    ""
+  end
+
+  def find_lexical_constant(name)
+    scope = self.constant_scope()
+    while scope != ""
+      found = self.find_namespace_constant(scope + "::" + name)
+      return found if found != nil
+      parts = scope.split("::")
+      parts.pop()
+      scope = parts.join("::")
+    end
+    self.find_namespace_constant(name)
+  end
+
+  def store_namespace_constant(name, value)
+    if @function_nesting_depth != 0
+      self.fail("constants cannot be defined inside functions")
+      return value
+    end
+    scope = self.constant_scope()
+    qualified = if scope == "" then name else scope + "::" + name end
+    if self.find_namespace_constant(qualified) != nil
+      self.fail("constant is already defined")
+      return value
+    end
+    constant_index = @builder.declare_namespace_constant(qualified)
+    @namespace_constants.push([qualified, constant_index])
+    if @current_module_index != nil && @current_class_index == nil
+      @modules[@current_module_entry][2].push([name, constant_index])
+    end
+    self.emit_instruction2(49, constant_index, value)
+    value
+  end
+
   def compile_module_constant(module_name)
     constant_name = self.token_text(@current)
     first = constant_name.slice(0, 1)
-    if first == "_" || first != first.upcase()
-      self.fail("module constants must begin with an uppercase letter")
+    if first < "A" || first > "Z"
+      self.fail(if @current_class_index == nil
+        "module constants must begin with an uppercase letter"
+      else
+        "class constants must begin with an uppercase letter"
+      end)
       return
     end
-    qualified = module_name + "::" + constant_name
-    constant_index = nil
-    index = 0
-    while index < @modules[@current_module_entry][2].length()
-      constant_index = 0 if @modules[@current_module_entry][2][index][0] == constant_name
-      index = index + 1
-    end
-    if constant_index != nil
-      self.fail("constant is already defined")
-      return
-    end
-    constant_index = @builder.declare_namespace_constant(qualified)
-    @modules[@current_module_entry][2].push([constant_name, constant_index])
-    self.advance_token()
-    self.advance_token()
-    value = self.parse_expression()
-    self.emit_instruction2(49, constant_index, value)
+    self.compile_assignment()
     if @current.kind() == :if || @current.kind() == :unless
       self.fail("expected definition or include in module")
     end
@@ -3269,11 +3301,17 @@ class Parser
   def compile_index_assignment()
     name = self.token_text(@current)
     local = self.find_local(name)
-    if local == nil
+    constant_index = self.find_lexical_constant(name)
+    receiver = if local != nil
+      self.read_local(local)
+    elsif constant_index != nil
+      destination = self.allocate_register()
+      self.emit_instruction2(48, destination, constant_index)
+      destination
+    else
       self.fail("undefined local variable")
       return 0
     end
-    receiver = self.read_local(local)
     self.advance_token()
     self.advance_token()
     index = self.parse_expression()
@@ -3296,6 +3334,8 @@ class Parser
     return self.compile_ivar_write(token, value) if instance_variable
     return self.compile_cvar_write(token, value) if class_variable
     name = self.token_text(token)
+    first = name.slice(0, 1)
+    return self.store_namespace_constant(name, value) if first >= "A" && first <= "Z"
     existing = self.find_local(name)
     if existing != nil && existing[2]
       self.emit_instruction2(Opcode::SET_CELL, existing[1], value)
@@ -4533,32 +4573,8 @@ class Parser
     return self.parse_file_open_call() if self.is_file_open_target(name, class_entry, local)
     dot_construct = self.dot_construct_id(name, class_entry, local)
     return self.parse_dot_construct_call(dot_construct) if dot_construct >= 0
-    if local == nil && @current_module_index != nil
-      constant_index = nil
-      constants = @modules[@current_module_entry][2]
-      index = 0
-      while index < constants.length()
-        constant_index = constants[index][1] if constants[index][0] == name
-        index = index + 1
-      end
-      if constant_index == nil && @modules[@current_module_entry][8] != nil
-        parent_name = @modules[@current_module_entry][8]
-        while constant_index == nil && parent_name != nil
-          index = 0
-          while index < @modules.length()
-            if @modules[index][0] == parent_name
-              constants = @modules[index][2]
-              parent_name = @modules[index][8]
-            end
-            index = index + 1
-          end
-          index = 0
-          while index < constants.length()
-            constant_index = constants[index][1] if constants[index][0] == name
-            index = index + 1
-          end
-        end
-      end
+    if local == nil
+      constant_index = self.find_lexical_constant(name)
       if constant_index != nil
         destination = self.allocate_register()
         self.emit_instruction2(48, destination, constant_index)
@@ -4585,79 +4601,34 @@ class Parser
   end
 
   def parse_qualified_name(name, module_entry)
-    self.advance_token()
-    if @current.kind() != :identifier
-      self.fail("expected name after '::'")
-      return 0
-    end
-    constant_name = self.token_text(@current)
-    qualified_name = name + "::" + constant_name
-    self.advance_token()
-    nested_module = nil
-    index = 0
-    while index < @modules.length()
-      nested_module = @modules[index] if @modules[index][0] == qualified_name
-      index = index + 1
-    end
-    if nested_module != nil && @current.kind() == :dot
-      self.advance_token()
-      return self.compile_module_singleton_call(nested_module)
-    end
-    if nested_module != nil && @current.kind() == :double_colon
+    qualified = name
+    while @current.kind() == :double_colon
       self.advance_token()
       if @current.kind() != :identifier
         self.fail("expected name after '::'")
         return 0
       end
-      constant_name = self.token_text(@current)
+      qualified = qualified + "::" + self.token_text(@current)
       self.advance_token()
-      qualified_name = qualified_name + "::" + constant_name
-      name = nil
-      index = 0
-      while index < @modules.length()
-        name = @modules[index] if @modules[index][0] == qualified_name
-        index = index + 1
-      end
-      if name != nil && @current.kind() == :dot
+    end
+    constant_index = self.find_lexical_constant(qualified)
+    if constant_index != nil
+      destination = self.allocate_register()
+      self.emit_instruction2(48, destination, constant_index)
+      return destination
+    end
+    index = 0
+    while index < @modules.length()
+      if @modules[index][0] == qualified && @current.kind() == :dot
         self.advance_token()
-        return self.compile_module_singleton_call(name)
+        return self.compile_module_singleton_call(@modules[index])
       end
-      if name == nil && @current.kind() == :dot
-        name = self.find_class(qualified_name)
-        return self.compile_new_call(name[1]) if name != nil
-      end
-      if name != nil && @current.kind() == :double_colon
-        self.advance_token()
-        if @current.kind() != :identifier
-          self.fail("expected name after '::'")
-          return 0
-        end
-        constant_name = self.token_text(@current)
-        self.advance_token()
-        module_entry = name
-      else
-        module_entry = nested_module
-      end
+      index = index + 1
     end
-    if nested_module == nil && @current.kind() == :dot
-      nested_module = self.find_class(qualified_name)
-      return self.compile_new_call(nested_module[1]) if nested_module != nil
-    end
-    constant_index = nil
-    if module_entry != nil
-      index = 0
-      while index < module_entry[2].length()
-        constant_index = module_entry[2][index][1] if module_entry[2][index][0] == constant_name
-        index = index + 1
-      end
-    end
-    if constant_index == nil
-      self.fail("undefined namespaced class")
-      return 0
-    end
-    destination = self.allocate_register()
-    self.emit_instruction2(48, destination, constant_index)
-    destination
+    class_entry = self.find_class(qualified)
+    return self.compile_class_dot_call(class_entry) if class_entry != nil && @current.kind() == :dot
+    self.fail("undefined namespaced class")
+    0
   end
 
   # Shared by compile_module_singleton_call and compile_class_singleton_call.

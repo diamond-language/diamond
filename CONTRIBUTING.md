@@ -78,9 +78,20 @@ make test-repl        # tests/repl_test.sh, if src/repl.c changed
 make test-<package>   # e.g. make test-rack-package -- if one package changed
 make test-examples    # the standalone examples' smoke tests, if a language feature changed
 make test-all          # debug, release, sanitizers, packages, LSP, REPL, fuzz smoke,
-                        # self-host bootstrap -- slow; CI runs this, not every local commit
+                        # self-host bootstrap -- slow; CI splits this into the groups below
+make test-builds       # debug, release, ASan/UBSan, and TSan checks
+make test-integration  # API, fibers, packages, tooling, cache, self-host bootstrap
+make test-fuzz         # instrumented fuzz builds and bounded smoke tests
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push
 ```
+
+CI runs `test-builds`, `test-integration`, and `test-fuzz` in separate jobs
+for each Fedora/Ubuntu and GCC/Clang combination. Together they retain the
+coverage of `test-all`, while giving expensive sanitizer and fuzz builds
+independent time budgets. Run these groups sequentially in a shared checkout;
+CI isolates them in separate jobs. Automatic runs cover pull requests and
+pushes to `main`; use the workflow's manual dispatch for other branches.
+New commits cancel superseded runs for the same PR or branch.
 
 At minimum, `make test` must pass before a commit. If the change touches
 `lsp/`, also run `make test-lsp`.
