@@ -167,10 +167,10 @@ remain, none attempted yet, none committed:
   between a crash and the next restart, with no cap, is a safety valve, not
   a policy; a real "give up after N crashes in M seconds" (Erlang's own
   default) needs an actual policy object, not just a bigger fixed constant;
-- **cancel-on-timeout** -- there is no cancellation anywhere in Diamond's
-  concurrency model yet (`Thread` doesn't have it either), so this needs
-  that more fundamental gap closed first, not something `Supervisor` can
-  add on its own;
+- **cancel-on-timeout** -- the experimental cancellation cut now provides
+  explicit tokens and deadlines (see [design](cancellation.md)); native wait
+  wakeups and implicit interruption remain open. `Supervisor.stop` still
+  requires workers to cooperate;
 - **cross-thread-transferable supervisor handles** -- `Supervisor` cannot
   currently cross a `Thread.new`/`Channel` boundary at all (see docs/
   threads.md). Not clearly needed without a concrete use case, since a
