@@ -63,10 +63,9 @@ the whole window — useful after rebuilding `diamond-lsp`.
    `diamond.languageServerPath` works for the language server above.
 3. Open a `.di` file, set a gutter breakpoint on any line with a real
    statement on it, then Run & Debug ("Debug Diamond File" from the
-   dropdown, or F5). Diamond has no live breakpoint/stepping support yet
-   (see `docs/debugging.md`): every breakpoint is compiled in up front,
-   so changing one means stopping and restarting the session, and
-   Continue is the only resume command -- there is no step-over/into/out.
+   dropdown, or F5). Breakpoints can be added or removed during the session.
+   Continue, Step Over, Step Into, and Step Out are supported (see
+   [debugging details](../../docs/debugging.md) for limitations).
    The Debug Console shows the debuggee's own stdout/stderr; the Variables
    pane shows locals only for the innermost, currently-paused frame (an
    outer call-stack frame shows no locals in v1).

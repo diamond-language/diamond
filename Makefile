@@ -702,6 +702,8 @@ test-examples: debug
 		bash examples/$$example/smoke_test.sh || exit 1; \
 	done
 
+EXAMPLE_SMOKE_TESTS += debug_me
+
 test-cache: debug
 	# The Makefile-wide DIAMOND_NO_CACHE=1 export above exists specifically
 	# to protect every *other* test target from this feature -- this one
