@@ -1,0 +1,4 @@
+{
+  "adapter": "postgresql",
+  "connection": "host=127.0.0.1 dbname=diamond_example user=diamond connect_timeout=5"
+}
