@@ -67,8 +67,8 @@ startup — `ENV["PATH"]`, `ENV["HOME"]`, etc.; a missing key is `nil`,
 same as any other `Hash`. Mutating the `ENV` `Hash` only changes that
 in-memory snapshot, not the real environment (no `setenv` round-trip) —
 read-only in effect, even though nothing stops the write syntax itself.
-Like every other built-in name, a local variable or user-defined
-function named `ARGV`/`ENV` shadows it.
+A constant or user-defined function named `ARGV`/`ENV` shadows it.
+Constant definitions belong at top level or inside a class or module.
 
 `exit(code = 0)` immediately terminates the whole process with the given
 status (0–255; anything else raises `ArgumentError`, a non-`Int` raises

@@ -13,7 +13,7 @@
 #
 # A "reply" is a Hash: {"line": String, "body": String | nil, "close": Bool}.
 
-def gunzip_limit() -> Int = 1_048_576
+GUNZIP_LIMIT = 1_048_576
 
 def build_reply(line: String, body: String | Nil = nil, close: Bool = false) -> Hash
   {"line": line, "body": body, "close": close}

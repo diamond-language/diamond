@@ -1362,6 +1362,8 @@ typedef enum DiamondVmStatus : uint8_t {
      * though ensure handlers still run. Reaching the top means the target
      * frame had already returned. */
     DIAMOND_VM_NONLOCAL_EXIT,
+    /* Reading before initialization or executing a constant assignment twice. */
+    DIAMOND_VM_CONSTANT_ERROR,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {

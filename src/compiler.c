@@ -327,6 +327,7 @@ typedef struct Compiler {
      * a normal compile always has, except every declaration is already
      * known up front. */
     bool discovery_pass;
+    bool namespace_constant_defined[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* True only for the real (discovery_pass=false) pass of a
      * diamond_compile_with_breakpoints call -- compile_sequence emits a
      * DIAMOND_OP_BREAKPOINT_CHECK at the start of *every* statement
@@ -371,6 +372,7 @@ typedef struct Compiler {
 enum { DIAMOND_UNRESOLVED_SINGLETON_FUNCTION = DIAMOND_MAX_FUNCTIONS };
 
 static uint16_t parse_expression(Compiler *compiler);
+static uint16_t compile_assignment(Compiler *compiler);
 static uint16_t compile_sequence(Compiler *compiler);
 static uint16_t compile_begin(Compiler *compiler);
 static uint16_t compile_yield(Compiler *compiler);
@@ -2243,15 +2245,21 @@ static int find_namespace_constant_name(const Compiler *compiler,
     return -1;
 }
 
-static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
-    if(compiler->current_module<0)return -1;
+/* Constants use lexical namespace lookup, ending at the program scope. */
+static const char *constant_scope(const Compiler *compiler) {
+    if(compiler->current_class>=0)
+        return compiler->program->classes[(size_t)compiler->current_class].name;
+    if(compiler->current_module>=0)
+        return compiler->program->modules[(size_t)compiler->current_module].name;
+    return "";
+}
+
+static int find_lexical_constant_name(const Compiler *compiler,const char *name) {
     char scope[DIAMOND_MAX_FUNCTION_NAME];
-    (void)snprintf(scope,sizeof scope,"%s",
-        compiler->program->modules[(size_t)compiler->current_module].name);
-    while(true) {
+    (void)snprintf(scope,sizeof scope,"%s",constant_scope(compiler));
+    while(scope[0]!='\0') {
         char qualified[DIAMOND_MAX_FUNCTION_NAME];
-        const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",scope,
-            (int)name.length,compiler->source+name.start);
+        const int written=snprintf(qualified,sizeof qualified,"%s::%s",scope,name);
         if(written>0&&(size_t)written<sizeof qualified) {
             const int found=find_namespace_constant_name(compiler,qualified);
             if(found>=0)return found;
@@ -2260,7 +2268,61 @@ static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
         if(separator==nullptr)break;
         separator[-1]='\0';
     }
-    return -1;
+    return find_namespace_constant_name(compiler,name);
+}
+
+static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
+    char text[DIAMOND_MAX_FUNCTION_NAME];
+    if(name.length>=sizeof text)return -1;
+    (void)snprintf(text,sizeof text,"%.*s",(int)name.length,
+                   compiler->source+name.start);
+    return find_lexical_constant_name(compiler,text);
+}
+
+/* Indexed writes mutate the value, not the constant binding. Discovery
+ * must tolerate forward constants here just as it does in parse_name. */
+static int load_constant_receiver(Compiler *compiler,DiamondSpan name) {
+    const int constant=find_namespace_constant(compiler,name);
+    if(constant<0&&!(compiler->discovery_pass&&
+       compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z'))
+        return -1;
+    const uint16_t receiver=allocate_register(compiler);
+    if(constant>=0)
+        emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,receiver,
+                         (uint8_t)constant,0,2);
+    else
+        emit_instruction(compiler,DIAMOND_OP_NIL,receiver,0,0,1);
+    return (int)receiver;
+}
+
+static uint16_t store_namespace_constant(Compiler *compiler,DiamondSpan name,
+                                         uint16_t value) {
+    if(compiler->in_function) {
+        fail(compiler,name,"constants cannot be defined inside functions");return value;
+    }
+    char qualified[DIAMOND_MAX_FUNCTION_NAME];
+    const char *scope=constant_scope(compiler);
+    const int written=snprintf(qualified,sizeof qualified,"%s%s%.*s",scope,
+        scope[0]=='\0'?"":"::",(int)name.length,compiler->source+name.start);
+    if(written<0||(size_t)written>=sizeof qualified) {
+        fail(compiler,name,"constant name is too long");return value;
+    }
+    int constant=find_namespace_constant_name(compiler,qualified);
+    if(constant>=0&&compiler->namespace_constant_defined[(size_t)constant]) {
+        fail(compiler,name,"constant is already defined");return value;
+    }
+    if(constant<0) {
+        if(compiler->program->namespace_constant_count==DIAMOND_MAX_NAMESPACE_CONSTANTS) {
+            fail(compiler,name,"too many namespace constants");return value;
+        }
+        constant=(int)compiler->program->namespace_constant_count++;
+        (void)snprintf(compiler->program->namespace_constants[(size_t)constant],
+                       DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
+    }
+    compiler->namespace_constant_defined[(size_t)constant]=true;
+    emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
+                     (uint8_t)constant,value,0,2);
+    return value;
 }
 
 static bool append_span_name(Compiler *compiler,char *buffer,size_t capacity,
@@ -6831,7 +6893,7 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         class_index=find_class_name(compiler,qualified);
         module_index=find_module_name(compiler,qualified);
-        const int constant=find_namespace_constant_name(compiler,qualified);
+        const int constant=find_lexical_constant_name(compiler,qualified);
         if(constant>=0) {
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
@@ -6839,6 +6901,7 @@ static uint16_t parse_name(Compiler *compiler) {
             return destination;
         }
         if(class_index<0&&module_index<0) {
+            if(compiler->discovery_pass)return allocate_register(compiler);
             fail(compiler,name,"undefined namespaced class");return 0;
         }
     }
@@ -7051,7 +7114,7 @@ static uint16_t parse_name(Compiler *compiler) {
         return parse_math_unary_call(compiler,DIAMOND_MATH_TANH);
     /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
      * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
-     * already a complete expression. Still shadowable by a local or
+     * already a complete expression. Still shadowable by a constant or
      * user-defined function of the same name, same convention as every
      * other built-in name. See docs/syntax.md. */
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
@@ -7265,25 +7328,10 @@ static uint16_t parse_name(Compiler *compiler) {
          find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
         return parse_call(compiler, name);
     }
-    /* During diamond_compile's own discovery pass only: `class_index<0`
-     * here means this identifier isn't a known class (or module, or any
-     * of the built-in Fiber/File/SQLite3/etc. names already ruled out
-     * above) *yet* -- for a genuine forward reference (the whole reason
-     * discovery exists, see that function's own comment), the class
-     * declaration just hasn't been reached by this pass's own walk. A
-     * capitalized name immediately followed by '.' is exactly the shape
-     * `SomeClass.new(...)`/`SomeClass.someMethod(...)` -- rather than
-     * re-deriving how to parse either of those forms here, substitute a
-     * harmless NIL for the (as far as this pass knows) unresolved name
-     * and let this expression's own postfix-chain loop (parse_precedence)
-     * consume the following '.method(...)' exactly the way it already
-     * does for any other receiver, via parse_invoke -- discovery's own
-     * bytecode is discarded regardless of what it computes here. If the
-     * name is genuinely undefined (a real typo, not a forward reference),
-     * this pass simply won't record that -- the second, real pass has no
-     * such tolerance and will correctly fail on it there instead. */
+    /* Discovery may encounter a constant or class before its declaration.
+     * Its bytecode is discarded; the real pass resolves the discovered name
+     * or reports an undefined identifier. */
     if(compiler->discovery_pass&&class_index<0&&module_index<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
        compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z') {
         const uint16_t destination=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
@@ -12097,10 +12145,17 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
-        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-        receiver=compiler->locals[(size_t)local].reg;
+        if(local<0) {
+            const int constant_receiver=load_constant_receiver(compiler,name);
+            if(constant_receiver<0) {
+                fail(compiler,name,"undefined local variable");return 0;
+            }
+            receiver=(uint16_t)constant_receiver;
+        } else {
+            receiver=compiler->locals[(size_t)local].reg;
+        }
         mutation_receiver=receiver;
-        if(compiler->locals[(size_t)local].captured) {
+        if(local>=0&&compiler->locals[(size_t)local].captured) {
             /* See parse_identifier's own BOX_LOCAL re-emission for why this
              * defensive re-box is needed: `captured` doesn't imply this
              * control-flow path actually ran the boxing site. */
@@ -12185,10 +12240,17 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
-        if(local<0) { fail(compiler,name,"undefined local variable"); return 0; }
-        receiver=compiler->locals[(size_t)local].reg;
+        if(local<0) {
+            const int constant_receiver=load_constant_receiver(compiler,name);
+            if(constant_receiver<0) {
+                fail(compiler,name,"undefined local variable");return 0;
+            }
+            receiver=(uint16_t)constant_receiver;
+        } else {
+            receiver=compiler->locals[(size_t)local].reg;
+        }
         mutation_receiver=receiver;
-        if(compiler->locals[(size_t)local].captured) {
+        if(local>=0&&compiler->locals[(size_t)local].captured) {
             /* See compile_index_assignment's own comment on this exact
              * defensive re-box. */
             emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,receiver,0,0,1);
@@ -15578,6 +15640,14 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
                 compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
             compile_attribute(compiler,reader,
                               shorthand||predicate?false:writer,predicate);
+        } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+                  assignment_ahead(compiler)) {
+            const char first=compiler->source[compiler->current.span.start];
+            if(first<'A'||first>'Z') {
+                fail(compiler,compiler->current.span,
+                     "class constants must begin with an uppercase letter");break;
+            }
+            (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -16762,28 +16832,7 @@ static uint16_t compile_module(Compiler *compiler) {
                 fail(compiler,constant_name,
                      "module constants must begin with an uppercase letter");break;
             }
-            char qualified[DIAMOND_MAX_FUNCTION_NAME];
-            const int written=snprintf(qualified,sizeof qualified,"%s::%.*s",
-                module->name,(int)constant_name.length,
-                compiler->source+constant_name.start);
-            if(written<0||(size_t)written>=sizeof qualified) {
-                fail(compiler,constant_name,"constant name is too long");break;
-            }
-            if(find_namespace_constant_name(compiler,qualified)>=0) {
-                fail(compiler,constant_name,"constant is already defined");break;
-            }
-            if(compiler->program->namespace_constant_count==
-               DIAMOND_MAX_NAMESPACE_CONSTANTS) {
-                fail(compiler,constant_name,"too many namespace constants");break;
-            }
-            const uint8_t constant=(uint8_t)
-                compiler->program->namespace_constant_count++;
-            (void)snprintf(compiler->program->namespace_constants[constant],
-                DIAMOND_MAX_FUNCTION_NAME,"%s",qualified);
-            advance_token(compiler);advance_token(compiler);
-            const uint16_t value=parse_expression(compiler);
-            emit_instruction(compiler,DIAMOND_OP_SET_NAMESPACE_CONSTANT,
-                             constant,value,0,2);
+            (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
             advance_token(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -17082,6 +17131,8 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                          (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,value,3);
         return value;
     }
+    if(compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z')
+        return store_namespace_constant(compiler,name,value);
     int local = find_local(compiler, name);
     const uint32_t value_alias_identity=
         alias_identity_for_value(compiler,value);
@@ -17343,6 +17394,8 @@ static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
     }
     const int local=find_local(compiler,name);
     if(local<0) {
+        const int receiver=load_constant_receiver(compiler,name);
+        if(receiver>=0)return (uint16_t)receiver;
         fail(compiler,name,"undefined local variable");return 0;
     }
     uint16_t receiver=compiler->locals[(size_t)local].reg;
@@ -18650,6 +18703,9 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     memcpy(program->modules, discovery->modules,
         discovery->module_count*sizeof program->modules[0]);
     program->module_count = discovery->module_count;
+    memcpy(program->namespace_constants,discovery->namespace_constants,
+        discovery->namespace_constant_count*sizeof program->namespace_constants[0]);
+    program->namespace_constant_count=discovery->namespace_constant_count;
 
     /* Reserve every compiler-created function at its discovery-pass index.
      * The real pass claims the slots in the same source order, preserving

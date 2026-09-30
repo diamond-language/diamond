@@ -88,7 +88,7 @@ def print_reply(conn, command: String)
   raise IOError.new("server closed the connection") if head == nil
   if head.start_with?("GZ ")
     size = head.slice(3, head.length()).to_i()
-    text = Gzip.decompress(read_exactly(conn, size), gunzip_limit())
+    text = Gzip.decompress(read_exactly(conn, size), GUNZIP_LIMIT)
     lines = text.strip().split("\n")
     puts("#{command} -> #{lines.length()} lines of '#{lines[0]}', #{text.length()} bytes, compressed on the wire: #{size < text.length()}")
   else

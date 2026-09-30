@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Constants now support top-level and class definitions, lexical reads from
+  functions and methods, and `Class::NAME` access. Bindings are write-once;
+  collection contents remain mutable. Updated vending, tictactoe, and tlsecho
+  to use constants instead of helper functions.
+
 ## 0.9.2 — 2026-09-28
 
 ### Runtime

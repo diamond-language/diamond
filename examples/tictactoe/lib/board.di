@@ -8,17 +8,12 @@ def other_player(player: Symbol) -> Symbol
   player == :x ? :o : :x
 end
 
-# A top-level constant isn't visible inside a function (only a module's
-# own constant is), so the eight winning lines are a function, not a
-# top-level `WIN_LINES = [...]`.
-def win_lines() -> Array
-  [[0, 1, 2], [3, 4, 5], [6, 7, 8],
-   [0, 3, 6], [1, 4, 7], [2, 5, 8],
-   [0, 4, 8], [2, 4, 6]]
-end
+WIN_LINES = [[0, 1, 2], [3, 4, 5], [6, 7, 8],
+             [0, 3, 6], [1, 4, 7], [2, 5, 8],
+             [0, 4, 8], [2, 4, 6]]
 
 def board_winner(board: Array) -> Symbol | Nil
-  line = win_lines().find() do |positions|
+  line = WIN_LINES.find() do |positions|
     a = board[positions[0]]
     a != nil && a == board[positions[1]] && a == board[positions[2]]
   end

@@ -2,6 +2,36 @@
 
 [Language reference](syntax.md) · Previous: [Functions, closures, and calls](callables.md) · Next: [Gradual typing and exceptions](types-and-errors.md)
 
+## Constants
+
+Uppercase names assigned at the top level or in a class or module define
+shared, write-once bindings:
+
+```ruby
+DEFAULT_LIMIT = 100
+class Config
+  LIMIT = 20
+  def limit() = LIMIT
+  def self.default_limit() = DEFAULT_LIMIT
+end
+puts(Config::LIMIT)
+```
+
+Functions and methods can read constants. Unqualified lookup checks the
+current class or module, its enclosing namespaces, then the top level.
+A namespace's constant shadows one with the same name outside it. Use
+`Config::LIMIT` to access a constant explicitly, including from other files
+loaded with `require`. Top-level constants are shared by the loaded program,
+not private to a file.
+
+Constants may be referenced by methods defined before the constant's
+assignment, but the assignment must execute before the value is read.
+Reading an uninitialized constant raises `RuntimeError`. Executing the same
+constant assignment more than once also raises `RuntimeError`.
+Reassigning a constant is an error, and constants cannot be defined inside
+functions. Arrays and hashes held by constants are **not frozen**: their
+contents remain mutable.
+
 ## Classes
 
 ```ruby

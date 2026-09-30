@@ -10354,6 +10354,7 @@ static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus st
         case DIAMOND_VM_REGEXP_ERROR: return DIAMOND_CLASS_REGEXP_ERROR;
         case DIAMOND_VM_WOULD_BLOCK: return DIAMOND_CLASS_WOULD_BLOCK_ERROR;
         case DIAMOND_VM_PROGRAM_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
+        case DIAMOND_VM_CONSTANT_ERROR: return DIAMOND_CLASS_RUNTIME_ERROR;
         case DIAMOND_VM_THREAD_ERROR: return DIAMOND_CLASS_THREAD_ERROR;
         case DIAMOND_VM_SQLITE3_ERROR: return DIAMOND_CLASS_SQLITE3_ERROR;
         case DIAMOND_VM_POSTGRES_ERROR: return DIAMOND_CLASS_POSTGRES_ERROR;
@@ -22442,16 +22443,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_GET_NAMESPACE_CONSTANT: {
                 uint16_t destination=0,index=0;READ_SHORT(destination);READ_SHORT(index);
-                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS||
-                   !vm->namespace_constant_initialized[index])
+                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(!vm->namespace_constant_initialized[index]) {
+                    snprintf(vm->error,sizeof vm->error,"uninitialized constant");
+                    VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);
+                }
                 registers[destination]=vm->namespace_constants[index];break;
             }
             case DIAMOND_OP_SET_NAMESPACE_CONSTANT: {
                 uint16_t index=0,source=0;READ_SHORT(index);READ_SHORT(source);
-                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS||
-                   vm->namespace_constant_initialized[index])
+                if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(vm->namespace_constant_initialized[index]) {
+                    snprintf(vm->error,sizeof vm->error,"constant is already initialized");
+                    VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);
+                }
                 vm->namespace_constants[index]=registers[source];
                 vm->namespace_constant_initialized[index]=true;break;
             }
@@ -24884,6 +24891,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "ok";
         case DIAMOND_VM_INVALID_BYTECODE:
             return "invalid bytecode";
+        case DIAMOND_VM_CONSTANT_ERROR:
+            return "constant initialization error";
         case DIAMOND_VM_TYPE_ERROR:
             return "type error";
         case DIAMOND_VM_INTEGER_OVERFLOW:
