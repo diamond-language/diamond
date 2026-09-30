@@ -225,6 +225,12 @@ already-tested index-based implementations by materializing the receiver
 into an Array via `to_a` first (itself built on `each`) and delegating to
 those, rather than re-deriving each one generically over `each()`.
 
+For a user-defined class including `Enumerable`, blockless `collection.sum()`
+adds the values yielded by `each`, starting at integer zero. Empty collections
+return `0`; mixed integer/float values produce a floating-point sum. Each call
+traverses the collection again. The included method takes no arguments or block;
+Array and Hash have their own block-taking sum implementations.
+
 A handful of further Array/Hash conveniences work as receiver syntax too,
 forwarding the same way the Enumerable set above does:
 `values.first()`/`values.last()` return the first/last element (an empty
