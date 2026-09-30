@@ -206,17 +206,6 @@ enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
  * to size its own card-index arithmetic. */
 enum { DIAMOND_GC_CARD_SIZE = 64 };
 
-typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE } HandlerKind;
-
-typedef struct UnwindHandler {
-    HandlerKind kind;
-    size_t target;
-    uint16_t destination;
-    uint8_t type_count;
-    uint8_t types[8];
-    bool enabled;
-} UnwindHandler;
-
 typedef enum PendingKind : uint8_t {
     PENDING_NONE,
     PENDING_NORMAL,
@@ -231,12 +220,46 @@ typedef struct PendingUnwind {
     PendingKind kind;
     DiamondValue value;
     size_t continuation;
+    uint64_t nonlocal_target;
+    bool nonlocal_is_break;
 } PendingUnwind;
+
+typedef enum HandlerKind : uint8_t { HANDLER_RESCUE, HANDLER_ENSURE, HANDLER_ACTIVE_ENSURE } HandlerKind;
+
+typedef struct UnwindHandler {
+    HandlerKind kind;
+    size_t target;
+    uint16_t destination;
+    uint8_t type_count;
+    uint8_t types[8];
+    bool enabled;
+    PendingUnwind saved_pending;
+} UnwindHandler;
+
+/* An active ensure remains on the handler stack as an unwind boundary.
+ * Its saved continuation survives nested cleanup, but is discarded when a
+ * new exception or return escapes that cleanup. */
+static UnwindHandler pop_unwind_handler(UnwindHandler *handlers,
+        size_t *count,PendingUnwind *pending) {
+    const UnwindHandler handler=handlers[--*count];
+    if(handler.kind==HANDLER_ACTIVE_ENSURE)*pending=handler.saved_pending;
+    return handler;
+}
+
+static size_t enter_ensure(UnwindHandler *handler,PendingUnwind *pending,
+        PendingUnwind next) {
+    handler->kind=HANDLER_ACTIVE_ENSURE;
+    handler->saved_pending=*pending;
+    *pending=next;
+    return handler->target;
+}
 
 typedef struct DiamondFrame {
     struct DiamondFrame *previous;
     DiamondValue *registers;
     PendingUnwind *pending;
+    UnwindHandler *handlers;
+    size_t *handler_count;
     size_t register_count;
     /* Backtrace support (Exception#backtrace): the owning chunk plus a
      * pointer to run_chunk's own `instruction_offset` local, not a copied
@@ -635,6 +658,10 @@ static void mark_frame_chain(void *frames, bool minor) {
         }
         if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
             mark_value(frame->pending->value, minor);
+        if(frame->handlers!=nullptr && frame->handler_count!=nullptr)
+            for(size_t i=0;i<*frame->handler_count;i++)
+                if(frame->handlers[i].kind==HANDLER_ACTIVE_ENSURE)
+                    mark_value(frame->handlers[i].saved_pending.value,minor);
     }
 }
 
@@ -10304,13 +10331,14 @@ static bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
                             PendingUnwind *pending,DiamondValue *registers,
                             size_t *ip) {
     while(*handler_count>0) {
-        (*handler_count)--;
-        UnwindHandler *handler=&handlers[*handler_count];
+        UnwindHandler *handler=&handlers[*handler_count-1];
         if(handler->kind==HANDLER_ENSURE) {
-            *pending=(PendingUnwind){.kind=PENDING_EXCEPTION,
-                                     .value=vm->exception};
-            vm->has_exception=false;*ip=handler->target;return true;
+            *ip=enter_ensure(handler,pending,(PendingUnwind){
+                .kind=PENDING_EXCEPTION,.value=vm->exception});
+            vm->has_exception=false;return true;
         }
+        const UnwindHandler popped=pop_unwind_handler(handlers,handler_count,pending);
+        if(popped.kind==HANDLER_ACTIVE_ENSURE)continue;
         if(!handler->enabled)continue;
         bool matches=handler->type_count==0;
         for(size_t i=0;i<handler->type_count&&!matches;i++)
@@ -17018,13 +17046,15 @@ static NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *c
         return NONLOCAL_CONTINUE;
     }
     while(*handler_count>0&&handlers[*handler_count-1].kind!=HANDLER_ENSURE)
-        (*handler_count)--;
+        (void)pop_unwind_handler(handlers,handler_count,pending);
     if(*handler_count>0) {
-        const UnwindHandler handler=handlers[--*handler_count];
-        *pending=here?(PendingUnwind){.kind=PENDING_RETURN,.value=vm->nonlocal_value}:
-                      (PendingUnwind){.kind=PENDING_NONLOCAL};
+        const PendingUnwind next=here?
+            (PendingUnwind){.kind=PENDING_RETURN,.value=vm->nonlocal_value}:
+            (PendingUnwind){.kind=PENDING_NONLOCAL,.value=vm->nonlocal_value,
+                .nonlocal_target=vm->nonlocal_target,
+                .nonlocal_is_break=vm->nonlocal_is_break};
+        *ip=enter_ensure(&handlers[*handler_count-1],pending,next);
         if(here) {clear_nonlocal_exit(vm);}
-        *ip=handler.target;
         return NONLOCAL_CONTINUE;
     }
     if(here) {
@@ -17139,6 +17169,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             registers[index] = arguments[index];
     }
     PendingUnwind pending={};
+    UnwindHandler handlers[16];
+    size_t handler_count=0;
     size_t ip = 0;
     size_t instruction_offset = 0;
     const uint64_t frame_serial=++vm->frame_serial;
@@ -17146,6 +17178,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         .previous = vm->frames,
         .registers = registers,
         .pending = &pending,
+        .handlers = handlers,
+        .handler_count = &handler_count,
         .register_count = live_register_count,
         .chunk = chunk,
         .instruction_offset = &instruction_offset,
@@ -17154,8 +17188,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             closure->return_target:frame_serial,
     };
     vm->frames = &frame;
-    UnwindHandler handlers[16];
-    size_t handler_count=0;
 
     #define RECORD_ERROR(status_) do {                                      \
         if ((status_) != DIAMOND_VM_OK) {                                   \
@@ -23109,12 +23141,11 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(source);
                 while(handler_count>0 &&
                       handlers[handler_count-1].kind!=HANDLER_ENSURE)
-                    handler_count--;
+                    (void)pop_unwind_handler(handlers,&handler_count,&pending);
                 if(handler_count>0) {
-                    const UnwindHandler handler=handlers[--handler_count];
-                    pending=(PendingUnwind){.kind=PENDING_RETURN,
-                                            .value=registers[source]};
-                    ip=handler.target;break;
+                    ip=enter_ensure(&handlers[handler_count-1],&pending,
+                        (PendingUnwind){.kind=PENDING_RETURN,.value=registers[source]});
+                    break;
                 }
                 *result = registers[source];
                 VM_RETURN(DIAMOND_VM_OK);
@@ -23176,10 +23207,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(handler_count==0||continuation>chunk->code_count||
                    handlers[handler_count-1].kind!=HANDLER_ENSURE)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const UnwindHandler handler=handlers[--handler_count];
-                pending=(PendingUnwind){.kind=PENDING_NORMAL,
-                                        .continuation=continuation};
-                ip=handler.target;break;
+                ip=enter_ensure(&handlers[handler_count-1],&pending,
+                    (PendingUnwind){.kind=PENDING_NORMAL,.continuation=continuation});
+                break;
             }
             case DIAMOND_OP_BLOCK_RETURN:
             case DIAMOND_OP_BLOCK_BREAK: {
@@ -23224,19 +23254,27 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
             }
             case DIAMOND_OP_END_ENSURE: {
-                const PendingUnwind resume=pending;pending=(PendingUnwind){};
+                if(handler_count==0 ||
+                   handlers[handler_count-1].kind!=HANDLER_ACTIVE_ENSURE)
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const PendingUnwind resume=pending;
+                (void)pop_unwind_handler(handlers,&handler_count,&pending);
                 if(resume.kind==PENDING_NORMAL) {ip=resume.continuation;break;}
                 if(resume.kind==PENDING_RETURN) {
                     while(handler_count>0 &&
                           handlers[handler_count-1].kind!=HANDLER_ENSURE)
-                        handler_count--;
+                        (void)pop_unwind_handler(handlers,&handler_count,&pending);
                     if(handler_count>0) {
-                        const UnwindHandler handler=handlers[--handler_count];
-                        pending=resume;ip=handler.target;break;
+                        ip=enter_ensure(&handlers[handler_count-1],&pending,resume);break;
                     }
                     *result=resume.value;VM_RETURN(DIAMOND_VM_OK);
                 }
-                if(resume.kind==PENDING_NONLOCAL) VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
+                if(resume.kind==PENDING_NONLOCAL) {
+                    vm->nonlocal_value=resume.value;
+                    vm->nonlocal_target=resume.nonlocal_target;
+                    vm->nonlocal_is_break=resume.nonlocal_is_break;
+                    VM_RETURN(DIAMOND_VM_NONLOCAL_EXIT);
+                }
                 if(resume.kind==PENDING_EXCEPTION) {
                     vm->exception=resume.value;vm->has_exception=true;
                     if(catch_exception(vm,chunk,handlers,&handler_count,&pending,

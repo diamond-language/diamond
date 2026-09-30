@@ -6,6 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Nested rescue/ensure cleanup preserves enclosing return values, exceptions,
+  and non-local block exits, including during garbage collection.
+
 - CI splits the full compiler/distro matrix into build, integration, and fuzz
   jobs to avoid cumulative timeouts, avoids duplicate push/PR runs, and
   cancels superseded runs without reducing test coverage.
