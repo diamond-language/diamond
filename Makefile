@@ -532,6 +532,14 @@ test-active-tagging-package: $(TARGET)
 test-active-discussion-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/active_discussion/test.sh
 
+.PHONY: test-cancellation-package test-job-service
+
+test-cancellation-package: $(TARGET)
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/cancellation/test.sh
+
+test-job-service: $(TARGET) $(BUILD_DIR)/facet
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash examples/job_service/smoke_test.sh
+
 test-jobs-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/jobs/test.sh
 
@@ -807,6 +815,8 @@ test-integration:
 	$(MAKE) test-active-tagging-package
 	$(MAKE) test-active-discussion-package
 	$(MAKE) test-jobs-package
+	$(MAKE) test-cancellation-package
+	$(MAKE) test-job-service
 	$(MAKE) test-registry-package
 	$(MAKE) test-registry-http
 	$(MAKE) test-pheint-application

@@ -151,6 +151,15 @@ it are ever deep-copied. A value unsupported for cross-thread transfer
 (a capturing closure, another native-resource handle) raises `TypeError` on
 `send`/`try_send`, exactly as passing one to `Thread.new` already does.
 
+## Cooperative cancellation
+
+The experimental [cancellation cut](../packages/cancellation/README.md) provides
+shared cancellation tokens, monotonic deadlines, cancellation-aware channel
+waits, and task scopes. It uses explicit checkpoints and short polling waits;
+it does not change blocking native methods or inject exceptions into threads.
+See the [design and limitations](cancellation.md) and
+[persistent job service](../examples/job_service/README.md).
+
 ## Supervisors
 
 `Supervisor` restarts a worker automatically when it crashes -- an uncaught
@@ -197,15 +206,15 @@ sup.alive?(0)         # => true while child 0 is still running/restarting;
 ```
 
 `stop()` prevents any further restarts and blocks until every child's
-*current* attempt finishes -- there is no cancellation anywhere in
-Diamond's concurrency model, the same limitation `Thread` already has, so a
+*current* attempt finishes -- there is no implicit native cancellation, so a
 worker parked in a blocking call (a `Channel#receive`, a socket read, an
 infinite loop with no exit condition) keeps `stop()` waiting until that
 call itself returns or raises. `join()` is the non-stopping counterpart: it
 blocks until every child has finished on its own, without disabling
 restarts -- a child that keeps crashing and restarting forever blocks
 `join()` forever too, exactly as joining a `Thread` that never returns
-already does.
+already does. With the cancellation cut, cancel a shared source first and have
+workers catch expected cancellation and return normally before calling `stop()`.
 
 A `Supervisor` cannot cross a `Thread.new`/`Channel` boundary -- passing
 one raises `TypeError`, same as `Thread`, `File`, and the other native-

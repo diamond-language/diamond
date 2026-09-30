@@ -19,6 +19,14 @@ class GremlinShutdown
   # existing convention (packages/rack/lib/rack/cors.di's @@origins etc.)
   # of only ever writing a class variable from inside a method, relying
   # on an unset @@cvar reading back nil (falsy) until first written.
+  def self.return_after_shutdown(value)
+    @@return_after_shutdown = value
+  end
+  def self.return_after_shutdown?() -> Bool = @@return_after_shutdown == true
+  def self.close_connections(connections)
+    connections.each() do |entry| entry["conn"].close() end
+  end
+
   def self.requested?() -> Bool = @@requested == true
 
   # Lazily self-arms on first read rather than requiring a separate
@@ -43,6 +51,8 @@ class GremlinShutdown
   # captured as a gremlin_worker local for the same 16-binding-cap
   # reason everything else here isn't.
   def self.register_listener(listener)
+    @@requested = false
+    @@deadline = nil
     @@listener = listener
   end
 
