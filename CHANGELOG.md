@@ -6,6 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Class singleton declarations are visible before their definitions, including
+  calls from constant initializers, mutual recursion, and method references.
+
 - Constants now support top-level and class definitions, lexical reads from
   functions and methods, and `Class::NAME` access. Bindings are write-once;
   collection contents remain mutable. Updated vending, tictactoe, and tlsecho

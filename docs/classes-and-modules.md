@@ -322,6 +322,13 @@ unaffected by any of this -- `self` still isn't accessible there, and
 `ModuleName.name(...)` still resolves entirely at compile time. Modules
 have no superclass chain and nothing to virtually dispatch against.
 
+Class singleton declarations are visible throughout their class body. A
+method or constant initializer can call a later `ClassName.method(...)`
+definition, and singleton methods can call each other recursively. Positional
+calls and bare method references support this ordering; forward calls with
+keyword, spread, or explicit generic arguments retain the same restrictions
+as forward module singleton calls. Duplicate definitions remain errors.
+
 ### Bare singleton method references
 
 ```ruby
