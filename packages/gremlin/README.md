@@ -47,3 +47,23 @@ continues even with no socket activity. These are I/O deadlines from accept,
 not preemption of synchronous handlers; stalled response writes also expire.
 Long-lived protocols such as WebSockets should not use this policy without
 accounting for the connection lifetime limit.
+
+## Returning to an application owner on shutdown
+
+The optional seventh argument, `return_after_shutdown: true`, makes a
+single-worker server return after draining (or closing at the shutdown deadline)
+instead of exiting the process. This lets the caller's `ensure` cancel and join
+other owned work. Pass the preceding optional arguments explicitly:
+
+```ruby
+begin
+  gremlin_serve(8080, handler, 1, nil, nil, nil, true)
+ensure
+  # Close application-owned resources here.
+end
+```
+
+This mode requires `threads = 1`; multi-worker shutdown coordination is not
+implemented. Default behavior is unchanged. A second shutdown signal still
+forces process exit and bypasses cleanup. Signal handlers are not restored when
+the server returns; this mode is intended for shutdown of the owning service.

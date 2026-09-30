@@ -129,6 +129,10 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
   loop do
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
+      if GremlinShutdown.return_after_shutdown?()
+        GremlinShutdown.close_connections(connections)
+        return nil
+      end
       exit(0)
     end
 
@@ -323,11 +327,19 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
 
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
+      if GremlinShutdown.return_after_shutdown?()
+        GremlinShutdown.close_connections(connections)
+        return nil
+      end
       exit(0)
     end
     if GremlinShutdown.requested?() && Time.monotonic() >= GremlinShutdown.deadline()
       log.info("server.shutdown_complete",
         {"forced": true, "remaining_connections": connections.length()})
+      if GremlinShutdown.return_after_shutdown?()
+        GremlinShutdown.close_connections(connections)
+        return nil
+      end
       exit(0)
     end
   end
@@ -357,7 +369,11 @@ end
 # supplied; skipping `threads` while naming `tick_interval`/`on_tick`
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
-def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil)
+def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil, return_after_shutdown: Bool = false)
+  if return_after_shutdown && threads != 1
+    raise ArgumentError.new("return_after_shutdown requires threads = 1")
+  end
+  GremlinShutdown.return_after_shutdown(return_after_shutdown)
   if limits != nil
     ["line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"].each() do |key|
       unless limits[key] is Int then raise ArgumentError.new("Gremlin limits must be positive integers") end

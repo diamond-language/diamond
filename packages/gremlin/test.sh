@@ -480,4 +480,16 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out" "$out.di"
 
-echo "17 gremlin tests passed"
+# Returning is restricted to a single HTTP worker until shutdown state can
+# coordinate every worker; reject the unsupported mode before binding.
+actual="$("$diamond" -e "require \"$package_root/lib/gremlin\"
+def handler(request, context)
+  [200, {}, \"ok\"]
+end
+begin
+  gremlin_serve(18999, handler, 2, nil, nil, nil, true)
+rescue error: ArgumentError
+  puts(error.message())
+end")"
+[[ "$actual" == *'return_after_shutdown requires threads = 1'* ]]
+echo "18 gremlin tests passed"
