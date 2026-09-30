@@ -10,6 +10,9 @@ identical pause -- without editing source -- for VS Code's "Run & Debug"
 view or any other DAP-compatible client (`editors/vscode`'s own
 "Debugging" section covers the VS Code side specifically).
 
+For a hands-on example, try the [pricing-bug walkthrough](../examples/debug_me/README.md),
+with terminal and editor instructions plus a corrected solution.
+
 ## What this is
 
 Editor-settable breakpoints, a real call stack, locals at the paused
