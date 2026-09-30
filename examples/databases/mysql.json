@@ -1,0 +1,8 @@
+{
+  "adapter": "mysql",
+  "host": "127.0.0.1",
+  "port": 3306,
+  "database": "diamond_example",
+  "user": "diamond",
+  "password_env": "DIAMOND_EXAMPLE_DB_PASSWORD"
+}
