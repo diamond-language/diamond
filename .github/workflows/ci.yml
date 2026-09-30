@@ -33,9 +33,11 @@ jobs:
   # doesn't hide results from the other combinations. Split the full suite
   # into independent build, integration, and fuzz jobs: the sanitizer and
   # fuzz builds alone can consume most of a monolithic job's 60-minute limit.
+  # Runs 305-308 peaked at 24m builds, 21.2m fuzz, and 11.1m integration.
+  # Keep headroom for slower runners while bounding stalled jobs.
   test-all:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.suite == 'test-builds' && 40 || matrix.suite == 'test-fuzz' && 35 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -96,12 +98,12 @@ jobs:
   # the other portability jobs and a representative package slice covering
   # configuration, HTTP/TLS, threaded serving, middleware, and GraphQL.
   # ASan/UBSan has its own job below because its instrumented build alone nearly
-  # exhausts this job's 30-minute budget. The container stays Ubuntu 26.04 so
+  # exceeds this job's budget. The container stays Ubuntu 26.04 so
   # its compiler and dependency versions match the existing Ubuntu leg; the
   # runner is the genuinely different part (arm64 hardware).
   test-arm64:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 20
     container:
       image: ubuntu:26.04
       options: --init
@@ -189,7 +191,7 @@ jobs:
   # building and testing against musl actually required.
   test-musl:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     container:
       image: alpine:edge
       options: --init # see test-all's own identical comment above
@@ -261,7 +263,7 @@ jobs:
   # claiming that coverage here would be dishonest.
   test-freebsd:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -378,7 +380,7 @@ jobs:
   # either.
   test-macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:

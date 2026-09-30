@@ -1967,81 +1967,8 @@ fi
 grep -q "expected 'trap' after 'Signal'" "$error_file"
 rm -f "$error_file"
 
-# The real point of this feature: a signal arriving while genuinely
-# blocked in a native call (not just between bytecode instructions) has
-# to actually interrupt it -- otherwise a trapped signal would never run
-# its handler until whatever the process was blocked on happens to
-# complete on its own, which for "graceful shutdown of an idle server"
-# could be never. Exercises the accept()-specific EINTR-retry path
-# (src/vm.c) directly, not just the once-per-instruction dispatch-loop
-# check that CPU-bound code alone would already satisfy.
-#
-# This server does exactly one accept() call (not a loop), so unlike
-# http/gremlin's own tests, even a bash /dev/tcp probe-and-close
-# readiness check (this repo's usual wait_for_port trick) isn't safe
-# here -- that probe connection would itself *be* the one accept() call
-# consumes, exactly the stray-connection bug already found and fixed in
-# packages/http's own test.sh. So: print "ready" right after
-# TCPServer.listen succeeds and poll the captured output for that line
-# instead, the same readiness signal the UDP tests above already use for
-# the same underlying reason (no safe zero-side-effect probe available).
-signal_port=18749
-signal_out="$(mktemp)"
-# A non-interactive shell (this script, `bash tests/run.sh`) sets SIGINT
-# and SIGQUIT to be *ignored* for an asynchronous (backgrounded, `&`)
-# command -- well-known bash/POSIX behavior, meant to keep a background
-# job alive when the terminal sends SIGINT to the whole foreground
-# process group. Since SIG_IGN survives exec(2), the diamond process
-# below would inherit SIGINT already ignored at the OS level, and its own
-# later Signal.trap (a plain sigaction() call) doesn't get a chance to
-# run before that disposition is already in place for anything delivered
-# in the gap -- confirmed the hard way: kill -INT reliably did nothing at
-# all when this was a plain `... &` background, in this script, despite
-# every one of the earlier manual `command &` tests (not run from inside
-# a script file) working every time. The fix is the standard one: an
-# explicit `trap - INT` (reset to default) inside a subshell, before
-# exec-ing the real command, so the child never sees SIG_IGN in the
-# first place.
-( trap - INT
-  exec timeout 10 "$diamond" -e "$(printf 'def run()
-  def handler()
-    puts("caught INT")
-  end
-  Signal.trap("INT", handler)
-  server = TCPServer.listen(%d)
-  puts("ready")
-  conn = server.accept()
-  puts("accepted")
-  conn.close()
-  server.close()
-end
-run()' "$signal_port")" >"$signal_out" 2>&1 ) &
-signal_pid=$!
-for _ in $(seq 1 200); do
-    grep -q '^ready$' "$signal_out" && break
-    sleep 0.05
-done
-kill -INT "$signal_pid"
-sleep 0.3
-exec 3<>"/dev/tcp/127.0.0.1/$signal_port"
-{ exec 3<&- 3>&-; } 2>/dev/null || true
-# `|| true`, not a bare `wait`: $signal_pid is `timeout`'s own PID (the
-# subshell above execs into it), and GNU coreutils' timeout transparently
-# relays a signal it receives to its child, then exits with the child's
-# real exit status once the child (diamond, having trapped and survived
-# the signal) finishes normally -- status 0 here. Ubuntu 26.04's default
-# `timeout` is uutils-coreutils (a distro-picked alternative to GNU
-# coreutils, confirmed via `timeout --version`), which relays the signal
-# identically but then reports the relayed signal's own 128+signal status
-# regardless of the child's real outcome -- confirmed directly: the exact
-# same diamond process, run without the `timeout` wrapper at all, always
-# reports the correct `wait` status of 0. Real correctness is verified by
-# $actual below either way, so `wait`'s own status here is deliberately
-# not load-bearing.
-wait "$signal_pid" || true
-actual="$(cat "$signal_out")"
-[[ "$actual" == $'ready\ncaught INT\naccepted\nnil' ]]
-rm -f "$signal_out"
+# Verify signal delivery during native accept(), with bounded handshakes.
+DIAMOND_BIN="$diamond" bash tests/signal_interrupt.sh
 
 # An untrapped signal still gets the OS default disposition (kills the
 # process) -- Signal.trap is opt-in per signal name, not a blanket
