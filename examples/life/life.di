@@ -10,11 +10,16 @@ end
 def main(argv) -> Int
   return usage() unless argv.length() == 2
   return usage() unless life_digits?(argv[1])
+
+  # A bad pattern is exit 65; an unreadable file, 66.
   begin
     grid = grid_parse(File.open(argv[0], "r").read())
     generations = argv[1].to_i()
+
+    # Show the starting pattern, then each generation after it.
     puts(grid_render(grid))
     generation = 0
+
     while generation < generations
       grid = grid_step(grid)
       generation += 1
