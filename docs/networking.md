@@ -242,12 +242,12 @@ The completion check is idempotent on connected or accepted sockets. Reads and
 writes also check pending connection state. `close()` cancels an outstanding
 connection and remains idempotent. All these sockets stay in their owning VM.
 
-For cancellable connections, load the cancellation cut and use its 0.4.0 helper:
+For cancellable connections, load the cancellation cut and use its 0.5.0 helper:
 
 ```ruby
 source = Cancellation::Source.new(nil, 2.0)
 token = source.token()
-socket = token.connect("127.0.0.1", 8080)
+socket = token.connect("localhost", 8080)
 begin
   token.write(socket, "hello")
   response = token.read(socket, 4096)
@@ -256,11 +256,33 @@ ensure
 end
 ```
 
-`token.connect` observes parent cancellation and the earliest inherited deadline,
-checks cancellation again after completion, and closes the descriptor on failure
-or cancellation. On success the caller owns the socket. The deadline covers the
-whole connect operation; DNS resolution and TLS handshakes are separate work and
-are not provided by this numeric-address API.
+`token.connect` accepts hostnames and numeric IP literals. It resolves the host,
+tries unique IPv4/IPv6 addresses in resolver order after connection failures,
+checks cancellation again after completion, and closes failed or cancelled
+attempts. The earliest inherited deadline covers DNS and all connection attempts
+without restarting. A pending connection uses the remaining deadline; addresses
+are tried sequentially, without Happy Eyeballs racing. On success the caller owns
+the socket. TLS handshakes remain separate blocking work.
+
+### Cancellable system DNS
+
+`token.resolve(host)` exposes the same resolution separately. The lower-level
+`DNS.resolve(host, cancellations, deadline)` takes a hostname String, an Array of
+Channels, and a finite Float absolute `Time.monotonic()` deadline or nil. It
+returns unique numeric address strings in system resolver order, or nil if any
+channel closes or the deadline expires. DNS failures and exhausted worker
+capacity raise `IOError`; invalid inputs raise `TypeError`. Empty hosts, embedded
+NULs, URL brackets, and IPv6 scope suffixes are rejected. Network sandbox policy
+also applies to DNS, including numeric literals.
+
+Resolution runs in native workers while the calling VM waits with cancellation
+notifications and dispatches its signal handlers. Cancellation abandons the wait;
+it cannot forcibly interrupt libc's resolver. Workers retain only their own C
+buffers and descriptors, never the VM or its heap, and are not joined during VM
+cleanup. The process-wide limit is eight outstanding lookups, including abandoned
+ones. Further hostname requests fail promptly until a worker finishes; numeric
+literals bypass the pool. No new DNS cache is introduced, and system hosts/NSS
+configuration remains in effect.
 
 ## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
 

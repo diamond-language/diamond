@@ -72,9 +72,36 @@ module Cancellation
       result
     end
 
+    # Check cancellation before starting DNS and again before returning results.
+    def resolve(host)
+      self.checkpoint()
+      addresses = DNS.resolve(host, self.wait_channels(), self.wait_deadline())
+      self.checkpoint()
+      addresses
+    end
+
+    def connect(host, port)
+      self.checkpoint()
+      unless port is Int then raise TypeError.new("connect port must be an Int") end
+      if port < 1 || port > 65535 then raise TypeError.new("connect port must be between 1 and 65535") end
+      addresses = self.resolve(host)
+      last_error = nil
+      addresses.each() do |address|
+        self.checkpoint()
+        begin
+          return self.connect_address(address, port)
+        rescue error: IOError
+          last_error = error
+        end
+      end
+      self.checkpoint()
+      if last_error != nil then raise last_error end
+      raise IOError.new("hostname has no supported TCP addresses")
+    end
+
     # Return ownership only after both connection completion and a final
     # checkpoint. Failure/cancellation closes the in-progress descriptor.
-    def connect(address, port)
+    def connect_address(address, port)
       self.checkpoint()
       socket = nil
       transferred = false

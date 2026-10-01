@@ -53,3 +53,6 @@ python3 test/socket_test.py "$work/socket-test"
 python3 test/connect_test.py "$diamond" test/connect_test.di
 "$diamond" build test/connect_test.di -o "$work/connect-test" > "$work/connect-build.log"
 python3 test/connect_test.py "$work/connect-test"
+python3 test/dns_test.py "$diamond" test/dns_test.di
+"$diamond" build test/dns_test.di -o "$work/dns-test" > "$work/dns-build.log"
+python3 test/dns_test.py "$work/dns-test"

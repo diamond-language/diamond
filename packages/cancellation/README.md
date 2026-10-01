@@ -1,9 +1,9 @@
 # cancellation
 
 Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
-Install this cut and `require_cut "cancellation"`. Version 0.4.0 requires a
+Install this cut and `require_cut "cancellation"`. Version 0.5.0 requires a
 Diamond runtime with channel readiness waits, cancellation options for `IO.poll`,
-and `TCPSocket.connect_nonblocking`.
+`TCPSocket.connect_nonblocking`, and `DNS.resolve`.
 
 ```ruby
 require_cut "cancellation"
@@ -66,13 +66,26 @@ Run `DIAMOND_BIN=/absolute/path/to/diamond bash test.sh` for interpreted and
 compiled tests. This package is experimental and is not added to the public
 registry inventory by this change.
 
-## Outbound TCP connections
+## DNS and outbound TCP connections
 
-Version 0.4.0 adds `token.connect(address, port)`, returning a connected
-nonblocking `Socket`. Numeric IPv4/IPv6 addresses only: hostnames are rejected
-rather than performing a blocking DNS lookup. Parent cancellation and deadlines
-apply throughout connection establishment. Failures and cancellation close the
-pending descriptor; after success, the caller closes the socket in `ensure`.
-Use the existing token `read` and `write` helpers with the returned socket.
-See [outbound TCP](../../docs/networking.md#nonblocking-outbound-tcp) for an example
-and the lower-level `TCPSocket.connect_nonblocking` / `Socket.finish_connect` API.
+Version 0.5.0 adds `token.resolve(host)`, returning unique IPv4/IPv6 address
+strings in system resolver order. `token.connect(host, port)` accepts either a
+hostname or a numeric IP literal, tries addresses in order after connection
+failures, and returns a connected nonblocking `Socket`. DNS and every connection
+attempt share the token's existing deadline, including inherited deadlines.
+There is no per-address timeout reset or parallel Happy Eyeballs racing.
+
+Cancellation promptly stops waiting for DNS. A libc lookup already in progress
+may continue in a native worker, but it retains no VM objects and cannot delay
+VM cleanup or process exit. At most eight native lookups can be outstanding
+process-wide, including abandoned lookups. If all are busy, another hostname
+lookup raises `IOError` immediately. Slots and native buffers are reclaimed when
+those lookups finish. Numeric IP literals bypass the worker limit. Resolution
+uses the system resolver, including local hosts configuration; this cut adds no
+DNS cache.
+
+Failed and cancelled connection attempts close their descriptors. After
+success, the caller owns the socket and closes it in `ensure`; token `read` and
+`write` helpers work as before. For numeric-only callers, `token.connect_address`
+retains the direct connection path. TLS handshakes remain separate blocking work.
+See [outbound TCP](../../docs/networking.md#nonblocking-outbound-tcp) for an example.

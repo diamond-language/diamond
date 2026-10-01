@@ -5733,6 +5733,52 @@ static uint16_t parse_io_poll_call(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_dns_resolve_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"resolve",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'resolve' after 'DNS'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'resolve' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'DNS.resolve'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t host_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after DNS.resolve host");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t cancellations_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,"expected ',' after DNS.resolve cancellations");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t deadline_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after DNS.resolve arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_DNS_RESOLVE);
+    emit_register(compiler,dest);
+    emit_register(compiler,host_register);
+    emit_register(compiler,cancellations_register);
+    emit_register(compiler,deadline_register);
+    return dest;
+}
+
 static uint16_t parse_udp_socket_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     const bool is_bind=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
@@ -7020,6 +7066,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPServer",name,false))
         return parse_tcp_listen_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"DNS",name,false))
+        return parse_dns_resolve_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"IO",name,false))

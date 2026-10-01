@@ -1,1 +1,1 @@
-{"name": "cancellation", "version": "0.4.0", "summary": "Cooperative cancellation tokens, deadlines, and task scopes", "license": "MIT", "maintainers": [{"name": "Diamond contributors", "contact": "https://github.com/diamond-language/diamond"}]}
+{"name": "cancellation", "version": "0.5.0", "summary": "Cooperative cancellation tokens, deadlines, and task scopes", "license": "MIT", "maintainers": [{"name": "Diamond contributors", "contact": "https://github.com/diamond-language/diamond"}]}

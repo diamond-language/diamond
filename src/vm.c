@@ -3854,6 +3854,184 @@ static DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *hos
     return DIAMOND_VM_OK;
 }
 
+/* Resolver workers own only native data, never a VM, Diamond value, or a
+ * pointer into the caller's heap. Cancellation abandons a reference rather
+ * than joining libc's potentially unbounded getaddrinfo. Eight outstanding
+ * workers bound the resources retained by abandoned lookups. */
+#define DIAMOND_RESOLVER_LIMIT 8
+static atomic_uint diamond_active_resolvers=0;
+typedef struct DiamondResolverJob {
+    atomic_uint references;
+    atomic_bool done;
+    char *host;
+    int pipe_fds[2];
+    int error;
+    struct addrinfo *addresses;
+} DiamondResolverJob;
+
+static void resolver_release(DiamondResolverJob *job) {
+    if(atomic_fetch_sub(&job->references,1)!=1)return;
+    if(job->addresses!=nullptr)freeaddrinfo(job->addresses);
+    close(job->pipe_fds[0]);close(job->pipe_fds[1]);
+    free(job->host);free(job);
+}
+
+static void *resolver_worker(void *argument) {
+    DiamondResolverJob *job=argument;
+    const struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
+    job->error=getaddrinfo(job->host,nullptr,&hints,&job->addresses);
+    atomic_store_explicit(&job->done,true,memory_order_release);
+    const char byte=1;
+    ssize_t written;
+    do {written=write(job->pipe_fds[1],&byte,1);} while(written<0&&errno==EINTR);
+    /* Both pipe ends stay alive until the last reference, even if the caller
+     * has already cancelled. No SIGPIPE or write to a recycled descriptor. */
+    resolver_release(job);
+    atomic_fetch_sub(&diamond_active_resolvers,1);
+    return nullptr;
+}
+
+static DiamondVmStatus resolver_cancelled(DiamondVm *vm,DiamondValue channels,
+        DiamondValue deadline,bool *cancelled) {
+    *cancelled=false;
+    if(channels.kind!=DIAMOND_VALUE_OBJECT||channels.as.object->kind!=DIAMOND_OBJECT_ARRAY||
+       (deadline.kind!=DIAMOND_VALUE_NIL&&
+        (deadline.kind!=DIAMOND_VALUE_FLOAT||!isfinite(deadline.as.real)))) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve expects an Array of Channels and a finite Float deadline or nil");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondArray *array=(const DiamondArray *)channels.as.object;
+    for(size_t i=0;i<array->count;i++) {
+        if(array->values[i].kind!=DIAMOND_VALUE_OBJECT||
+           array->values[i].as.object->kind!=DIAMOND_OBJECT_CHANNEL) {
+            snprintf(vm->error,sizeof vm->error,"DNS.resolve cancellations must be Channels");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondChannel *channel=((DiamondChannelHandle *)array->values[i].as.object)->channel;
+        pthread_mutex_lock(&channel->lock);
+        *cancelled=*cancelled||channel->closed;
+        pthread_mutex_unlock(&channel->lock);
+    }
+    if(deadline.kind!=DIAMOND_VALUE_NIL) {
+        struct timespec now;
+        if(clock_gettime(CLOCK_MONOTONIC,&now)!=0)return DIAMOND_VM_IO_ERROR;
+        *cancelled=*cancelled||((double)now.tv_sec+(double)now.tv_nsec/1e9>=deadline.as.real);
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* out points to a VM register so the result remains rooted as strings grow. */
+static DiamondVmStatus dns_resolve_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,DiamondValue host_value,DiamondValue channels,DiamondValue deadline,
+        DiamondValue *out) {
+    if(host_value.kind!=DIAMOND_VALUE_OBJECT||host_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve host must be a String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *host=(const DiamondString *)host_value.as.object;
+    if(host->length==0||memchr(host->chars,'\0',host->length)!=nullptr||
+       memchr(host->chars,'%',host->length)!=nullptr||memchr(host->chars,'[',host->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve requires a hostname or an unscoped IP literal");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    *out=DIAMOND_NIL;
+    bool cancelled=false;
+    DiamondVmStatus status=resolver_cancelled(vm,channels,deadline,&cancelled);
+    if(status!=DIAMOND_VM_OK||cancelled)return status;
+    struct in6_addr numeric;
+    if(inet_pton(AF_INET,host->chars,&numeric)==1||inet_pton(AF_INET6,host->chars,&numeric)==1) {
+        DiamondArray *array=allocate_array(vm,&host_value,1);
+        if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(array);
+        return DIAMOND_VM_OK;
+    }
+    unsigned active=atomic_load(&diamond_active_resolvers);
+    do {
+        if(active>=DIAMOND_RESOLVER_LIMIT) {
+            snprintf(vm->error,sizeof vm->error,"DNS resolver capacity exhausted (8 outstanding lookups)");
+            return DIAMOND_VM_IO_ERROR;
+        }
+    } while(!atomic_compare_exchange_weak(&diamond_active_resolvers,&active,active+1));
+    DiamondResolverJob *job=calloc(1,sizeof *job);
+    if(job==nullptr) {atomic_fetch_sub(&diamond_active_resolvers,1);return DIAMOND_VM_OUT_OF_MEMORY;}
+    job->host=malloc(host->length+1);
+    if(job->host==nullptr) {free(job);atomic_fetch_sub(&diamond_active_resolvers,1);return DIAMOND_VM_OUT_OF_MEMORY;}
+    memcpy(job->host,host->chars,host->length+1);
+    if(pipe(job->pipe_fds)!=0) {
+        free(job->host);free(job);atomic_fetch_sub(&diamond_active_resolvers,1);
+        snprintf(vm->error,sizeof vm->error,"DNS resolver pipe failed: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    atomic_init(&job->references,1);
+    atomic_init(&job->done,false);
+    int error=0;
+    for(size_t i=0;i<2;i++) {
+        if(fcntl(job->pipe_fds[i],F_SETFD,FD_CLOEXEC)<0||
+           fcntl(job->pipe_fds[i],F_SETFL,O_NONBLOCK)<0) {error=errno;break;}
+    }
+    pthread_attr_t attributes;
+    bool initialized=false;
+    if(error==0) {error=pthread_attr_init(&attributes);initialized=error==0;}
+    if(error==0)error=pthread_attr_setdetachstate(&attributes,PTHREAD_CREATE_DETACHED);
+    pthread_t thread;
+    if(error==0) {
+        atomic_fetch_add(&job->references,1);
+        error=pthread_create(&thread,&attributes,resolver_worker,job);
+        if(error!=0)resolver_release(job);
+    }
+    if(initialized)pthread_attr_destroy(&attributes);
+    if(error!=0) {
+        resolver_release(job);atomic_fetch_sub(&diamond_active_resolvers,1);
+        snprintf(vm->error,sizeof vm->error,"DNS resolver startup failed: %s",strerror(error));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    for(;;) {
+        bool invoked=false;
+        status=dispatch_pending_signals(vm,chunk,depth,&invoked);
+        if(status!=DIAMOND_VM_OK)break;
+        status=resolver_cancelled(vm,channels,deadline,&cancelled);
+        if(status!=DIAMOND_VM_OK||cancelled)break;
+        if(atomic_load_explicit(&job->done,memory_order_acquire)) {
+            if(job->error!=0) {
+                snprintf(vm->error,sizeof vm->error,"cannot resolve hostname: %s",gai_strerror(job->error));
+                status=DIAMOND_VM_IO_ERROR;break;
+            }
+            DiamondArray *array=allocate_array(vm,nullptr,0);
+            if(array==nullptr) {status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            *out=DIAMOND_OBJECT(array);
+            for(const struct addrinfo *entry=job->addresses;entry!=nullptr;entry=entry->ai_next) {
+                char address[INET6_ADDRSTRLEN];
+                const void *bytes=nullptr;
+                if(entry->ai_family==AF_INET)
+                    bytes=&((const struct sockaddr_in *)entry->ai_addr)->sin_addr;
+                else if(entry->ai_family==AF_INET6&&((const struct sockaddr_in6 *)entry->ai_addr)->sin6_scope_id==0)
+                    bytes=&((const struct sockaddr_in6 *)entry->ai_addr)->sin6_addr;
+                if(bytes==nullptr||inet_ntop(entry->ai_family,bytes,address,sizeof address)==nullptr)continue;
+                bool duplicate=false;
+                for(size_t i=0;i<array->count;i++) {
+                    const DiamondString *old=(const DiamondString *)array->values[i].as.object;
+                    if(strcmp(old->chars,address)==0) {duplicate=true;break;}
+                }
+                if(duplicate)continue;
+                DiamondString *value=allocate_string(vm,address,strlen(address));
+                if(value==nullptr||!array_push(vm,array,DIAMOND_OBJECT(value))) {
+                    status=DIAMOND_VM_OUT_OF_MEMORY;break;
+                }
+            }
+            if(status==DIAMOND_VM_OK&&array->count==0) {
+                snprintf(vm->error,sizeof vm->error,"hostname has no supported TCP addresses");
+                status=DIAMOND_VM_IO_ERROR;
+            }
+            break;
+        }
+        struct pollfd fds[2]={{.fd=job->pipe_fds[0],.events=POLLIN}};
+        status=cancellable_wait_helper(vm,nullptr,false,channels,deadline,fds,1);
+        if(status!=DIAMOND_VM_OK)break;
+    }
+    resolver_release(job);
+    return status;
+}
+
 /* Numeric addresses keep name resolution entirely outside this nonblocking
  * contract. No resolver thread or unbounded getaddrinfo call is hidden here. */
 static DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm,
@@ -24488,6 +24666,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)new_handle};
+                break;
+            }
+            case DIAMOND_OP_DNS_RESOLVE: {
+                uint16_t dest=0,host_reg=0,channels_reg=0,deadline_reg=0;
+                READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(channels_reg);READ_SHORT(deadline_reg);
+                VM_SANDBOX_GUARD("DNS.resolve", "network");
+                const size_t root_count=vm->gc_protected_count;
+                if(!gc_protect(vm,registers[host_reg])||!gc_protect(vm,registers[channels_reg])) {
+                    gc_unprotect(vm,root_count);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                const DiamondVmStatus status=dns_resolve_helper(vm,chunk,depth,
+                    registers[host_reg],registers[channels_reg],registers[deadline_reg],&registers[dest]);
+                gc_unprotect(vm,root_count);
+                VM_PROPAGATE(status);
                 break;
             }
             case DIAMOND_OP_TCP_CONNECT_NONBLOCK: {
