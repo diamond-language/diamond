@@ -197,6 +197,33 @@ the same way `TCPServer.listen`/`TCPSocket.connect` are (`IO.poll`
 mirroring `TCPSocket.connect`'s 3-argument shape, since neither is a
 class with real dispatch — see above).
 
+### Cancellation and absolute deadlines
+
+`IO.poll(readables, writables, {"cancellations": channels, "deadline": deadline})`
+uses the same readiness result as the integer-timeout form. `channels` is a
+required Array of Channels; closing any channel wakes the wait. Duplicates and
+an empty array are allowed. `deadline` is a finite Float absolute
+`Time.monotonic()` timestamp, or `nil` (also the default) for no deadline.
+Unknown options and invalid types raise `TypeError`.
+
+This form registers a notification pipe alongside the supplied descriptors.
+It returns on readiness, cancellation, deadline expiry, or a spurious wakeup;
+it does not raise a cancellation exception or reserve/consume socket data.
+Readiness arrays may contain only `false` after a wakeup. Recheck cancellation
+and retry nonblocking operations. An expired deadline or already closed
+cancellation source returns immediately. Signals return to the VM dispatcher
+after the waiter has unregistered; VMs with signal handlers retain bounded
+10 ms returns. Other VMs have no periodic polling timer.
+
+The [cancellation cut](../packages/cancellation/README.md) wraps this as
+`token.poll(readables, writables)`, checking the token before and after each
+wait. For accepted nonblocking TCP `Socket`s, use `token.read(socket, count)`
+and `token.write(socket, string)` to retry readiness waits automatically.
+Read returns up to `count` bytes or `nil` at EOF; write returns the byte count
+after writing the entire string. Cancellation during a write may leave a
+prefix on the wire. The caller still owns the socket and should close it in
+`ensure`. Blocking TCP/TLS handles and SQL calls are outside this contract.
+
 ## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
 
 ```ruby

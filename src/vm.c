@@ -444,9 +444,12 @@ typedef struct ChannelWaitRegistration {
  * retries its operation after waking. Registration and readiness checks share
  * each channel's lock: a transition either precedes the check or writes to
  * the already-registered pipe. This closes the check/sleep lost-wakeup gap.
- * Receiver/argument registers keep all handles alive for this entire call. */
-static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
-        bool writable,DiamondValue cancellations,DiamondValue deadline_value) {
+ * Receiver/argument registers keep all handles alive for this entire call.
+ * fds has room for one extra descriptor after fd_count. target is NULL for
+ * IO.poll, which waits on its supplied fds plus cancellation channels. */
+static DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
+        bool writable,DiamondValue cancellations,DiamondValue deadline_value,
+        struct pollfd *fds,nfds_t fd_count) {
     if(cancellations.kind!=DIAMOND_VALUE_OBJECT ||
        cancellations.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
         snprintf(vm->error,sizeof vm->error,"channel wait cancellations must be an Array of Channels");
@@ -471,8 +474,9 @@ static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
     }
     if(array->count>=SIZE_MAX/sizeof(ChannelWaitRegistration)-1)
         return DIAMOND_VM_OUT_OF_MEMORY;
-    const size_t count=array->count+1;
-    ChannelWaitRegistration *registrations=calloc(count,sizeof *registrations);
+    const size_t target_count=target==nullptr?0:1;
+    const size_t count=array->count+target_count;
+    ChannelWaitRegistration *registrations=calloc(count==0?1:count,sizeof *registrations);
     if(registrations==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     int descriptors[2];
     if(pipe(descriptors)!=0) {
@@ -489,10 +493,11 @@ static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
             return DIAMOND_VM_IO_ERROR;
         }
     }
+    fds[fd_count]=(struct pollfd){.fd=descriptors[0],.events=POLLIN};
     bool ready=false;
     for(size_t i=0;i<count;i++) {
-        DiamondChannel *channel=i==0?target:
-            ((DiamondChannelHandle *)array->values[i-1].as.object)->channel;
+        DiamondChannel *channel=i<target_count?target:
+            ((DiamondChannelHandle *)array->values[i-target_count].as.object)->channel;
         ChannelWaitRegistration *registration=&registrations[i];
         registration->channel=channel;
         registration->link.write_fd=descriptors[1];
@@ -500,7 +505,7 @@ static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
         registration->link.next=channel->waiters;
         channel->waiters=&registration->link;
         ready=ready||channel->closed ||
-            (i==0&&(writable?channel->count<channel->capacity:channel->count>0));
+            (i<target_count&&(writable?channel->count<channel->capacity:channel->count>0));
         pthread_mutex_unlock(&channel->lock);
     }
     /* Trapped signals are dispatched at VM instruction boundaries. Only
@@ -523,14 +528,14 @@ static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
             milliseconds=rounded>INT_MAX?INT_MAX:(int)rounded;
         }
         if(signal_aware&&(milliseconds<0||milliseconds>10))milliseconds=10;
-        struct pollfd descriptor={.fd=descriptors[0],.events=POLLIN};
-        const int result=poll(&descriptor,1,milliseconds);
+        const int result=poll(fds,fd_count+1,milliseconds);
         if(result>0) {
-            if(descriptor.revents&POLLIN)break;
-            wait_error=EIO;break;
+            if(fds[fd_count].revents&(POLLERR|POLLHUP|POLLNVAL))wait_error=EIO;
+            break;
         }
         if(result<0) {
             if(errno!=EINTR)wait_error=errno;
+            for(nfds_t i=0;i<fd_count;i++)fds[i].revents=0;
             break;
         }
         if(signal_aware)break;
@@ -21289,8 +21294,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"wait_writable",13)==0;
                     if(wait_readable||wait_writable) {
                         if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        const DiamondVmStatus wait_status=channel_wait_helper(vm,target_channel,
-                            wait_writable,registers[base],registers[base+1]);
+                        struct pollfd wait_fd[1];
+                        const DiamondVmStatus wait_status=cancellable_wait_helper(vm,target_channel,
+                            wait_writable,registers[base],registers[base+1],wait_fd,0);
                         if(wait_status!=DIAMOND_VM_OK)VM_RETURN(wait_status);
                         registers[dest]=DIAMOND_NIL;break;
                     }
@@ -24782,10 +24788,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[readable_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[readable_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY||
                    registers[writable_reg].kind!=DIAMOND_VALUE_OBJECT||
-                   registers[writable_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY||
-                   registers[timeout_reg].kind!=DIAMOND_VALUE_INT) {
-                    snprintf(vm->error,sizeof vm->error,"IO.poll arguments must be an "
-                        "Array of readables, an Array of writables, and an Int timeout");
+                   registers[writable_reg].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+                    snprintf(vm->error,sizeof vm->error,"IO.poll readables and writables must be Arrays");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 const DiamondArray *readable_array=
@@ -24799,7 +24803,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         "IO.poll supports at most %d fds per list",DIAMOND_MAX_POLL_FDS);
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                struct pollfd fds[DIAMOND_MAX_POLL_FDS];
+                /* Reserve a separate slot for the cancellation notification pipe. */
+                struct pollfd fds[DIAMOND_MAX_POLL_FDS+1];
                 nfds_t fd_count=0;
                 size_t read_slot[DIAMOND_MAX_POLL_FDS];
                 size_t write_slot[DIAMOND_MAX_POLL_FDS];
@@ -24827,33 +24832,63 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                 }
-                const int64_t timeout_value=registers[timeout_reg].as.integer;
-                const int timeout_ms=timeout_value<0?-1:
-                    (timeout_value>INT_MAX?INT_MAX:(int)timeout_value);
-                int poll_result=0;
-                errno=0;
-                poll_result=poll(fds,fd_count,timeout_ms);
-                /* Unlike the plain EINTR-retries-unconditionally loop
-                 * this replaced, a signal actually gets handled here
-                 * before retrying -- gremlin_serve's own event loop calls
-                 * IO.poll with timeout_ms=-1 (block until something's
-                 * ready), so blindly retrying on every EINTR would mean a
-                 * trapped signal arriving while a gremlin server sits
-                 * idle would never actually run its handler until some
-                 * connection activity happened to wake the poll() up
-                 * first -- exactly backwards for "let me shut this server
-                 * down gracefully on Ctrl+C." */
-                while(poll_result<0&&errno==EINTR) {
-                    bool signal_invoked=false;
-                    const DiamondVmStatus signal_status=
-                        dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
-                    VM_PROPAGATE_SIGNAL(signal_status);
+                const DiamondValue timeout=registers[timeout_reg];
+                if(timeout.kind==DIAMOND_VALUE_OBJECT&&
+                   timeout.as.object->kind==DIAMOND_OBJECT_HASH) {
+                    const DiamondHash *options=(const DiamondHash *)timeout.as.object;
+                    DiamondValue cancellations=DIAMOND_NIL,deadline=DIAMOND_NIL;
+                    for(size_t i=0;i<options->count;i++) {
+                        const DiamondValue key=options->entries[i].key;
+                        if(key.kind!=DIAMOND_VALUE_OBJECT||key.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                            snprintf(vm->error,sizeof vm->error,"IO.poll option keys must be Strings");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        const DiamondString *name=(const DiamondString *)key.as.object;
+                        if(name->length==13&&memcmp(name->chars,"cancellations",13)==0)
+                            cancellations=options->entries[i].value;
+                        else if(name->length==8&&memcmp(name->chars,"deadline",8)==0)
+                            deadline=options->entries[i].value;
+                        else {
+                            snprintf(vm->error,sizeof vm->error,"unknown IO.poll option");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                    }
+                    /* Unlink before returning to the VM's signal dispatcher:
+                     * handlers can close sockets or cancellation sources. */
+                    VM_PROPAGATE(cancellable_wait_helper(vm,nullptr,false,
+                        cancellations,deadline,fds,fd_count));
+                } else if(timeout.kind==DIAMOND_VALUE_INT) {
+                    const int64_t timeout_value=registers[timeout_reg].as.integer;
+                    const int timeout_ms=timeout_value<0?-1:
+                        (timeout_value>INT_MAX?INT_MAX:(int)timeout_value);
+                    int poll_result=0;
                     errno=0;
                     poll_result=poll(fds,fd_count,timeout_ms);
-                }
-                if(poll_result<0) {
-                    snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
-                    VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    /* Unlike the plain EINTR-retries-unconditionally loop
+                     * this replaced, a signal actually gets handled here
+                     * before retrying -- gremlin_serve's own event loop calls
+                     * IO.poll with timeout_ms=-1 (block until something's
+                     * ready), so blindly retrying on every EINTR would mean a
+                     * trapped signal arriving while a gremlin server sits
+                     * idle would never actually run its handler until some
+                     * connection activity happened to wake the poll() up
+                     * first -- exactly backwards for "let me shut this server
+                     * down gracefully on Ctrl+C." */
+                    while(poll_result<0&&errno==EINTR) {
+                        bool signal_invoked=false;
+                        const DiamondVmStatus signal_status=
+                            dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
+                        VM_PROPAGATE_SIGNAL(signal_status);
+                        errno=0;
+                        poll_result=poll(fds,fd_count,timeout_ms);
+                    }
+                    if(poll_result<0) {
+                        snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                } else {
+                    snprintf(vm->error,sizeof vm->error,"IO.poll timeout must be an Int or cancellation options Hash");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 /* POLLHUP/POLLERR/POLLNVAL count toward *both* readiness
                  * directions: a peer that closed its end, or a socket that

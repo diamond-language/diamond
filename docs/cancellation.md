@@ -77,9 +77,23 @@ segments, without extending the deadline. Each active wait uses two file
 descriptors; allocation or descriptor exhaustion raises an ordinary runtime
 error and leaves no registered waiter behind.
 
-Pollable socket I/O is the next integration boundary. Socket/SQL interruption
-and implicit VM checkpoints require separate contracts; channel wakeups do not
-claim to solve those problems.
+`IO.poll` accepts cancellation options and uses the same registration protocol,
+adding the notification pipe alongside the caller's descriptors. Its original
+integer timeout form remains available. The options form uses an absolute
+deadline, so retries do not extend it. Spurious returns have no ready entries.
+
+`token.poll(readables, writables)` checks cancellation before and after waiting;
+a token cancelled alongside socket readiness raises instead of reporting ready.
+`token.read(socket, count)` retries until bytes or EOF, and
+`token.write(socket, string)` retries partial writes until all bytes are sent.
+These helpers accept only nonblocking TCP `Socket`s. They neither close the
+socket nor roll back a partial write: use `ensure` for ownership cleanup, and
+account for a prefix already sent if a write is cancelled. Sockets stay in their
+owning VM; pass a cancellation source across threads instead of the socket.
+
+Blocking TLS/socket connection setup, SQL interruption, and implicit VM
+checkpoints still require separate contracts. Existing HTTP servers must opt
+into token-aware waits; installing the package does not alter their I/O loops.
 
 ## Reference service
 

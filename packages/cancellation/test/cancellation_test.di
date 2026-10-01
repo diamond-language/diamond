@@ -215,5 +215,13 @@ ready.receive()
 parent.cancel()
 thread.join()
 check(cleaned.receive() == "cleaned", "ancestor cancellation lost")
+# Blocking and unrelated handles must never reach a socket read/write.
+[1, Channel.new(1)].each() do |handle|
+  begin
+    Cancellation::Source.new().token().read(handle, 1)
+    raise "non-socket accepted"
+  rescue error: TypeError
+  end
+end
 puts("cancellation tests passed")
 exit(0)

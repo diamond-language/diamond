@@ -47,3 +47,6 @@ check_signal_wait "$diamond" test/signal_test.di
 "$diamond" build test/signal_test.di -o "$work/signal-test" > "$work/signal-build.log"
 check_signal_wait "$work/signal-test"
 echo "cancellation signal tests passed"
+python3 test/socket_test.py "$diamond" test/socket_test.di
+"$diamond" build test/socket_test.di -o "$work/socket-test" > "$work/socket-build.log"
+python3 test/socket_test.py "$work/socket-test"

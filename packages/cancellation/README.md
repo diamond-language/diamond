@@ -1,8 +1,8 @@
 # cancellation
 
 Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
-Install this cut and `require_cut "cancellation"`. Version 0.2.0 requires a
-Diamond runtime with `Channel.wait_readable` and `Channel.wait_writable`.
+Install this cut and `require_cut "cancellation"`. Version 0.3.0 requires a
+Diamond runtime with channel readiness waits and cancellation options for `IO.poll`.
 
 ```ruby
 require_cut "cancellation"
@@ -34,6 +34,13 @@ sources can cross thread/channel boundaries; scopes stay in their owning thread.
   `Cancellation::DeadlineExceeded`.
 - `token.sleep(seconds)`, `token.receive(channel)`, and
   `token.send(channel, value)` are cancellation-aware waits.
+- `token.poll(readables, writables)` waits on pollable I/O with cancellation and
+  the earliest inherited deadline. Readiness is a hint and can be all false.
+- `token.read(socket, count)` returns up to `count` bytes or `nil` at EOF;
+  `token.write(socket, string)` writes the entire string and returns its byte
+  count. Both retry nonblocking TCP `Socket` operations. A cancelled write may
+  have sent a prefix already; close owned sockets in `ensure`. Blocking File/TLS
+  handles are rejected by these helpers.
 - `Cancellation.scope(body, timeout_seconds = nil)` joins all spawned children.
   Body failure cancels them; child failure cancels siblings. Cleanup runs before
   propagating errors, including non-Exception raised values.
