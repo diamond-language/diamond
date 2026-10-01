@@ -19,6 +19,8 @@ require "./lib/optimizer"
 require "./lib/tokenizer"
 require "./lib/checkpoint"
 
+# Arguments: the checkpoint file, the starting text, and how many bytes to
+# generate (default 200).
 checkpoint_path = ARGV[0]
 prompt = ARGV[1]
 if checkpoint_path == nil || prompt == nil
@@ -39,10 +41,14 @@ seq_len = 64
 max_seq_len = seq_len
 vocab_size = ByteTokenizer.vocab_size()
 
+
+# Build a model of the right shape (its random initial weights are
+# immediately overwritten by the checkpoint), then load the trained weights.
 rng = SimpleRng.new(1)
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
 Checkpoint.load!(model, checkpoint_path)
 
+# The text so far, as byte ids. Each step appends one more.
 token_ids = ByteTokenizer.encode(prompt)
 
 step = 0
@@ -58,6 +64,9 @@ while step < num_tokens
     context = context.slice(context.length() - max_seq_len, max_seq_len)
   end
 
+
+  # Run the model and pick the highest-scoring next byte from the last
+  # position's logits (greedy: always the single most likely one).
   logits = model.forward(context).tensor()
   last_row = logits.rows() - 1
   best_index = 0
@@ -71,6 +80,8 @@ while step < num_tokens
     end
     j += 1
   end
+
+  # Append it and go around again: the model's own output becomes input.
   token_ids.push(best_index)
   step += 1
 end

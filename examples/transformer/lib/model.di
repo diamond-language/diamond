@@ -10,12 +10,18 @@ class TransformerModel
 
   def initialize(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
     @embedding = Embedding.new(vocab_size, d_model, max_seq_len, rng)
+
+    # The stack of identical (but separately initialized) blocks.
     @blocks = []
     i = 0
     while i < num_layers
       @blocks.push(TransformerBlock.new(d_model, num_heads, d_ff, rng))
       i += 1
     end
+
+    # The final LayerNorm (gamma starts at 1, beta at 0: initially a pure
+    # normalize) and the projection from d_model up to a score per vocabulary
+    # entry.
     @final_ln_gamma = Var.leaf(tensor_ones(1, d_model))
     @final_ln_beta = Var.leaf(Tensor.zeros(1, d_model))
     @eps = 0.00001
@@ -25,20 +31,29 @@ class TransformerModel
   # token_ids: Array of Ints. Returns a Var (seq_len x vocab_size) of
   # raw logits.
   def forward(token_ids)
+    # Token + position embeddings, then through every block in turn. `true`
+    # makes attention causal (each position sees only earlier ones).
     x = @embedding.forward(token_ids)
     i = 0
     while i < @blocks.length()
       x = @blocks[i].forward(x, true)
       i += 1
     end
+
+    # Final normalization, then one score per vocabulary entry per position.
     normalized = Autograd.layernorm(x, @final_ln_gamma, @final_ln_beta, @eps)
     @output_proj.forward(normalized)
   end
 
+  # Every trainable Var, in a FIXED order (Checkpoint saves and loads by
+  # position in this list, so changing the order breaks old checkpoints).
   def parameters()
     params = []
     params.push(@embedding.token_table())
     params.push(@embedding.position_table())
+
+    # Each block: attention's four projections, the feed-forward's two, and
+    # the two LayerNorms.
     i = 0
     while i < @blocks.length()
       block = @blocks[i]
@@ -62,6 +77,8 @@ class TransformerModel
       params.push(block.ln2_beta())
       i += 1
     end
+
+    # Then the final LayerNorm and the output projection.
     params.push(@final_ln_gamma)
     params.push(@final_ln_beta)
     params.push(@output_proj.weight())

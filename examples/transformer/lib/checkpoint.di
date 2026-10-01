@@ -11,6 +11,8 @@
 # exactly this reason).
 class Checkpoint
   def self.save(model, path)
+    # Collect every parameter as nested arrays of numbers (JSON can hold
+    # those but not a Tensor).
     params = model.parameters()
     data = []
     i = 0
@@ -18,6 +20,7 @@ class Checkpoint
       data.push(params[i].tensor().to_a())
       i += 1
     end
+
     file = File.open(path, "w")
     file.write(JSON.stringify(data))
     file.close()
@@ -28,10 +31,16 @@ class Checkpoint
     file = File.open(path, "r")
     data = JSON.parse(file.read())
     file.close()
+
+    # The only check made: the number of tensors (see the header on why not
+    # their shapes).
     params = model.parameters()
     if data.length() != params.length()
       raise IOError.new("checkpoint at #{path} has #{data.length()} tensors, model expects #{params.length()} -- built with a different config?")
     end
+
+    # Replace each parameter's tensor, in the same fixed order they were
+    # saved in.
     i = 0
     while i < params.length()
       params[i].tensor = Tensor.from_array(data[i])

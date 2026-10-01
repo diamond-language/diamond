@@ -6,6 +6,8 @@
 class TransformerBlock
   attr_accessor attention, feed_forward, ln1_gamma, ln1_beta, ln2_gamma, ln2_beta, eps
 
+  # Two LayerNorms (each with its own learned scale `gamma`, starting at 1,
+  # and shift `beta`, starting at 0), plus the two sub-layers.
   def initialize(d_model, num_heads, d_ff, rng)
     @attention = MultiHeadAttention.new(d_model, num_heads, rng)
     @feed_forward = FeedForward.new(d_model, d_ff, rng)
@@ -16,11 +18,15 @@ class TransformerBlock
     @eps = 0.00001
   end
 
+  # Each half is "normalize, transform, add the input back" (a residual
+  # connection: it gives gradients a direct path back through deep stacks).
   def forward(x, causal)
+    # Attention half.
     normalized1 = Autograd.layernorm(x, @ln1_gamma, @ln1_beta, @eps)
     attn_out = @attention.forward(normalized1, causal)
     residual1 = Autograd.add(attn_out, x)
 
+    # Feed-forward half.
     normalized2 = Autograd.layernorm(residual1, @ln2_gamma, @ln2_beta, @eps)
     ff_out = @feed_forward.forward(normalized2)
     Autograd.add(ff_out, residual1)
