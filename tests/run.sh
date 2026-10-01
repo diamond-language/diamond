@@ -1592,7 +1592,7 @@ if "$diamond" -e 'TCPSocket.dial("x", 80)' >/dev/null 2>"$error_file"; then
     echo "malformed TCPSocket.dial unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "expected 'connect' after 'TCPSocket'" "$error_file"
+grep -q "expected 'connect' or 'connect_nonblocking' after 'TCPSocket'" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

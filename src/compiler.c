@@ -5471,9 +5471,10 @@ static uint16_t parse_program_builder_new_call(Compiler *compiler) {
 
 static uint16_t parse_tcp_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    const bool nonblocking=name_equals(compiler,"connect_nonblocking",compiler->current.span,false);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"connect",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'connect' after 'TCPSocket'");
+       (!nonblocking&&!name_equals(compiler,"connect",compiler->current.span,false))) {
+        fail(compiler,compiler->current.span,"expected 'connect' or 'connect_nonblocking' after 'TCPSocket'");
         return 0;
     }
     advance_token(compiler); /* consume 'connect' */
@@ -5493,12 +5494,12 @@ static uint16_t parse_tcp_connect_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
-    uint16_t options_register;
-    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+    uint16_t options_register=0;
+    if(!nonblocking&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);skip_newlines(compiler);
         options_register=parse_expression(compiler);
         skip_newlines(compiler);
-    } else {
+    } else if(!nonblocking) {
         options_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,options_register,0,0,1);
     }
@@ -5508,11 +5509,11 @@ static uint16_t parse_tcp_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_TCP_CONNECT);
+    emit_opcode(compiler,nonblocking?DIAMOND_OP_TCP_CONNECT_NONBLOCK:DIAMOND_OP_TCP_CONNECT);
     emit_register(compiler,dest);
     emit_register(compiler,host_register);
     emit_register(compiler,port_register);
-    emit_register(compiler,options_register);
+    if(!nonblocking)emit_register(compiler,options_register);
     return dest;
 }
 

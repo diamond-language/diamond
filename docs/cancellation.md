@@ -91,7 +91,10 @@ socket nor roll back a partial write: use `ensure` for ownership cleanup, and
 account for a prefix already sent if a write is cancelled. Sockets stay in their
 owning VM; pass a cancellation source across threads instead of the socket.
 
-Blocking TLS/socket connection setup, SQL interruption, and implicit VM
+`token.connect(address, port)` establishes nonblocking TCP connections to numeric
+IPv4/IPv6 addresses with inherited cancellation/deadlines and closes failed or
+cancelled attempts. Successful sockets belong to the caller. Blocking DNS/TLS
+connection setup, SQL interruption, and implicit VM
 checkpoints still require separate contracts. HTTP servers must opt into token-aware waits. Gremlin's optional
 `shutdown_token` mode integrates these waits, a shared drain deadline across
 workers, and joins before returning;

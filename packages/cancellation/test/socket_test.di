@@ -26,6 +26,7 @@ def run(port, mode)
       socket = listener.accept()
       break if socket != nil
     end
+    socket.finish_connect()
     if mode == "deadline"
       parent = Cancellation::Source.new(nil, 0.05)
       source = Cancellation::Source.new(parent.token(), 10)

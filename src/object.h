@@ -447,8 +447,8 @@ typedef struct DiamondListenerHandle {
     unsigned int alpn_protocols_length;
 } DiamondListenerHandle;
 
-/* A non-blocking TCP connection, returned only by .accept() on a
- * TCPServer.listen_nonblocking listener -- deliberately not
+/* A non-blocking TCP connection, accepted by a nonblocking listener or
+ * initiated by TCPSocket.connect_nonblocking -- deliberately not
  * DiamondFileHandle's buffered FILE*, since libc stdio buffering and
  * EAGAIN don't mix cleanly (a short buffered read can silently swallow
  * the "nothing available yet" signal a poll-driven caller needs to see
@@ -457,6 +457,7 @@ typedef struct DiamondListenerHandle {
 typedef struct DiamondSocketHandle {
     DiamondObject object;
     int fd;
+    bool connecting;
 } DiamondSocketHandle;
 
 /* UDP is connectionless -- one socket both sends and receives, to/from

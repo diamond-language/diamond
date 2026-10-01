@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Cancellation 0.4.0 adds `token.connect(address, port)` for nonblocking outbound
+  TCP with inherited cancellation and deadlines. The runtime exposes
+  `TCPSocket.connect_nonblocking` and `Socket.finish_connect`; numeric IPv4/IPv6
+  addresses keep DNS outside the nonblocking contract. Failed and cancelled
+  attempts close their descriptors.
+
 - Gremlin 0.4.0 extends token-managed shutdown to multiple workers, sharing
   one drain deadline and joining every worker before returning or propagating
   a worker failure. VMs without a signal handler no longer consume pending

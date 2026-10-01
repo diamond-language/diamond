@@ -1,8 +1,9 @@
 # cancellation
 
 Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
-Install this cut and `require_cut "cancellation"`. Version 0.3.0 requires a
-Diamond runtime with channel readiness waits and cancellation options for `IO.poll`.
+Install this cut and `require_cut "cancellation"`. Version 0.4.0 requires a
+Diamond runtime with channel readiness waits, cancellation options for `IO.poll`,
+and `TCPSocket.connect_nonblocking`.
 
 ```ruby
 require_cut "cancellation"
@@ -64,3 +65,14 @@ precedence, deadline behavior, limitations, and the native wait lifetime protoco
 Run `DIAMOND_BIN=/absolute/path/to/diamond bash test.sh` for interpreted and
 compiled tests. This package is experimental and is not added to the public
 registry inventory by this change.
+
+## Outbound TCP connections
+
+Version 0.4.0 adds `token.connect(address, port)`, returning a connected
+nonblocking `Socket`. Numeric IPv4/IPv6 addresses only: hostnames are rejected
+rather than performing a blocking DNS lookup. Parent cancellation and deadlines
+apply throughout connection establishment. Failures and cancellation close the
+pending descriptor; after success, the caller closes the socket in `ensure`.
+Use the existing token `read` and `write` helpers with the returned socket.
+See [outbound TCP](../../docs/networking.md#nonblocking-outbound-tcp) for an example
+and the lower-level `TCPSocket.connect_nonblocking` / `Socket.finish_connect` API.

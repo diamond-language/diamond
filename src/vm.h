@@ -559,6 +559,7 @@ typedef enum DiamondOpCode : uint8_t {
      * register operand (the value). See run_chunk's VM_RETURN. */
     DIAMOND_OP_BLOCK_RETURN,
     DIAMOND_OP_BLOCK_BREAK,
+    DIAMOND_OP_TCP_CONNECT_NONBLOCK, /* dest, numeric address, port */
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
