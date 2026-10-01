@@ -95,9 +95,12 @@ An internal VM failure is reported as `ThreadError` at `join()`.
 
 Standard input and output are process-wide native streams. Concurrent writes
 are memory-safe but may interleave, so applications should serialize output
-when ordering matters. `Signal.trap` is also process-wide; installing a
-handler from multiple threads replaces the previous handler rather than
-creating one handler per VM.
+when ordering matters. The OS signal disposition is
+process-wide, while `Signal.trap` closures live in their installing VM. A VM
+without a matching trap leaves the pending signal for one that has it. If
+multiple VMs trap the same signal, one eligible VM claims each pending delivery;
+keep signal handling in one owner and broadcast cancellation through Channels
+when all workers need to stop.
 
 ## Channels
 
