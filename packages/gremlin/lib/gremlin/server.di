@@ -128,12 +128,12 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
     end
   end
 
+  begin
   loop do
     GremlinShutdown.observe_token()
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
       if GremlinShutdown.return_after_shutdown?()
-        GremlinShutdown.close_connections(connections)
         return nil
       end
       exit(0)
@@ -339,7 +339,6 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
       if GremlinShutdown.return_after_shutdown?()
-        GremlinShutdown.close_connections(connections)
         return nil
       end
       exit(0)
@@ -348,12 +347,57 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
       log.info("server.shutdown_complete",
         {"forced": true, "remaining_connections": connections.length()})
       if GremlinShutdown.return_after_shutdown?()
-        GremlinShutdown.close_connections(connections)
         return nil
       end
       exit(0)
     end
   end
+  ensure
+    listener.close()
+    GremlinShutdown.close_connections(connections)
+  end
+end
+
+# Configure each isolated VM explicitly; only Channels cross by reference.
+def gremlin_managed_worker(port, handler, tick_interval, on_tick, limits, config)
+  GremlinShutdown.configure_group(config["channels"], config["deadline"],
+    config["timeout"], config["shared_deadline"], config["stop"])
+  begin
+    gremlin_worker(port, handler, tick_interval, on_tick, limits)
+  ensure
+    # Also wake siblings if listener setup or the worker loop raises.
+    config["stop"].close()
+  end
+end
+
+def gremlin_managed_serve(port, handler, threads, tick_interval, on_tick, limits, token, timeout)
+  shared_deadline = Channel.new(1)
+  shared_deadline.send(nil)
+  stop = Channel.new(1)
+  config = {"channels": token.wait_channels(), "deadline": token.wait_deadline(),
+    "timeout": timeout, "shared_deadline": shared_deadline, "stop": stop}
+  spawned = []
+  failures = []
+  begin
+    (threads - 1).times() do |i|
+      spawned.push(Thread.new(gremlin_managed_worker, port, handler, tick_interval, on_tick, limits, config))
+    end
+    gremlin_managed_worker(port, handler, tick_interval, on_tick, limits, config)
+  rescue error
+    failures.push(error)
+  ensure
+    stop.close()
+    # Join every worker even when an earlier join raises.
+    spawned.each() do |worker|
+      begin
+        worker.join()
+      rescue error
+        failures.push(error)
+      end
+    end
+  end
+  if failures.length() > 0 then raise failures[0] end
+  nil
 end
 
 # `threads = 1` (the default) is exactly today's behavior: no Thread.new
@@ -381,10 +425,10 @@ end
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
 def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil, return_after_shutdown: Bool = false, shutdown_token = nil, shutdown_timeout = 10.0)
-  if (shutdown_token != nil || shutdown_timeout != 10.0) && threads != 1
-    raise ArgumentError.new("token shutdown and custom shutdown_timeout require threads = 1")
+  if shutdown_token == nil && shutdown_timeout != 10.0 && threads != 1
+    raise ArgumentError.new("custom shutdown_timeout without a token requires threads = 1")
   end
-  if return_after_shutdown && threads != 1
+  if shutdown_token == nil && return_after_shutdown && threads != 1
     raise ArgumentError.new("return_after_shutdown requires threads = 1")
   end
   GremlinShutdown.configure(shutdown_token, shutdown_timeout)
@@ -397,6 +441,9 @@ def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, 
   end
   if threads < 1
     raise ArgumentError.new("gremlin_serve threads must be at least 1")
+  end
+  if shutdown_token != nil && threads > 1
+    return gremlin_managed_serve(port, handler, threads, tick_interval, on_tick, limits, shutdown_token, shutdown_timeout)
   end
   # Every spawned worker's Thread handle must stay referenced for as long
   # as the server runs -- Thread.new's return value is otherwise a plain

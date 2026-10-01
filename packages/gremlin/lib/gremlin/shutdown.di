@@ -12,8 +12,8 @@
 # the isolation this needs anyway: each `gremlin_serve(threads: N)`
 # worker thread already has its own fully independent VM (see
 # `server.di`'s own "Per-worker context" comment on `context`), so these
-# class variables are already correctly scoped one-per-worker with no
-# extra work, the same way `context` itself already is.
+# class variables remain scoped one-per-worker, like `context`. Managed
+# workers explicitly configure their shared cancellation/deadline channels.
 class GremlinShutdown
   # No class-body-level @@cvar initializer -- matches this package's own
   # existing convention (packages/rack/lib/rack/cors.di's @@origins etc.)
@@ -30,6 +30,17 @@ class GremlinShutdown
     @@channels = if token == nil then [] else token.wait_channels() end
     @@token_deadline = if token == nil then nil else token.wait_deadline() end
     @@grace = timeout
+    @@shared_deadline = nil
+    @@stop = nil
+  end
+  def self.configure_group(channels, deadline, timeout, shared_deadline, stop)
+    @@token_managed = true
+    @@channels = channels.concat([stop])
+    @@token_deadline = deadline
+    @@grace = timeout
+    @@shared_deadline = shared_deadline
+    @@stop = stop
+    self.return_after_shutdown(true)
   end
   def self.token_managed?() = @@token_managed == true
 
@@ -37,6 +48,14 @@ class GremlinShutdown
     if @@requested == true then return nil end
     @@requested = true
     @@deadline = Time.monotonic() + (if @@grace == nil then 10.0 else @@grace end)
+    if @@shared_deadline != nil
+      # A capacity-one mailbox serializes the first observer's deadline.
+      # Every worker returns the value for the next reader, including late starters.
+      shared = @@shared_deadline.receive()
+      if shared != nil then @@deadline = shared end
+      @@shared_deadline.send(@@deadline)
+      @@stop.close()
+    end
     unless @@listener == nil then @@listener.close() end
     Logger.new("gremlin", "info", nil, "json").info("server.shutdown_started", {})
   end

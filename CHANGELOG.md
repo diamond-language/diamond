@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Gremlin 0.4.0 extends token-managed shutdown to multiple workers, sharing
+  one drain deadline and joining every worker before returning or propagating
+  a worker failure. VMs without a signal handler no longer consume pending
+  signals intended for another VM.
+
 - `--dump-bytecode=user` shows application/import bytecode without the bundled
   preamble, preserving real instruction offsets and function IDs. The existing
   full dump remains available as `--dump-bytecode` or `--dump-bytecode=all`.

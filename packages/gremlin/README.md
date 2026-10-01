@@ -87,14 +87,22 @@ Load the cancellation cut in the application. Token mode requires the runtime
 with cancellable `IO.poll` (cancellation 0.3.0). Gremlin itself keeps its existing
 HTTP/logger dependencies; ordinary callers need no cancellation package.
 
-Token mode requires one worker and always returns to its caller, regardless of
+Token mode supports multiple workers and always returns to its caller, regardless of
 `return_after_shutdown`. The application owns signal handling: Gremlin does not
 install or replace `Signal.trap` handlers in this mode. A handler can call
 `source.cancel()`, as the [job service](../../examples/job_service/README.md) does.
 Cancellation from another thread, a parent source, or the token's deadline
-closes the listener and starts draining. `server.shutdown_started` is logged
+closes each worker's listener and starts draining. `server.shutdown_started` is logged
 after the listener closes. The grace deadline is anchored once and does not
-restart on another cancellation. A pre-cancelled token accepts no requests.
+restart on another cancellation. All workers share the first observer's absolute
+drain deadline, including workers that notice cancellation later. The caller
+joins every spawned worker before returning. A worker setup or loop failure
+also stops its siblings; joins finish before the error is re-raised. A
+pre-cancelled token accepts no requests.
+
+Use `threads: 4` with the same token to enable this in Gremlin 0.4.0. Handlers
+and tick callbacks must be zero-capture callables, as with ordinary multi-worker
+servers. Class variables and request contexts remain private to each VM.
 
 Active connections can finish until the grace deadline. Once it expires,
 remaining sockets close and handlers suspended in socket I/O resume once so
@@ -105,5 +113,5 @@ watching the already-cancelled token and waits on live sockets/deadlines instead
 Handlers must cooperate: synchronous CPU/native work cannot be preempted, and
 code that catches a closed-socket error and yields again is not guaranteed to
 finish. A grace period bounds I/O waiting, not arbitrary application execution.
-Custom grace periods also require one worker. Without a token, the existing
+Without a token, custom grace periods still require one worker; the existing
 signal-driven shutdown and second-signal forced exit remain in place.

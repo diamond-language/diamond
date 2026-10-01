@@ -49,12 +49,6 @@ def run(port, mode)
         nil
       end
     end
-    begin
-      gremlin_serve(port, ShutdownTest.handle, 2, nil, nil, nil, false, source.token())
-      raise "multi-worker token shutdown accepted"
-    rescue error: ArgumentError
-      nil
-    end
     source.cancel()
   elsif mode != "deadline"
     worker = Thread.new(cancel_after_request, source, gate)

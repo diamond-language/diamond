@@ -92,8 +92,9 @@ account for a prefix already sent if a write is cancelled. Sockets stay in their
 owning VM; pass a cancellation source across threads instead of the socket.
 
 Blocking TLS/socket connection setup, SQL interruption, and implicit VM
-checkpoints still require separate contracts. HTTP servers must opt into token-aware waits. Gremlin's optional single-worker
-`shutdown_token` mode integrates these waits and a bounded drain period;
+checkpoints still require separate contracts. HTTP servers must opt into token-aware waits. Gremlin's optional
+`shutdown_token` mode integrates these waits, a shared drain deadline across
+workers, and joins before returning;
 installing the cancellation package alone does not alter an existing I/O loop.
 
 ## Reference service

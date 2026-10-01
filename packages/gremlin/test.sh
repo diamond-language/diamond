@@ -514,3 +514,7 @@ echo "18 gremlin tests passed"
 python3 "$package_root/test/shutdown.py" "$diamond" "$package_root/test/shutdown.di"
 "$diamond" build "$package_root/test/shutdown.di" -o "$test_project/shutdown-test" > "$test_project/build.log"
 python3 "$package_root/test/shutdown.py" "$test_project/shutdown-test"
+
+python3 "$package_root/test/multi_shutdown.py" "$diamond" "$package_root/test/multi_shutdown.di"
+"$diamond" build "$package_root/test/multi_shutdown.di" -o "$test_project/multi-shutdown-test" > "$test_project/multi-build.log"
+python3 "$package_root/test/multi_shutdown.py" "$test_project/multi-shutdown-test"

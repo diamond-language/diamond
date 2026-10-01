@@ -3677,7 +3677,7 @@ static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
  * wide OS concept, not a per-VM-instance one -- sigaction installs one
  * handler for the whole process regardless of which DiamondVm happens to
  * be running when it fires. The C handler itself only does what POSIX
- * guarantees is async-signal-safe: set a volatile sig_atomic_t and
+ * guarantees is async-signal-safe: update a lock-free atomic bitmask and
  * return. Everything else -- resolving which Diamond closure to call,
  * actually calling it -- happens later, synchronously, from ordinary
  * (non-signal-handler) code that checks these flags at safe points: once
@@ -3688,14 +3688,16 @@ static DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
  * UDPSocket#receive -- see their own opcode handlers). */
 static const int diamond_signal_numbers[DIAMOND_SIGNAL_COUNT]={SIGINT,SIGTERM,SIGHUP};
 static const char *const diamond_signal_names[DIAMOND_SIGNAL_COUNT]={"INT","TERM","HUP"};
-static volatile sig_atomic_t diamond_signal_pending[DIAMOND_SIGNAL_COUNT]={0};
-static volatile sig_atomic_t diamond_any_signal_pending=0;
+/* Signal handlers must never enter an atomic library lock. All supported
+ * targets provide lock-free unsigned int atomics. A single mask also avoids
+ * losing a delivery between clearing a summary flag and its per-signal flag. */
+static_assert(ATOMIC_INT_LOCK_FREE==2,"signal delivery requires lock-free int atomics");
+static atomic_uint diamond_pending_signals=0;
 
 static void diamond_signal_handler(int signal_number) {
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++) {
         if(diamond_signal_numbers[index]==signal_number) {
-            diamond_signal_pending[index]=1;
-            diamond_any_signal_pending=1;
+            atomic_fetch_or_explicit(&diamond_pending_signals,1u<<index,memory_order_relaxed);
             return;
         }
     }
@@ -3705,8 +3707,7 @@ static void diamond_signal_handler(int signal_number) {
  * signal-index order, synchronously -- via the same nested-run_chunk
  * mechanism DIAMOND_OP_CALL_CLOSURE itself uses, since a trapped handler
  * is an ordinary 0-arity Callable, not anything signal-specific at the
- * bytecode level. Clears each signal's own pending flag (and the
- * combined any-pending flag) before invoking its handler, not after --
+ * bytecode level. Claims each signal's pending bit before invoking its handler, not after --
  * a second delivery of the same signal *during* handler execution should
  * queue another invocation next time this runs, not be silently dropped
  * because the flag was still "pending" from the call already in
@@ -3723,13 +3724,15 @@ static void diamond_signal_handler(int signal_number) {
 static DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,bool *any_invoked) {
     *any_invoked=false;
-    if(!diamond_any_signal_pending)return DIAMOND_VM_OK;
-    diamond_any_signal_pending=0;
+    if(!atomic_load_explicit(&diamond_pending_signals,memory_order_relaxed))return DIAMOND_VM_OK;
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++) {
-        if(!diamond_signal_pending[index])continue;
-        diamond_signal_pending[index]=0;
+        /* A VM without this handler must leave the delivery for its owner.
+         * Multiple eligible VMs atomically claim a coalesced delivery once. */
         if(vm->trapped_signal_handlers[index].kind!=DIAMOND_VALUE_OBJECT||
            vm->trapped_signal_handlers[index].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+            continue;
+        const unsigned bit=1u<<index;
+        if(!(atomic_fetch_and_explicit(&diamond_pending_signals,~bit,memory_order_relaxed)&bit))
             continue;
         *any_invoked=true;
         const DiamondClosure *handler=
@@ -17482,12 +17485,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     } while (false)
 
     while (ip < chunk->code_count) {
-        /* Cheap steady-state cost (one volatile read, almost always
+        /* Cheap steady-state cost (one relaxed atomic read, almost always
          * false) for prompt signal handling in CPU-bound Diamond code
          * that never calls a blocking native function at all -- the
          * EINTR-based checks in accept/IO.poll/UDPSocket#receive below
          * cover the case where it's blocked in one of those instead. */
-        if(diamond_any_signal_pending) {
+        if(atomic_load_explicit(&diamond_pending_signals,memory_order_relaxed)) {
             bool signal_invoked=false;
             const DiamondVmStatus signal_status=
                 dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
@@ -17501,7 +17504,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         /* Cheap steady-state cost (one boolean read, false unless either
          * DIAMOND_MAX_INSTRUCTIONS or DIAMOND_MAX_WALL_MILLISECONDS is
          * configured) for docs/sandbox.md's own "Resource limits" --
-         * same shape as diamond_any_signal_pending's own check just above.
+         * same shape as diamond_pending_signals's own check just above.
          * The instruction-count comparison itself is cheap enough to run
          * every dispatch when active; the wall-clock check is additionally
          * masked (see DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK's own
