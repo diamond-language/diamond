@@ -158,7 +158,6 @@ def main(args: Array[String]) -> Int
     end
   end
 
-
   # Orderly shutdown: flush every client's remaining replies, close
   # everything, compact the log if it has grown, and report what is left.
   connections.each() do |connection|

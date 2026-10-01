@@ -21,7 +21,6 @@ class Book < ActiveRecord::Model
     @@repository = repository
   end
 
-
   # Availability is stored as 0/1 (SQLite has no boolean type).
   def available?() -> Bool = @available == 1
 

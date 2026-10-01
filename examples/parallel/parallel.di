@@ -165,7 +165,6 @@ rescue error: ArgumentError
   puts("join re-raised: #{error.message()}")
 end
 
-
 # A supervised worker that fails twice. A restarted worker starts with a
 # fresh heap and no memory of earlier attempts, so the parent preloads a
 # ticket per attempt on a channel (the channel survives restarts) and the

@@ -46,7 +46,6 @@ def build_task_validator(db)
     end
   end
 
-
   ActiveRecord::Validators.combine([
     ActiveRecord::Validators.presence("title"),
     ActiveRecord::Validators.length("title", 1, 200),

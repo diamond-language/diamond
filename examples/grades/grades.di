@@ -58,7 +58,6 @@ def grades_main(paths: Array[String]) -> Int
     end
   end
 
-
   # Phase 2: group the scores by student and by course, and print a table for
   # each. Rows are sorted by name; a report object wraps one group.
   students = group_by_key(scores, student_of)
@@ -70,14 +69,12 @@ def grades_main(paths: Array[String]) -> Int
     CourseReport.new(name, courses[name])
   end)
 
-
   # Phase 3: summary lines. Honor roll = students whose mean is 90 or more.
   honor_roll = students.keys().select() do |name|
     mean(students[name].map() do |score| score.points() end) >= 90.0
   end.sort()
   puts("Honor roll: #{if honor_roll.empty?() then "(none)" else honor_roll.join(", ") end}")
   puts("#{scores.length()} scores from #{students.length()} students in #{courses.length()} courses")
-
 
   # Phase 4: list what was rejected and why; any rejection makes the exit
   # status 1.

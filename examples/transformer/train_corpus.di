@@ -76,7 +76,6 @@ if text.length() == 0
   exit(1)
 end
 
-
 # Bytes -> ids -> fixed-length (input, target) windows.
 token_ids = ByteTokenizer.encode(text)
 examples = Dataset.windows(token_ids, seq_len, stride)
@@ -90,7 +89,6 @@ puts("#{examples.length()} training example(s) (seq_len=#{seq_len}, stride=#{str
 # surprise multi-hour run.
 estimated_hours = examples.length() * epochs * measured_seconds_per_step / 3600.0
 puts("estimated total training time: ~#{estimated_hours} hour(s) for #{epochs} epoch(s) (based on a ~#{measured_seconds_per_step}s/step measurement on this machine -- adjust max_stories/epochs above if this is too long)")
-
 
 rng = SimpleRng.new(1)
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
@@ -116,7 +114,6 @@ while epoch < epochs
     loss = Loss.softmax_cross_entropy(logits, targets)
     backward!(loss)
     optimizer.step!()
-
 
     # Accumulate for the epoch mean, and print every 20th example.
     total_loss += loss.tensor().get(0, 0)

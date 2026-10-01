@@ -41,7 +41,6 @@ seq_len = 64
 max_seq_len = seq_len
 vocab_size = ByteTokenizer.vocab_size()
 
-
 # Build a model of the right shape (its random initial weights are
 # immediately overwritten by the checkpoint), then load the trained weights.
 rng = SimpleRng.new(1)
@@ -63,7 +62,6 @@ while step < num_tokens
   if context.length() > max_seq_len
     context = context.slice(context.length() - max_seq_len, max_seq_len)
   end
-
 
   # Run the model and pick the highest-scoring next byte from the last
   # position's logits (greedy: always the single most likely one).

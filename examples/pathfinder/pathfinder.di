@@ -79,14 +79,12 @@ def main(args: Array[String]) -> Int
     return 2
   end
 
-
   # Run the chosen search. It returns a Found, or nil if G is walled off.
   found = case algo
   when "bfs" then search_bfs(grid, diagonal)
   when "dijkstra" then search_dijkstra(grid, diagonal)
   else search_astar(grid, diagonal)
   end
-
 
   # Unreachable: still show the map (with no route) and exit 1.
   if found == nil

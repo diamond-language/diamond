@@ -28,7 +28,6 @@ class Author < ActiveRecord::Model
     @@repository = repository
   end
 
-
   # An author's books: every `books` row whose author_id is this author's id.
   def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
 end

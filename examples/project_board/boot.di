@@ -22,7 +22,6 @@ require "./lib/views/.cache/project_form.html"
 require "./lib/views/.cache/task_form.html"
 require "./lib/views/.cache/layout.html"
 
-
 # Logging and database access, then the models they serve.
 require "./lib/helpers/logging"
 require "./lib/database"

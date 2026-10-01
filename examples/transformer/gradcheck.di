@@ -47,7 +47,6 @@ def check(label, inputs, forward_fn)
     i += 1
   end
 
-
   # Step 2: for EVERY element of every input, estimate the gradient the slow
   # way: nudge the element up and down by epsilon, rerun the forward pass,
   # and take the slope (the central difference). Track the worst
@@ -93,7 +92,6 @@ def check(label, inputs, forward_fn)
     end
     v += 1
   end
-
 
   # Finite differences have their own small error, so 1e-3 is the tolerance.
   status = if max_diff < 0.001 then "PASS" else "FAIL" end

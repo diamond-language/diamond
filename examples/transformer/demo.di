@@ -27,11 +27,9 @@ d_ff = 128
 num_layers = 2
 max_seq_len = 16
 
-
 # The seed makes the "random" weights identical on every run.
 rng = SimpleRng.new(42)
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
-
 
 # An arbitrary 6-token input (each id must be below vocab_size).
 token_ids = [3, 17, 8, 41, 2, 9]
@@ -45,7 +43,6 @@ t1 = Time.monotonic()
 puts("model: vocab=#{vocab_size} d_model=#{d_model} heads=#{num_heads} d_ff=#{d_ff} layers=#{num_layers}")
 puts("input: #{token_ids.length()} tokens -> logits #{logits.rows()}x#{logits.cols()}")
 puts("forward pass took #{t1 - t0}s")
-
 
 # The prediction for what comes NEXT is read from the LAST position's row:
 # find its largest logit (argmax).

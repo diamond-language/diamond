@@ -28,7 +28,6 @@ def add_book(db, title, author_id, year, available)
   db.execute("INSERT INTO books (title, author_id, year, available) VALUES (?, ?, ?, ?)", [title, author_id, year, available])
 end
 
-
 # Seed data: three authors, then two books each (the second Le Guin and
 # Borges books are unavailable, to make /books/available show a difference).
 le_guin = add_author(db, "Ursula K. Le Guin", "USA")
@@ -41,7 +40,6 @@ add_book(db, "Invisible Cities", calvino, 1972, 1)
 add_book(db, "If on a winter's night a traveler", calvino, 1979, 1)
 add_book(db, "Ficciones", borges, 1944, 1)
 add_book(db, "The Aleph", borges, 1949, 0)
-
 
 # Read the counts back from the database as a sanity check.
 author_count = db.query("SELECT COUNT(*) AS count FROM authors")[0]["count"]

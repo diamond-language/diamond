@@ -67,7 +67,6 @@ while step < steps
   step += 1
 end
 
-
 # After training: the loss once more, and what the model now predicts for
 # each input (the highest-scoring id in that position's row of logits).
 final_logits = model.forward(inputs)

@@ -90,7 +90,6 @@ puts("")
   print_report(report)
 end
 
-
 # Dynamic balances: the ledger has no checking_balance method; method_missing
 # turns `checking_balance` into balance("checking"), and `credit_card_balance`
 # into balance("credit card") (underscores back to spaces).
@@ -122,7 +121,6 @@ def attempt(label: String, &action)
   end
 end
 
-
 # Debits (100.00) and credits (10.00) disagree.
 attempt("unbalanced entry") do
   ledger.post("2026-09-30", "Typo") do |entry|
@@ -147,7 +145,6 @@ end
 attempt("unknown method") do
   ledger.checking_total()
 end
-
 
 # Closing the books freezes the ledger (and its entries). Money values were
 # frozen the moment they were created, so they are immutable regardless.

@@ -55,7 +55,6 @@ class MultiHeadAttention
       mask = Var.constant(mask_tensor)
     end
 
-
     # Attention per head: each head works on its own head_dim-wide slice.
     head_outputs = []
     head = 0
@@ -65,7 +64,6 @@ class MultiHeadAttention
       q_head = Autograd.columns(q, start, @head_dim)
       k_head = Autograd.columns(k, start, @head_dim)
       v_head = Autograd.columns(v, start, @head_dim)
-
 
       # scores = Q K^T / sqrt(head_dim): how much each position should
       # attend to each other position. The scale keeps the softmax from
@@ -81,7 +79,6 @@ class MultiHeadAttention
       head_outputs.push(Autograd.matmul(weights, v_head))
       head += 1
     end
-
 
     # Join the heads back into d_model columns and mix them with the final
     # projection.

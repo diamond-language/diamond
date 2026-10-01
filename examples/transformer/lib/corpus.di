@@ -59,7 +59,6 @@ class Corpus
     # points at a differently-named dataset.
     paths = all_paths.sort_by() do |p| p end
 
-
     # Walk the files in order, appending each one's text to `text`.
     text = ""
     file_count = 0

@@ -24,14 +24,12 @@ num_layers = 6
 max_seq_len = 128
 seq_len = 64
 
-
 # Build the model (timed separately: allocating and filling the weights is
 # real work at this size).
 rng = SimpleRng.new(7)
 t_build0 = Time.monotonic()
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
 t_build1 = Time.monotonic()
-
 
 # A fixed pseudo-random token sequence, so every run measures the same work.
 token_ids = []
@@ -41,7 +39,6 @@ while i < seq_len
   token_ids.push(mod(i * 97 + 13, vocab_size))
   i += 1
 end
-
 
 # One timed forward pass.
 t0 = Time.monotonic()
