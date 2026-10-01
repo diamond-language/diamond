@@ -58,6 +58,7 @@
 #include <mysql.h>
 #include <zlib.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -3866,7 +3867,13 @@ static DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm,
     const struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
         .ai_flags=AI_NUMERICHOST|AI_NUMERICSERV};
     struct addrinfo *address_info=nullptr;
+    struct in6_addr numeric_address;
+    /* getaddrinfo treats an empty host as an unspecified address on macOS.
+     * Its inet_pton also accepts scope suffixes. Require plain IP literals. */
     if(memchr(address->chars,'\0',address->length)!=nullptr||
+       memchr(address->chars,'%',address->length)!=nullptr||
+       (inet_pton(AF_INET,address->chars,&numeric_address)!=1&&
+        inet_pton(AF_INET6,address->chars,&numeric_address)!=1)||
        getaddrinfo(address->chars,service,&hints,&address_info)!=0) {
         snprintf(vm->error,sizeof vm->error,"connect_nonblocking requires a numeric IPv4 or IPv6 address");
         return DIAMOND_VM_TYPE_ERROR;

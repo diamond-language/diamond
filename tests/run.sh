@@ -3221,6 +3221,7 @@ for case_file in tests/cases/*.di; do
         if [[ "$exit_code" != "0" ]]; then
             echo "FAIL: $case_file" >&2
             echo "  expected exit code 0, got: $exit_code" >&2
+            cat "$case_output_dir/$case_base.stderr" >&2
             exit 1
         fi
         if [[ "$actual" != "$expected" ]]; then

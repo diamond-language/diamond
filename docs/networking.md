@@ -230,7 +230,7 @@ prefix on the wire. The caller still owns the socket and should close it in
 immediately returns a nonblocking `Socket`. The address must be a numeric IPv4
 or IPv6 string (for example `"127.0.0.1"` or `"::1"`), and the port an Int from
 1 through 65535. Invalid inputs raise `TypeError`; hostnames are rejected so
-DNS cannot block this operation. IPv6 literals are passed without URL brackets.
+DNS cannot block this operation. IPv4 uses dotted decimal; IPv6 literals use no URL brackets or scope suffix.
 The existing `TCPSocket.connect` API continues to support hostnames and blocking
 buffered I/O.
 
