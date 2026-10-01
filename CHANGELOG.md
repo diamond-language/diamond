@@ -6,6 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- LSP formatting no longer re-indents or trims lines inside multi-line string
+  literals, which previously changed the string's value.
+
 - Cancellation 0.4.0 adds `token.connect(address, port)` for nonblocking outbound
   TCP with inherited cancellation and deadlines. The runtime exposes
   `TCPSocket.connect_nonblocking` and `Socket.finish_connect`; numeric IPv4/IPv6

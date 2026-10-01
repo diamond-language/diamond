@@ -21,6 +21,10 @@
  * "narrowest useful slice" bar struct/sealed classes/sandbox mode were
  * each held to.
  *
+ * Lines that start or end inside a multi-line string literal are string
+ * content, not layout, and are never edited (re-indenting them would change
+ * the string's value).
+ *
  * Only lines whose indentation or trailing whitespace actually needs
  * to change get an edit -- an already-conventionally-formatted
  * document gets an empty array back, not a no-op edit for every line.

@@ -311,7 +311,9 @@ search over a real (if scoped) lexical symbol table:
   `parse_invoke`), so it's excluded from opening a level there too.
   Verified against every real (non-test-fixture) `*.di` file in this
   repository -- 309 files, zero bailouts, each proposed change
-  manually spot-checked. Returns `json_null()` rather than a guess
+  manually spot-checked. Lines that start (or whose newline falls) inside a
+  multi-line string literal are string content and are never re-indented
+  or trimmed. Returns `json_null()` rather than a guess
   when the source contains a lexer error or the tracked depth doesn't
   balance to exactly zero by EOF -- a real grammar shape this pass
   doesn't yet model should mean no edits, not a corrupted one. No
