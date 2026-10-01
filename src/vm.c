@@ -58,6 +58,7 @@
 #include <mysql.h>
 #include <zlib.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -3851,6 +3852,82 @@ static DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *hos
     }
     *out_fd=connected_fd;
     return DIAMOND_VM_OK;
+}
+
+/* Numeric addresses keep name resolution entirely outside this nonblocking
+ * contract. No resolver thread or unbounded getaddrinfo call is hidden here. */
+static DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm,
+        const DiamondString *address,int64_t port,DiamondSocketHandle **out_handle) {
+    if(port<1||port>65535) {
+        snprintf(vm->error,sizeof vm->error,"connect port must be between 1 and 65535");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    char service[6];
+    snprintf(service,sizeof service,"%" PRId64,port);
+    const struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
+        .ai_flags=AI_NUMERICHOST|AI_NUMERICSERV};
+    struct addrinfo *address_info=nullptr;
+    struct in6_addr numeric_address;
+    /* getaddrinfo treats an empty host as an unspecified address on macOS.
+     * Its inet_pton also accepts scope suffixes. Require plain IP literals. */
+    if(memchr(address->chars,'\0',address->length)!=nullptr||
+       memchr(address->chars,'%',address->length)!=nullptr||
+       (inet_pton(AF_INET,address->chars,&numeric_address)!=1&&
+        inet_pton(AF_INET6,address->chars,&numeric_address)!=1)||
+       getaddrinfo(address->chars,service,&hints,&address_info)!=0) {
+        snprintf(vm->error,sizeof vm->error,"connect_nonblocking requires a numeric IPv4 or IPv6 address");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int fd=socket(address_info->ai_family,SOCK_STREAM,0);
+    if(fd<0)goto failed;
+    const int flags=fcntl(fd,F_GETFL,0);
+    if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0||fcntl(fd,F_SETFD,FD_CLOEXEC)<0)
+        goto close_failed;
+    const int result=connect(fd,address_info->ai_addr,address_info->ai_addrlen);
+    if(result<0&&errno!=EINPROGRESS&&errno!=EINTR)goto close_failed;
+    freeaddrinfo(address_info);
+    DiamondSocketHandle *handle=allocate_socket_handle(vm,fd);
+    if(handle==nullptr) {close(fd);return DIAMOND_VM_OUT_OF_MEMORY;}
+    handle->connecting=result!=0;
+    *out_handle=handle;
+    return DIAMOND_VM_OK;
+close_failed:;
+    const int saved_errno=errno;
+    close(fd);errno=saved_errno;
+failed:;
+    const int final_errno=errno;
+    freeaddrinfo(address_info);
+    snprintf(vm->error,sizeof vm->error,"nonblocking connect failed: %s",strerror(final_errno));
+    return DIAMOND_VM_IO_ERROR;
+}
+
+/* SO_ERROR alone can be zero while a connection is still pending. Require
+ * readiness and a connected peer before reporting success. Terminal errors
+ * close the descriptor so consuming SO_ERROR cannot turn a retry into success. */
+static DiamondVmStatus socket_finish_connect_helper(DiamondVm *vm,DiamondSocketHandle *handle) {
+    if(!handle->connecting)return DIAMOND_VM_OK;
+    struct pollfd interest={.fd=handle->fd,.events=POLLOUT};
+    const int ready=poll(&interest,1,0);
+    if(ready==0||(ready<0&&errno==EINTR))goto pending;
+    if(ready<0)goto failed;
+    int error=0;socklen_t error_length=sizeof error;
+    if(getsockopt(handle->fd,SOL_SOCKET,SO_ERROR,&error,&error_length)!=0)goto failed;
+    if(error!=0) {errno=error;goto failed;}
+    struct sockaddr_storage peer;socklen_t peer_length=sizeof peer;
+    if(getpeername(handle->fd,(struct sockaddr *)&peer,&peer_length)!=0) {
+        if(errno==ENOTCONN&&!(interest.revents&(POLLHUP|POLLERR|POLLNVAL)))goto pending;
+        goto failed;
+    }
+    handle->connecting=false;
+    return DIAMOND_VM_OK;
+pending:
+    snprintf(vm->error,sizeof vm->error,"connect would block");
+    return DIAMOND_VM_WOULD_BLOCK;
+failed:;
+    const int saved_errno=errno;
+    close(handle->fd);handle->fd=-1;
+    snprintf(vm->error,sizeof vm->error,"connect failed: %s",strerror(saved_errno));
+    return DIAMOND_VM_IO_ERROR;
 }
 
 /* Applies SO_RCVTIMEO/SO_SNDTIMEO to an already-connected fd -- a
@@ -21918,7 +21995,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"write",5)==0;
                     const bool close_method=method_name->length==5&&
                         memcmp(method_name->chars,"close",5)==0;
-                    if(!read_method&&!write_method&&!close_method) {
+                    const bool finish_method=method_name->length==14&&
+                        memcmp(method_name->chars,"finish_connect",14)==0;
+                    if(!read_method&&!write_method&&!close_method&&!finish_method) {
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"Socket");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -21935,6 +22014,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         snprintf(vm->error,sizeof vm->error,"socket is closed");
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }
+                    if(finish_method&&argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    const DiamondVmStatus finish_status=socket_finish_connect_helper(vm,socket_handle);
+                    VM_PROPAGATE(finish_status);
+                    if(finish_method) {registers[dest]=DIAMOND_NIL;break;}
                     if(read_method) {
                         if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(registers[base].kind!=DIAMOND_VALUE_INT||
@@ -24405,6 +24488,25 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)new_handle};
+                break;
+            }
+            case DIAMOND_OP_TCP_CONNECT_NONBLOCK: {
+                uint16_t dest=0,address_reg=0,port_reg=0;
+                READ_SHORT(dest);READ_SHORT(address_reg);READ_SHORT(port_reg);
+                VM_SANDBOX_GUARD("TCPSocket.connect_nonblocking", "network");
+                if(registers[address_reg].kind!=DIAMOND_VALUE_OBJECT||
+                   registers[address_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
+                   registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "connect_nonblocking arguments must be a String address and an Int port");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                DiamondSocketHandle *handle=nullptr;
+                const DiamondVmStatus status=tcp_connect_nonblocking_helper(vm,
+                    (const DiamondString *)registers[address_reg].as.object,
+                    registers[port_reg].as.integer,&handle);
+                VM_PROPAGATE(status);
+                registers[dest]=DIAMOND_OBJECT(handle);
                 break;
             }
             case DIAMOND_OP_TCP_CONNECT: {

@@ -72,7 +72,31 @@ module Cancellation
       result
     end
 
-    # Accepted nonblocking TCP sockets only: a blocking File/TLS read cannot
+    # Return ownership only after both connection completion and a final
+    # checkpoint. Failure/cancellation closes the in-progress descriptor.
+    def connect(address, port)
+      self.checkpoint()
+      socket = nil
+      transferred = false
+      begin
+        socket = TCPSocket.connect_nonblocking(address, port)
+        loop do
+          self.checkpoint()
+          begin
+            socket.finish_connect()
+            self.checkpoint()
+            transferred = true
+            return socket
+          rescue error: WouldBlockError
+            self.poll([], [socket])
+          end
+        end
+      ensure
+        if socket != nil && !transferred then socket.close() end
+      end
+    end
+
+    # Nonblocking TCP sockets only: a blocking File/TLS read cannot
     # safely be retried under this cooperative contract.
     def read(socket, count)
       unless socket is Socket then raise TypeError.new("expected a nonblocking Socket") end

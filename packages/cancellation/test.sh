@@ -50,3 +50,6 @@ echo "cancellation signal tests passed"
 python3 test/socket_test.py "$diamond" test/socket_test.di
 "$diamond" build test/socket_test.di -o "$work/socket-test" > "$work/socket-build.log"
 python3 test/socket_test.py "$work/socket-test"
+python3 test/connect_test.py "$diamond" test/connect_test.di
+"$diamond" build test/connect_test.di -o "$work/connect-test" > "$work/connect-build.log"
+python3 test/connect_test.py "$work/connect-test"

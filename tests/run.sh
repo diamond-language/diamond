@@ -1592,7 +1592,7 @@ if "$diamond" -e 'TCPSocket.dial("x", 80)' >/dev/null 2>"$error_file"; then
     echo "malformed TCPSocket.dial unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "expected 'connect' after 'TCPSocket'" "$error_file"
+grep -q "expected 'connect' or 'connect_nonblocking' after 'TCPSocket'" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
@@ -3221,6 +3221,7 @@ for case_file in tests/cases/*.di; do
         if [[ "$exit_code" != "0" ]]; then
             echo "FAIL: $case_file" >&2
             echo "  expected exit code 0, got: $exit_code" >&2
+            cat "$case_output_dir/$case_base.stderr" >&2
             exit 1
         fi
         if [[ "$actual" != "$expected" ]]; then

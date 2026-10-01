@@ -129,8 +129,8 @@ that let a fiber's own I/O yield back to a scheduler instead:
   pending (an ordinary `TCPServer.listen` listener's `.accept()` is
   unaffected either way — still blocks, same as always).
 - **`Socket`** — a new object kind (`DIAMOND_OBJECT_SOCKET`,
-  `DiamondSocketHandle`), returned only by `.accept()` on a
-  `TCPServer.listen_nonblocking` listener. Deliberately *not* the
+  `DiamondSocketHandle`), returned by `.accept()` on a
+  `TCPServer.listen_nonblocking` listener or `TCPSocket.connect_nonblocking`. Deliberately *not* the
   buffered `FILE*` `File`/blocking-socket path reuses — libc stdio
   buffering and `EAGAIN` don't mix cleanly, since a short buffered read
   can silently swallow the "nothing available yet" signal a poll-driven
@@ -223,6 +223,44 @@ Read returns up to `count` bytes or `nil` at EOF; write returns the byte count
 after writing the entire string. Cancellation during a write may leave a
 prefix on the wire. The caller still owns the socket and should close it in
 `ensure`. Blocking TCP/TLS handles and SQL calls are outside this contract.
+
+## Nonblocking outbound TCP
+
+`TCPSocket.connect_nonblocking(address, port)` starts a TCP connection and
+immediately returns a nonblocking `Socket`. The address must be a numeric IPv4
+or IPv6 string (for example `"127.0.0.1"` or `"::1"`), and the port an Int from
+1 through 65535. Invalid inputs raise `TypeError`; hostnames are rejected so
+DNS cannot block this operation. IPv4 uses dotted decimal; IPv6 literals use no URL brackets or scope suffix.
+The existing `TCPSocket.connect` API continues to support hostnames and blocking
+buffered I/O.
+
+Call `socket.finish_connect()` to check completion. It returns nil on success,
+raises `WouldBlockError` while pending, or closes the socket and raises
+`IOError` on terminal connection failure. Wait for writable readiness with
+`IO.poll` before retrying; readiness alone does not prove connection success.
+The completion check is idempotent on connected or accepted sockets. Reads and
+writes also check pending connection state. `close()` cancels an outstanding
+connection and remains idempotent. All these sockets stay in their owning VM.
+
+For cancellable connections, load the cancellation cut and use its 0.4.0 helper:
+
+```ruby
+source = Cancellation::Source.new(nil, 2.0)
+token = source.token()
+socket = token.connect("127.0.0.1", 8080)
+begin
+  token.write(socket, "hello")
+  response = token.read(socket, 4096)
+ensure
+  socket.close()
+end
+```
+
+`token.connect` observes parent cancellation and the earliest inherited deadline,
+checks cancellation again after completion, and closes the descriptor on failure
+or cancellation. On success the caller owns the socket. The deadline covers the
+whole connect operation; DNS resolution and TLS handshakes are separate work and
+are not provided by this numeric-address API.
 
 ## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
 
