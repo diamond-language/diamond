@@ -19,6 +19,8 @@ end
 class EvalError < CalcError
 end
 
+# Character classes, by character code (48-57 are "0"-"9", 97-122 are
+# "a"-"z"). Lowercasing first lets one range test cover both cases.
 def calc_digit?(char: String) -> Bool
   code = char.ord()
   code >= 48 && code <= 57
@@ -29,32 +31,47 @@ def calc_letter?(char: String) -> Bool
   (code >= 97 && code <= 122) || char == "_"
 end
 
+# Scans left to right. `start` remembers where the current token began (its
+# column); the inner loops advance `i` past the whole token. The bare `case`
+# with no subject tries each `when` condition in order.
 def calc_tokenize(line: String) -> Array[Token]
   tokens = []
   i = 0
+
   while i < line.length()
     char = line[i]
     start = i
+
     case
+    # Whitespace separates tokens and produces none.
     when char == " " || char == "\t"
       i += 1
+    # A number: digits and dots. The lexer is lenient: "1.2.3" is one token,
+    # and the parser's to_f then reads just the leading "1.2".
     when calc_digit?(char)
       while i < line.length() && (calc_digit?(line[i]) || line[i] == ".")
         i += 1
       end
       tokens.push(Token.new(:number, line.slice(start, i - start), start))
+    # A name (variable or function): a letter or `_`, then letters, digits
+    # and `_`.
     when calc_letter?(char)
       while i < line.length() && (calc_letter?(line[i]) || calc_digit?(line[i]))
         i += 1
       end
       tokens.push(Token.new(:name, line.slice(start, i - start), start))
+    # Any single-character operator or punctuation.
     when "+-*/%^(),=".index_of(char) != nil
       tokens.push(Token.new(:op, char, start))
       i += 1
+    # Anything else cannot start a token.
     else
       raise ParseError.new("unexpected character '#{char}'", start)
     end
   end
+
+  # A final :end token (positioned just past the input) means the parser never
+  # runs off the array, and "unexpected end of input" errors get a column.
   tokens.push(Token.new(:end, "", line.length()))
   tokens
 end
