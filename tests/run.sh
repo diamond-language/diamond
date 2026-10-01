@@ -1971,7 +1971,7 @@ rm -f "$error_file"
 
 # Verify signal delivery during native accept(), with bounded handshakes.
 DIAMOND_BIN="$diamond" bash tests/signal_interrupt.sh
-python3 tests/signal_threads.py "$diamond"
+bash tests/signal_threads.sh "$diamond"
 
 # An untrapped signal still gets the OS default disposition (kills the
 # process) -- Signal.trap is opt-in per signal name, not a blanket
