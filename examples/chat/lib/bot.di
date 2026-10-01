@@ -14,6 +14,8 @@ def chat_roll(sides: Int) -> Int
   value % sides + 1
 end
 
+# The text of the bot's answer to one command. A command is {"from": name,
+# "text": "/roll 20"}. Pure except for the random roll and the clock.
 def chat_bot_reply(command)
   words = command["text"].split(" ")
   name = command["from"]
@@ -29,6 +31,8 @@ def chat_bot_reply(command)
     end
   elsif verb == "/time"
     "Server time is #{Time.now().strftime("%H:%M:%S %Z")}"
+  # Deliberate failure, to demonstrate supervision: the exception escapes
+  # `chat_bot`, and the Supervisor restarts it.
   elsif verb == "/crash"
     raise RuntimeError.new("#{name} asked the bot to crash")
   else
@@ -46,7 +50,12 @@ def chat_bot(inbox, outbox)
   end
 end
 
+# The server's handle on the bot thread. All state is in class variables
+# (one bot per process).
 class Bot
+  # Create the two channels (bounded to 64 messages each, so a flood cannot
+  # grow memory without limit) and start the bot under a Supervisor, passing
+  # it the channels. Channels are the one thing that may cross between threads.
   def self.start()
     @@inbox = Channel.new(64)
     @@outbox = Channel.new(64)
@@ -66,6 +75,7 @@ class Bot
     end
   end
 
+  # How many times the supervisor has restarted child 0 (the bot).
   def self.restarts() = @@supervisor.restart_count(0)
 
   # Called from gremlin's tick: forwards queued replies and announces
@@ -80,6 +90,9 @@ class Bot
       end
       Room.broadcast({"type": "bot", "text": reply["text"]})
     end
+
+    # Announce a restart once: compare the supervisor's count with the last
+    # one we reported.
     restarts = Bot.restarts()
     if restarts != @@restarts_seen
       @@restarts_seen = restarts
