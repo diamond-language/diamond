@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Gremlin 0.3.0 adds single-worker token-managed shutdown with a configurable
+  drain deadline. Cancellation stops new connections, closes stalled sockets
+  after the grace period, and returns through application cleanup. The job
+  service shares one shutdown token between HTTP and its background worker.
+
 - Cancellation 0.3.0 adds token-aware nonblocking TCP reads/writes and pollable
   I/O waits. `IO.poll` accepts cancellation channels and an absolute monotonic
   deadline; the existing integer timeout form remains available. Partial writes

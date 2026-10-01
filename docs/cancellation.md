@@ -92,14 +92,16 @@ account for a prefix already sent if a write is cancelled. Sockets stay in their
 owning VM; pass a cancellation source across threads instead of the socket.
 
 Blocking TLS/socket connection setup, SQL interruption, and implicit VM
-checkpoints still require separate contracts. Existing HTTP servers must opt
-into token-aware waits; installing the package does not alter their I/O loops.
+checkpoints still require separate contracts. HTTP servers must opt into token-aware waits. Gremlin's optional single-worker
+`shutdown_token` mode integrates these waits and a bounded drain period;
+installing the cancellation package alone does not alter an existing I/O loop.
 
 ## Reference service
 
 [Job service](../examples/job_service/README.md) uses SQLite persistence, HTTP,
 and a supervised worker. Jobs have checkpoints, independent monotonic deadlines,
-and a durable cancellation request. Service shutdown cancels the root token,
-requeues interrupted work, closes the worker database in ensure, and joins the
-supervisor. Normal job failures retain the jobs package's retry/backoff policy;
+and a durable cancellation request. Service shutdown cancels the shared root token: Gremlin closes its listener
+and drains HTTP for up to 0.5 seconds while the worker requeues interrupted work.
+After Gremlin returns, the owner joins the supervisor and closes its database;
+the worker closes its own database in ensure. Normal job failures retain the jobs package's retry/backoff policy;
 cancellation and timeout are separate terminal outcomes.

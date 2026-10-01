@@ -19,32 +19,74 @@ class GremlinShutdown
   # existing convention (packages/rack/lib/rack/cors.di's @@origins etc.)
   # of only ever writing a class variable from inside a method, relying
   # on an unset @@cvar reading back nil (falsy) until first written.
+  def self.configure(token, timeout)
+    unless timeout is Int || timeout is Float
+      raise ArgumentError.new("shutdown_timeout must be finite and nonnegative")
+    end
+    if timeout < 0 || !timeout.to_f().finite?()
+      raise ArgumentError.new("shutdown_timeout must be finite and nonnegative")
+    end
+    @@token_managed = token != nil
+    @@channels = if token == nil then [] else token.wait_channels() end
+    @@token_deadline = if token == nil then nil else token.wait_deadline() end
+    @@grace = timeout
+  end
+  def self.token_managed?() = @@token_managed == true
+
+  def self.begin_drain()
+    if @@requested == true then return nil end
+    @@requested = true
+    @@deadline = Time.monotonic() + (if @@grace == nil then 10.0 else @@grace end)
+    unless @@listener == nil then @@listener.close() end
+    Logger.new("gremlin", "info", nil, "json").info("server.shutdown_started", {})
+  end
+
+  def self.observe_token()
+    if !self.token_managed?() || @@requested == true then return nil end
+    @@channels.each() do |channel|
+      if channel.closed?() then self.begin_drain() end
+    end
+    if @@token_deadline != nil && Time.monotonic() >= @@token_deadline
+      self.begin_drain()
+    end
+  end
+
+  def self.poll(readables, writables, timeout_ms)
+    unless self.token_managed?() then return IO.poll(readables, writables, timeout_ms) end
+    deadline = if timeout_ms < 0 then nil else Time.monotonic() + timeout_ms.to_f() / 1000.0 end
+    # Once draining, the cancelled token must not keep waking poll in a loop.
+    # Only the drain/request/tick deadlines and live sockets matter then.
+    token_deadline = if @@requested == true then nil else @@token_deadline end
+    if token_deadline != nil && (deadline == nil || token_deadline < deadline)
+      deadline = token_deadline
+    end
+    channels = if @@requested == true then [] else @@channels end
+    IO.poll(readables, writables, {"cancellations": channels, "deadline": deadline})
+  end
+
   def self.return_after_shutdown(value)
     @@return_after_shutdown = value
   end
   def self.return_after_shutdown?() -> Bool = @@return_after_shutdown == true
   def self.close_connections(connections)
     connections.each() do |entry| entry["conn"].close() end
+    # Resume each I/O-suspended handler once so the closed socket raises and
+    # its ensure blocks run. Arbitrary handler code must still cooperate.
+    connections.each() do |entry|
+      if entry["fiber"].alive?()
+        begin
+          entry["fiber"].resume()
+        rescue error: StandardError
+          nil
+        end
+      end
+    end
   end
 
   def self.requested?() -> Bool = @@requested == true
 
-  # Lazily self-arms on first read rather than requiring a separate
-  # "arm the deadline" call from gremlin_worker -- the signal that sets
-  # @@requested can fire, and gremlin_worker can reach a point that
-  # needs a real deadline value, within the very same loop iteration
-  # (the one already blocked in IO.poll when the signal arrived never
-  # gets a fresh "top of loop" pass before it reaches its own
-  # end-of-iteration checks) -- a plain `@@deadline` read at that point
-  # would still be nil, and comparing a Float against nil is a genuine
-  # runtime TypeError, not just a logic bug. Idempotent: every call
-  # after the first returns the same already-armed value.
-  def self.deadline()
-    if @@requested == true && @@deadline == nil
-      @@deadline = Time.monotonic() + 10.0
-    end
-    @@deadline
-  end
+  # Anchored when draining starts, never extended by poll retries.
+  def self.deadline() = @@deadline
 
   # gremlin_worker calls this once, right after creating its own
   # listener, purely so `request` below has something to close. Not
@@ -91,9 +133,6 @@ class GremlinShutdown
         "server.shutdown_forced_by_signal", {})
       exit(0)
     end
-    @@requested = true
-    unless @@listener == nil
-      @@listener.close()
-    end
+    self.begin_drain()
   end
 end

@@ -509,3 +509,8 @@ rescue error: ArgumentError
 end")"
 [[ "$actual" == *'return_after_shutdown requires threads = 1'* ]]
 echo "18 gremlin tests passed"
+
+# Token-managed shutdown returns through the owner and bounds stalled clients.
+python3 "$package_root/test/shutdown.py" "$diamond" "$package_root/test/shutdown.di"
+"$diamond" build "$package_root/test/shutdown.di" -o "$test_project/shutdown-test" > "$test_project/build.log"
+python3 "$package_root/test/shutdown.py" "$test_project/shutdown-test"

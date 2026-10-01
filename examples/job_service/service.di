@@ -72,12 +72,17 @@ def main(argv)
   JobService.boot(argv[1])
   source = Cancellation::Source.new()
   supervisor = Supervisor.new()
+  def stop_service()
+    source.cancel()
+  end
+  Signal.trap("TERM", stop_service)
+  Signal.trap("INT", stop_service)
   begin
     supervisor.add_child(job_service_worker, argv[1], source.token())
     limits = {"line_bytes": 2048, "header_bytes": 8192, "header_count": 32,
       "body_bytes": 4096, "connections": 16, "timeout_seconds": 2}
     puts("job service starting on port #{port}")
-    gremlin_serve(port, JobService.handle, 1, nil, nil, limits, true)
+    gremlin_serve(port, JobService.handle, 1, nil, nil, limits, true, source.token(), 0.5)
   ensure
     source.cancel()
     supervisor.stop()

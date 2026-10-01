@@ -69,8 +69,10 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
   # actually return, an otherwise-idle server would never notice the
   # signal at all.
   GremlinShutdown.register_listener(listener)
-  Signal.trap("TERM", GremlinShutdown.request)
-  Signal.trap("INT", GremlinShutdown.request)
+  unless GremlinShutdown.token_managed?()
+    Signal.trap("TERM", GremlinShutdown.request)
+    Signal.trap("INT", GremlinShutdown.request)
+  end
 
   def spawn_connection(client_socket)
     conn = NonblockingConnection.new(client_socket, limits)
@@ -127,6 +129,7 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
   end
 
   loop do
+    GremlinShutdown.observe_token()
     if GremlinShutdown.requested?() && connections.length() == 0
       log.info("server.shutdown_complete", {"forced": false})
       if GremlinShutdown.return_after_shutdown?()
@@ -210,7 +213,8 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
       end
       position += 1
     end
-    ready = IO.poll(read_list, write_list, poll_ms)
+    ready = GremlinShutdown.poll(read_list, write_list, poll_ms)
+    GremlinShutdown.observe_token()
 
     # Accepted here, *not* folded into `connections` until after the resume
     # pass below -- `ready`'s own readable/writable arrays are sized and
@@ -250,6 +254,8 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
     if listener_polled && ready["readable"][0] && !GremlinShutdown.requested?()
       begin
       loop do
+        GremlinShutdown.observe_token()
+        break if GremlinShutdown.requested?()
         client_socket = listener.accept()
         if client_socket == nil
           break
@@ -274,6 +280,11 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
 
     still_active = []
     def resume_if_ready(entry, position)
+      # Do not start another handler turn once the drain deadline has expired.
+      if GremlinShutdown.requested?() && Time.monotonic() >= GremlinShutdown.deadline()
+        still_active.push(entry)
+        return nil
+      end
       deadline = entry["conn"].deadline()
       if deadline != nil && Time.monotonic() >= deadline
         log.warn("request.timeout", {"request_id": entry["conn"].request_id(), "reason": "deadline_exceeded"})
@@ -369,11 +380,15 @@ end
 # supplied; skipping `threads` while naming `tick_interval`/`on_tick`
 # leaves a gap and fails to compile ("missing argument"), not a bug in
 # this function itself.
-def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil, return_after_shutdown: Bool = false)
+def gremlin_serve(port, handler: Callable[2], threads = 1, tick_interval = nil, on_tick = nil, limits = nil, return_after_shutdown: Bool = false, shutdown_token = nil, shutdown_timeout = 10.0)
+  if (shutdown_token != nil || shutdown_timeout != 10.0) && threads != 1
+    raise ArgumentError.new("token shutdown and custom shutdown_timeout require threads = 1")
+  end
   if return_after_shutdown && threads != 1
     raise ArgumentError.new("return_after_shutdown requires threads = 1")
   end
-  GremlinShutdown.return_after_shutdown(return_after_shutdown)
+  GremlinShutdown.configure(shutdown_token, shutdown_timeout)
+  GremlinShutdown.return_after_shutdown(return_after_shutdown || shutdown_token != nil)
   if limits != nil
     ["line_bytes", "header_bytes", "header_count", "body_bytes", "connections", "timeout_seconds"].each() do |key|
       unless limits[key] is Int then raise ArgumentError.new("Gremlin limits must be positive integers") end
