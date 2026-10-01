@@ -67,3 +67,43 @@ This mode requires `threads = 1`; multi-worker shutdown coordination is not
 implemented. Default behavior is unchanged. A second shutdown signal still
 forces process exit and bypasses cleanup. Signal handlers are not restored when
 the server returns; this mode is intended for shutdown of the owning service.
+
+## Token-managed shutdown
+
+Gremlin 0.3.0 accepts optional eighth and ninth arguments, `shutdown_token` and
+`shutdown_timeout` (seconds, default `10.0`, finite and nonnegative):
+
+```ruby
+source = Cancellation::Source.new()
+begin
+  gremlin_serve(8080, handler, 1, nil, nil, nil, false, source.token(), 0.5)
+ensure
+  source.cancel()
+  # Join other owned work and close application resources.
+end
+```
+
+Load the cancellation cut in the application. Token mode requires the runtime
+with cancellable `IO.poll` (cancellation 0.3.0). Gremlin itself keeps its existing
+HTTP/logger dependencies; ordinary callers need no cancellation package.
+
+Token mode requires one worker and always returns to its caller, regardless of
+`return_after_shutdown`. The application owns signal handling: Gremlin does not
+install or replace `Signal.trap` handlers in this mode. A handler can call
+`source.cancel()`, as the [job service](../../examples/job_service/README.md) does.
+Cancellation from another thread, a parent source, or the token's deadline
+closes the listener and starts draining. `server.shutdown_started` is logged
+after the listener closes. The grace deadline is anchored once and does not
+restart on another cancellation. A pre-cancelled token accepts no requests.
+
+Active connections can finish until the grace deadline. Once it expires,
+remaining sockets close and handlers suspended in socket I/O resume once so
+their `ensure` cleanup can run. `server.shutdown_complete` reports `forced` and,
+on forced closure, the remaining connection count. During drain, Gremlin stops
+watching the already-cancelled token and waits on live sockets/deadlines instead.
+
+Handlers must cooperate: synchronous CPU/native work cannot be preempted, and
+code that catches a closed-socket error and yields again is not guaranteed to
+finish. A grace period bounds I/O waiting, not arbitrary application execution.
+Custom grace periods also require one worker. Without a token, the existing
+signal-driven shutdown and second-signal forced exit remain in place.
