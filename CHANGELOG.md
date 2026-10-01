@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Cancellation 0.2.0 replaces timed channel polling with native readiness and
+  cancellation notifications, including inherited deadlines and cancellation
+  across thread heaps. New `Channel.wait_readable`/`wait_writable` primitives
+  also support deadline-aware callers; signal-trapping VMs retain bounded
+  returns for handler dispatch.
+
+- Avoid undefined behavior when compiling method references with no type sets.
+
 - Nested rescue/ensure cleanup preserves enclosing return values, exceptions,
   and non-local block exits, including during garbage collection.
 

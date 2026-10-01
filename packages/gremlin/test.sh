@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # Requires the diamond binary on PATH, or DIAMOND_BIN pointing at one
 # (e.g. DIAMOND_BIN=../../build/diamond bash test.sh, or `make
@@ -9,6 +9,15 @@ cd "$(dirname "$0")"
 package_root="$(pwd)"
 test_project="$(mktemp -d)"
 trap 'rm -rf "$test_project"' EXIT
+report_failure() {
+    local status="$1" line="$2" command="$3"
+    echo "gremlin test failed at line $line (status $status): $command" >&2
+    if [[ -n "${out:-}" && -f "$out" ]]; then
+        echo "server log (port ${port:-unknown}):" >&2
+        cat "$out" >&2
+    fi
+}
+trap 'report_failure "$?" "$LINENO" "$BASH_COMMAND"' ERR
 mkdir -p "$test_project/cuts"
 ln -s "$package_root/../http" "$test_project/cuts/http"
 ln -s "$package_root/../logger" "$test_project/cuts/logger"
@@ -18,6 +27,13 @@ wait_for_port() {
     local port="$1"
     { for _ in $(seq 1 100); do
         if exec 3<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+            # listen() precedes Signal.trap installation. A completed request
+            # proves the worker has entered its loop before shutdown tests
+            # send TERM; a successful TCP connect alone cannot prove that.
+            printf 'GET /ready HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+            local response
+            response="$(timeout 3 cat <&3)" || return 1
+            [[ -n "$response" ]] || return 1
             return 0
         fi
         sleep 0.05

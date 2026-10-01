@@ -404,10 +404,16 @@ typedef struct DiamondThread {
  * `not_empty`/`not_full` are this codebase's first condition variables
  * -- see send/receive's own dispatch comments (DIAMOND_OP_INVOKE) for
  * the exact wait/signal protocol. */
+typedef struct ChannelWaitLink {
+    struct ChannelWaitLink *next;
+    int write_fd;
+} ChannelWaitLink;
+
 typedef struct DiamondChannel {
     pthread_mutex_t lock;
     pthread_cond_t not_empty;
     pthread_cond_t not_full;
+    ChannelWaitLink *waiters;
     DiamondVm *private_vm;
     DiamondProgram *private_program;
     DiamondValue *queue;
@@ -416,6 +422,136 @@ typedef struct DiamondChannel {
     bool closed;
     atomic_size_t refcount;
 } DiamondChannel;
+
+/* Called with channel->lock held. Writes never block; a full pipe already
+ * contains a wakeup. Waiters unlink under this same lock before closing their
+ * descriptors, so no writer can retain a stale pointer or write to a closed
+ * reader. No user code, allocation, or second channel lock is involved. */
+static void notify_channel_waiters(DiamondChannel *channel) {
+    for(ChannelWaitLink *waiter=channel->waiters;waiter!=nullptr;waiter=waiter->next) {
+        const char byte=1;
+        ssize_t written;
+        do {written=write(waiter->write_fd,&byte,1);} while(written<0&&errno==EINTR);
+    }
+}
+
+typedef struct ChannelWaitRegistration {
+    DiamondChannel *channel;
+    ChannelWaitLink link;
+} ChannelWaitRegistration;
+
+/* A readiness wait does not consume data or reserve capacity. The caller
+ * retries its operation after waking. Registration and readiness checks share
+ * each channel's lock: a transition either precedes the check or writes to
+ * the already-registered pipe. This closes the check/sleep lost-wakeup gap.
+ * Receiver/argument registers keep all handles alive for this entire call. */
+static DiamondVmStatus channel_wait_helper(DiamondVm *vm,DiamondChannel *target,
+        bool writable,DiamondValue cancellations,DiamondValue deadline_value) {
+    if(cancellations.kind!=DIAMOND_VALUE_OBJECT ||
+       cancellations.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
+        snprintf(vm->error,sizeof vm->error,"channel wait cancellations must be an Array of Channels");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondArray *array=(const DiamondArray *)cancellations.as.object;
+    for(size_t i=0;i<array->count;i++) {
+        if(array->values[i].kind!=DIAMOND_VALUE_OBJECT ||
+           array->values[i].as.object->kind!=DIAMOND_OBJECT_CHANNEL) {
+            snprintf(vm->error,sizeof vm->error,"channel wait cancellations must be an Array of Channels");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    const bool timed=deadline_value.kind!=DIAMOND_VALUE_NIL;
+    double deadline=0;
+    if(timed) {
+        if(deadline_value.kind!=DIAMOND_VALUE_FLOAT || !isfinite(deadline_value.as.real)) {
+            snprintf(vm->error,sizeof vm->error,"channel wait deadline must be a finite monotonic Float or nil");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        deadline=deadline_value.as.real;
+    }
+    if(array->count>=SIZE_MAX/sizeof(ChannelWaitRegistration)-1)
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    const size_t count=array->count+1;
+    ChannelWaitRegistration *registrations=calloc(count,sizeof *registrations);
+    if(registrations==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    int descriptors[2];
+    if(pipe(descriptors)!=0) {
+        free(registrations);
+        snprintf(vm->error,sizeof vm->error,"channel wait pipe: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    for(size_t i=0;i<2;i++) {
+        if(fcntl(descriptors[i],F_SETFD,FD_CLOEXEC)<0 ||
+           fcntl(descriptors[i],F_SETFL,O_NONBLOCK)<0) {
+            const int error=errno;
+            close(descriptors[0]);close(descriptors[1]);free(registrations);
+            snprintf(vm->error,sizeof vm->error,"channel wait pipe flags: %s",strerror(error));
+            return DIAMOND_VM_IO_ERROR;
+        }
+    }
+    bool ready=false;
+    for(size_t i=0;i<count;i++) {
+        DiamondChannel *channel=i==0?target:
+            ((DiamondChannelHandle *)array->values[i-1].as.object)->channel;
+        ChannelWaitRegistration *registration=&registrations[i];
+        registration->channel=channel;
+        registration->link.write_fd=descriptors[1];
+        pthread_mutex_lock(&channel->lock);
+        registration->link.next=channel->waiters;
+        channel->waiters=&registration->link;
+        ready=ready||channel->closed ||
+            (i==0&&(writable?channel->count<channel->capacity:channel->count>0));
+        pthread_mutex_unlock(&channel->lock);
+    }
+    /* Trapped signals are dispatched at VM instruction boundaries. Only
+     * VMs that installed handlers need a bounded return to that dispatcher;
+     * ordinary worker waits have no periodic timeout. EINTR also returns
+     * immediately, after unlinking, so handlers can safely close channels. */
+    bool signal_aware=false;
+    for(size_t i=0;i<DIAMOND_SIGNAL_COUNT;i++)
+        if(vm->trapped_signal_handlers[i].kind==DIAMOND_VALUE_OBJECT)
+            signal_aware=true;
+    int wait_error=0;
+    while(!ready) {
+        int milliseconds=-1;
+        if(timed) {
+            struct timespec now;
+            if(clock_gettime(CLOCK_MONOTONIC,&now)!=0) {wait_error=errno;break;}
+            const double remaining=deadline-(double)now.tv_sec-(double)now.tv_nsec/1e9;
+            if(remaining<=0)break;
+            const double rounded=ceil(remaining*1000);
+            milliseconds=rounded>INT_MAX?INT_MAX:(int)rounded;
+        }
+        if(signal_aware&&(milliseconds<0||milliseconds>10))milliseconds=10;
+        struct pollfd descriptor={.fd=descriptors[0],.events=POLLIN};
+        const int result=poll(&descriptor,1,milliseconds);
+        if(result>0) {
+            if(descriptor.revents&POLLIN)break;
+            wait_error=EIO;break;
+        }
+        if(result<0) {
+            if(errno!=EINTR)wait_error=errno;
+            break;
+        }
+        if(signal_aware)break;
+        /* Timeout: recompute against the absolute monotonic deadline.
+         * Long deadlines may need more than one INT_MAX-millisecond wait. */
+    }
+    for(size_t i=0;i<count;i++) {
+        ChannelWaitRegistration *registration=&registrations[i];
+        pthread_mutex_lock(&registration->channel->lock);
+        ChannelWaitLink **link=&registration->channel->waiters;
+        while(*link!=&registration->link)link=&(*link)->next;
+        *link=registration->link.next;
+        pthread_mutex_unlock(&registration->channel->lock);
+    }
+    close(descriptors[0]);close(descriptors[1]);free(registrations);
+    if(wait_error!=0) {
+        snprintf(vm->error,sizeof vm->error,"channel wait: %s",strerror(wait_error));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
 
 static void free_channel_reference(DiamondChannel *channel);
 
@@ -21147,6 +21283,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
                     DiamondChannel *target_channel=
                         ((DiamondChannelHandle *)registers[recv].as.object)->channel;
+                    const bool wait_readable=method_name->length==13&&
+                        memcmp(method_name->chars,"wait_readable",13)==0;
+                    const bool wait_writable=method_name->length==13&&
+                        memcmp(method_name->chars,"wait_writable",13)==0;
+                    if(wait_readable||wait_writable) {
+                        if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondVmStatus wait_status=channel_wait_helper(vm,target_channel,
+                            wait_writable,registers[base],registers[base+1]);
+                        if(wait_status!=DIAMOND_VM_OK)VM_RETURN(wait_status);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
                     const bool send_method=method_name->length==4&&
                         memcmp(method_name->chars,"send",4)==0;
                     const bool receive_method=method_name->length==7&&
@@ -21175,6 +21322,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                          * not an error. */
                         if(!target_channel->closed) {
                             target_channel->closed=true;
+                            notify_channel_waiters(target_channel);
                             pthread_cond_broadcast(&target_channel->not_empty);
                             pthread_cond_broadcast(&target_channel->not_full);
                         }
@@ -21240,6 +21388,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         target_channel->queue[target_channel->count++]=copied;
                         target_channel->private_vm->extra_root_count=
                             target_channel->count;
+                        notify_channel_waiters(target_channel);
                         pthread_cond_signal(&target_channel->not_empty);
                         pthread_mutex_unlock(&target_channel->lock);
                         registers[dest]=DIAMOND_NIL;break;
@@ -21292,6 +21441,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     target_channel->count--;
                     target_channel->private_vm->extra_root_count=
                         target_channel->count;
+                    notify_channel_waiters(target_channel);
                     pthread_cond_signal(&target_channel->not_full);
                     pthread_mutex_unlock(&target_channel->lock);
                     registers[dest]=copied;break;

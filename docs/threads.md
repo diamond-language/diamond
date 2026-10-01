@@ -135,10 +135,21 @@ a bit and it might arrive" (see `try_send`/`try_receive` below).
 
 `try_send(value)`/`try_receive()` are the non-blocking pair: instead of
 waiting, a full `send`/empty `receive` raises `WouldBlockError` immediately
--- the same convention non-blocking socket reads/writes already use. Poll a
-channel with `try_receive` in a loop for timeout- or signal-responsive
-waiting; a plain blocking `receive` (like `Thread#join`) does not service
-`Signal.trap` handlers while parked.
+-- the same convention non-blocking socket reads/writes already use. Combine
+these with readiness waits below for timeout- or signal-responsive waiting;
+a plain blocking `receive` (like `Thread#join`) does not service `Signal.trap`
+handlers while parked.
+
+`wait_readable(cancellations, deadline)` and `wait_writable(cancellations,
+deadline)` wait for a readiness hint without consuming a value or reserving
+capacity. `cancellations` must be an Array of Channels (duplicates allowed);
+closing any of them wakes the wait. `deadline` is a finite Float absolute
+`Time.monotonic()` timestamp in seconds, or `nil` for no deadline. Both methods
+return `nil` on readiness, target closure, cancellation-source closure, deadline
+expiry, or a spurious wakeup. Recheck cancellation/deadlines and retry the
+nonblocking operation after each return. A VM with installed signal handlers
+returns periodically to dispatch them. Most callers should use the cancellation
+cut instead of managing these low-level readiness hints themselves.
 
 `close()` is idempotent -- closing an already-closed channel is a no-op, not
 an error. `closed?()` and `size()` report status without blocking.
@@ -155,8 +166,9 @@ it are ever deep-copied. A value unsupported for cross-thread transfer
 
 The experimental [cancellation cut](../packages/cancellation/README.md) provides
 shared cancellation tokens, monotonic deadlines, cancellation-aware channel
-waits, and task scopes. It uses explicit checkpoints and short polling waits;
-it does not change blocking native methods or inject exceptions into threads.
+waits, and task scopes. It uses explicit checkpoints and native channel wakeups
+with monotonic deadlines. It does not change blocking native methods or inject
+exceptions into threads.
 See the [design and limitations](cancellation.md) and
 [persistent job service](../examples/job_service/README.md).
 

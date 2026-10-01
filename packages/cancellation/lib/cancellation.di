@@ -33,40 +33,59 @@ module Cancellation
       end
     end
 
+    def wait_channels()
+      channels = [@state]
+      if @parent != nil then channels = channels.concat(@parent.wait_channels()) end
+      channels
+    end
+
+    def wait_deadline()
+      deadline = @deadline
+      if @parent != nil
+        parent_deadline = @parent.wait_deadline()
+        if parent_deadline != nil && (deadline == nil || parent_deadline < deadline)
+          deadline = parent_deadline
+        end
+      end
+      deadline
+    end
+
     def sleep(seconds)
       Cancellation.duration(seconds)
       until_time = Time.monotonic() + seconds
+      deadline = self.wait_deadline()
+      deadline = until_time if deadline == nil || until_time < deadline
+      channels = self.wait_channels()
       loop do
         self.checkpoint()
-        remaining = until_time - Time.monotonic()
-        break if remaining <= 0
-        # poll's timeout is integer milliseconds. The extra millisecond
-        # avoids a busy spin at sub-millisecond boundaries.
-        milliseconds = (remaining * 1000).to_i() + 1
-        milliseconds = 10 if milliseconds > 10
-        IO.poll([], [], milliseconds)
+        break if Time.monotonic() >= until_time
+        @state.wait_readable(channels, deadline)
       end
     end
 
     def receive(channel)
+      channels = self.wait_channels()
+      deadline = self.wait_deadline()
       loop do
         self.checkpoint()
         begin
           return channel.try_receive()
         rescue error: WouldBlockError
-          self.sleep(0.01)
+          channel.wait_readable(channels, deadline)
         end
       end
     end
 
     def send(channel, value)
+      channels = self.wait_channels()
+      deadline = self.wait_deadline()
       loop do
         self.checkpoint()
         begin
           channel.try_send(value)
           return nil
         rescue error: WouldBlockError
-          self.sleep(0.01)
+          channel.wait_writable(channels, deadline)
         end
       end
     end

@@ -4241,8 +4241,9 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
     if(!diamond_function_reserve_type_sets(function,function->type_set_count)) {
         fail(compiler,namespace_name,"out of memory");return 0;
     }
-    memcpy(function->type_sets,compiler->function->type_sets,
-        function->type_set_count*sizeof function->type_sets[0]);
+    if(function->type_set_count>0)
+        memcpy(function->type_sets,compiler->function->type_sets,
+            function->type_set_count*sizeof function->type_sets[0]);
     static const char reference_name[]="<method reference>";
     for(size_t index=0;index<sizeof(reference_name);index++)
         function->name[index]=reference_name[index];

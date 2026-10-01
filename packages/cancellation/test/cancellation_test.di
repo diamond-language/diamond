@@ -196,5 +196,24 @@ end
 source.cancel()
 threads.each() do |thread| thread.join() end
 check(cleaned.size() == 4, "cancellation did not reach every child")
+# A parent's earlier deadline governs a child native wait.
+parent = Cancellation::Source.new(nil, 0.02)
+child = Cancellation::Source.new(parent.token(), 10)
+begin
+  child.token().receive(Channel.new(1))
+  raise "ancestor deadline ignored"
+rescue error: Cancellation::DeadlineExceeded
+end
+
+# A copied child's token must wake when an ancestor is cancelled.
+parent = Cancellation::Source.new()
+child = Cancellation::Source.new(parent.token())
+ready = Channel.new(1)
+cleaned = Channel.new(1)
+thread = Thread.new(Cancellation.task, child, waiting, [ready, cleaned])
+ready.receive()
+parent.cancel()
+thread.join()
+check(cleaned.receive() == "cleaned", "ancestor cancellation lost")
 puts("cancellation tests passed")
 exit(0)

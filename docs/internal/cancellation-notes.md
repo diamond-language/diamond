@@ -6,10 +6,11 @@ integration boundaries:
 - Gremlin called `exit(0)` when drained, bypassing the service owner's `ensure`.
   The opt-in single-worker `return_after_shutdown` mode now returns so the owner
   can cancel and join its supervised worker.
-- Nested rescue directly inside ensure currently emits invalid bytecode. The
-  cancellation scope uses a separate `Scope.cleanup()` helper to capture cleanup
-  errors instead. This compiler defect remains open; it is not part of the
-  cancellation API contract. Reproducer from the repository root:
+- Nested rescue directly inside ensure exposed a VM unwind-state defect: one
+  pending result/exception slot could not preserve enclosing cleanup state.
+  PR #6 fixed this with stacked handler state and GC roots. The cancellation
+  scope retains its separate `Scope.cleanup()` helper to capture cleanup errors
+  without replacing the body's exception. The original reproducer now passes:
 
 ```sh
 build/diamond -e 'def repro()
@@ -26,5 +27,5 @@ end
 repro()'
 ```
 
-Expected result: `7`. Observed: `runtime error: invalid bytecode` at the nested
-rescue end. Do not add a passing test that enshrines that incorrect behavior.
+Expected and observed result after the fix: `7`. Nested ensure regressions cover
+return values, exceptions, non-local exits, and GC during cleanup.
