@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Cancellation 0.6.0 adds `token.connect_tls`, sharing the DNS/TCP deadline with
+  a verified TLS handshake. `TLSSocket.start_handshake`, `finish_handshake`, and
+  `abort` provide readiness-driven negotiation and prompt failure cleanup.
+  Application TLS reads/writes retain their existing blocking behavior.
+
 - Cancellation 0.5.0 adds `token.resolve(host)` and hostname support for
   `token.connect`, sharing one deadline across DNS and sequential address
   attempts. `DNS.resolve` provides cancellable system resolution backed by at

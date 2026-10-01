@@ -123,6 +123,35 @@ module Cancellation
       end
     end
 
+    # DNS, TCP, and the TLS handshake all use this token's original deadline.
+    # Successful application reads/writes retain TLSSocket's blocking contract.
+    def connect_tls(host, port, options = nil)
+      self.checkpoint()
+      tcp = nil
+      tls = nil
+      transferred = false
+      begin
+        tcp = self.connect(host, port)
+        tls = TLSSocket.start_handshake(tcp, host, options)
+        loop do
+          self.checkpoint()
+          direction = tls.finish_handshake()
+          if direction == nil
+            self.checkpoint()
+            transferred = true
+            return tls
+          elsif direction == "read"
+            self.poll([tls], [])
+          else
+            self.poll([], [tls])
+          end
+        end
+      ensure
+        if tcp != nil then tcp.close() end
+        if tls != nil && !transferred then tls.abort() end
+      end
+    end
+
     # Nonblocking TCP sockets only: a blocking File/TLS read cannot
     # safely be retried under this cooperative contract.
     def read(socket, count)

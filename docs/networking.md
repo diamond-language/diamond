@@ -262,7 +262,7 @@ checks cancellation again after completion, and closes failed or cancelled
 attempts. The earliest inherited deadline covers DNS and all connection attempts
 without restarting. A pending connection uses the remaining deadline; addresses
 are tried sequentially, without Happy Eyeballs racing. On success the caller owns
-the socket. TLS handshakes remain separate blocking work.
+the socket. Use `token.connect_tls` to extend the same deadline through TLS negotiation.
 
 ### Cancellable system DNS
 
@@ -283,6 +283,31 @@ cleanup. The process-wide limit is eight outstanding lookups, including abandone
 ones. Further hostname requests fail promptly until a worker finishes; numeric
 literals bypass the pool. No new DNS cache is introduced, and system hosts/NSS
 configuration remains in effect.
+
+### Cancellable client TLS handshakes
+
+Cancellation 0.6.0 adds `token.connect_tls(host, port, options = nil)`. It resolves
+and connects using the token, then negotiates TLS using that same deadline and
+cancellation channels. Certificate verification is mandatory, using the original
+hostname (or IP subject alternative name for numeric hosts), not a resolved IP
+substituted for the hostname. TLS trust, client-certificate, ALPN, session, and
+application read/write timeout options match `TLSSocket.connect`.
+`connect_timeout_ms` is rejected: the token owns the connection deadline.
+
+`TLSSocket.start_handshake(socket, host, options = nil)` is the native building
+block. It takes a connected nonblocking `Socket` and transfers descriptor ownership
+once input validation passes. Subsequent setup failure closes that descriptor;
+validation failure leaves it owned by the original socket. The returned TLS socket
+allows `finish_handshake()`, `close()`, and `abort()` while pending. Each finish call
+returns `"read"`, `"write"`, or nil (complete). Poll only the requested direction,
+then retry. Terminal errors close the connection immediately; completed calls are
+idempotent. `IO.poll` accepts TLS sockets only during a pending handshake.
+
+The token checks cancellation before each attempt and after completion. Its failure
+cleanup calls `abort()`, an idempotent close without any TLS shutdown exchange.
+Successful handshakes return a regular blocking TLS socket, owned by the caller;
+application reads/writes remain outside the cancellation contract. Local trust-store
+and certificate loading also remain synchronous filesystem work.
 
 ## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
 
@@ -592,13 +617,13 @@ zero-external-dependencies stance.
   signal-interruptible retry loop from the Signals section above — a
   server genuinely idle with nothing connecting still responds promptly
   to a trapped signal), then a server-side TLS handshake. No
-  `TLSServer.listen_nonblocking` — non-blocking sockets and TLS are not
-  combined in this first slice.
+  `TLSServer.listen_nonblocking` is not available. Client-side cancellable
+  negotiation is provided separately by `TLSSocket.start_handshake`.
 - Both return the same new object kind, `DIAMOND_OBJECT_TLS_SOCKET` —
   `.read(n)`/`.read()`/`.gets()`/`.write(value)`/`.close()`, the exact
   same method surface and semantics as `File` (bounded/unbounded read,
   line read, EOF-as-nil), not `Socket`'s raw-fd/non-blocking shape — a
-  TLS connection here is always blocking, so `packages/http`'s own
+  completed TLS connection uses blocking application I/O, so `packages/http`'s own
   `conn.gets()`/`conn.read()`/`conn.write()` calls work unchanged against
   either kind of connection. Internally a raw fd plus an OpenSSL `SSL *`
   rather than a buffered `FILE *`: `SSL_read`/`SSL_write` need to own the

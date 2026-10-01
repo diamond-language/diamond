@@ -1,9 +1,9 @@
 # cancellation
 
 Cooperative cancellation, monotonic deadlines, and scopes that join their tasks.
-Install this cut and `require_cut "cancellation"`. Version 0.5.0 requires a
+Install this cut and `require_cut "cancellation"`. Version 0.6.0 requires a
 Diamond runtime with channel readiness waits, cancellation options for `IO.poll`,
-`TCPSocket.connect_nonblocking`, and `DNS.resolve`.
+`TCPSocket.connect_nonblocking`, `DNS.resolve`, and `TLSSocket.start_handshake`.
 
 ```ruby
 require_cut "cancellation"
@@ -87,5 +87,39 @@ DNS cache.
 Failed and cancelled connection attempts close their descriptors. After
 success, the caller owns the socket and closes it in `ensure`; token `read` and
 `write` helpers work as before. For numeric-only callers, `token.connect_address`
-retains the direct connection path. TLS handshakes remain separate blocking work.
+retains the direct connection path. Use `connect_tls` below to include TLS negotiation.
 See [outbound TCP](../../docs/networking.md#nonblocking-outbound-tcp) for an example.
+
+## Cancellable TLS handshakes
+
+Version 0.6.0 adds `token.connect_tls(host, port, options = nil)`. DNS, TCP,
+and TLS negotiation share the token's original inherited deadline. The original
+hostname is used for SNI and certificate identity checks; numeric hosts verify
+IP subject alternative names. Peer verification is always enabled. Trust-store,
+client-certificate, ALPN, session and application read/write timeout options
+match `TLSSocket.connect`; `connect_timeout_ms` is unsupported on this path.
+
+```ruby
+source = Cancellation::Source.new(nil, 5.0)
+socket = source.token().connect_tls("localhost", 8443, {"ca_file": "ca.pem"})
+begin
+  socket.write("hello")
+ensure
+  socket.close()
+end
+```
+
+Cancellation or any handshake failure closes the owned connection. Cleanup uses
+`TLSSocket#abort`, which does no TLS shutdown exchange. On success, the caller
+owns a regular **blocking** TLS socket: application reads/writes are not yet
+cancellable and the existing token read/write helpers still reject TLS sockets.
+Local trust/certificate file loading is synchronous; deadlines are checked before
+and after setup, but cannot interrupt that filesystem work.
+
+The low-level API is `TLSSocket.start_handshake(connected_socket, host, options)`.
+It transfers the TCP descriptor out of the supplied Socket. Call
+`finish_handshake()` until it returns nil, polling the TLS socket for the returned
+`"read"` or `"write"` direction between attempts. Application methods are rejected
+while pending. On completion, blocking I/O is restored and TLS polling is rejected.
+`abort()` is idempotent and closes either a pending or completed TLS socket without
+protocol I/O; ordinary `close()` retains graceful shutdown after completion.

@@ -111,3 +111,12 @@ and drains HTTP for up to 0.5 seconds while the worker requeues interrupted work
 After Gremlin returns, the owner joins the supervisor and closes its database;
 the worker closes its own database in ensure. Normal job failures retain the jobs package's retry/backoff policy;
 cancellation and timeout are separate terminal outcomes.
+
+## TLS handshakes
+
+Cancellation 0.6.0 adds `token.connect_tls(host, port, options = nil)`, sharing one
+inherited deadline across DNS, TCP, and verified TLS negotiation. Failed or cancelled
+handshakes abort the owned connection without blocking on TLS shutdown. Successful
+calls return a caller-owned blocking TLS socket; application reads/writes remain
+separate work. See [TLS handshake contracts](networking.md#cancellable-client-tls-handshakes)
+for options, ownership, and the native stepping API.

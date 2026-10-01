@@ -97,7 +97,7 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
     fclose(sink);
     static const char *const unsafe_mnemonics[] = {
         "FILE_OPEN", "TCP_CONNECT", "TCP_LISTEN", "TCP_LISTEN_NONBLOCK",
-        "IO_POLL", "DNS_RESOLVE", "UDP_BIND", "UDP_OPEN", "SIGNAL_TRAP", "TLS_CONNECT",
+        "IO_POLL", "DNS_RESOLVE", "UDP_BIND", "UDP_OPEN", "SIGNAL_TRAP", "TLS_CONNECT", "TLS_START_HANDSHAKE",
         "TLS_LISTEN", "THREAD_NEW",
     };
     bool found = false;

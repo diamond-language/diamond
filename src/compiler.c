@@ -5585,9 +5585,11 @@ static uint16_t parse_tcp_listen_call(Compiler *compiler) {
 
 static uint16_t parse_tls_connect_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    const bool start_handshake=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        name_equals(compiler,"start_handshake",compiler->current.span,false);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"connect",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'connect' after 'TLSSocket'");
+       (!start_handshake&&!name_equals(compiler,"connect",compiler->current.span,false))) {
+        fail(compiler,compiler->current.span,"expected 'connect' or 'start_handshake' after 'TLSSocket'");
         return 0;
     }
     advance_token(compiler); /* consume 'connect' */
@@ -5622,7 +5624,7 @@ static uint16_t parse_tls_connect_call(Compiler *compiler) {
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_TLS_CONNECT);
+    emit_opcode(compiler,start_handshake?DIAMOND_OP_TLS_START_HANDSHAKE:DIAMOND_OP_TLS_CONNECT);
     emit_register(compiler,dest);
     emit_register(compiler,host_register);
     emit_register(compiler,port_register);

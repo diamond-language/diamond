@@ -56,3 +56,6 @@ python3 test/connect_test.py "$work/connect-test"
 python3 test/dns_test.py "$diamond" test/dns_test.di
 "$diamond" build test/dns_test.di -o "$work/dns-test" > "$work/dns-build.log"
 python3 test/dns_test.py "$work/dns-test"
+python3 test/tls_test.py "$diamond" test/tls_test.di
+"$diamond" build test/tls_test.di -o "$work/tls-test" > "$work/tls-build.log"
+python3 test/tls_test.py "$work/tls-test"
