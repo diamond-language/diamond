@@ -222,3 +222,16 @@ AST for either pass to share — each is a full, independent walk of the
 token stream. Pass `--dump-bytecode` on the CLI to see how any construct
 in this document actually lowers (that dump reflects only the second,
 real pass's output).
+
+### Targeted bytecode dumps
+
+`diamond --dump-bytecode=user FILE [ARGS...]` (or `-e CODE [ARGS...]`)
+prints the application's bytecode and its `require`/`require_cut` imports,
+excluding the bundled core/JSON preamble. Instruction offsets, registers,
+function IDs, and jump targets retain their values in the complete program.
+The program still runs afterward, with its usual output and exit status.
+
+Plain `--dump-bytecode` keeps the complete dump; `--dump-bytecode=all` is an
+explicit equivalent. User-only dumps recompile instead of reading or updating
+the `.dic` cache so the preamble boundary is known even for cached programs.
+This is a preamble filter, not a single-file or single-function selector.

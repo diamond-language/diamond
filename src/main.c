@@ -566,7 +566,7 @@ static int handle_build_command(int argc, char **argv) {
 static void print_usage(FILE *stream) {
     fputs("Usage: diamond [OPTIONS] [FILE [ARGS...]]\n"
           "       diamond -e CODE [ARGS...]\n"
-          "       diamond --dump-bytecode [-e CODE | FILE] [ARGS...]\n"
+          "       diamond --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
           "       diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]\n"
           "\n"
           "Run a Diamond program, evaluate source, or start the REPL when no\n"
@@ -574,7 +574,8 @@ static void print_usage(FILE *stream) {
           "\n"
           "Options:\n"
           "  -e CODE             evaluate CODE\n"
-          "  --dump-bytecode     print bytecode before running\n"
+          "  --dump-bytecode     print all bytecode before running (same as =all)\n"
+          "  --dump-bytecode=user  print application/import bytecode without the preamble\n"
           "  --sandbox           deny filesystem/network/subprocess access --\n"
           "                      see docs/sandbox.md\n"
           "  -h, --help          display this help and exit\n"
@@ -620,12 +621,21 @@ int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "-e") == 0) {
         return diamond_run_source("-e", argv[2], false, argc - 3, argv + 3);
     }
-    if (argc >= 4 && strcmp(argv[1], "--dump-bytecode") == 0 &&
-        strcmp(argv[2], "-e") == 0) {
-        return diamond_run_source("-e", argv[3], true, argc - 4, argv + 4);
+    DiamondBytecodeDump dump_mode=DIAMOND_DUMP_NONE;
+    if(argc>=2) {
+        if(strcmp(argv[1],"--dump-bytecode")==0||strcmp(argv[1],"--dump-bytecode=all")==0)
+            dump_mode=DIAMOND_DUMP_ALL;
+        else if(strcmp(argv[1],"--dump-bytecode=user")==0)
+            dump_mode=DIAMOND_DUMP_USER;
+        else if(strncmp(argv[1],"--dump-bytecode=",16)==0) {
+            print_usage(stderr);
+            return 64;
+        }
     }
-    const bool dump_file = argc >= 2 &&
-        strcmp(argv[1], "--dump-bytecode") == 0;
+    if (argc >= 4 && dump_mode && strcmp(argv[2], "-e") == 0) {
+        return diamond_run_source("-e", argv[3], dump_mode, argc - 4, argv + 4);
+    }
+    const bool dump_file = dump_mode != DIAMOND_DUMP_NONE;
     if ((argc >= 2 && !dump_file) || (dump_file && argc >= 3)) {
         const char *path = dump_file ? argv[2] : argv[1];
         char *source = read_file(path);
@@ -633,7 +643,7 @@ int main(int argc, char **argv) {
             return 74;
         }
         const int arg_start = dump_file ? 3 : 2;
-        const int status = diamond_run_source(path, source, dump_file,
+        const int status = diamond_run_source(path, source, dump_mode,
             argc - arg_start, argv + arg_start);
         free(source);
         return status;

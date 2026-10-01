@@ -5,13 +5,20 @@
 
 #include <stdbool.h>
 
+typedef enum {
+    DIAMOND_DUMP_NONE = 0,
+    DIAMOND_DUMP_ALL = 1,
+    DIAMOND_DUMP_USER = 2,
+} DiamondBytecodeDump;
+
 /* Compiles and runs `source` exactly the way the `diamond` CLI's own
  * file/-e execution does: lib/core.di prepended, `require` resolution,
  * VM execution, every DIAMOND_*-env-var-driven tracing/stress knob
  * (DIAMOND_STRESS_GC, DIAMOND_QUICKEN, DIAMOND_REPEAT, the DIAMOND_TRACE_*
  * family, ...), matching stdout/stderr output byte-for-byte. `name` is
  * the display name used in diagnostics/stack traces (a file path, or
- * "-e"); `dump_bytecode` matches `--dump-bytecode`. `script_argc`/
+ * "-e"); `dump_bytecode` selects no dump, the full dump, or application/import
+ * code without the preamble (`--dump-bytecode=user`). `script_argc`/
  * `script_argv` are the program's own trailing command-line arguments
  * (whatever followed the script path or -e source on the real `diamond`
  * command line, or 0/nullptr for none) -- exposed to Diamond code as the
@@ -25,7 +32,7 @@
  * process per case) -- both stay behaviorally identical to each other,
  * and to every already-recorded `.expected` file under tests/cases/,
  * which was originally captured by running the CLI itself. */
-int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
+int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump dump_bytecode,
     int script_argc, char *const *script_argv);
 
 /* Same as diamond_run_source, except the caller supplies (and owns) the
@@ -45,7 +52,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
  * to catch -- this is a property of which function gets called, not an
  * env var a caller could accidentally leave set. */
 int diamond_run_source_with_program(const char *name, const char *source,
-    bool dump_bytecode, DiamondProgram *program,
+    DiamondBytecodeDump dump_bytecode, DiamondProgram *program,
     int script_argc, char *const *script_argv);
 
 /* Same as diamond_run_source_with_program, except `program` is compiled
@@ -66,7 +73,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
  * Never touches the bytecode cache either -- see diamond_run_source_
  * with_program's own note on this just above; applies identically here. */
 int diamond_run_source_with_template(const char *name, const char *source,
-    bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+    DiamondBytecodeDump dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
     int script_argc, char *const *script_argv);
 
 /* Compiles (but does not run) `source` exactly the way diamond_run_source's

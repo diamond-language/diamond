@@ -251,8 +251,12 @@ bool diamond_print_type_set(FILE *stream, const DiamondChunk *chunk, uint16_t se
 }
 
 static bool disassemble_chunk(FILE *stream, const char *name,
-                              const DiamondChunk *chunk) {
+                              const DiamondChunk *chunk, size_t source_start) {
     fprintf(stream, "== %s ==\n", name);
+    FILE *output=stream;
+    FILE *hidden=source_start==0?nullptr:fopen("/dev/null","w");
+    if(source_start!=0&&hidden==nullptr)return false;
+    if(hidden!=nullptr)stream=hidden;
     size_t offset = 0;
     bool valid = true;
 
@@ -273,6 +277,15 @@ static bool disassemble_chunk(FILE *stream, const char *name,
 
     while (offset < chunk->code_count) {
         starts[offset] = true;
+        /* Combined source compiles emit a source-offset marker before each
+         * top-level statement. Walk hidden instructions too, preserving real
+         * offsets and jump validation instead of renumbering a sliced chunk. */
+        if(hidden!=nullptr&&chunk->code[offset]==DIAMOND_OP_BREAKPOINT_CHECK&&
+           chunk->code_count-offset>=12) {
+            uint64_t position=0;
+            for(size_t i=0;i<8;i++)position=(position<<8)|chunk->code[offset+4+i];
+            stream=position>=source_start?output:hidden;
+        }
         if (chunk->lines != nullptr && chunk->lines[offset] != 0) {
             fprintf(stream, "%04zu %4u:%-3u ", offset, chunk->lines[offset],
                     chunk->columns[offset]);
@@ -1518,14 +1531,16 @@ static bool disassemble_chunk(FILE *stream, const char *name,
             valid = false;
         }
     }
+    if(hidden!=nullptr)fclose(hidden);
     return valid;
 }
 
-bool diamond_disassemble(FILE *stream, const char *name,
-                         const DiamondChunk *chunk) {
-    bool valid = disassemble_chunk(stream, name, chunk);
-    for (size_t index = 0; index < chunk->function_count; index++) {
+bool diamond_disassemble_user(FILE *stream, const char *name,
+        const DiamondChunk *chunk, size_t first_function, size_t source_start) {
+    bool valid = disassemble_chunk(stream, name, chunk, source_start);
+    for (size_t index = first_function; index < chunk->function_count; index++) {
         const DiamondFunction *function = chunk->functions[index];
+        if(source_start!=0&&function->declaration_start<source_start)continue;
         const DiamondChunk function_chunk = {
             .name = function->name,
             .code = function->code,
@@ -1546,11 +1561,16 @@ bool diamond_disassemble(FILE *stream, const char *name,
             .interface_count=chunk->interface_count,
             .register_count=function->register_count,
         };
-        if (!disassemble_chunk(stream, function->name, &function_chunk)) {
+        if (!disassemble_chunk(stream, function->name, &function_chunk, 0)) {
             valid = false;
         }
     }
     return valid;
+}
+
+bool diamond_disassemble(FILE *stream, const char *name,
+                         const DiamondChunk *chunk) {
+    return diamond_disassemble_user(stream,name,chunk,0,0);
 }
 
 bool diamond_verify_bytecode(const DiamondChunk *chunk) {
