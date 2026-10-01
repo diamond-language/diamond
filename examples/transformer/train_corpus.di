@@ -34,16 +34,22 @@ require "./lib/corpus"
 require "./lib/dataset"
 require "./lib/checkpoint"
 
+# Indexing past the end of ARGV raises instead of returning nil, so an
+# optional argument has to be checked against the length first.
+def arg_at(index)
+  if ARGV.length() > index then ARGV[index] else nil end
+end
+
 # Arguments. The two limits accept a number or the word "all" (nil means no
 # limit); the defaults are small so a first run finishes quickly.
-folder = ARGV[0]
+folder = arg_at(0)
 if folder == nil
-  puts("usage: diamond train_corpus.di <folder> [checkpoint_path]")
+  puts("usage: diamond train_corpus.di <folder> [checkpoint_path] [max_files] [max_stories]")
   exit(1)
 end
-checkpoint_path = if ARGV[1] == nil then "checkpoint.json" else ARGV[1] end
-max_files = if ARGV[2] == nil then 26 elsif ARGV[2] == "all" then nil else ARGV[2].to_i() end
-max_stories = if ARGV[3] == nil then 50 elsif ARGV[3] == "all" then nil else ARGV[3].to_i() end
+checkpoint_path = if arg_at(1) == nil then "checkpoint.json" else arg_at(1) end
+max_files = if arg_at(2) == nil then 26 elsif arg_at(2) == "all" then nil else arg_at(2).to_i() end
+max_stories = if arg_at(3) == nil then 50 elsif arg_at(3) == "all" then nil else arg_at(3).to_i() end
 
 # Small enough to train at a reasonable pace on a modest corpus with
 # plain SGD on CPU -- not tuned for quality, a starting point to adjust
