@@ -36,11 +36,14 @@ before the success write wins; cancellation and timeout may race. Cancelling an
 already terminal job returns its existing state unchanged. Queued cancellation
 is durable and immediately terminal.
 
-Send SIGTERM or press Ctrl-C once to stop. Gremlin drains active HTTP connections
-(up to its existing grace period), then the service cancels its root token and
-joins the worker. Interrupted jobs return to pending without consuming an
-attempt. Each worker closes its own database in ensure. A second signal uses
-Gremlin's existing forced-exit behavior and cannot promise cleanup.
+Send SIGTERM or press Ctrl-C to cancel the shared root token. The worker stops
+and requeues interrupted jobs without consuming an attempt while Gremlin stops
+accepting clients and drains existing HTTP connections for up to 0.5 seconds.
+Silent clients and blocked response writers are then closed. Gremlin returns to
+the service owner, which joins the supervisor and closes its database in ensure;
+the worker closes its own database separately. Repeated signals cancel the same
+source idempotently and do not bypass cleanup. The grace period bounds socket
+waiting; application code and native calls still need to cooperate.
 
 Run only one service process per database. On worker/process restart, abandoned
 running jobs are requeued. This is at-least-once execution, not exactly-once:

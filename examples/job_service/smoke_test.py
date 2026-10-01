@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-job-service-') as directory:
 
     def stop():
         process.terminate()
-        assert process.wait(timeout=12) == 0, 'unclean shutdown'
+        assert process.wait(timeout=5) == 0, 'unclean shutdown'
 
     def enqueue(**args):
         status, body = request('/jobs', args)
@@ -102,11 +102,13 @@ with tempfile.TemporaryDirectory(prefix='diamond-job-service-') as directory:
         await_state(interrupted, 'running')
         # An incomplete request must drain/expire without bypassing the
         # application's cancellation and database cleanup.
-        with socket.create_connection(('127.0.0.1', port), timeout=2) as stalled:
+        with socket.create_connection(('127.0.0.1', port), timeout=2) as stalled, \
+                socket.create_connection(('127.0.0.1', port), timeout=2) as silent:
             stalled.sendall(b'GET /health HTTP/1.1\r\nHost: localhost\r\n')
             time.sleep(.05)
             stop()
             assert stalled.recv(1) == b'', 'shutdown left a connection open'
+            assert silent.recv(1) == b'', 'shutdown left a silent client open'
         assert stored(interrupted) == ('pending', 0), stored(interrupted)
         start()
         await_state(interrupted, 'succeeded')
