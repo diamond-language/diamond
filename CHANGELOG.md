@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Cancellation 0.3.0 adds token-aware nonblocking TCP reads/writes and pollable
+  I/O waits. `IO.poll` accepts cancellation channels and an absolute monotonic
+  deadline; the existing integer timeout form remains available. Partial writes
+  are retried, and stalled I/O wakes directly when a source is cancelled.
+
 - Cancellation 0.2.0 replaces timed channel polling with native readiness and
   cancellation notifications, including inherited deadlines and cancellation
   across thread heaps. New `Channel.wait_readable`/`wait_writable` primitives

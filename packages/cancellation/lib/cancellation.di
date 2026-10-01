@@ -63,6 +63,48 @@ module Cancellation
       end
     end
 
+    # Readiness is only a hint. Check cancellation on both sides of the wait,
+    # including when a descriptor and the cancellation pipe wake together.
+    def poll(readables, writables)
+      self.checkpoint()
+      result = IO.poll(readables, writables, {"cancellations": self.wait_channels(), "deadline": self.wait_deadline()})
+      self.checkpoint()
+      result
+    end
+
+    # Accepted nonblocking TCP sockets only: a blocking File/TLS read cannot
+    # safely be retried under this cooperative contract.
+    def read(socket, count)
+      unless socket is Socket then raise TypeError.new("expected a nonblocking Socket") end
+      loop do
+        self.checkpoint()
+        begin
+          return socket.read(count)
+        rescue error: WouldBlockError
+          self.poll([socket], [])
+        end
+      end
+    end
+
+    # Successful return means every byte was written. Cancellation can leave
+    # a prefix on the wire; callers must not blindly retry the whole message.
+    def write(socket, value)
+      unless socket is Socket then raise TypeError.new("expected a nonblocking Socket") end
+      unless value is String then raise TypeError.new("expected a String") end
+      self.checkpoint()
+      offset = 0
+      while offset < value.length()
+        self.checkpoint()
+        begin
+          written = socket.write(value.slice(offset, value.length() - offset))
+          offset += written
+        rescue error: WouldBlockError
+          self.poll([], [socket])
+        end
+      end
+      offset
+    end
+
     def receive(channel)
       channels = self.wait_channels()
       deadline = self.wait_deadline()
