@@ -6,6 +6,10 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- `--dump-bytecode=user` shows application/import bytecode without the bundled
+  preamble, preserving real instruction offsets and function IDs. The existing
+  full dump remains available as `--dump-bytecode` or `--dump-bytecode=all`.
+
 - Gremlin 0.3.0 adds single-worker token-managed shutdown with a configurable
   drain deadline. Cancellation stops new connections, closes stalled sockets
   after the grace period, and returns through application cleanup. The job

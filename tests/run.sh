@@ -85,6 +85,8 @@ actual="$("$diamond" "$file_argv" one two three)"
 actual="$("$diamond" --dump-bytecode -e 'puts(ARGV[0])' extra)"
 [[ "$(tail -2 <<<"$actual" | head -1)" == "extra" ]]
 
+DIAMOND_BIN="$diamond" bash tests/dump_bytecode.sh
+
 # ENV: real environment-variable control, same reasoning as ARGV above.
 actual="$(FOO_DIAMOND_TEST_VAR=hello "$diamond" -e 'ENV["FOO_DIAMOND_TEST_VAR"]')"
 [[ "$actual" == "hello" ]]

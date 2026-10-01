@@ -8,6 +8,12 @@
 bool diamond_disassemble(FILE *stream, const char *name,
                          const DiamondChunk *chunk);
 
+/* Print application/imported code only. Template compiles supply the first
+ * user function index; combined compiles supply the user source byte offset.
+ * Offsets and function IDs remain those of the complete running program. */
+bool diamond_disassemble_user(FILE *stream, const char *name,
+    const DiamondChunk *chunk, size_t first_function, size_t source_start);
+
 /* Structurally validates every function in `chunk` (the top-level chunk
  * and every entry in chunk->functions) the same way diamond_disassemble
  * does -- register operands in range, jump/PUSH_RESCUE/PUSH_ENSURE/

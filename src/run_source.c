@@ -100,16 +100,20 @@ static void print_diagnostic(const char *name, const char *source,
  * text; diamond_run_source_with_template has no equivalent allocation
  * of its own to free, since diamond_compile_incremental compiles
  * `bundle`'s own source directly. `prelude_bytes`/`user_bytes` feed
- * only the trace line's own byte breakdown -- diamond_run_source_
- * with_template passes 0/total, having reprocessed no prelude text at
- * all rather than some nonzero-but-not-actually-recompiled amount. */
-static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_bytecode,
+ * the trace line's byte breakdown. A nonzero prelude size also locates
+ * the user-source boundary for targeted dumps; template compiles pass
+ * zero there and identify inherited functions by prelude_function_count. */
+static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytecodeDump dump_bytecode,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time, double compiled_time,
         size_t total_bytes, size_t prelude_bytes, size_t user_bytes,
-        char *owned_buffer, DiamondSourceBundle *bundle) {
+        char *owned_buffer, DiamondSourceBundle *bundle, size_t prelude_function_count) {
     chunk.name = name;
-    if (dump_bytecode) {
+    if (dump_bytecode == DIAMOND_DUMP_USER) {
+        const size_t source_start=prelude_bytes==0?0:
+            prelude_bytes+sizeof(DIAMOND_USER_LINE_RESET)-1;
+        (void)diamond_disassemble_user(stdout,name,&chunk,prelude_function_count,source_start);
+    } else if (dump_bytecode) {
         (void)diamond_disassemble(stdout, name, &chunk);
     }
     DiamondVm vm;
@@ -238,7 +242,7 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, bool dump_by
  * package, so doing it twice would cost real startup time, not just
  * style. */
 static int run_source_from_bundle_program(const char *name, DiamondSourceBundle *bundle,
-        bool dump_bytecode, DiamondProgram *program,
+        DiamondBytecodeDump dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
         const char *cache_path, const uint8_t *source_hash) {
@@ -278,11 +282,11 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
     return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
         script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
         prelude_length+reset_length+source_length, prelude_length, source_length,
-        combined, bundle);
+        combined, bundle, 0);
 }
 
 int diamond_run_source_with_program(const char *name, const char *source,
-        bool dump_bytecode, DiamondProgram *program,
+        DiamondBytecodeDump dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv) {
     const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
@@ -299,7 +303,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
 /* See run_source_from_bundle_program's own comment -- the same split,
  * for diamond_run_source_with_template. */
 static int run_source_from_bundle_template(const char *name, DiamondSourceBundle *bundle,
-        bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+        DiamondBytecodeDump dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
         const char *cache_path, const uint8_t *source_hash) {
@@ -321,11 +325,11 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
     return run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
         script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
         source_length, 0, source_length,
-        nullptr, bundle);
+        nullptr, bundle, template->function_count);
 }
 
 int diamond_run_source_with_template(const char *name, const char *source,
-        bool dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
+        DiamondBytecodeDump dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
         int script_argc, char *const *script_argv) {
     const bool trace_startup=getenv("DIAMOND_TRACE_STARTUP") != nullptr;
     const double start_time=trace_startup ? diamond_monotonic_seconds() : 0;
@@ -393,7 +397,7 @@ static DiamondProgram *build_embedded_prelude_template(void) {
  * incremental) always re-initializes `program` from scratch before
  * compiling, so reuse is safe, and it avoids paying this function's own
  * per-call template-deserialize cost hundreds of times over. */
-int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
+int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump dump_bytecode,
         int script_argc, char *const *script_argv) {
     DiamondProgram *program=calloc(1,sizeof *program);
     if(program==nullptr) {
@@ -449,7 +453,10 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
      * session (must not interfere with dap/main.c's own combined-buffer
      * assumptions, same reason the embedded-template fast path above is
      * already skipped for one), and whenever DIAMOND_NO_CACHE is set. */
-    char *cache_path = (!debug_mode && getenv("DIAMOND_NO_CACHE")==nullptr) ?
+    /* A targeted dump needs the compile path's prelude boundary. Recompile
+     * instead of guessing whether a cached program came from a template. */
+    char *cache_path = (dump_bytecode != DIAMOND_DUMP_USER &&
+        !debug_mode && getenv("DIAMOND_NO_CACHE")==nullptr) ?
         diamond_cache_path_for(name) : nullptr;
     uint8_t source_hash[32];
     bool used_cache = false;
@@ -466,7 +473,7 @@ int diamond_run_source(const char *name, const char *source, bool dump_bytecode,
         const size_t user_bytes=strlen(bundle.source);
         status=run_compiled_chunk(name, diamond_program_chunk(program), dump_bytecode,
             script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
-            user_bytes, 0, user_bytes, nullptr, &bundle);
+            user_bytes, 0, user_bytes, nullptr, &bundle, 0);
     } else {
         DiamondProgram *template=nullptr;
         if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
