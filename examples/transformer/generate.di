@@ -19,15 +19,21 @@ require "./lib/optimizer"
 require "./lib/tokenizer"
 require "./lib/checkpoint"
 
+# Indexing past the end of ARGV raises instead of returning nil, so an
+# optional argument has to be checked against the length first.
+def arg_at(index)
+  if ARGV.length() > index then ARGV[index] else nil end
+end
+
 # Arguments: the checkpoint file, the starting text, and how many bytes to
 # generate (default 200).
-checkpoint_path = ARGV[0]
-prompt = ARGV[1]
+checkpoint_path = arg_at(0)
+prompt = arg_at(1)
 if checkpoint_path == nil || prompt == nil
   puts("usage: diamond generate.di <checkpoint_path> <prompt> [num_tokens]")
   exit(1)
 end
-num_tokens = if ARGV[2] == nil then 200 else ARGV[2].to_i() end
+num_tokens = if arg_at(2) == nil then 200 else arg_at(2).to_i() end
 
 # Must match train_corpus.di's own config exactly -- Checkpoint.load!
 # only checks the parameter *count*, not each Tensor's shape, so a
