@@ -770,6 +770,47 @@ static void mark_object_children(DiamondObject *object, bool minor) {
     }
 }
 
+/* Marking uses an explicit work stack instead of recursing, so its depth
+ * is bounded by heap memory, not by the C stack: a chain of N nested
+ * Arrays (or a long linked list of Instances) used to recurse N levels
+ * through mark_object -> mark_object_children -> mark_value, and a
+ * collection running with a deep enough structure live (a few tens of
+ * thousands of levels on a debug build) overflowed the C stack and
+ * crashed the process. See the GC issue this fixes in docs/gc-
+ * generational-design.md's own notes.
+ *
+ * thread_local, not per-VM: the mark_* functions take no VM, every Thread
+ * runs its own VM's collections on its own OS thread concurrently, and a
+ * collection never yields mid-mark (so Fibers sharing one OS thread can't
+ * interleave two marks either). mark_roots frees the buffer when its
+ * collection ends, so nothing outlives a collection -- no leak when a
+ * Thread exits, and no per-mark_object malloc/free churn.
+ *
+ * `draining` makes the outermost mark_object call the only loop: a nested
+ * call (from mark_object_children via mark_value) just marks and pushes.
+ * mark_object_children itself is still the single place that knows each
+ * object kind's children; this stack deliberately holds every newly
+ * marked object (bar Strings/Symbols, which can never have children)
+ * rather than duplicating that per-kind list in a "has children"
+ * predicate that a future kind could be missed from.
+ *
+ * If growing the stack fails (out of memory), fall back to the old direct
+ * recursion for that object so marking stays correct, just not
+ * stack-bounded, exactly as before. */
+typedef struct MarkStack {
+    DiamondObject **items;
+    size_t count;
+    size_t capacity;
+    bool draining;
+} MarkStack;
+
+static thread_local MarkStack diamond_mark_stack;
+
+static void mark_stack_release(void) {
+    free(diamond_mark_stack.items);
+    diamond_mark_stack=(MarkStack){};
+}
+
 static void mark_object(DiamondObject *object, bool minor) {
     if (object == nullptr) return;
     /* A minor collection only traces into the young generation -- an
@@ -785,7 +826,25 @@ static void mark_object(DiamondObject *object, bool minor) {
     if (minor && object->old) return;
     if (object->marked) return;
     object->marked = true;
-    mark_object_children(object, minor);
+    if (object->kind == DIAMOND_OBJECT_STRING ||
+        object->kind == DIAMOND_OBJECT_SYMBOL) return;
+    MarkStack *stack = &diamond_mark_stack;
+    if (stack->count == stack->capacity) {
+        const size_t capacity = stack->capacity == 0 ? 256 : stack->capacity * 2;
+        DiamondObject **grown = realloc(stack->items, capacity * sizeof *grown);
+        if (grown == nullptr) {
+            mark_object_children(object, minor);
+            return;
+        }
+        stack->items = grown;
+        stack->capacity = capacity;
+    }
+    stack->items[stack->count++] = object;
+    if (stack->draining) return;
+    stack->draining = true;
+    while (stack->count > 0)
+        mark_object_children(stack->items[--stack->count], minor);
+    stack->draining = false;
 }
 
 static void mark_value(DiamondValue value, bool minor) {
@@ -939,6 +998,7 @@ static void mark_roots(DiamondVm *vm, bool minor) {
     for(size_t index=0;index<vm->extra_root_count;index++)
         mark_value(vm->extra_roots[index],minor);
     if (minor) mark_remembered_set(vm);
+    mark_stack_release();
 }
 
 /* Sweeps *list_head, freeing anything left unmarked exactly as the

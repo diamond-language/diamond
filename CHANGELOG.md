@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Fixed a crash in garbage collection of deeply nested data. Marking recursed
+  once per nesting level, so a collection running while a chain of tens of
+  thousands of nested Arrays, Hashes, or linked Instances was live overflowed
+  the C stack and crashed the process (about 50,000 levels on a debug build).
+  Marking now uses an explicit work stack, so depth is limited only by memory.
+
 ## 0.10.1 — 2026-10-02
 
 ### Runtime
