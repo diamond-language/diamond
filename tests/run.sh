@@ -2023,7 +2023,7 @@ if "$diamond" -e 'TLSSocket.dial("localhost", 443)' >/dev/null 2>"$error_file"; 
     echo "malformed TLSSocket.dial unexpectedly compiled" >&2
     exit 1
 fi
-grep -q "expected 'connect' after 'TLSSocket'" "$error_file"
+grep -q "expected 'connect' or 'start_handshake' after 'TLSSocket'" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"

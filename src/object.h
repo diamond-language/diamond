@@ -486,6 +486,7 @@ typedef struct DiamondUdpSocketHandle {
  * either; both steps are genuinely required, not defensive redundancy. */
 typedef struct DiamondTlsSocketHandle {
     DiamondObject object;
+    bool handshake_pending;
     SSL *ssl;
     int fd;
     /* Set by tls_new_session_callback (vm.c), registered on every

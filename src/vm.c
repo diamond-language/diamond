@@ -1022,7 +1022,7 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             size=sizeof(DiamondTlsSocketHandle);
             DiamondTlsSocketHandle *tls_handle=(DiamondTlsSocketHandle *)unreached;
             if(tls_handle->ssl!=nullptr) {
-                SSL_shutdown(tls_handle->ssl);
+                if(!tls_handle->handshake_pending)SSL_shutdown(tls_handle->ssl);
                 SSL_free(tls_handle->ssl);
             }
             if(tls_handle->fd>=0)close(tls_handle->fd);
@@ -1570,7 +1570,7 @@ static void free_object_list(DiamondObject *object) {
         } else if(object->kind==DIAMOND_OBJECT_TLS_SOCKET) {
             DiamondTlsSocketHandle *tls_handle=(DiamondTlsSocketHandle *)object;
             if(tls_handle->ssl!=nullptr) {
-                SSL_shutdown(tls_handle->ssl);
+                if(!tls_handle->handshake_pending)SSL_shutdown(tls_handle->ssl);
                 SSL_free(tls_handle->ssl);
             }
             if(tls_handle->fd>=0)close(tls_handle->fd);
@@ -3854,6 +3854,184 @@ static DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *hos
     return DIAMOND_VM_OK;
 }
 
+/* Resolver workers own only native data, never a VM, Diamond value, or a
+ * pointer into the caller's heap. Cancellation abandons a reference rather
+ * than joining libc's potentially unbounded getaddrinfo. Eight outstanding
+ * workers bound the resources retained by abandoned lookups. */
+#define DIAMOND_RESOLVER_LIMIT 8
+static atomic_uint diamond_active_resolvers=0;
+typedef struct DiamondResolverJob {
+    atomic_uint references;
+    atomic_bool done;
+    char *host;
+    int pipe_fds[2];
+    int error;
+    struct addrinfo *addresses;
+} DiamondResolverJob;
+
+static void resolver_release(DiamondResolverJob *job) {
+    if(atomic_fetch_sub(&job->references,1)!=1)return;
+    if(job->addresses!=nullptr)freeaddrinfo(job->addresses);
+    close(job->pipe_fds[0]);close(job->pipe_fds[1]);
+    free(job->host);free(job);
+}
+
+static void *resolver_worker(void *argument) {
+    DiamondResolverJob *job=argument;
+    const struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
+    job->error=getaddrinfo(job->host,nullptr,&hints,&job->addresses);
+    atomic_store_explicit(&job->done,true,memory_order_release);
+    const char byte=1;
+    ssize_t written;
+    do {written=write(job->pipe_fds[1],&byte,1);} while(written<0&&errno==EINTR);
+    /* Both pipe ends stay alive until the last reference, even if the caller
+     * has already cancelled. No SIGPIPE or write to a recycled descriptor. */
+    resolver_release(job);
+    atomic_fetch_sub(&diamond_active_resolvers,1);
+    return nullptr;
+}
+
+static DiamondVmStatus resolver_cancelled(DiamondVm *vm,DiamondValue channels,
+        DiamondValue deadline,bool *cancelled) {
+    *cancelled=false;
+    if(channels.kind!=DIAMOND_VALUE_OBJECT||channels.as.object->kind!=DIAMOND_OBJECT_ARRAY||
+       (deadline.kind!=DIAMOND_VALUE_NIL&&
+        (deadline.kind!=DIAMOND_VALUE_FLOAT||!isfinite(deadline.as.real)))) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve expects an Array of Channels and a finite Float deadline or nil");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondArray *array=(const DiamondArray *)channels.as.object;
+    for(size_t i=0;i<array->count;i++) {
+        if(array->values[i].kind!=DIAMOND_VALUE_OBJECT||
+           array->values[i].as.object->kind!=DIAMOND_OBJECT_CHANNEL) {
+            snprintf(vm->error,sizeof vm->error,"DNS.resolve cancellations must be Channels");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondChannel *channel=((DiamondChannelHandle *)array->values[i].as.object)->channel;
+        pthread_mutex_lock(&channel->lock);
+        *cancelled=*cancelled||channel->closed;
+        pthread_mutex_unlock(&channel->lock);
+    }
+    if(deadline.kind!=DIAMOND_VALUE_NIL) {
+        struct timespec now;
+        if(clock_gettime(CLOCK_MONOTONIC,&now)!=0)return DIAMOND_VM_IO_ERROR;
+        *cancelled=*cancelled||((double)now.tv_sec+(double)now.tv_nsec/1e9>=deadline.as.real);
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* out points to a VM register so the result remains rooted as strings grow. */
+static DiamondVmStatus dns_resolve_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,DiamondValue host_value,DiamondValue channels,DiamondValue deadline,
+        DiamondValue *out) {
+    if(host_value.kind!=DIAMOND_VALUE_OBJECT||host_value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve host must be a String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *host=(const DiamondString *)host_value.as.object;
+    if(host->length==0||memchr(host->chars,'\0',host->length)!=nullptr||
+       memchr(host->chars,'%',host->length)!=nullptr||memchr(host->chars,'[',host->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,"DNS.resolve requires a hostname or an unscoped IP literal");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    *out=DIAMOND_NIL;
+    bool cancelled=false;
+    DiamondVmStatus status=resolver_cancelled(vm,channels,deadline,&cancelled);
+    if(status!=DIAMOND_VM_OK||cancelled)return status;
+    struct in6_addr numeric;
+    if(inet_pton(AF_INET,host->chars,&numeric)==1||inet_pton(AF_INET6,host->chars,&numeric)==1) {
+        DiamondArray *array=allocate_array(vm,&host_value,1);
+        if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(array);
+        return DIAMOND_VM_OK;
+    }
+    unsigned active=atomic_load(&diamond_active_resolvers);
+    do {
+        if(active>=DIAMOND_RESOLVER_LIMIT) {
+            snprintf(vm->error,sizeof vm->error,"DNS resolver capacity exhausted (8 outstanding lookups)");
+            return DIAMOND_VM_IO_ERROR;
+        }
+    } while(!atomic_compare_exchange_weak(&diamond_active_resolvers,&active,active+1));
+    DiamondResolverJob *job=calloc(1,sizeof *job);
+    if(job==nullptr) {atomic_fetch_sub(&diamond_active_resolvers,1);return DIAMOND_VM_OUT_OF_MEMORY;}
+    job->host=malloc(host->length+1);
+    if(job->host==nullptr) {free(job);atomic_fetch_sub(&diamond_active_resolvers,1);return DIAMOND_VM_OUT_OF_MEMORY;}
+    memcpy(job->host,host->chars,host->length+1);
+    if(pipe(job->pipe_fds)!=0) {
+        free(job->host);free(job);atomic_fetch_sub(&diamond_active_resolvers,1);
+        snprintf(vm->error,sizeof vm->error,"DNS resolver pipe failed: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    atomic_init(&job->references,1);
+    atomic_init(&job->done,false);
+    int error=0;
+    for(size_t i=0;i<2;i++) {
+        if(fcntl(job->pipe_fds[i],F_SETFD,FD_CLOEXEC)<0||
+           fcntl(job->pipe_fds[i],F_SETFL,O_NONBLOCK)<0) {error=errno;break;}
+    }
+    pthread_attr_t attributes;
+    bool initialized=false;
+    if(error==0) {error=pthread_attr_init(&attributes);initialized=error==0;}
+    if(error==0)error=pthread_attr_setdetachstate(&attributes,PTHREAD_CREATE_DETACHED);
+    pthread_t thread;
+    if(error==0) {
+        atomic_fetch_add(&job->references,1);
+        error=pthread_create(&thread,&attributes,resolver_worker,job);
+        if(error!=0)resolver_release(job);
+    }
+    if(initialized)pthread_attr_destroy(&attributes);
+    if(error!=0) {
+        resolver_release(job);atomic_fetch_sub(&diamond_active_resolvers,1);
+        snprintf(vm->error,sizeof vm->error,"DNS resolver startup failed: %s",strerror(error));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    for(;;) {
+        bool invoked=false;
+        status=dispatch_pending_signals(vm,chunk,depth,&invoked);
+        if(status!=DIAMOND_VM_OK)break;
+        status=resolver_cancelled(vm,channels,deadline,&cancelled);
+        if(status!=DIAMOND_VM_OK||cancelled)break;
+        if(atomic_load_explicit(&job->done,memory_order_acquire)) {
+            if(job->error!=0) {
+                snprintf(vm->error,sizeof vm->error,"cannot resolve hostname: %s",gai_strerror(job->error));
+                status=DIAMOND_VM_IO_ERROR;break;
+            }
+            DiamondArray *array=allocate_array(vm,nullptr,0);
+            if(array==nullptr) {status=DIAMOND_VM_OUT_OF_MEMORY;break;}
+            *out=DIAMOND_OBJECT(array);
+            for(const struct addrinfo *entry=job->addresses;entry!=nullptr;entry=entry->ai_next) {
+                char address[INET6_ADDRSTRLEN];
+                const void *bytes=nullptr;
+                if(entry->ai_family==AF_INET)
+                    bytes=&((const struct sockaddr_in *)entry->ai_addr)->sin_addr;
+                else if(entry->ai_family==AF_INET6&&((const struct sockaddr_in6 *)entry->ai_addr)->sin6_scope_id==0)
+                    bytes=&((const struct sockaddr_in6 *)entry->ai_addr)->sin6_addr;
+                if(bytes==nullptr||inet_ntop(entry->ai_family,bytes,address,sizeof address)==nullptr)continue;
+                bool duplicate=false;
+                for(size_t i=0;i<array->count;i++) {
+                    const DiamondString *old=(const DiamondString *)array->values[i].as.object;
+                    if(strcmp(old->chars,address)==0) {duplicate=true;break;}
+                }
+                if(duplicate)continue;
+                DiamondString *value=allocate_string(vm,address,strlen(address));
+                if(value==nullptr||!array_push(vm,array,DIAMOND_OBJECT(value))) {
+                    status=DIAMOND_VM_OUT_OF_MEMORY;break;
+                }
+            }
+            if(status==DIAMOND_VM_OK&&array->count==0) {
+                snprintf(vm->error,sizeof vm->error,"hostname has no supported TCP addresses");
+                status=DIAMOND_VM_IO_ERROR;
+            }
+            break;
+        }
+        struct pollfd fds[2]={{.fd=job->pipe_fds[0],.events=POLLIN}};
+        status=cancellable_wait_helper(vm,nullptr,false,channels,deadline,fds,1);
+        if(status!=DIAMOND_VM_OK)break;
+    }
+    resolver_release(job);
+    return status;
+}
+
 /* Numeric addresses keep name resolution entirely outside this nonblocking
  * contract. No resolver thread or unbounded getaddrinfo call is hidden here. */
 static DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm,
@@ -4329,22 +4507,51 @@ static DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
     return DIAMOND_VM_OK;
 }
 
-/* IO.poll accepts only the object kinds that actually own a pollable
- * fd -- a TCPServer.listen_nonblocking listener (interesting for
- * readability: a pending connection), one of its accepted Sockets
- * (interesting for either), a UDPSocket (readable once a datagram is
- * queued, so a following .receive() cannot block), or a Process.spawn
- * stream. A blocking TCPServer.listen listener/
- * TCPSocket.connect File is deliberately not accepted: poll()ing a
- * blocking-mode fd is meaningless here, since nothing in this VM ever
- * puts one in non-blocking mode, so it would always appear either always-
- * ready or never-ready depending on kernel buffering, never the genuine
- * signal IO.poll's caller needs. */
+static void tls_abort_handshake(DiamondTlsSocketHandle *handle) {
+    SSL_free(handle->ssl);handle->ssl=nullptr;
+    if(handle->fd>=0)close(handle->fd);
+    handle->fd=-1;
+    if(handle->received_session!=nullptr)SSL_SESSION_free(handle->received_session);
+    handle->received_session=nullptr;
+}
+
+/* Returns the readiness direction, or nullptr on completion. Application I/O
+ * retains its existing blocking contract after the handshake succeeds. */
+static DiamondVmStatus tls_finish_handshake(DiamondVm *vm,
+        DiamondTlsSocketHandle *handle,const char **direction) {
+    *direction=nullptr;
+    if(!handle->handshake_pending)return DIAMOND_VM_OK;
+    ERR_clear_error();
+    const int result=SSL_connect(handle->ssl);
+    const int error=SSL_get_error(handle->ssl,result);
+    if(result!=1) {
+        if(error==SSL_ERROR_WANT_READ) {*direction="read";return DIAMOND_VM_OK;}
+        if(error==SSL_ERROR_WANT_WRITE) {*direction="write";return DIAMOND_VM_OK;}
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,"TLS handshake failed: %s",detail);
+        tls_abort_handshake(handle);return DIAMOND_VM_IO_ERROR;
+    }
+    if(SSL_get_verify_result(handle->ssl)!=X509_V_OK) {
+        snprintf(vm->error,sizeof vm->error,"TLS certificate verification failed");
+        tls_abort_handshake(handle);return DIAMOND_VM_IO_ERROR;
+    }
+    const int flags=fcntl(handle->fd,F_GETFL,0);
+    if(flags<0||fcntl(handle->fd,F_SETFL,flags&~O_NONBLOCK)<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot restore blocking TLS I/O: %s",strerror(errno));
+        tls_abort_handshake(handle);return DIAMOND_VM_IO_ERROR;
+    }
+    handle->handshake_pending=false;
+    return DIAMOND_VM_OK;
+}
+
+/* Readiness is meaningful for TLS only while its handshake is pending.
+ * Completed TLS sockets retain their blocking application I/O contract. */
 static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd) {
     if(value.kind!=DIAMOND_VALUE_OBJECT||
        (value.as.object->kind!=DIAMOND_OBJECT_LISTENER&&
         value.as.object->kind!=DIAMOND_OBJECT_SOCKET&&
         value.as.object->kind!=DIAMOND_OBJECT_UDP_SOCKET&&
+        value.as.object->kind!=DIAMOND_OBJECT_TLS_SOCKET&&
         value.as.object->kind!=DIAMOND_OBJECT_PROCESS_STREAM)) {
         snprintf(vm->error,sizeof vm->error,"IO.poll arguments must be nonblocking "
             "TCPServer listeners, their accepted Sockets, UDPSockets, or a Process.spawn stream");
@@ -4356,7 +4563,14 @@ static DiamondVmStatus pollable_fd(DiamondVm *vm,DiamondValue value,int *out_fd)
         fd=((DiamondListenerHandle *)value.as.object)->fd;
     else if(value.as.object->kind==DIAMOND_OBJECT_SOCKET)
         fd=((DiamondSocketHandle *)value.as.object)->fd;
-    else if(value.as.object->kind==DIAMOND_OBJECT_UDP_SOCKET) {
+    else if(value.as.object->kind==DIAMOND_OBJECT_TLS_SOCKET) {
+        DiamondTlsSocketHandle *tls=(DiamondTlsSocketHandle *)value.as.object;
+        if(!tls->handshake_pending) {
+            snprintf(vm->error,sizeof vm->error,"IO.poll only supports TLS sockets during their handshake");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        fd=tls->fd;
+    } else if(value.as.object->kind==DIAMOND_OBJECT_UDP_SOCKET) {
         fd=((DiamondUdpSocketHandle *)value.as.object)->fd;
         closed_message="cannot poll a closed UDP socket";
     } else {
@@ -22317,6 +22531,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"gets",4)==0;
                     const bool write_method=method_name->length==5&&
                         memcmp(method_name->chars,"write",5)==0;
+                    const bool abort_method=method_name->length==5&&
+                        memcmp(method_name->chars,"abort",5)==0;
                     const bool close_method=method_name->length==5&&
                         memcmp(method_name->chars,"close",5)==0;
                     const bool alpn_protocol_method=method_name->length==13&&
@@ -22325,21 +22541,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memcmp(method_name->chars,"session",7)==0;
                     const bool session_reused_method=method_name->length==15&&
                         memcmp(method_name->chars,"session_reused?",15)==0;
+                    const bool finish_handshake_method=method_name->length==16&&
+                        memcmp(method_name->chars,"finish_handshake",16)==0;
                     const bool peer_subject_method=method_name->length==12&&
                         memcmp(method_name->chars,"peer_subject",12)==0;
                     const bool peer_fingerprint_method=method_name->length==16&&
                         memcmp(method_name->chars,"peer_fingerprint",16)==0;
-                    if(!read_method&&!gets_method&&!write_method&&!close_method&&
+                    if(!read_method&&!gets_method&&!write_method&&!close_method&&!abort_method&&
                        !alpn_protocol_method&&!session_method&&!session_reused_method&&
-                       !peer_subject_method&&!peer_fingerprint_method) {
+                       !peer_subject_method&&!peer_fingerprint_method&&!finish_handshake_method) {
                         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
                             (int)method_name->length,method_name->chars,"TLSSocket");
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
+                    if(abort_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        tls_abort_handshake(tls_handle);
+                        registers[dest]=DIAMOND_NIL;break;
+                    }
                     if(close_method) {
                         if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         if(tls_handle->ssl!=nullptr) {
-                            SSL_shutdown(tls_handle->ssl);
+                            if(!tls_handle->handshake_pending)SSL_shutdown(tls_handle->ssl);
                             SSL_free(tls_handle->ssl);
                             tls_handle->ssl=nullptr;
                             if(tls_handle->fd>=0)close(tls_handle->fd);
@@ -22353,6 +22576,22 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     if(tls_handle->ssl==nullptr) {
                         snprintf(vm->error,sizeof vm->error,"TLS socket is closed");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(finish_handshake_method) {
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const char *direction=nullptr;
+                        VM_PROPAGATE(tls_finish_handshake(vm,tls_handle,&direction));
+                        registers[dest]=DIAMOND_NIL;
+                        if(direction!=nullptr) {
+                            DiamondString *value=allocate_string(vm,direction,strlen(direction));
+                            if(value==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                            registers[dest]=DIAMOND_OBJECT(value);
+                        }
+                        break;
+                    }
+                    if(tls_handle->handshake_pending) {
+                        snprintf(vm->error,sizeof vm->error,"TLS handshake is not complete");
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
                     }
                     if(alpn_protocol_method) {
@@ -24490,6 +24729,20 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)new_handle};
                 break;
             }
+            case DIAMOND_OP_DNS_RESOLVE: {
+                uint16_t dest=0,host_reg=0,channels_reg=0,deadline_reg=0;
+                READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(channels_reg);READ_SHORT(deadline_reg);
+                VM_SANDBOX_GUARD("DNS.resolve", "network");
+                const size_t root_count=vm->gc_protected_count;
+                if(!gc_protect(vm,registers[host_reg])||!gc_protect(vm,registers[channels_reg])) {
+                    gc_unprotect(vm,root_count);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                }
+                const DiamondVmStatus status=dns_resolve_helper(vm,chunk,depth,
+                    registers[host_reg],registers[channels_reg],registers[deadline_reg],&registers[dest]);
+                gc_unprotect(vm,root_count);
+                VM_PROPAGATE(status);
+                break;
+            }
             case DIAMOND_OP_TCP_CONNECT_NONBLOCK: {
                 uint16_t dest=0,address_reg=0,port_reg=0;
                 READ_SHORT(dest);READ_SHORT(address_reg);READ_SHORT(port_reg);
@@ -24653,14 +24906,30 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_NIL;
                 break;
             }
+            case DIAMOND_OP_TLS_START_HANDSHAKE:
             case DIAMOND_OP_TLS_CONNECT: {
+                const bool start_handshake=instruction==DIAMOND_OP_TLS_START_HANDSHAKE;
                 uint16_t dest=0,host_reg=0,port_reg=0,options_reg=0;
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(port_reg);
                 READ_SHORT(options_reg);
                 VM_SANDBOX_GUARD("TLSSocket.connect", "network");
+                DiamondSocketHandle *tcp=nullptr;
+                if(start_handshake) {
+                    if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[host_reg].as.object->kind!=DIAMOND_OBJECT_SOCKET) {
+                        snprintf(vm->error,sizeof vm->error,"start_handshake expects a connected Socket");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    tcp=(DiamondSocketHandle *)registers[host_reg].as.object;
+                    if(tcp->fd<0||tcp->connecting) {
+                        snprintf(vm->error,sizeof vm->error,"start_handshake requires a completed TCP connection");
+                        VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    host_reg=port_reg;
+                }
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING||
-                   registers[port_reg].kind!=DIAMOND_VALUE_INT) {
+                   (!start_handshake&&registers[port_reg].kind!=DIAMOND_VALUE_INT)) {
                     snprintf(vm->error,sizeof vm->error,
                              "TLSSocket.connect arguments must be a String host and an Int port");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -24669,6 +24938,10 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondVmStatus options_status=parse_socket_connect_options_helper(
                     vm,registers[options_reg],true,&options);
                 VM_PROPAGATE(options_status);
+                if(start_handshake&&options.connect_timeout_ms>=0) {
+                    snprintf(vm->error,sizeof vm->error,"start_handshake uses caller readiness/deadlines, not connect_timeout_ms");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
                 /* Checked before ever touching the network: an incomplete
                  * cert/key pair is a caller mistake regardless of whether
                  * the connection attempt would otherwise succeed. */
@@ -24688,9 +24961,17 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
                 int connected_fd=-1;
-                const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
-                    registers[port_reg].as.integer,options.connect_timeout_ms,&connected_fd);
-                VM_PROPAGATE(connect_status);
+                if(host->length==0||memchr(host->chars,'\0',host->length)!=nullptr) {
+                    snprintf(vm->error,sizeof vm->error,"TLS hostname must be nonempty and contain no NUL");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(start_handshake) {
+                    connected_fd=tcp->fd;tcp->fd=-1; /* ownership moves exactly once */
+                } else {
+                    const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
+                        registers[port_reg].as.integer,options.connect_timeout_ms,&connected_fd);
+                    VM_PROPAGATE(connect_status);
+                }
                 const DiamondVmStatus timeout_status=apply_socket_timeouts_helper(vm,
                     connected_fd,options.read_timeout_ms,options.write_timeout_ms);
                 if(timeout_status!=DIAMOND_VM_OK) {close(connected_fd);VM_RETURN(timeout_status);}
@@ -24808,14 +25089,24 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * this now-reachable object's own fields. */
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+                handle->handshake_pending=start_handshake;
                 SSL_set_app_data(ssl,handle);
-                SSL_set_fd(ssl,connected_fd);
+                if(SSL_set_fd(ssl,connected_fd)!=1) {
+                    tls_abort_handshake(handle);VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
                 /* SNI (which certificate a multi-tenant server presents)
                  * and the hostname check SSL_get_verify_result below
                  * relies on both need a null-terminated hostname --
                  * host->chars always is (see allocate_string). */
-                SSL_set_tlsext_host_name(ssl,host->chars);
-                if(SSL_set1_host(ssl,host->chars)!=1)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                struct in6_addr numeric_host;
+                const bool is_ip=inet_pton(AF_INET,host->chars,&numeric_host)==1||
+                    inet_pton(AF_INET6,host->chars,&numeric_host)==1;
+                const int identity_status=is_ip?
+                    X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl),host->chars):
+                    SSL_set1_host(ssl,host->chars);
+                if(identity_status!=1||(!is_ip&&SSL_set_tlsext_host_name(ssl,host->chars)!=1)) {
+                    tls_abort_handshake(handle);VM_RETURN(DIAMOND_VM_IO_ERROR);
+                }
                 /* Session resumption is always best-effort: a `session`
                  * blob that fails to parse (corrupt, or from an
                  * incompatible OpenSSL build/rotated ticket key) is
@@ -24835,6 +25126,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         SSL_SESSION_free(resume_session); /* SSL_set_session took its own ref */
                     }
                 }
+                if(start_handshake)break;
                 ERR_clear_error();
                 if(SSL_connect(ssl)!=1) {
                     char detail[256];tls_format_error(detail,sizeof detail);
