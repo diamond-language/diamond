@@ -1,0 +1,1 @@
+sup = Supervisor.new(:sometimes)

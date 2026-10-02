@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- `deep_freeze()` freezes an Array, Hash, or Instance and everything
+  reachable from it, including through reference cycles.
+- `Supervisor.new(:one_for_all)` and `Supervisor.new(:rest_for_one)` add
+  Erlang's other two restart strategies; the default stays `:one_for_one`.
+  Siblings are restarted by cooperatively interrupting their current attempt.
+
 ## 0.10.0 — 2026-10-01
 
 - The registry launch seed now selects gremlin 0.4.0 (token-driven shutdown).

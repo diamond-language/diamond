@@ -501,6 +501,19 @@ distinction Ruby draws between `dup` and `clone`. Freezing is also
 value -- a `Hash` it merely holds a reference to (in a value, or an
 ivar) stays exactly as mutable as it was.
 
+`deep_freeze()` is the transitive version: it freezes the receiver and
+every `Array` element, `Hash` key/value, and `Instance` field reachable
+from it, then returns the receiver. It terminates on cyclic graphs (a node
+whose descendant refers back to it) and does not recurse the C stack, so
+very deep structures are fine. It still descends into a value that was
+already shallowly frozen, so `x.freeze()` followed by `x.deep_freeze()`
+freezes what `x` holds. Nested instances are frozen directly -- a nested
+instance's own `freeze` override is not called -- while a class that
+defines its own `deep_freeze` always wins for the receiver, like `dup`.
+Immutable values and primitives are left alone (no-op), and native
+resource-backed types are skipped rather than traversed. A call to
+`deep_freeze` makes the enclosing function ineligible for the opt-in JIT.
+
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
 as Ruby's own default (no `include_private` second argument yet). Only

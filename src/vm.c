@@ -631,7 +631,25 @@ typedef struct DiamondSupervisorChild {
      * actual (unlocked) pthread_join call, mirroring DiamondThread's own
      * `joined` flag/join_lock pairing for the identical reason. */
     bool joined;
+    /* Slot index in supervisor->children[], so a crashing child can tell
+     * which siblings its strategy reaches. */
+    size_t index;
+    /* Set (under supervisor->lock) by a crashing sibling when the
+     * supervisor's strategy says this child must restart too; polled by
+     * this child's own attempt VM (DiamondVm.interrupt_flag) and
+     * consumed by its retry loop. Cleared at the start of each attempt,
+     * since a fresh attempt is already the restart being asked for. */
+    atomic_bool interrupt;
 } DiamondSupervisorChild;
+
+/* Restart strategy, chosen once by Supervisor.new(:strategy). Mirrors
+ * Erlang's three: only the crashed child (default), every child, or the
+ * crashed child and every child added after it. */
+typedef enum DiamondSupervisorStrategy {
+    DIAMOND_SUPERVISOR_ONE_FOR_ONE,
+    DIAMOND_SUPERVISOR_ONE_FOR_ALL,
+    DIAMOND_SUPERVISOR_REST_FOR_ONE,
+} DiamondSupervisorStrategy;
 
 /* Native backing struct for DiamondSupervisorHandle (object.h) -- see
  * docs/threads.md's Supervisors section and docs/internal/concurrency-
@@ -656,6 +674,7 @@ typedef struct DiamondSupervisor {
     DiamondSupervisorChild children[DIAMOND_MAX_SUPERVISOR_CHILDREN];
     size_t child_count;
     bool stopped;
+    DiamondSupervisorStrategy strategy;
     atomic_size_t refcount;
 } DiamondSupervisor;
 
@@ -3303,6 +3322,11 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         diamond_vm_init(run_vm);
         run_vm->range_class_index=child->program_template->range_class_index;
         run_vm->root_chunk=&child_chunk;
+        if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE) {
+            atomic_store(&child->interrupt,false);
+            run_vm->interrupt_flag=&child->interrupt;
+            run_vm->resource_limits_active=true;
+        }
         /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
          * NEW's own argument copy loop uses, for the identical reason: a
          * later argument's copy_value_into_vm call can itself trigger a
@@ -3333,13 +3357,33 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             break;
         }
         child->restart_count++;
-        if(status==DIAMOND_VM_EXCEPTION) {
+        const bool interrupted_by_sibling=status==DIAMOND_VM_INTERRUPTED;
+        if(interrupted_by_sibling) {
+            /* Not this child's own crash: a sibling's failure restarted
+             * it, and last_error says so. No restart delay below, since
+             * this attempt wasn't failing on its own. */
+            snprintf(child->last_error,sizeof child->last_error,
+                "restarted: a sibling crashed");
+        } else if(status==DIAMOND_VM_EXCEPTION) {
             format_uncaught_exception_message(run_vm,run_vm->exception,false);
             snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
         } else {
             const char *message=run_vm->error[0]!='\0'?run_vm->error:
                 diamond_vm_status_name(status);
             snprintf(child->last_error,sizeof child->last_error,"%s",message);
+        }
+        if(!interrupted_by_sibling&&
+           supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE&&
+           !atomic_load(&supervisor->stop_requested)) {
+            /* This child's own crash: take down the siblings its strategy
+             * covers. Already-finished children (clean return) stay
+             * finished, the same as for a plain crash. */
+            const size_t first=supervisor->strategy==DIAMOND_SUPERVISOR_ONE_FOR_ALL?0:
+                child->index+1;
+            for(size_t other=first;other<supervisor->child_count;other++) {
+                if(other==child->index||supervisor->children[other].done)continue;
+                atomic_store(&supervisor->children[other].interrupt,true);
+            }
         }
         pthread_mutex_unlock(&supervisor->lock);
         diamond_vm_free(run_vm);free(run_vm);
@@ -3355,6 +3399,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             pthread_mutex_unlock(&supervisor->lock);
             break;
         }
+        if(interrupted_by_sibling)continue;
         struct timespec delay={.tv_nsec=20*1000*1000};
         nanosleep(&delay,nullptr);
     }
@@ -13823,6 +13868,17 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_freeze(vm,&registers[recv],out);
     }
+    if(method_name->length==11&&memcmp(method_name->chars,"deep_freeze",11)==0&&
+       lookup_method(owner,instance->class,"deep_freeze",11)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return diamond_deep_freeze(vm,&registers[recv],out);
+    }
     if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
        lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
         if(type_argument_count!=0) {
@@ -17371,6 +17427,100 @@ DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
     return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
 }
 
+/* `deep_freeze`: freezes the receiver and, transitively, every Array
+ * element, Hash key/value, and Instance field reachable from it. Native
+ * and shallow-by-design siblings (`freeze`) stay as they are; this is a
+ * separate universal method so a class's own `freeze` is never bypassed
+ * for the receiver itself, but nested instances are frozen directly,
+ * without calling any user-defined `freeze` on them -- a deep freeze is a
+ * guarantee about the graph, not a request to run arbitrary user code
+ * mid-walk. Cycles are handled with an explicit visited set (pointer-keyed,
+ * open addressing) and an explicit work stack, so neither a cyclic graph
+ * nor a very deep one can recurse the C stack. Only Array/Hash/Instance
+ * carry a frozen flag; every other object kind is skipped (immutable
+ * String/Symbol, or native resources with no guarded mutation). Never
+ * allocates on the VM heap, so no GC can run mid-walk. */
+typedef struct DeepFreezeWalk {
+    const DiamondObject **visited;
+    size_t visited_capacity;
+    size_t visited_count;
+    DiamondObject **stack;
+    size_t stack_count;
+    size_t stack_capacity;
+} DeepFreezeWalk;
+
+static size_t deep_freeze_slot(const DiamondObject *object,size_t capacity) {
+    return (size_t)(((uintptr_t)object>>4)*(uintptr_t)11400714819323198485ull)&(capacity-1);
+}
+
+/* Returns 1 if newly queued, 0 if already seen or not freezable, -1 on OOM. */
+static int deep_freeze_visit(DeepFreezeWalk *walk,DiamondValue value) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object==nullptr)return 0;
+    DiamondObject *object=value.as.object;
+    if(object->kind!=DIAMOND_OBJECT_ARRAY&&object->kind!=DIAMOND_OBJECT_HASH&&
+       object->kind!=DIAMOND_OBJECT_INSTANCE)return 0;
+    if(walk->visited_count*2>=walk->visited_capacity) {
+        const size_t new_capacity=walk->visited_capacity==0?64:walk->visited_capacity*2;
+        const DiamondObject **grown=calloc(new_capacity,sizeof *grown);
+        if(grown==nullptr)return -1;
+        for(size_t index=0;index<walk->visited_capacity;index++) {
+            const DiamondObject *entry=walk->visited[index];
+            if(entry==nullptr)continue;
+            size_t slot=deep_freeze_slot(entry,new_capacity);
+            while(grown[slot]!=nullptr)slot=(slot+1)&(new_capacity-1);
+            grown[slot]=entry;
+        }
+        free(walk->visited);
+        walk->visited=grown;walk->visited_capacity=new_capacity;
+    }
+    size_t slot=deep_freeze_slot(object,walk->visited_capacity);
+    while(walk->visited[slot]!=nullptr) {
+        if(walk->visited[slot]==object)return 0;
+        slot=(slot+1)&(walk->visited_capacity-1);
+    }
+    walk->visited[slot]=object;walk->visited_count++;
+    if(walk->stack_count==walk->stack_capacity) {
+        const size_t new_capacity=walk->stack_capacity==0?64:walk->stack_capacity*2;
+        DiamondObject **grown=realloc(walk->stack,new_capacity*sizeof *grown);
+        if(grown==nullptr)return -1;
+        walk->stack=grown;walk->stack_capacity=new_capacity;
+    }
+    walk->stack[walk->stack_count++]=object;
+    return 1;
+}
+
+DiamondVmStatus diamond_deep_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    (void)vm;
+    DeepFreezeWalk walk={};
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    if(deep_freeze_visit(&walk,*receiver)<0)status=DIAMOND_VM_OUT_OF_MEMORY;
+    while(status==DIAMOND_VM_OK&&walk.stack_count>0) {
+        DiamondObject *object=walk.stack[--walk.stack_count];
+        object->frozen=true;
+        if(object->kind==DIAMOND_OBJECT_ARRAY) {
+            const DiamondArray *array=(const DiamondArray *)object;
+            for(size_t index=0;index<array->count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,array->values[index])<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        } else if(object->kind==DIAMOND_OBJECT_HASH) {
+            const DiamondHash *hash=(const DiamondHash *)object;
+            for(size_t index=0;index<hash->count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,hash->entries[index].key)<0||
+                   deep_freeze_visit(&walk,hash->entries[index].value)<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        } else {
+            const DiamondInstance *instance=(const DiamondInstance *)object;
+            for(size_t index=0;index<instance->field_count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,instance->fields[index])<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
+    free(walk.visited);free(walk.stack);
+    if(status==DIAMOND_VM_OK)*out=*receiver;
+    return status;
+}
+
 DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out) {
     if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;}
@@ -17820,11 +17970,15 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
          * kill. */
         if (vm->resource_limits_active) {
             vm->instructions_executed++;
+            if (vm->interrupt_flag != nullptr &&
+                atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {
+                VM_RETURN(DIAMOND_VM_INTERRUPTED);
+            }
             if (vm->max_instructions != 0 &&
                 vm->instructions_executed > vm->max_instructions) {
                 vm->max_instructions = 0;
                 vm->max_wall_nanoseconds = 0;
-                vm->resource_limits_active = false;
+                vm->resource_limits_active = vm->interrupt_flag != nullptr;
                 VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
             }
             if (vm->max_wall_nanoseconds != 0 &&
@@ -17835,7 +17989,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if (now_ns - vm->start_time_ns > vm->max_wall_nanoseconds) {
                     vm->max_instructions = 0;
                     vm->max_wall_nanoseconds = 0;
-                    vm->resource_limits_active = false;
+                    vm->resource_limits_active = vm->interrupt_flag != nullptr;
                     VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
                 }
             }
@@ -19989,6 +20143,18 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             diamond_jit_freeze(vm,&registers[recv],&registers[dest]);
                         VM_PROPAGATE(freeze_status);break;
                     }
+                    /* deep_freeze: same receiver set as freeze (no-op on a
+                     * primitive/String/Symbol); Array/Hash get the real,
+                     * transitive walk. Not JIT-compiled -- jit.c bails on
+                     * any method name it doesn't list, which is correct. */
+                    if(dup_defined&&method_name->length==11&&
+                       memcmp(method_name->chars,"deep_freeze",11)==0) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        const DiamondVmStatus deep_status=
+                            diamond_deep_freeze(vm,&registers[recv],&registers[dest]);
+                        VM_PROPAGATE(deep_status);break;
+                    }
                     if(dup_defined&&method_name->length==7&&
                        memcmp(method_name->chars,"frozen?",7)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
@@ -21909,6 +22075,8 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     DiamondSupervisorChild *new_child=
                         &target_supervisor->children[new_index];
                     new_child->supervisor=target_supervisor;
+                    new_child->index=new_index;
+                    atomic_init(&new_child->interrupt,false);
                     new_child->program_template=program_template;
                     new_child->args_vm=args_vm;
                     new_child->function_index=callable->function_index;
@@ -24695,13 +24863,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SUPERVISOR_NEW: {
-                /* Zero-arg constructor, same shape as DIAMOND_OP_PROGRAM_
-                 * BUILDER_NEW above -- v1 has no configurable policy
-                 * (restart delay/child cap are fixed constants, see
-                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment), so
-                 * there's nothing for Supervisor.new() to take yet. */
-                uint16_t dest=0;
-                READ_SHORT(dest);
+                /* One optional operand: the restart strategy symbol (nil
+                 * register when Supervisor.new() is called with none).
+                 * Restart delay/child cap remain fixed constants, see
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment. */
+                uint16_t dest=0,strategy_reg=0;
+                READ_SHORT(dest);READ_SHORT(strategy_reg);
                 /* calloc, never a `(DiamondSupervisor){}` compound literal --
                  * see DiamondSupervisor's own comment: with children[]'s
                  * DIAMOND_MAX_SUPERVISOR_CHILDREN*DIAMOND_MAX_ARGUMENTS-sized
@@ -24714,8 +24881,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * could catch it -- exactly the DiamondProgram calloc
                  * convention this codebase already uses for its own large
                  * fixed structs, for the identical reason. */
+                DiamondSupervisorStrategy strategy=DIAMOND_SUPERVISOR_ONE_FOR_ONE;
+                if(registers[strategy_reg].kind!=DIAMOND_VALUE_NIL) {
+                    const DiamondValue given=registers[strategy_reg];
+                    const DiamondSymbol *name=given.kind==DIAMOND_VALUE_OBJECT&&
+                        given.as.object->kind==DIAMOND_OBJECT_SYMBOL?
+                        (const DiamondSymbol *)given.as.object:nullptr;
+                    if(name!=nullptr&&name->length==11&&
+                       memcmp(name->chars,"one_for_one",11)==0)
+                        strategy=DIAMOND_SUPERVISOR_ONE_FOR_ONE;
+                    else if(name!=nullptr&&name->length==11&&
+                       memcmp(name->chars,"one_for_all",11)==0)
+                        strategy=DIAMOND_SUPERVISOR_ONE_FOR_ALL;
+                    else if(name!=nullptr&&name->length==12&&
+                       memcmp(name->chars,"rest_for_one",12)==0)
+                        strategy=DIAMOND_SUPERVISOR_REST_FOR_ONE;
+                    else {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Supervisor.new's strategy must be :one_for_one, "
+                            ":one_for_all, or :rest_for_one");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                }
                 DiamondSupervisor *new_supervisor=calloc(1,sizeof *new_supervisor);
                 if(new_supervisor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                new_supervisor->strategy=strategy;
                 atomic_init(&new_supervisor->refcount,1);
                 atomic_init(&new_supervisor->stop_requested,false);
                 pthread_mutex_init(&new_supervisor->lock,nullptr);
@@ -25563,6 +25753,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "resource limit exceeded";
         case DIAMOND_VM_FROZEN_ERROR:
             return "frozen object cannot be modified";
+        case DIAMOND_VM_INTERRUPTED:
+            return "interrupted by supervisor";
     }
     return "unknown VM status";
 }
