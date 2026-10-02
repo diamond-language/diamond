@@ -20,8 +20,11 @@ require "./lib/patch"
 
 def usage() = "usage: udiff [-U N] [-i] [-w] [-q] [--stat] OLD NEW\n       udiff --apply [-R] [-o OUT] PATCH FILE"
 
+# The file's lines, as diff sees them (see lib/lines.di).
 def read_lines(path: String) -> Array[String] = split_lines(File.read(path))
 
+# The lines to COMPARE by, for -i and -w. Only the comparison uses these; the
+# diff still prints the original text.
 def normalize(lines: Array[String], ignore_case: Bool, ignore_space: Bool) -> Array[String]
   return lines unless ignore_case || ignore_space
   lines.map() do |line|
@@ -32,6 +35,8 @@ def normalize(lines: Array[String], ignore_case: Bool, ignore_space: Bool) -> Ar
   end
 end
 
+# Output for --apply: to stdout when `path` is nil, else to the file. Every
+# line gets a trailing newline; no lines means an empty file.
 def write_lines(lines: Array[String], path: String | Nil)
   text = if lines.empty?() then "" else lines.join("\n") + "\n" end
   if path == nil
@@ -41,15 +46,23 @@ def write_lines(lines: Array[String], path: String | Nil)
   end
 end
 
+# `diff` mode. Returns 0 if the files are the same, 1 if they differ (like
+# diff(1)), after printing the result in the chosen form.
 def run_diff(old_path: String, new_path: String, context: Int,
              ignore_case: Bool, ignore_space: Bool, brief: Bool, stat: Bool) -> Int
   old_lines = read_lines(old_path)
   new_lines = read_lines(new_path)
+
+  # Compute the edit script (comparing normalized lines), group it into hunks,
+  # and bail out silently if there is nothing to report.
   edits = diff_lines(normalize(old_lines, ignore_case, ignore_space),
                      normalize(new_lines, ignore_case, ignore_space),
                      old_lines, new_lines)
   hunks = build_hunks(edits, context)
   return 0 if hunks.empty?()
+
+  # Three output forms: -q (just say they differ), --stat (a one-line
+  # summary, with correct singular/plural), or the full unified diff.
   if brief
     puts("Files #{old_path} and #{new_path} differ")
   elsif stat
@@ -64,23 +77,30 @@ def run_diff(old_path: String, new_path: String, context: Int,
   1
 end
 
+# `--apply` mode: parse the patch, optionally reverse it (-R), and apply it.
 def run_apply(patch_path: String, file_path: String, reverse: Bool, out_path: String | Nil) -> Int
   hunks = parse_patch(File.read(patch_path))
+
   if hunks.empty?()
     warn("udiff: #{patch_path}: no hunks found")
     return 2
   end
+
+  # -R: swap every hunk's old and new sides and reverse each edit, so
+  # applying it undoes the original change.
   if reverse
     hunks = hunks.map() do |hunk|
       Hunk.new(hunk.new_start(), hunk.new_count(), hunk.old_start(), hunk.old_count(),
                hunk.edits().map() do |edit| reverse_edit(edit) end)
     end
   end
+
   write_lines(apply_hunks(read_lines(file_path), hunks), out_path)
   0
 end
 
 def main(args: Array[String]) -> Int
+  # Defaults, then one pass over the arguments.
   context = 3
   ignore_case = false
   ignore_space = false
@@ -91,9 +111,13 @@ def main(args: Array[String]) -> Int
   out_path = nil
   files = []
   index = 0
+
   while index < args.length()
     arg = args[index]
+
     case arg
+    # -U and -o take a value: step past it, and validate it (-U must be all
+    # digits, since to_i() would quietly turn "abc" into 0).
     when "-U"
       index += 1
       if index >= args.length() || !Regexp.new("^\\d+$").match?(args[index])
@@ -114,6 +138,7 @@ def main(args: Array[String]) -> Int
     when "--stat" then stat = true
     when "--apply" then apply = true
     when "-R" then reverse = true
+    # Anything else is a file name, unless it looks like an unknown option.
     else
       if arg.start_with?("-") && arg != "-"
         warn("udiff: unknown option #{arg}\n#{usage()}")
@@ -123,10 +148,14 @@ def main(args: Array[String]) -> Int
     end
     index += 1
   end
+
+  # Both modes take exactly two files.
   if files.length() != 2
     warn(usage())
     return 2
   end
+
+  # Run, mapping every kind of failure to a message and exit status 2.
   begin
     if apply
       run_apply(files[0], files[1], reverse, out_path)

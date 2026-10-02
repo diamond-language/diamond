@@ -41,7 +41,12 @@ class Unparsed < LogLine
   def reason() = @reason
 end
 
+# Classifies one input line. Never raises: anything wrong with the line
+# becomes an Unparsed value, so one bad line cannot stop a long run.
 def logstat_parse(text: String, number: Int) -> LogLine
+  # Three successive checks, each with its own reason: valid JSON, a JSON
+  # object (not an array or a bare string), and having the two fields every
+  # log line must carry. `is Hash`/`is String` test the runtime type.
   event = nil
   begin
     event = JSON.parse(text)
@@ -49,14 +54,23 @@ def logstat_parse(text: String, number: Int) -> LogLine
     return Unparsed.new(number, "not JSON")
   end
   unless event is Hash then return Unparsed.new(number, "not a JSON object") end
+
   level = event["level"]
   message = event["message"]
   unless level is String && message is String
     return Unparsed.new(number, "missing level or message")
   end
+
+  # `tag` is optional ("-" when absent or not text). Note `status` and
+  # `duration` can be nil here; the checks in the `if` below handle that.
   tag = if event["tag"] is String then event["tag"] else "-" end
   status = event["status"]
   duration = event["duration_ms"]
+
+  # A completed request needs an integer status and a numeric duration. A
+  # whole-number duration may be written without a decimal point (2, not
+  # 2.0), so both Int and Float are accepted; `* 1.0` normalizes to Float.
+  # Anything else with a message is a plain event.
   if message == "request.completed" && status is Int && (duration is Float || duration is Int)
     RequestLine.new(level, tag, status, duration * 1.0)
   else

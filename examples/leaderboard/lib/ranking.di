@@ -2,6 +2,7 @@
 # `Ranking.name(...)`, and never as a bare `name(...)` from outside, so
 # these helpers can't hijack a global of the same name.
 module Ranking
+  # Medal for a 1-based rank ("" beyond third place).
   def self.medal(rank: Int) -> String
     case rank
     when 1 then "gold"
@@ -13,6 +14,7 @@ module Ranking
 
   # The tier a score falls in, for grouping.
   def self.tier(score: Int) -> String
+    # `0...100` is a half-open range: includes 0, excludes 100.
     case score
     when 0...100 then "rookie"
     when 100...500 then "regular"

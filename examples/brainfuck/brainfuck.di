@@ -13,11 +13,13 @@ def usage() -> Int
 end
 
 def run(argv: Array) -> Int
+  # Defaults, then one pass over the arguments.
   path = nil
   input = ""
   limit = 10_000_000
   show_steps = false
   index = 0
+
   while index < argv.length()
     case argv[index]
     when "--input"
@@ -37,12 +39,18 @@ def run(argv: Array) -> Int
   end
   return usage() if path == nil
 
+  # Run the program. Its output is collected and printed at the end (as
+  # `print`, since the program's own newlines are the only ones wanted).
+  # The step count goes to stderr so stdout stays exactly the program's
+  # output.
   [text, steps] = run_program(File.read(path), input, limit)
   print(text)
   warn("#{steps} instructions") if show_steps
   0
 end
 
+# A bad program or exceeding the step limit is exit 65; an unreadable file,
+# 66.
 def main(argv) -> Int
   begin
     run(argv)

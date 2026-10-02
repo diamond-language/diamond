@@ -14,6 +14,7 @@
 class RuleError < StandardError
 end
 
+# The shared part of every rule: what to show, and when in the day.
 sealed class Rule
   attr_reader title: String
   attr_reader clock: String      # "HH:MM", or "" for all day
@@ -23,6 +24,7 @@ sealed class Rule
   end
 end
 
+# One class per recurrence kind; each adds only what that kind needs.
 class Once < Rule
   attr_reader date: String
   def initialize(date: String, title: String, clock: String)
@@ -78,6 +80,7 @@ class Yearly < Rule
   end
 end
 
+# "mon" -> 1 (Sunday is 0, matching Time#wday). Case-insensitive.
 def weekday_number(name: String) -> Int
   number = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].index_of(name.downcase())
   raise RuleError.new("unknown weekday '#{name}'") if number == nil
@@ -87,40 +90,60 @@ end
 # Splits "09:30 Standup" into ["09:30", "Standup"], or ["", text] when the
 # text doesn't start with a time.
 def split_clock(text: String) -> Array
+  # The regexp only checks the SHAPE (hours 00-29), so "27:00" matches and
+  # is rejected on the next line.
   found = Regexp.new("^([0-2][0-9]:[0-5][0-9]) +(.+)$").match(text)
   return ["", text] if found == nil
+
+  # `[_, clock, title] = found` destructures the match; `_` skips the
+  # whole-match element.
   [_, clock, title] = found
   raise RuleError.new("bad time #{clock}") if clock.slice(0, 2).to_i() > 23
   [clock, title]
 end
 
+# Parses one line into a Rule. The line is split into words and matched
+# against word-list patterns; `*rest` captures the remaining words, which
+# split_clock then separates into an optional time and the title. Arm order
+# matters: "every N weeks from ..." must come before the general "every
+# DAYS ..." or it would be read as a weekday list.
 def parse_rule(line: String) -> Rule
+  # Drop empty words so repeated spaces do not matter.
   words = line.split(" ").reject() do |word| word.empty?() end
+
   case words
+  # A date first: a one-off event. The regexp only checks the SHAPE; the
+  # bare Time.parse that follows exists purely to reject impossible dates
+  # such as 2026-02-31 (its result is unused).
   when [date, *rest] if Regexp.new("^[0-9]{4}-[0-9]{2}-[0-9]{2}$").match?(date)
     [clock, title] = split_clock(rest.join(" "))
     Time.parse("#{date}T00:00:00Z")   # rejects impossible dates
     Once.new(date, title, clock)
+  # Every N weeks, counted from a start date.
   when ["every", count, "weeks", "from", start, *rest]
     [clock, title] = split_clock(rest.join(" "))
     Time.parse("#{start}T00:00:00Z")
     EveryWeeks.new(count.to_i(), start, title, clock)
+  # Weekly on a comma-separated list of days: "mon,wed".
   when ["every", days, *rest]
     [clock, title] = split_clock(rest.join(" "))
     Weekly.new(days.split(",").map() do |day| weekday_number(day) end, title, clock)
   when ["weekdays", *rest]
     [clock, title] = split_clock(rest.join(" "))
     Weekdays.new(title, clock)
+  # A day of the month; expand.di clamps 31 to short months' last day.
   when ["monthly", day, *rest]
     [clock, title] = split_clock(rest.join(" "))
     Monthly.new(day.to_i(), title, clock)
   when ["last", weekday, *rest]
     [clock, title] = split_clock(rest.join(" "))
     LastWeekday.new(weekday_number(weekday), title, clock)
+  # "03-14" split into month and day.
   when ["yearly", month_day, *rest]
     [clock, title] = split_clock(rest.join(" "))
     [month, day] = month_day.split("-").map() do |part| part.to_i() end
     Yearly.new(month, day, title, clock)
+  # Nothing matched.
   else
     raise RuleError.new("can't read rule: #{line}")
   end

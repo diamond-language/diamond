@@ -13,6 +13,7 @@
 class ByteTokenizer
   def self.vocab_size() = 256
 
+  # Text -> the code (0-255) of each byte.
   def self.encode(text)
     ids = []
     i = 0
@@ -23,6 +24,7 @@ class ByteTokenizer
     ids
   end
 
+  # The inverse: each id back to its character.
   def self.decode(ids)
     text = ""
     i = 0

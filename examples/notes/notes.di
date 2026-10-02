@@ -19,23 +19,30 @@
 # usage error, 66 when a file can't be read.
 require "./lib/store"
 
+# Helpers for the commands below.
+
 def usage() = "usage: notes [--db FILE] add|list|show|search|tag|untag|rm|import|export|stats ..."
 
+# Parses a command-line id. The regexp (digits only) comes first because
+# to_i() would quietly accept "12abc" as 12.
 def note_id(text: String) -> Int
   raise NotesError.new("not a note id: #{text}") unless Regexp.new("^[0-9]+$").match?(text)
   text.to_i()
 end
 
+# The note with this id, or a NotesError (shown to the user, exit 1).
 def found(store: NoteStore, text: String) -> Note
   note = store.find(note_id(text))
   raise NotesError.new("no note #{text}") if note == nil
   note
 end
 
+# " [a, b]" after a title, or nothing if there are no tags.
 def tag_text(tags: Array[String]) -> String
   if tags.empty?() then "" else "  [#{tags.join(", ")}]" end
 end
 
+# One line per note: right-aligned id, date, title, tags.
 def print_list(notes: Array[Note])
   puts("no notes") if notes.empty?()
   notes.each() do |note|
@@ -43,6 +50,7 @@ def print_list(notes: Array[Note])
   end
 end
 
+# A new note's body is whatever arrives on stdin.
 def read_body() -> String
   lines = []
   loop do
@@ -53,8 +61,12 @@ def read_body() -> String
   lines.join("\n")
 end
 
+# Executes one command. `case` matches the argument list against array
+# patterns: `*tags` captures any number of trailing words, and a pattern with
+# a fixed number of names (["show", id]) matches only that exact length.
 def run(store: NoteStore, command: Array[String]) -> Int
   case command
+  # add: the title and tags come from the command line, the body from stdin.
   when ["add", title, *tags]
     id = store.add(title, read_body(), tags)
     puts("added #{id}")
@@ -66,6 +78,9 @@ def run(store: NoteStore, command: Array[String]) -> Int
     puts("#{note.created()}#{tag_text(note.tags())}")
     puts("")
     puts(note.body())
+  # search: the words are rejoined into one FTS5 query. A snippet can span
+  # lines, so runs of whitespace are squeezed to a single space to keep each
+  # hit on one output line.
   when ["search", *words]
     raise NotesError.new("search needs a query") if words.empty?()
     hits = store.search(words.join(" "))
@@ -86,14 +101,17 @@ def run(store: NoteStore, command: Array[String]) -> Int
   when ["rm", id]
     raise NotesError.new("no note #{id}") unless store.remove(note_id(id))
     puts("removed #{id}")
+  # import: all-or-nothing (see NoteStore#import).
   when ["import", path]
     entries = JSON.parse(File.open(path, "r").read())
     raise NotesError.new("#{path}: expected a JSON array") unless entries is Array
     puts("imported #{store.import(entries)}")
+  # export: the same JSON shape that import reads back.
   when ["export"]
     puts(JSON.stringify(store.list(nil).map() do |note|
       {"id": note.id(), "title": note.title(), "body": note.body(), "created": note.created(), "tags": note.tags()}
     end))
+  # stats: three blocks separated by blank lines.
   when ["stats"]
     puts("#{store.count()} notes")
     puts("")
@@ -102,28 +120,40 @@ def run(store: NoteStore, command: Array[String]) -> Int
     puts("")
     puts("By month")
     store.monthly_counts().each() do |row| puts("  #{row["month"]}  #{row["count"]}") end
+  # Anything that matched no pattern is a usage error.
   else
     warn(usage())
     return 64
   end
+
   0
 end
 
 def main(args: Array[String]) -> Int
+  # Database path: --db FILE wins over $NOTES_DB, which wins over the
+  # default. --db is only recognized as the first argument.
   path = ENV.fetch("NOTES_DB", "notes.db")
   if args.length() >= 2 && args[0] == "--db"
     path = args[1]
     args = args.slice(2, args.length() - 2)
   end
+
   if args.empty?()
     warn(usage())
     return 64
   end
+
   if args[0] == "--help"
     puts(usage())
     return 0
   end
+
+  # "Today", overridable so tests get stable dates.
   now = ENV.fetch("NOTES_NOW", Time.now().strftime("%Y-%m-%d"))
+
+  # Run the command, translating each kind of failure into a message and an
+  # exit code; `ensure` closes the database whatever happened. `store` is set
+  # to nil first so the ensure is safe even if opening the database fails.
   store = nil
   begin
     store = NoteStore.new(path, now)

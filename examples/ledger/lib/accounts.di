@@ -7,6 +7,9 @@ sealed class Account
 
   def initialize(name: String)
     @name = name
+
+    # `@@opened` is a class variable, SHARED by Account and every subclass.
+    # It starts out nil, hence `(@@opened || 0)`.
     @@opened = (@@opened || 0) + 1
   end
 
@@ -14,9 +17,13 @@ sealed class Account
   def self.opened() -> Int = @@opened || 0
 
   def to_s() -> String = "#{@name} (#{self.kind()})"
+
+  # "asset", "liability", ...: the lowercased class name.
   def kind() -> String = self.class().downcase()
 end
 
+# The five kinds of account. They differ only in which side increases them
+# (see `normal_side`), so none needs any body.
 class Asset < Account
 end
 

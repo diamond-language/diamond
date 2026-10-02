@@ -19,13 +19,21 @@ require "./lib/optimizer"
 require "./lib/tokenizer"
 require "./lib/checkpoint"
 
-checkpoint_path = ARGV[0]
-prompt = ARGV[1]
+# Indexing past the end of ARGV raises instead of returning nil, so an
+# optional argument has to be checked against the length first.
+def arg_at(index)
+  if ARGV.length() > index then ARGV[index] else nil end
+end
+
+# Arguments: the checkpoint file, the starting text, and how many bytes to
+# generate (default 200).
+checkpoint_path = arg_at(0)
+prompt = arg_at(1)
 if checkpoint_path == nil || prompt == nil
   puts("usage: diamond generate.di <checkpoint_path> <prompt> [num_tokens]")
   exit(1)
 end
-num_tokens = if ARGV[2] == nil then 200 else ARGV[2].to_i() end
+num_tokens = if arg_at(2) == nil then 200 else arg_at(2).to_i() end
 
 # Must match train_corpus.di's own config exactly -- Checkpoint.load!
 # only checks the parameter *count*, not each Tensor's shape, so a
@@ -39,10 +47,13 @@ seq_len = 64
 max_seq_len = seq_len
 vocab_size = ByteTokenizer.vocab_size()
 
+# Build a model of the right shape (its random initial weights are
+# immediately overwritten by the checkpoint), then load the trained weights.
 rng = SimpleRng.new(1)
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
 Checkpoint.load!(model, checkpoint_path)
 
+# The text so far, as byte ids. Each step appends one more.
 token_ids = ByteTokenizer.encode(prompt)
 
 step = 0
@@ -58,6 +69,8 @@ while step < num_tokens
     context = context.slice(context.length() - max_seq_len, max_seq_len)
   end
 
+  # Run the model and pick the highest-scoring next byte from the last
+  # position's logits (greedy: always the single most likely one).
   logits = model.forward(context).tensor()
   last_row = logits.rows() - 1
   best_index = 0
@@ -71,6 +84,8 @@ while step < num_tokens
     end
     j += 1
   end
+
+  # Append it and go around again: the model's own output becomes input.
   token_ids.push(best_index)
   step += 1
 end

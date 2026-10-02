@@ -9,6 +9,8 @@
 def collect_files_recursive(folder, results)
   entries = Dir.entries(folder).sort_by() do |name| name end
   i = 0
+
+  # Directories are descended into; everything else is a file to collect.
   while i < entries.length()
     full_path = File.join(folder, entries[i])
     if File.directory?(full_path)
@@ -57,24 +59,34 @@ class Corpus
     # points at a differently-named dataset.
     paths = all_paths.sort_by() do |p| p end
 
+    # Walk the files in order, appending each one's text to `text`.
     text = ""
     file_count = 0
     story_count = 0
     i = 0
+
     while i < paths.length()
       path = paths[i]
+
+      # Only the wanted extensions, and stop taking files once max_files
+      # matching ones have been read.
       if extensions.include?(File.extname(path))
         if max_files != nil && file_count >= max_files
           i += 1
           next
         end
         ext = File.extname(path)
+
+        # JSON: parse, then pull stories out of the top-level array.
         if ext == ".json"
           puts("Corpus.load: parsing #{path} (this can take a while at real dataset scale)")
           file = File.open(path, "r")
           raw = file.read()
           file.close()
           parsed = JSON.parse(raw)
+
+          # Each element is a bare string or a Hash with a "story" field;
+          # stop at max_stories. Stories are separated by a blank line.
           j = 0
           while j < parsed.length() && (max_stories == nil || story_count < max_stories)
             entry = parsed[j]
@@ -90,6 +102,7 @@ class Corpus
             end
             j += 1
           end
+        # Plain text: the whole file, followed by a blank line.
         else
           file = File.open(path, "r")
           text = text + file.read() + "\n\n"

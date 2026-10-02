@@ -4,6 +4,12 @@
 sealed class Expr
 end
 
+# Node classes. Each is immutable (readers only). The `column` on Var, BinOp
+# and Call is where the node's token started in the input line, kept only so
+# that evaluation errors can point at the right spot; Num, Neg and Assign
+# cannot fail at evaluation time, so they carry no column.
+
+# A literal: an Int or a Float.
 class Num < Expr
   def initialize(value: Int | Float)
     @value = value
@@ -11,6 +17,7 @@ class Num < Expr
   def value() = @value
 end
 
+# A variable reference, e.g. `x` or `pi`.
 class Var < Expr
   def initialize(name: String, column: Int)
     @name = name
@@ -20,6 +27,7 @@ class Var < Expr
   def column() = @column
 end
 
+# Unary minus.
 class Neg < Expr
   def initialize(operand: Expr)
     @operand = operand
@@ -27,6 +35,7 @@ class Neg < Expr
   def operand() = @operand
 end
 
+# A binary operator: "+", "-", "*", "/", "%" or "^".
 class BinOp < Expr
   def initialize(op: String, left: Expr, right: Expr, column: Int)
     @op = op
@@ -40,6 +49,7 @@ class BinOp < Expr
   def column() = @column
 end
 
+# A function call, e.g. `max(1, 2, 3)`.
 class Call < Expr
   def initialize(name: String, args: Array, column: Int)
     @name = name
@@ -51,6 +61,8 @@ class Call < Expr
   def column() = @column
 end
 
+# `name = value`. The assignment is itself an expression whose value is the
+# assigned value, so `y = x = 3` works.
 class Assign < Expr
   def initialize(name: String, value: Expr)
     @name = name

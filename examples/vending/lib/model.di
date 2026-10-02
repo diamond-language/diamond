@@ -5,6 +5,9 @@
 sealed class Event
 end
 
+# Events: what a customer or technician can do to the machine.
+
+# A coin is inserted (any value; the machine decides whether it accepts it).
 class Coin < Event
   attr_reader cents: Int
   def initialize(cents: Int)
@@ -12,6 +15,7 @@ class Coin < Event
   end
 end
 
+# A slot is chosen, e.g. "A1".
 class Select < Event
   attr_reader slot: String
   def initialize(slot: String)
@@ -19,9 +23,11 @@ class Select < Event
   end
 end
 
+# Cancel and take back any credit.
 class Refund < Event
 end
 
+# A technician adds `count` items to a slot at `price` cents.
 class Restock < Event
   attr_reader slot: String
   attr_reader count: Int
@@ -41,12 +47,15 @@ class Service < Event
   end
 end
 
+# States: where the machine is between events.
 sealed class State
 end
 
+# Ready, no money inserted.
 class Idle < State
 end
 
+# Money inserted and waiting for a selection; `cents` is the credit.
 class HasCredit < State
   attr_reader cents: Int
   def initialize(cents: Int)
@@ -54,5 +63,6 @@ class HasCredit < State
   end
 end
 
+# Locked for maintenance; only the service key gets through.
 class OutOfService < State
 end

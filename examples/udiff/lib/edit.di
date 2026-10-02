@@ -9,15 +9,19 @@ sealed class Edit
   end
 end
 
+# The line is unchanged: in both files.
 class Keep < Edit
 end
 
+# The line is only in the OLD file.
 class Delete < Edit
 end
 
+# The line is only in the NEW file.
 class Insert < Edit
 end
 
+# The diff could not be computed (the files are too different to handle).
 class DiffError < StandardError
 end
 

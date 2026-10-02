@@ -7,21 +7,32 @@
 #
 # A datagram can carry several lines separated by newlines.
 
+# A line that is not valid StatsD syntax. The message says what was wrong.
 class MetricError < StandardError
 end
 
+# One parsed line. For a sampled counter the value is already scaled up.
 struct Sample(name: String, value: Float, kind: String)
 end
 
+# Strict number syntax: an optional minus, digits, an optional fractional
+# part. Stricter than to_f, which would accept "12abc" as 12.
 def number?(text: String) -> Bool
   Regexp.new("^-?[0-9]+(\\.[0-9]+)?$").match(text) != nil
 end
 
+# Parses one "name:value|type[|@rate]" line, raising MetricError for any
+# deviation.
 def parse_sample(line: String) -> Sample
+  # Split at the FIRST colon: the name cannot contain one, the rest can.
   [name, rest] = split_once(line, ":")
+
+  # The name must look like an identifier (letters, digits, `_` and `.`).
   unless Regexp.new("^[A-Za-z_][A-Za-z0-9_.]*$").match(name) != nil
     raise MetricError.new("bad metric name '#{name}'")
   end
+
+  # `rest` is "value|type" or "value|type|@rate": two or three parts.
   parts = rest.split("|")
   raise MetricError.new("expected name:value|type in '#{line}'") if parts.length() < 2 || parts.length() > 3
   raise MetricError.new("bad value '#{parts[0]}'") unless number?(parts[0])
@@ -30,6 +41,10 @@ def parse_sample(line: String) -> Sample
   unless ["c", "g", "ms"].include?(kind)
     raise MetricError.new("unknown metric type '#{kind}'")
   end
+
+  # An optional sample rate, valid only for counters. A client that sends
+  # only 1 in 10 events (rate @0.1) tells us so, and each received event
+  # stands for 1 / 0.1 = 10, so the value is divided by the rate.
   if parts.length() == 3
     raise MetricError.new("only counters take a sample rate") unless kind == "c"
     rate = parts[2]
@@ -48,6 +63,9 @@ def split_once(text: String, separator: String) -> Array
   [text.slice(0, at), text.slice(at + separator.length(), text.length())]
 end
 
+# The running totals. Three separate tables because the three kinds combine
+# differently: counters add up, gauges keep the latest, timers keep every
+# value (percentiles need them all).
 class Aggregator
   def initialize()
     @counters = {}
@@ -55,6 +73,7 @@ class Aggregator
     @timers = {}
   end
 
+  # Folds one sample into the right table.
   def record(sample: Sample)
     case sample.kind()
     when "c" then @counters[sample.name()] = @counters.fetch(sample.name(), 0.0) + sample.value()
@@ -68,6 +87,8 @@ class Aggregator
   # Parses and records every line of a datagram or file body. Nothing is
   # recorded unless all of it parses, so a bad line rejects the whole batch.
   def record_lines(text: String) -> Int
+    # Parse everything FIRST (this is where a bad line raises), and only
+    # then record: that ordering is what makes the batch all-or-nothing.
     samples = text.split("\n").reject() do |l| l.strip().empty?() end.map() do |l|
       parse_sample(l.strip())
     end
@@ -75,6 +96,7 @@ class Aggregator
     samples.length()
   end
 
+  # Forget everything (the !reset control datagram).
   def reset()
     @counters = {}
     @gauges = {}
@@ -89,8 +111,13 @@ class Aggregator
     sorted[if rank < 1 then 0 else rank - 1 end]
   end
 
+  # The aggregates as plain data (the shape sent for !report). Timers are
+  # summarized; counters and gauges are already single numbers.
   def report() -> Hash
     timers = {}
+
+    # Sorted by name for a stable order. Sort each timer's values once: min
+    # and max are the ends, and the percentile reads by position.
     @timers.keys().sort().each() do |name|
       values = @timers[name].sort()
       timers[name] = {
@@ -104,21 +131,26 @@ class Aggregator
     {"counters": @counters, "gauges": @gauges, "timers": timers}
   end
 
+  # The aggregates as a human-readable table. Each section is skipped when it
+  # has nothing in it.
   def to_text() -> String
     data = self.report()
     lines = []
+
     unless data["counters"].empty?()
       lines.push("counters")
       data["counters"].keys().sort().each() do |name|
         lines.push("  #{name.ljust(18, " ")} #{"%.2f".format(data["counters"][name])}")
       end
     end
+
     unless data["gauges"].empty?()
       lines.push("gauges")
       data["gauges"].keys().sort().each() do |name|
         lines.push("  #{name.ljust(18, " ")} #{"%.2f".format(data["gauges"][name])}")
       end
     end
+
     unless data["timers"].empty?()
       lines.push("timers (ms)")
       data["timers"].keys().sort().each() do |name|
@@ -126,6 +158,7 @@ class Aggregator
         lines.push("  #{name.ljust(18, " ")} n=#{t["count"]} min=#{"%.2f".format(t["min"])} mean=#{"%.2f".format(t["mean"])} p90=#{"%.2f".format(t["p90"])} max=#{"%.2f".format(t["max"])}")
       end
     end
+
     lines.push("(nothing recorded)") if lines.empty?()
     lines.join("\n")
   end
