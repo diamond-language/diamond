@@ -6,6 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.10.0 — 2026-10-01
+
+- The registry launch seed now selects gremlin 0.4.0 (token-driven shutdown).
 - LSP formatting no longer re-indents or trims lines inside multi-line string
   literals, which previously changed the string's value.
 
