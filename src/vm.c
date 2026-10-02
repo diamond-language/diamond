@@ -447,10 +447,15 @@ typedef struct ChannelWaitRegistration {
  * the already-registered pipe. This closes the check/sleep lost-wakeup gap.
  * Receiver/argument registers keep all handles alive for this entire call.
  * fds has room for one extra descriptor after fd_count. target is NULL for
- * IO.poll, which waits on its supplied fds plus cancellation channels. */
+ * IO.poll, which waits on its supplied fds plus cancellation channels.
+ * select_drained is non-NULL only for Channel.select: the Array's channels
+ * are then candidates rather than cancellation sources, ready when they hold
+ * a value or close, except entries the caller already saw closed and drained
+ * (select_drained[i]) -- those can never become ready again and would
+ * otherwise spin the wait. */
 static DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         bool writable,DiamondValue cancellations,DiamondValue deadline_value,
-        struct pollfd *fds,nfds_t fd_count) {
+        struct pollfd *fds,nfds_t fd_count,const bool *select_drained) {
     if(cancellations.kind!=DIAMOND_VALUE_OBJECT ||
        cancellations.as.object->kind!=DIAMOND_OBJECT_ARRAY) {
         snprintf(vm->error,sizeof vm->error,"channel wait cancellations must be an Array of Channels");
@@ -505,8 +510,12 @@ static DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *tar
         pthread_mutex_lock(&channel->lock);
         registration->link.next=channel->waiters;
         channel->waiters=&registration->link;
-        ready=ready||channel->closed ||
-            (i<target_count&&(writable?channel->count<channel->capacity:channel->count>0));
+        if(select_drained!=nullptr)
+            ready=ready||channel->count>0 ||
+                (channel->closed&&!select_drained[i-target_count]);
+        else
+            ready=ready||channel->closed ||
+                (i<target_count&&(writable?channel->count<channel->capacity:channel->count>0));
         pthread_mutex_unlock(&channel->lock);
     }
     /* Trapped signals are dispatched at VM instruction boundaries. Only
@@ -4025,7 +4034,7 @@ static DiamondVmStatus dns_resolve_helper(DiamondVm *vm,const DiamondChunk *chun
             break;
         }
         struct pollfd fds[2]={{.fd=job->pipe_fds[0],.events=POLLIN}};
-        status=cancellable_wait_helper(vm,nullptr,false,channels,deadline,fds,1);
+        status=cancellable_wait_helper(vm,nullptr,false,channels,deadline,fds,1,nullptr);
         if(status!=DIAMOND_VM_OK)break;
     }
     resolver_release(job);
@@ -21590,7 +21599,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(argc!=2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                         struct pollfd wait_fd[1];
                         const DiamondVmStatus wait_status=cancellable_wait_helper(vm,target_channel,
-                            wait_writable,registers[base],registers[base+1],wait_fd,0);
+                            wait_writable,registers[base],registers[base+1],wait_fd,0,nullptr);
                         if(wait_status!=DIAMOND_VM_OK)VM_RETURN(wait_status);
                         registers[dest]=DIAMOND_NIL;break;
                     }
@@ -24694,6 +24703,104 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .as.object=(DiamondObject *)new_handle};
                 break;
             }
+            case DIAMOND_OP_CHANNEL_SELECT: {
+                /* Channel.select(channels, deadline) -- see docs/threads.md.
+                 * Receives from the first channel (in array order) that holds
+                 * a value, returning [index, value]; blocks until one does.
+                 * nil means nothing will arrive: the deadline passed, or
+                 * every channel is closed and drained. Built from the same
+                 * take-one-value step as Channel#receive plus the readiness
+                 * wait wait_readable already uses, so a value is only ever
+                 * consumed under its own channel's lock. */
+                uint16_t dest=0,channels_reg=0,deadline_reg=0;
+                READ_SHORT(dest);READ_SHORT(channels_reg);READ_SHORT(deadline_reg);
+                const DiamondValue channels_value=registers[channels_reg];
+                const DiamondValue deadline_value=registers[deadline_reg];
+                bool valid_channels=channels_value.kind==DIAMOND_VALUE_OBJECT&&
+                    channels_value.as.object->kind==DIAMOND_OBJECT_ARRAY;
+                const DiamondArray *candidates=valid_channels?
+                    (const DiamondArray *)channels_value.as.object:nullptr;
+                for(size_t i=0;valid_channels&&i<candidates->count;i++)
+                    valid_channels=candidates->values[i].kind==DIAMOND_VALUE_OBJECT&&
+                        candidates->values[i].as.object->kind==DIAMOND_OBJECT_CHANNEL;
+                if(!valid_channels||candidates->count==0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.select's first argument must be a non-empty Array of Channels");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const bool select_timed=deadline_value.kind!=DIAMOND_VALUE_NIL;
+                if(select_timed&&(deadline_value.kind!=DIAMOND_VALUE_FLOAT||
+                                  !isfinite(deadline_value.as.real))) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.select's deadline must be a finite monotonic Float or nil");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                bool *drained=calloc(candidates->count,sizeof *drained);
+                if(drained==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondValue selected=DIAMOND_NIL;
+                bool found=false;
+                while(!found) {
+                    size_t open_count=0;
+                    for(size_t i=0;i<candidates->count&&!found;i++) {
+                        DiamondChannel *candidate=
+                            ((DiamondChannelHandle *)candidates->values[i].as.object)->channel;
+                        pthread_mutex_lock(&candidate->lock);
+                        if(candidate->count==0) {
+                            if(candidate->closed)drained[i]=true;
+                            else open_count++;
+                            pthread_mutex_unlock(&candidate->lock);
+                            continue;
+                        }
+                        DiamondValue copied=DIAMOND_NIL;
+                        if(!copy_value_into_vm(vm,candidate->queue[0],nullptr,
+                               candidate->private_program->classes,chunk->classes,
+                               nullptr,&copied)) {
+                            pthread_mutex_unlock(&candidate->lock);
+                            free(drained);
+                            snprintf(vm->error,sizeof vm->error,
+                                "Channel.select result does not support this type");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        memmove(candidate->queue,candidate->queue+1,
+                            (candidate->count-1)*sizeof *candidate->queue);
+                        candidate->count--;
+                        candidate->private_vm->extra_root_count=candidate->count;
+                        notify_channel_waiters(candidate);
+                        pthread_cond_signal(&candidate->not_full);
+                        pthread_mutex_unlock(&candidate->lock);
+                        /* Root the value in dest before allocating the result
+                         * pair, which may trigger a collection. */
+                        registers[dest]=copied;
+                        const DiamondValue pair_values[2]={DIAMOND_INT((int64_t)i),copied};
+                        DiamondArray *pair=allocate_array(vm,pair_values,2);
+                        if(pair==nullptr) {
+                            free(drained);
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        }
+                        selected=DIAMOND_OBJECT(pair);
+                        found=true;
+                    }
+                    if(found)break;
+                    /* Closed and drained everywhere: nothing can ever arrive. */
+                    if(open_count==0)break;
+                    if(select_timed) {
+                        struct timespec now;
+                        if(clock_gettime(CLOCK_MONOTONIC,&now)!=0 ||
+                           deadline_value.as.real-(double)now.tv_sec-(double)now.tv_nsec/1e9<=0)
+                            break;
+                    }
+                    struct pollfd wait_fd[1];
+                    const DiamondVmStatus select_status=cancellable_wait_helper(vm,nullptr,
+                        false,channels_value,deadline_value,wait_fd,0,drained);
+                    if(select_status!=DIAMOND_VM_OK) {
+                        free(drained);
+                        VM_RETURN(select_status);
+                    }
+                }
+                free(drained);
+                registers[dest]=selected;
+                break;
+            }
             case DIAMOND_OP_SUPERVISOR_NEW: {
                 /* Zero-arg constructor, same shape as DIAMOND_OP_PROGRAM_
                  * BUILDER_NEW above -- v1 has no configurable policy
@@ -25253,7 +25360,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     /* Unlink before returning to the VM's signal dispatcher:
                      * handlers can close sockets or cancellation sources. */
                     VM_PROPAGATE(cancellable_wait_helper(vm,nullptr,false,
-                        cancellations,deadline,fds,fd_count));
+                        cancellations,deadline,fds,fd_count,nullptr));
                 } else if(timeout.kind==DIAMOND_VALUE_INT) {
                     const int64_t timeout_value=registers[timeout_reg].as.integer;
                     const int timeout_ms=timeout_value<0?-1:

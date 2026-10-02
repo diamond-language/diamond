@@ -4881,6 +4881,42 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* Channel.select(channels[, deadline]) -- see docs/threads.md's Channels
+ * section. The deadline is optional (nil when omitted). */
+static uint16_t parse_channel_select_call(Compiler *compiler) {
+    advance_token(compiler); /* consume 'select' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Channel.select'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t channels_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint16_t deadline_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        deadline_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        deadline_register=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_NIL);
+        emit_register(compiler,deadline_register);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Channel.select arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CHANNEL_SELECT);
+    emit_register(compiler,dest);
+    emit_register(compiler,channels_register);
+    emit_register(compiler,deadline_register);
+    return dest;
+}
+
 /* Channel.new(capacity) -- see docs/threads.md's Channels section. A
  * single required Int argument, unlike Thread.new's own variadic
  * callable+args shape just above -- closer to parse_time_at_call's own
@@ -4891,9 +4927,12 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
  * File.open/SQLite3.open use their own distinct names). */
 static uint16_t parse_channel_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"select",compiler->current.span,false))
+        return parse_channel_select_call(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'new' after 'Channel'");
+        fail(compiler,compiler->current.span,"expected 'new' or 'select' after 'Channel'");
         return 0;
     }
     advance_token(compiler); /* consume 'new' */

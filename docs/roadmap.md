@@ -141,10 +141,9 @@ opens up, none attempted yet, none committed:
 `send`/`receive`/`try_send`/`try_receive`/`close`. Real possibilities this
 opens up, none attempted yet, none committed:
 
-- **select-across-multiple-channels** (Go's own `select`) -- receive from
-  whichever of several channels has something ready first. Needs a real
-  design for waiting on more than one channel's own condition variable at
-  once, not just a bigger API surface;
+- **send-side select** -- `Channel.select` (docs/threads.md) covers the
+  receive side only; waiting to `send` on whichever of several channels has
+  room is not provided, and no use case has asked for it;
 - **unbounded/rendezvous channels** -- `Channel.new(0)`-style synchronous
   handoff, or no capacity limit at all. Deliberately out of v1's own scope
   (a bound keeps memory use predictable and gives `send` real backpressure)
