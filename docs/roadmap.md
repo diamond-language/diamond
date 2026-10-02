@@ -59,14 +59,9 @@ yet, none committed:
 deliberately shallow -- freezing a `Hash`/`Array`/`Instance` marks only
 that one value, never anything it merely references (an ivar holding a
 separate `Array` stays exactly as mutable as it was, matching Ruby's own
-shallow-freeze semantics). Real possibilities this opens up, none
-attempted yet, none committed:
+shallow-freeze semantics; `deep_freeze` is the transitive form). Real
+possibilities this opens up, none attempted yet, none committed:
 
-- **deep/recursive freeze** -- a `freeze(deep: true)`-style option (or a
-  separate method) that walks a frozen value's own fields/elements and
-  freezes those too. Needs a real cycle-detection story (a frozen
-  `Instance` holding an ivar that, transitively, holds a reference back
-  to itself) that a plain recursive walk doesn't get for free;
 - **frozen string/array literals** -- some languages let a literal itself
   be frozen at the point it's written (`# frozen_string_literal: true` in
   Ruby, or a `%i[]`-style always-frozen literal), avoiding a separate
@@ -152,17 +147,13 @@ opens up, none attempted yet, none committed:
 
 ### `Supervisor`
 
-`Supervisor` (docs/threads.md, landed this cycle) is a flat, `one_for_one`-
-only restart-on-crash primitive -- `add_child`/`stop`/`join`/`restart_count`/
+`Supervisor` (docs/threads.md, landed this cycle) is a flat restart-on-crash
+primitive (`one_for_one`, `one_for_all`, `rest_for_one`) -- `add_child`/`stop`/`join`/`restart_count`/
 `last_error`/`alive?`. Genuine supervision *trees* need no new mechanism (a
 supervised child is just a closure free to create and manage its own nested
 `Supervisor`, see docs/threads.md's own example), but real possibilities
 remain, none attempted yet, none committed:
 
-- **`one_for_all`/`rest_for_one` restart strategies** (Erlang's other two)
-  -- restarting every sibling, or every sibling started after the crashed
-  one, instead of just the one child. Needs the retry loop to reach across
-  sibling children, not just its own slot;
 - **configurable restart intensity/backoff** -- v1's fixed 20ms delay
   between a crash and the next restart, with no cap, is a safety valve, not
   a policy; a real "give up after N crashes in M seconds" (Erlang's own

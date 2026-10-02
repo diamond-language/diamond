@@ -179,8 +179,10 @@ See the [design and limitations](cancellation.md) and
 
 `Supervisor` restarts a worker automatically when it crashes -- an uncaught
 exception or an internal VM failure -- instead of just ending it the way a
-plain `Thread` would. It restarts only the crashed worker (Erlang's
-`one_for_one` strategy); a crash in one child never affects its siblings.
+plain `Thread` would. By default it restarts only the crashed worker
+(Erlang's `one_for_one` strategy); a crash in one child never affects its
+siblings. `Supervisor.new(:one_for_all)` and `Supervisor.new(:rest_for_one)`
+choose the other two strategies -- see [Restart strategies](#restart-strategies).
 
 ```ruby
 def fetch_loop(url)
@@ -230,6 +232,30 @@ restarts -- a child that keeps crashing and restarting forever blocks
 `join()` forever too, exactly as joining a `Thread` that never returns
 already does. With the cancellation cut, cancel a shared source first and have
 workers catch expected cancellation and return normally before calling `stop()`.
+
+### Restart strategies
+
+`Supervisor.new(strategy)` takes an optional strategy symbol:
+
+- `:one_for_one` (the default, same as `Supervisor.new()`): only the crashed
+  child restarts.
+- `:one_for_all`: when any child crashes, every other child that is still
+  running restarts too.
+- `:rest_for_one`: when a child crashes, the children added *after* it
+  restart too; earlier children are untouched.
+
+Any other value raises `TypeError`. Children that already finished with a
+clean return stay finished under every strategy.
+
+A sibling is restarted by interrupting its current attempt: its VM stops at
+the next instruction and the attempt is discarded (the interruption is not
+an exception, so a `rescue` cannot swallow it). Like `stop()`, this is
+cooperative -- a sibling parked in a blocking native call (`Channel#receive`,
+a socket read) is restarted only once that call returns, and code running in
+the opt-in JIT is not interrupted mid-function. A restarted sibling's
+`restart_count` goes up and its `last_error` becomes `"restarted: a sibling
+crashed"`; it restarts without the 20ms crash delay, since the attempt was
+not failing on its own.
 
 A `Supervisor` cannot cross a `Thread.new`/`Channel` boundary -- passing
 one raises `TypeError`, same as `Thread`, `File`, and the other native-

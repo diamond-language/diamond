@@ -23,6 +23,7 @@
 #include "value.h"
 #include "object.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <ucontext.h>
@@ -1367,6 +1368,12 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_NONLOCAL_EXIT,
     /* Reading before initialization or executing a constant assignment twice. */
     DIAMOND_VM_CONSTANT_ERROR,
+    /* A Supervisor interrupted this supervised child because a sibling
+     * crashed under a `one_for_all`/`rest_for_one` strategy -- see
+     * DiamondVm.interrupt_flag. Never an exception (no exception class
+     * maps to it, so `rescue` cannot swallow it), and only ever
+     * observed by the supervisor's own retry loop. */
+    DIAMOND_VM_INTERRUPTED,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -1814,6 +1821,13 @@ struct DiamondVm {
     size_t instructions_executed;
     int64_t start_time_ns;
     bool resource_limits_active;
+    /* Non-null only for a supervised child's own per-attempt VM under a
+     * non-`one_for_one` Supervisor strategy: the per-opcode check above
+     * (which this also turns resource_limits_active on for) returns
+     * DIAMOND_VM_INTERRUPTED once another thread sets it. Cooperative,
+     * like every other stop in Diamond -- a child parked in a blocking
+     * native call notices only when that call returns. */
+    atomic_bool *interrupt_flag;
     /* Set once, by maybe_collect (src/vm.c), the first time a configured
      * DIAMOND_MAX_MEMORY_BYTES budget is actually exceeded -- lets
      * exception_class_for_status tell "the OOM this program is seeing was
