@@ -1,0 +1,18 @@
+scalars: null true 1 -5 1.5 100.0 1e+20 1e-07
+big: 1267650600228229401496703205376
+nan: RAISED JSONError cannot convert NaN to JSON
+inf: RAISED JSONError cannot convert Infinity to JSON
+neginf: RAISED JSONError cannot convert -Infinity to JSON
+escapes: "a\"b\\c\nd\re\tf\u0001g\u001fhi/é€😀"
+symbol key: {"a":1}
+str key: {"a":1}
+int key: {"1":2,"2.5":3,"true":4,"nil":5}
+obj key: {"FOO":1}
+symbol value: RAISED JSONError cannot convert this value to JSON
+instance: RAISED JSONError cannot convert this value to JSON
+range: RAISED JSONError cannot convert this value to JSON
+nested: [1,[2,{"a":[null,true]}],"x"]
+empty: [[],{}]
+key escape: {"a\"b":1}
+frozen: [1]
+nil

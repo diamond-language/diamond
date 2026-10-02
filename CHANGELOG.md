@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- `JSON.stringify` is now native, matching `JSON.parse`. Output is byte-for-byte
+  what the Diamond implementation produced, at roughly 70-80x the speed (a
+  313-byte object: 96 us -> 1.4 us; 21 KB: 5.8 ms -> 71 us), which raised a
+  small JSON-returning `gremlin_serve` endpoint's throughput by about 50% at
+  every worker count. It also fixes a crash: documents nested more than about
+  44 levels segfaulted on release builds, and an Array or Hash containing
+  itself recursed until it crashed. Nesting is now bounded at 91 levels (the
+  same bound as `JSON.parse`) and deeper or self-containing values raise
+  `SystemStackError`.
+
 ## 0.10.1 — 2026-10-02
 
 ### Runtime

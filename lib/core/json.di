@@ -2,7 +2,8 @@
 module JSON
   module_function
 
-  def stringify(value) -> String = JSONCodec.new().stringify(value)
+  # Native (diamond_json_stringify, src/vm.c) -- see json_codec.di.
+  def stringify(value) -> String = diamond_json_stringify(value)
   # Native (String#parse_json, src/vm.c) -- see its own comment for why.
   def parse(source: String) = source.parse_json()
 end

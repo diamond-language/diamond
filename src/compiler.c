@@ -5909,6 +5909,28 @@ static uint16_t parse_to_int_call(Compiler *compiler) {
     return dest;
 }
 
+/* diamond_json_stringify(value): the native behind JSON.stringify (see
+ * lib/core/json.di and json_write_value in src/vm.c). Named with the same
+ * diamond_ prefix lib/core.di's other internal natives use, so it doesn't
+ * take a plain name away from user programs. */
+static uint16_t parse_json_stringify_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const uint16_t source = parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_JSON_STRINGIFY);
+    emit_register(compiler,dest);
+    emit_register(compiler,source);
+    compiler->known_types[dest]=DIAMOND_TYPE_STRING;
+    return dest;
+}
+
 static uint16_t parse_to_sym_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */
     skip_newlines(compiler);
@@ -7131,6 +7153,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"to_sym",name,false))
         return parse_to_sym_call(compiler);
+    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       name_equals(compiler,"diamond_json_stringify",name,false))
+        return parse_json_stringify_call(compiler);
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"sqrt",name,false))
