@@ -193,7 +193,9 @@ those. Hash keys that aren't Strings are written as their string form
 Strings are escaped as JSON requires (quotes, backslashes, and control
 characters) and otherwise written byte for byte. Anything else -- a
 `Symbol`, an instance, `NaN`, `Infinity` -- raises a rescuable `JSONError`.
-Output is compact, with no whitespace.
+Output is compact, with no whitespace. Nesting is limited to 91 levels, the same
+bound `JSON.parse` uses; a deeper document, or an Array/Hash that contains
+itself, raises `SystemStackError` rather than recursing without end.
 
 `JSON.parse(text)` (also `text.parse_json()`) returns the value a JSON
 document describes: objects become Hashes with String keys, arrays become

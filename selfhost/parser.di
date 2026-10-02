@@ -121,6 +121,8 @@ module Opcode
   TO_FLOAT = 85
   TO_INT = 86
   TO_SYMBOL = 87
+  # DIAMOND_OP_JSON_STRINGIFY (native JSON.stringify): keep in step with src/vm.h.
+  JSON_STRINGIFY = 178
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
@@ -4902,7 +4904,8 @@ class Parser
     return true if name == "chr"
     return true if name == "to_f"
     return true if name == "to_i"
-    name == "to_sym"
+    return true if name == "to_sym"
+    name == "diamond_json_stringify"
   end
 
   def parse_builtin_scalar_call(name)
@@ -4910,6 +4913,7 @@ class Parser
     return self.parse_chr_call() if name == "chr"
     return self.parse_to_float_call() if name == "to_f"
     return self.parse_to_int_call() if name == "to_i"
+    return self.parse_json_stringify_call() if name == "diamond_json_stringify"
     self.parse_to_sym_call()
   end
 
@@ -4955,6 +4959,10 @@ class Parser
 
   def parse_to_sym_call()
     self.parse_scalar_conversion_call(Opcode::TO_SYMBOL, Type::SYMBOL)
+  end
+
+  def parse_json_stringify_call()
+    self.parse_scalar_conversion_call(Opcode::JSON_STRINGIFY, Type::STRING)
   end
 
   def is_math_unary_target(name)

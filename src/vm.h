@@ -562,6 +562,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TCP_CONNECT_NONBLOCK, /* dest, numeric address, port */
     DIAMOND_OP_DNS_RESOLVE, /* dest, hostname, cancellation channels, deadline */
     DIAMOND_OP_TLS_START_HANDSHAKE, /* dest, connected Socket, hostname, options */
+    DIAMOND_OP_JSON_STRINGIFY, /* dest, value (native JSON.stringify) */
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

@@ -11729,6 +11729,191 @@ static DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
     return DIAMOND_VM_OK;
 }
 
+/* Native JSON.stringify, replacing lib/core/json_codec.di's pure-Diamond
+ * JSONCodec#stringify (which cost ~4us per call before touching any data,
+ * ~11us per small 3-field object, and recursed through two interpreted
+ * calls per nesting level -- so a ~44-deep document hit
+ * DIAMOND_MAX_CALL_DEPTH, and on a release build crashed with a real C
+ * stack overflow instead of raising). Output is byte-for-byte what the
+ * Diamond version produced: nil/true/false as null/true/false; Int, bignum
+ * and Float exactly as `"#{value}"` prints them (a Float that is NaN or
+ * infinite raises JSONError, "cannot convert NaN to JSON"); strings
+ * escape `"`, `\`, \n, \r, \t and every other byte below 0x20 as a
+ * lowercase \u00xx, and pass every other byte (including all of UTF-8 and
+ * 0x7f) through untouched; Hash keys that aren't Strings go through to_s
+ * (a Symbol's bare name, a user class's own to_s, ...); anything that
+ * isn't one of those kinds raises JSONError "cannot convert this value to
+ * JSON".
+ *
+ * Nesting recurses in C, so it is bounded the same way (and for the same
+ * reason) json_parse_array is: by DIAMOND_MAX_CALL_DEPTH, raising the
+ * ordinary SystemStackError. That also turns a self-containing Array/Hash
+ * into a clean error instead of unbounded recursion.
+ *
+ * GC safety: the output accumulates in a plain malloc'd buffer (no GC
+ * objects at all), and the value being encoded stays rooted by the
+ * caller's own register for the whole call. The only GC-visible
+ * allocation mid-walk is a non-String, non-Symbol Hash key's to_s result,
+ * which is copied into the buffer immediately and never held. A to_s is
+ * arbitrary code and may mutate the very collection being walked, so
+ * counts are re-read every step and a Hash entry is read only after its
+ * key has been converted. */
+static bool builder_format_value(StringBuilder *builder,DiamondValue value);
+
+typedef struct JsonWriter {
+    DiamondVm *vm;
+    const DiamondChunk *chunk;
+    size_t call_depth;
+    size_t nesting;
+    StringBuilder out;
+} JsonWriter;
+
+static bool json_write_string(StringBuilder *out,const char *chars,size_t length) {
+    static const char hex[]="0123456789abcdef";
+    if(!builder_append(out,"\"",1))return false;
+    size_t run=0;
+    for(size_t index=0;index<length;index++) {
+        const unsigned char c=(unsigned char)chars[index];
+        if(c>=0x20&&c!='"'&&c!='\\')continue;
+        if(index>run&&!builder_append(out,chars+run,index-run))return false;
+        run=index+1;
+        bool ok;
+        switch(c) {
+            case '"':ok=builder_append(out,"\\\"",2);break;
+            case '\\':ok=builder_append(out,"\\\\",2);break;
+            case '\n':ok=builder_append(out,"\\n",2);break;
+            case '\r':ok=builder_append(out,"\\r",2);break;
+            case '\t':ok=builder_append(out,"\\t",2);break;
+            default: {
+                const char escape[6]={'\\','u','0','0',hex[c>>4],hex[c&15]};
+                ok=builder_append(out,escape,6);
+            }
+        }
+        if(!ok)return false;
+    }
+    if(length>run&&!builder_append(out,chars+run,length-run))return false;
+    return builder_append(out,"\"",1);
+}
+
+static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value);
+
+static DiamondVmStatus json_write_hash_key(JsonWriter *writer,DiamondValue key) {
+    StringBuilder *out=&writer->out;
+    if(key.kind==DIAMOND_VALUE_OBJECT) {
+        const DiamondObject *object=key.as.object;
+        if(object->kind==DIAMOND_OBJECT_STRING) {
+            const DiamondString *string=(const DiamondString *)object;
+            return json_write_string(out,string->chars,string->length)?
+                DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        if(object->kind==DIAMOND_OBJECT_SYMBOL) {
+            const DiamondSymbol *symbol=(const DiamondSymbol *)object;
+            return json_write_string(out,symbol->chars,symbol->length)?
+                DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
+    /* Everything else is "#{key}" -- the same conversion string
+     * interpolation does, including a user class's own to_s. */
+    DiamondValue text=DIAMOND_NIL;
+    const DiamondVmStatus status=stringify_value(writer->vm,writer->chunk,
+        writer->call_depth,key,&text);
+    if(status!=DIAMOND_VM_OK)return status;
+    const DiamondString *string=(const DiamondString *)text.as.object;
+    return json_write_string(out,string->chars,string->length)?
+        DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+}
+
+static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
+    StringBuilder *out=&writer->out;
+    switch(value.kind) {
+        case DIAMOND_VALUE_NIL:
+            return builder_append(out,"null",4)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        case DIAMOND_VALUE_BOOL:
+            return builder_append(out,value.as.boolean?"true":"false",
+                value.as.boolean?4:5)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        case DIAMOND_VALUE_INT:
+            return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        case DIAMOND_VALUE_FLOAT:
+            /* JSON has no NaN or Infinity. */
+            if(isnan(value.as.real)||isinf(value.as.real)) {
+                snprintf(writer->vm->error,sizeof writer->vm->error,
+                    "cannot convert %s to JSON",isnan(value.as.real)?"NaN":
+                    value.as.real<0?"-Infinity":"Infinity");
+                return DIAMOND_VM_JSON_ERROR;
+            }
+            return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+        case DIAMOND_VALUE_OBJECT:
+            break;
+        default:
+            snprintf(writer->vm->error,sizeof writer->vm->error,
+                "cannot convert this value to JSON");
+            return DIAMOND_VM_JSON_ERROR;
+    }
+    if(value_is_bignum(value))
+        return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+    const DiamondObject *object=value.as.object;
+    if(object->kind==DIAMOND_OBJECT_STRING) {
+        const DiamondString *string=(const DiamondString *)object;
+        return json_write_string(out,string->chars,string->length)?
+            DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    if(object->kind!=DIAMOND_OBJECT_ARRAY&&object->kind!=DIAMOND_OBJECT_HASH) {
+        snprintf(writer->vm->error,sizeof writer->vm->error,
+            "cannot convert this value to JSON");
+        return DIAMOND_VM_JSON_ERROR;
+    }
+    if(writer->nesting>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
+    writer->nesting++;
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    if(object->kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *array=(const DiamondArray *)object;
+        if(!builder_append(out,"[",1))status=DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;status==DIAMOND_VM_OK&&index<array->count;index++) {
+            if(index>0&&!builder_append(out,",",1)) {
+                status=DIAMOND_VM_OUT_OF_MEMORY;break;
+            }
+            status=json_write_value(writer,array->values[index]);
+        }
+        if(status==DIAMOND_VM_OK&&!builder_append(out,"]",1))
+            status=DIAMOND_VM_OUT_OF_MEMORY;
+    } else {
+        const DiamondHash *hash=(const DiamondHash *)object;
+        if(!builder_append(out,"{",1))status=DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;status==DIAMOND_VM_OK&&index<hash->count;index++) {
+            if(index>0&&!builder_append(out,",",1)) {
+                status=DIAMOND_VM_OUT_OF_MEMORY;break;
+            }
+            status=json_write_hash_key(writer,hash->entries[index].key);
+            if(status!=DIAMOND_VM_OK)break;
+            if(!builder_append(out,":",1)) {
+                status=DIAMOND_VM_OUT_OF_MEMORY;break;
+            }
+            /* The key's to_s may have shrunk the Hash. */
+            if(index>=hash->count)break;
+            status=json_write_value(writer,hash->entries[index].value);
+        }
+        if(status==DIAMOND_VM_OK&&!builder_append(out,"}",1))
+            status=DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    writer->nesting--;
+    return status;
+}
+
+/* JSON.stringify's single entry point; `*result` is a fresh String. */
+static DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,DiamondValue value,DiamondValue *result) {
+    JsonWriter writer={.vm=vm,.chunk=chunk,.call_depth=depth};
+    DiamondVmStatus status=json_write_value(&writer,value);
+    if(status==DIAMOND_VM_OK) {
+        DiamondString *text=allocate_string(vm,writer.out.chars!=nullptr?
+            writer.out.chars:"",writer.out.length);
+        if(text==nullptr)status=DIAMOND_VM_OUT_OF_MEMORY;
+        else *result=DIAMOND_OBJECT(text);
+    }
+    free(writer.out.chars);
+    return status;
+}
+
 /* Breaks a Time's epoch into calendar fields. UTC and fixed offsets use
  * gmtime_r (the latter after shifting the epoch); process-local time uses
  * localtime_r and therefore remains DST-aware and system-tzdata-backed.
@@ -25465,6 +25650,16 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     source_string->length);
                 if(symbol==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[dest]=DIAMOND_OBJECT(symbol);
+                break;
+            }
+            case DIAMOND_OP_JSON_STRINGIFY: {
+                uint16_t dest=0,source=0;
+                READ_SHORT(dest);READ_SHORT(source);
+                DiamondValue json_text=DIAMOND_NIL;
+                const DiamondVmStatus json_status=json_stringify_document(
+                    vm,chunk,depth,registers[source],&json_text);
+                VM_PROPAGATE(json_status);
+                registers[dest]=json_text;
                 break;
             }
             case DIAMOND_OP_MATH_UNARY: {
