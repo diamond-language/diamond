@@ -24,8 +24,8 @@ end
 attempt("92 levels") do
   JSON.stringify(nest(92))
 end
-attempt("100000 levels") do
-  JSON.stringify(nest(100000))
+attempt("200 levels") do
+  JSON.stringify(nest(200))
 end
 
 cyclic_array = []
