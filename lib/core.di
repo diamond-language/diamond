@@ -1707,7 +1707,13 @@ def diamond_string_index(text: String, needle: String) -> Int | Nil = text.index
 def diamond_string_hex(text: String) -> Int = text.to_i(16)
 def diamond_string_oct(text: String) -> Int = text.to_i(8)
 def diamond_string_to_sym(text: String) -> Symbol = to_sym(text)
-def diamond_string_match(text: String, pattern) -> Bool = pattern.match?(text)
+# A String pattern is compiled to a Regexp, as in Ruby. Without this branch
+# `pattern.match?(text)` would dispatch right back here (a String receiver),
+# recursing until the call stack overflowed.
+def diamond_string_match(text: String, pattern) -> Bool
+  pattern = Regexp.new(pattern) if pattern is String
+  pattern.match?(text)
+end
 def diamond_string_to_s(text: String) -> String = text
 
 # The last position of `needle`, or nil.

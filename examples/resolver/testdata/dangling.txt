@@ -1,0 +1,2 @@
+web 1.0.0 rack:* ghost:*
+admin 1.0.0 web:* ghost:* phantom:>=1.0.0
