@@ -195,7 +195,7 @@ runs as interpreted bytecode.
 
 ## Follow-ups
 
-1. **Native or cheaper `JSON.stringify`.** It dominates a typical API handler
+1. **Done: native `JSON.stringify`** (see the changelog). Original note: **Native or cheaper `JSON.stringify`.** It dominates a typical API handler
    (as costly as 2000 loop iterations for a 313-byte body). Options: a native
    implementation, or at least avoiding a codec allocation per call. Measure
    with the `json.di`-style microbenchmark above before and after.
@@ -203,3 +203,18 @@ runs as interpreted bytecode.
    core, `ab` on its own core) to get a clean best-case curve for the docs.
 3. **Keep-alive** remains a separate design question (see below); it would cut
    the roughly one-third kernel share but is not needed to explain scaling.
+
+### After native `JSON.stringify` (same machine, same sweep, 3 rounds)
+
+| threads | before req/s | after req/s | change |
+|---:|---:|---:|---:|
+| 2 | 2,980 | 4,636 | +56% |
+| 4 | 4,645 | 7,090 | +53% |
+| 6 | 5,299 | 7,909 | +49% |
+| 8 | 5,507 | 8,233 | +50% |
+| 10 | 5,623 | 8,451 | +50% |
+| 12 | 5,657 | 8,244 | +46% |
+
+The shape is unchanged (clock and SMT limit scaling, as above); the whole curve
+moved up. What remains per request is the 2000-iteration loop (about 131 us),
+the kernel's connection setup, and the HTTP parse/respond path.

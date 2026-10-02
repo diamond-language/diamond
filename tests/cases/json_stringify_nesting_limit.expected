@@ -1,0 +1,8 @@
+102
+184
+92 levels: SystemStackError
+100000 levels: SystemStackError
+array containing itself: SystemStackError
+hash containing itself: SystemStackError
+[1,{"a":[2]}]
+nil
