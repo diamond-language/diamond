@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.10.1 — 2026-10-02
+
+### Runtime
+
+- Fixed a stack overflow in `String#match?` when the pattern is a String
+  (`"12".match?("^[0-9]+$")`): it dispatched back to itself indefinitely. A
+  String pattern is now compiled to a `Regexp` first, as in Ruby.
+
 ## 0.10.0 — 2026-10-01
 
 - The registry launch seed now selects gremlin 0.4.0 (token-driven shutdown).
