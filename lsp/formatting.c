@@ -476,6 +476,20 @@ static bool leading_already_correct(const char *content,size_t leading,size_t ta
     return true;
 }
 
+/* True iff byte offset `position` falls strictly inside a string literal
+ * token, i.e. a literal that spans physical lines. A line that STARTS
+ * inside one (its leading whitespace) or whose newline is inside one (its
+ * trailing whitespace) is string content, not source layout, so
+ * re-indenting or trimming it would change the program's value. */
+static bool inside_string_token(const DiamondToken *tokens,size_t token_count,size_t position) {
+    for(size_t index=0;index<token_count;index++) {
+        if(tokens[index].kind!=DIAMOND_TOKEN_STRING)continue;
+        if(tokens[index].span.start<position&&
+           position<tokens[index].span.start+tokens[index].span.length)return true;
+    }
+    return false;
+}
+
 JsonValue *formatting_compute(const char *text,size_t length) {
     char *source_copy=malloc(length+1);
     if(source_copy==nullptr)return nullptr;
@@ -499,14 +513,13 @@ JsonValue *formatting_compute(const char *text,size_t length) {
     if(depths==nullptr) {free(lines);free(tokens);free(source_copy);return nullptr;}
     const bool balanced=line_count==0?true:
         compute_line_depths(tokens,token_count,line_count,depths);
-    free(tokens);
     if(!balanced) {
-        free(depths);free(lines);free(source_copy);
+        free(tokens);free(depths);free(lines);free(source_copy);
         return json_null();
     }
 
     JsonValue *result=json_array();
-    if(result==nullptr) {free(depths);free(lines);free(source_copy);return nullptr;}
+    if(result==nullptr) {free(tokens);free(depths);free(lines);free(source_copy);return nullptr;}
     bool build_ok=true;
     for(size_t index=0;index<line_count&&build_ok;index++) {
         const FormatLine current=lines[index];
@@ -519,6 +532,14 @@ JsonValue *formatting_compute(const char *text,size_t length) {
               (content[trailing_start-1]==' '||content[trailing_start-1]=='\t'))
             trailing_start--;
         const bool blank_line=trailing_start==leading;
+
+        /* Lines that begin or end inside a multi-line string literal are
+         * string content: leave them byte-for-byte alone. */
+        const bool starts_in_string=
+            inside_string_token(tokens,token_count,current.start);
+        const bool ends_in_string=
+            inside_string_token(tokens,token_count,current.start+current.length);
+        if(starts_in_string&&ends_in_string)continue;
 
         const size_t target_spaces=blank_line?0:
             (size_t)(depths[index].depth<0?0:depths[index].depth)*2;
@@ -533,7 +554,7 @@ JsonValue *formatting_compute(const char *text,size_t length) {
             continue;
         }
 
-        if(!leading_already_correct(content,leading,target_spaces)) {
+        if(!starts_in_string&&!leading_already_correct(content,leading,target_spaces)) {
             char *spaces=target_spaces==0?nullptr:malloc(target_spaces);
             if(target_spaces>0&&spaces==nullptr) {build_ok=false;break;}
             if(target_spaces>0)memset(spaces,' ',target_spaces);
@@ -544,14 +565,14 @@ JsonValue *formatting_compute(const char *text,size_t length) {
             }
         }
 
-        if(trailing_start<current.length) {
+        if(!ends_in_string&&trailing_start<current.length) {
             JsonValue *edit=text_edit(index+1,trailing_start,current.length,"",0);
             if(edit==nullptr||!json_array_push(result,edit)) {
                 json_free(edit);build_ok=false;break;
             }
         }
     }
-    free(depths);free(lines);free(source_copy);
+    free(tokens);free(depths);free(lines);free(source_copy);
     if(!build_ok) {json_free(result);return nullptr;}
     return result;
 }

@@ -2130,6 +2130,24 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_broken_uri"'"}}}'
 read_message >/dev/null
 
+# A string literal that spans lines: its continuation lines are string CONTENT
+# (the program's value), so their leading and trailing whitespace must be left
+# alone -- line 2 below ("   b  ") is inside the literal and gets no edit.
+# Line 3 starts inside the literal (leading untouched) but its closing quote
+# ends it, so the two spaces AFTER the quote are ordinary trailing whitespace
+# and are still trimmed.
+fmt_string_uri="file:///fmt_string.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_string_uri"'","text":"def f()\n  x = \"a\n   b  \nc\"  \n  x\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":181,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_string_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":181,"result":[{"range":{"start":{"line":3,"character":2},"end":{"line":3,"character":4}},"newText":""}]}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_string_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

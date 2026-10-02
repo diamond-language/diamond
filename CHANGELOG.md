@@ -6,6 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- LSP formatting no longer re-indents or trims lines inside multi-line string
+  literals, which previously changed the string's value.
+
 - Cancellation 0.6.0 adds `token.connect_tls`, sharing the DNS/TCP deadline with
   a verified TLS handshake. `TLSSocket.start_handshake`, `finish_handshake`, and
   `abort` provide readiness-driven negotiation and prompt failure cleanup.
