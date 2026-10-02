@@ -162,6 +162,23 @@ single barrier call there covers all of them (including a nested
 yield/resume chain, since each nested `.resume()` goes through this same
 call site for its own fiber).
 
+## Marking is iterative
+
+`mark_object` does not recurse into children. It marks the object, pushes it
+on a thread-local work stack, and, if it is the outermost call, drains the
+stack (`mark_object_children` on each popped object; nested `mark_object`
+calls just mark and push). The first version recursed once per nesting level,
+so a collection with a chain of tens of thousands of nested containers (or a
+long linked list of Instances) live overflowed the C stack. The stack is
+`thread_local` because the mark functions take no VM and each Thread collects
+its own heap concurrently; it is freed at the end of `mark_roots`, so nothing
+outlives a collection. If growing it fails (out of memory), that one object
+falls back to direct recursion, so marking stays correct. Marking order
+changes (LIFO instead of depth-first recursion) but the set of marked
+objects does not. `mark_object_children` remains the only place that lists
+each object kind's children. Tests: `tests/cases/gc_deep_chains` and
+`gc_deep_chain_in_thread`.
+
 ## Minor collection
 
 Roots = the existing root walk (registers, frame chains, fibers, VM-level

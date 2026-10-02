@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Fixed a crash in garbage collection of deeply nested data. Marking recursed
+  once per nesting level, so a collection running while a chain of tens of
+  thousands of nested Arrays, Hashes, or linked Instances was live overflowed
+  the C stack and crashed the process (about 50,000 levels on a debug build).
+  Marking now uses an explicit work stack, so depth is limited only by memory.
+
 - `JSON.stringify` is now native, matching `JSON.parse`. Output is byte-for-byte
   what the Diamond implementation produced, at roughly 70-80x the speed (a
   313-byte object: 96 us -> 1.4 us; 21 KB: 5.8 ms -> 71 us), which raised a
