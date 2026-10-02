@@ -704,7 +704,7 @@ test-exit: debug
 # The standalone example programs (examples/*/smoke_test.sh), each run
 # interpreted and as a `diamond build` binary. The web and chat examples
 # need databases or cuts and have their own instructions.
-EXAMPLE_SMOKE_TESTS := agenda brainfuck calc databases exact generators grades huffman kvstore leaderboard ledger life logstat markdown metrics models notes parallel pathfinder plugins pngmeta redact resolver spreadsheet taskrun template tictactoe tlsecho udiff vault vending
+EXAMPLE_SMOKE_TESTS := agenda brainfuck calc databases exact generators grades huffman kvstore leaderboard ledger life logstat markdown metrics models notes parallel pathfinder pipeline plugins pngmeta redact resolver spreadsheet taskrun template tictactoe tlsecho udiff vault vending
 test-examples: debug
 	@for example in $(EXAMPLE_SMOKE_TESTS); do \
 		bash examples/$$example/smoke_test.sh || exit 1; \

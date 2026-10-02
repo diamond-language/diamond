@@ -1,0 +1,14 @@
+== results
+  #1 Ada -> ada=Lovelace#29010
+  #2 grace -> grace=Hopper#9147
+  #4 Beam -> beam=Erlang#52628
+  #6 alan -> alan=Turing#60662
+  #8 linus -> linus=Torvalds#16223
+== dead letters
+  #3 spin at normalize: budget (stages/normalize.di: runtime error: resource limit exceeded)
+  #5 beacon at enrich: denied (stages/enrich.di: runtime error: sandbox denies TCPSocket.connect)
+  #7 poison at seal: gave up (stages/seal.di: runtime error: uncaught exception: seal failed on poison=? (attempt 3))
+== restarts
+  normalize: 0
+  enrich: 0
+  seal: 4
