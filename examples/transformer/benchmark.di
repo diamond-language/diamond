@@ -13,6 +13,9 @@ require "./lib/transformer_block"
 require "./lib/embedding"
 require "./lib/model"
 
+# The model's size: 6 layers of 512-wide, 8-head blocks, over a made-up
+# 8000-token vocabulary (nothing here is trained: the numbers only matter for
+# timing).
 vocab_size = 8000
 d_model = 512
 num_heads = 8
@@ -21,18 +24,23 @@ num_layers = 6
 max_seq_len = 128
 seq_len = 64
 
+# Build the model (timed separately: allocating and filling the weights is
+# real work at this size).
 rng = SimpleRng.new(7)
 t_build0 = Time.monotonic()
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
 t_build1 = Time.monotonic()
 
+# A fixed pseudo-random token sequence, so every run measures the same work.
 token_ids = []
 i = 0
+
 while i < seq_len
   token_ids.push(mod(i * 97 + 13, vocab_size))
   i += 1
 end
 
+# One timed forward pass.
 t0 = Time.monotonic()
 logits = model.forward(token_ids).tensor()
 t1 = Time.monotonic()

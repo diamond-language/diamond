@@ -7,6 +7,8 @@
 class LifeError < StandardError
 end
 
+# True if the text is a non-empty run of digits (used to validate the
+# generation count, since to_i() would quietly read "abc" as 0).
 def life_digits?(text: String) -> Bool
   return false if text.empty?()
   index = 0
@@ -18,6 +20,8 @@ def life_digits?(text: String) -> Bool
   true
 end
 
+# Reads a pattern: one row per line, '.' dead and '#' alive. Every row must
+# be as wide as the first.
 def grid_parse(text: String) -> Array
   lines = text.split("\n").reject() do |line| line.empty?() end
   if lines.empty?()
@@ -42,15 +46,20 @@ def grid_parse(text: String) -> Array
   end
 end
 
+# Is that cell alive? Anything outside the grid counts as dead, so edge
+# cells need no special case.
 def grid_alive?(grid: Array, row: Int, col: Int) -> Bool
   return false if row < 0 || row >= grid.length()
   return false if col < 0 || col >= grid[row].length()
   grid[row][col]
 end
 
+# How many of the 8 surrounding cells are alive: visit the 3x3 block around
+# the cell, skipping the centre (offset 0, 0).
 def grid_neighbors(grid: Array, row: Int, col: Int) -> Int
   count = 0
   delta_row = -1
+
   while delta_row <= 1
     delta_col = -1
     while delta_col <= 1
@@ -67,6 +76,10 @@ end
 # Conway's own rule: a live cell survives with 2 or 3 live neighbors, a
 # dead cell is born with exactly 3 -- every other combination dies or
 # stays dead.
+#
+# Every cell is judged against the OLD grid and written into a NEW one, so a
+# cell that changes this generation cannot affect its neighbors' counts in
+# the same generation.
 def grid_step(grid: Array) -> Array
   next_grid = []
   grid.each_with_index() do |row, row_index|
@@ -80,6 +93,7 @@ def grid_step(grid: Array) -> Array
   next_grid
 end
 
+# The grid back as text, in the same '.'/'#' form the parser reads.
 def grid_render(grid: Array) -> String
   grid.map() do |row|
     row.map() do |alive| alive ? "#" : "." end.join("")

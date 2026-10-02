@@ -4,17 +4,26 @@
 
 # The start below `high` (and at or above `low`) with the longest Collatz
 # sequence, as [start, length].
+#
+# The Collatz rule: halve an even number, otherwise triple it and add 1,
+# until reaching 1. It is pure CPU work with no I/O, so it shows what extra
+# cores buy.
 def collatz_longest(low: Int, high: Int) -> Array
   best = low
   best_length = 0
   n = low
+
   while n < high
+    # Count the steps for this starting value (the length includes the
+    # starting number itself).
     x = n
     length = 1
     while x != 1
       x = if x % 2 == 0 then x / 2 else 3 * x + 1 end
       length += 1
     end
+
+    # Keep the longest so far; on a tie the smaller start wins (strict >).
     if length > best_length
       best = n
       best_length = length
@@ -26,6 +35,8 @@ end
 
 # Word counts for one document, lowercased, punctuation dropped.
 def count_words(text: String) -> Hash
+  # Replace everything but letters, apostrophes and spaces with a space,
+  # split into words, drop empties, and `tally` counts each distinct word.
   words = text.downcase().gsub(Regexp.new("[^a-z' ]"), " ").split(" ")
   words.reject() do |word| word.empty?() end.tally()
 end
@@ -33,6 +44,8 @@ end
 # --- Worker-pool pieces --------------------------------------------------
 
 # Sends each job, then closes the channel so the workers know to stop.
+# The producer. Each job is [its position, the text], so results can be put
+# back in order later.
 def feed(jobs: Channel, documents: Array)
   documents.each_with_index() do |text, index|
     jobs.send([index, text])
@@ -56,6 +69,9 @@ end
 
 # --- Pipeline stages: each reads one channel and writes the next ---------
 
+# Three stages connected by channels, each running in its own thread:
+# numbers -> squares -> [n, digit sum]. Each closes its output when its input
+# ends, which cascades the "no more data" signal down the pipeline.
 def stage_numbers(output: Channel, limit: Int)
   1.upto(limit) do |n| output.send(n) end
   output.close()
@@ -82,6 +98,8 @@ end
 
 # --- Isolation and failure -----------------------------------------------
 
+# A counter in a class variable. Each thread has its OWN copy of the
+# module's state, which is what the isolation demo shows.
 module Tally
   def self.bump() -> Int
     @@count = (@@count || 0) + 1
@@ -94,6 +112,7 @@ def append_and_bump(values: Array) -> Array
   [values, Tally.bump()]
 end
 
+# Fails for negative input, to show an error in a thread surfacing at `join`.
 def fail_on(value: Int)
   raise ArgumentError.new("worker rejected #{value}") if value < 0
   value

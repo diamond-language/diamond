@@ -8,6 +8,12 @@
 # counting the frames the caller already uses. None of the failing shapes
 # is an error in the language; they just hit that limit.
 
+# Each function below counts down from n to 0 in a different SHAPE, and
+# `attempt` reports whether it survives n levels of recursion.
+#
+# The ideal: the recursive call is the whole value of a `return`, and the
+# running total travels in `acc`, so nothing is left to do after the call
+# returns. That is a tail call, and runs in constant stack.
 def count_tail(n: Int, acc: Int) -> Int
   return acc if n == 0
   return count_tail(n - 1, acc + 1)
@@ -41,6 +47,10 @@ def pong(n: Int, acc: Int) -> Int
   return ping(n - 1, acc + 1)
 end
 
+# Runs `work` (a zero-argument function) and prints one table row: the
+# shape, the depth, and whether the answer was right, wrong, or the stack
+# overflowed. SystemStackError is the "too deep" failure, and is rescued so
+# the demo can continue to the next shape.
 def attempt(label: String, depth: Int, expected: Int, work)
   result = begin
     value = work()
@@ -58,11 +68,18 @@ def main(argv) -> Int
     return 64
   end
   puts("#{"shape".ljust(34, " ")} #{"depth".rjust(8, " ")}   result")
+
+  # `attempt` takes a function value, so each shape is wrapped in a
+  # zero-argument nested def that captures n.
   def tail() = count_tail(n, 0)
   def plain() = count_plain(n)
   def guarded() = count_guarded(n, 0)
   def mutual() = ping(n, 0)
   def small() = count_plain(80)
+
+  # Expected: the self tail call passes at any depth; the three that are not
+  # self tail calls overflow at the large depth; and plain recursion is fine
+  # when it stays within the fixed limit (80 is under it).
   attempt("self tail call", n, n, tail)
   attempt("non-tail: 1 + f(n - 1)", n, n, plain)
   attempt("tail call inside begin/rescue", n, n, guarded)

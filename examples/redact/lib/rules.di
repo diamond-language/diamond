@@ -3,12 +3,19 @@
 # from a rules file (see load_rules).
 require "./checks"
 
+# `check` is optional extra validation: a function from the matched text to
+# true/false (nil means no extra check).
 struct Rule(name: String, pattern: Regexp, check: Callable | Nil)
 end
 
+# A bad line in a user's rules file.
 class RulesError < StandardError
 end
 
+# Order matters: rules run one after another, each on the output of the
+# previous, so the most specific ones come first. Some patterns use
+# lookbehind `(?<=...)` so that only the value is replaced and the label
+# ("Bearer ", "password=") stays readable in the output.
 def builtin_rules() -> Array[Rule]
   [
     Rule.new("private_key", Regexp.new("-----BEGIN [A-Z ]*PRIVATE KEY-----"), nil),
@@ -30,13 +37,21 @@ end
 def parse_rule_line(line: String, number: Int) -> Rule | Nil
   text = line.strip()
   return nil if text.empty?() || text.start_with?("#")
+
+  # Three whitespace-separated fields; the pattern is "the rest of the
+  # line", so it may itself contain spaces.
   parts = Regexp.new("^([a-z_][a-z0-9_]*)\\s+([-ix]+)\\s+(.+)$").match(text)
   raise RulesError.new("line #{number}: expected NAME FLAGS PATTERN") if parts == nil
+
+  # Turn the flag letters into the option bits Regexp.new takes (1 ignore
+  # case, 4 extended); "-" sets none.
   options = 0
   parts[2].chars().each() do |flag|
     options = options | 1 if flag == "i"
     options = options | 4 if flag == "x"
   end
+
+  # A pattern that does not compile is reported with its line number.
   begin
     Rule.new(parts[1], Regexp.new(parts[3], options), nil)
   rescue error: RegexpError
@@ -44,6 +59,8 @@ def parse_rule_line(line: String, number: Int) -> Rule | Nil
   end
 end
 
+# All the rules in a file, in file order. Rules from a file always have no
+# extra check.
 def load_rules(path: String) -> Array[Rule]
   rules = []
   number = 0

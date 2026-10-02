@@ -24,9 +24,13 @@ def tensor_column_sums(x) = x.column_sums()
 
 def tensor_add_columns!(dest, start, src) = dest.add_columns!(start, src)
 
+# A rows x cols Tensor of 1.0 (used for LayerNorm's initial gamma). Starts
+# from zeros and sets every cell; it is only built once per layer, so a
+# plain loop is fine here.
 def tensor_ones(rows, cols)
   result = Tensor.zeros(rows, cols)
   i = 0
+
   while i < rows
     j = 0
     while j < cols
@@ -35,6 +39,7 @@ def tensor_ones(rows, cols)
     end
     i += 1
   end
+
   result
 end
 
@@ -44,6 +49,8 @@ end
 # why this doesn't build via Tensor.from_array/a Diamond-level nested
 # Array any more).
 def tensor_random(rows, cols, rng, scale)
+  # Fill natively with values in [-1, 1) from a fresh seed, then scale the
+  # whole buffer to [-scale, scale).
   tensor = Tensor.random(rows, cols, rng.next_seed())
   tensor_scale!(tensor, scale)
   tensor
@@ -75,6 +82,8 @@ def tensor_columns(x, start, width) = x.columns(start, width)
 # for disjoint column ranges like these.
 def tensor_concat_columns(tensors)
   rows = tensors[0].rows()
+
+  # Pass 1: the result's total width is the sum of the inputs' widths.
   total_cols = 0
   t = 0
   while t < tensors.length()
@@ -82,6 +91,8 @@ def tensor_concat_columns(tensors)
     t += 1
   end
   result = Tensor.zeros(rows, total_cols)
+
+  # Pass 2: copy each input in at its running column offset.
   col_offset = 0
   t = 0
   while t < tensors.length()
@@ -90,5 +101,6 @@ def tensor_concat_columns(tensors)
     col_offset += tensor.cols()
     t += 1
   end
+
   result
 end

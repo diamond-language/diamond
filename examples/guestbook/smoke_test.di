@@ -35,38 +35,51 @@ end
 # single response, so last response's cookie is the only one that
 # reflects the latest session state; reusing an older one would silently
 # roll the session back to whatever it looked like at that point.
+# First visit: no cookie yet, so the app should start a session, count visit
+# 1, and hand back a Set-Cookie.
 first = web_app(web_request("GET", "/"), {})
 if first[0] != 200 then raise "first visit did not return 200" end
 if first[1]["Set-Cookie"] == nil then raise "first visit did not set a session cookie" end
 if !first[2].include?("Visits this session: 1") then raise "first visit did not show visit count 1" end
 cookie = cookie_pair(first[1]["Set-Cookie"])
 
+# Scrape the CSRF token out of the page the way the browser's own script
+# would use it: take the text between the `X-CSRF-Token': '` marker and the
+# next quote. The token is 32 random bytes hex-encoded, hence length 64.
 marker = "X-CSRF-Token': '"
 token_start = first[2].index_of(marker) + marker.length()
 after_marker = first[2].slice(token_start, first[2].length() - token_start)
 csrf_token = after_marker.slice(0, after_marker.index_of("'"))
 if csrf_token.length() != 64 then raise "CSRF token was not embedded in the page" end
 
+# Second visit, sending the cookie back: the counter must have survived the
+# round trip through the encrypted cookie.
 second = web_app(web_request("GET", "/", {"cookie": cookie}), {})
 if !second[2].include?("Visits this session: 2") then raise "session did not persist across requests" end
 cookie = cookie_pair(second[1]["Set-Cookie"])
 
+# CSRF: a POST with no token, then with a wrong one, must both be refused
+# with 403 before the handler ever runs.
 no_token = web_app(web_request("POST", "/notes", {"cookie": cookie}, JSON.stringify({"text": "hi"})), {})
 if no_token[0] != 403 then raise "note without a CSRF token was not rejected" end
 
 wrong_token = web_app(web_request("POST", "/notes", {"cookie": cookie, "x-csrf-token": "wrong"}, JSON.stringify({"text": "hi"})), {})
 if wrong_token[0] != 403 then raise "note with a wrong CSRF token was not rejected" end
 
+# The same POST with the correct token succeeds and returns the stored list.
 posted = web_app(web_request("POST", "/notes", {"cookie": cookie, "x-csrf-token": csrf_token}, JSON.stringify({"text": "hello world"})), {})
 if posted[0] != 200 then raise "note with the correct CSRF token was rejected" end
 posted_notes = JSON.parse(posted[2])["notes"]
 if posted_notes.length() != 1 || posted_notes[0] != "hello world" then raise "posted note was not stored" end
 cookie = cookie_pair(posted[1]["Set-Cookie"])
 
+# The note must now appear when the page is rendered again.
 after_post = web_app(web_request("GET", "/", {"cookie": cookie}), {})
 if !after_post[2].include?("hello world") then raise "posted note did not render on the next page load" end
 cookie = cookie_pair(after_post[1]["Set-Cookie"])
 
+# XSS: post a note containing a <script> tag, then check the page shows it
+# escaped (as visible text) and never as a live tag.
 xss = web_app(web_request("POST", "/notes", {"cookie": cookie, "x-csrf-token": csrf_token}, JSON.stringify({"text": "<script>bad</script>"})), {})
 if xss[0] != 200 then raise "second note was rejected" end
 cookie = cookie_pair(xss[1]["Set-Cookie"])
@@ -82,6 +95,9 @@ while i < 5
   cookie = cookie_pair(step[1]["Set-Cookie"])
   i = i + 1
 end
+
+# After 5 more posts the oldest ("hello world") must be gone, the newest
+# present.
 capped = web_app(web_request("GET", "/", {"cookie": cookie}), {})
 if capped[2].include?("hello world") then raise "note list was not capped at 5 entries" end
 if !capped[2].include?("note-4") then raise "the most recent note was dropped instead of the oldest" end
@@ -99,10 +115,13 @@ if !fresh[2].include?("Visits this session: 1") then raise "a fresh request shar
 fresh_cookie = cookie_pair(fresh[1]["Set-Cookie"])
 i = 0
 limited_status = nil
+
+# Make 30 more requests; the last response's status is the one that matters.
 while i < 30
   limited_status = web_app(web_request("GET", "/", {"cookie": fresh_cookie}), {})[0]
   i = i + 1
 end
+
 if limited_status != 429 then raise "RateLimit did not trip after exceeding its limit" end
 
 # Cors: a disallowed origin gets no grant (but the request still
@@ -112,10 +131,14 @@ disallowed = api_app(web_request("GET", "/api/status", {"origin": "https://evil.
 if disallowed[0] != 200 then raise "a disallowed-origin request was rejected server-side" end
 if disallowed[1]["Access-Control-Allow-Origin"] != nil then raise "a disallowed origin was granted CORS headers" end
 
+# An allowed origin is granted CORS headers, and the endpoint's body is
+# untouched.
 allowed = api_app(web_request("GET", "/api/status", {"origin": "https://trusted-partner.example"}), {})
 if allowed[1]["Access-Control-Allow-Origin"] != "https://trusted-partner.example" then raise "an allowed origin was not granted CORS headers" end
 if JSON.parse(allowed[2])["ok"] != true then raise "the API endpoint did not return its normal body" end
 
+# A CORS preflight (OPTIONS) is answered by the middleware itself with an
+# empty 204, never reaching api_status.
 preflight = api_app(web_request("OPTIONS", "/api/status", {"origin": "https://trusted-partner.example", "access-control-request-method": "GET"}), {})
 if preflight[0] != 204 || preflight[2] != "" then raise "a CORS preflight reached the app instead of being answered directly" end
 
@@ -124,6 +147,7 @@ if preflight[0] != 204 || preflight[2] != "" then raise "a CORS preflight reache
 api_via_dispatch = rack_app(web_request("GET", "/api/status", {"origin": "https://trusted-partner.example"}), {})
 if api_via_dispatch[1]["Set-Cookie"] != nil then raise "the API path unexpectedly went through CookieSession" end
 
+# An unknown path falls through to web_handler's 404.
 unknown = web_app(web_request("GET", "/nope"), {})
 if unknown[0] != 404 then raise "an unknown path did not 404" end
 

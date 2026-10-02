@@ -34,6 +34,8 @@ require "./lib/corpus"
 require "./lib/dataset"
 require "./lib/checkpoint"
 
+# Arguments. The two limits accept a number or the word "all" (nil means no
+# limit); the defaults are small so a first run finishes quickly.
 folder = ARGV[0]
 if folder == nil
   puts("usage: diamond train_corpus.di <folder> [checkpoint_path]")
@@ -67,12 +69,14 @@ measured_seconds_per_step = 4.2
 
 vocab_size = ByteTokenizer.vocab_size()
 
+# Load the text, and stop early with a clear message if there is none.
 text = Corpus.load(folder, [".txt", ".md", ".json"], max_files, max_stories)
 if text.length() == 0
   puts("no .txt/.md/.json files found under #{folder}")
   exit(1)
 end
 
+# Bytes -> ids -> fixed-length (input, target) windows.
 token_ids = ByteTokenizer.encode(text)
 examples = Dataset.windows(token_ids, seq_len, stride)
 if examples.length() == 0
@@ -80,6 +84,9 @@ if examples.length() == 0
   exit(1)
 end
 puts("#{examples.length()} training example(s) (seq_len=#{seq_len}, stride=#{stride})")
+
+# A rough time estimate up front, so a large corpus does not turn into a
+# surprise multi-hour run.
 estimated_hours = examples.length() * epochs * measured_seconds_per_step / 3600.0
 puts("estimated total training time: ~#{estimated_hours} hour(s) for #{epochs} epoch(s) (based on a ~#{measured_seconds_per_step}s/step measurement on this machine -- adjust max_stories/epochs above if this is too long)")
 
@@ -89,27 +96,35 @@ optimizer = SGD.new(model.parameters(), learning_rate)
 
 puts("model: vocab=#{vocab_size} d_model=#{d_model} heads=#{num_heads} d_ff=#{d_ff} layers=#{num_layers} seq_len=#{seq_len}")
 
+# One epoch is one pass over every window. One window = one training step.
 epoch = 0
 while epoch < epochs
   total_loss = 0.0
   example_index = 0
+
   while example_index < examples.length()
     pair = examples[example_index]
     inputs = pair[0]
     targets = pair[1]
 
+    # The same step as train.di: clear gradients, forward, loss, backward,
+    # update.
     optimizer.zero_grad!()
     logits = model.forward(inputs)
     loss = Loss.softmax_cross_entropy(logits, targets)
     backward!(loss)
     optimizer.step!()
 
+    # Accumulate for the epoch mean, and print every 20th example.
     total_loss += loss.tensor().get(0, 0)
     if mod(example_index, 20) == 0
       puts("epoch #{epoch} example #{example_index}/#{examples.length()}: loss #{loss.tensor().get(0, 0)}")
     end
     example_index += 1
   end
+
+  # End of epoch: report the mean loss and save, so an interrupted run
+  # still leaves usable weights.
   mean_loss = total_loss / examples.length()
   puts("epoch #{epoch} done: mean loss #{mean_loss}")
   Checkpoint.save(model, checkpoint_path)

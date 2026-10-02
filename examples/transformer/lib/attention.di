@@ -30,10 +30,16 @@ class MultiHeadAttention
   # packed/optimized masking a real implementation would use.
   def forward(x, causal)
     seq_len = x.tensor().rows()
+
+    # Project the input into queries, keys and values (each seq_len x
+    # d_model, all heads side by side).
     q = @query_proj.forward(x)
     k = @key_proj.forward(x)
     v = @value_proj.forward(x)
 
+    # Causal mask: a seq_len x seq_len matrix that is 0 on and below the
+    # diagonal and hugely negative above it (position i looking at later
+    # positions j > i). Added to the scores before softmax.
     mask = nil
     if causal
       mask_tensor = Tensor.zeros(seq_len, seq_len)
@@ -49,23 +55,33 @@ class MultiHeadAttention
       mask = Var.constant(mask_tensor)
     end
 
+    # Attention per head: each head works on its own head_dim-wide slice.
     head_outputs = []
     head = 0
+
     while head < @num_heads
       start = head * @head_dim
       q_head = Autograd.columns(q, start, @head_dim)
       k_head = Autograd.columns(k, start, @head_dim)
       v_head = Autograd.columns(v, start, @head_dim)
 
+      # scores = Q K^T / sqrt(head_dim): how much each position should
+      # attend to each other position. The scale keeps the softmax from
+      # saturating as head_dim grows.
       scores = Autograd.scale(Autograd.matmul(q_head, Autograd.transpose(k_head)), 1.0 / sqrt(@head_dim))
       if mask != nil
         scores = Autograd.add(scores, mask)
       end
+
+      # Softmax turns each row of scores into weights summing to 1; the head's
+      # output is those weights applied to V.
       weights = Autograd.softmax(scores)
       head_outputs.push(Autograd.matmul(weights, v_head))
       head += 1
     end
 
+    # Join the heads back into d_model columns and mix them with the final
+    # projection.
     concatenated = Autograd.concat_columns(head_outputs)
     @output_proj.forward(concatenated)
   end

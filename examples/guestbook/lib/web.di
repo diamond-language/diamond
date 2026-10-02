@@ -6,6 +6,10 @@
 # own key function (rate_limit_key, app.di) reads the session id
 # CookieSession just populated.
 
+# Escapes the four characters that matter when text lands in HTML element
+# content or a double-quoted attribute. `&` MUST be replaced first: doing it
+# later would re-escape the `&` inside the `&lt;`/`&gt;`/`&quot;` already
+# produced.
 def escape_html(text)
   result = text.gsub(Regexp.new("&"), "&amp;")
   result = result.gsub(Regexp.new("<"), "&lt;")
@@ -26,12 +30,19 @@ def web_visitor_id(request)
   id
 end
 
+# Turns the note list into <li> elements. Every note is user input, so each
+# one is escaped; skipping that would let a note inject script into
+# every later page view for that session.
 def render_notes(notes)
   items = []
+
+  # A nested `def` captures `items` (see docs/callables.md), so it can append
+  # to the outer array even though `each` is handed it as a plain function.
   def render_one(note)
     items.push("<li>#{escape_html(note)}</li>")
   end
   notes.each(render_one)
+
   items.join("")
 end
 
@@ -44,6 +55,9 @@ end
 # X-CSRF-Token header instead -- exactly the pattern packages/cookies'
 # own README documents as the way to use Csrf from a traditional page.
 def web_home(request, context)
+  # Count this visit. Session values are absent on a first visit, so default
+  # them. Writing back into `request["session"]` is what makes
+  # CookieSession re-issue the cookie with the new value.
   visits = request["session"]["visits"]
   visits = if visits == nil then 0 else visits end
   visits = visits + 1
@@ -52,8 +66,12 @@ def web_home(request, context)
   notes = request["session"]["notes"]
   notes = if notes == nil then [] else notes end
 
+  # The token the page's script will send back on POST /notes.
   csrf_token = Csrf.token(request)
 
+  # Build the page by string concatenation, one HTML/JS fragment per line.
+  # The `+` at each line's end is what continues the expression onto the
+  # next line.
   page = "<!doctype html><html><head><title>Guestbook</title></head><body>" +
     "<h1>Guestbook</h1>" +
     "<p>Visits this session: #{visits}</p>" +
@@ -79,25 +97,33 @@ end
 # CookieSession), not a database, so letting it grow without bound would
 # grow the cookie itself without bound, not just an in-memory structure.
 def web_add_note(request, context)
+  # A body that is not valid JSON is treated the same as a missing one: both
+  # become `nil` and are rejected below with one 400.
   parsed = nil
   begin
     parsed = JSON.parse(request["body"])
   rescue error: JSONError
     parsed = nil
   end
+
   if parsed == nil || parsed["text"] == nil || parsed["text"] == ""
     return [400, {"Content-Type": "application/json"}, JSON.stringify({"error": "text is required"})]
   end
+
+  # Append the note, then keep only the newest 5 (drop the older surplus).
   notes = request["session"]["notes"]
   notes = if notes == nil then [] else notes end
   notes.push(parsed["text"])
   if notes.length() > 5
     notes = notes.drop(notes.length() - 5)
   end
+
+  # Assigning back is what persists the change into the session cookie.
   request["session"]["notes"] = notes
   [200, {"Content-Type": "application/json"}, JSON.stringify({"notes": notes})]
 end
 
+# Tiny router for this side of the app; anything else is a 404.
 def web_handler(request, context)
   if request["path"] == "/notes" && request["method"] == "POST"
     web_add_note(request, context)

@@ -19,6 +19,7 @@ require "./lib/model"
 require "./lib/loss"
 require "./lib/optimizer"
 
+# A very small model: vocabulary of 12 ids.
 vocab_size = 12
 d_model = 16
 num_heads = 2
@@ -28,12 +29,17 @@ max_seq_len = 8
 
 rng = SimpleRng.new(1)
 model = TransformerModel.new(vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_len, rng)
+
+# Plain SGD with learning rate 0.05 over every trainable weight.
 optimizer = SGD.new(model.parameters(), 0.05)
 
+# The task: each input id should predict the NEXT id in 0..6. Inputs are
+# 0..5 and targets are 1..6 (the same list shifted by one).
 sequence = [0, 1, 2, 3, 4, 5, 6]
 inputs = []
 targets = []
 i = 0
+
 while i < sequence.length() - 1
   inputs.push(sequence[i])
   targets.push(sequence[i + 1])
@@ -42,20 +48,27 @@ end
 
 puts("training on inputs=#{inputs} -> targets=#{targets}")
 
+# The training loop: forward pass, loss, backward pass, weight update. The
+# gradients are cleared first each time so steps do not accumulate.
 steps = 200
 step = 0
+
 while step < steps
   optimizer.zero_grad!()
   logits = model.forward(inputs)
   loss = Loss.softmax_cross_entropy(logits, targets)
   backward!(loss)
   optimizer.step!()
+
+  # Report every 20th step, so the loss curve is visible.
   if mod(step, 20) == 0
     puts("step #{step}: loss #{loss.tensor().get(0, 0)}")
   end
   step += 1
 end
 
+# After training: the loss once more, and what the model now predicts for
+# each input (the highest-scoring id in that position's row of logits).
 final_logits = model.forward(inputs)
 final_loss = Loss.softmax_cross_entropy(final_logits, targets)
 puts("final loss: #{final_loss.tensor().get(0, 0)}")

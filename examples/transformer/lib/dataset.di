@@ -17,9 +17,15 @@ class Dataset
   def self.windows(token_ids, seq_len, stride)
     examples = []
     start = 0
+
+    # Slide a window along the corpus. The `+ seq_len <` bound leaves room
+    # for the one extra token the last target needs, so no window is short.
     while start + seq_len < token_ids.length()
       input_ids = []
       target_ids = []
+
+      # Input is tokens [start, start + seq_len); target is the same range
+      # shifted forward by one (each token's "next token").
       i = 0
       while i < seq_len
         input_ids.push(token_ids[start + i])

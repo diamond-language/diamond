@@ -9,7 +9,10 @@
 # here -- see packages/dials/README.md's "Wiring into rack/gremlin".
 def route(request, context) = Dials::RouterHolder.get(build_router).dispatch(request, context)
 
+# Prints one line per request: verb, path, and the response status.
 def logging_middleware(request, context, forward)
+  # `forward` runs the rest of the chain; logging happens after it returns
+  # so the status is known.
   response = forward(request, context)
   puts("#{request["method"]} #{request["path"]} -> #{response[0]}")
   response
@@ -21,6 +24,8 @@ def timing_middleware(request, context, forward)
   start = Time.monotonic()
   response = forward(request, context)
   elapsed_ms = (Time.monotonic() - start) * 1000
+
+  # Round to two decimals: scale by 100, truncate to Int, scale back.
   rounded_ms = to_f(to_i(elapsed_ms * 100)) / 100.0
   puts("#{request["method"]} #{request["path"]} took #{rounded_ms}ms")
   response
@@ -47,8 +52,16 @@ def ensure_models_configured(context)
   end
 end
 
+# The handler given to gremlin_serve. Runs on every request, on whichever
+# worker thread got it.
 def app(request, context)
+  # First, make sure THIS worker's models are configured (a no-op after the
+  # worker's first request).
   ensure_models_configured(context)
+
+  # Wrap `route` in the two middlewares; the list order is outermost first,
+  # so timing wraps logging wraps routing. The chain is rebuilt each
+  # request, which is cheap.
   chain = rack_compose([timing_middleware, logging_middleware], route)
   rack_run_chain(chain, 0, request, context)
 end

@@ -4,6 +4,7 @@
 sealed class Node
 end
 
+# Literal text, copied through unchanged.
 class TextNode < Node
   def initialize(text: String)
     @text = text
@@ -11,6 +12,7 @@ class TextNode < Node
   def text() = @text
 end
 
+# {{path}} (escaped) or {{{path}}} (not escaped).
 class VarNode < Node
   def initialize(path: String, escaped: Bool)
     @path = path
@@ -20,6 +22,8 @@ class VarNode < Node
   def escaped?() = @escaped
 end
 
+# {{#path}}...{{/path}}, or {{^path}}...{{/path}} when inverted. `body` is the
+# list of nodes between the tags (which may contain more sections).
 class SectionNode < Node
   def initialize(path: String, inverted: Bool, body: Array)
     @path = path
@@ -31,6 +35,7 @@ class SectionNode < Node
   def body() = @body
 end
 
+# A malformed template. `position` is the character offset of the problem.
 class TemplateError < StandardError
   def initialize(message, position)
     super(message)

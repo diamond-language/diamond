@@ -11,8 +11,11 @@ class SGD
     @learning_rate = learning_rate
   end
 
+  # One gradient-descent step: move every weight against its gradient,
+  # scaled by the learning rate (w = w - lr * dL/dw).
   def step!()
     i = 0
+
     while i < @parameters.length()
       param = @parameters[i]
       j = 0
@@ -29,6 +32,8 @@ class SGD
     end
   end
 
+  # Clear every gradient. Must be called before each forward pass, or
+  # gradients from the previous step would be added to this one's.
   def zero_grad!()
     i = 0
     while i < @parameters.length()
