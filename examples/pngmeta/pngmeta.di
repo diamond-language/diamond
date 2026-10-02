@@ -11,6 +11,7 @@ require "./lib/png"
 
 def usage() = "usage: pngmeta info FILE... | strip IN OUT | set IN OUT KEY VALUE"
 
+# Reads and parses a file (structure only; see load_intact for CRCs).
 def load(path: String) -> Array[Chunk] = parse_png(File.read(path))
 
 # Every chunk's CRC must match before we rewrite a file: copying a
@@ -24,13 +25,20 @@ def load_intact(path: String) -> Array[Chunk]
   chunks
 end
 
+# Prints one file's summary and a line per chunk. Returns false if any chunk
+# failed its CRC, so main can set the exit status; the file is still shown in
+# full, with the bad chunk flagged.
 def show_info(path: String) -> Bool
   chunks = load(path)
   header = header_of(chunks)
   interlace = if header.interlaced() then ", interlaced" else "" end
   puts("#{path}: #{header.width()}x#{header.height()}, #{header.bit_depth()}-bit #{header.color_name()}#{interlace}")
+
   intact = true
+
   chunks.each() do |chunk|
+    # Flag a CRC mismatch, and add a human-readable detail for the chunk
+    # kinds we understand (the later assignment wins for tIME).
     status = if chunk.intact?() then "" else "  CRC MISMATCH" end
     intact = false unless chunk.intact?()
     detail = ""
@@ -42,6 +50,8 @@ def show_info(path: String) -> Bool
   intact
 end
 
+# `strip`: copy the file minus its metadata chunks. The pixel data (IDAT) is
+# copied byte for byte, never decoded.
 def strip(input: String, output: String)
   chunks = load_intact(input)
   kept = chunks.reject() do |chunk| metadata_kinds().include?(chunk.kind()) end
@@ -56,6 +66,9 @@ def set_text(input: String, output: String, key: String, value: String)
     raise PngError.new("a keyword must be 1-79 printable ASCII characters")
   end
   raise PngError.new("the text can't contain a NUL byte") if value.include?("\0")
+
+  # Load, dropping any existing entry with this keyword (that is what makes
+  # `set` replace rather than duplicate).
   chunks = load_intact(input).reject() do |chunk|
     entry = text_entry(chunk)
     entry != nil && entry[0] == key
@@ -68,8 +81,11 @@ def set_text(input: String, output: String, key: String, value: String)
 end
 
 def main(args: Array[String]) -> Int
+  # A PngError (invalid or damaged file) is exit 1; an unreadable file, 66.
   begin
     case args
+    # `info` takes any number of files; the exit status is 1 if ANY has a bad
+    # CRC, but every file is still shown.
     when ["info", *paths]
       if paths.empty?()
         warn(usage())

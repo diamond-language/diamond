@@ -5,6 +5,8 @@
 #   diamond ledger.di
 require "./lib/reports"
 
+# Build the chart of accounts: a ledger can only post to accounts that have
+# been opened. The list is of five different classes, one per kind of account.
 ledger = Ledger.new()
 [
   Asset.new("checking"),
@@ -18,8 +20,13 @@ ledger = Ledger.new()
   Expense.new("utilities"),
   Expense.new("dining"),
 ].each() do |account| ledger.open(account) end
+
+# Account keeps a count of how many it has made, across all its subclasses.
 puts("opened #{Account.opened()} accounts")
 
+# The first entry, on its own: the starting balances. Debits and credits
+# must total the same, or `post` raises UnbalancedEntry. Here 1,500.00 +
+# 8,000.00 debited (assets up) equals 9,500.00 credited to equity.
 ledger.post("2026-07-01", "Opening balance") do |entry|
   entry.debit("checking", usd("1500.00"))
   entry.debit("savings", usd("8000.00"))
@@ -47,7 +54,9 @@ end
   end
 end
 
-# A shared bill split three ways without losing a cent.
+# A shared bill split three ways without losing a cent. $187.00 does not
+# divide evenly by 3 (62.333...), so `allocate` gives the leftover cents one
+# at a time to the first parts: 62.34 + 62.33 + 62.33.
 power_bill = usd("187.00")
 shares = power_bill.allocate([1, 1, 1])
 puts("power bill #{power_bill} split: #{shares.join(" + ")} = #{shares.reduce(Money.zero()) do |a, b| a + b end}")
@@ -69,6 +78,9 @@ ledger.post("2026-09-30", "Interest") do |entry|
   entry.debit("savings", interest)
   entry.credit("interest", interest)
 end
+
+# `length` is forwarded to the ledger's entries list (a `delegate` in
+# lib/ledger.di).
 puts("#{ledger.length()} entries posted")
 puts("")
 
@@ -78,18 +90,28 @@ puts("")
   print_report(report)
 end
 
+# Dynamic balances: the ledger has no checking_balance method; method_missing
+# turns `checking_balance` into balance("checking"), and `credit_card_balance`
+# into balance("credit card") (underscores back to spaces).
 ["checking", "credit_card"].each() do |name|
   method = "#{name}_balance"
   puts("#{method}: #{ledger.public_send(method)}")
 end
+
+# Net worth is assets minus liabilities, computed with Money's operators.
 puts("net worth: #{ledger.balance("checking") + ledger.balance("savings") - ledger.balance("credit card")}")
+
+# The asset account with the highest balance: filter to Assets (`is` tests
+# the class), then max_by balance.
 richest = ledger.accounts().select() do |account| account is Asset end.max_by() do |account|
   ledger.balance(account.name())
 end
 puts("largest asset: #{richest}")
 puts("")
 
-# Everything below is rejected, each with its own exception.
+# Everything below is rejected, each with its own exception. `attempt` runs a
+# block and prints either "ok" or the kind and message of the error it
+# raised, so the demo can show every failure without stopping.
 def attempt(label: String, &action)
   begin
     yield()
@@ -99,24 +121,33 @@ def attempt(label: String, &action)
   end
 end
 
+# Debits (100.00) and credits (10.00) disagree.
 attempt("unbalanced entry") do
   ledger.post("2026-09-30", "Typo") do |entry|
     entry.debit("rent", usd("100.00"))
     entry.credit("checking", usd("10.00"))
   end
 end
+
+# "yacht" was never opened.
 attempt("unknown account") do
   ledger.post("2026-09-30", "Mystery") do |entry|
     entry.debit("yacht", usd("1.00"))
   end
 end
+
+# Dollars plus euros: Money refuses to guess an exchange rate.
 attempt("mixed currencies") do
   usd("5.00") + Money.new(500, "EUR")
 end
+
+# method_missing only handles *_balance; anything else is a NoMethodError.
 attempt("unknown method") do
   ledger.checking_total()
 end
 
+# Closing the books freezes the ledger (and its entries). Money values were
+# frozen the moment they were created, so they are immutable regardless.
 ledger.close()
 puts("ledger frozen? #{ledger.frozen?()}, money frozen? #{usd("1.00").frozen?()}")
 attempt("posting after close") do

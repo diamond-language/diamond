@@ -1050,6 +1050,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=three_registers(stream,chunk,"FILE_OPEN",offset, &valid);break;
             case DIAMOND_OP_FILE_DELETE:
                 offset=two_registers(stream,chunk,"FILE_DELETE",offset, &valid);break;
+            case DIAMOND_OP_DNS_RESOLVE:
+                offset=four_registers(stream,chunk,"DNS_RESOLVE",offset, &valid);break;
             case DIAMOND_OP_TCP_CONNECT_NONBLOCK:
                 offset=three_registers(stream,chunk,"TCP_CONNECT_NONBLOCK",offset, &valid);break;
             case DIAMOND_OP_TCP_CONNECT:
@@ -1072,6 +1074,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=one_register(stream,chunk,"UDP_OPEN",offset, &valid);break;
             case DIAMOND_OP_SIGNAL_TRAP:
                 offset=three_registers(stream,chunk,"SIGNAL_TRAP",offset, &valid);break;
+            case DIAMOND_OP_TLS_START_HANDSHAKE:
+                offset=four_registers(stream,chunk,"TLS_START_HANDSHAKE",offset, &valid);break;
             case DIAMOND_OP_TLS_CONNECT:
                 offset=four_registers(stream,chunk,"TLS_CONNECT",offset, &valid);break;
             case DIAMOND_OP_TLS_LISTEN:

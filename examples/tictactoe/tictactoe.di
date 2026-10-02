@@ -15,10 +15,15 @@ def usage() -> Int
   64
 end
 
+# --self: both sides play the minimax move every turn, printing the board
+# after each one.
 def play_self() -> Int
   board = [nil, nil, nil, nil, nil, nil, nil, nil, nil]
   player = :x
   puts(board_render(board))
+
+  # Each side passes itself as `maximizer`, so every search is from the
+  # mover's own point of view.
   while board_winner(board) == nil && !board_full?(board)
     move = minimax(board, player, player).move()
     board[move] = player
@@ -27,20 +32,28 @@ def play_self() -> Int
     puts(board_render(board))
     player = other_player(player)
   end
+
+  # Report how the game ended.
   winner = board_winner(board)
   puts("")
   puts(winner == nil ? "draw" : "#{winner} wins")
   0
 end
 
+# X always moves first, so equal counts mean it is X's turn; otherwise X
+# is one mark ahead and O moves.
 def whose_turn(board: Array) -> Symbol
   x_count = board.count() do |cell| cell == :x end
   o_count = board.count() do |cell| cell == :o end
   x_count == o_count ? :x : :o
 end
 
+# --best: analyze one position given on the command line. Exit codes:
+# 0 ok, 65 for a bad or already-finished board (EX_DATAERR).
 def best_move(text: String) -> Int
   board = board_parse(text)
+
+  # There is nothing to search if the game has already ended.
   if board_winner(board) != nil
     warn("that game is already over")
     return 65
@@ -49,6 +62,9 @@ def best_move(text: String) -> Int
     warn("that board is already full")
     return 65
   end
+
+  # Search from the side to move and describe the result in words. Scores
+  # are from that side's view: 1 win, 0 draw, -1 loss.
   player = whose_turn(board)
   result = minimax(board, player, player)
   outcome = if result.score() == 1 then "#{player} wins with best play"
@@ -58,8 +74,11 @@ def best_move(text: String) -> Int
   0
 end
 
+# Dispatches on the first flag. `rescue error: BoardError` turns a
+# malformed board into a message and exit 65 instead of a stack trace.
 def main(argv) -> Int
   return usage() if argv.empty?()
+
   case argv[0]
   when "--self" then play_self()
   when "--best"

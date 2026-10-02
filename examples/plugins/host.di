@@ -12,16 +12,29 @@
 # which capabilities to grant, by setting DIAMOND_SANDBOX_ALLOW only for
 # that child. A plugin never gets a say in its own trust level.
 
+# What happened to one plugin: its name, a status word ("ok",
+# "sandbox_denied", "resource_limit" or "crashed"), the exit code, and a
+# note (its output, or the first line of its error).
 struct PluginResult(name: String, status: String, exit_code: Int, note: String)
 end
 
+# Builds the command that runs one plugin. The manifest entry `spec` has
+# the plugin's path, an optional argument, its resource budgets, and the
+# capabilities (`allow`) the HOST grants it.
 def build_argv(diamond_bin, spec)
+  # Resource limits are passed to the child as environment variables.
   env_args = ["DIAMOND_MAX_INSTRUCTIONS=#{spec["max_instructions"]}",
               "DIAMOND_MAX_WALL_MILLISECONDS=#{spec["max_wall_ms"]}"]
+
+  # Grant capabilities only when the manifest lists some; with none, the
+  # plugin gets the sandbox's default of denying everything.
   allow = spec["allow"]
   if !allow.empty?()
     env_args = env_args + ["DIAMOND_SANDBOX_ALLOW=#{allow.join(",")}"]
   end
+
+  # `env VAR=... diamond --sandbox plugin.di [arg]`: `env` sets the variables
+  # for just this child, and --sandbox is always on.
   argv = ["env"] + env_args + [diamond_bin, "--sandbox", spec["path"]]
   arg = spec["arg"]
   argv = arg.empty?() ? argv : argv + [arg]
@@ -46,6 +59,8 @@ def classify(result)
   end
 end
 
+# Runs one plugin to completion and summarizes it. `classify` does not know
+# the plugin's name, so it is filled in here.
 def run_plugin(diamond_bin, spec)
   argv = build_argv(diamond_bin, spec)
   result = Process.run(argv)
@@ -53,6 +68,8 @@ def run_plugin(diamond_bin, spec)
   PluginResult.new(spec["name"], outcome.status(), outcome.exit_code(), outcome.note())
 end
 
+# One line of report; only the first line of an error is shown, to keep the
+# output short.
 def report_line(outcome)
   case outcome.status()
   when "ok" then "  ok             #{outcome.note()}"
@@ -68,8 +85,15 @@ def main(argv)
     return 64
   end
   diamond_bin = argv[0]
+
+  # The manifest is the host's policy: which plugins to run and what each is
+  # allowed to do.
   manifest = JSON.parse(File.open("manifest.json", "r").read())
   exit_status = 0
+
+  # Run every plugin in turn. A sandbox denial or a resource limit is an
+  # expected, handled outcome; only a genuine crash makes the host's own
+  # exit status non-zero.
   manifest["plugins"].each() do |spec|
     outcome = run_plugin(diamond_bin, spec)
     puts(outcome.name())

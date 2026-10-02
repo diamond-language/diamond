@@ -242,12 +242,12 @@ The completion check is idempotent on connected or accepted sockets. Reads and
 writes also check pending connection state. `close()` cancels an outstanding
 connection and remains idempotent. All these sockets stay in their owning VM.
 
-For cancellable connections, load the cancellation cut and use its 0.4.0 helper:
+For cancellable connections, load the cancellation cut and use its 0.5.0 helper:
 
 ```ruby
 source = Cancellation::Source.new(nil, 2.0)
 token = source.token()
-socket = token.connect("127.0.0.1", 8080)
+socket = token.connect("localhost", 8080)
 begin
   token.write(socket, "hello")
   response = token.read(socket, 4096)
@@ -256,11 +256,58 @@ ensure
 end
 ```
 
-`token.connect` observes parent cancellation and the earliest inherited deadline,
-checks cancellation again after completion, and closes the descriptor on failure
-or cancellation. On success the caller owns the socket. The deadline covers the
-whole connect operation; DNS resolution and TLS handshakes are separate work and
-are not provided by this numeric-address API.
+`token.connect` accepts hostnames and numeric IP literals. It resolves the host,
+tries unique IPv4/IPv6 addresses in resolver order after connection failures,
+checks cancellation again after completion, and closes failed or cancelled
+attempts. The earliest inherited deadline covers DNS and all connection attempts
+without restarting. A pending connection uses the remaining deadline; addresses
+are tried sequentially, without Happy Eyeballs racing. On success the caller owns
+the socket. Use `token.connect_tls` to extend the same deadline through TLS negotiation.
+
+### Cancellable system DNS
+
+`token.resolve(host)` exposes the same resolution separately. The lower-level
+`DNS.resolve(host, cancellations, deadline)` takes a hostname String, an Array of
+Channels, and a finite Float absolute `Time.monotonic()` deadline or nil. It
+returns unique numeric address strings in system resolver order, or nil if any
+channel closes or the deadline expires. DNS failures and exhausted worker
+capacity raise `IOError`; invalid inputs raise `TypeError`. Empty hosts, embedded
+NULs, URL brackets, and IPv6 scope suffixes are rejected. Network sandbox policy
+also applies to DNS, including numeric literals.
+
+Resolution runs in native workers while the calling VM waits with cancellation
+notifications and dispatches its signal handlers. Cancellation abandons the wait;
+it cannot forcibly interrupt libc's resolver. Workers retain only their own C
+buffers and descriptors, never the VM or its heap, and are not joined during VM
+cleanup. The process-wide limit is eight outstanding lookups, including abandoned
+ones. Further hostname requests fail promptly until a worker finishes; numeric
+literals bypass the pool. No new DNS cache is introduced, and system hosts/NSS
+configuration remains in effect.
+
+### Cancellable client TLS handshakes
+
+Cancellation 0.6.0 adds `token.connect_tls(host, port, options = nil)`. It resolves
+and connects using the token, then negotiates TLS using that same deadline and
+cancellation channels. Certificate verification is mandatory, using the original
+hostname (or IP subject alternative name for numeric hosts), not a resolved IP
+substituted for the hostname. TLS trust, client-certificate, ALPN, session, and
+application read/write timeout options match `TLSSocket.connect`.
+`connect_timeout_ms` is rejected: the token owns the connection deadline.
+
+`TLSSocket.start_handshake(socket, host, options = nil)` is the native building
+block. It takes a connected nonblocking `Socket` and transfers descriptor ownership
+once input validation passes. Subsequent setup failure closes that descriptor;
+validation failure leaves it owned by the original socket. The returned TLS socket
+allows `finish_handshake()`, `close()`, and `abort()` while pending. Each finish call
+returns `"read"`, `"write"`, or nil (complete). Poll only the requested direction,
+then retry. Terminal errors close the connection immediately; completed calls are
+idempotent. `IO.poll` accepts TLS sockets only during a pending handshake.
+
+The token checks cancellation before each attempt and after completion. Its failure
+cleanup calls `abort()`, an idempotent close without any TLS shutdown exchange.
+Successful handshakes return a regular blocking TLS socket, owned by the caller;
+application reads/writes remain outside the cancellation contract. Local trust-store
+and certificate loading also remain synchronous filesystem work.
 
 ## UDP sockets: `UDPSocket.bind`/`UDPSocket.open`, `.send`/`.receive`
 
@@ -570,13 +617,13 @@ zero-external-dependencies stance.
   signal-interruptible retry loop from the Signals section above — a
   server genuinely idle with nothing connecting still responds promptly
   to a trapped signal), then a server-side TLS handshake. No
-  `TLSServer.listen_nonblocking` — non-blocking sockets and TLS are not
-  combined in this first slice.
+  `TLSServer.listen_nonblocking` is not available. Client-side cancellable
+  negotiation is provided separately by `TLSSocket.start_handshake`.
 - Both return the same new object kind, `DIAMOND_OBJECT_TLS_SOCKET` —
   `.read(n)`/`.read()`/`.gets()`/`.write(value)`/`.close()`, the exact
   same method surface and semantics as `File` (bounded/unbounded read,
   line read, EOF-as-nil), not `Socket`'s raw-fd/non-blocking shape — a
-  TLS connection here is always blocking, so `packages/http`'s own
+  completed TLS connection uses blocking application I/O, so `packages/http`'s own
   `conn.gets()`/`conn.read()`/`conn.write()` calls work unchanged against
   either kind of connection. Internally a raw fd plus an OpenSSL `SSL *`
   rather than a buffered `FILE *`: `SSL_read`/`SSL_write` need to own the

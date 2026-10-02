@@ -4,6 +4,10 @@
 struct Entry(priority: Int, order: Int, cell: Int)
 end
 
+# Stored in a flat Array as an implicit binary tree: the children of index i
+# are 2i+1 and 2i+2, and its parent is (i-1)/2. The invariant is that no
+# entry comes AFTER its parent, so the best entry is always at index 0.
+
 class MinHeap
   def initialize()
     @items = []
@@ -14,6 +18,7 @@ class MinHeap
 
   def size() = @items.length()
 
+  # Add at the end (the first free leaf), then float it up to its place.
   def push(priority: Int, cell: Int)
     @items.push(Entry.new(priority, @pushed, cell))
     @pushed += 1
@@ -23,6 +28,9 @@ class MinHeap
   # Removes and returns the entry with the lowest priority.
   def pop() -> Entry
     top = @items[0]
+
+    # Take the last leaf out, and (unless it was the only entry) move it to
+    # the root and sink it down. That keeps the tree complete.
     last = @items.pop()
     unless @items.empty?()
       @items[0] = last
@@ -33,6 +41,7 @@ class MinHeap
 
   private
 
+  # Heap order: lower priority first; equal priorities by insertion order.
   def before?(a: Entry, b: Entry) -> Bool
     a.priority() < b.priority() || (a.priority() == b.priority() && a.order() < b.order())
   end
@@ -43,8 +52,10 @@ class MinHeap
     @items[j] = held
   end
 
+  # Swap an entry with its parent while it belongs before it.
   def sift_up(start: Int)
     index = start
+
     while index > 0
       parent = (index - 1) / 2
       break unless self.before?(@items[index], @items[parent])
@@ -53,9 +64,12 @@ class MinHeap
     end
   end
 
+  # Swap an entry with its better child until neither child belongs before
+  # it. `best` picks the winner among the entry itself and its two children.
   def sift_down(start: Int)
     index = start
     count = @items.length()
+
     loop do
       left = index * 2 + 1
       right = left + 1

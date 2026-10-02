@@ -4,12 +4,16 @@
 require "./formula"
 require "./lexer"
 
+# Same machinery as examples/calc/lib/parser.di (see its comments for the
+# precedence-climbing algorithm and how `power` encodes associativity); only
+# the differences are explained here.
 class Parser
   def initialize(tokens: Array[Token])
     @tokens = tokens
     @pos = 0
   end
 
+  # Parse one formula (the text after the "="), requiring all of it be used.
   def self.parse(text: String) -> Node
     parser = Parser.new(formula_tokenize(text))
     node = parser.parse_expr(0)
@@ -55,6 +59,7 @@ class Parser
     token
   end
 
+  # Like expect_op, but for a cell reference; used for function arguments.
   def expect_ref() -> Token
     token = self.advance()
     unless token.kind() == :ref
@@ -64,6 +69,8 @@ class Parser
     token
   end
 
+  # Only the four arithmetic operators are infix, so `*` and `/` (20) bind
+  # tighter than `+` and `-` (10). All are left-associative.
   def infix_power(token: Token) -> Int
     return 0 unless token.kind() == :op
     case token.text()
@@ -80,6 +87,9 @@ class Parser
       NumberNode.new(text.to_f())
     when [:ref, name]
       RefNode.new(name)
+    # A bare name must be a function call and its argument must be exactly
+    # REF ":" REF, so "SUM(A1:A3)" parses and "SUM(1)" is an error pointing
+    # at the "1".
     when [:name, name]
       self.expect_op("(")
       from = self.expect_ref().text()
@@ -87,6 +97,7 @@ class Parser
       to = self.expect_ref().text()
       self.expect_op(")")
       CallNode.new(name, from, to)
+    # Unary minus binds tighter than * and / (so -A1 * 2 is (-A1) * 2).
     when [:op, "-"]
       NegNode.new(self.parse_expr(30))
     when [:op, "("]

@@ -30,6 +30,10 @@ end
 
 def main(argv) -> Int
   return usage() unless argv.length() == 2
+
+  # Read both files, parse the template, render it against the JSON context.
+  # `print`, not `puts`: the output is the template's own text, newlines
+  # included. Bad JSON or a bad template is exit 65; an unreadable file, 66.
   begin
     text = File.open(argv[0], "r").read()
     context = JSON.parse(File.open(argv[1], "r").read())

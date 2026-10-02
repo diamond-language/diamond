@@ -14,6 +14,7 @@ def usage() -> Int
   64
 end
 
+# The whole file; `ensure` closes it even if the read fails.
 def read_file(path: String) -> String
   file = File.open(path, "r")
   begin
@@ -24,14 +25,17 @@ def read_file(path: String) -> String
 end
 
 def main(args: Array[String]) -> Int
+  # Defaults, then one pass over the arguments.
   path = "Taskfile"
   limit = 1
   show_time = false
   plan_only = false
   targets = []
   index = 0
+
   while index < args.length()
     case args[index]
+    # -f and -j each take a value; skip it afterwards. -j must be at least 1.
     when "-f", "-j"
       return usage() if index + 1 >= args.length()
       if args[index] == "-f"
@@ -43,14 +47,18 @@ def main(args: Array[String]) -> Int
       index += 1
     when "--time" then show_time = true
     when "--plan" then plan_only = true
+    # Anything else is a target name, unless it looks like an option.
     else
       return usage() if args[index].start_with?("-")
       targets.push(args[index])
     end
+
     index += 1
   end
+
   return usage() if targets.empty?()
 
+  # Read the file (66 if that fails)...
   text = ""
   begin
     text = read_file(path)
@@ -58,13 +66,18 @@ def main(args: Array[String]) -> Int
     warn("taskrun: #{error.message()}")
     return 66
   end
+
+  # ...then parse, plan, and run. Planning happens before anything runs, so a
+  # cycle or unknown task is reported without side effects.
   begin
     tasks = parse_taskfile(text)
     order = plan(tasks, targets)
+
     if plan_only
       order.each_with_index() do |name, position| puts("#{position + 1}. #{name}") end
       return 0
     end
+
     [ok, failed, skipped] = Runner.new(tasks, limit, show_time).run(order)
     puts("#{ok} ok, #{failed} failed, #{skipped} skipped")
     if failed > 0 then 1 else 0 end

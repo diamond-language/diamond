@@ -16,6 +16,7 @@ class Autograd
   # to seed from. Its own backward simply broadcasts the (also scalar)
   # incoming gradient back onto every element it summed.
   def self.sum(x)
+    # Forward: add up every element.
     total = 0.0
     i = 0
     while i < x.tensor().rows()
@@ -26,9 +27,14 @@ class Autograd
       end
       i += 1
     end
+
+    # Wrap the total in a 1x1 Var whose parent is x.
     output = Tensor.zeros(1, 1)
     output.set(0, 0, total)
     result = Var.new(output, [x], true)
+
+    # Backward: every element contributed 1 * total, so each gets the
+    # incoming gradient added to its own.
     closure backward()
       if x.requires_grad()
         seed = result.grad().get(0, 0)
@@ -47,6 +53,9 @@ class Autograd
     result
   end
 
+  # a + b. d(a+b)/da = d(a+b)/db = 1, so the output's gradient flows to BOTH
+  # parents unchanged. (`+=` into .grad rather than `=`: a Var used by
+  # several later ops gets a contribution from each.)
   def self.add(a, b)
     result = Var.new(tensor_add!(tensor_clone(a.tensor()), b.tensor()), [a, b], true)
     closure backward()
@@ -79,6 +88,7 @@ class Autograd
     result
   end
 
+  # a . b (matrix product).
   def self.matmul(a, b)
     result = Var.new(a.tensor().matmul(b.tensor()), [a, b], true)
     closure backward()
@@ -110,6 +120,7 @@ class Autograd
     result
   end
 
+  # Swap rows and columns; the gradient is transposed back.
   def self.transpose(x)
     result = Var.new(x.tensor().transpose(), [x], true)
     closure backward()
@@ -121,6 +132,9 @@ class Autograd
     result
   end
 
+  # Columns [start, start + width) of x. Backward adds the output's gradient
+  # into just those columns of x's gradient (the other columns of x did not
+  # affect this output, so they get nothing).
   def self.columns(x, start, width)
     result = Var.new(tensor_columns(x.tensor(), start, width), [x], true)
     closure backward()
@@ -132,7 +146,10 @@ class Autograd
     result
   end
 
+  # Side-by-side join of several Vars (the inverse of `columns`): used to
+  # reassemble the attention heads.
   def self.concat_columns(vars)
+    # Forward: gather the raw tensors and join them.
     tensors = []
     i = 0
     while i < vars.length()
@@ -140,6 +157,9 @@ class Autograd
       i += 1
     end
     result = Var.new(tensor_concat_columns(tensors), vars, true)
+
+    # Backward: hand each input back its own slice of the output gradient,
+    # found by walking a running column offset.
     closure backward()
       col_offset = 0
       i = 0
@@ -236,6 +256,9 @@ class Autograd
     d_model = token_table.tensor().cols()
     seq_len = token_ids.length()
     output = Tensor.zeros(seq_len, d_model)
+
+    # Forward: row i of the output is the token's embedding row plus the
+    # position's embedding row.
     i = 0
     while i < seq_len
       token_id = token_ids[i]
@@ -247,6 +270,9 @@ class Autograd
       i += 1
     end
     result = Var.new(output, [token_table, position_table], true)
+
+    # Backward: addition passes the gradient to both tables, but each only to
+    # the row it supplied (`+=`, so repeated tokens accumulate).
     closure backward()
       i = 0
       while i < seq_len
@@ -270,6 +296,9 @@ class Autograd
   end
 end
 
+# Depth-first walk that appends each node AFTER all its parents, producing a
+# topological order (inputs first, final loss last). `visited` stops a node
+# reached by two paths being processed twice.
 def topo_visit(node, visited, order)
   if visited.include?(node)
     return
@@ -290,10 +319,17 @@ end
 # if you don't want this step's gradients added on top of a previous
 # step's (optimizer.di's own training loop does this).
 def backward!(loss_var)
+  # Order the graph so every node comes after the nodes it depends on.
   order = []
   visited = []
   topo_visit(loss_var, visited, order)
+
+  # Seed: d(loss)/d(loss) = 1.
   loss_var.grad().set(0, 0, 1.0)
+
+  # Walk in REVERSE, so a node's gradient is complete (every consumer has
+  # already added its share) before it pushes gradient to its own parents.
+  # Leaves have no backward function and are skipped.
   i = order.length() - 1
   while i >= 0
     node = order[i]

@@ -11,7 +11,7 @@ $ diamond udiff.di testdata/old.txt testdata/new.txt
 @@ -1,11 +1,14 @@
  The quick brown fox
  jumps over the lazy dog.
- 
+
 -Pack my box with five
 +Pack my box with six
  dozen liquor jugs.
@@ -20,7 +20,7 @@ $ diamond udiff.di testdata/old.txt testdata/new.txt
  jump quickly.
 +Bright vixens jump;
 +dozy fowl quack.
- 
+
  Sphinx of black quartz,
  judge my vow.
 +And one more line.

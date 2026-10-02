@@ -15,6 +15,8 @@ def usage() -> Int
   64
 end
 
+# A port number from the command line. The `port.to_s() == text` check
+# rejects anything to_i() would silently forgive ("80abc", "080", " 80").
 def parse_port(text: String) -> Int
   port = text.to_i()
   raise ArgumentError.new("bad port '#{text}'") unless port.to_s() == text && port >= 1 && port <= 65535
@@ -23,6 +25,7 @@ end
 
 # The reply to one datagram, and whether the server should stop after it.
 def answer(aggregator: Aggregator, datagram: String) -> Array
+  # A leading "!" marks a control command; anything else is metric data.
   case datagram.strip()
   when "!ping" then ["pong", false]
   when "!report" then [JSON.stringify(aggregator.report()), false]
@@ -31,6 +34,8 @@ def answer(aggregator: Aggregator, datagram: String) -> Array
     aggregator.reset()
     ["reset", false]
   when "!stop" then ["stopping", true]
+  # Metric data. A bad line is answered with an error, not a crash, since
+  # any client on the network can send anything.
   else
     begin
       ["ok #{aggregator.record_lines(datagram)}", false]
@@ -40,6 +45,7 @@ def answer(aggregator: Aggregator, datagram: String) -> Array
   end
 end
 
+# The server loop: receive a datagram, answer it, repeat until told to stop.
 def serve(port: Int) -> Int
   aggregator = Aggregator.new()
   socket = UDPSocket.bind(port)
@@ -58,11 +64,16 @@ def serve(port: Int) -> Int
 
   puts("listening on udp/#{port}")
   stopping = false
+
+  # One datagram in, one reply out, sent back to whoever sent it. UDP is
+  # connectionless, so the reply address comes from the packet itself.
+  # `answer` also says whether this datagram was the `!stop` command.
   until stopping
     packet = socket.receive(4096)
     [reply, stopping] = answer(aggregator, packet["data"])
     socket.send(reply, packet["host"], packet["port"])
   end
+
   socket.close()
   puts("stopped by !stop; final totals:")
   puts(aggregator.to_text())
@@ -72,6 +83,8 @@ end
 # Waits up to two seconds for a reply. UDP has no delivery guarantee, so a
 # silent server (or none at all) is reported instead of waited on forever.
 def await_reply(socket, size: Int) -> String
+  # poll returns which sockets are readable; waiting is bounded by the 2000
+  # ms timeout.
   ready = IO.poll([socket], [], 2000)
   raise IOError.new("no reply from the server within 2 seconds") unless ready["readable"][0]
   socket.receive(size)["data"]
@@ -81,16 +94,20 @@ end
 def send_lines(port: Int, lines: Array) -> Int
   socket = UDPSocket.open()
   failed = 0
+
   lines.each() do |line|
     socket.send(line, "127.0.0.1", port)
     reply = await_reply(socket, 4096)
     puts(reply)
     failed += 1 if reply.start_with?("error")
   end
+
   socket.close()
   failed == 0 ? 0 : 1
 end
 
+# Asks a running server for its totals. 65535 is the largest possible UDP
+# payload, so the whole report fits in one receive.
 def fetch_report(port: Int, json: Bool) -> Int
   socket = UDPSocket.open()
   socket.send(json ? "!report" : "!text", "127.0.0.1", port)
@@ -99,8 +116,11 @@ def fetch_report(port: Int, json: Bool) -> Int
   0
 end
 
+# Offline mode: no network, just feed a file's lines through the same
+# aggregator the server uses. A bad line stops the run, naming file and line.
 def aggregate_file(path: String) -> Int
   aggregator = Aggregator.new()
+
   File.read(path).split("\n").each_with_index() do |line, index|
     text = line.strip()
     next if text.empty?() || text.start_with?("#")
@@ -117,6 +137,9 @@ end
 
 def main(argv) -> Int
   return usage() if argv.empty?()
+
+  # A subcommand dispatcher; each arm checks its own argument count. A bad
+  # port is a usage-class error (64); a network or file problem is 66.
   begin
     case argv[0]
     when "serve"

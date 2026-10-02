@@ -5,8 +5,12 @@ require "./lib/room"
 require "./lib/bot"
 require "./lib/page"
 
+# Longest chat line accepted.
 def chat_max_text() = 500
 
+# Sends one event to one client as JSON. The "try" version does not block: a
+# client that cannot take the frame immediately would otherwise stall this
+# connection's fiber.
 def chat_send(ws, event)
   websocket_try_send_text(ws, JSON.stringify(event))
 end
@@ -17,6 +21,9 @@ def chat_clean_name(value)
   unless value is String then return nil end
   name = value.strip()
   if name.length() < 1 || name.length() > 24 then return nil end
+
+  # Reject control characters (codes below 32, and 127 DEL), which could be
+  # used to mangle other users' displays.
   ok = true
   name.chars().each() do |ch|
     if ch.ord() < 32 || ch.ord() == 127 then ok = false end
@@ -24,6 +31,7 @@ def chat_clean_name(value)
   if ok then name else nil end
 end
 
+# A client message as a Hash, or nil if it is not a JSON object.
 def chat_parse(data)
   begin
     event = JSON.parse(data)
@@ -36,13 +44,18 @@ end
 # One chat line from `name`: commands go to the bot (or are answered here when
 # they need server state), everything else is broadcast.
 def chat_say(ws, name, text)
+  # /stats needs server state, so it is answered here, to the asker only.
   if text.start_with?("/stats")
     chat_send(ws, {"type": "bot", "text": "#{Room.members().length()} online; bot restarts: #{Bot.restarts()}"})
+  # Other commands: everyone sees the command line itself, and the bot's
+  # reply will follow (via Bot.drain on the server tick). `Bot.ask` returns
+  # false if the bot's queue is full, which the asker is told.
   elsif text.start_with?("/")
     Room.broadcast({"type": "message", "name": name, "text": text})
     unless Bot.ask(name, text)
       chat_send(ws, {"type": "error", "text": "The bot is busy; try again shortly."})
     end
+  # Ordinary chat: just broadcast.
   else
     Room.broadcast({"type": "message", "name": name, "text": text})
   end
@@ -52,12 +65,19 @@ end
 # first message must be {"type": "join", "name": ...}; later ones are
 # {"type": "say", "text": ...}.
 def chat_session(ws)
+  # `name` stays nil until a valid join; it doubles as "has this client
+  # joined yet?".
   name = nil
+
   begin
     loop do
+      # receive() waits for the next frame; nil means the client closed.
       message = ws.receive()
       break if message == nil
       event = chat_parse(message["data"])
+
+      # Four cases, in order: garbage; a message before joining (must be a
+      # valid, unused name); a chat line; anything else is ignored.
       if event == nil
         chat_send(ws, {"type": "error", "text": "Messages must be JSON objects."})
       elsif name == nil
@@ -66,12 +86,15 @@ def chat_session(ws)
           chat_send(ws, {"type": "error", "text": "Join first with a name of 1-24 characters."})
         elsif Room.taken?(candidate)
           chat_send(ws, {"type": "error", "text": "#{candidate} is already here; pick another name."})
+        # Success: register, send the newcomer the recent history, and tell
+        # everyone (including them) who is here now.
         else
           name = candidate
           Room.join(ws, name)
           chat_send(ws, {"type": "welcome", "name": name, "history": Room.history()})
           Room.broadcast({"type": "joined", "name": name, "members": Room.names()})
         end
+      # An empty line after trimming is silently ignored.
       elsif event["type"] == "say" && event["text"] is String
         text = event["text"].strip()
         if text.length() > chat_max_text()
@@ -81,14 +104,22 @@ def chat_session(ws)
         end
       end
     end
+  # A connection that dies mid-read is just a departure, not a server error.
   rescue error: IOError
     nil
   end
+
+  # However the loop ended, remove the client and announce it, but only if
+  # they ever joined and nobody else has already announced it (`leave`
+  # reports whether they were still listed).
   if name != nil && Room.leave(ws)
     Room.broadcast({"type": "left", "name": name, "members": Room.names()})
   end
 end
 
+# The HTTP handler: "/ws" upgrades to a WebSocket and runs the chat session
+# for the life of that connection (returning nil, since the response has
+# already been taken over by the socket); "/" serves the page.
 def chat_handler(request, context)
   path = request["path"]
   if path == "/ws" && websocket_upgrade_request?(request)
@@ -101,6 +132,8 @@ def chat_handler(request, context)
   end
 end
 
+# Called by the server every 50 ms (see app.di): the only place bot replies
+# are picked up, since the bot thread cannot call into this heap.
 def chat_tick(context)
   Bot.drain()
 end

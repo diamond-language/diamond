@@ -76,20 +76,32 @@ def rate_limit_key(request)
   end
 end
 
+# Configure each middleware once, at load time. Each `configure` writes class
+# variables (one policy per VM; see the header), so this must not run per
+# request.
 CookieSession.configure(secret: session_secret())
 Cors.configure({"origins": ["https://trusted-partner.example"]})
 RateLimit.configure({"limit": 30, "window": 60, "key": rate_limit_key})
 
+# Cookie-session side. Order matters: SecurityHeaders wraps everything;
+# CookieSession must populate the session before RateLimit reads it (see
+# rate_limit_key) and before Csrf checks the token stored in it.
+# `rack_run_chain(chain, 0, ...)` starts at the first middleware; each one
+# calls the next, finishing at `web_handler`.
 def web_app(request, context)
   chain = rack_compose([SecurityHeaders.call, CookieSession.call, RateLimit.call, Csrf.call], web_handler)
   rack_run_chain(chain, 0, request, context)
 end
 
+# Stateless side: no session, so no CookieSession or Csrf. Cors lets the
+# one trusted origin read responses from the browser.
 def api_app(request, context)
   chain = rack_compose([SecurityHeaders.call, Cors.call, RateLimit.call], api_status)
   rack_run_chain(chain, 0, request, context)
 end
 
+# The single entry point handed to gremlin_serve: pick a stack by path
+# prefix. The chain is rebuilt per request on purpose (see the header).
 def rack_app(request, context)
   if request["path"].start_with?("/api/")
     api_app(request, context)

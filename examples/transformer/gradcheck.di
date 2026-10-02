@@ -10,6 +10,7 @@ require "./lib/tensor_ops"
 require "./lib/var"
 require "./lib/autograd"
 
+# A reproducible random Tensor (the seed fixes the values).
 def random_tensor(rows, cols, seed)
   Tensor.random(rows, cols, seed)
 end
@@ -19,6 +20,8 @@ end
 # numerically perturbs every element of every Var in `inputs` and
 # compares. `label` is just for the printed report.
 def check(label, inputs, forward_fn)
+  # Step 1: compute the ANALYTIC gradients: clear them, run the forward pass
+  # once, and let backward! fill them in.
   i = 0
   while i < inputs.length()
     inputs[i].zero_grad!()
@@ -44,6 +47,10 @@ def check(label, inputs, forward_fn)
     i += 1
   end
 
+  # Step 2: for EVERY element of every input, estimate the gradient the slow
+  # way: nudge the element up and down by epsilon, rerun the forward pass,
+  # and take the slope (the central difference). Track the worst
+  # disagreement with the analytic value.
   epsilon = 0.0001
   max_diff = 0.0
   v = 0
@@ -65,10 +72,13 @@ def check(label, inputs, forward_fn)
         var.tensor().set(row, col, original - epsilon)
         minus = forward_fn()
 
+        # Put the element back before moving on.
         var.tensor().set(row, col, original)
 
         numeric = (plus.tensor().get(0, 0) - minus.tensor().get(0, 0)) / (2.0 * epsilon)
         computed = analytic.get(row, col)
+
+        # Absolute difference, tracked as the running maximum.
         diff = computed - numeric
         if diff < 0
           diff = 0 - diff
@@ -83,10 +93,14 @@ def check(label, inputs, forward_fn)
     v += 1
   end
 
+  # Finite differences have their own small error, so 1e-3 is the tolerance.
   status = if max_diff < 0.001 then "PASS" else "FAIL" end
   puts("#{status} #{label}: max |analytic - numeric| = #{max_diff}")
 end
 
+# One check per operation. Each builds fresh random inputs, wraps the op in
+# a closure that sums its output to a scalar (so there is a single loss to
+# differentiate), and hands both to `check`.
 class GradCheckRunner
   def self.run()
     a = Var.leaf(random_tensor(3, 4, 1))
@@ -135,6 +149,7 @@ class GradCheckRunner
     end
     check("concat_columns", [ca, cb], check_concat)
 
+    # LayerNorm is checked on all three of its differentiable inputs.
     lx = Var.leaf(random_tensor(4, 5, 12))
     lgamma = Var.leaf(random_tensor(1, 5, 13))
     lbeta = Var.leaf(random_tensor(1, 5, 14))
@@ -155,6 +170,8 @@ class GradCheckRunner
     end
     check("gelu", [gx], check_gelu)
 
+    # Embedding: a 10-token vocabulary, 6 positions, and a sequence of three
+    # token ids.
     tt = Var.leaf(random_tensor(10, 4, 17))
     pt = Var.leaf(random_tensor(6, 4, 18))
     token_ids = [2, 5, 1]

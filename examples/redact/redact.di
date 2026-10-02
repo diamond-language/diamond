@@ -11,6 +11,8 @@ require "./lib/tagger"
 
 def usage() = "usage: redact [--mask] [--rules FILE] [--summary] [FILE...]"
 
+# Redacts every line of one input (`file` is nil for stdin). The same
+# tagger is used for all inputs, so tags stay consistent across files.
 def redact_stream(file, tagger: Tagger, rules: Array[Rule])
   loop do
     line = if file == nil then gets() else file.gets() end
@@ -19,6 +21,7 @@ def redact_stream(file, tagger: Tagger, rules: Array[Rule])
   end
 end
 
+# --summary: how many matches of each kind, to stderr so stdout stays clean.
 def print_summary(counts: Hash[String, Int])
   if counts.empty?()
     warn("redact: nothing found")
@@ -30,13 +33,16 @@ def print_summary(counts: Hash[String, Int])
 end
 
 def main(args: Array[String]) -> Int
+  # Defaults, then one pass over the arguments.
   mask = false
   summary = false
   rules = builtin_rules()
   paths = []
   index = 0
+
   while index < args.length()
     arg = args[index]
+
     if arg == "--mask"
       mask = true
     elsif arg == "--summary"
@@ -46,6 +52,9 @@ def main(args: Array[String]) -> Int
         warn("redact: --rules needs a file\n#{usage()}")
         return 64
       end
+
+      # Consume the value, and ADD the file's rules after the built-ins (so
+      # custom rules see text the built-ins have already processed).
       index += 1
       begin
         rules = rules + load_rules(args[index])
@@ -56,6 +65,7 @@ def main(args: Array[String]) -> Int
         warn("redact: #{error.message()}")
         return 66
       end
+    # A lone "-" means stdin, so it is a path, not an option.
     elsif arg.start_with?("-") && arg != "-"
       warn("redact: unknown option #{arg}\n#{usage()}")
       return 64
@@ -64,9 +74,13 @@ def main(args: Array[String]) -> Int
     end
     index += 1
   end
+
+  # No files: read stdin.
   paths = ["-"] if paths.empty?()
 
+  # Process each input in order with ONE tagger.
   tagger = Tagger.new(mask)
+
   paths.each() do |path|
     if path == "-"
       redact_stream(nil, tagger, rules)

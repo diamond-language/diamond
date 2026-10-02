@@ -1,3 +1,4 @@
+# The training loss.
 class Loss
   # logits: Var (seq_len x vocab_size). targets: Array of Int, length
   # seq_len -- targets[i] is the correct next-token id for position i.
@@ -15,6 +16,10 @@ class Loss
   def self.softmax_cross_entropy(logits, targets)
     seq_len = logits.tensor().rows()
     vocab_size = logits.tensor().cols()
+
+    # Forward: softmax each row into probabilities (on a copy, since the
+    # backward pass needs them again), then average the negative log
+    # probability assigned to each correct next token.
     probs = tensor_clone(logits.tensor())
     tensor_row_softmax!(probs)
 
@@ -34,9 +39,13 @@ class Loss
     end
     mean_loss = total_loss / seq_len
 
+    # A 1x1 Var holding the loss, so `backward!` can start from it.
     output = Tensor.zeros(1, 1)
     output.set(0, 0, mean_loss)
     result = Var.new(output, [logits], true)
+
+    # Backward: the gradient for every logit, scaled by the incoming gradient
+    # (1.0 for the final loss).
     closure backward()
       if logits.requires_grad()
         i = 0
