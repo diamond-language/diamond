@@ -1,6 +1,6 @@
 # gremlin_serve multi-thread scaling: investigation plan
 
-Status: **plan, nothing here is confirmed yet.** Starting evidence is
+Status: **steps 0-4 and 6 run on 2026-10-02; see "Results" at the end.** Starting evidence is
 `bench/gremlin_http/SWEEP.md` (recorded 2026-10-02, Diamond 0.10.1,
 gremlin 0.4.0, Ryzen 5 Pro 7535U, 6 cores / 12 threads).
 
@@ -133,3 +133,73 @@ conclusion with wall-clock, not just instruction counts.
 Keep-alive support, pipelining, and the HTTP parser are separate features. If
 Step 3 or 4 shows the no-keep-alive connection cost dominates, that becomes a
 separate design question rather than part of this investigation.
+
+## Results (2026-10-02)
+
+Tooling: `bench/gremlin_http/instrumented.py` (frequency, user/system split,
+context switches, per-thread balance, RSS) plus `perf stat`/`perf record`
+(user-space only: `perf_event_paranoid` is 2, so kernel time is measured with
+`/proc` CPU accounting instead). Machine: 6 cores, SMT sibling pairs
+(0,1) (2,3) ... (10,11), `performance` governor, on AC power, boost up to
+4.63 GHz.
+
+**Verdict: the plateau is hardware, not gremlin. Software scaling is clean.**
+
+- **Step 0, harness (H8): not the cause.** Pinning `ab` to its own core
+  changed nothing (10 threads: 5,772 req/s pinned vs 5,682 unpinned).
+- **Step 2/7, balance (H7): not the cause.** Every worker is busy; the least
+  busy thread did 91-99% of the busiest thread's CPU.
+- **Step 1, clock (H1): the main cause up to 5 threads.** With one thread per
+  physical core (cpus 0,2,4,6,8), CPU time per request rises 0.50 -> 0.74 ms
+  from 1 to 5 threads, but the busy cores' clock falls 3967 -> 2750 MHz
+  (-31%). CPU time multiplied by clock (cycles per request) is flat at about
+  2.0 M (1.98, 1.98, 1.94, 2.04 M at 1, 2, 3, 5 threads).
+- **Step 1, SMT (H2): the cause past 5 threads.** On 5 physical cores, going
+  from 5 to 10 threads raises throughput only +13% (5,116 -> 5,793 req/s).
+  `perf stat` shows IPC falling from 2.87 to 1.65 per thread while total user
+  instructions rise 11%, the usual two-threads-per-core pattern. Cycles per
+  request rise from about 2.2 M to 3.3 M.
+- **H4/H5/H6: ruled out for this workload.** User instructions per request are
+  identical at 1 and 5 threads (about 4.2 M and 4.1 M), so no lock, allocator,
+  or GC cost grows with concurrency. RSS is about 75 MB per worker and flat
+  over the run (growth under 4 MB), so the 893 MB at 12 threads is 12 worker
+  heaps, not a leak.
+- **H3, kernel TCP:** about a third of server CPU is system time (roughly 0.2
+  ms per request) and grows in proportion with everything else; it is a real
+  fixed cost of no-keep-alive but is not what limits scaling. Step 4 (the C
+  baseline) was not needed to reach the verdict and was not run.
+
+Practical reading: on this laptop part, peak throughput needs one worker per
+physical core (about 5 threads leaves a core for the load generator, 6 uses
+them all) and extra SMT threads buy 10-15%. The earlier expectation of a peak
+at 4-6 threads was reasonable; the measured curve is flatter after 6 because
+SMT still adds a little instead of hurting.
+
+### What the profile did show
+
+Per-request user cost is large: about 4.2 M instructions, of which `hello`
+(no handler work) is only 0.25 M, so gremlin's own accept/parse/respond path is
+about 6%. 67% of user time is in `run_chunk` (the bytecode loop). Splitting the
+test handler (microseconds per call, release build):
+
+| part | time |
+|---|---:|
+| 2000-iteration integer loop | 131 |
+| building 8 small hashes | 5 |
+| `JSON.stringify` of that 8-item, 313-byte payload | 96-107 |
+
+`JSON.stringify` is linear (about 11 us per 3-field item, 5.8 ms for 21 KB) but
+slow: even `JSON.stringify(1)` costs 3.7 us. It is implemented in Diamond
+(`lib/core/json.di` builds a new `JSONCodec` per call, `json_codec.di`), so it
+runs as interpreted bytecode.
+
+## Follow-ups
+
+1. **Native or cheaper `JSON.stringify`.** It dominates a typical API handler
+   (as costly as 2000 loop iterations for a 313-byte body). Options: a native
+   implementation, or at least avoiding a codec allocation per call. Measure
+   with the `json.di`-style microbenchmark above before and after.
+2. **Optionally re-run the sweep pinned to physical cores** (one worker per
+   core, `ab` on its own core) to get a clean best-case curve for the docs.
+3. **Keep-alive** remains a separate design question (see below); it would cut
+   the roughly one-third kernel share but is not needed to explain scaling.
