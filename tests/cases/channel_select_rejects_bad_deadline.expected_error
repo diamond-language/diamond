@@ -1,0 +1,1 @@
+Channel.select's deadline must be a finite monotonic Float or nil

@@ -12,6 +12,11 @@ authoritative fine-grained record.
   Erlang's other two restart strategies; the default stays `:one_for_one`.
   Siblings are restarted by cooperatively interrupting their current attempt.
 
+- `Channel.select(channels, deadline = nil)` receives from the first of several
+  channels that has a value, returning `[index, value]`, or `nil` on deadline
+  expiry or once every channel is closed and drained. Closing a channel wakes
+  a blocked select; earlier channels in the array take priority.
+
 ## 0.10.0 — 2026-10-01
 
 - The registry launch seed now selects gremlin 0.4.0 (token-driven shutdown).

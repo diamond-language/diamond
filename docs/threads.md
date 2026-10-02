@@ -154,6 +154,44 @@ nonblocking operation after each return. A VM with installed signal handlers
 returns periodically to dispatch them. Most callers should use the cancellation
 cut instead of managing these low-level readiness hints themselves.
 
+### Waiting on several channels: `Channel.select`
+
+`Channel.select(channels, deadline = nil)` receives from whichever of several
+channels has a value ready, like Go's `select` with only receive cases. It
+returns `[index, value]` -- the position of the channel in `channels` and the
+value taken from it -- and blocks until one is ready.
+
+```ruby
+orders = Channel.new(8)
+cancels = Channel.new(1)
+
+loop
+  picked = Channel.select([cancels, orders])
+  break if picked == nil
+  index, value = picked[0], picked[1]
+  break if index == 0          # a cancellation arrived
+  puts("order: #{value}")
+end
+```
+
+- When several channels are ready at once, the **first one in array order**
+  wins, so list the channel that should take priority (a cancellation or
+  shutdown channel) first. Selection is deterministic, not random as in Go.
+- Closing a channel wakes a blocked `select`. A closed channel is still
+  selected until its queued values are drained; after that it is skipped.
+- It returns `nil` when nothing will arrive: the `deadline` (an absolute
+  `Time.monotonic()` Float, as for `wait_readable`) passed, or every channel is
+  closed and drained. `closed?` on the channels tells the two apart.
+- Only one value is taken per call, under that channel's own lock, so several
+  threads may select over the same channels without losing or duplicating
+  values.
+- `channels` must be a non-empty Array of Channels and `deadline` a finite
+  Float or `nil`; anything else raises `TypeError`. Like a plain `receive`, a
+  blocking `select` does not service `Signal.trap` handlers while parked --
+  pass a short deadline and loop if you need to.
+- Send-side select (waiting to `send` on whichever channel has room) is not
+  provided.
+
 `close()` is idempotent -- closing an already-closed channel is a no-op, not
 an error. `closed?()` and `size()` report status without blocking.
 
