@@ -5,9 +5,11 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `26758cbfdd516860c21944d4bbfbcb2321947f18` (upgraded
-2026-09-25 with `deploy/upgrade.sh` for cut show pages, after a verified
-laptop snapshot; previously `822114807fbc9cbdd579f29fec4e0958da8b78df` from
+Runtime revision: `d951b2ac9934b151f70200c76eca4f4abb491836` (Diamond 0.10.1,
+upgraded 2026-10-02 with `deploy/upgrade.sh` after a verified laptop snapshot;
+previously `a4eabf76` for 0.9.2 and `26758cbfdd516860c21944d4bbfbcb2321947f18`
+from 2026-09-25 for cut show pages;
+earlier `822114807fbc9cbdd579f29fec4e0958da8b78df` from
 2026-09-24, launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
 flags. Only the current release is kept on the host; git is the rollback. Schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
@@ -61,6 +63,36 @@ External HTTPS verification confirmed exactly 18 catalog releases, 404 responses
 for each removed release's metadata and archive, and successful facet resolution,
 digest checks, loading, and locked reinstall of every retained cut. The revised
 seed also passed local reproducibility and dependency-closure checks.
+
+## Publishing a new cut version
+
+Seed-time inventory lives in `docs/registry-launch-inventory.json`; a cut that
+changes after launch is published on its own. Take and verify a laptop snapshot
+first (`tools/fetch_registry_backup.py`, below). Then:
+
+1. On the host, issue a short-lived credential. **The subject must be a current
+   owner of the cut** (`diamond-language` for every launch cut); a credential
+   with any other subject gets HTTP 403 even with the right `publish:<name>`
+   scope.
+
+   ```sh
+   ssh root@dilang.tech 'cd /opt/diamond-registry/current/app && umask 077 && \
+     REGISTRY_ROOT=/var/lib/diamond-registry REGISTRY_OPERATOR=<you> \
+     runuser -u diamond-registry -- ../bin/diamond credentials.di issue \
+       diamond-language 1800 "publish:<name>" "<reason>"' > credential.json
+   chmod 600 credential.json
+   ```
+
+2. Extract `seed/` from the deployment bundle and keep only the target cut in
+   `inventory.json` plus its archive; `tools/publish_registry_seed.py` verifies
+   the archive against that entry and publishes only it. Never publish the whole
+   seed again: versions are immutable.
+3. Verify with `tools/verify_registry_launch.py https://cuts.dilang.tech`, delete
+   `credential.json`, and revoke the credential
+   (`credentials.di revoke <id> "<reason>"`) or let it expire.
+
+gremlin 0.4.0 was published this way on 2026-10-02 (`gremlin` now lists 0.2.1,
+0.2.2, and 0.4.0).
 
 ## Host disk and logs
 
