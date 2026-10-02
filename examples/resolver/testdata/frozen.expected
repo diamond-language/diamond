@@ -1,0 +1,3 @@
+index frozen: frozen object cannot be modified
+version frozen: true
+unique(5): expected Array[TypeVariable], got Int
