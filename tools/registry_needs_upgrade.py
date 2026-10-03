@@ -95,7 +95,7 @@ def main():
         git("cat-file", "-e", deployed + "^{commit}")
     except subprocess.CalledProcessError:
         sys.exit(f"deployed revision {deployed[:12]} is not in this checkout (git fetch?)")
-    target = git("rev-parse", args.target).strip()
+    target = git("rev-parse", args.target + "^{commit}").strip()
     changed = git("diff", "--name-only", deployed, target).splitlines()
 
     cuts = cut_closure(registry_roots())
