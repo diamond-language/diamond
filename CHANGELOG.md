@@ -11,6 +11,9 @@ authoritative fine-grained record.
   supervisor counted it, so a sibling crashing in that gap did not see the child
   and never restarted it. Present in 0.10.2.
 
+- `Hash#clear` removes every pair in one native pass and returns the Hash itself;
+  a frozen Hash raises `FrozenError`.
+
 ## 0.10.2 — 2026-10-02
 
 ### Examples
