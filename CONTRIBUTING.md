@@ -148,6 +148,30 @@ the summary -- `git log` is read far more often than it's written. Keep a
 commit to one logical change; split unrelated work into separate commits
 even when it landed in the same session.
 
+## Branches and pull requests
+
+All new functionality is added on a branch and merged through a pull request;
+nothing new is committed straight to `main`. This applies equally to people and
+to agent sessions.
+
+1. Branch from the latest `main` (`git fetch`, then branch from `origin/main`),
+   one branch per change. Use a separate worktree when several branches are in
+   flight at once.
+2. Open a pull request. CI runs on it automatically (see "Build and test").
+3. Before merging, **rebase the branch onto the current `main`** -- do not merge
+   `main` into the branch -- and update the branch with
+   `git push --force-with-lease`. If `main` moved after your last run, rebase
+   again.
+4. **Merge only on a green CI run for the rebased head**: every job passing, on
+   the exact commit being merged. A red run, or a run still in progress, is not
+   green. A failed job caused by infrastructure (for example a package mirror
+   download dying before any test ran) can be re-run; a job that hangs or fails
+   in the tests is a real result until shown otherwise, so find the cause before
+   merging.
+5. Tag a release only after CI is green on the merged `main` commit.
+
+Tests belong in the same pull request as the behavior they cover.
+
 ## Documentation and the changelog
 
 Three different places, three different jobs -- don't blend them:
