@@ -1,0 +1,7 @@
+Thread result is nested too deeply to copy (or contains itself)
+Thread result is nested too deeply to copy (or contains itself)
+4000
+Thread.new argument is nested too deeply to copy (or contains itself)
+Channel#send argument is nested too deeply to copy (or contains itself)
+100
+nil
