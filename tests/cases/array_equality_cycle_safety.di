@@ -1,7 +1,6 @@
-# Two different self-referential Arrays must compare unequal without
-# hanging/stack-overflowing (DIAMOND_STRUCTURAL_MAX_DEPTH bounds the
-# recursion) -- and a genuinely deep but non-cyclic structure, well
-# within that bound, must still compare correctly.
+# Two different self-referential Arrays must compare without
+# hanging/stack-overflowing -- they have the same shape, so they are equal --
+# and a genuinely deep but non-cyclic structure must still compare correctly.
 a = []
 a.push(a)
 b = []
