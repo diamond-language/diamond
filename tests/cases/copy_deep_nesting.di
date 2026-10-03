@@ -23,6 +23,13 @@ begin
 rescue e
   puts(e.message())
 end
+# A failed join is spent: joining again re-raises the same error, and the
+# thread is not joined a second time when it is cleaned up at exit.
+begin
+  t.join()
+rescue e
+  puts(e.message())
+end
 puts(depth(Thread.new(chain, 4000).join()))
 a = []
 a.push(a)

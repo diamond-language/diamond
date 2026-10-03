@@ -21974,22 +21974,31 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                 target_thread->child_program->classes,
                                 chunk->classes,nullptr,&copied);
                             if(!copy_ok) {
-                                pthread_mutex_unlock(&target_thread->join_lock);
-                                snprintf(vm->error,sizeof vm->error,
+                                /* The OS thread was already pthread_join'd
+                                 * above, so this join is spent: leaving
+                                 * `joined` false made a later join (or
+                                 * free_thread) join it a second time, which
+                                 * is undefined behavior (a crash on musl).
+                                 * Record it as a failed join instead; the
+                                 * ThreadError path below raises the message
+                                 * and every later join re-raises it. */
+                                snprintf(target_thread->child_vm->error,
+                                    sizeof target_thread->child_vm->error,
                                     "%s %s","Thread result",copy_failure_reason());
-                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                            }
-                            target_thread->result=copied;
-                            /* target_thread->result lives in the
-                             * DiamondThread payload struct, not a
-                             * DiamondObject header of its own -- the
-                             * barrier has to reach back to the owning
-                             * DiamondThreadHandle (registers[recv]'s own
-                             * object) for a promoted handle to stay
-                             * correctly remembered. */
-                            if(!gc_write_barrier(vm,registers[recv].as.object)) {
-                                pthread_mutex_unlock(&target_thread->join_lock);
-                                VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                target_thread->internal_failure=true;
+                            } else {
+                                target_thread->result=copied;
+                                /* target_thread->result lives in the
+                                 * DiamondThread payload struct, not a
+                                 * DiamondObject header of its own -- the
+                                 * barrier has to reach back to the owning
+                                 * DiamondThreadHandle (registers[recv]'s own
+                                 * object) for a promoted handle to stay
+                                 * correctly remembered. */
+                                if(!gc_write_barrier(vm,registers[recv].as.object)) {
+                                    pthread_mutex_unlock(&target_thread->join_lock);
+                                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                                }
                             }
                         }
                         target_thread->joined=true;
