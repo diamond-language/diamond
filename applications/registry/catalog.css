@@ -42,7 +42,9 @@ section{padding:92px 0}
 #browse>.container{position:relative;z-index:1}
 /* The dilang.tech hero background: gradient glow plus faint facet lines. */
 .hero-glow{position:absolute;inset:-128px -10% auto -10%;height:640px;background:radial-gradient(45% 55% at 25% 20%,rgba(79,70,229,.30),transparent 60%),radial-gradient(35% 45% at 75% 10%,rgba(34,211,238,.22),transparent 60%),radial-gradient(30% 40% at 50% 60%,rgba(59,130,246,.18),transparent 60%);pointer-events:none;z-index:0}
-.hero-facets{position:absolute;top:0;left:0;width:100%;height:640px;opacity:.5;pointer-events:none;z-index:0}
+.hero-facets{position:absolute;top:-12%;right:-14%;width:min(900px,86vw);height:auto;aspect-ratio:1;opacity:.4;pointer-events:none;z-index:0;transform:rotate(32deg);animation:facet-sway 40s ease-in-out infinite alternate}
+@keyframes facet-sway{from{transform:rotate(26deg)}to{transform:rotate(38deg)}}
+@media (prefers-reduced-motion:reduce){.hero-facets{animation:none}}
 .inline-code,p code,li code{font-size:.92em;color:var(--tok-fn);background:rgba(107,198,255,.08);padding:1px 5px;border-radius:4px}
 .prose a,.status a{color:var(--cyan);font-weight:600}
 
