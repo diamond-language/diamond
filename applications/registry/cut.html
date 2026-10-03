@@ -45,6 +45,19 @@
 <main id="main">
   <section class="cut-page">
     <div class="hero-glow" aria-hidden="true"></div>
+    <svg class="hero-facets" viewBox="0 0 32 32" aria-hidden="true">
+      <defs>
+        <linearGradient id="facetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#4f46e5"/>
+          <stop offset="55%" stop-color="#2563eb"/>
+          <stop offset="100%" stop-color="#22d3ee"/>
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke="url(#facetGrad)" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke">
+        <path d="M11 5 L21 5 L28 13 L16 28 L4 13 Z" stroke-width="1.25" vector-effect="non-scaling-stroke"/>
+        <path d="M11 5 L16 13 M21 5 L16 13 M4 13 L28 13 M16 13 L16 28" stroke-width="1.25" vector-effect="non-scaling-stroke"/>
+      </g>
+    </svg>
     <div class="container">
       <p class="crumbs"><a href="../">All cuts</a> / <span id="crumb-name"></span></p>
       <div class="cut-head">
