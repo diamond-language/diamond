@@ -8,6 +8,12 @@ authoritative fine-grained record.
 
 ### Runtime
 
+- `==` on Arrays and Hashes is now exact at any nesting depth. Past 256 levels it
+  used to answer `false` for equal values, so a deeply nested value was unequal to
+  its own copy and missed as a Hash key. Deep comparison now runs on an explicit
+  stack instead of the C stack, and two structures that contain themselves compare
+  equal when they have the same shape.
+
 - Fixed a crash when a deeply nested value crossed a `Thread` or `Channel`
   boundary (`Thread.new` arguments, `join` results, `Channel#send`/`receive`,
   `Channel.select`, `Supervisor` children, `ProgramBuilder#run`). Copying recursed

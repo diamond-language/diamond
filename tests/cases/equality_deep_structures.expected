@@ -1,0 +1,16 @@
+10: equal=true differ_at_bottom=false hashes=true hash_differ=false
+255: equal=true differ_at_bottom=false hashes=true hash_differ=false
+256: equal=true differ_at_bottom=false hashes=true hash_differ=false
+257: equal=true differ_at_bottom=false hashes=true hash_differ=false
+5000: equal=true differ_at_bottom=false hashes=true hash_differ=false
+150000: equal=true differ_at_bottom=false hashes=true hash_differ=false
+depth mismatch: false
+!= on equal deep: false
+mixed: true
+deep key lookup: found
+deep key miss: nil
+cyclic same shape: true
+cyclic unrolled: true
+cyclic vs finite: false
+cyclic hash: true
+nil

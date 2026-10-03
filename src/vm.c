@@ -7653,22 +7653,34 @@ static bool numeric_as_double(DiamondValue value, double *out) {
     return false;
 }
 
-/* Shared by values_equal_at_depth and hash_value_at_depth below --
- * recursion in both is bounded (not by DIAMOND_MAX_CALL_DEPTH -- these
- * are plain C helpers, never go through the Diamond call stack at all)
- * specifically so a self-referential Array/Hash (`a = []; a.push(a)`)
- * can never stack-overflow either one: two structures nested/cyclic
- * beyond this depth report unequal (or, for hashing, just stop mixing
- * in any deeper structure) rather than recursing forever. 256 is
- * generous for any real data (deeply-nested-but-finite data structures
- * essentially never approach it) while still being a small, bounded
- * amount of native C stack. */
-enum { DIAMOND_STRUCTURAL_MAX_DEPTH = 256 };
+/* hash_value_at_depth's recursion is bounded so a self-referential
+ * Array/Hash (`a = []; a.push(a)`) can never overflow the C stack: past this
+ * depth it stops mixing in deeper structure, which is always valid for a
+ * hash (equal values still hash equally, since both truncate identically).
+ * Equality may not truncate -- that would call equal deep values unequal --
+ * so it has its own scheme: values_equal_at_depth recurses only to
+ * DIAMOND_EQUAL_FAST_DEPTH, and anything deeper is redone by
+ * values_equal_iterative on an explicit heap stack. */
+enum { DIAMOND_STRUCTURAL_MAX_DEPTH = 256, DIAMOND_EQUAL_FAST_DEPTH = 32 };
 
 static bool values_equal_at_depth(DiamondValue left,DiamondValue right,int depth);
+static bool values_equal_iterative(DiamondValue left,DiamondValue right);
+
+/* Set by values_equal_at_depth when it gave up at DIAMOND_EQUAL_FAST_DEPTH,
+ * meaning its `false` is "too deep to tell", not "unequal". */
+static thread_local bool equal_too_deep;
+/* hash_find (reached for Hash comparison) calls back into values_equal for
+ * key comparison, so Hashes used as keys of Hashes nest values_equal calls on
+ * the C stack; bound that the one way it can still grow. */
+static thread_local int equal_reentry;
 
 static bool values_equal(DiamondValue left, DiamondValue right) {
-    return values_equal_at_depth(left,right,0);
+    const bool saved_too_deep=equal_too_deep;
+    equal_too_deep=false;
+    bool result=values_equal_at_depth(left,right,0);
+    if(!result&&equal_too_deep)result=values_equal_iterative(left,right);
+    equal_too_deep=saved_too_deep;
+    return result;
 }
 
 static bool values_equal_at_depth(DiamondValue left, DiamondValue right, int depth) {
@@ -7727,13 +7739,10 @@ static bool values_equal_at_depth(DiamondValue left, DiamondValue right, int dep
              * fallback below). */
             if(left.as.object==right.as.object)return true;
             if(left.as.object->kind==DIAMOND_OBJECT_ARRAY) {
-                /* Two different but cyclic/absurdly-deep structures
-                 * (a=[]; a.push(a)) can never finish an element-by-
-                 * element comparison -- the depth guard here is what
-                 * turns that into "not equal" instead of a stack
-                 * overflow. Real, non-cyclic data essentially never
-                 * approaches this bound. */
-                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                /* Deep or cyclic structures leave the recursion here:
+                 * the guard flags "too deep to tell" and values_equal
+                 * redoes the comparison iteratively. */
+                if(depth>=DIAMOND_EQUAL_FAST_DEPTH){equal_too_deep=true;return false;}
                 const DiamondArray *a=(const DiamondArray *)left.as.object;
                 const DiamondArray *b=(const DiamondArray *)right.as.object;
                 if(a->count!=b->count)return false;
@@ -7743,7 +7752,7 @@ static bool values_equal_at_depth(DiamondValue left, DiamondValue right, int dep
                 return true;
             }
             if(left.as.object->kind==DIAMOND_OBJECT_HASH) {
-                if(depth>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+                if(depth>=DIAMOND_EQUAL_FAST_DEPTH){equal_too_deep=true;return false;}
                 const DiamondHash *a=(const DiamondHash *)left.as.object;
                 const DiamondHash *b=(const DiamondHash *)right.as.object;
                 if(a->count!=b->count)return false;
@@ -7810,6 +7819,115 @@ static uint64_t hash_mix64(uint64_t value) {
     value^=value>>33;value*=0xc4ceb9fe1a85ec53ULL;
     value^=value>>33;
     return value;
+}
+
+/* Equality on an explicit heap stack, so nesting depth is bounded by memory,
+ * not the C stack. Containers push their element pairs; everything else is
+ * compared by values_equal_at_depth (no recursion for a non-container).
+ * Cycles: past DIAMOND_STRUCTURAL_MAX_DEPTH levels a container pair is
+ * remembered, and meeting the same pair again counts as equal -- the
+ * standard coinductive reading, so two structures with identical shape that
+ * both contain themselves compare equal, as in Ruby. Out of memory reports
+ * unequal rather than guessing. */
+typedef struct EqualPair {
+    DiamondValue left;
+    DiamondValue right;
+    size_t depth;
+} EqualPair;
+
+typedef struct EqualSeen {
+    const void **slots; /* left,right object pairs, flattened; nullptr = empty */
+    size_t capacity;    /* number of pairs, a power of two (or 0) */
+    size_t count;
+} EqualSeen;
+
+static size_t equal_seen_slot(const void *left,const void *right,size_t capacity) {
+    uintptr_t mixed=(uintptr_t)left*0x9E3779B97F4A7C15u^(uintptr_t)right*0xC2B2AE3D27D4EB4Fu;
+    mixed^=mixed>>29;
+    return (size_t)mixed&(capacity-1);
+}
+
+/* 1 = newly added, 0 = already present, -1 = out of memory */
+static int equal_seen_add(EqualSeen *seen,const void *left,const void *right) {
+    if((seen->count+1)*2>seen->capacity) {
+        const size_t capacity=seen->capacity==0?64:seen->capacity*2;
+        const void **slots=calloc(capacity*2,sizeof *slots);
+        if(slots==nullptr)return -1;
+        for(size_t old=0;old<seen->capacity;old++) {
+            if(seen->slots[old*2]==nullptr)continue;
+            size_t slot=equal_seen_slot(seen->slots[old*2],seen->slots[old*2+1],capacity);
+            while(slots[slot*2]!=nullptr)slot=(slot+1)&(capacity-1);
+            slots[slot*2]=seen->slots[old*2];slots[slot*2+1]=seen->slots[old*2+1];
+        }
+        free(seen->slots);
+        seen->slots=slots;seen->capacity=capacity;
+    }
+    size_t slot=equal_seen_slot(left,right,seen->capacity);
+    while(seen->slots[slot*2]!=nullptr) {
+        if(seen->slots[slot*2]==left&&seen->slots[slot*2+1]==right)return 0;
+        slot=(slot+1)&(seen->capacity-1);
+    }
+    seen->slots[slot*2]=left;seen->slots[slot*2+1]=right;seen->count++;
+    return 1;
+}
+
+static bool equal_stack_push(EqualPair **items,size_t *count,size_t *capacity,
+                             DiamondValue left,DiamondValue right,size_t depth) {
+    if(*count==*capacity) {
+        const size_t grown_capacity=*capacity==0?64:*capacity*2;
+        EqualPair *grown=realloc(*items,grown_capacity*sizeof **items);
+        if(grown==nullptr)return false;
+        *items=grown;*capacity=grown_capacity;
+    }
+    (*items)[(*count)++]=(EqualPair){left,right,depth};
+    return true;
+}
+
+static bool values_equal_iterative(DiamondValue left,DiamondValue right) {
+    if(equal_reentry>=DIAMOND_STRUCTURAL_MAX_DEPTH)return false;
+    equal_reentry++;
+    EqualPair *stack=nullptr;
+    size_t count=0,capacity=0;
+    EqualSeen seen={};
+    bool equal=equal_stack_push(&stack,&count,&capacity,left,right,0);
+    while(equal&&count>0) {
+        const EqualPair pair=stack[--count];
+        const DiamondValue l=pair.left,r=pair.right;
+        const bool containers=l.kind==DIAMOND_VALUE_OBJECT&&r.kind==DIAMOND_VALUE_OBJECT&&
+            l.as.object->kind==r.as.object->kind&&l.as.object!=r.as.object&&
+            (l.as.object->kind==DIAMOND_OBJECT_ARRAY||l.as.object->kind==DIAMOND_OBJECT_HASH);
+        if(!containers) {
+            /* Leaves, mismatched kinds, and the same object: no recursion. */
+            if(!values_equal_at_depth(l,r,0))equal=false;
+            continue;
+        }
+        if(pair.depth>=DIAMOND_STRUCTURAL_MAX_DEPTH) {
+            const int added=equal_seen_add(&seen,l.as.object,r.as.object);
+            if(added<0){equal=false;break;}
+            if(added==0)continue;
+        }
+        if(l.as.object->kind==DIAMOND_OBJECT_ARRAY) {
+            const DiamondArray *a=(const DiamondArray *)l.as.object;
+            const DiamondArray *b=(const DiamondArray *)r.as.object;
+            if(a->count!=b->count){equal=false;break;}
+            for(size_t index=0;equal&&index<a->count;index++)
+                equal=equal_stack_push(&stack,&count,&capacity,
+                    a->values[index],b->values[index],pair.depth+1);
+        } else {
+            const DiamondHash *a=(const DiamondHash *)l.as.object;
+            const DiamondHash *b=(const DiamondHash *)r.as.object;
+            if(a->count!=b->count){equal=false;break;}
+            for(size_t index=0;equal&&index<a->count;index++) {
+                const ptrdiff_t found=hash_find(b,a->entries[index].key);
+                if(found<0){equal=false;break;}
+                equal=equal_stack_push(&stack,&count,&capacity,
+                    a->entries[index].value,b->entries[(size_t)found].value,pair.depth+1);
+            }
+        }
+    }
+    free(stack);free(seen.slots);
+    equal_reentry--;
+    return equal;
 }
 
 /* FNV-1a over String content -- keys with equal bytes (values_equal's
