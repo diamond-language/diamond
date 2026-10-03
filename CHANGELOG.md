@@ -17,6 +17,30 @@ authoritative fine-grained record.
   expiry or once every channel is closed and drained. Closing a channel wakes
   a blocked select; earlier channels in the array take priority.
 
+- Fixed a crash in garbage collection of deeply nested data. Marking recursed
+  once per nesting level, so a collection running while a chain of tens of
+  thousands of nested Arrays, Hashes, or linked Instances was live overflowed
+  the C stack and crashed the process (about 50,000 levels on a debug build).
+  Marking now uses an explicit work stack, so depth is limited only by memory.
+
+- `JSON.stringify` is now native, matching `JSON.parse`. Output is byte-for-byte
+  what the Diamond implementation produced, at roughly 70-80x the speed (a
+  313-byte object: 96 us -> 1.4 us; 21 KB: 5.8 ms -> 71 us), which raised a
+  small JSON-returning `gremlin_serve` endpoint's throughput by about 50% at
+  every worker count. It also fixes a crash: documents nested more than about
+  44 levels segfaulted on release builds, and an Array or Hash containing
+  itself recursed until it crashed. Nesting is now bounded at 91 levels (the
+  same bound as `JSON.parse`) and deeper or self-containing values raise
+  `SystemStackError`.
+
+## 0.10.1 — 2026-10-02
+
+### Runtime
+
+- Fixed a stack overflow in `String#match?` when the pattern is a String
+  (`"12".match?("^[0-9]+$")`): it dispatched back to itself indefinitely. A
+  String pattern is now compiled to a `Regexp` first, as in Ruby.
+
 ## 0.10.0 — 2026-10-01
 
 - The registry launch seed now selects gremlin 0.4.0 (token-driven shutdown).

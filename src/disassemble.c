@@ -1088,6 +1088,8 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"TO_INT",offset, &valid);break;
             case DIAMOND_OP_TO_SYMBOL:
                 offset=two_registers(stream,chunk,"TO_SYMBOL",offset, &valid);break;
+            case DIAMOND_OP_JSON_STRINGIFY:
+                offset=two_registers(stream,chunk,"JSON_STRINGIFY",offset, &valid);break;
             case DIAMOND_OP_MATH_UNARY: {
                 if(!require_bytes(stream,chunk,offset,6)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, r%u, %s\n","MATH_UNARY",
