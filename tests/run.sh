@@ -33,7 +33,7 @@ run_cases_abs="$(realpath ./build/run_cases)"
 
 # Debug-family builds (the default `make`, sanitize, tsan) append a note
 # saying so; a release build prints the bare version.
-expected_version="diamond 0.10.2"
+expected_version="diamond 0.10.3"
 actual="$($diamond --version)"
 [[ "$actual" == "$expected_version" ||
    "$actual" == "$expected_version (debug build: unoptimized, much slower than \`make release\`)" ]] || {
