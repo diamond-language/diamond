@@ -87,6 +87,28 @@ thresholds, log rotation, retention, and an alert receiver in the host environme
 - Record takedown, ownership dispute, and credential compromise procedures. On an
   incident, restrict writes, preserve audit evidence, and rotate affected credentials.
 
+### When to upgrade, and the one-command routine
+
+The registry is one bundle built from a single repository revision, but most
+releases change nothing it runs, so it is **not upgraded on every release**.
+`tools/registry_needs_upgrade.py` compares the revision live on the server with a
+target (default `HEAD`) and answers:
+
+- **REQUIRED** (exit 20): the registry app files, a cut it loads (the dependency
+  closure of its `require_cut` lines), or the facet changed. Docs, tests, `deploy/`
+  templates, and the launch seed never count: new cut versions go in through the API.
+- **OPTIONAL** (exit 10): only the Diamond runtime changed. Upgrade for a crash or
+  security fix that affects the registry; otherwise wait for the next REQUIRED change.
+- **NONE** (exit 0): nothing relevant changed.
+
+`tools/deploy_registry.sh` runs the whole routine: the check above, swap in the build
+VM, a verified backup, the bundle build, upload and `upgrade.sh`, public verification
+(`verify_registry_launch.py`), and pruning. It stops unless the verdict is REQUIRED;
+`--force` upgrades anyway and `--dry-run` prints every mutating command instead of
+running it. Backups and bundles live in `~/diamond-registry-backups/` (outside every
+checkout) and only the newest of each is kept. Afterwards update the "Runtime
+revision" line in `PRODUCTION.md`.
+
 For upgrades, take a verified backup, stage the new version and its migrations,
 then restart and check health, auth, and a canary install. Do not assume old
 binaries can read a migrated database. If rollback needs a snapshot, restore to a
