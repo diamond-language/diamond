@@ -6,6 +6,23 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.10.2 — 2026-10-02
+
+### Examples
+
+- `examples/resolver` is a package version resolver exercising generic functions,
+  union types with exhaustive `case`, a sealed hierarchy, `Comparable`, and
+  `freeze`. `examples/pipeline` is a supervised, sandboxed worker pipeline that
+  combines `--sandbox` resource limits and the capability allow-list with
+  threads, `Supervisor` restarts, and Channels.
+
+### Tooling
+
+- The cuts catalog pages' logo had an unoutlined top edge with a stray highlight;
+  the outline is now closed on all four sides.
+
+### Runtime
+
 - `deep_freeze()` freezes an Array, Hash, or Instance and everything
   reachable from it, including through reference cycles.
 - `Supervisor.new(:one_for_all)` and `Supervisor.new(:rest_for_one)` add
