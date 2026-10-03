@@ -5783,7 +5783,7 @@ static void gc_unprotect(DiamondVm *vm, size_t saved_count) {
  * program. Rebase mode is active whenever `rebase_dest_classes!=nullptr`;
  * passing it alongside a meaningfully-used `*adopted_owner` is not a
  * supported combination -- exactly one caller mode applies per call. */
-static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
                                const DiamondClass *rebase_source_classes,
                                const DiamondClass *rebase_dest_classes,
@@ -5992,6 +5992,42 @@ static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         }
         default: return false;
     }
+}
+
+/* copy_value_step recurses once per nesting level on the C stack, so a deep
+ * enough structure (or a self-containing one, which never ends) used to
+ * overflow it and crash the process -- the same class of bug the GC's mark
+ * phase had. Copying is bounded rather than made iterative: the Instance
+ * and rebasing cases need each parent live (and GC-protected) while its
+ * children are copied, which an explicit work stack would have to
+ * reproduce. This counts the levels actually in flight on this OS thread
+ * and fails the copy past DIAMOND_COPY_MAX_DEPTH, comfortably inside a
+ * Thread's 8MB stack even on a sanitizer build's fatter frames. Callers
+ * report the failure with copy_failure_reason() so a too-deep value is not
+ * blamed on its type. */
+enum { DIAMOND_COPY_MAX_DEPTH = 4096 };
+static thread_local int copy_depth;
+static thread_local bool copy_too_deep;
+
+static const char *copy_failure_reason(void) {
+    return copy_too_deep?"is nested too deeply to copy (or contains itself)":
+                         "does not support this type";
+}
+
+static bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+                               DiamondProgram *source_program,
+                               const DiamondClass *rebase_source_classes,
+                               const DiamondClass *rebase_dest_classes,
+                               const DiamondChunk **adopted_owner,
+                               DiamondValue *out) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
+    if(copy_depth==0)copy_too_deep=false;
+    if(copy_depth>=DIAMOND_COPY_MAX_DEPTH) {copy_too_deep=true;return false;}
+    copy_depth++;
+    const bool copied=copy_value_step(dest_vm,value,source_program,
+        rebase_source_classes,rebase_dest_classes,adopted_owner,out);
+    copy_depth--;
+    return copied;
 }
 
 /* ProgramBuilder#run's real body, factored out of run_chunk's own opcode
@@ -21940,7 +21976,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             if(!copy_ok) {
                                 pthread_mutex_unlock(&target_thread->join_lock);
                                 snprintf(vm->error,sizeof vm->error,
-                                    "Thread result does not support this type");
+                                    "%s %s","Thread result",copy_failure_reason());
                                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                             }
                             target_thread->result=copied;
@@ -22120,7 +22156,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         if(!copy_ok) {
                             pthread_mutex_unlock(&target_channel->lock);
                             snprintf(vm->error,sizeof vm->error,
-                                "Channel#send argument does not support this type");
+                                "%s %s","Channel#send argument",copy_failure_reason());
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                         }
                         target_channel->queue[target_channel->count++]=copied;
@@ -22171,7 +22207,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(!copy_ok) {
                         pthread_mutex_unlock(&target_channel->lock);
                         snprintf(vm->error,sizeof vm->error,
-                            "Channel#receive result does not support this type");
+                            "%s %s","Channel#receive result",copy_failure_reason());
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                     memmove(target_channel->queue,target_channel->queue+1,
@@ -22375,7 +22411,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                          * temporary inside this same recursive run_chunk. */
                         memset(new_child,0,sizeof *new_child);
                         snprintf(vm->error,sizeof vm->error,
-                            "Supervisor.add_child argument does not support this type");
+                            "Supervisor.add_child argument %s",copy_failure_reason());
                         VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                     }
                     args_vm->extra_roots=new_child->args;
@@ -25070,7 +25106,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(copy_failed) {
                     free_thread(new_thread);
                     snprintf(vm->error,sizeof vm->error,
-                        "Thread.new argument does not support this type");
+                        "%s %s","Thread.new argument",copy_failure_reason());
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 new_thread->spawned=create_vm_thread(&new_thread->handle,
@@ -25206,7 +25242,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             pthread_mutex_unlock(&candidate->lock);
                             free(drained);
                             snprintf(vm->error,sizeof vm->error,
-                                "Channel.select result does not support this type");
+                                "%s %s","Channel.select result",copy_failure_reason());
                             VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                         }
                         memmove(candidate->queue,candidate->queue+1,

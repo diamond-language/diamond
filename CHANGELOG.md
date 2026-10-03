@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Runtime
+
+- Fixed a crash when a deeply nested value crossed a `Thread` or `Channel`
+  boundary (`Thread.new` arguments, `join` results, `Channel#send`/`receive`,
+  `Channel.select`, `Supervisor` children, `ProgramBuilder#run`). Copying recursed
+  once per nesting level on the C stack, so a chain tens of thousands deep, or an
+  Array that contains itself, segfaulted. Copies are now bounded at 4096 levels
+  and fail with a normal error that names the cause.
+
 ## 0.10.3 — 2026-10-03
 
 ### Tooling
