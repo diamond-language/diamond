@@ -168,7 +168,13 @@ to agent sessions.
    download dying before any test ran) can be re-run; a job that hangs or fails
    in the tests is a real result until shown otherwise, so find the cause before
    merging.
-5. Tag a release only after CI is green on the merged `main` commit.
+5. When several pull requests are open at once, each has a green run on its own
+   head, and they do not conflict, they may be merged together without
+   re-running CI for each one in turn. A pull request that conflicts with, or
+   depends on, one merged ahead of it still needs a rebase and a fresh green
+   run. The first CI run on `main` after the merges is the check on the
+   combination.
+6. Tag a release only after CI is green on the merged `main` commit.
 
 Tests belong in the same pull request as the behavior they cover.
 
