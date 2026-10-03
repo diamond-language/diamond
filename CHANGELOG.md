@@ -6,6 +6,17 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.10.3 — 2026-10-03
+
+### Tooling
+
+- `tools/registry_needs_upgrade.py` and `tools/deploy_registry.sh` decide whether a
+  release changes anything the cuts registry runs and, when it does, back up, build,
+  upgrade, verify, and prune in one command. Most releases no longer need a registry
+  upgrade.
+
+### Runtime
+
 - Fixed a race in `Supervisor#add_child` that could leave a `:one_for_all` or
   `:rest_for_one` supervisor hung. A new child's thread started before the
   supervisor counted it, so a sibling crashing in that gap did not see the child
