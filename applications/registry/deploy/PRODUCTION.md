@@ -146,7 +146,7 @@ reviewed public selection.
 ## Current backup and alert choices
 
 The user prefers **manual downloads to their laptop for now**. The first snapshot
-was downloaded to the operator-selected `~/Projects/diamond-lang/cutbackup/snapshot`
+was downloaded to the operator-selected `~/diamond-registry-backups/<dated-directory>/snapshot`
 and verified by a temporary local restore on 2026-09-23T18:42:37+00:00.
 Database integrity, foreign keys, archive sizes and digests passed. The snapshot
 contains 18 public releases and six retained takedowns (24 archive blobs total);
@@ -156,6 +156,11 @@ backup schedule is configured. Do not represent
 scheduled backups or automatic alert delivery as operational. Recovery can lose
 all changes since the last manual snapshot; record when each verified copy was
 made and repeat before upgrades, credential changes, and package publication.
+
+Keep backups **outside every source checkout** (the convention is
+`~/diamond-registry-backups/`, mode 0700, one dated directory per snapshot) so
+they can never be committed or shipped by accident, and keep only the latest
+verified snapshot once a newer one has passed restore verification.
 
 With Python 3.12+ on the laptop, select a new private destination yourself and use:
 

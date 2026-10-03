@@ -122,7 +122,7 @@ The selected version is 0.7.0.
 - [x] Verify removed cuts are unavailable and retained dependency graphs resolve.
 - [x] Record the deployed runtime revision and configuration backup procedure.
 - [x] Download and restore-verify the first snapshot with
-  `tools/fetch_registry_backup.py`. Saved under `~/Projects/diamond-lang/cutbackup`;
+  `tools/fetch_registry_backup.py`. Saved outside the source tree under `~/diamond-registry-backups/`;
   see the production record for its verification timestamp and retained state.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
   `monitor.py` probes remain available; automatic notification is not a release gate.
