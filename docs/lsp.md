@@ -226,6 +226,16 @@ search over a real (if scoped) lexical symbol table:
   chain's, via the same `lsp/receiver.c` resolution hover/definition
   use — not deduplicated against each other or the rest of the list, same
   as nothing else here dedupes either.
+  When that receiver is a built-in value instead — a String, Integer or Float
+  literal, or a local or parameter whose known type is `String`, `Array`,
+  `Hash`, `Int` or `Float` — it appends that type's methods: the VM's native
+  names (`diamond_native_member_names`, `src/vm.c`) plus the prelude extension
+  functions the VM dispatches by name (`array_x`, `hash_x`, `string_x`,
+  `integer_x`/`float_x`/`numeric_x`, `enumerable_x`, each also under a
+  `diamond_` prefix), deduplicated, with `?` added to Bool-returning ones.
+  Chains such as `name.strip().` and Array/Hash literals are not resolved yet.
+  `tests/lsp_test.sh` calls every offered name on a real value, so a name the VM
+  does not implement fails CI.
 - `workspace/symbol` (`lsp/workspace_symbol.c`) recursively walks the
   workspace root given via `initialize` (skipping dotfiles/dotdirs —
   `.git` and friends), compiles every `*.di` file it finds the same way

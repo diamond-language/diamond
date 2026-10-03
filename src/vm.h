@@ -1928,6 +1928,12 @@ void diamond_vm_set_exit_on_threaded_failure(bool enabled);
  * can wait forever -- a worker blocked sending to a channel the dead main
  * program would have drained. Exiting is what exit() already does. */
 void diamond_vm_exit_if_threads_running(int status);
+
+/* Names of the methods the VM implements natively for a built-in receiver type
+ * (DIAMOND_TYPE_STRING/ARRAY/HASH/INT/FLOAT), for editor completion. Writes
+ * the list's address to `*names` and returns its length; 0 for any other type. */
+size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names);
+
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
                                      uint8_t arity,uint8_t *return_type);
 /* Writes `value`'s bare runtime type name ("String", "Int", "Tensor", a

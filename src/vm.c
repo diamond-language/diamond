@@ -10183,6 +10183,57 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_FLOAT,"round",1,DIAMOND_TYPE_FLOAT},
 };
 
+/* Every method name the VM implements natively (or as a universal
+ * pseudo-method) per built-in receiver type, for editor completion
+ * (lsp/completion.c). Unlike DIAMOND_NATIVE_METHODS above this is names only
+ * and covers the whole surface, including natives dispatched inline in
+ * run_chunk; the prelude's extension functions (array_x, string_x, ...) are
+ * discovered from the compiled program instead and merged by the caller, so a
+ * name may appear in both. tests/lsp_test.sh calls every completed name on a
+ * real value, so a name listed here that the VM does not implement fails CI. */
+static const char *const NATIVE_MEMBERS_STRING[]={
+    "bytes","capitalize","chars","chomp","count","deep_freeze","delete","downcase",
+    "dup","empty?","end_with?","format","freeze","frozen?","getbyte","gsub",
+    "include?","index_of","length","ljust","lstrip","match","match?","nil?","ord",
+    "partition","repeat","reverse","rjust","rstrip","scan","size","slice","split",
+    "start_with?","strip","sub","tap","to_f","to_i","to_s","tr","upcase"};
+static const char *const NATIVE_MEMBERS_ARRAY[]={
+    "all?","any?","clear","compact","concat","count","deep_freeze","delete",
+    "delete_at","drop","dup","each","each_cons","each_slice","each_with_index",
+    "empty?","find","first","first_or","flat_map","flatten","freeze","frozen?",
+    "group_by","include?","index_of","join","last","last_or","lazy","length","map",
+    "max","max_by","min","min_by","nil?","partition","pop","push","reduce","reject",
+    "reverse","sample","select","shuffle","size","slice","sort","sort_by","sum",
+    "take","tally","tap","to_a","to_s","uniq","zip"};
+static const char *const NATIVE_MEMBERS_HASH[]={
+    "all?","any?","clear","compact","count","deep_freeze","delete","dup","each",
+    "each_with_index","empty?","fetch","find","freeze","frozen?","group_by",
+    "include?","include_key?","key_at","keys","lazy","length","map","map_values",
+    "max_by","merge","min_by","nil?","partition","reduce","reject","select","size",
+    "slice","sort","sort_by","sum","tap","to_a","to_s","value_at","values"};
+static const char *const NATIVE_MEMBERS_INT[]={
+    "abs","ago","chr","day","days","deep_freeze","downto","dup","freeze","from_now",
+    "frozen?","hour","hours","minute","minutes","nil?","second","seconds","tap",
+    "times","to_f","to_i","to_s","upto","week","weeks"};
+static const char *const NATIVE_MEMBERS_FLOAT[]={
+    "abs","ago","ceil","day","days","deep_freeze","dup","floor","freeze","from_now",
+    "frozen?","hour","hours","minute","minutes","nil?","round","second","seconds",
+    "tap","to_f","to_i","to_s","week","weeks"};
+
+size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names) {
+#define NATIVE_MEMBERS_CASE(type,list) \
+    case type: *names=list;return sizeof list/sizeof list[0];
+    switch(receiver_type) {
+        NATIVE_MEMBERS_CASE(DIAMOND_TYPE_STRING,NATIVE_MEMBERS_STRING)
+        NATIVE_MEMBERS_CASE(DIAMOND_TYPE_ARRAY,NATIVE_MEMBERS_ARRAY)
+        NATIVE_MEMBERS_CASE(DIAMOND_TYPE_HASH,NATIVE_MEMBERS_HASH)
+        NATIVE_MEMBERS_CASE(DIAMOND_TYPE_INT,NATIVE_MEMBERS_INT)
+        NATIVE_MEMBERS_CASE(DIAMOND_TYPE_FLOAT,NATIVE_MEMBERS_FLOAT)
+        default: *names=nullptr;return 0;
+    }
+#undef NATIVE_MEMBERS_CASE
+}
+
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
                                      uint8_t arity,uint8_t *return_type) {
     for(size_t index=0;index<sizeof DIAMOND_NATIVE_METHODS/

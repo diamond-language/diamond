@@ -2157,6 +2157,56 @@ count=$((count + 1))
 [[ "$response" == *'"error":{"code":-32601'* ]]
 count=$((count + 1))
 
+# --- completion on built-in values: String/Array/Hash/Int/Float locals and literals ---
+
+builtin_uri="file://$work/builtin_members.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$builtin_uri"'","text":"s = \"abc\"\na = [3, 1, 2]\nh = {\"a\": 1}\ni = 5\nf = 2.5\ns.length()\na.length()\nh.length()\ni.abs()\nf.abs()\n\"lit\".length()\n7.abs()\n\n"}}}'
+read_message >/dev/null
+builtin_labels() { # id line character -> one label per line
+    send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$builtin_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+    local reply="$(read_message)"
+    grep -o '"label":"[^"]*"' <<<"$reply" | sed 's/"label":"//;s/"$//'
+}
+baseline="$(builtin_labels 300 12 0)"
+string_members="$(builtin_labels 301 5 2)"
+array_members="$(builtin_labels 302 6 2)"
+hash_members="$(builtin_labels 303 7 2)"
+int_members="$(builtin_labels 304 8 2)"
+float_members="$(builtin_labels 305 9 2)"
+literal_string_members="$(builtin_labels 306 10 6)"
+literal_int_members="$(builtin_labels 307 11 2)"
+for expected in "string_members upcase" "string_members strip" "array_members push" "array_members first" \
+                "array_members each_slice" "hash_members keys" "hash_members include_key?" "hash_members clear" \
+                "int_members abs" "int_members times" "float_members floor" "float_members round" \
+                "literal_string_members downcase" "literal_int_members abs"; do
+    set -- $expected
+    grep -qxF -- "$2" <<<"${!1}" || { echo "lsp_test: $1 is missing $2" >&2; exit 1; }
+    count=$((count + 1))
+done
+# A member of one built-in type is not offered for another.
+! grep -qxF push <<<"$string_members"
+! grep -qxF upcase <<<"$array_members"
+! grep -qxF keys <<<"$int_members"
+count=$((count + 3))
+
+# Every offered member must be a real method: call each one with no arguments
+# on a value of that type; an arity or type error is fine, "undefined method"
+# is not.
+for entry in 'string_members|"abc"' 'array_members|[3, 1, 2]' 'hash_members|{"a": 1}' \
+             'int_members|5' 'float_members|2.5'; do
+    variable="${entry%%|*}"; literal="${entry#*|}"
+    script="$work/members_$variable.di"
+    : > "$script"
+    while IFS= read -r member; do
+        grep -qxF -- "$member" <<<"$baseline" && continue
+        printf 'begin\n  %s.%s()\nrescue e\n  puts("%s: " + e.message()) if e.message().include?("undefined method \x27%s\x27")\nend\n' \
+            "$literal" "$member" "$member" "${member}" >> "$script"
+    done <<<"${!variable}"
+    undefined="$(./build/diamond "$script" 2>&1 | grep 'undefined method' || true)"
+    [[ -z "$undefined" ]] || { echo "lsp_test: $variable offers methods the VM lacks: $undefined" >&2; exit 1; }
+    count=$((count + 1))
+done
+
 # --- shutdown then exit: clean exit code 0 ---
 
 send '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'

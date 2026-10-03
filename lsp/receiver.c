@@ -806,14 +806,16 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
     return 0;
 }
 
-size_t receiver_resolve_classes(const DiamondProgram *program,
-        const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        size_t *class_indices,size_t max_candidates,bool *is_singleton) {
-    if(max_candidates==0)return 0;
+/* Tokenizes `source` up to `stop_offset` and finds the receiver expression
+ * that ends just before a trailing `.` or `.partial` identifier: on success
+ * `*tokens` (caller frees) holds every token, and [*start, *end] is the
+ * receiver's inclusive token range. */
+static bool locate_receiver(const char *source,size_t stop_offset,
+        DiamondToken **tokens_out,size_t *start_out,size_t *end_out) {
     DiamondLexer lexer;diamond_lexer_init(&lexer,source);
     size_t count=0,capacity=32;
     DiamondToken *tokens=malloc(capacity*sizeof *tokens);
-    if(tokens==nullptr)return 0;
+    if(tokens==nullptr)return false;
     while(true) {
         const DiamondToken token=diamond_lexer_next(&lexer);
         if(token.kind==DIAMOND_TOKEN_EOF||token.span.start>=stop_offset)break;
@@ -821,7 +823,7 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
         if(count==capacity) {
             capacity*=2;
             DiamondToken *grown=realloc(tokens,capacity*sizeof *tokens);
-            if(grown==nullptr) {free(tokens);return 0;}
+            if(grown==nullptr) {free(tokens);return false;}
             tokens=grown;
         }
         tokens[count++]=token;
@@ -830,7 +832,7 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     if(count>0&&tokens[count-1].kind==DIAMOND_TOKEN_DOT)dot=count-1;
     else if(count>1&&tokens[count-1].kind==DIAMOND_TOKEN_IDENTIFIER&&
             tokens[count-2].kind==DIAMOND_TOKEN_DOT)dot=count-2;
-    if(dot==0||dot==count) {free(tokens);return 0;}
+    if(dot==0||dot==count) {free(tokens);return false;}
     /* Walk backward to the start of the receiver's current expression. A
      * newline was discarded above, so the last statement boundary is the
      * nearest token that cannot participate in a postfix call chain. */
@@ -859,9 +861,53 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
            kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&kind!=DIAMOND_TOKEN_LEFT_BRACKET&&
            kind!=DIAMOND_TOKEN_DOT)break;
     }
-    const size_t result=resolve_expression(program,chunk,source,tokens,start,dot-1,
+    *tokens_out=tokens;*start_out=start;*end_out=dot-1;
+    return true;
+}
+
+size_t receiver_resolve_classes(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,size_t stop_offset,
+        size_t *class_indices,size_t max_candidates,bool *is_singleton) {
+    if(max_candidates==0)return 0;
+    DiamondToken *tokens;size_t start,end;
+    if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return 0;
+    const size_t result=resolve_expression(program,chunk,source,tokens,start,end,
         class_indices,max_candidates,is_singleton,0);
     free(tokens);return result;
+}
+
+bool receiver_resolve_builtin_type(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,size_t stop_offset,
+        uint8_t *builtin_type) {
+    DiamondToken *tokens;size_t start,end;
+    if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return false;
+    bool found=false;
+    if(start==end) {
+        const DiamondToken token=tokens[start];
+        uint8_t type=DIAMOND_TYPE_NIL;
+        if(token.kind==DIAMOND_TOKEN_STRING)type=DIAMOND_TYPE_STRING;
+        else if(token.kind==DIAMOND_TOKEN_INTEGER)type=DIAMOND_TYPE_INT;
+        else if(token.kind==DIAMOND_TOKEN_FLOAT)type=DIAMOND_TYPE_FLOAT;
+        else if(token.kind==DIAMOND_TOKEN_IDENTIFIER) {
+            char name[DIAMOND_MAX_FUNCTION_NAME];
+            size_t length=token.span.length;
+            if(length>=sizeof name)length=sizeof name-1;
+            memcpy(name,source+token.span.start,length);name[length]='\0';
+            const DiamondFunction *owner=nullptr;
+            const DiamondScopeLocal *local=find_scope_local(program,chunk,name,
+                length,token.span.start,&owner);
+            if(local!=nullptr) {
+                int32_t known_type_set,tooling_type_set;
+                local_type_at_offset(owner,local,token.span.start,&type,
+                    &known_type_set,&tooling_type_set);
+            }
+        }
+        found=type==DIAMOND_TYPE_STRING||type==DIAMOND_TYPE_ARRAY||
+              type==DIAMOND_TYPE_HASH||type==DIAMOND_TYPE_INT||
+              type==DIAMOND_TYPE_FLOAT;
+        if(found)*builtin_type=type;
+    }
+    free(tokens);return found;
 }
 
 const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
