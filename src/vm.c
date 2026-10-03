@@ -22362,8 +22362,28 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     args_vm->extra_roots=new_child->args;
                     args_vm->extra_root_count=forwarded_argc;
+                    /* The child is counted *before* its thread starts, not
+                     * after: a started child runs immediately, and a sibling
+                     * that crashes while this thread is still between
+                     * create_vm_thread and the store below walks
+                     * `other < child_count` to decide whom its strategy
+                     * restarts -- publishing the count afterwards let it miss
+                     * a child that was already running, which then never
+                     * restarted (a real, rare hang once a 2-CPU CI runner
+                     * descheduled this thread right here). A child counted
+                     * but not yet started is harmless: its own attempt clears
+                     * `interrupt` at start, since starting is the restart. If
+                     * the thread can't be created the count is rolled back
+                     * (only this owning thread adds children, so nothing else
+                     * has seen the slot as real). */
+                    pthread_mutex_lock(&target_supervisor->lock);
+                    target_supervisor->child_count=new_index+1;
+                    pthread_mutex_unlock(&target_supervisor->lock);
                     if(create_vm_thread(&new_child->handle,
                             supervisor_child_entry_trampoline,new_child)!=0) {
+                        pthread_mutex_lock(&target_supervisor->lock);
+                        target_supervisor->child_count=new_index;
+                        pthread_mutex_unlock(&target_supervisor->lock);
                         diamond_vm_free(args_vm);free(args_vm);
                         diamond_program_free(program_template);free(program_template);
                         memset(new_child,0,sizeof *new_child);
@@ -22371,9 +22391,6 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         VM_RETURN(DIAMOND_VM_THREAD_ERROR);
                     }
                     atomic_fetch_add(&diamond_active_thread_count,1);
-                    pthread_mutex_lock(&target_supervisor->lock);
-                    target_supervisor->child_count=new_index+1;
-                    pthread_mutex_unlock(&target_supervisor->lock);
                     registers[dest]=DIAMOND_INT((int64_t)new_index);break;
                 }
                 if(receiver_kind==DIAMOND_OBJECT_FILE) {

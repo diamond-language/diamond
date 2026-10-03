@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- Fixed a race in `Supervisor#add_child` that could leave a `:one_for_all` or
+  `:rest_for_one` supervisor hung. A new child's thread started before the
+  supervisor counted it, so a sibling crashing in that gap did not see the child
+  and never restarted it. Present in 0.10.2.
+
 ## 0.10.2 — 2026-10-02
 
 ### Examples
