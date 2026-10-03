@@ -73,6 +73,98 @@ static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
     return true;
 }
 
+/* The members a built-in value answers to: the VM's native method names
+ * (diamond_native_member_names) plus the prelude's extension functions, which
+ * the VM dispatches by name -- `items.foo` calls array_foo, then
+ * enumerable_foo; strings use string_, Int integer_/numeric_, Float
+ * float_/numeric_ (find_collection_extension/find_value_extension in
+ * src/vm.c), each also tried under a `diamond_` prefix. A trailing `?` is
+ * dropped from the bridge name, so a Bool-returning function is offered with
+ * the `?` it is written with. */
+typedef struct MemberNames {
+    char **names;
+    size_t count;
+} MemberNames;
+
+static bool member_seen(const MemberNames *seen,const char *name) {
+    const size_t length=strlen(name)-(name[strlen(name)-1]=='?');
+    for(size_t index=0;index<seen->count;index++) {
+        const char *other=seen->names[index];
+        const size_t other_length=strlen(other)-(other[strlen(other)-1]=='?');
+        if(length==other_length&&memcmp(name,other,length)==0)return true;
+    }
+    return false;
+}
+
+static bool push_member(JsonValue *items,MemberNames *seen,const char *name) {
+    if(member_seen(seen,name))return true;
+    char **grown=realloc(seen->names,(seen->count+1)*sizeof *grown);
+    if(grown==nullptr)return false;
+    seen->names=grown;
+    seen->names[seen->count]=strdup(name);
+    if(seen->names[seen->count]==nullptr)return false;
+    seen->count++;
+    return push_item(items,name,COMPLETION_KIND_FUNCTION);
+}
+
+static bool function_returns_bool(const DiamondFunction *function) {
+    if(function->return_type_set==DIAMOND_NO_TYPE_SET||
+       function->return_type_set>=function->type_set_count)return false;
+    const DiamondTypeSet *set=&function->type_sets[function->return_type_set];
+    return set->count==1&&set->members[0].id==DIAMOND_TYPE_BOOL;
+}
+
+static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
+        uint8_t type) {
+    static const char *const array_prefixes[]={"array_","enumerable_"};
+    static const char *const hash_prefixes[]={"hash_","enumerable_"};
+    static const char *const string_prefixes[]={"string_"};
+    static const char *const int_prefixes[]={"integer_","numeric_"};
+    static const char *const float_prefixes[]={"float_","numeric_"};
+    /* The only enumerable_ functions a Hash dispatches to. */
+    static const char *const hash_enumerable[]={"lazy","select","count","any","all","reduce","map"};
+    const char *const *prefixes=nullptr;size_t prefix_count=0;
+    switch(type) {
+        case DIAMOND_TYPE_ARRAY:prefixes=array_prefixes;prefix_count=2;break;
+        case DIAMOND_TYPE_HASH:prefixes=hash_prefixes;prefix_count=2;break;
+        case DIAMOND_TYPE_STRING:prefixes=string_prefixes;prefix_count=1;break;
+        case DIAMOND_TYPE_INT:prefixes=int_prefixes;prefix_count=2;break;
+        case DIAMOND_TYPE_FLOAT:prefixes=float_prefixes;prefix_count=2;break;
+        default:return true;
+    }
+    MemberNames seen={};
+    bool okay=true;
+    const char *const *natives;
+    const size_t native_count=diamond_native_member_names(type,&natives);
+    for(size_t index=0;okay&&index<native_count;index++)
+        okay=push_member(items,&seen,natives[index]);
+    for(size_t index=0;okay&&index<chunk->function_count;index++) {
+        const DiamondFunction *function=chunk->functions[index];
+        if(function->owner_class!=UINT8_MAX||function->nested)continue;
+        const char *name=function->name;
+        if(strncmp(name,"diamond_",8)==0)name+=8;
+        for(size_t prefix=0;okay&&prefix<prefix_count;prefix++) {
+            const size_t prefix_length=strlen(prefixes[prefix]);
+            if(strncmp(name,prefixes[prefix],prefix_length)!=0)continue;
+            const char *member=name+prefix_length;
+            /* Operator bridges (array_op_minus) and prelude internals. */
+            if(*member=='\0'||strncmp(member,"op_",3)==0||strcmp(member,"call_pair")==0)continue;
+            if(type==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0) {
+                bool shared=false;
+                for(size_t k=0;k<sizeof hash_enumerable/sizeof hash_enumerable[0];k++)
+                    if(strcmp(member,hash_enumerable[k])==0)shared=true;
+                if(!shared)continue;
+            }
+            char label[DIAMOND_MAX_FUNCTION_NAME+2];
+            snprintf(label,sizeof label,"%s%s",member,function_returns_bool(function)?"?":"");
+            okay=push_member(items,&seen,label);
+        }
+    }
+    for(size_t index=0;index<seen.count;index++)free(seen.names[index]);
+    free(seen.names);
+    return okay;
+}
+
 /* Pushes every DiamondScopeLocal in `function` whose valid range
  * contains `cursor_offset` -- see completion.h's own comment on why
  * this correctly covers both "not yet declared"/"already out of a
@@ -147,6 +239,10 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
                 cursor_offset,class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton);
             for(size_t index=0;okay&&index<candidate_count;index++)
                 okay=push_class_methods(items,&chunk,class_indices[index],is_singleton);
+            uint8_t builtin_type;
+            if(okay&&candidate_count==0&&
+               receiver_resolve_builtin_type(scratch,&chunk,combined,cursor_offset,&builtin_type))
+                okay=push_builtin_members(items,&chunk,builtin_type);
         }
     }
     free(combined);diamond_source_bundle_free(&bundle);

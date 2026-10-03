@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- The language server completes methods on built-in values. After `name.` where
+  `name` is a String, Array, Hash, Int or Float local or parameter, or after a
+  string/number literal, completion lists that type's methods (`push`, `keys`,
+  `upcase`, `each_slice`, ...), not only user classes' methods.
+
 ### Runtime
 
 - `==` on Arrays and Hashes is now exact at any nesting depth. Past 256 levels it

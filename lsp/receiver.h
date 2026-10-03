@@ -62,6 +62,15 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton);
 
+/* Resolves the same receiver expression to a built-in value type for the
+ * forms where it is known without running anything: a string, integer or
+ * float literal, or a local (or parameter) whose known type at the cursor is
+ * String, Array, Hash, Int or Float. Writes that DIAMOND_TYPE_* to
+ * `*builtin_type`; false means the receiver is not one of those. */
+bool receiver_resolve_builtin_type(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,size_t stop_offset,
+        uint8_t *builtin_type);
+
 /* True iff a lexical local (or parameter) named `name` is in scope at
  * `offset` -- the same innermost-shadow-aware lookup
  * receiver_resolve_local_type_set uses internally, exposed standalone
