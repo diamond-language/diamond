@@ -10013,6 +10013,7 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
     {DIAMOND_TYPE_HASH,"delete",1,UINT8_MAX},
+    {DIAMOND_TYPE_HASH,"clear",0,DIAMOND_TYPE_HASH},
     {DIAMOND_TYPE_HASH,"include_key?",1,DIAMOND_TYPE_BOOL},
     {DIAMOND_TYPE_INT,"to_s",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_INT,"to_i",0,DIAMOND_TYPE_INT},
@@ -21012,6 +21013,23 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             VM_PROPAGATE(status);
                             registers[dest]=call_result;break;
                         }
+                    }
+                    if(receiver_kind==DIAMOND_OBJECT_HASH&&
+                       method_name->length==5&&
+                       memcmp(method_name->chars,"clear",5)==0) {
+                        /* Removes every pair in one O(buckets) pass -- not a
+                         * loop of delete, which rehashes the whole table on
+                         * each call. Nothing is allocated, so there is no
+                         * out-of-memory path, and dropping references needs no
+                         * write barrier. Returns the (now empty) Hash itself,
+                         * as Ruby's does. */
+                        if(argc!=0)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                        DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
+                        if(hash->object.frozen)VM_RETURN(DIAMOND_VM_FROZEN_ERROR);
+                        hash->count=0;
+                        for(size_t slot=0;slot<hash->bucket_capacity;slot++)
+                            hash->buckets[slot]=SIZE_MAX;
+                        registers[dest]=registers[recv];break;
                     }
                     if(receiver_kind==DIAMOND_OBJECT_HASH&&
                        method_name->length==6&&

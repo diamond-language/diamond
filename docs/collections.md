@@ -257,6 +257,11 @@ keep their insertion order, and a deleted key added again goes to the end.
 It is native and O(n) in the Hash's size, since later entries move down to
 keep the Hash dense; the result's static type is the Hash's value type or
 `Nil`.
+`hash.clear()` removes every pair and returns the same, now empty, Hash (a
+frozen Hash raises `FrozenError`, and extra arguments raise `ArgumentError`).
+It is native and does one O(n) pass over the Hash's table, where calling
+`delete` for each key would cost far more; the removed values themselves are
+not affected, only the Hash's references to them.
 `hash.fetch(key, fallback)` returns the value at `key`, or `fallback`
 (not raising) when `key` is absent; `hash.keys()`/`hash.values()` return
 an `Array` of the hash's keys/values respectively, both in insertion
