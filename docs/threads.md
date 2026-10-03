@@ -154,6 +154,44 @@ nonblocking operation after each return. A VM with installed signal handlers
 returns periodically to dispatch them. Most callers should use the cancellation
 cut instead of managing these low-level readiness hints themselves.
 
+### Waiting on several channels: `Channel.select`
+
+`Channel.select(channels, deadline = nil)` receives from whichever of several
+channels has a value ready, like Go's `select` with only receive cases. It
+returns `[index, value]` -- the position of the channel in `channels` and the
+value taken from it -- and blocks until one is ready.
+
+```ruby
+orders = Channel.new(8)
+cancels = Channel.new(1)
+
+loop
+  picked = Channel.select([cancels, orders])
+  break if picked == nil
+  index, value = picked[0], picked[1]
+  break if index == 0          # a cancellation arrived
+  puts("order: #{value}")
+end
+```
+
+- When several channels are ready at once, the **first one in array order**
+  wins, so list the channel that should take priority (a cancellation or
+  shutdown channel) first. Selection is deterministic, not random as in Go.
+- Closing a channel wakes a blocked `select`. A closed channel is still
+  selected until its queued values are drained; after that it is skipped.
+- It returns `nil` when nothing will arrive: the `deadline` (an absolute
+  `Time.monotonic()` Float, as for `wait_readable`) passed, or every channel is
+  closed and drained. `closed?` on the channels tells the two apart.
+- Only one value is taken per call, under that channel's own lock, so several
+  threads may select over the same channels without losing or duplicating
+  values.
+- `channels` must be a non-empty Array of Channels and `deadline` a finite
+  Float or `nil`; anything else raises `TypeError`. Like a plain `receive`, a
+  blocking `select` does not service `Signal.trap` handlers while parked --
+  pass a short deadline and loop if you need to.
+- Send-side select (waiting to `send` on whichever channel has room) is not
+  provided.
+
 `close()` is idempotent -- closing an already-closed channel is a no-op, not
 an error. `closed?()` and `size()` report status without blocking.
 
@@ -179,8 +217,10 @@ See the [design and limitations](cancellation.md) and
 
 `Supervisor` restarts a worker automatically when it crashes -- an uncaught
 exception or an internal VM failure -- instead of just ending it the way a
-plain `Thread` would. It restarts only the crashed worker (Erlang's
-`one_for_one` strategy); a crash in one child never affects its siblings.
+plain `Thread` would. By default it restarts only the crashed worker
+(Erlang's `one_for_one` strategy); a crash in one child never affects its
+siblings. `Supervisor.new(:one_for_all)` and `Supervisor.new(:rest_for_one)`
+choose the other two strategies -- see [Restart strategies](#restart-strategies).
 
 ```ruby
 def fetch_loop(url)
@@ -230,6 +270,30 @@ restarts -- a child that keeps crashing and restarting forever blocks
 `join()` forever too, exactly as joining a `Thread` that never returns
 already does. With the cancellation cut, cancel a shared source first and have
 workers catch expected cancellation and return normally before calling `stop()`.
+
+### Restart strategies
+
+`Supervisor.new(strategy)` takes an optional strategy symbol:
+
+- `:one_for_one` (the default, same as `Supervisor.new()`): only the crashed
+  child restarts.
+- `:one_for_all`: when any child crashes, every other child that is still
+  running restarts too.
+- `:rest_for_one`: when a child crashes, the children added *after* it
+  restart too; earlier children are untouched.
+
+Any other value raises `TypeError`. Children that already finished with a
+clean return stay finished under every strategy.
+
+A sibling is restarted by interrupting its current attempt: its VM stops at
+the next instruction and the attempt is discarded (the interruption is not
+an exception, so a `rescue` cannot swallow it). Like `stop()`, this is
+cooperative -- a sibling parked in a blocking native call (`Channel#receive`,
+a socket read) is restarted only once that call returns, and code running in
+the opt-in JIT is not interrupted mid-function. A restarted sibling's
+`restart_count` goes up and its `last_error` becomes `"restarted: a sibling
+crashed"`; it restarts without the 20ms crash delay, since the attempt was
+not failing on its own.
 
 A `Supervisor` cannot cross a `Thread.new`/`Channel` boundary -- passing
 one raises `TypeError`, same as `Thread`, `File`, and the other native-

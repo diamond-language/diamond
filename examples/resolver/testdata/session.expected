@@ -1,0 +1,49 @@
+$ resolver testdata/index.txt web:>=1.0.0
+web 2.0.0
+rack 2.0.0
+json 2.0.0
+exit 0
+$ resolver testdata/index.txt web:=1.1.0
+web 1.1.0
+rack 1.2.0
+json 1.1.0
+logger 0.5.0
+exit 0
+$ resolver testdata/index.txt web:1.0.0..1.1.0
+web 1.0.0
+rack 2.0.0
+json 2.0.0
+exit 0
+$ resolver testdata/index.txt admin:*
+conflict: json must be exactly 1.0.0 (wanted by admin 1.0.0)
+  but 2.0.0 is already chosen
+exit 1
+$ resolver testdata/index.txt json:=1.0.0 web:=1.0.0 admin:*
+json 1.0.0
+web 1.0.0
+rack 2.0.0
+admin 1.0.0
+exit 0
+$ resolver testdata/index.txt rack:=2.0.0 web:=1.1.0
+conflict: rack must be 1.0.0 up to (not including) 2.0.0 (wanted by web 1.1.0)
+  but 2.0.0 is already chosen
+exit 1
+$ resolver testdata/index.txt ghost:*
+missing: ghost (wanted by (root)) is not in the index
+exit 1
+$ resolver testdata/index.txt cycle_a:*
+cycle_a 1.0.0
+cycle_b 1.0.0
+exit 0
+$ resolver testdata/index.txt web:>=3.0.0
+conflict: web must be 3.0.0 or newer (wanted by (root))
+  no version of web matches
+exit 1
+$ resolver --check testdata/index.txt
+index ok: 7 packages
+exit 0
+$ resolver --check testdata/dangling.txt
+dangling: rack
+dangling: ghost
+dangling: phantom
+exit 1

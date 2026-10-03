@@ -356,6 +356,10 @@ DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out);
 DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out);
+/* Not a JIT trampoline: `deep_freeze` (src/vm.c) is declared here only so
+ * the interpreter's two dispatch sites share one definition. */
+DiamondVmStatus diamond_deep_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out);
 
 /* Phase 7. JIT trampoline for DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED's
  * Instance-receiver dispatch tail -- a full extraction of that case's own

@@ -1274,8 +1274,10 @@ static bool disassemble_chunk(FILE *stream, const char *name,
              * affected), but worth closing now that it's been found. */
             case DIAMOND_OP_CHANNEL_NEW:
                 offset=two_registers(stream,chunk,"CHANNEL_NEW",offset, &valid);break;
+            case DIAMOND_OP_CHANNEL_SELECT:
+                offset=three_registers(stream,chunk,"CHANNEL_SELECT",offset, &valid);break;
             case DIAMOND_OP_SUPERVISOR_NEW:
-                offset=one_register(stream,chunk,"SUPERVISOR_NEW",offset, &valid);break;
+                offset=two_registers(stream,chunk,"SUPERVISOR_NEW",offset, &valid);break;
             case DIAMOND_OP_DIR_ENTRIES:
                 offset=two_registers(stream,chunk,"DIR_ENTRIES",offset, &valid);break;
             case DIAMOND_OP_TENSOR_ZEROS:

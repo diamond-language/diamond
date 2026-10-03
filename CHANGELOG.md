@@ -6,6 +6,17 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+- `deep_freeze()` freezes an Array, Hash, or Instance and everything
+  reachable from it, including through reference cycles.
+- `Supervisor.new(:one_for_all)` and `Supervisor.new(:rest_for_one)` add
+  Erlang's other two restart strategies; the default stays `:one_for_one`.
+  Siblings are restarted by cooperatively interrupting their current attempt.
+
+- `Channel.select(channels, deadline = nil)` receives from the first of several
+  channels that has a value, returning `[index, value]`, or `nil` on deadline
+  expiry or once every channel is closed and drained. Closing a channel wakes
+  a blocked select; earlier channels in the array take priority.
+
 - Fixed a crash in garbage collection of deeply nested data. Marking recursed
   once per nesting level, so a collection running while a chain of tens of
   thousands of nested Arrays, Hashes, or linked Instances was live overflowed

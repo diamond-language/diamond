@@ -1,0 +1,14 @@
+# A small index. Format: name version [dep:constraint ...]
+rack 1.0.0
+rack 1.2.0
+rack 2.0.0
+json 1.0.0
+json 1.1.0
+json 2.0.0
+logger 0.5.0
+web 1.0.0 rack:>=1.0.0 json:*
+web 1.1.0 rack:1.0.0..2.0.0 json:=1.1.0 logger:>=0.5.0
+web 2.0.0 rack:>=2.0.0 json:>=2.0.0
+admin 1.0.0 web:>=1.0.0 json:=1.0.0
+cycle_a 1.0.0 cycle_b:*
+cycle_b 1.0.0 cycle_a:*

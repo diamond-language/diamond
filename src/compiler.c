@@ -4881,6 +4881,42 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* Channel.select(channels[, deadline]) -- see docs/threads.md's Channels
+ * section. The deadline is optional (nil when omitted). */
+static uint16_t parse_channel_select_call(Compiler *compiler) {
+    advance_token(compiler); /* consume 'select' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Channel.select'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const uint16_t channels_register=parse_expression(compiler);
+    skip_newlines(compiler);
+    uint16_t deadline_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        deadline_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        deadline_register=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_NIL);
+        emit_register(compiler,deadline_register);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after Channel.select arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CHANNEL_SELECT);
+    emit_register(compiler,dest);
+    emit_register(compiler,channels_register);
+    emit_register(compiler,deadline_register);
+    return dest;
+}
+
 /* Channel.new(capacity) -- see docs/threads.md's Channels section. A
  * single required Int argument, unlike Thread.new's own variadic
  * callable+args shape just above -- closer to parse_time_at_call's own
@@ -4891,9 +4927,12 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
  * File.open/SQLite3.open use their own distinct names). */
 static uint16_t parse_channel_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"select",compiler->current.span,false))
+        return parse_channel_select_call(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'new' after 'Channel'");
+        fail(compiler,compiler->current.span,"expected 'new' or 'select' after 'Channel'");
         return 0;
     }
     advance_token(compiler); /* consume 'new' */
@@ -4917,11 +4956,11 @@ static uint16_t parse_channel_new_call(Compiler *compiler) {
     return dest;
 }
 
-/* Supervisor.new() -- see docs/threads.md's Supervisors section. Zero
- * arguments, same shape as parse_program_builder_new_call just below
- * (v1 has no configurable policy -- restart delay/child cap are fixed
+/* Supervisor.new([strategy]) -- see docs/threads.md's Supervisors section.
+ * One optional restart-strategy symbol (:one_for_one, :one_for_all,
+ * :rest_for_one; checked at run time). Restart delay/child cap are fixed
  * constants, see DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment in
- * src/vm.c), just recognized by the literal 'new' method name the same
+ * src/vm.c. Just recognized by the literal 'new' method name the same
  * way Thread.new/Channel.new/Fiber.new are rather than a bare
  * `Supervisor(...)` form. */
 static uint16_t parse_supervisor_new_call(Compiler *compiler) {
@@ -4938,6 +4977,15 @@ static uint16_t parse_supervisor_new_call(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
+    uint16_t strategy_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+        /* No strategy: a nil register, which the VM reads as :one_for_one. */
+        strategy_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,strategy_register,0,0,1);
+    } else {
+        strategy_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Supervisor.new arguments");
         return 0;
@@ -4946,6 +4994,7 @@ static uint16_t parse_supervisor_new_call(Compiler *compiler) {
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_SUPERVISOR_NEW);
     emit_register(compiler,dest);
+    emit_register(compiler,strategy_register);
     return dest;
 }
 

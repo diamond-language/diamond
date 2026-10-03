@@ -1,0 +1,6 @@
+# name=Title, one per line; the enrich stage reads this file.
+ada=Lovelace
+grace=Hopper
+alan=Turing
+linus=Torvalds
+beam=Erlang

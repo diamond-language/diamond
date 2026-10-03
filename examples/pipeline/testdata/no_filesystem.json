@@ -1,0 +1,30 @@
+{
+  "max_attempts": 3,
+  "stages": [
+    {
+      "name": "normalize",
+      "path": "stages/normalize.di",
+      "allow": [],
+      "max_instructions": 300000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "enrich",
+      "path": "stages/enrich.di",
+      "allow": [],
+      "max_instructions": 300000,
+      "max_wall_ms": 2000
+    },
+    {
+      "name": "seal",
+      "path": "stages/seal.di",
+      "allow": [],
+      "max_instructions": 300000,
+      "max_wall_ms": 2000
+    }
+  ],
+  "items": [
+    "ada",
+    "beacon"
+  ]
+}
