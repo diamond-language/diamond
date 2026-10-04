@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `make test-stress-threads` (and a CI job) re-runs every Thread, Channel and Supervisor
+  test case 60 times, each pinned to two CPUs under a timeout. Threaded bugs are timing
+  bugs; this reproduces the 0.10.2 supervisor race, which hung CI about once in 40 runs.
+
 - The language server completes methods on built-in values. After `name.` where
   `name` is a String, Array, Hash, Int or Float local or parameter, or after a
   string/number literal, completion lists that type's methods (`push`, `keys`,

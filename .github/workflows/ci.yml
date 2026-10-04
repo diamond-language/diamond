@@ -179,6 +179,27 @@ jobs:
       - name: ASan and UBSan (Ubuntu arm64)
         run: make CC=gcc test-sanitize
 
+  # Threaded bugs are timing bugs, and the supervisor child-count race hung CI
+  # about once in 40 runs of one test. This runs every Thread/Channel/Supervisor
+  # case 60 times, each pinned to two CPUs under a timeout, which reproduced that
+  # race on its 46th run before it was fixed (tests/stress_threads.sh).
+  test-stress-threads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+      - name: Stress the threaded cases on two CPUs
+        run: make test-stress-threads
+
   # A third, genuinely different target -- musl, not just another distro
   # (fedora/ubuntu above are both glibc). Its own job, not another
   # matrix.os entry above: needs a different package manager, an extra
