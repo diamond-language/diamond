@@ -1,0 +1,1 @@
+expected attribute name (write `attr_reader name: Type`, not `attr_reader :name`)

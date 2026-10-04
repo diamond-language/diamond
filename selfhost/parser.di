@@ -2819,7 +2819,11 @@ class Parser
     end
     while !@failed
       if @current.kind() != :identifier
-        self.fail("expected attribute name")
+        if @current.kind() == :symbol
+          self.fail("expected attribute name (write `attr_reader name: Type`, not `attr_reader :name`)")
+        else
+          self.fail("expected attribute name")
+        end
         return
       end
       field_name = self.token_text(@current)

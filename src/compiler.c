@@ -15172,7 +15172,10 @@ static void compile_attribute(Compiler *compiler,bool reader,bool writer,
     if(parenthesized) {advance_token(compiler);skip_newlines(compiler);}
     while(!compiler->failed) {
         if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,"expected attribute name");return;
+            fail(compiler,compiler->current.span,
+                compiler->current.kind==DIAMOND_TOKEN_SYMBOL?
+                "expected attribute name (write `attr_reader name: Type`, not `attr_reader :name`)":
+                "expected attribute name");return;
         }
         const DiamondSpan name=compiler->current.span;advance_token(compiler);
         int type_set=-1;
