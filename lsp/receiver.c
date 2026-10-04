@@ -836,13 +836,34 @@ static bool locate_receiver(const char *source,size_t stop_offset,
     /* Walk backward to the start of the receiver's current expression. A
      * newline was discarded above, so the last statement boundary is the
      * nearest token that cannot participate in a postfix call chain. */
-    size_t start=dot-1,nesting=0,bracket_nesting=0;
+    size_t start=dot-1,nesting=0,bracket_nesting=0,brace_nesting=0;
     for(size_t index=dot;index>0;index--) {
         const DiamondTokenKind kind=tokens[index-1].kind;
         if(kind==DIAMOND_TOKEN_RIGHT_PAREN)nesting++;
         else if(kind==DIAMOND_TOKEN_RIGHT_BRACKET)bracket_nesting++;
-        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&bracket_nesting>0)
+        else if(kind==DIAMOND_TOKEN_RIGHT_BRACE)brace_nesting++;
+        else if(kind==DIAMOND_TOKEN_LEFT_BRACE&&brace_nesting>0&&--brace_nesting==0&&
+                nesting==0&&bracket_nesting==0&&
+                (index==1||tokens[index-2].span.line!=tokens[index-1].span.line||
+                 (tokens[index-2].kind!=DIAMOND_TOKEN_IDENTIFIER&&
+                  tokens[index-2].kind!=DIAMOND_TOKEN_RIGHT_PAREN&&
+                  tokens[index-2].kind!=DIAMOND_TOKEN_RIGHT_BRACKET))) {
+            /* A brace group not following an expression is a Hash literal and
+             * the receiver's first token. */
+            start=index-1;break;
+        }
+        else if(kind==DIAMOND_TOKEN_LEFT_BRACKET&&bracket_nesting>0) {
             bracket_nesting--;
+            /* A bracket group not following an expression is an Array literal
+             * (after one on the same line it is an index and the receiver continues left). */
+            if(bracket_nesting==0&&nesting==0&&brace_nesting==0&&
+               (index==1||tokens[index-2].span.line!=tokens[index-1].span.line||
+                (tokens[index-2].kind!=DIAMOND_TOKEN_IDENTIFIER&&
+                 tokens[index-2].kind!=DIAMOND_TOKEN_RIGHT_PAREN&&
+                 tokens[index-2].kind!=DIAMOND_TOKEN_RIGHT_BRACKET))) {
+                start=index-1;break;
+            }
+        }
         else if(kind==DIAMOND_TOKEN_LEFT_PAREN&&nesting>0) {
             nesting--;
             /* A matched `(` preceded by an identifier belongs to a call and
@@ -855,7 +876,7 @@ static bool locate_receiver(const char *source,size_t stop_offset,
             }
         }
         start=index-1;
-        if(nesting==0&&bracket_nesting==0&&index>1&&
+        if(nesting==0&&bracket_nesting==0&&brace_nesting==0&&index>1&&
            tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
            kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&
            kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&kind!=DIAMOND_TOKEN_LEFT_BRACKET&&
@@ -876,18 +897,116 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     free(tokens);return result;
 }
 
-bool receiver_resolve_builtin_type(const DiamondProgram *program,
-        const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        uint8_t *builtin_type) {
-    DiamondToken *tokens;size_t start,end;
-    if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return false;
-    bool found=false;
+static bool is_builtin_value_type(uint8_t type) {
+    return type==DIAMOND_TYPE_STRING||type==DIAMOND_TYPE_ARRAY||
+           type==DIAMOND_TYPE_HASH||type==DIAMOND_TYPE_INT||type==DIAMOND_TYPE_FLOAT;
+}
+
+const char *const *receiver_builtin_prefixes(uint8_t builtin_type,size_t *count) {
+    static const char *const array_prefixes[]={"array_","enumerable_"};
+    static const char *const hash_prefixes[]={"hash_","enumerable_"};
+    static const char *const string_prefixes[]={"string_"};
+    static const char *const int_prefixes[]={"integer_","numeric_"};
+    static const char *const float_prefixes[]={"float_","numeric_"};
+    switch(builtin_type) {
+        case DIAMOND_TYPE_ARRAY:*count=2;return array_prefixes;
+        case DIAMOND_TYPE_HASH:*count=2;return hash_prefixes;
+        case DIAMOND_TYPE_STRING:*count=1;return string_prefixes;
+        case DIAMOND_TYPE_INT:*count=2;return int_prefixes;
+        case DIAMOND_TYPE_FLOAT:*count=2;return float_prefixes;
+        default:*count=0;return nullptr;
+    }
+}
+
+bool receiver_hash_uses_enumerable(const char *name) {
+    static const char *const shared[]={"lazy","select","count","any","all","reduce","map"};
+    for(size_t index=0;index<sizeof shared/sizeof shared[0];index++)
+        if(strcmp(name,shared[index])==0)return true;
+    return false;
+}
+
+/* The one built-in type a function's declared (or, failing that, inferred)
+ * return type names, if it names exactly one. */
+static bool function_builtin_return(const DiamondFunction *function,uint8_t *type) {
+    const uint16_t sets[2]={function->return_type_set,function->inferred_return_type_set};
+    for(size_t index=0;index<2;index++) {
+        if(sets[index]==DIAMOND_NO_TYPE_SET||sets[index]>=function->type_set_count)continue;
+        const DiamondTypeSet *set=&function->type_sets[sets[index]];
+        if(set->count==1&&is_builtin_value_type(set->members[0].id)) {
+            *type=set->members[0].id;return true;
+        }
+    }
+    return false;
+}
+
+static const DiamondFunction *find_plain_function(const DiamondChunk *chunk,
+        const char *name,size_t length) {
+    for(size_t index=chunk->function_count;index>0;index--) {
+        const DiamondFunction *function=chunk->functions[index-1];
+        if(function->owner_class==UINT8_MAX&&!function->nested&&
+           strlen(function->name)==length&&memcmp(function->name,name,length)==0)
+            return function;
+    }
+    return nullptr;
+}
+
+/* What calling `method` on a built-in value of `receiver` returns, when known:
+ * a native with one fixed result type first (natives win at runtime), then the
+ * prelude extension function the VM would dispatch to. */
+static bool builtin_method_result(const DiamondChunk *chunk,uint8_t receiver,
+        const char *method,size_t length,uint8_t *result) {
+    if(diamond_native_method_return_type(receiver,method,length,result)&&
+       is_builtin_value_type(*result))return true;
+    if(length>0&&method[length-1]=='?')length--;
+    size_t prefix_count;
+    const char *const *prefixes=receiver_builtin_prefixes(receiver,&prefix_count);
+    char bridge[DIAMOND_MAX_FUNCTION_NAME];
+    for(size_t pass=0;pass<2;pass++)
+        for(size_t prefix=0;prefix<prefix_count;prefix++) {
+            if(receiver==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0) {
+                char plain[DIAMOND_MAX_FUNCTION_NAME];
+                if(length>=sizeof plain)continue;
+                memcpy(plain,method,length);plain[length]='\0';
+                if(!receiver_hash_uses_enumerable(plain))continue;
+            }
+            const int written=snprintf(bridge,sizeof bridge,"%s%s%.*s",
+                pass==0?"":"diamond_",prefixes[prefix],(int)length,method);
+            if(written<=0||(size_t)written>=sizeof bridge)continue;
+            const DiamondFunction *function=find_plain_function(chunk,bridge,(size_t)written);
+            if(function!=nullptr)
+                return function_builtin_return(function,result);
+        }
+    return false;
+}
+
+/* Index of the token that opens the bracket closed by tokens[close], or
+ * `start` when none is found in range. */
+static size_t matching_open(const DiamondToken *tokens,size_t start,size_t close,
+        DiamondTokenKind open_kind,DiamondTokenKind close_kind) {
+    size_t nesting=0;
+    for(size_t index=close+1;index>start;index--) {
+        const DiamondTokenKind kind=tokens[index-1].kind;
+        if(kind==close_kind)nesting++;
+        else if(kind==open_kind&&--nesting==0)return index-1;
+    }
+    return start;
+}
+
+static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *source,const DiamondToken *tokens,size_t start,size_t end,
+        unsigned depth,uint8_t *type) {
+    if(start>end||depth>32)return false;
+    if(tokens[start].kind==DIAMOND_TOKEN_LEFT_PAREN&&
+       tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN&&
+       matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_PAREN,
+           DIAMOND_TOKEN_RIGHT_PAREN)==start&&end>start)
+        return builtin_type_of(program,chunk,source,tokens,start+1,end-1,depth+1,type);
     if(start==end) {
         const DiamondToken token=tokens[start];
-        uint8_t type=DIAMOND_TYPE_NIL;
-        if(token.kind==DIAMOND_TOKEN_STRING)type=DIAMOND_TYPE_STRING;
-        else if(token.kind==DIAMOND_TOKEN_INTEGER)type=DIAMOND_TYPE_INT;
-        else if(token.kind==DIAMOND_TOKEN_FLOAT)type=DIAMOND_TYPE_FLOAT;
+        uint8_t found=DIAMOND_TYPE_NIL;
+        if(token.kind==DIAMOND_TOKEN_STRING)found=DIAMOND_TYPE_STRING;
+        else if(token.kind==DIAMOND_TOKEN_INTEGER)found=DIAMOND_TYPE_INT;
+        else if(token.kind==DIAMOND_TOKEN_FLOAT)found=DIAMOND_TYPE_FLOAT;
         else if(token.kind==DIAMOND_TOKEN_IDENTIFIER) {
             char name[DIAMOND_MAX_FUNCTION_NAME];
             size_t length=token.span.length;
@@ -898,15 +1017,45 @@ bool receiver_resolve_builtin_type(const DiamondProgram *program,
                 length,token.span.start,&owner);
             if(local!=nullptr) {
                 int32_t known_type_set,tooling_type_set;
-                local_type_at_offset(owner,local,token.span.start,&type,
+                local_type_at_offset(owner,local,token.span.start,&found,
                     &known_type_set,&tooling_type_set);
             }
         }
-        found=type==DIAMOND_TYPE_STRING||type==DIAMOND_TYPE_ARRAY||
-              type==DIAMOND_TYPE_HASH||type==DIAMOND_TYPE_INT||
-              type==DIAMOND_TYPE_FLOAT;
-        if(found)*builtin_type=type;
+        if(!is_builtin_value_type(found))return false;
+        *type=found;return true;
     }
+    /* [..] / {..} spanning the whole range is an Array / Hash literal; after
+     * something else it is an index, whose element type is not known. */
+    if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
+       matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_BRACKET,
+           DIAMOND_TOKEN_RIGHT_BRACKET)==start) {*type=DIAMOND_TYPE_ARRAY;return true;}
+    if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACE&&
+       matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_BRACE,
+           DIAMOND_TOKEN_RIGHT_BRACE)==start) {*type=DIAMOND_TYPE_HASH;return true;}
+    if(tokens[end].kind!=DIAMOND_TOKEN_RIGHT_PAREN)return false;
+    const size_t open=matching_open(tokens,start,end,DIAMOND_TOKEN_LEFT_PAREN,
+        DIAMOND_TOKEN_RIGHT_PAREN);
+    if(open==start||tokens[open-1].kind!=DIAMOND_TOKEN_IDENTIFIER)return false;
+    const size_t callee=open-1;
+    const char *name=source+tokens[callee].span.start;
+    const size_t length=tokens[callee].span.length;
+    if(callee==start) {
+        const DiamondFunction *function=find_plain_function(chunk,name,length);
+        return function!=nullptr&&function_builtin_return(function,type);
+    }
+    if(callee<2||tokens[callee-1].kind!=DIAMOND_TOKEN_DOT)return false;
+    uint8_t receiver;
+    if(!builtin_type_of(program,chunk,source,tokens,start,callee-2,depth+1,&receiver))
+        return false;
+    return builtin_method_result(chunk,receiver,name,length,type);
+}
+
+bool receiver_resolve_builtin_type(const DiamondProgram *program,
+        const DiamondChunk *chunk,const char *source,size_t stop_offset,
+        uint8_t *builtin_type) {
+    DiamondToken *tokens;size_t start,end;
+    if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return false;
+    const bool found=builtin_type_of(program,chunk,source,tokens,start,end,0,builtin_type);
     free(tokens);return found;
 }
 

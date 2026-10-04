@@ -233,7 +233,11 @@ search over a real (if scoped) lexical symbol table:
   functions the VM dispatches by name (`array_x`, `hash_x`, `string_x`,
   `integer_x`/`float_x`/`numeric_x`, `enumerable_x`, each also under a
   `diamond_` prefix), deduplicated, with `?` added to Bool-returning ones.
-  Chains such as `name.strip().` and Array/Hash literals are not resolved yet.
+  The receiver may also be an Array or Hash literal, or a call whose result type
+  is known: a native method with one fixed result type (`name.strip().`,
+  `value.to_s().`, `text.split(" ").`), a prelude extension function or top-level
+  function with a declared return type, applied to any receiver of those forms.
+  Element types (`items[0].`) and methods whose result varies are not resolved.
   `tests/lsp_test.sh` calls every offered name on a real value, so a name the VM
   does not implement fails CI.
 - `workspace/symbol` (`lsp/workspace_symbol.c`) recursively walks the

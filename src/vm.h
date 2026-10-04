@@ -1932,6 +1932,12 @@ void diamond_vm_exit_if_threads_running(int status);
 /* Names of the methods the VM implements natively for a built-in receiver type
  * (DIAMOND_TYPE_STRING/ARRAY/HASH/INT/FLOAT), for editor completion. Writes
  * the list's address to `*names` and returns its length; 0 for any other type. */
+/* The fixed result type (a DIAMOND_TYPE_*) of the native method `name` on a
+ * built-in receiver type, from DIAMOND_NATIVE_METHODS. False when the method is
+ * not listed there or its result is not one fixed type. */
+bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
+                                       size_t length,uint8_t *return_type);
+
 size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names);
 
 bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,

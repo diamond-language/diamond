@@ -16,6 +16,8 @@ authoritative fine-grained record.
   `name` is a String, Array, Hash, Int or Float local or parameter, or after a
   string/number literal, completion lists that type's methods (`push`, `keys`,
   `upcase`, `each_slice`, ...), not only user classes' methods.
+- That completion also follows calls and literals: `name.strip().`, `n.to_s().`,
+  `text.split(" ").`, `[1, 2].` and `{"a": 1}.` complete the result type's methods.
 
 ### Runtime
 

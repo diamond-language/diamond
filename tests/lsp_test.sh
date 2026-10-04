@@ -2160,7 +2160,7 @@ count=$((count + 1))
 # --- completion on built-in values: String/Array/Hash/Int/Float locals and literals ---
 
 builtin_uri="file://$work/builtin_members.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$builtin_uri"'","text":"s = \"abc\"\na = [3, 1, 2]\nh = {\"a\": 1}\ni = 5\nf = 2.5\ns.length()\na.length()\nh.length()\ni.abs()\nf.abs()\n\"lit\".length()\n7.abs()\n\n"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$builtin_uri"'","text":"s = \"abc\"\na = [3, 1, 2]\nh = {\"a\": 1}\ni = 5\nf = 2.5\ns.length()\na.length()\nh.length()\ni.abs()\nf.abs()\n\"lit\".length()\n7.abs()\n\ns.strip().length()\n[1, 2].length()\n{\"a\": 1}.length()\ni.to_s().length()\n(s).length()\ns.split(\" \").length()\na.length().abs()\n"}}}'
 read_message >/dev/null
 builtin_labels() { # id line character -> one label per line
     send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$builtin_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
@@ -2175,10 +2175,20 @@ int_members="$(builtin_labels 304 8 2)"
 float_members="$(builtin_labels 305 9 2)"
 literal_string_members="$(builtin_labels 306 10 6)"
 literal_int_members="$(builtin_labels 307 11 2)"
+chain_string_members="$(builtin_labels 308 13 10)"
+literal_array_members="$(builtin_labels 309 14 7)"
+literal_hash_members="$(builtin_labels 310 15 9)"
+chain_to_s_members="$(builtin_labels 311 16 9)"
+grouped_members="$(builtin_labels 312 17 4)"
+chain_split_members="$(builtin_labels 313 18 13)"
+chain_length_members="$(builtin_labels 314 19 11)"
 for expected in "string_members upcase" "string_members strip" "array_members push" "array_members first" \
                 "array_members each_slice" "hash_members keys" "hash_members include_key?" "hash_members clear" \
                 "int_members abs" "int_members times" "float_members floor" "float_members round" \
-                "literal_string_members downcase" "literal_int_members abs"; do
+                "literal_string_members downcase" "literal_int_members abs" \
+                "chain_string_members upcase" "literal_array_members push" "literal_hash_members keys" \
+                "chain_to_s_members upcase" "grouped_members upcase" "chain_split_members push" \
+                "chain_length_members abs"; do
     set -- $expected
     grep -qxF -- "$2" <<<"${!1}" || { echo "lsp_test: $1 is missing $2" >&2; exit 1; }
     count=$((count + 1))
@@ -2187,7 +2197,10 @@ done
 ! grep -qxF push <<<"$string_members"
 ! grep -qxF upcase <<<"$array_members"
 ! grep -qxF keys <<<"$int_members"
-count=$((count + 3))
+# A chain's members follow the call's result type, not the receiver's.
+! grep -qxF push <<<"$chain_string_members"
+! grep -qxF upcase <<<"$chain_split_members"
+count=$((count + 5))
 
 # Every offered member must be a real method: call each one with no arguments
 # on a value of that type; an arity or type error is fine, "undefined method"

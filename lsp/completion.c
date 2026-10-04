@@ -116,22 +116,9 @@ static bool function_returns_bool(const DiamondFunction *function) {
 
 static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
         uint8_t type) {
-    static const char *const array_prefixes[]={"array_","enumerable_"};
-    static const char *const hash_prefixes[]={"hash_","enumerable_"};
-    static const char *const string_prefixes[]={"string_"};
-    static const char *const int_prefixes[]={"integer_","numeric_"};
-    static const char *const float_prefixes[]={"float_","numeric_"};
-    /* The only enumerable_ functions a Hash dispatches to. */
-    static const char *const hash_enumerable[]={"lazy","select","count","any","all","reduce","map"};
-    const char *const *prefixes=nullptr;size_t prefix_count=0;
-    switch(type) {
-        case DIAMOND_TYPE_ARRAY:prefixes=array_prefixes;prefix_count=2;break;
-        case DIAMOND_TYPE_HASH:prefixes=hash_prefixes;prefix_count=2;break;
-        case DIAMOND_TYPE_STRING:prefixes=string_prefixes;prefix_count=1;break;
-        case DIAMOND_TYPE_INT:prefixes=int_prefixes;prefix_count=2;break;
-        case DIAMOND_TYPE_FLOAT:prefixes=float_prefixes;prefix_count=2;break;
-        default:return true;
-    }
+    size_t prefix_count;
+    const char *const *prefixes=receiver_builtin_prefixes(type,&prefix_count);
+    if(prefixes==nullptr)return true;
     MemberNames seen={};
     bool okay=true;
     const char *const *natives;
@@ -149,12 +136,8 @@ static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
             const char *member=name+prefix_length;
             /* Operator bridges (array_op_minus) and prelude internals. */
             if(*member=='\0'||strncmp(member,"op_",3)==0||strcmp(member,"call_pair")==0)continue;
-            if(type==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0) {
-                bool shared=false;
-                for(size_t k=0;k<sizeof hash_enumerable/sizeof hash_enumerable[0];k++)
-                    if(strcmp(member,hash_enumerable[k])==0)shared=true;
-                if(!shared)continue;
-            }
+            if(type==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0&&
+               !receiver_hash_uses_enumerable(member))continue;
             char label[DIAMOND_MAX_FUNCTION_NAME+2];
             snprintf(label,sizeof label,"%s%s",member,function_returns_bool(function)?"?":"");
             okay=push_member(items,&seen,label);
