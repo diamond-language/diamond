@@ -802,6 +802,9 @@ typedef struct DiamondModule {
     size_t next_singleton_claim;
     char fields[DIAMOND_MAX_FIELDS][DIAMOND_MAX_FUNCTION_NAME];
     size_t field_count;
+    /* Modules this module `include`s directly; see DiamondClass's copy. */
+    uint8_t included_modules[DIAMOND_MAX_MODULES];
+    uint8_t included_module_count;
     /* See DiamondInterface's own copy of this field just above. */
     bool declared_by_discovery;
     /* A template (prelude) module this program reopens: the real pass
@@ -846,6 +849,14 @@ struct DiamondClass {
      * promise plus the one restriction (no direct instantiation) needed
      * to make exhaustiveness over just the direct subclasses sound. */
     bool sealed;
+    /* Modules this class `include`s directly (indices into modules[]),
+     * deduplicated. Compile-time only: constant lookup walks them after
+     * the superclass chain (find_ancestor_constant). Not reset when the
+     * discovery pass hands the slot to the real pass -- re-including is
+     * idempotent, and keeping them makes a constant in an included
+     * module visible to a method defined above the `include` line. */
+    uint8_t included_modules[DIAMOND_MAX_MODULES];
+    uint8_t included_module_count;
     DiamondMethod methods[DIAMOND_MAX_METHODS];
     size_t method_count;
     DiamondMethod singleton_methods[DIAMOND_MAX_METHODS];

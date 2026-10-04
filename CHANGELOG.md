@@ -19,6 +19,15 @@ authoritative fine-grained record.
 - That completion also follows calls and literals: `name.strip().`, `n.to_s().`,
   `text.split(" ").`, `[1, 2].` and `{"a": 1}.` complete the result type's methods.
 
+### Language
+
+- Constants are inherited. A subclass reads its superclass's constants, and a class
+  or module reads the constants of the modules it `include`s, both unqualified
+  (`def sides() = SIDES`) and qualified (`Triangle::SIDES`). Lookup order is the
+  lexical namespaces, then the ancestors, then the top level, so an enclosing
+  namespace's constant still beats an inherited one. Before this, a subclass method
+  reading a parent's constant failed with `undefined local variable`.
+
 ### Runtime
 
 - `Array#-` and `Array#&` are linear instead of quadratic: they rescanned the other
