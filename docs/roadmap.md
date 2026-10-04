@@ -616,7 +616,10 @@ freezing experimental interfaces prematurely.
 A first stability pass should cover:
 
 - source compatibility promises;
-- bytecode validation and versioning;
+- bytecode versioning beyond "same build only": the cache and AOT blobs are
+  rejected on any compiler change by design, so there is no cross-version format
+  to promise yet (`.dic` loading is already validated; the AOT-embedded blob is
+  trusted because the same build generated it);
 - native embedding ownership and error contracts;
 - package layout and lockfile compatibility.
 

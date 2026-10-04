@@ -31,13 +31,29 @@ Caching only ever skips the **compile** step (lexing, parsing, bytecode generati
 is no way around that without caching the load step separately, which this doesn't
 attempt.
 
-A `.dic` file that's missing, truncated, hand-edited, or was written by a
-different build of `diamond` (a build fingerprint covering the exact struct layouts
-and opcode count the file format depends on, plus a checksum of the compiler's own
-sources and prelude, is checked on every read) is treated
-exactly like a cache miss: `diamond` falls back to a clean recompile and, on success,
-overwrites the stale file. This never crashes and never affects a script's own
-observable behavior -- caching is a pure optimization.
+A `.dic` file that's missing, truncated, damaged, hand-edited, or was written by a
+different build of `diamond` is treated exactly like a cache miss: `diamond` falls back
+to a clean recompile and, on success, overwrites the stale file. This never crashes and
+never affects a script's own observable behavior -- caching is a pure optimization.
+Every read checks, in order:
+
+1. the magic bytes and a build fingerprint (the exact struct layouts and opcode count
+   the format depends on, plus a checksum of the compiler's own sources and prelude);
+2. the SHA-256 of the expanded source, so the file belongs to this program;
+3. a checksum of the whole body, which catches truncation, bit rot and partial
+   overwrites that leave the header intact;
+4. bounds on every count read from the file, scalar-only constants, in-range method
+   and superclass indices, and `diamond_verify_bytecode` over every function (register
+   bounds, instruction alignment, jump targets) -- the same checks a hand-assembled
+   program gets. This layer does not trust the checksum: it is not cryptographic, so a
+   file deliberately re-signed after editing still has to pass it.
+
+A `.dic` is still not a distribution format. A file that passes every check runs
+whatever bytecode it contains, so anyone who can write one next to a script can change
+what that script does without touching its source -- the same trust you already give the
+directory's `.di` files. Set `DIAMOND_NO_CACHE=1` where that isn't true. Validation
+guarantees memory safety, not that the bytecode matches the source. Cache format
+version 4 added the body checksum; older files are ignored and rebuilt.
 
 ## Disabling it
 
