@@ -1,0 +1,15 @@
+"a\"b\\c\nd\t"
+["a", "b, c", 1, 2.5, nil, true, :sym]
+{"k": [1, "v"], "z": {"n": nil}}
+:sym
+nil
+1
+#<Point x=1, y=2>
+[#<Point x=3, y=4>, Named<x>]
+Named<y>
+#<Node v=1, next=#<Node v=2, next=#<Node ...>>>
+"é\x01"
+[a, b]
+rescued: inspect must return String
+arity rejected
+nil

@@ -608,6 +608,27 @@ though: `arr[i] += 1`, `h[k] -= 1`, and the rest of `+=`/`-=`/`*=`/`/=`/
 same as plain `arr[i] = v` — the index expression is evaluated exactly
 once either way.
 
+## inspect
+
+`value.inspect()` is `to_s()` for debugging: it shows what a value *is* rather than how
+it prints. It works on every value.
+
+```ruby
+["a", "b, c"].to_s()       # => "[a, b, c]"      (ambiguous)
+["a", "b, c"].inspect()    # => "[\"a\", \"b, c\"]"
+"line\n".inspect()         # => "\"line\\n\""   (quoted, escapes shown)
+:ok.inspect()              # => ":ok"
+{"k": [1, nil]}.inspect()  # => "{\"k\": [1, nil]}"
+```
+
+Strings are double-quoted with `\"`, `\\`, `\n`, `\t`, `\r` and `\xNN` for other control bytes.
+A Symbol keeps its colon. Numbers, `nil` and booleans print as `to_s` does. Collections
+use the same source-like layout as `to_s`, with each element inspected.
+
+An instance shows its fields, `#<Point x=1, y=2>`, and a cycle shows `#<Node ...>`. A class
+can define its own `inspect` and every collection that holds it will use that. `inspect`
+ignores a class's `to_s`; define both if you want both.
+
 ## Symbols
 
 ```ruby
@@ -630,11 +651,11 @@ that kind of complexity until profiling shows it's actually worth it (see
 `to_sym(string)` converts a `String` to a `Symbol`; the reverse direction
 goes through `puts`/string interpolation/a class's `to_s` method, all of
 which print a Symbol as its bare name with **no** leading colon — matching
-Ruby's `to_s`/`puts` convention (Ruby's colon only shows via `inspect`/`p`,
-which Diamond has no equivalent of). This keeps `to_sym` and printing true
+Ruby's `to_s`/`puts` convention. This keeps `to_sym` and printing true
 inverses of each other: `to_sym("#{:ok}") == :ok`. The practical tradeoff is
 that a Symbol and a same-named String print identically — Ruby has this
-same tradeoff for the same reason.
+same tradeoff for the same reason. When you need to tell them apart, use
+`inspect()` (below).
 
 A colon starts a Symbol literal only when it isn't immediately glued (no
 space) onto the end of a preceding identifier, digit, or closing
