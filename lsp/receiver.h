@@ -64,12 +64,27 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
 
 /* Resolves the same receiver expression to a built-in value type for the
  * forms where it is known without running anything: a string, integer or
- * float literal, or a local (or parameter) whose known type at the cursor is
- * String, Array, Hash, Int or Float. Writes that DIAMOND_TYPE_* to
+ * float literal, an Array or Hash literal, a local (or parameter) whose known
+ * type at the cursor is String, Array, Hash, Int or Float, or a call whose
+ * result type is known: a native method with one fixed result type
+ * (`name.strip()`), a prelude extension function with a declared return type,
+ * or a top-level function with a `-> String`-style annotation, applied to any
+ * receiver of those forms (so `name.strip().` and `words.join(",").`). Writes that DIAMOND_TYPE_* to
  * `*builtin_type`; false means the receiver is not one of those. */
 bool receiver_resolve_builtin_type(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         uint8_t *builtin_type);
+
+/* The prelude function-name prefixes the VM probes, in order, when a method is
+ * called on a built-in value of `builtin_type` (`items.foo` calls array_foo,
+ * then enumerable_foo; see find_collection_extension and find_value_extension
+ * in src/vm.c). Each is also tried under a `diamond_` prefix. Writes the count
+ * to `*count`; nullptr for any other type. */
+const char *const *receiver_builtin_prefixes(uint8_t builtin_type,size_t *count);
+
+/* True iff a Hash dispatches `name` to an enumerable_ function (it shares only
+ * these with Array; every other enumerable_ function is Array-only). */
+bool receiver_hash_uses_enumerable(const char *name);
 
 /* True iff a lexical local (or parameter) named `name` is in scope at
  * `offset` -- the same innermost-shadow-aware lookup

@@ -10220,6 +10220,23 @@ static const char *const NATIVE_MEMBERS_FLOAT[]={
     "frozen?","hour","hours","minute","minutes","nil?","round","second","seconds",
     "tap","to_f","to_i","to_s","week","weeks"};
 
+bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
+                                       size_t length,uint8_t *return_type) {
+    bool found=false;
+    for(size_t index=0;index<sizeof DIAMOND_NATIVE_METHODS/
+        sizeof DIAMOND_NATIVE_METHODS[0];index++) {
+        const DiamondNativeMethod *method=&DIAMOND_NATIVE_METHODS[index];
+        if(method->receiver_type!=receiver_type||strlen(method->name)!=length||
+           memcmp(method->name,name,length)!=0)continue;
+        /* Overloads (Float#round with and without digits) that disagree, or a
+         * result that is not one fixed type, leave the answer unknown. */
+        if(method->return_type==UINT8_MAX||(found&&*return_type!=method->return_type))
+            return false;
+        *return_type=method->return_type;found=true;
+    }
+    return found;
+}
+
 size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names) {
 #define NATIVE_MEMBERS_CASE(type,list) \
     case type: *names=list;return sizeof list/sizeof list[0];
