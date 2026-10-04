@@ -223,7 +223,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -739,6 +739,14 @@ test-fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 # tests/stress_threads.sh for why and for the STRESS_* knobs.
 test-stress-threads: $(TARGET)
 	bash tests/stress_threads.sh
+
+# The same pinned loop against a ThreadSanitizer build. TSan reports a race
+# that never changed an answer, and pinning makes the interleavings it sees
+# uneven. Fewer runs than the plain loop (TSan is ~10x slower); halt_on_error
+# turns a report into a failed run.
+test-stress-threads-tsan: tsan
+	TSAN_OPTIONS="$${TSAN_OPTIONS:-halt_on_error=1}" STRESS_RUNS=$${STRESS_RUNS:-10} \
+		STRESS_TIMEOUT=$${STRESS_TIMEOUT:-180} bash tests/stress_threads.sh
 
 $(BUILD_DIR)/lexer_dump: tests/lexer_dump.c src/lexer.c src/lexer.h
 	@mkdir -p $(BUILD_DIR)

@@ -200,6 +200,43 @@ jobs:
       - name: Stress the threaded cases on two CPUs
         run: make test-stress-threads
 
+  # The same pinned stress loop under ThreadSanitizer, and on real arm64
+  # hardware (weaker memory ordering than x86 is where a missing barrier
+  # shows). Separate jobs so a slow TSan build never delays the plain loop.
+  test-stress-threads-tsan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+      - name: Stress the threaded cases on two CPUs under TSan
+        run: make test-stress-threads-tsan
+
+  test-stress-threads-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl util-linux
+      - name: Stress the threaded cases on two CPUs
+        run: make test-stress-threads
+
   # A third, genuinely different target -- musl, not just another distro
   # (fedora/ubuntu above are both glibc). Its own job, not another
   # matrix.os entry above: needs a different package manager, an extra
