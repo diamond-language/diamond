@@ -55,8 +55,8 @@ decode), and 66 when a file can't be opened.
   order, so a decoder doing its own tree-building over the same
   frequencies isn't guaranteed to reconstruct the *same* tree the encoder
   built, and would decode garbage the moment it didn't.
-- **A top-level constant isn't visible inside a function** — the magic
-  bytes are `magic()`, a function, not a top-level `MAGIC = "HUF1"`.
+- **A top-level constant read from functions** — the magic bytes are
+  `MAGIC = "HUF1"`, shared by the encoder and the decoder's header check.
 
 ## Test
 
