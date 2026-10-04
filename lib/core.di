@@ -1337,18 +1337,37 @@ end
 # Every k-element combination, in order.
 def diamond_array_combination(values: Array, k: Int) -> Array
   return [[]] if k == 0
-  return [] if k > values.length() || k < 0
+  count = values.length()
+  return [] if k > count || k < 0
+  # Walks the index combinations in lexicographic order, building each result
+  # array once.
+  chosen = []
+  position = 0
+  while position < k
+    chosen.push(position)
+    position += 1
+  end
   result = []
-  index = 0
-  while index <= values.length() - k
-    first = values[index]
-    tails = diamond_array_combination(values.drop(index + 1), k - 1)
-    tail = 0
-    while tail < tails.length()
-      result.push([first] + tails[tail])
-      tail += 1
+  while true
+    combo = []
+    position = 0
+    while position < k
+      combo.push(values[chosen[position]])
+      position += 1
     end
-    index += 1
+    result.push(combo)
+    # Advance the rightmost index that still has room, then reset those after it.
+    position = k - 1
+    while position >= 0 && chosen[position] == count - k + position
+      position -= 1
+    end
+    return result if position < 0
+    chosen[position] = chosen[position] + 1
+    position += 1
+    while position < k
+      chosen[position] = chosen[position - 1] + 1
+      position += 1
+    end
   end
   result
 end
@@ -1377,12 +1396,43 @@ end
 
 # Array - Array: left's elements that aren't in right. & is the elements
 # in both, | the union; each keeps first-seen order without duplicates.
+# `other.include?(item)` for many items against one `other`. Scalars (nil, Bool,
+# Int, Float, String, Symbol) are looked up in a Hash built once; anything else
+# keeps the linear scan, since `==` on it may be a user-defined method that a Hash
+# lookup would not call. Returns [scalar Hash, the non-scalar elements].
+def diamond_array_membership(other: Array) -> Array
+  scalars = {}
+  rest = []
+  index = 0
+  while index < other.length()
+    item = other[index]
+    if item == nil || item is Bool || item is Int || item is Float ||
+       item is String || item is Symbol
+      scalars[item] = true
+    else
+      rest.push(item)
+    end
+    index += 1
+  end
+  [scalars, rest]
+end
+
+def diamond_array_member(other: Array, membership: Array, item) -> Bool
+  if item == nil || item is Bool || item is Int || item is Float ||
+     item is String || item is Symbol
+    return true if membership[0].include_key?(item)
+    return membership[1].length() > 0 && membership[1].include?(item)
+  end
+  other.include?(item)
+end
+
 def diamond_array_op_minus(values: Array, other) -> Array
   raise TypeError.new("Array - needs an Array, got #{other}") unless other is Array
+  membership = diamond_array_membership(other)
   result = []
   index = 0
   while index < values.length()
-    result.push(values[index]) unless other.include?(values[index])
+    result.push(values[index]) unless diamond_array_member(other, membership, values[index])
     index += 1
   end
   result
@@ -1390,11 +1440,12 @@ end
 
 def diamond_array_op_and(values: Array, other) -> Array
   raise TypeError.new("Array & needs an Array, got #{other}") unless other is Array
+  membership = diamond_array_membership(other)
   unique = values.uniq()
   result = []
   index = 0
   while index < unique.length()
-    result.push(unique[index]) if other.include?(unique[index])
+    result.push(unique[index]) if diamond_array_member(other, membership, unique[index])
     index += 1
   end
   result
