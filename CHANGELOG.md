@@ -6,6 +6,19 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Security
+
+- A `.dic` bytecode cache is now validated before it runs. Flipping a few bytes in the
+  body of a cache file whose header and source hash were intact could crash `diamond`
+  (2 of 400 random single-to-four-byte corruptions segfaulted, more failed with
+  nonsense runtime errors), contradicting the documented "never crashes". Cache format
+  version 4 adds a body checksum; every load also bounds-checks the file's counts,
+  rejects non-scalar constants and out-of-range method/superclass indices, and runs
+  the bytecode verifier over every function. A rejected file is a plain cache miss and
+  the script recompiles. The cost is about 3 ms on a cache hit (debug build). A new
+  `make test-cache` case re-signs 200 mutated caches and requires that none dies on a
+  signal.
+
 ### Tooling
 
 - `make test-stress-threads` (and a CI job) re-runs every Thread, Channel and Supervisor

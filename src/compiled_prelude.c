@@ -56,6 +56,7 @@
 #define __BSD_VISIBLE 1
 #define _DARWIN_C_SOURCE
 #include "compiled_prelude.h"
+#include "disassemble.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -256,6 +257,14 @@ static bool read_function(const uint8_t **cursor, const uint8_t *end,
     if (raw == nullptr) return false;
     DiamondFunction view;
     memcpy(&view, raw, sizeof view);
+    /* Every count below comes straight off disk: bound it by the bytes that
+     * remain before multiplying, so a corrupted count can't wrap a size_t
+     * product into a small, in-bounds-looking take(). */
+    const size_t remaining = (size_t)(end - *cursor);
+    if (view.code_count > remaining / sizeof *view.code ||
+        view.constant_count > remaining / sizeof *view.constants ||
+        view.type_set_count > remaining / sizeof *view.type_sets)
+        return false;
     const uint8_t *code = take(cursor, end, view.code_count * sizeof *view.code);
     const uint8_t *lines_bytes = take(cursor, end, view.code_count * sizeof *view.lines);
     const uint8_t *columns_bytes = take(cursor, end, view.code_count * sizeof *view.columns);
@@ -316,6 +325,18 @@ static bool read_bytes(const uint8_t **cursor, const uint8_t *end, void *dest, s
     return true;
 }
 
+/* A DiamondMethod is raw-dumped, pointer fields included. The writer only
+ * ever sees plain methods (assert_methods_are_plain), so on the way back in
+ * those fields are always null; forcing that here means a hand-edited file
+ * can't smuggle in a chunk or bound-value pointer of its own choosing. */
+static void clear_method_pointers(DiamondMethod *methods, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        methods[index].source_chunk = nullptr;
+        methods[index].bound_values = nullptr;
+        methods[index].bound_value_count = 0;
+    }
+}
+
 /* Inverse of write_class: rejects an oversized method_count/field_count/
  * class_variable_count up front (this build's own DIAMOND_MAX_METHODS/
  * DIAMOND_MAX_FIELDS budget) rather than overflowing `out`'s own
@@ -339,6 +360,8 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
     if (!read_bytes(cursor, end, out->singleton_methods,
             (size_t)singleton_method_count * sizeof out->singleton_methods[0])) return false;
+    clear_method_pointers(out->methods, out->method_count);
+    clear_method_pointers(out->singleton_methods, out->singleton_method_count);
 
     uint64_t field_count = 0;
     if (!read_u64(cursor, end, &field_count)) return false;
@@ -375,6 +398,8 @@ static bool read_module(const uint8_t **cursor, const uint8_t *end, DiamondModul
     if (!read_bytes(cursor, end, out->methods, (size_t)method_count * sizeof out->methods[0])) return false;
     if (!read_bytes(cursor, end, out->singleton_methods,
             (size_t)singleton_method_count * sizeof out->singleton_methods[0])) return false;
+    clear_method_pointers(out->methods, out->method_count);
+    clear_method_pointers(out->singleton_methods, out->singleton_method_count);
 
     if (!read_bytes(cursor, end, &out->next_singleton_claim, sizeof out->next_singleton_claim)) return false;
 
@@ -475,6 +500,70 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
     return true;
 }
 
+/* Semantic checks over a program read back from disk, run before anything
+ * executes it. The reader above only guarantees the bytes fit the structs;
+ * this guarantees the structs don't point outside the program. Anything
+ * that fails is treated by callers exactly like a missing file. */
+static bool method_table_valid(const DiamondMethod *methods, size_t count, size_t function_count) {
+    for (size_t index = 0; index < count; index++)
+        if (methods[index].function_index >= function_count) return false;
+    return true;
+}
+
+static bool constants_are_scalar(const DiamondFunction *function) {
+    for (size_t index = 0; index < function->constant_count; index++) {
+        const DiamondValueKind kind = function->constants[index].kind;
+        if (kind != DIAMOND_VALUE_NIL && kind != DIAMOND_VALUE_BOOL &&
+            kind != DIAMOND_VALUE_INT && kind != DIAMOND_VALUE_FLOAT)
+            return false;
+    }
+    return true;
+}
+
+static bool program_is_valid(const DiamondProgram *program) {
+    if (!constants_are_scalar(&program->entry)) return false;
+    for (size_t index = 0; index < program->function_count; index++)
+        if (!constants_are_scalar(program->functions[index])) return false;
+    for (size_t index = 0; index < program->class_count; index++) {
+        const DiamondClass *class = &program->classes[index];
+        if (class->superclass != UINT8_MAX && class->superclass >= program->class_count) return false;
+        if (!method_table_valid(class->methods, class->method_count, program->function_count) ||
+            !method_table_valid(class->singleton_methods, class->singleton_method_count,
+                program->function_count))
+            return false;
+    }
+    for (size_t index = 0; index < program->module_count; index++) {
+        const DiamondModule *module = &program->modules[index];
+        if (!method_table_valid(module->methods, module->method_count, program->function_count) ||
+            !method_table_valid(module->singleton_methods, module->singleton_method_count,
+                program->function_count))
+            return false;
+    }
+    const DiamondChunk chunk = diamond_program_chunk(program);
+    return diamond_verify_bytecode(&chunk);
+}
+
+/* Not cryptographic: it detects truncation, bit rot, partial overwrites and
+ * hand edits, the ways a file next to a source file really goes wrong. A
+ * file someone deliberately forges with a matching checksum still has to get
+ * past program_is_valid. Eight bytes per step keeps this to a few
+ * milliseconds over a multi-megabyte cache. */
+static uint64_t body_checksum(const uint8_t *data, size_t size) {
+    uint64_t hash = 0x9e3779b97f4a7c15ull ^ (uint64_t)size;
+    size_t index = 0;
+    for (; index + 8 <= size; index += 8) {
+        uint64_t word;
+        memcpy(&word, data + index, sizeof word);
+        hash = (hash ^ word) * 0xff51afd7ed558ccdull;
+        hash ^= hash >> 32;
+    }
+    uint64_t tail = 0;
+    memcpy(&tail, data + index, size - index);
+    hash = (hash ^ tail) * 0xff51afd7ed558ccdull;
+    hash ^= hash >> 29;
+    return hash;
+}
+
 /* Deliberately not char[8] (no room for a null terminator, only every
  * on-disk-magic-length reference below actually needs) -- newer GCC's
  * -Wunterminated-string-initialization flags that even though it's
@@ -484,8 +573,9 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
 static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
 enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
 /* 2: string constants are length-prefixed instead of fixed 4KB records.
- * 3: the fingerprint carries build_id. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 3 };
+ * 3: the fingerprint carries build_id.
+ * 4: a body checksum follows the source hash. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 4 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.di and lib/core/), passed in by the
@@ -583,8 +673,26 @@ bool diamond_program_read_cache_file(const char *path,
         free(buffer);
         return false;
     }
-    const bool ok = diamond_program_read_compiled(cursor, (size_t)(end - cursor), program);
+    const uint8_t *stored_checksum_bytes = take(&cursor, end, sizeof(uint64_t));
+    if (stored_checksum_bytes == nullptr) {
+        free(buffer);
+        return false;
+    }
+    uint64_t stored_checksum;
+    memcpy(&stored_checksum, stored_checksum_bytes, sizeof stored_checksum);
+    if (stored_checksum != body_checksum(cursor, (size_t)(end - cursor))) {
+        free(buffer);
+        return false;
+    }
+    bool ok = diamond_program_read_compiled(cursor, (size_t)(end - cursor), program);
     free(buffer);
+    if (ok) ok = program_is_valid(program);
+    if (!ok) {
+        /* A failed or partial read leaves `program` half-populated; hand
+         * the caller back the fresh, empty program it passed in. */
+        diamond_program_free(program);
+        diamond_program_init(program);
+    }
     return ok;
 }
 
@@ -615,10 +723,18 @@ void diamond_program_write_cache_file(const char *path,
         return;
     }
     const DiamondCacheFingerprint fingerprint = diamond_cache_fingerprint();
-    bool ok = write_all(file, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) &&
+    char *body = nullptr;
+    size_t body_size = 0;
+    FILE *body_stream = open_memstream(&body, &body_size);
+    bool ok = body_stream != nullptr && diamond_program_write_compiled(program, body_stream);
+    if (body_stream != nullptr && fclose(body_stream) != 0) ok = false;
+    const uint64_t checksum = ok ? body_checksum((const uint8_t *)body, body_size) : 0;
+    ok = ok && write_all(file, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) &&
         write_cache_fingerprint(file, &fingerprint) &&
         write_all(file, source_hash, 32) &&
-        diamond_program_write_compiled(program, file);
+        write_all(file, &checksum, sizeof checksum) &&
+        write_all(file, body, body_size);
+    free(body);
     if (fclose(file) != 0) ok = false;
     if (ok) {
         if (rename(temp_path, path) != 0) unlink(temp_path);
