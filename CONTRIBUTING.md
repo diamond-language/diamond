@@ -82,6 +82,7 @@ make test-all          # debug, release, sanitizers, packages, LSP, REPL, fuzz s
 make test-builds       # debug, release, ASan/UBSan, and TSan checks
 make test-integration  # API, fibers, packages, tooling, cache, self-host bootstrap
 make test-fuzz         # instrumented fuzz builds and bounded smoke tests
+make test-stress-threads  # every Thread/Channel/Supervisor case, 60 runs each pinned to 2 CPUs
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push
 ```
 
