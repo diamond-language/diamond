@@ -3761,6 +3761,24 @@ static bool self_has_method(const Compiler *compiler,DiamondSpan name) {
     return false;
 }
 
+/* Does the class being compiled, or a superclass, define a singleton method
+ * `name`? Class singleton methods are registered before any body compiles,
+ * so one defined further down the class counts too. */
+static bool self_has_singleton_method(const Compiler *compiler,DiamondSpan name) {
+    const DiamondClass *owner=&compiler->program->classes[(size_t)compiler->current_class];
+    for(size_t depth=0;owner!=nullptr&&depth<=DIAMOND_MAX_CLASSES;depth++) {
+        for(size_t index=0;index<owner->singleton_method_count;index++)
+            if(singleton_call_name_equals(compiler,owner->singleton_methods[index].name,name))
+                return true;
+        owner=owner->superclass==UINT8_MAX?nullptr:
+            &compiler->program->classes[owner->superclass];
+    }
+    return false;
+}
+
+static uint16_t parse_self_class_method_arguments(Compiler *compiler,
+        DiamondSpan name,bool writer_name);
+
 static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
@@ -3817,6 +3835,13 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
        self_has_method(compiler,name)) {
         return parse_invoke_named(compiler,0,0,compiler->known_type_sets[0],name);
     }
+    /* The same for a class singleton method: inside `def self.x`, a bare
+     * `name(...)` is `self.name(...)`, dispatched on self's actual class so
+     * a subclass inherits it. */
+    if(function_index<0&&!compiler->discovery_pass&&compiler->in_method&&
+       compiler->in_singleton_method&&compiler->current_class>=0&&
+       self_has_singleton_method(compiler,name))
+        return parse_self_class_method_arguments(compiler,name,false);
     if (function_index < 0) {
         note_self_reference(compiler,name);
         if(compiler->discovery_pass)
@@ -9186,6 +9211,9 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
  * own comment in vm.h. Mirrors parse_invoke's argument-marshaling shape
  * exactly, minus generic type arguments (not needed for this first
  * pass -- self.foo[T](...) isn't supported). */
+static uint16_t parse_self_class_method_arguments(Compiler *compiler,
+        DiamondSpan name,bool writer_name);
+
 static uint16_t parse_self_class_method_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
@@ -9211,6 +9239,14 @@ static uint16_t parse_self_class_method_call(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
         writer_name=true;advance_token(compiler);
     }
+    return parse_self_class_method_arguments(compiler,name,writer_name);
+}
+
+/* The argument list and optional block of `self.name(...)`, or of a bare
+ * `name(...)` that resolved to one of the class's own singleton methods;
+ * the name is already consumed and the current token should be '('. */
+static uint16_t parse_self_class_method_arguments(Compiler *compiler,
+        DiamondSpan name,bool writer_name) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,
              "member access requires a method call with '()'");return 0;

@@ -319,18 +319,28 @@ one dynamically by a computed string (see docs/internal/design.md's
 `DIAMOND_VALUE_CLASS` section, and docs/roadmap.md's "Explicitly
 deferred" section for why that stays out of scope).
 
-Only the **explicit** `self.foo(...)` form dispatches this way. A **bare**
-call to a sibling `self.` method (`table_name()` instead of
-`self.table_name()`) does not -- and, as of this feature, no longer even
-resolves to a sibling method at all; it's an ordinary undefined-function
-error. (Before this, a bare call happened to reach a sibling class method
-by accident: singleton methods shared the same "not a class member"
-compile-time tag as plain top-level functions, so top-level function
-lookup found them incidentally. Giving `self` a real value required
-giving singleton methods a real owner, which closes that accident --
-class-owned singleton methods now behave exactly like module ones always
-did, where a bare sibling call was already an error. Use `self.foo(...)`
-explicitly in both cases now.)
+Inside a class-owned singleton method, `self.foo(...)` and a bare `foo(...)`
+mean the same thing: both dispatch on `self`'s actual class at run time, so a
+subclass's override wins and an inherited singleton method is found:
+
+```ruby
+class Greeter
+  def self.greet(name) = prefix() + name
+  def self.prefix() = "hello "
+end
+class Shouter < Greeter
+  def self.prefix() = "HEY "
+end
+Shouter.greet("b")   # => "HEY b"
+```
+
+The bare form needs a singleton method of that name on the class or a
+superclass (defined above or below the caller) and, like the instance-method
+form, never overrides a function of the same name: a top-level `def foo`
+still wins. A name with no match is the usual `undefined function` compile
+error. (Bare sibling calls were once an error here: they used to reach a
+sibling by accident, and giving `self` a real value closed that accident.
+They now resolve deliberately, through `self`.)
 
 Module namespace singletons (`def self.name` inside a `module` block) are
 unaffected by any of this -- `self` still isn't accessible there, and

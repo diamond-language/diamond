@@ -28,6 +28,12 @@ authoritative fine-grained record.
   namespace's constant still beats an inherited one. Before this, a subclass method
   reading a parent's constant failed with `undefined local variable`.
 
+- A bare `name(...)` inside a class's `def self.x` calls the class's own singleton method
+  `name`, as `self.name(...)` does: it dispatches on `self`'s actual class, so a
+  subclass's override wins and inherited singleton methods are found, and it works
+  whether `name` is defined above or below. A top-level function of the same name still
+  wins, and an unknown name is still `undefined function`.
+
 ### Runtime
 
 - `Array#-` and `Array#&` are linear instead of quadratic: they rescanned the other
