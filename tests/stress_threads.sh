@@ -61,7 +61,12 @@ run_once() { # case_file
     if [[ -f "$base.expected" ]]; then
         actual="$(<"$out")"; expected="$(cat "$base.expected")"
         (( status == 0 )) || { echo "exit status $status"; return 1; }
-        [[ "$actual" == "$expected" ]] || { echo "stdout differs"; return 1; }
+        [[ "$actual" == "$expected" ]] || {
+            # Say what came back: a CI log that only reads "stdout differs" can't
+            # tell a lost message from a reordering from a truncated run.
+            echo "stdout differs: expected [${expected:0:300}] got [${actual:0:300}] stderr [$(head -c 300 "$err")]"
+            return 1
+        }
     elif [[ -f "$base.expected_error" ]]; then
         pattern="$(cat "$base.expected_error")"
         [[ "$combined" == *"$pattern"* ]] || { echo "error text differs"; return 1; }
