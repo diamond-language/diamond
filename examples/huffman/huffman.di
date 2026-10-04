@@ -23,9 +23,8 @@ require "./lib/bits"
 class HuffmanError < StandardError
 end
 
-# A top-level constant isn't visible inside a function, so this is a
-# function rather than a top-level `MAGIC = "HUF1"` assignment.
-def magic() -> String = "HUF1"
+# The container's first four bytes.
+MAGIC = "HUF1"
 
 def usage() -> Int
   warn("usage: huffman.di --encode IN OUT")
@@ -78,7 +77,7 @@ def encode(input_path: String, output_path: String) -> Int
 
   # Step 4: assemble and write. The ratio is the compressed size as a whole
   # percentage of the original (below 100 means it shrank).
-  container = magic() + pack_u32(data.length()) + table + pack_bits(bits)
+  container = MAGIC + pack_u32(data.length()) + table + pack_bits(bits)
   File.write(output_path, container)
   ratio = container.length() * 100 / data.length()
   puts("#{input_path}: #{data.length()} -> #{container.length()} bytes (#{ratio}%)")
@@ -117,7 +116,7 @@ def decode(input_path: String, output_path: String) -> Int
 
   # Check the header: the magic bytes, and that there are at least the 10
   # fixed header bytes (4 magic + 4 length + 2 symbol count).
-  unless container.length() >= 10 && container.slice(0, 4) == magic()
+  unless container.length() >= 10 && container.slice(0, 4) == MAGIC
     raise HuffmanError.new("not a huffman container (bad magic)")
   end
   original_length = unpack_u32(container, 4)

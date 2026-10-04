@@ -18,8 +18,23 @@ puts(Config::LIMIT)
 ```
 
 Functions and methods can read constants. Unqualified lookup checks the
-current class or module, its enclosing namespaces, then the top level.
-A namespace's constant shadows one with the same name outside it. Use
+current class or module, its enclosing namespaces, the ancestors of the
+current class or module (superclasses and included modules), then the top
+level. A namespace's constant shadows one with the same name outside it, and
+an enclosing namespace's constant beats an inherited one:
+
+```ruby
+class Shape
+  SIDES = 0
+end
+class Triangle < Shape
+  def sides() = SIDES   # inherited: 0
+end
+puts(Triangle::SIDES)   # 0
+```
+
+A subclass can redefine an inherited constant for itself (`SIDES = 3`);
+that does not change the superclass's. Use
 `Config::LIMIT` to access a constant explicitly, including from other files
 loaded with `require`. Top-level constants are shared by the loaded program,
 not private to a file.

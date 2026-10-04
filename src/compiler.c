@@ -2248,6 +2248,64 @@ static const char *constant_scope(const Compiler *compiler) {
     return "";
 }
 
+/* Appends `module_index` to an include list unless already present, moving
+ * nothing: a repeated `include` (discovery pass, then real pass, or a
+ * reopened class) must not grow the list. The list is as large as the
+ * module table, so a deduplicated append always fits. */
+static void record_included_module(uint8_t *list,uint8_t *count,uint8_t module_index) {
+    for(size_t index=0;index<*count;index++)
+        if(list[index]==module_index)return;
+    list[(*count)++]=module_index;
+}
+
+/* Constants inherited through `include`: one constant in `module_index`
+ * itself, then in every module it includes (latest `include` first, as
+ * method resolution prefers the latest). `depth` only bounds a hypothetical
+ * include cycle. */
+static int find_module_chain_constant(const Compiler *compiler,int module_index,
+                                      const char *name,int depth) {
+    const DiamondModule *module=&compiler->program->modules[(size_t)module_index];
+    char qualified[DIAMOND_MAX_FUNCTION_NAME];
+    const int written=snprintf(qualified,sizeof qualified,"%s::%s",module->name,name);
+    if(written>0&&(size_t)written<sizeof qualified) {
+        const int found=find_namespace_constant_name(compiler,qualified);
+        if(found>=0)return found;
+    }
+    if(depth>=DIAMOND_MAX_MODULES)return -1;
+    for(size_t index=module->included_module_count;index>0;index--) {
+        const int found=find_module_chain_constant(compiler,
+            module->included_modules[index-1],name,depth+1);
+        if(found>=0)return found;
+    }
+    return -1;
+}
+
+/* A class's own constant, its included modules', then its superclass's, up
+ * the chain -- the order Ruby's ancestor walk uses. */
+static int find_class_chain_constant(const Compiler *compiler,int class_index,
+                                     const char *name) {
+    for(size_t depth=0;class_index>=0&&depth<=DIAMOND_MAX_CLASSES;depth++) {
+        const DiamondClass *class=&compiler->program->classes[(size_t)class_index];
+        char qualified[DIAMOND_MAX_FUNCTION_NAME];
+        const int written=snprintf(qualified,sizeof qualified,"%s::%s",class->name,name);
+        if(written>0&&(size_t)written<sizeof qualified) {
+            const int found=find_namespace_constant_name(compiler,qualified);
+            if(found>=0)return found;
+        }
+        for(size_t index=class->included_module_count;index>0;index--) {
+            const int found=find_module_chain_constant(compiler,
+                class->included_modules[index-1],name,0);
+            if(found>=0)return found;
+        }
+        class_index=class->superclass==UINT8_MAX?-1:(int)class->superclass;
+    }
+    return -1;
+}
+
+/* Lexical namespaces first, then the ancestors of the innermost class or
+ * module (superclasses and included modules), then the program scope --
+ * Ruby's order, so a subclass sees its parents' constants but an
+ * enclosing namespace's constant still beats an inherited one. */
 static int find_lexical_constant_name(const Compiler *compiler,const char *name) {
     char scope[DIAMOND_MAX_FUNCTION_NAME];
     (void)snprintf(scope,sizeof scope,"%s",constant_scope(compiler));
@@ -2262,7 +2320,33 @@ static int find_lexical_constant_name(const Compiler *compiler,const char *name)
         if(separator==nullptr)break;
         separator[-1]='\0';
     }
+    int inherited=-1;
+    if(compiler->current_class>=0)
+        inherited=find_class_chain_constant(compiler,compiler->current_class,name);
+    else if(compiler->current_module>=0)
+        inherited=find_module_chain_constant(compiler,compiler->current_module,name,0);
+    if(inherited>=0)return inherited;
     return find_namespace_constant_name(compiler,name);
+}
+
+/* `Namespace::NAME` where NAME lives in an ancestor of Namespace (a
+ * superclass or included module) rather than in Namespace itself. */
+static int find_qualified_inherited_constant(const Compiler *compiler,
+                                             const char *qualified) {
+    const char *separator=strrchr(qualified,':');
+    if(separator==nullptr||separator==qualified||separator[-1]!=':')return -1;
+    char prefix[DIAMOND_MAX_FUNCTION_NAME];
+    const size_t prefix_length=(size_t)(separator-1-qualified);
+    if(prefix_length>=sizeof prefix)return -1;
+    memcpy(prefix,qualified,prefix_length);
+    prefix[prefix_length]='\0';
+    const char *name=separator+1;
+    const int class_index=find_class_qualified_or_scoped(compiler,prefix);
+    if(class_index>=0)return find_class_chain_constant(compiler,class_index,name);
+    const int module_index=find_module_name(compiler,prefix);
+    if(module_index>=0)
+        return find_module_chain_constant(compiler,module_index,name,0);
+    return -1;
 }
 
 static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
@@ -7011,7 +7095,8 @@ static uint16_t parse_name(Compiler *compiler) {
         }
         class_index=find_class_name(compiler,qualified);
         module_index=find_module_name(compiler,qualified);
-        const int constant=find_lexical_constant_name(compiler,qualified);
+        int constant=find_lexical_constant_name(compiler,qualified);
+        if(constant<0)constant=find_qualified_inherited_constant(compiler,qualified);
         if(constant>=0) {
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_GET_NAMESPACE_CONSTANT,
@@ -15806,6 +15891,8 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
             }
             const DiamondModule *module=
                 &compiler->program->modules[(size_t)module_index];
+            record_included_module(class->included_modules,
+                &class->included_module_count,(uint8_t)module_index);
             for(size_t source=0;source<module->field_count;source++) {
                 bool present=false;
                 for(size_t field=0;field<class->field_count;field++)
@@ -15975,6 +16062,7 @@ static uint16_t compile_class(Compiler *compiler) {
         class->singleton_method_count=0;
         class->field_count=0;
         class->class_variable_count=0;
+        class->included_module_count=0;
         class->declared_by_discovery=false;
         class->superclass=UINT8_MAX;
         class->sealed=false;
@@ -16879,6 +16967,7 @@ static uint16_t compile_module(Compiler *compiler) {
         module->method_count=0;
         module->singleton_method_count=0;
         module->field_count=0;
+        module->included_module_count=0;
         module->next_singleton_claim=0;
         module->declared_by_discovery=false;
     }
@@ -16963,6 +17052,8 @@ static uint16_t compile_module(Compiler *compiler) {
             }
             const DiamondModule *source=
                 &compiler->program->modules[(size_t)included];
+            record_included_module(module->included_modules,
+                &module->included_module_count,(uint8_t)included);
             for(size_t imported=0;imported<source->field_count;imported++) {
                 bool present=false;
                 for(size_t field=0;field<module->field_count;field++)
