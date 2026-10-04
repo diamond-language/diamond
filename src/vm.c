@@ -10194,30 +10194,30 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
 static const char *const NATIVE_MEMBERS_STRING[]={
     "bytes","capitalize","chars","chomp","count","deep_freeze","delete","downcase",
     "dup","empty?","end_with?","format","freeze","frozen?","getbyte","gsub",
-    "include?","index_of","length","ljust","lstrip","match","match?","nil?","ord",
+    "include?","index_of","inspect","length","ljust","lstrip","match","match?","nil?","ord",
     "partition","repeat","reverse","rjust","rstrip","scan","size","slice","split",
     "start_with?","strip","sub","tap","to_f","to_i","to_s","tr","upcase"};
 static const char *const NATIVE_MEMBERS_ARRAY[]={
     "all?","any?","clear","compact","concat","count","deep_freeze","delete",
     "delete_at","drop","dup","each","each_cons","each_slice","each_with_index",
     "empty?","find","first","first_or","flat_map","flatten","freeze","frozen?",
-    "group_by","include?","index_of","join","last","last_or","lazy","length","map",
+    "group_by","include?","index_of","inspect","join","last","last_or","lazy","length","map",
     "max","max_by","min","min_by","nil?","partition","pop","push","reduce","reject",
     "reverse","sample","select","shuffle","size","slice","sort","sort_by","sum",
     "take","tally","tap","to_a","to_s","uniq","zip"};
 static const char *const NATIVE_MEMBERS_HASH[]={
     "all?","any?","clear","compact","count","deep_freeze","delete","dup","each",
     "each_with_index","empty?","fetch","find","freeze","frozen?","group_by",
-    "include?","include_key?","key_at","keys","lazy","length","map","map_values",
+    "include?","include_key?","inspect","key_at","keys","lazy","length","map","map_values",
     "max_by","merge","min_by","nil?","partition","reduce","reject","select","size",
     "slice","sort","sort_by","sum","tap","to_a","to_s","value_at","values"};
 static const char *const NATIVE_MEMBERS_INT[]={
     "abs","ago","chr","day","days","deep_freeze","downto","dup","freeze","from_now",
-    "frozen?","hour","hours","minute","minutes","nil?","second","seconds","tap",
+    "frozen?","hour","hours","inspect","minute","minutes","nil?","second","seconds","tap",
     "times","to_f","to_i","to_s","upto","week","weeks"};
 static const char *const NATIVE_MEMBERS_FLOAT[]={
     "abs","ago","ceil","day","days","deep_freeze","dup","floor","freeze","from_now",
-    "frozen?","hour","hours","minute","minutes","nil?","round","second","seconds",
+    "frozen?","hour","hours","inspect","minute","minutes","nil?","round","second","seconds",
     "tap","to_f","to_i","to_s","week","weeks"};
 
 bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
@@ -11564,6 +11564,10 @@ typedef struct StringBuilder {
     const DiamondObject *active[32];
     size_t active_count;
     FormatContext *format_context;
+    /* inspect() rather than to_s(): Strings are quoted and escaped, Symbols
+     * keep their colon, and an Instance without its own inspect shows its
+     * fields, so `["a", "b"]` and `["a, b"]` no longer print alike. */
+    bool inspect;
 } StringBuilder;
 
 static bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
@@ -12795,6 +12799,40 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
                                         size_t depth,DiamondValue value,
                                         DiamondValue *out);
 
+static bool builder_format_value(StringBuilder *builder,DiamondValue value);
+static bool builder_inspect_instance(StringBuilder *builder,DiamondValue value);
+static DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
+        const DiamondChunk *owner,DiamondValue value,const DiamondMethod *method,
+        const char *label,DiamondValue *out);
+
+/* A double-quoted literal for `chars`, escaped so it reads back as the same
+ * String: the quote and backslash, the common whitespace escapes, and any
+ * other control byte as \xNN. Bytes >= 0x80 pass through (UTF-8). */
+static bool builder_append_quoted(StringBuilder *builder,const char *chars,size_t length) {
+    if(!builder_append(builder,"\"",1))return false;
+    for(size_t index=0;index<length;index++) {
+        const unsigned char byte=(unsigned char)chars[index];
+        const char *escape=nullptr;
+        char hex[5];
+        switch(byte) {
+            case '"': escape="\\\""; break;
+            case '\\': escape="\\\\"; break;
+            case '\n': escape="\\n"; break;
+            case '\t': escape="\\t"; break;
+            case '\r': escape="\\r"; break;
+            default:
+                if(byte<0x20||byte==0x7f) {
+                    (void)snprintf(hex,sizeof hex,"\\x%02x",byte);
+                    escape=hex;
+                }
+        }
+        if(escape!=nullptr?!builder_append(builder,escape,strlen(escape)):
+                           !builder_append(builder,(const char *)&byte,1))
+            return false;
+    }
+    return builder_append(builder,"\"",1);
+}
+
 static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     char scalar[96];int length=0;
     if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
@@ -12883,8 +12921,16 @@ static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     const DiamondObject *object=value.as.object;
     if(object->kind==DIAMOND_OBJECT_STRING) {
         const DiamondString *string=(const DiamondString *)object;
+        if(builder->inspect)return builder_append_quoted(builder,string->chars,string->length);
         return builder_append(builder,string->chars,string->length);
     }
+    if(object->kind==DIAMOND_OBJECT_SYMBOL&&builder->inspect) {
+        const DiamondSymbol *symbol=(const DiamondSymbol *)object;
+        return builder_append(builder,":",1)&&
+            builder_append(builder,symbol->chars,symbol->length);
+    }
+    if(object->kind==DIAMOND_OBJECT_INSTANCE&&builder->inspect)
+        return builder_inspect_instance(builder,value);
     if(object->kind==DIAMOND_OBJECT_SYMBOL) {
         /* Bare name, no leading ':' -- matches Ruby's to_s/puts/
          * interpolation convention (only inspect/p show the colon there,
@@ -13067,6 +13113,99 @@ static void format_uncaught_exception_message(DiamondVm *vm,DiamondValue excepti
                        (int)origin->length,origin->chars);
 }
 
+/* Runs a zero-argument instance method that must return a String (to_s,
+ * inspect) and stores the result. `label` names the method in the error. */
+static DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
+        const DiamondChunk *owner,DiamondValue value,const DiamondMethod *method,
+        const char *label,DiamondValue *out) {
+    if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
+    /* See DIAMOND_OP_INVOKE_TYPED's own comment on function_chunk. */
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    const DiamondFunction *fn=function_chunk->functions[method->function_index];
+    const DiamondChunk child={.name=fn->name,.code=fn->code,
+      .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
+      .constants=fn->constants,.constant_count=fn->constant_count,
+      .strings=fn->strings,.string_count=fn->string_count,
+      .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
+      .functions=function_chunk->functions,.function_count=function_chunk->function_count,
+      .classes=function_chunk->classes,.class_count=function_chunk->class_count,
+      .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
+      .parameter_type_sets=fn->parameter_type_sets,
+      .type_variable_count=fn->type_variable_count,
+      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .register_count=fn->register_count,.has_variadic=fn->has_variadic};
+    DiamondValue args[1+DIAMOND_MAX_BOUND_VALUES]={value};
+    for(size_t i=0;i<method->bound_value_count;i++)
+        args[1+i]=method->bound_values[i];
+    DiamondValue converted=DIAMOND_NIL;
+    DiamondVmStatus status=run_chunk(&child,vm,args,
+                                      (size_t)1+method->bound_value_count,
+                                      depth+1,nullptr,&converted);
+    if(status!=DIAMOND_VM_OK)return status;
+    if(converted.kind!=DIAMOND_VALUE_OBJECT||
+       converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,"%s must return String",label);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    *out=converted;return DIAMOND_VM_OK;
+}
+
+/* inspect for an Instance: its class's own inspect when it defines one,
+ * otherwise `#<Name field=value, ...>`. Fields of an Instance already being
+ * printed (a cycle) show as `#<Name ...>`. */
+static bool builder_inspect_instance(StringBuilder *builder,DiamondValue value) {
+    const DiamondInstance *instance=(const DiamondInstance *)value.as.object;
+    FormatContext *context=builder->format_context;
+    if(context!=nullptr) {
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:context->vm->root_chunk;
+        const DiamondMethod *method=lookup_method(owner,instance->class,"inspect",7);
+        if(method!=nullptr) {
+            DiamondValue text=DIAMOND_NIL;
+            context->status=run_instance_string_method(context->vm,context->depth,
+                owner,value,method,"inspect",&text);
+            if(context->status!=DIAMOND_VM_OK)return false;
+            const DiamondString *string=(const DiamondString *)text.as.object;
+            return builder_append(builder,string->chars,string->length);
+        }
+    }
+    const char *name=instance->class->name;
+    for(size_t index=0;index<builder->active_count;index++)
+        if(builder->active[index]==(const DiamondObject *)instance)
+            return builder_append(builder,"#<",2)&&
+                builder_append(builder,name,strlen(name))&&
+                builder_append(builder," ...>",5);
+    if(builder->active_count==32)return builder_append(builder,"...",3);
+    builder->active[builder->active_count++]=(const DiamondObject *)instance;
+    bool ok=builder_append(builder,"#<",2)&&builder_append(builder,name,strlen(name));
+    const size_t fields=instance->field_count<instance->class->field_count?
+        instance->field_count:instance->class->field_count;
+    for(size_t index=0;ok&&index<fields;index++) {
+        const char *field=instance->class->fields[index];
+        ok=builder_append(builder,index==0?" ":", ",index==0?1:2)&&
+           builder_append(builder,field,strlen(field))&&
+           builder_append(builder,"=",1)&&
+           builder_format_value(builder,instance->fields[index]);
+    }
+    builder->active_count--;
+    return ok&&builder_append(builder,">",1);
+}
+
+static DiamondVmStatus inspect_value(DiamondVm *vm,const DiamondChunk *chunk,
+                                     size_t depth,DiamondValue value,
+                                     DiamondValue *out) {
+    FormatContext context={.vm=vm,.chunk=chunk,.depth=depth,.status=DIAMOND_VM_OK};
+    StringBuilder builder={.format_context=&context,.inspect=true};
+    if(!builder_format_value(&builder,value)) {
+        free(builder.chars);
+        return context.status!=DIAMOND_VM_OK?context.status:DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
                                         size_t depth,DiamondValue value,
                                         DiamondValue *out) {
@@ -13082,39 +13221,8 @@ static DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
         const DiamondMethod *method=lookup_method(owner,instance->class,
             "to_s",sizeof("to_s")-1);
-        if(method!=nullptr) {
-            if(method->required_arity>0)return DIAMOND_VM_ARITY_ERROR;
-            /* See DIAMOND_OP_INVOKE_TYPED's own comment on function_chunk. */
-            const DiamondChunk *function_chunk=
-                method->source_chunk!=nullptr?method->source_chunk:owner;
-            const DiamondFunction *fn=function_chunk->functions[method->function_index];
-            const DiamondChunk child={.name=fn->name,.code=fn->code,
-              .lines=fn->lines,.columns=fn->columns,.code_count=fn->code_count,
-              .constants=fn->constants,.constant_count=fn->constant_count,
-              .strings=fn->strings,.string_count=fn->string_count,
-              .type_sets=fn->type_sets,.type_set_count=fn->type_set_count,
-              .functions=function_chunk->functions,.function_count=function_chunk->function_count,
-              .classes=function_chunk->classes,.class_count=function_chunk->class_count,
-              .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
-              .parameter_type_sets=fn->parameter_type_sets,
-              .type_variable_count=fn->type_variable_count,
-              .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
-              .register_count=fn->register_count,.has_variadic=fn->has_variadic};
-            DiamondValue args[1+DIAMOND_MAX_BOUND_VALUES]={value};
-            for(size_t i=0;i<method->bound_value_count;i++)
-                args[1+i]=method->bound_values[i];
-            DiamondValue converted=DIAMOND_NIL;
-            DiamondVmStatus status=run_chunk(&child,vm,args,
-                                              (size_t)1+method->bound_value_count,
-                                              depth+1,nullptr,&converted);
-            if(status!=DIAMOND_VM_OK)return status;
-            if(converted.kind!=DIAMOND_VALUE_OBJECT||
-               converted.as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,"to_s must return String");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            *out=converted;return DIAMOND_VM_OK;
-        }
+        if(method!=nullptr)
+            return run_instance_string_method(vm,depth,owner,value,method,"to_s",out);
     }
     FormatContext context={.vm=vm,.chunk=chunk,.depth=depth,.status=DIAMOND_VM_OK};
     StringBuilder builder={.format_context=&context};
@@ -14322,6 +14430,19 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         }
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return stringify_value(vm,chunk,depth,registers[recv],out);
+    }
+    /* Every object answers inspect(): its fields, unless its class defines its
+     * own inspect (any arity), which then dispatches normally. */
+    if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
+       lookup_method(owner,instance->class,"inspect",7)==nullptr) {
+        if(type_argument_count!=0) {
+            snprintf(vm->error,sizeof vm->error,
+                "'%.*s' does not accept generic type arguments",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
+        return inspect_value(vm,chunk,depth,registers[recv],out);
     }
     if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
        lookup_method(owner,instance->class,"dup",3)==nullptr) {
@@ -20579,6 +20700,19 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         const DiamondVmStatus to_s_status=
                             stringify_value(vm,chunk,depth,registers[recv],&text);
                         VM_PROPAGATE(to_s_status);
+                        registers[dest]=text;break;
+                    }
+                    /* inspect() on any built-in value: like to_s(), but Strings
+                     * are quoted and Symbols keep their colon, so the text shows
+                     * what the value is rather than how it prints. */
+                    if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
+                       argc==0&&(registers[recv].kind!=DIAMOND_VALUE_OBJECT||
+                        registers[recv].as.object->kind!=DIAMOND_OBJECT_INSTANCE)) {
+                        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+                        DiamondValue text=DIAMOND_NIL;
+                        const DiamondVmStatus inspect_status=
+                            inspect_value(vm,chunk,depth,registers[recv],&text);
+                        VM_PROPAGATE(inspect_status);
                         registers[dest]=text;break;
                     }
                     /* dup only where a real (or trivially self-returning)

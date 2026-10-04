@@ -37,6 +37,12 @@ authoritative fine-grained record.
 
 ### Language
 
+- `inspect()` on every value: Strings are quoted and escaped, Symbols keep their colon,
+  collections inspect their elements, and an instance prints its fields
+  (`#<Point x=1, y=2>`) unless its class defines its own `inspect`. Before this,
+  `["a", "b, c"].to_s()` and `["a, b", "c"].to_s()` printed alike and there was no way
+  to see an object's state. `to_s` is unchanged.
+
 - Constants are inherited. A subclass reads its superclass's constants, and a class
   or module reads the constants of the modules it `include`s, both unqualified
   (`def sides() = SIDES`) and qualified (`Triangle::SIDES`). Lookup order is the
