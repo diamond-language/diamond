@@ -21,6 +21,13 @@ authoritative fine-grained record.
 
 ### Runtime
 
+- `Array#-` and `Array#&` are linear instead of quadratic: they rescanned the other
+  Array for every element, so a 20,000-element subtraction took minutes. Scalars are
+  looked up in a Hash; other values keep the scan, so a user-defined `==` is still
+  called. `Array#combination` builds each result once and is linear in its output
+  (about 3x faster at 300 elements, and it no longer slows down as the result
+  grows).
+
 - `==` on Arrays and Hashes is now exact at any nesting depth. Past 256 levels it
   used to answer `false` for equal values, so a deeply nested value was unequal to
   its own copy and missed as a Hash key. Deep comparison now runs on an explicit
