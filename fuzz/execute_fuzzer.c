@@ -9,8 +9,6 @@
 #include "disassemble.h"
 #include "vm.h"
 
-#include <setjmp.h>
-#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,42 +50,20 @@
  * a small declared register_count together with an operand that
  * overruns it. */
 
-/* Per-input execution watchdog.
+/* Per-input execution budget.
  *
- * run_chunk has no execution-step budget on purpose -- real Diamond
- * programs legitimately run unbounded loops. But this harness feeds it
- * raw, adversarial bytecode with no source behind it, and libFuzzer's
- * own per-unit -timeout (1200s default) treats a genuine hang the same
- * as a crash. Caught for real once, via the simplest possible input: a
- * single JUMP whose target is its own offset.
+ * run_chunk has no execution-step budget by default on purpose -- real
+ * Diamond programs legitimately run unbounded loops -- but this harness feeds
+ * it raw, adversarial bytecode, and libFuzzer treats a genuine hang the same
+ * as a crash (a single JUMP to its own offset caught it once).
  *
- * Fix: wrap each diamond_vm_run call in a short sigsetjmp/siglongjmp
- * cutoff, using a dedicated POSIX timer (timer_create) and SIGUSR1 --
- * not alarm()/SIGALRM, which libFuzzer's own AlarmCallback watchdog
- * already uses internally. Sharing that signal would risk a stray
- * SIGALRM firing outside this file's own protected window and
- * longjmp-ing into a dead jmp_buf; a private timer/signal pair can't
- * collide with it.
- *
- * sigsetjmp/siglongjmp on the ordinary native stack (no ucontext/fiber
- * switching involved) is a standard, ASan-safe idiom -- no annotations
- * needed, unlike Diamond's own Fiber implementation.
- *
- * A timed-out run abandons whatever run_chunk was doing mid-
- * instruction, but `vm` is still an ordinary stack struct the jump
- * doesn't touch, so diamond_vm_free below still walks and frees
- * everything already linked into vm->objects. The one residual risk is
- * a handler-local scratch buffer (e.g. a StringBuilder mid-append) that
- * hasn't reached its own GC-object allocation yet -- bounded by this
- * harness's small inputs (register_count 1..64, code capped at
- * DIAMOND_MAX_CODE) and by only firing on the rare input that hangs. */
-static sigjmp_buf execution_timeout;
-
-static void handle_execution_timeout(int signal_number) {
-    (void)signal_number;
-    siglongjmp(execution_timeout, 1);
-}
-
+ * The VM's own DIAMOND_MAX_INSTRUCTIONS / DIAMOND_MAX_WALL_MILLISECONDS
+ * budgets (docs/sandbox.md) stop a run cleanly: the run returns an error and
+ * unwinds normally. An earlier version used a timer plus siglongjmp out of
+ * the run; when the timer fired inside a garbage collection it left the
+ * thread-local mark stack mid-drain, and the next input's collection marked
+ * stale pointers (a heap-use-after-free found by this fuzzer, in the harness
+ * and not in the runtime). Nothing may longjmp out of the VM. */
 static bool references_unsafe_opcode(const DiamondChunk *chunk) {
     char *text = nullptr;
     size_t text_size = 0;
@@ -113,6 +89,66 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
     return found;
 }
 
+/* The input is more than code now. The first harness gave the entry function
+ * bytes and nothing else, so every opcode that names a constant, string or
+ * function was rejected by the verifier (there were none to name) and never
+ * ran -- but ProgramBuilder#add_constant/#add_string/#declare_function hand a
+ * script all three. Layout, every field optional (a short input just reads
+ * zeros):
+ *
+ *   byte 0   bits 0-5 entry register_count - 1, bits 6-7 class count
+ *   byte 1   bits 0-2 constant count, bits 3-5 string count, bits 6-7 function count
+ *   then     each constant: 1 kind byte (Nil/Bool/Int/Float/Class) + 8 payload bytes
+ *   then     each string: 1 length byte (mod 16) + that many bytes
+ *   then     each function: arity (mod 4), register_count - 1 (mod 16), code length (mod 48), code
+ *   then     each class: superclass (a byte past the classes so far means none), field count (mod 5),
+ *            method count (mod 3), and per method a function index (mod function count) and arity (mod 4)
+ *   rest     the entry function's code
+ *
+ * Every function, and the entry, gets its own copy of the same constants and
+ * strings, so an index that is valid in one is valid in all. Class constants
+ * are included on purpose: a script can put one there (`add_constant(f, self)`
+ * inside a singleton method), and its index only means something to the chunk
+ * it came from. */
+typedef struct FuzzReader {
+    const uint8_t *data;
+    size_t size;
+} FuzzReader;
+
+static uint8_t fuzz_byte(FuzzReader *reader) {
+    if (reader->size == 0) return 0;
+    const uint8_t byte = *reader->data;
+    reader->data++;
+    reader->size--;
+    return byte;
+}
+
+static bool fuzz_function_fill(DiamondFunction *function, const char *name, FuzzReader *reader,
+        size_t code_length, uint16_t register_count, uint8_t arity,
+        const DiamondValue *constants, size_t constant_count,
+        const DiamondStringConstant *strings, size_t string_count) {
+    if (name != function->name) (void)snprintf(function->name, sizeof function->name, "%s", name);
+    function->arity = arity;
+    function->required_arity = arity;
+    function->register_count = register_count;
+    if (code_length > 0) {
+        if (!diamond_function_reserve_code(function, code_length)) return false;
+        for (size_t index = 0; index < code_length; index++) function->code[index] = fuzz_byte(reader);
+        function->code_count = code_length;
+    }
+    if (constant_count > 0) {
+        if (!diamond_function_reserve_constants(function, constant_count)) return false;
+        memcpy(function->constants, constants, constant_count * sizeof *constants);
+        function->constant_count = constant_count;
+    }
+    if (string_count > 0) {
+        if (!diamond_function_reserve_strings(function, string_count)) return false;
+        memcpy(function->strings, strings, string_count * sizeof *strings);
+        function->string_count = string_count;
+    }
+    return true;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     /* DiamondProgram is tens of MB (see compile_fuzzer.c's own comment
@@ -126,66 +162,110 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     diamond_program_free(program);
     diamond_program_init(program);
 
-    const uint16_t register_count = (uint16_t)(1 + (data[0] % 64));
-    data++;
-    size--;
-    if (size > DIAMOND_MAX_CODE) size = DIAMOND_MAX_CODE;
+    FuzzReader reader = {.data = data, .size = size};
+    const uint8_t first = fuzz_byte(&reader);
+    const uint16_t register_count = (uint16_t)(1 + (first & 63u));
+    const size_t class_total = (first >> 6) & 3u;
+    const uint8_t counts = fuzz_byte(&reader);
+    const size_t constant_count = counts & 7u;
+    const size_t string_count = (counts >> 3) & 7u;
+    const size_t function_count = (counts >> 6) & 3u;
+
+    DiamondValue constants[8];
+    for (size_t index = 0; index < constant_count; index++) {
+        const uint8_t kind = fuzz_byte(&reader) % 5;
+        uint8_t payload[8];
+        for (size_t byte = 0; byte < sizeof payload; byte++) payload[byte] = fuzz_byte(&reader);
+        int64_t integer;
+        double real;
+        memcpy(&integer, payload, sizeof integer);
+        memcpy(&real, payload, sizeof real);
+        switch (kind) {
+            case 0: constants[index] = DIAMOND_NIL; break;
+            case 1: constants[index] = DIAMOND_BOOL(payload[0] & 1u); break;
+            case 2: constants[index] = DIAMOND_INT(integer); break;
+            case 3: constants[index] = DIAMOND_FLOAT(real); break;
+            default: constants[index] = DIAMOND_CLASS(payload[0]); break;
+        }
+    }
+    DiamondStringConstant strings[8];
+    for (size_t index = 0; index < string_count; index++) {
+        const size_t length = fuzz_byte(&reader) % 16;
+        memset(&strings[index], 0, sizeof strings[index]);
+        for (size_t byte = 0; byte < length; byte++) strings[index].chars[byte] = (char)fuzz_byte(&reader);
+        strings[index].length = length;
+    }
+    for (size_t index = 0; index < function_count; index++) {
+        const uint8_t arity = fuzz_byte(&reader) % 4;
+        const uint16_t function_registers = (uint16_t)(1 + fuzz_byte(&reader) % 16);
+        const size_t code_length = fuzz_byte(&reader) % 48;
+        DiamondFunction *function = diamond_program_add_function(program);
+        char name[8];
+        (void)snprintf(name, sizeof name, "f%zu", index);
+        if (function == nullptr || !fuzz_function_fill(function, name, &reader, code_length,
+                function_registers, arity, constants, constant_count, strings, string_count))
+            return 0;
+    }
+    /* Classes, declared the way ProgramBuilder#declare_class / #declare_field /
+     * #declare_method do, so NEW, GET_IVAR/SET_IVAR, INVOKE and super calls have
+     * something to act on. A method points at one of the functions above; as
+     * declare_method does, that function's owner_class is set to the class. */
+    for (size_t index = 0; index < class_total; index++) {
+        if (program->class_count >= DIAMOND_MAX_CLASSES) break;
+        const uint8_t superclass_byte = fuzz_byte(&reader);
+        const size_t field_total = fuzz_byte(&reader) % 5;
+        const size_t method_total = fuzz_byte(&reader) % 3;
+        const size_t class_index = program->class_count++;
+        DiamondClass *class = &program->classes[class_index];
+        *class = (DiamondClass){};
+        (void)snprintf(class->name, sizeof class->name, "K%zu", index);
+        class->superclass = UINT8_MAX;
+        if (superclass_byte < class_index) {
+            const DiamondClass *parent = &program->classes[superclass_byte];
+            class->superclass = superclass_byte;
+            class->field_count = parent->field_count;
+            memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
+        }
+        for (size_t field = 0; field < field_total && class->field_count < DIAMOND_MAX_FIELDS; field++)
+            (void)snprintf(class->fields[class->field_count++], sizeof class->fields[0], "f%zu", field);
+        for (size_t method = 0; method < method_total; method++) {
+            const uint8_t function_byte = fuzz_byte(&reader);
+            const uint8_t arity = fuzz_byte(&reader) % 4;
+            if (function_count == 0 || class->method_count >= DIAMOND_MAX_METHODS) continue;
+            const size_t function_index = function_byte % function_count;
+            DiamondMethod *entry = &class->methods[class->method_count++];
+            *entry = (DiamondMethod){};
+            (void)snprintf(entry->name, sizeof entry->name, method == 0 ? "initialize" : "m%zu", method);
+            entry->function_index = (uint16_t)function_index;
+            entry->arity = arity;
+            entry->required_arity = arity;
+            program->functions[function_index]->owner_class = (uint8_t)class_index;
+        }
+        for (size_t field_count = 0; field_count <= class->field_count; field_count++)
+            class->shapes[field_count] = (DiamondShape){.class = class, .field_count = (uint8_t)field_count};
+    }
     /* `entry.code` is `uint8_t *`, not an inline array -- diamond_program_
      * init's memset leaves it null, same as every other DiamondProgram
-     * field a real compile pass would malloc into (see compiler.c's own
-     * `destination->code=malloc(...)`) rather than write through
-     * directly. Never caught until a real Ubuntu 26.04 + Clang test-all
-     * run finally got far enough to run this harness (see CHANGELOG.md);
-     * a 6-byte input reliably reproduces it on Fedora too, so this was
-     * always a harness bug, not anything platform-specific. */
-    if (size > 0) {
-        program->entry.code = malloc(size);
-        if (program->entry.code == nullptr) return 0;
-        memcpy(program->entry.code, data, size);
-    }
-    program->entry.code_count = size;
-    program->entry.code_capacity = size;
-    program->entry.register_count = register_count;
+     * field a real compile pass would malloc into. Never caught until a
+     * real Ubuntu 26.04 + Clang test-all run finally got far enough to run
+     * this harness (see CHANGELOG.md). */
+    size_t entry_length = reader.size;
+    if (entry_length > DIAMOND_MAX_CODE) entry_length = DIAMOND_MAX_CODE;
+    if (!fuzz_function_fill(&program->entry, program->entry.name, &reader, entry_length,
+            register_count, 0, constants, constant_count, strings, string_count))
+        return 0;
 
     const DiamondChunk chunk = diamond_program_chunk(program);
     if (!diamond_verify_bytecode(&chunk)) return 0;
     if (references_unsafe_opcode(&chunk)) return 0;
 
-    static bool watchdog_ready = false;
-    static timer_t watchdog;
-    if (!watchdog_ready) {
-        struct sigaction action = {0};
-        action.sa_handler = handle_execution_timeout;
-        sigemptyset(&action.sa_mask);
-        sigaction(SIGUSR1, &action, nullptr);
-
-        struct sigevent event = {0};
-        event.sigev_notify = SIGEV_SIGNAL;
-        event.sigev_signo = SIGUSR1;
-        /* Best-effort: if the OS timer facility isn't available for
-         * some reason, fall through with no watchdog rather than fail
-         * the whole harness over it. */
-        watchdog_ready = timer_create(CLOCK_MONOTONIC, &event, &watchdog) == 0;
-    }
-
+    /* Read by diamond_vm_init, so set before it. */
+    setenv("DIAMOND_MAX_INSTRUCTIONS", "2000000", 1);
+    setenv("DIAMOND_MAX_WALL_MILLISECONDS", "2000", 1);
     DiamondVm vm;
     diamond_vm_init(&vm);
-    if (sigsetjmp(execution_timeout, 1) == 0) {
-        if (watchdog_ready) {
-            /* 2s -- generous for any legitimate bounded computation
-             * this harness's tiny (<=DIAMOND_MAX_CODE, no I/O) inputs
-             * could construct, small relative to fuzz_smoke.sh's own
-             * 20s total budget. */
-            const struct itimerspec arm = {.it_value = {.tv_sec = 2}};
-            timer_settime(watchdog, 0, &arm, nullptr);
-        }
-        DiamondValue result = DIAMOND_NIL;
-        (void)diamond_vm_run(&vm, &chunk, &result);
-        if (watchdog_ready) {
-            const struct itimerspec disarm = {0};
-            timer_settime(watchdog, 0, &disarm, nullptr);
-        }
-    }
+    DiamondValue result = DIAMOND_NIL;
+    (void)diamond_vm_run(&vm, &chunk, &result);
     diamond_vm_free(&vm);
     return 0;
 }

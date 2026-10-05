@@ -39,13 +39,13 @@ echo "fuzz smoke test passed ($runs runs, 20s bound, no crash)"
 # there's no natural text corpus to seed from the way compile_fuzzer
 # seeds from tests/parser_cases -- seed instead with the exact byte
 # sequence that reproduced the pre-release audit's register-bounds bug
-# (register_count selector byte 0x00 -> register_count=1, then a MOVE
+# (register_count selector byte 0x00 -> register_count=1, then a count byte, then a MOVE
 # r64999, r0 -- opcode 5, dest 0xFDE7=64999, src 0x0000), so this
 # specific regression stays covered even though libFuzzer starts every
 # other input from nothing.
 execute_corpus="$work/execute_corpus"
 mkdir -p "$execute_corpus"
-printf '\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
+printf '\x00\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
 
 # Seeded the same way, for a diamond_format_value_type SEGV a 2026-09-27
 # fuzzing run found (exit_helper's "exit code must be an Int, got %s"
@@ -59,16 +59,26 @@ printf '\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_register"
 # ChangeBit) found a second variant of the same missing-case bug before
 # the real fix (an explicit DIAMOND_VALUE_CLASS branch, not just a
 # null-object-pointer guard) closed both at once.
-printf '\x45\x6e\x00\x00\x00\x80\x00\x00\x09\x92\xff' \
+printf '\x05\x00\x6e\x00\x00\x00\x80\x00\x00\x09\x92\xff' \
     > "$execute_corpus/format_value_type_null_object"
 
 # A third consumer of the same CLASS-kind-read-as-object-pointer bug:
 # raising a class value (`raise Foo.bar()`, tests/cases/raise_class_value.di)
 # reached format_uncaught_exception_message's unconditional `.as.object`
 # read. Found by libFuzzer on CI after the fix above shipped.
-printf '\x9b\x6e\x00\x00\x10\x3a\x00\x00\x0b\x4c\x16' \
+printf '\x1b\x00\x6e\x00\x00\x10\x3a\x00\x00\x0b\x4c\x16' \
     > "$execute_corpus/uncaught_exception_class_value"
 
+# COLLECT_VARIADIC naming fixed parameter 4 on the entry function, which has
+# no argument array at all: &arguments[4] from a null pointer, found by the
+# extended harness (UBSan, clang).
+printf '\x00\x00\x81\x00\x00\x00\x04\x00\x00\x39\x00\x00' \
+    > "$execute_corpus/collect_variadic_null_arguments"
+
+# The first two bytes of every execute_fuzzer input are the register count and a
+# constants/strings/functions count byte (fuzz/execute_fuzzer.c), so the seeds
+# above carry a 0x00 count byte after the register byte (and a register byte with
+# the top two bits clear: those say how many classes follow).
 execute_artifacts="$work/execute_artifacts"
 mkdir -p "$execute_artifacts"
 
