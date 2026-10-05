@@ -28,8 +28,12 @@ sup = Supervisor.new(:rest_for_one)
 sup.add_child(idle, a_starts, quit)
 sup.add_child(crasher, a_starts, b_starts, c_starts, quit)
 sup.add_child(idle, c_starts, quit)
+# Wait for both restarts to have actually run. The supervisor counts a restart
+# before the new thread gets to its first line, and under load (TSan, two pinned
+# CPUs) the later sibling can start and report before the earlier one does, so
+# waiting on c_starts alone could stop the supervisor with b's restart unrun.
 loop
-  break if c_starts.size() >= 2
+  break if b_starts.size() >= 2 && c_starts.size() >= 2
 end
 quit.close()
 sup.stop()
