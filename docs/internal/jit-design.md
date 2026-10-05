@@ -1941,3 +1941,21 @@ and argument registers to GC while `allocate_string` runs. Any type, bounds,
 or allocation failure propagates its VM status directly, avoiding a restart
 that could repeat an allocation. Stress-GC regression coverage exercises the
 successful, clamped, bounds-error, and type-error paths.
+
+## Where the next win is
+
+Two measurements that used to sit in the roadmap and should survive its cleanup:
+
+- **Receiver kind is no longer the limit on Skindicate's ORM path.** Phase 13's
+  re-benchmark of `Skin.random_sample` and the `_for` batch loaders, which are
+  `self`-receiver-shaped, showed no improvement. The cause is that Arel's own hot
+  accessors (`Query#projections`, `BinaryNode#left`, ...) have no explicit `-> Type`
+  return annotation, and this mechanism deliberately never trusts an unannotated return
+  (Phase 12's restriction). For that workload, return-type annotations on Arel and
+  ActiveRecord's hot methods matter more than another receiver-kind phase.
+- **Phase 9 alone moved Skindicate's `/` route only about 4-6%** in a controlled A/B
+  re-profile, well short of the ~11.5 ms / ~10 ms that the diffuse remainder of
+  non-`self` instance calls still costs (Phases 8, 9 and 10 above).
+
+A value the JIT cannot prove is an `Int` at run time (a String, Instance, Float, ...)
+correctly takes the slow trampoline every time; that is expected cost, not a gap.
