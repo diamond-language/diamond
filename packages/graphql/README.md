@@ -81,6 +81,14 @@ A resolver is a `Callable[3]` called as `(object, args, context)`. If `resolve` 
 
 `has_default` is a separate flag from `default_value` because GraphQL distinguishes "default is `null`" from "no default". To give an argument a default, pass both: `Argument.new("limit", int, 20, true)`. A resolver reads values from the `args` Hash, keyed by the GraphQL argument name (`args["limit"]`, `args["leaderboardId"]`).
 
+Variables follow the spec's argument-coercion rules. A variable the request declared but did not supply is treated as an **omitted** argument, so the argument's schema default applies (or, for a required argument, validation rejects the document). An explicit `null` is a *provided* value and overrides the default.
+
+```ruby
+# page(limit: Int = 20): both documents are valid
+schema.execute("query($l: Int) { page(limit: $l) }", {})              # limit == 20
+schema.execute("query($l: Int) { page(limit: $l) }", {"l": nil})      # limit == nil
+```
+
 An `ID` argument reaches the resolver exactly as the client sent it: an `Int` for `id: 1`, a `String` for `id: "1"`. Normalise it (`id = id.to_i() if id is String`) before using it as a database key.
 
 ### Other type kinds
