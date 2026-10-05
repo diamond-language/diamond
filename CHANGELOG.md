@@ -8,6 +8,15 @@ authoritative fine-grained record.
 
 ### Security
 
+- `execute_fuzzer` now builds constants, strings, extra functions and class-kind
+  constants, not just an entry function's bytes, so it reaches the opcodes a
+  `ProgramBuilder` script can actually name (the old harness rejected all of them at
+  verification). A 15-minute, 6-worker ASan/UBSan campaign (about 800k runs per
+  worker) found one real bug: `COLLECT_VARIADIC` formed `&arguments[n]` from a null
+  pointer on a call with no arguments (undefined behavior, no memory access).
+  Fixed. The sandbox docs now also list `ProgramBuilder#run` among the places each
+  VM gets its own full resource budget.
+
 - A `.dic` bytecode cache is now validated before it runs. Flipping a few bytes in the
   body of a cache file whose header and source hash were intact could crash `diamond`
   (2 of 400 random single-to-four-byte corruptions segfaulted, more failed with

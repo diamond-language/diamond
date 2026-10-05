@@ -129,12 +129,14 @@ to handle it.
 
 **What's not covered**:
 
-- **Not a shared, cross-thread budget.** Each `DiamondVm` -- the top-level program,
-  and independently, each `Thread.new`/`Supervisor` child's own `child_vm` -- reads
-  the same configured env var at its own init and enforces it against its own
-  counters. A program that spawns many threads gets one independent budget *per
-  thread*, not one shared total, so it could still multiply its aggregate resource use
-  past a single configured number. A real fix needs a shared, atomic, cross-thread
+- **Not a shared budget.** Each `DiamondVm` -- the top-level program, and independently,
+  each `Thread.new`/`Supervisor` child's own `child_vm` and each `ProgramBuilder#run`
+  (which builds a fresh VM per call) -- reads the same configured env var at its own
+  init and enforces it against its own counters. A program that spawns many threads
+  gets one independent budget *per thread*, and one that calls `ProgramBuilder#run` in
+  a loop gets a fresh instruction budget for every run (the parent's counters only see
+  the few instructions that make the call), not one shared total, so either could
+  still multiply its aggregate resource use past a single configured number. A real fix needs a shared, atomic, cross-thread
   counter (real precedent exists for exactly this shape --
   `DIAMOND_MAX_THREADS`'s own process-wide atomic counter) but is real, separate,
   higher-effort work, not attempted here.
