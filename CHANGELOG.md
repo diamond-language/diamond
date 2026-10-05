@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- `tests/free_port.py` gives test scripts a free port from outside the kernel's ephemeral
+  range, never twice in one process. Five scripts that reserved a port with `bind(0)`
+  and then started a server on it (the registry HTTP, nginx and systemd tests and the chat
+  and job-service smoke tests) now use it. `bind(0)` returns a port from the pool that
+  outgoing connections also draw from, which is how CI hit "Address already in use" on a
+  test port; `nginx_test.py` reserved two ports back to back and could have been given the
+  same one twice.
+
 ### Fixed
 
 - `graphql` 0.1.2: an optional variable the request declared but did not supply is now treated

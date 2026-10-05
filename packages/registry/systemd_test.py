@@ -10,6 +10,9 @@ import socket
 import subprocess
 import tempfile
 import time
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+from free_port import free_port  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,9 +59,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-systemd-', dir='/opt')
         for directory in ('blobs', 'staging'):
             (state / directory).mkdir(mode=0o700)
             os.chown(state / directory, account.pw_uid, account.pw_gid)
-        with socket.socket() as probe:
-            probe.bind(('127.0.0.1', 0))
-            port = probe.getsockname()[1]
+        port = free_port()
 
         def write_environment(data):
             environment.write_text(f'REGISTRY_ROOT={data}\nREGISTRY_FACET={work}/facet\n'
