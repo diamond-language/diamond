@@ -18,7 +18,7 @@ def wait_for(probe, message, process, log_path):
     raise AssertionError(message + "\n" + log_path.read_text())
 
 
-for mode in ("idle", "silent", "slow", "drain", "zero", "pre", "deadline"):
+def run(mode):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -84,7 +84,10 @@ for mode in ("idle", "silent", "slow", "drain", "zero", "pre", "deadline"):
                 if mode in ("silent", "zero"):
                     assert peer.recv(1) == b"", "silent socket leaked"
             except BaseException:
-                print(f"Gremlin shutdown scenario {mode}:\n{log_path.read_text()}", file=sys.stderr)
+                text = log_path.read_text()
+                if "Address already in use" in text:
+                    raise PortTaken(f"Gremlin shutdown scenario {mode}:\n{text}")
+                print(f"Gremlin shutdown scenario {mode}:\n{text}", file=sys.stderr)
                 raise
             finally:
                 if peer is not None:
@@ -92,4 +95,24 @@ for mode in ("idle", "silent", "slow", "drain", "zero", "pre", "deadline"):
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=5)
+
+class PortTaken(Exception):
+    """The server could not bind the port the test reserved and released: something else
+    took it in between. Not a failure of what is under test, so the scenario is retried."""
+
+
+def run_with_retries(modes, run):
+    for mode in modes:
+        for attempt in range(5):
+            try:
+                run(mode)
+                break
+            except PortTaken as taken:
+                if attempt == 4:
+                    print(taken, file=sys.stderr)
+                    raise
+                print(f"port taken before {mode} started; retrying on a new port", file=sys.stderr)
+
+
+run_with_retries(("idle", "silent", "slow", "drain", "zero", "pre", "deadline"), run)
 print("gremlin token shutdown tests passed")

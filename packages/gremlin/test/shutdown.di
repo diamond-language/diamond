@@ -57,7 +57,13 @@ def run(port, mode)
     gremlin_serve(port, ShutdownTest.handle, 1, nil, nil, nil, false,
       source.token(), if mode == "zero" then 0.0 elsif mode == "drain" then 1.0 else 0.3 end)
   ensure
-    if worker != nil then worker.join() end
+    if worker != nil
+      # The worker waits for the /trigger request. If gremlin_serve failed before any
+      # request (the port was taken), nothing will ever send it, and joining would hang
+      # with the real error unprinted. A value is harmless when it has already run.
+      gate.send(true)
+      worker.join()
+    end
     puts("owner cleaned")
   end
   puts("returned")

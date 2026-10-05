@@ -19,7 +19,7 @@ def wait_for(probe, process, log):
     raise AssertionError(log.read_text())
 
 
-for mode in ("idle", "forced", "slow", "drain", "failure", "pre", "deadline", "bind"):
+def run(mode):
     with socket.socket() as reservation, tempfile.TemporaryDirectory() as directory:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -100,7 +100,11 @@ for mode in ("idle", "forced", "slow", "drain", "failure", "pre", "deadline", "b
                         if mode != "slow":
                             assert peer.recv(1) == b"", "socket leaked after owner returned"
             except BaseException:
-                print(f"Multi-worker shutdown {mode}:\n{log_path.read_text()}", file=sys.stderr)
+                text = log_path.read_text()
+                # The `bind` scenario holds the port on purpose and expects this error.
+                if mode != "bind" and "Address already in use" in text:
+                    raise PortTaken(f"Multi-worker shutdown {mode}:\n{text}")
+                print(f"Multi-worker shutdown {mode}:\n{text}", file=sys.stderr)
                 raise
             finally:
                 for peer in peers:
@@ -108,4 +112,24 @@ for mode in ("idle", "forced", "slow", "drain", "failure", "pre", "deadline", "b
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=5)
+
+class PortTaken(Exception):
+    """The server could not bind the port the test reserved and released: something else
+    took it in between. Not a failure of what is under test, so the scenario is retried."""
+
+
+def run_with_retries(modes, run):
+    for mode in modes:
+        for attempt in range(5):
+            try:
+                run(mode)
+                break
+            except PortTaken as taken:
+                if attempt == 4:
+                    print(taken, file=sys.stderr)
+                    raise
+                print(f"port taken before {mode} started; retrying on a new port", file=sys.stderr)
+
+
+run_with_retries(("idle", "forced", "slow", "drain", "failure", "pre", "deadline", "bind"), run)
 print("gremlin multi-worker shutdown tests passed")
