@@ -47,7 +47,7 @@ and the "Enumerable candidates" section.
 Compound assignment (step 4) and the `unless`/truthiness rewrite (step 5)
 have landed in `packages/arel/lib/arel.di`, and now also in `lib/core.di`,
 `lib/core/numeric.di`, `lib/core/json_codec.di`, `lib/minitest.di`, and
-`packages/gremlin/gremlin.di`. Both passes were applied out of the
+`packages/gremlin/lib/gremlin.di`. Both passes were applied out of the
 Recommended Order below (ahead of Enumerable) because they're purely local,
 behavior-preserving syntax edits with no call-site or compilation-order
 implications, unlike the receiver-method migrations. Two categories were
@@ -69,7 +69,7 @@ deliberately left alone rather than rewritten:
   pattern in the first place: it's a `while` condition, not a single-branch
   `if` guard.
 
-`packages/http/http.di` has also been swept: 6 of its 7 `if x != nil`-shaped
+`packages/http/lib/http.di` has also been swept: 6 of its 7 `if x != nil`-shaped
 guards converted to `unless`; the 7th (`http_request`'s Content-Length check,
 around line 220) has an `else` branch and was left as `if` for the same
 elsif/else reason as `arel.di`'s remaining cases. A repo-wide re-scan after

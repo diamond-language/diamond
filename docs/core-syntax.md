@@ -369,6 +369,9 @@ ada.name = "Ada Lovelace"   # sugar for ada.name=("Ada Lovelace")
 puts(ada.name())            # => "Ada Lovelace"
 ```
 
+Attributes are declared with the name and its type, `attr_accessor name: String`, not
+with a Symbol (`attr_accessor :name` is an error that says so).
+
 `receiver.attr = value` is pure sugar for the writer-method call
 `receiver.attr=(value)` — the same call either spelling compiles to, reaching
 any writer method, hand-written or `attr_accessor`-synthesized. Because it's
@@ -655,7 +658,7 @@ Ruby's `to_s`/`puts` convention. This keeps `to_sym` and printing true
 inverses of each other: `to_sym("#{:ok}") == :ok`. The practical tradeoff is
 that a Symbol and a same-named String print identically — Ruby has this
 same tradeoff for the same reason. When you need to tell them apart, use
-`inspect()` (below).
+[`inspect()`](#inspect).
 
 A colon starts a Symbol literal only when it isn't immediately glued (no
 space) onto the end of a preceding identifier, digit, or closing

@@ -341,7 +341,7 @@ for friendlier Diamond wrappers around these, and that example's own
 (finite-difference) gradients. Still deliberately
 narrow, not a general tensor library: no broadcasting, no non-2D shapes,
 and no autodiff built into `Tensor` itself — `examples/transformer`'s own
-reverse-mode autograd (`lib/var.di`/`lib/autograd.di`) is ordinary
+reverse-mode autograd (`examples/transformer/lib/var.di` and `autograd.di`) is ordinary
 Diamond code layered on top of these primitives, not a VM feature. It
 exists to measure real `matmul`/elementwise throughput (`bench/`-style
 native code, not boxed `DiamondValue` arrays) before committing to a
