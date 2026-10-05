@@ -26,9 +26,10 @@ ever considered "valid enough to run" — without that risk.
 
 Fuzzing execution *of a compiled Diamond program* (arbitrary program logic,
 with real I/O bridges reachable) is still a distinct, separable, higher-
-effort project for later: it would need at least a wall-clock/instruction
-budget per run and denying or faking out the I/O bridges, neither of which
-exist today.
+effort project for later. The pieces now exist -- `DIAMOND_MAX_INSTRUCTIONS`/
+`DIAMOND_MAX_WALL_MILLISECONDS` budgets and sandbox mode (docs/sandbox.md), which
+`execute_fuzzer` already uses for its run budget -- but a source-level harness would
+still have to decide which programs are worth running and keep the sandbox on.
 
 ## Fuzzing bytecode execution
 

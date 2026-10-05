@@ -33,8 +33,8 @@ Possible follow-ups:
 
 ### `struct` declarations
 
-`struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md,
-landed this cycle) is deliberately narrow -- see that section's own list
+`struct Name(field: Type, ...) ... end` (docs/classes-and-modules.md) is
+deliberately narrow -- see that section's own list
 of what it doesn't do. Real possibilities this opens up, none attempted
 yet, none committed:
 
@@ -55,7 +55,7 @@ yet, none committed:
 
 ### freeze / frozen?
 
-`freeze`/`frozen?` (docs/classes-and-modules.md, landed this cycle) is
+`freeze`/`frozen?` (docs/classes-and-modules.md) is
 deliberately shallow -- freezing a `Hash`/`Array`/`Instance` marks only
 that one value, never anything it merely references (an ivar holding a
 separate `Array` stays exactly as mutable as it was, matching Ruby's own
@@ -111,7 +111,7 @@ committed:
 
 ### Case/when exhaustiveness checking
 
-Exhaustiveness checking (docs/core-syntax.md, landed this cycle) now covers
+Exhaustiveness checking (docs/core-syntax.md) now covers
 two independent closed-type shapes: an explicit union made entirely of
 `nil`/user classes, and (added this same cycle, alongside sealed classes --
 docs/classes-and-modules.md) a plain type naming a `sealed` class, required
@@ -132,7 +132,7 @@ opens up, none attempted yet, none committed:
 
 ### Channel
 
-`Channel` (docs/threads.md, landed this cycle) is a bounded mailbox --
+`Channel` (docs/threads.md) is a bounded mailbox --
 `send`/`receive`/`try_send`/`try_receive`/`close`. Real possibilities this
 opens up, none attempted yet, none committed:
 
@@ -146,7 +146,7 @@ opens up, none attempted yet, none committed:
 
 ### `Supervisor`
 
-`Supervisor` (docs/threads.md, landed this cycle) is a flat restart-on-crash
+`Supervisor` (docs/threads.md) is a flat restart-on-crash
 primitive (`one_for_one`, `one_for_all`, `rest_for_one`) -- `add_child`/`stop`/`join`/`restart_count`/
 `last_error`/`alive?`. Genuine supervision *trees* need no new mechanism (a
 supervised child is just a closure free to create and manage its own nested
@@ -170,7 +170,7 @@ remain, none attempted yet, none committed:
 
 ### `diamond build`
 
-`diamond build` (docs/deployment.md, landed this cycle) produces a
+`diamond build` (docs/deployment.md) produces a
 standalone native executable via the same serialize/deserialize mechanism
 the embedded prelude template already used. Real possibilities this opens
 up, none attempted yet, none committed:
@@ -190,21 +190,19 @@ up, none attempted yet, none committed:
 
 ### Sandbox mode
 
-Sandbox mode (docs/sandbox.md, landed this cycle) is a coarse, all-or-nothing switch --
-`DIAMOND_SANDBOX`/`diamond --sandbox` deny every native call that opens a real
-filesystem/network/subprocess resource, checked directly at each opcode rather than
-via a per-VM field, so it applies identically to the top-level program and anything
-it spawns (`Thread`, `Supervisor`, `ProgramBuilder#run`) with nothing to propagate.
-Real possibilities this opens up, none attempted yet, none committed:
+Sandbox mode (docs/sandbox.md) denies native calls that open real filesystem,
+network or subprocess resources, with per-capability allow-listing and optional
+instruction, wall-clock and memory budgets. It is checked at each opcode rather
+than via a per-VM field, so it applies identically to the top-level program and
+anything it spawns. Real possibilities remain, none attempted yet, none committed:
 
-- **per-capability granularity** -- allow network but not filesystem, or allow-list
-  specific paths/hosts, instead of one blanket switch. Needs an actual policy format,
-  not just more env vars;
-- **resource limits** -- a CPU/wall-clock/memory budget per run. This is the other half
-  of what docs/internal/fuzzing.md's own execution-fuzzing note asks for ("denying or
-  faking out the I/O bridges" is now done; "at least a wall-clock/instruction budget per
-  run" is not) -- a real prerequisite for ever attempting execution fuzzing, not
-  something sandbox mode itself needs for its own stated purpose;
+- **a shared budget** -- each `DiamondVm` (the program, every `Thread`/`Supervisor`
+  child, every `ProgramBuilder#run`) enforces the configured limits against its own
+  counters, so spawning threads or looping `ProgramBuilder#run` multiplies the
+  aggregate. A real fix needs a shared atomic counter, the shape
+  `DIAMOND_MAX_THREADS`'s process-wide counter already has;
+- **path and host allow-listing** -- capabilities are whole categories today; finer
+  matching needs an actual policy format, not just more env vars;
 - **restricting `Thread.new`/`Supervisor.add_child`** -- bounding how many OS threads a
   sandboxed program can spawn (today: the existing process-wide 64-thread cap, same as
   any other program) is a resource-exhaustion concern, not clearly in scope for "deny
@@ -214,10 +212,11 @@ Real possibilities this opens up, none attempted yet, none committed:
 
 ### Bytecode caching
 
-Bytecode caching (docs/caching.md, landed this cycle) caches a compiled program in a
+Bytecode caching (docs/caching.md) caches a compiled program in a
 `.dic` sibling file next to the source, keyed on a SHA-256 hash of the fully
-`require`-expanded program and validated against a build fingerprint so a rebuilt/
-upgraded `diamond` binary never trusts a stale-format cache. Real possibilities this
+`require`-expanded program, validated against a build fingerprint so a rebuilt/
+upgraded `diamond` binary never trusts a stale-format cache, and checked (body
+checksum, bounds, bytecode verification) before it runs. Real possibilities this
 opens up, none attempted yet, none committed:
 
 - **a `diamond cache clear`-style command** -- today the only way to force-discard a
@@ -320,7 +319,7 @@ Next steps:
 
 ### LSP formatting
 
-`textDocument/formatting` (docs/lsp.md, landed this cycle) normalizes each
+`textDocument/formatting` (docs/lsp.md) normalizes each
 physical line's own leading indentation and trims trailing whitespace,
 tracking nesting depth from the same token stream every other LSP handler
 here already uses -- deliberately not a full AST-based pretty-printer or
@@ -355,7 +354,10 @@ belong in the relevant topic guides and test scripts.
 Priorities:
 
 - continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database
-  coverage;
+  coverage. The pinned thread stress loop runs plain, under TSan and on arm64
+  (`make test-stress-threads`, `test-stress-threads-tsan`); the bytecode execution
+  fuzzer (`make fuzz`) reaches constants, strings, functions and builder-style
+  classes but still skips the I/O opcodes, type sets and interfaces;
 - document platform-dependent behavior explicitly;
 - preserve thread safety: per-value state is preferred to mutation of
   process-global settings.
@@ -598,7 +600,9 @@ TCP/TLS, threaded serving, middleware, and application-level parsing without
 requiring an external service. Coverage remains intentionally narrower than
 `test-all`: TSan, Redis/external-database integration, and the remaining package
 suites have not yet been validated on Linux arm64 and should be widened only as
-separate measured increments.
+separate measured increments. The pinned Thread/Channel/Supervisor stress loop
+(`test-stress-threads-arm64`) does run natively there, since weaker memory ordering
+is where a missing barrier shows.
 
 The arm64, musl, and macOS jobs exclude the JIT cases while still compiling
 the JIT source and exercising the interpreter. The current JIT is validated

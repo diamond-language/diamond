@@ -6,19 +6,9 @@ authoritative fine-grained record.
 
 ## Unreleased
 
-### Security
+## 0.11.0 — 2026-10-04
 
-- `execute_fuzzer` now builds constants, strings, extra functions and class-kind
-  constants, not just an entry function's bytes, so it reaches the opcodes a
-  `ProgramBuilder` script can actually name (the old harness rejected all of them at
-  verification). A 15-minute, 6-worker ASan/UBSan campaign (about 800k runs per
-  worker) found one real bug: `COLLECT_VARIADIC` formed `&arguments[n]` from a null
-  pointer on a call with no arguments (undefined behavior, no memory access).
-  Fixed. A second pass added up to three builder-style classes (superclass, fields,
-  methods bound to the generated functions), which reached `NEW`, field access and
-  method dispatch on builder-made classes: 20 more minutes on 6 workers, about 1.9M
-  runs, edge coverage 16.1k to 17.6k, clean. The sandbox docs now also list `ProgramBuilder#run` among the places each
-  VM gets its own full resource budget.
+### Security
 
 - A `.dic` bytecode cache is now validated before it runs. Flipping a few bytes in the
   body of a cache file whose header and source hash were intact could crash `diamond`
@@ -31,6 +21,18 @@ authoritative fine-grained record.
   `make test-cache` case re-signs 200 mutated caches and requires that none dies on a
   signal.
 
+- `execute_fuzzer` now builds constants, strings, extra functions and class-kind
+  constants, not just an entry function's bytes, so it reaches the opcodes a
+  `ProgramBuilder` script can actually name (the old harness rejected all of them at
+  verification). A 15-minute, 6-worker ASan/UBSan campaign (about 800k runs per
+  worker) found one real bug: `COLLECT_VARIADIC` formed `&arguments[n]` from a null
+  pointer on a call with no arguments (undefined behavior, no memory access). Fixed.
+  A second pass added up to three builder-style classes (superclass, fields, methods
+  bound to the generated functions), which reached `NEW`, field access and method
+  dispatch on builder-made classes: 20 more minutes on 6 workers, about 1.9M runs,
+  edge coverage 16.1k to 17.6k, clean. The sandbox docs now also list
+  `ProgramBuilder#run` among the places each VM gets its own full resource budget.
+
 ### Tooling
 
 - `make test-stress-threads` (and a CI job) re-runs every Thread, Channel and Supervisor
@@ -40,6 +42,12 @@ authoritative fine-grained record.
   runs the stress loop on arm64 hardware as well. Local sweeps pinned to 1 and 3 CPUs
   (64 cases x 150 runs each) and a TSan sweep (64 x 20) found nothing.
 
+- The one TSan failure CI showed was a race in a test, not in `Supervisor`: the
+  `rest_for_one` stress case stopped the supervisor once the later sibling had restarted,
+  before the earlier one had run. It now waits for both, and a stress mismatch prints the
+  expected and actual output.
+- `tools/registry_needs_upgrade.py --target` prints a tag's commit hash rather than the
+  annotated tag object's.
 - The language server completes methods on built-in values. After `name.` where
   `name` is a String, Array, Hash, Int or Float local or parameter, or after a
   string/number literal, completion lists that type's methods (`push`, `keys`,
@@ -54,6 +62,10 @@ authoritative fine-grained record.
   (`#<Point x=1, y=2>`) unless its class defines its own `inspect`. Before this,
   `["a", "b, c"].to_s()` and `["a, b", "c"].to_s()` printed alike and there was no way
   to see an object's state. `to_s` is unchanged.
+
+- `attr_reader :name` (a Symbol where Diamond wants `attr_reader name: Type`) now says so
+  in the error instead of just "expected attribute name", in both the native and the
+  self-hosted parser.
 
 - Constants are inherited. A subclass reads its superclass's constants, and a class
   or module reads the constants of the modules it `include`s, both unqualified

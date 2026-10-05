@@ -25,12 +25,14 @@ enough POSIX-adjacent surface area to matter here.
   `test-arm64-sanitize` job, in the same workflow. Five representative package suites
   also run natively: database configuration, HTTP, Gremlin, Rack, and GraphQL.
   The x86-64-only JIT fixtures are excluded, while the portable interpreter and
-  JIT-disabled fallback still compile and run. Narrower than `test-all`: TSan,
+  JIT-disabled fallback still compile and run. The pinned
+  Thread/Channel/Supervisor stress loop runs natively too
+  (`test-stress-threads-arm64`). Narrower than `test-all`: TSan,
   Redis/external-database integration, and the remaining package suites have
   not been validated on Linux arm64 yet.
 - **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
-  of focused targets (`test-musl` job, same workflow) on every push. 1283
-  of 1285 `tests/cases/*.di` corpus cases pass; the two known failures
+  of focused targets (`test-musl` job, same workflow) on every push. Every
+  `tests/cases/*.di` corpus case passes except two known failures
   (`bcrypt.di`, `active_record_secure_password.di`) are excluded from the
   CI run itself rather than left to fail it -- both are the same real,
   documented libc limitation (BCrypt, below), not a bug. Narrower than

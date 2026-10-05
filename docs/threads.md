@@ -320,3 +320,23 @@ sup.add_child(managed_subsystem, options)
 
 Implementation details, copy semantics, and lifecycle invariants are
 documented in [Concurrency internals](internal/concurrency-internals.md).
+
+## Testing threaded code
+
+Threaded bugs are timing bugs, and an idle many-core machine hides most of them.
+Three checks exist for that:
+
+- `make test-tsan` builds with ThreadSanitizer (it cannot combine with ASan/UBSan, so
+  it is its own build) and runs the Thread, Channel and Supervisor cases once each.
+- `make test-stress-threads` re-runs every case that uses `Thread`, `Channel` or
+  `Supervisor` many times, each run pinned to two CPUs under a timeout. Pinning makes the
+  scheduler interleave threads far more unevenly than an idle machine does; it found the
+  `Supervisor#add_child` race that hung CI about once in 40 runs. `STRESS_RUNS`,
+  `STRESS_CPUS`, `STRESS_TIMEOUT` and `STRESS_FILTER` tune it, and a failure prints the
+  expected and actual output.
+- `make test-stress-threads-tsan` is the same loop against the TSan build.
+
+When a test of your own waits for threads, wait for the effect you assert on, not a
+neighbouring one: a supervisor counts a restart before the new thread runs its first
+line, so a test that waits for one sibling's restart can see another's still pending.
+CI runs all three, the stress loop on arm64 as well.
