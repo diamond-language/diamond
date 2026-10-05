@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Security
+
+- Sandbox mode now denies `ProgramBuilder#expand_source`. It resolves `require` by
+  reading files and returns the expanded text, so under `--sandbox` a script could read
+  any file whose name ends in `.di` (an absolute path, `../`, or a symlink so named)
+  and tell which paths exist from the error message, while `File.open` and `File.read`
+  were denied. It is part of the `filesystem` category: `DIAMOND_SANDBOX_ALLOW=filesystem`
+  turns it back on.
+
 ## 0.11.0 — 2026-10-04
 
 ### Security

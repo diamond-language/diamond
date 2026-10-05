@@ -24,6 +24,7 @@ anything:
 
 - `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
 - `Dir.entries`
+- `ProgramBuilder#expand_source` (it resolves `require` by reading files and returns the text)
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`
 - `TLSSocket.connect`, `TLSServer.listen`
@@ -173,7 +174,9 @@ known limitations:
   distinct from resource-opening.
 - **The compile-time `require` graph is not restricted.** Sandbox mode restricts
   *runtime* behavior; the entry script itself (and whatever it `require`s) is assumed
-  to already be source the caller chose to run.
+  to already be source the caller chose to run. A `require` the program triggers at run
+  time through `ProgramBuilder#expand_source` is a different thing: it is a file read, so
+  it is denied with the `filesystem` category.
 
 Revisit any of these only with a real driving need, not speculatively -- the same bar
 [the roadmap](roadmap.md) already holds every other research direction to.
