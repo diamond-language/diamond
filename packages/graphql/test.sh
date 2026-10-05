@@ -844,4 +844,46 @@ puts(schema.execute("{ items { value } sibling }"))
 assert_contains "$actual" "{data: {items: nil, sibling: fine}, errors: [{message: cannot return null for a non-null field, path: [items, 0, value]}]}"
 count=$((count + 1))
 
+# --- an omitted optional variable behaves like an omitted argument ---
+# Per the GraphQL spec, an argument whose variable was declared but never
+# supplied is treated as not provided, so its schema default applies. An
+# explicit null is different: it is a provided value and overrides the default.
+actual="$(run_file '
+def page(o, a, c) = "limit=#{a["limit"]} offset=#{a["offset"]}"
+def filtered(o, a, c) = "min=#{a["f"]["min"]} tag=#{a["f"]["tag"]}"
+filter_type = GraphQL::InputObjectType.new("Filter")
+filter_type.argument("min", GraphQL::ScalarType.int(), 5, true)
+filter_type.argument("tag", GraphQL::ScalarType.string())
+t = GraphQL::ObjectType.new("Query")
+t.field("page", GraphQL::ScalarType.string().non_null(), page, [
+  GraphQL::Argument.new("limit", GraphQL::ScalarType.int(), 20, true),
+  GraphQL::Argument.new("offset", GraphQL::ScalarType.int())
+])
+t.field("need", GraphQL::ScalarType.string(), page, [
+  GraphQL::Argument.new("limit", GraphQL::ScalarType.int().non_null())
+])
+t.field("filtered", GraphQL::ScalarType.string().non_null(), filtered, [
+  GraphQL::Argument.new("f", filter_type)
+])
+schema = GraphQL::Schema.new()
+schema.query(t)
+q = "query($l: Int, $o: Int) { page(limit: $l, offset: $o) }"
+puts(schema.execute(q, {}))
+puts(schema.execute(q, {"l": nil, "o": nil}))
+puts(schema.execute(q, {"l": 5, "o": 2}))
+puts(schema.execute("query($l: Int = 7) { page(limit: $l) }", {}))
+puts(schema.execute("query($l: Int) { need(limit: $l) }", {}))
+puts(schema.execute("query($m: Int) { filtered(f: {min: $m, tag: \"x\"}) }", {}))
+puts(schema.execute("query($m: Int) { filtered(f: {min: $m, tag: \"x\"}) }", {"m": nil}))
+')"
+assert_contains "$actual" "{data: {page: limit=20 offset=nil}}"
+assert_contains "$actual" "{data: {page: limit=nil offset=nil}}"
+assert_contains "$actual" "{data: {page: limit=5 offset=2}}"
+assert_contains "$actual" "{data: {page: limit=7 offset=nil}}"
+# A nullable variable in a non-null position is rejected by validation, before coercion.
+assert_contains "$actual" "not compatible with expected type \"Int!\""
+assert_contains "$actual" "{data: {filtered: min=5 tag=x}}"
+assert_contains "$actual" "{data: {filtered: min=nil tag=x}}"
+count=$((count + 1))
+
 echo "$count graphql tests passed"
