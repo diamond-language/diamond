@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.11.1 — 2026-10-05
+
 ### Security
 
 - Sandbox mode now denies `ProgramBuilder#expand_source`. It resolves `require` by
@@ -13,7 +15,18 @@ authoritative fine-grained record.
   any file whose name ends in `.di` (an absolute path, `../`, or a symlink so named)
   and tell which paths exist from the error message, while `File.open` and `File.read`
   were denied. It is part of the `filesystem` category: `DIAMOND_SANDBOX_ALLOW=filesystem`
-  turns it back on.
+  turns it back on. The sandbox docs now also say what it does not hide: `ENV`, `ARGV`
+  and the clock stay readable from sandboxed code, so deployment secrets in the
+  environment of a sandboxed process are visible to it.
+
+### Tooling
+
+- Three test scripts that reserve a port by binding and closing a socket, then hand it to
+  a server, now retry on a new port when something else takes it in between (the
+  cancellation socket test and the gremlin shutdown tests; one flaked on CI). Forcing
+  that collision also showed that `packages/gremlin/test/shutdown.di` hung when its
+  server failed to bind, with the error unprinted; it now exits with the error. These are
+  test programs; the gremlin package itself is unchanged.
 
 ## 0.11.0 — 2026-10-04
 
