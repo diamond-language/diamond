@@ -6129,6 +6129,8 @@ static DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
  * directly rather than pre-extracted arguments, unlike
  * regexp_new_helper/regexp_match_helper, since six methods with different
  * arities would otherwise need six different call signatures. */
+static bool sandbox_category_allowed(const char *category);
+
 static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         DiamondProgramBuilder *builder, const DiamondStringConstant *method_name,
         DiamondValue *registers, uint16_t base, uint8_t argc, size_t depth,
@@ -7243,6 +7245,18 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         const DiamondString *name=(const DiamondString *)registers[base].as.object;
         const DiamondString *source=
             (const DiamondString *)registers[(size_t)base+1].as.object;
+        /* Resolving a `require` reads files from disk, and the expanded text
+         * is handed back to the caller: without this check a sandboxed
+         * script could read any file whose name ends in `.di` (any absolute
+         * or `../` path, or a symlink named so), and learn which paths exist
+         * from the error text, while File.open and File.read are denied.
+         * The check is the same as VM_SANDBOX_GUARD's, which only works
+         * inside run_chunk. */
+        if(getenv("DIAMOND_SANDBOX")!=nullptr&&!sandbox_category_allowed("filesystem")) {
+            snprintf(vm->error,sizeof vm->error,
+                "sandbox denies ProgramBuilder#expand_source");
+            return DIAMOND_VM_SANDBOX_ERROR;
+        }
         char path[DIAMOND_MAX_SOURCE_PATH];
         if(name->length>=sizeof path)return DIAMOND_VM_TYPE_ERROR;
         memcpy(path,name->chars,name->length);path[name->length]='\0';

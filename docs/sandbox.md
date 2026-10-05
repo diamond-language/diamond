@@ -24,6 +24,7 @@ anything:
 
 - `File.open`, `File.publish`, `File.rename`, `File.sync`, `File.delete`, `File.exist?`, `File.directory?`, `File.expand_path`
 - `Dir.entries`
+- `ProgramBuilder#expand_source` (it resolves `require` by reading files and returns the text)
 - `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`
 - `UDPSocket.bind`/`.open`
 - `TLSSocket.connect`, `TLSServer.listen`
@@ -169,11 +170,18 @@ known limitations:
   the real process environment directly at each gated opcode, so it applies identically
   to the top-level program, every `Thread`/`Supervisor` child, and anything run via
   `ProgramBuilder#run`, with nothing to propagate from parent to child).
+- **The program's own inputs are not restricted.** `ENV` (a `Hash` of the real process
+  environment, which is where deployment secrets usually live), `ARGV` and the clock are
+  readable from sandboxed code. Sandbox mode stops the program touching the outside
+  world; it does not hide what the process was started with, so do not put secrets in the
+  environment of a sandboxed process that you would not hand to the code inside it.
 - **`Signal.trap` is not restricted.** A process-wide side effect, adjacent to but
   distinct from resource-opening.
 - **The compile-time `require` graph is not restricted.** Sandbox mode restricts
   *runtime* behavior; the entry script itself (and whatever it `require`s) is assumed
-  to already be source the caller chose to run.
+  to already be source the caller chose to run. A `require` the program triggers at run
+  time through `ProgramBuilder#expand_source` is a different thing: it is a file read, so
+  it is denied with the `filesystem` category.
 
 Revisit any of these only with a real driving need, not speculatively -- the same bar
 [the roadmap](roadmap.md) already holds every other research direction to.
