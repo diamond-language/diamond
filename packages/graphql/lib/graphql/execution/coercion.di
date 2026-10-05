@@ -148,7 +148,7 @@ module GraphQL
         index = 0
         while index < type.arguments().length()
           arg = type.arguments()[index]
-          if provided.include_key?(arg.name())
+          if provided.include_key?(arg.name()) && !self.omitted_variable?(provided[arg.name()], coerced_variables)
             result[arg.name()] = self.coerce_literal(provided[arg.name()], arg.type(), coerced_variables)
           elsif arg.has_default?()
             result[arg.name()] = arg.default_value()
@@ -233,12 +233,22 @@ module GraphQL
             result[vardef.name()] = self.coerce_literal(vardef.default_value(), schema_type, {})
           elsif schema_type.kind() == "NON_NULL"
             raise GraphQL::RequestError.new("missing required variable \"$#{vardef.name()}\"")
-          else
-            result[vardef.name()] = nil
           end
+          # An optional variable that was neither given nor defaulted is left
+          # absent, not recorded as nil: an omitted variable and an explicit
+          # null are different things (see omitted_variable?).
           index += 1
         end
         result
+      end
+
+      # True when `value` is a `$variable` reference the request declared but
+      # never supplied (and that has no default of its own). Per the GraphQL
+      # spec the argument or input field it feeds is then treated as not
+      # provided, so its schema default applies, or a required one is missing.
+      # An explicit null is a provided value and is not "omitted".
+      def self.omitted_variable?(value, coerced_variables)
+        value is GraphQL::Language::Variable && !coerced_variables.include_key?(value.name())
       end
 
       # The final args Hash for one field/directive call: a schema-declared
@@ -257,7 +267,7 @@ module GraphQL
         index = 0
         while index < schema_arguments.length()
           arg = schema_arguments[index]
-          if provided.include_key?(arg.name())
+          if provided.include_key?(arg.name()) && !self.omitted_variable?(provided[arg.name()], coerced_variables)
             result[arg.name()] = self.coerce_literal(provided[arg.name()], arg.type(), coerced_variables)
           elsif arg.has_default?()
             result[arg.name()] = arg.default_value()

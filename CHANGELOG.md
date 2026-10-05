@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixed
+
+- `graphql`: an optional variable the request declared but did not supply is now treated
+  as an omitted argument, as the GraphQL spec requires. Previously it reached the
+  resolver as `nil`, so `query($l: Int) { page(limit: $l) }` run without `$l` ignored
+  `limit`'s schema default and could crash a resolver that relied on it. An explicit
+  `null` still overrides the default, and the same rule now applies to input-object
+  fields.
+
 ## 0.11.1 — 2026-10-05
 
 ### Security
