@@ -170,6 +170,11 @@ known limitations:
   the real process environment directly at each gated opcode, so it applies identically
   to the top-level program, every `Thread`/`Supervisor` child, and anything run via
   `ProgramBuilder#run`, with nothing to propagate from parent to child).
+- **The program's own inputs are not restricted.** `ENV` (a `Hash` of the real process
+  environment, which is where deployment secrets usually live), `ARGV` and the clock are
+  readable from sandboxed code. Sandbox mode stops the program touching the outside
+  world; it does not hide what the process was started with, so do not put secrets in the
+  environment of a sandboxed process that you would not hand to the code inside it.
 - **`Signal.trap` is not restricted.** A process-wide side effect, adjacent to but
   distinct from resource-opening.
 - **The compile-time `require` graph is not restricted.** Sandbox mode restricts
