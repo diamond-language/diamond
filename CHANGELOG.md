@@ -14,7 +14,10 @@ authoritative fine-grained record.
   verification). A 15-minute, 6-worker ASan/UBSan campaign (about 800k runs per
   worker) found one real bug: `COLLECT_VARIADIC` formed `&arguments[n]` from a null
   pointer on a call with no arguments (undefined behavior, no memory access).
-  Fixed. The sandbox docs now also list `ProgramBuilder#run` among the places each
+  Fixed. A second pass added up to three builder-style classes (superclass, fields,
+  methods bound to the generated functions), which reached `NEW`, field access and
+  method dispatch on builder-made classes: 20 more minutes on 6 workers, about 1.9M
+  runs, edge coverage 16.1k to 17.6k, clean. The sandbox docs now also list `ProgramBuilder#run` among the places each
   VM gets its own full resource budget.
 
 - A `.dic` bytecode cache is now validated before it runs. Flipping a few bytes in the

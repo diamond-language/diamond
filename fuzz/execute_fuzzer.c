@@ -96,11 +96,13 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
  * script all three. Layout, every field optional (a short input just reads
  * zeros):
  *
- *   byte 0   entry register_count - 1, mod 64
+ *   byte 0   bits 0-5 entry register_count - 1, bits 6-7 class count
  *   byte 1   bits 0-2 constant count, bits 3-5 string count, bits 6-7 function count
  *   then     each constant: 1 kind byte (Nil/Bool/Int/Float/Class) + 8 payload bytes
  *   then     each string: 1 length byte (mod 16) + that many bytes
  *   then     each function: arity (mod 4), register_count - 1 (mod 16), code length (mod 48), code
+ *   then     each class: superclass (a byte past the classes so far means none), field count (mod 5),
+ *            method count (mod 3), and per method a function index (mod function count) and arity (mod 4)
  *   rest     the entry function's code
  *
  * Every function, and the entry, gets its own copy of the same constants and
@@ -161,7 +163,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     diamond_program_init(program);
 
     FuzzReader reader = {.data = data, .size = size};
-    const uint16_t register_count = (uint16_t)(1 + (fuzz_byte(&reader) % 64));
+    const uint8_t first = fuzz_byte(&reader);
+    const uint16_t register_count = (uint16_t)(1 + (first & 63u));
+    const size_t class_total = (first >> 6) & 3u;
     const uint8_t counts = fuzz_byte(&reader);
     const size_t constant_count = counts & 7u;
     const size_t string_count = (counts >> 3) & 7u;
@@ -201,6 +205,44 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (function == nullptr || !fuzz_function_fill(function, name, &reader, code_length,
                 function_registers, arity, constants, constant_count, strings, string_count))
             return 0;
+    }
+    /* Classes, declared the way ProgramBuilder#declare_class / #declare_field /
+     * #declare_method do, so NEW, GET_IVAR/SET_IVAR, INVOKE and super calls have
+     * something to act on. A method points at one of the functions above; as
+     * declare_method does, that function's owner_class is set to the class. */
+    for (size_t index = 0; index < class_total; index++) {
+        if (program->class_count >= DIAMOND_MAX_CLASSES) break;
+        const uint8_t superclass_byte = fuzz_byte(&reader);
+        const size_t field_total = fuzz_byte(&reader) % 5;
+        const size_t method_total = fuzz_byte(&reader) % 3;
+        const size_t class_index = program->class_count++;
+        DiamondClass *class = &program->classes[class_index];
+        *class = (DiamondClass){};
+        (void)snprintf(class->name, sizeof class->name, "K%zu", index);
+        class->superclass = UINT8_MAX;
+        if (superclass_byte < class_index) {
+            const DiamondClass *parent = &program->classes[superclass_byte];
+            class->superclass = superclass_byte;
+            class->field_count = parent->field_count;
+            memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
+        }
+        for (size_t field = 0; field < field_total && class->field_count < DIAMOND_MAX_FIELDS; field++)
+            (void)snprintf(class->fields[class->field_count++], sizeof class->fields[0], "f%zu", field);
+        for (size_t method = 0; method < method_total; method++) {
+            const uint8_t function_byte = fuzz_byte(&reader);
+            const uint8_t arity = fuzz_byte(&reader) % 4;
+            if (function_count == 0 || class->method_count >= DIAMOND_MAX_METHODS) continue;
+            const size_t function_index = function_byte % function_count;
+            DiamondMethod *entry = &class->methods[class->method_count++];
+            *entry = (DiamondMethod){};
+            (void)snprintf(entry->name, sizeof entry->name, method == 0 ? "initialize" : "m%zu", method);
+            entry->function_index = (uint16_t)function_index;
+            entry->arity = arity;
+            entry->required_arity = arity;
+            program->functions[function_index]->owner_class = (uint8_t)class_index;
+        }
+        for (size_t field_count = 0; field_count <= class->field_count; field_count++)
+            class->shapes[field_count] = (DiamondShape){.class = class, .field_count = (uint8_t)field_count};
     }
     /* `entry.code` is `uint8_t *`, not an inline array -- diamond_program_
      * init's memset leaves it null, same as every other DiamondProgram

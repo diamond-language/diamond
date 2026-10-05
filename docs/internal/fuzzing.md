@@ -35,10 +35,13 @@ exist today.
 `execute_fuzzer` fuzzes a narrower, already-safe-to-run slice of that same
 surface: `run_chunk` directly, called on a synthetic `DiamondChunk` built
 straight from the fuzzer's raw input bytes. Byte 0 picks the entry's
-`register_count` (1..64), byte 1 says how many constants (0..7), string
-constants (0..7) and extra functions (0..3) follow, then come the constants
+`register_count` (1..64, low six bits) and how many classes follow (top two
+bits), byte 1 says how many constants (0..7), string constants (0..7) and
+extra functions (0..3) follow, then come the constants
 (Nil/Bool/Int/Float/Class), the strings, each function's arity, register count
-and code, and finally the entry's own code. Every function gets the same
+and code, each class (superclass, field count, and methods bound to the
+functions above, declared the way `declare_class`/`declare_field`/
+`declare_method` do), and finally the entry's own code. Every function gets the same
 constants and strings, so an index valid in one is valid in all. Class constants
 are in on purpose: a script can put one there (`add_constant(f, self)` inside a
 singleton method) and its index only means something to the chunk it came from.
