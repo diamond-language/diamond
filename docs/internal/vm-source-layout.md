@@ -14,8 +14,9 @@ sanitize` use), on one core:
 | `vm.c` as it was | 26,544 | 363 s |
 | `vm.c` with the body of `run_chunk` replaced by a stub | 16,713 | **3 s** |
 | `vm_program_builder.c` | 1,734 | 2 s |
+| `vm.c` after the per-handle `INVOKE_TYPED` blocks were outlined (`-O1 -g0`, asan+ubsan) | 19,080 | 273 s |
 
-So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file).
+So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file, before the per-handle blocks were outlined; 6,879 lines now).
 The other 16,700 lines compile in seconds. Splitting `vm.c` into files therefore cannot shorten a
 full instrumented build, but it does decide how much a change *outside* `run_chunk` costs: an edit
 to anything left in the same translation unit still pays for `run_chunk`.
@@ -25,19 +26,20 @@ sanitizer-build problem.
 
 ## What is inside `run_chunk`
 
-148 opcode cases have braced bodies, 7,688 of its 8,171 lines. One of them,
-`DIAMOND_OP_INVOKE_TYPED` (method calls), is **3,104 lines**; the next largest is 238. It is a chain of
-blocks keyed on the receiver's kind:
+148 opcode cases have braced bodies. One of them, `DIAMOND_OP_INVOKE_TYPED` (method calls), is
+**1,808 lines** (3,104 before the cold per-handle blocks were outlined); the next largest is 238. It is
+a chain of blocks keyed on the receiver's kind:
 
 | block | lines |
 |---|---|
 | Array, Hash, String and other built-in natives | 1,115 |
 | Int and Float natives | 254 |
-| Supervisor, UDP socket, TLS socket, Channel, Listener, Thread, File, Socket, Fiber, Regexp | about 1,350 together |
 | user-defined Instance dispatch and the rest | the remainder |
 
-The per-handle blocks have the same shape as `time_dispatch_helper`, `tensor_dispatch_helper` and the
-database `*_dispatch_helper` functions, which are already outlined.
+The cold per-handle blocks (Supervisor, UDP socket, TLS socket, Channel, Listener, Thread, File,
+Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions in `vm.c`, the same shape as
+`time_dispatch_helper`, `tensor_dispatch_helper` and the database `*_dispatch_helper` functions. A
+helper returns its status instead of using `VM_RETURN`; the call site propagates it.
 
 ## What has been split out
 

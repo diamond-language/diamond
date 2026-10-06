@@ -217,9 +217,6 @@ Current behavior and phase history: [JIT design](internal/jit-design.md).
 
 Current layout and measurements: [VM source layout](internal/vm-source-layout.md).
 
-- **Outline the cold per-handle method blocks of `DIAMOND_OP_INVOKE_TYPED`** (Supervisor, UDP,
-  TLS, Channel, Listener, Thread, File, Socket, Fiber, Regexp; about 1,350 lines) into dispatch
-  helpers, as `time_dispatch_helper` already does. Cold, so no hot-path cost.
 - **Outline the hot Array/Hash/String and Int/Float native blocks** (about 1,370 lines). This is
   what would actually shorten an instrumented build, since the whole six minutes is `run_chunk`,
   but it puts a call on the hottest method-call path: only with `bench/` evidence that it is neutral.
