@@ -102,8 +102,9 @@ def main():
     required_prefixes = (shipped_app_files() + FACET_PATHS +
                          [f"packages/{name}/" for name in cuts])
 
-    # Docs and tests inside a package are not executed by the registry.
-    inert = re.compile(r"^packages/[^/]+/(README\.md|LICENSE|test\.sh|test/)")
+    # Docs and tests inside a package are not executed by the registry. Some packages
+    # keep their tests beside the sources (packages/registry/http_test.py), not in test/.
+    inert = re.compile(r"^packages/[^/]+/(README\.md|LICENSE|test\.sh|test/|[^/]+_test\.(py|di))")
 
     def hits(prefixes):
         return [path for path in changed if not inert.match(path)

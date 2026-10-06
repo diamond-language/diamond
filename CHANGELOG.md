@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.11.2 — 2026-10-05
+
 ### Security
 
 - Fixed a heap out-of-bounds read reachable from plain source: calling a generic function
@@ -27,6 +29,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `tools/registry_needs_upgrade.py` no longer counts a package's own `*_test.py` and
+  `*_test.di` files as registry code. It had said REQUIRED after test files beside the
+  sources in `packages/registry/` changed, though the registry never executes them.
 - `tests/free_port.py` gives test scripts a free port from outside the kernel's ephemeral
   range, never twice in one process. Five scripts that reserved a port with `bind(0)`
   and then started a server on it (the registry HTTP, nginx and systemd tests and the chat
