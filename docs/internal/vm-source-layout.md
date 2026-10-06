@@ -15,8 +15,9 @@ sanitize` use), on one core:
 | `vm.c` with the body of `run_chunk` replaced by a stub | 16,713 | **3 s** |
 | `vm_program_builder.c` | 1,734 | 2 s |
 | `vm.c` after the per-handle `INVOKE_TYPED` blocks were outlined (`-O1 -g0`, asan+ubsan) | 19,080 | 273 s |
+| `vm.c` after the Array/Hash/String and Int/Float blocks were outlined too | 19,145 | 227 s |
 
-So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file, before the per-handle blocks were outlined; 6,879 lines now).
+So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file, before the `INVOKE_TYPED` blocks were outlined; 5,521 lines now).
 The other 16,700 lines compile in seconds. Splitting `vm.c` into files therefore cannot shorten a
 full instrumented build, but it does decide how much a change *outside* `run_chunk` costs: an edit
 to anything left in the same translation unit still pays for `run_chunk`.
@@ -36,10 +37,15 @@ a chain of blocks keyed on the receiver's kind:
 | Int and Float natives | 254 |
 | user-defined Instance dispatch and the rest | the remainder |
 
-The cold per-handle blocks (Supervisor, UDP socket, TLS socket, Channel, Listener, Thread, File,
-Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions in `vm.c`, the same shape as
+The per-kind blocks (Array/Hash/String, Int/Float, Supervisor, UDP socket, TLS socket, Channel,
+Listener, Thread, File, Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions in `vm.c`, the same shape as
 `time_dispatch_helper`, `tensor_dispatch_helper` and the database `*_dispatch_helper` functions. A
 helper returns its status instead of using `VM_RETURN`; the call site propagates it.
+
+The two hot blocks (`collection_invoke_helper`, `numeric_invoke_helper`) were measured with
+`perf stat` user instructions and cycles over `bench/`: instructions rose about 1% (the extra call),
+cycles were neutral to better (string and native-read benchmarks 8-10% fewer, `array_ops` and
+`hash_ops` about 2% more), presumably from the smaller `run_chunk` frame.
 
 ## What has been split out
 

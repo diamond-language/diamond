@@ -217,9 +217,6 @@ Current behavior and phase history: [JIT design](internal/jit-design.md).
 
 Current layout and measurements: [VM source layout](internal/vm-source-layout.md).
 
-- **Outline the hot Array/Hash/String and Int/Float native blocks** (about 1,370 lines). This is
-  what would actually shorten an instrumented build, since the whole six minutes is `run_chunk`,
-  but it puts a call on the hottest method-call path: only with `bench/` evidence that it is neutral.
 - **Isolate `run_chunk` in its own translation unit**, so an edit to anything else never recompiles
   it. It uses a few hundred `static` helpers that would have to be exported or made `static inline`
   in a header, and the hot ones must stay inlinable.
