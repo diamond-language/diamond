@@ -22,3 +22,9 @@ start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
 - [Diamond-modernization audit](di-modernization-audit.md) -- a one-time
   historical audit of a past refactor; kept for context, not maintained
   as ongoing reference.
+- [VM source layout](vm-source-layout.md) -- how `vm.c` is split, what each file
+  holds, and the compile-time and run-time measurements behind it.
+- [Register recycling design](register-recycling-design.md) -- the compiler's
+  register reuse stages and their invariants.
+- [Cancellation notes](cancellation-notes.md) -- maintainer notes behind
+  [cancellation](../cancellation.md).
