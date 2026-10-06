@@ -653,12 +653,12 @@ typedef struct DiamondProcessHandle {
  * run a DiamondProgram at runtime. Like DiamondFileHandle/
  * DiamondListenerHandle, no mark_object branch is needed -- the wrapped
  * DiamondProgram's own constants are restricted to scalar DiamondValues
- * (see ProgramBuilder#add_constant in vm.c), so nothing inside one ever
+ * (see ProgramBuilder#add_constant in vm_program_builder.c), so nothing inside one ever
  * references another Diamond value.
  *
  * Trust model (settled after the pre-release audit that added
  * diamond_verify_bytecode's register-bounds/jump-alignment checks,
- * program_builder_run_helper in vm.c): ProgramBuilder is an internal
+ * program_builder_run_helper in vm_program_builder.c): ProgramBuilder is an internal
  * mechanism the self-hosted compiler bootstrap needs, not a supported
  * embedding API -- it's exactly what docs/roadmap.md's "Explicitly
  * deferred" section means by deferring stable bytecode/embedding APIs.

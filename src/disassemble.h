@@ -20,7 +20,7 @@ bool diamond_disassemble_user(FILE *stream, const char *name,
  * RUN_ENSURE targets landing on a real instruction boundary, constant/
  * string/function/type-set indices in range -- without printing
  * anything. Ordinary compiler-emitted bytecode always passes this by
- * construction; it exists for ProgramBuilder#run (src/vm.c), which lets
+ * construction; it exists for ProgramBuilder#run (src/vm_program_builder.c), which lets
  * Diamond code hand-assemble raw bytecode via #emit_byte with no
  * understanding of what instruction it's building, bypassing every
  * guarantee the compiler's own register allocator normally provides. */
