@@ -38,4 +38,15 @@ DIAMOND_INTERNAL DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         DiamondValue *registers, uint16_t base, uint8_t argc, size_t depth,
         DiamondValue *result);
 
+/* vm_tensor.c: entry points called from run_chunk */
+DIAMOND_INTERNAL DiamondTensor *allocate_tensor(DiamondVm *vm,size_t rows,size_t cols);
+DIAMOND_INTERNAL DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor, const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base, uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus tensor_from_array_helper(DiamondVm *vm,const DiamondArray *outer, DiamondValue *out);
+DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
+
+/* Shared primitives that stay in vm.c (needed by tensor code) */
+DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
+DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
+DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
+
 #endif
