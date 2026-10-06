@@ -127,7 +127,7 @@ CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
 endif
 CFLAGS_RELEASE := -O3 -DNDEBUG
 endif
-# -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~6,600-line
+# -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~8,000-line
 # function whose giant opcode switch declares its own locals (registers,
 # per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
 # opcodes, TLS setup buffers, etc.) in dozens of mutually-exclusive case

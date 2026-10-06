@@ -776,7 +776,7 @@ typedef struct DiamondInterface {
      * from a genuine duplicate declaration. Never true outside that one
      * seeding window; a normal single compile (the discovery pass
      * itself, or any DiamondInterface built directly by the
-     * ProgramBuilder native bridge in src/vm.c) never sets it. */
+     * ProgramBuilder native bridge in src/vm_program_builder.c) never sets it. */
     bool declared_by_discovery;
 } DiamondInterface;
 
