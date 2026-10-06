@@ -6,6 +6,25 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Security
+
+- Fixed a heap out-of-bounds read reachable from plain source: calling a generic function
+  with a very large spread (`f(*huge_array)`) made the VM index a 32-entry array of
+  parameter type sets by the call's argument count, before the arity check rejected the
+  call. Found while extending the execution fuzzer to type sets; reproduced under ASan
+  with 100,000 arguments, and with enough arguments it can read unmapped memory.
+- `ProgramBuilder#declare_function` initialized only 16 of a function's 32 parameter
+  type-set entries to "none"; the rest read as type set 0, so a built function with more
+  than 16 parameters got a phantom annotation. `declare_type_set` also stored a callable's
+  parameter set indices in a `uint8_t`, silently replacing any index above 255 (the entry
+  function holds every annotation in the program, so large programs built by the
+  self-hosted compiler could cross it).
+- The sandbox docs said a fired resource budget "stays fired". It is switched off: the
+  instruction and wall-clock budgets fire once, and a program that rescues
+  `ResourceLimitError` runs without limit afterwards (50 million more iterations after a
+  1M-instruction budget, measured). The docs now say so, and that the budgets stop runaway
+  code rather than contain hostile code. Behavior is unchanged.
+
 ### Tooling
 
 - `tests/free_port.py` gives test scripts a free port from outside the kernel's ephemeral

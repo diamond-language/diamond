@@ -75,6 +75,11 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
         "FILE_OPEN", "TCP_CONNECT", "TCP_LISTEN", "TCP_LISTEN_NONBLOCK",
         "IO_POLL", "DNS_RESOLVE", "UDP_BIND", "UDP_OPEN", "SIGNAL_TRAP", "TLS_CONNECT", "TLS_START_HANDSHAKE",
         "TLS_LISTEN", "THREAD_NEW",
+        /* Not an I/O opcode, but unbounded: the instruction and wall-clock budgets
+         * disarm after they first fire, so a program can rescue ResourceLimitError and
+         * then run without limit (docs/sandbox.md). Any program with a rescue clause can
+         * therefore hang this harness for as long as libFuzzer's timeout allows. */
+        "PUSH_RESCUE",
     };
     bool found = false;
     for (size_t index = 0;
@@ -98,11 +103,15 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
  *
  *   byte 0   bits 0-5 entry register_count - 1, bits 6-7 class count
  *   byte 1   bits 0-2 constant count, bits 3-5 string count, bits 6-7 function count
+ *   byte 2   bits 0-1 type sets per function, bits 2-3 interface count, bits 4-5 type variables
+ *            per function (type sets and interfaces are described after the classes)
  *   then     each constant: 1 kind byte (Nil/Bool/Int/Float/Class) + 8 payload bytes
  *   then     each string: 1 length byte (mod 16) + that many bytes
  *   then     each function: arity (mod 4), register_count - 1 (mod 16), code length (mod 48), code
  *   then     each class: superclass (a byte past the classes so far means none), field count (mod 5),
  *            method count (mod 3), and per method a function index (mod function count) and arity (mod 4)
+ *   then     each function's type sets (members, nested set references, callable shapes,
+ *            parameter and return annotations), the entry's first, then each interface's methods
  *   rest     the entry function's code
  *
  * Every function, and the entry, gets its own copy of the same constants and
@@ -149,6 +158,80 @@ static bool fuzz_function_fill(DiamondFunction *function, const char *name, Fuzz
     return true;
 }
 
+/* A function the builder has just declared has no type annotations: every set field is
+ * DIAMOND_NO_TYPE_SET. The zeroed fields a bare diamond_program_add_function leaves mean
+ * "type set 0", a set that does not exist yet, so a harness must not leave them. */
+static void fuzz_init_types(DiamondFunction *function) {
+    function->return_type_set = DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set = DIAMOND_NO_TYPE_SET;
+    for (size_t index = 0; index < DIAMOND_MAX_DECLARED_PARAMETERS; index++)
+        function->parameter_type_sets[index] = DIAMOND_NO_TYPE_SET;
+}
+
+/* Type sets for one function, built under the same rules ProgramBuilder#declare_type_set
+ * enforces, so that every state reached here is one a script could create: a set may
+ * reference only sets declared before it (no cycles), a type id is a primitive, a class that
+ * exists, an interface that exists, or a type variable the function declares, only Array and
+ * Hash carry element sets, and only Callable carries an arity, a return set and parameter sets. */
+static void fuzz_fill_types(DiamondFunction *function, FuzzReader *reader, size_t set_total,
+        size_t class_count, size_t interface_count, size_t variable_count) {
+    function->type_variable_count = (uint8_t)variable_count;
+    if (set_total == 0 || !diamond_function_reserve_type_sets(function, set_total)) return;
+    for (size_t index = 0; index < set_total; index++) {
+        DiamondTypeSet *set = &function->type_sets[index];
+        *set = (DiamondTypeSet){.count = (uint8_t)(1 + fuzz_byte(reader) % 3)};
+        for (size_t member = 0; member < set->count; member++) {
+            uint8_t ids[DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES + 64];
+            size_t id_count = 0;
+            for (size_t id = 0; id < DIAMOND_TYPE_CLASS_BASE; id++) ids[id_count++] = (uint8_t)id;
+            for (size_t id = 0; id < class_count && id < DIAMOND_MAX_CLASSES; id++)
+                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_CLASS_BASE + id);
+            for (size_t id = 0; id < variable_count; id++)
+                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_VARIABLE_BASE + id);
+            for (size_t id = 0; id < interface_count; id++)
+                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_INTERFACE_BASE + id);
+            const uint8_t type_id = ids[fuzz_byte(reader) % id_count];
+            const uint8_t first = fuzz_byte(reader), second = fuzz_byte(reader);
+            int argument = -1, second_argument = -1, arity = -1, callable_return = -1;
+            uint16_t parameters[16];
+            size_t parameter_count = 0;
+            if (type_id == DIAMOND_TYPE_ARRAY && index > 0 && (first & 1u))
+                argument = (first >> 1) % (int)index;
+            else if (type_id == DIAMOND_TYPE_HASH && index > 0) {
+                if (first & 1u) argument = (first >> 1) % (int)index;
+                if (second & 1u) second_argument = (second >> 1) % (int)index;
+            } else if (type_id == DIAMOND_TYPE_CALLABLE) {
+                arity = fuzz_byte(reader) % 5;
+                if (index > 0 && (second & 1u)) callable_return = (second >> 1) % (int)index;
+                if (index > 0 && (first & 1u)) {
+                    parameter_count = (size_t)arity;
+                    for (size_t parameter = 0; parameter < parameter_count; parameter++)
+                        parameters[parameter] = (uint16_t)(fuzz_byte(reader) % index);
+                }
+            }
+            DiamondTypeMember *entry = &set->members[member];
+            *entry = (DiamondTypeMember){.id = type_id,
+                .argument_set = argument < 0 ? DIAMOND_NO_TYPE_SET : (uint16_t)argument,
+                .second_argument_set = second_argument < 0 ? DIAMOND_NO_TYPE_SET : (uint16_t)second_argument,
+                .callable_arity = arity < 0 ? UINT8_MAX : (uint8_t)arity,
+                .callable_return_set = callable_return < 0 ? DIAMOND_NO_TYPE_SET : (uint16_t)callable_return,
+                .callable_parameters_typed = parameter_count > 0};
+            for (size_t parameter = 0; parameter < 16; parameter++)
+                entry->callable_parameter_sets[parameter] = DIAMOND_NO_TYPE_SET;
+            for (size_t parameter = 0; parameter < parameter_count; parameter++)
+                entry->callable_parameter_sets[parameter] = parameters[parameter];
+        }
+        function->type_set_count = index + 1;
+    }
+    const size_t annotated = function->arity < 16 ? function->arity : 16;
+    for (size_t parameter = 0; parameter < annotated; parameter++) {
+        const uint8_t choice = fuzz_byte(reader);
+        if (choice & 3u) function->parameter_type_sets[parameter] = (uint16_t)((choice >> 2) % set_total);
+    }
+    const uint8_t choice = fuzz_byte(reader);
+    if (choice & 3u) function->return_type_set = (uint16_t)((choice >> 2) % set_total);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size < 1) return 0;
     /* DiamondProgram is tens of MB (see compile_fuzzer.c's own comment
@@ -167,6 +250,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const uint16_t register_count = (uint16_t)(1 + (first & 63u));
     const size_t class_total = (first >> 6) & 3u;
     const uint8_t counts = fuzz_byte(&reader);
+    const uint8_t types = fuzz_byte(&reader);
+    const size_t type_set_total = types & 3u;
+    const size_t interface_total = (types >> 2) & 3u;
+    const size_t variable_total = (types >> 4) & 3u;
     const size_t constant_count = counts & 7u;
     const size_t string_count = (counts >> 3) & 7u;
     const size_t function_count = (counts >> 6) & 3u;
@@ -200,6 +287,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         const uint16_t function_registers = (uint16_t)(1 + fuzz_byte(&reader) % 16);
         const size_t code_length = fuzz_byte(&reader) % 48;
         DiamondFunction *function = diamond_program_add_function(program);
+        if (function != nullptr) fuzz_init_types(function);
         char name[8];
         (void)snprintf(name, sizeof name, "f%zu", index);
         if (function == nullptr || !fuzz_function_fill(function, name, &reader, code_length,
@@ -243,6 +331,43 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
         for (size_t field_count = 0; field_count <= class->field_count; field_count++)
             class->shapes[field_count] = (DiamondShape){.class = class, .field_count = (uint8_t)field_count};
+    }
+    /* Type sets and interfaces, after the classes (a type id may name a class or an
+     * interface). Interface method annotations index the entry function's type sets, as
+     * ProgramBuilder#declare_interface_method requires. */
+    program->interface_count = interface_total;
+    for (size_t index = 0; index < interface_total; index++) {
+        DiamondInterface *interface = &program->interfaces[index];
+        *interface = (DiamondInterface){};
+        (void)snprintf(interface->name, sizeof interface->name, "I%zu", index);
+    }
+    fuzz_init_types(&program->entry);
+    fuzz_fill_types(&program->entry, &reader, type_set_total, program->class_count,
+        interface_total, variable_total);
+    for (size_t index = 0; index < function_count; index++)
+        fuzz_fill_types(program->functions[index], &reader, type_set_total, program->class_count,
+            interface_total, variable_total);
+    for (size_t index = 0; index < interface_total; index++) {
+        DiamondInterface *interface = &program->interfaces[index];
+        const size_t method_total = fuzz_byte(&reader) % 3;
+        for (size_t method = 0; method < method_total; method++) {
+            DiamondInterfaceMethod *entry = &interface->methods[interface->method_count++];
+            *entry = (DiamondInterfaceMethod){.arity = (uint8_t)(fuzz_byte(&reader) % 3),
+                .return_type_set = DIAMOND_NO_TYPE_SET};
+            (void)snprintf(entry->name, sizeof entry->name, "m%zu", method);
+            for (size_t parameter = 0; parameter < DIAMOND_MAX_DECLARED_PARAMETERS; parameter++)
+                entry->parameter_type_sets[parameter] = DIAMOND_NO_TYPE_SET;
+            for (size_t parameter = 0; parameter < entry->arity; parameter++) {
+                const uint8_t choice = fuzz_byte(&reader);
+                if ((choice & 1u) && program->entry.type_set_count > 0)
+                    entry->parameter_type_sets[parameter] =
+                        (uint16_t)((choice >> 1) % program->entry.type_set_count);
+            }
+            const uint8_t choice = fuzz_byte(&reader);
+            if ((choice & 1u) && program->entry.type_set_count > 0)
+                entry->return_type_set = (uint16_t)((choice >> 1) % program->entry.type_set_count);
+        }
+        interface->type_sets = program->entry.type_sets;
     }
     /* `entry.code` is `uint8_t *`, not an inline array -- diamond_program_
      * init's memset leaves it null, same as every other DiamondProgram

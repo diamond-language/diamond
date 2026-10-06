@@ -38,11 +38,16 @@ surface: `run_chunk` directly, called on a synthetic `DiamondChunk` built
 straight from the fuzzer's raw input bytes. Byte 0 picks the entry's
 `register_count` (1..64, low six bits) and how many classes follow (top two
 bits), byte 1 says how many constants (0..7), string constants (0..7) and
-extra functions (0..3) follow, then come the constants
+extra functions (0..3) follow, byte 2 says how many type sets per function (0..3), interfaces
+(0..3) and type variables per function (0..3) there are, then come the constants
 (Nil/Bool/Int/Float/Class), the strings, each function's arity, register count
 and code, each class (superclass, field count, and methods bound to the
 functions above, declared the way `declare_class`/`declare_field`/
-`declare_method` do), and finally the entry's own code. Every function gets the same
+`declare_method` do), each function's type sets and parameter/return annotations (built
+under the rules `declare_type_set` enforces: a set references only earlier sets, ids are
+primitives, existing classes or interfaces, or declared type variables), the interfaces'
+methods, and finally the entry's own code. A function the builder declares has every
+type-set field set to "none"; leaving them zeroed means "set 0", which does not exist yet. Every function gets the same
 constants and strings, so an index valid in one is valid in all. Class constants
 are in on purpose: a script can put one there (`add_constant(f, self)` inside a
 singleton method) and its index only means something to the chunk it came from.
@@ -97,7 +102,7 @@ work:
 mkdir -p corpus && cp tests/parser_cases/*.di tests/cases/*.di corpus/
 ./build/compile_fuzzer -max_len=8192 corpus/
 
-mkdir -p execute_corpus && printf '\x00\x00\x05\xfd\xe7\x00\x00' > execute_corpus/seed
+mkdir -p execute_corpus && printf '\x00\x00\x00\x05\xfd\xe7\x00\x00' > execute_corpus/seed
 ./build/execute_fuzzer -max_len=4096 execute_corpus/
 ```
 
