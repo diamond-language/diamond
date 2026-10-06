@@ -41,12 +41,12 @@
 module Div
   module_function
 
-  # DIAMOND_MAX_STRING_LENGTH is 255 bytes (src/vm.h) and escaping a raw
-  # chunk can expand it (each byte can become up to 2-3 escaped bytes) --
-  # 150 raw chars per literal chunk is a deliberately conservative margin
-  # under that cap, not an exact byte computation.
+  # DIAMOND_MAX_STRING_LENGTH is 4095 bytes (src/vm.h) and escaping a raw
+  # chunk can expand it (each byte can become up to 4 escaped bytes) --
+  # 1000 raw chars per literal chunk keeps the worst case under that cap
+  # without an exact byte computation.
   def literal_chunk_size()
-    150
+    1000
   end
 
   # Any byte outside [A-Za-z0-9_] becomes "_" -- originally scoped to
