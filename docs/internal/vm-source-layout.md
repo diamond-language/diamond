@@ -44,8 +44,13 @@ helper returns its status instead of using `VM_RETURN`; the call site propagates
 
 The two hot blocks (`collection_invoke_helper`, `numeric_invoke_helper`) were measured with
 `perf stat` user instructions and cycles over `bench/`: instructions rose about 1% (the extra call),
-cycles were neutral to better (string and native-read benchmarks 8-10% fewer, `array_ops` and
-`hash_ops` about 2% more), presumably from the smaller `run_chunk` frame.
+and cycles were neutral to better (string and native-read benchmarks 8-10% fewer). The exception was
+`array_ops`, 2% more cycles: its loop is `Array#push` and `#length`, and the helper's frame saves
+every callee-saved register and spills nine arguments, which costs more than those two calls do.
+`collection_invoke_fast` answers exactly those two, plus `length` on Hash and String, at the call
+site with the helper's own checks in the helper's order (`#push` still defers to a user-defined
+`array_push` extension, and a frozen array, a type constraint, an arity mismatch or a cold extension
+cache fall through to the helper). With it `array_ops` is 2% below its pre-outlining cycles.
 
 ## What has been split out
 
