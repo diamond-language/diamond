@@ -237,3 +237,82 @@ Plain `--dump-bytecode` keeps the complete dump; `--dump-bytecode=all` is an
 explicit equivalent. User-only dumps recompile instead of reading or updating
 the `.dic` cache so the preamble boundary is known even for cached programs.
 This is a preamble filter, not a single-file or single-function selector.
+
+## Diagnostic environment variables
+
+These switches report what the interpreter did; none change what a program
+means. A flag takes effect when it is set to any value, including an empty one.
+A numeric one takes a positive integer and is ignored otherwise. Every report
+goes to standard error, and the counter reports print once, after the program
+has finished without a runtime error; a server stopped by a signal never
+prints them. They apply to the `diamond` command.
+
+Documented with their features instead: `DIAMOND_JIT`, `DIAMOND_JIT_THRESHOLD`
+and `DIAMOND_TRACE_JIT` ([deployment](deployment.md)); `DIAMOND_NO_CACHE` and
+`DIAMOND_TRACE_CACHE` ([caching](caching.md)); `DIAMOND_SANDBOX`,
+`DIAMOND_SANDBOX_ALLOW` and the three `DIAMOND_MAX_*` budgets
+([sandbox](sandbox.md)); `DIAMOND_DEBUG_FD`, `DIAMOND_DEBUG_BREAKPOINTS` and
+`DIAMOND_DEBUG_BREAKPOINT_OFFSETS` ([debugging](debugging.md)); `DIAMOND_FORCE_REPL`
+([repl](repl.md)); `DIAMOND_AOT_KIT` ([deployment](deployment.md)).
+
+### Where the time goes
+
+- `DIAMOND_TRACE_STARTUP` -- `startup: load Xs, compile Xs (N bytes: P prelude + U
+  user), run Xs, total Xs`. The prelude figure is 0 when the prelude comes
+  precompiled instead of being compiled with the program.
+- `DIAMOND_TRACE_COMPILE` -- `compile: discovery Xs, real Xs, total Xs, source N
+  bytes`, once per compile: the throwaway declaration-discovery pass, then the pass
+  that emits bytecode (see "No AST" above).
+- `DIAMOND_TRACE_GC` -- `GC: M major (Xs), m minor (Xs)`: collection counts and
+  total pause time.
+- `DIAMOND_REPEAT=N` -- run the compiled program `N` times in one VM, stopping at the
+  first failure. Later runs start with warm caches, which is what a steady-state
+  measurement wants; the program's own output repeats every time.
+- `DIAMOND_TRACE_OPCODES` -- one `opcode[N]: count` line per opcode that ran, where
+  `N` is the opcode's ordinal in `DiamondOpCode` (`src/vm.h`).
+  `--dump-bytecode` prints the names.
+
+### Inline caches and shapes
+
+Method calls and field reads are cached per call site. A site that keeps hitting
+one class is rewritten to dispatch directly.
+
+- `DIAMOND_TRACE_IC` -- `inline caches: H hits, M misses`.
+- `DIAMOND_TRACE_IC_SITES` -- one `inline cache site[i]: H hits, M misses, C classes`
+  line for every site that was ever used.
+- `DIAMOND_TRACE_IC_FAST` -- `monomorphic dispatches: N`, the calls that took the
+  single-class fast path.
+- `DIAMOND_TRACE_IC_PROBES` -- `method cache probes: N`.
+- `DIAMOND_TRACE_IC_REWRITES` -- `direct dispatch rewrites: N`, the call sites
+  rewritten to direct dispatch.
+- `DIAMOND_TRACE_IC_POLICY` -- the two thresholds in effect, `quicken threshold` and
+  `monomorphic threshold`.
+- `DIAMOND_IC_MONO_THRESHOLD=N` -- how many cache hits a site needs before it counts
+  as monomorphic and may be rewritten. Default 1.
+- `DIAMOND_TRACE_FIELDS` -- `field caches: H hits, M misses`.
+- `DIAMOND_TRACE_SHAPES` -- `shape transitions: N`, the times an instance's field
+  layout changed.
+- `DIAMOND_INVALIDATE_IC_EACH_RUN` -- with `DIAMOND_REPEAT`, clear the method caches
+  before every run after the first, so each run measures a cold cache.
+- `DIAMOND_TRACE_IC_EACH_RUN` -- with `DIAMOND_REPEAT`, a `run N: inline caches: H
+  hits, M misses, rewrites: R` line after every run instead of only a final total.
+
+### Quickening
+
+- `DIAMOND_QUICKEN` -- rewrite a generic `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `<=`, `>` or
+  `>=` site to an `Int`-specialized opcode once it has seen `Int` operands. A site whose
+  operands later stop being `Int` falls back to the generic opcode, which is how
+  mixed `Int`/`Float` arithmetic keeps working after a rewrite. Off by default.
+- `DIAMOND_QUICKEN_THRESHOLD=N` -- `Int` observations, counted across the whole VM,
+  needed before a rewrite. Default 1.
+- `DIAMOND_TRACE_QUICKEN` -- `quickened sites: N, deoptimized sites: M`.
+
+### Stress and verification
+
+- `DIAMOND_STRESS_GC` / `DIAMOND_STRESS_MINOR_GC` -- force a major or a minor
+  collection before every allocation that could trigger one. Programs run far
+  slower; this exists to expose a value that is not rooted when the collector runs
+  (see [GC design](internal/gc-generational-design.md)).
+- `DIAMOND_DEBUG_VERIFY` -- the bytecode verifier (run on every `ProgramBuilder#run`
+  program and on the embedded prelude) disassembles what it checks and normally
+  discards the text. With this set the disassembly goes to standard error.
