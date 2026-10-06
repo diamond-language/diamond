@@ -217,9 +217,10 @@ Current behavior and phase history: [JIT design](internal/jit-design.md).
 
 Current layout and measurements: [VM source layout](internal/vm-source-layout.md).
 
-- **Isolate `run_chunk` in its own translation unit**, so an edit to anything else never recompiles
-  it. It uses a few hundred `static` helpers that would have to be exported or made `static inline`
-  in a header, and the hot ones must stay inlinable.
+- **Build the AOT runtime archive with LTO.** `diamond build` links the runtime at `-O2` without
+  it, so standalone apps pay the cross-unit cost of keeping `run_chunk` in its own file (about 1.5%
+  more cycles in the `-O3` CLI build without LTO). Needs the archive to be fat LTO objects that a
+  user's own compiler can link, which is unmeasured.
 
 ### Register allocation
 

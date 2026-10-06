@@ -127,7 +127,7 @@ CFLAGS_DEBUG := -O0 -g3 -DDIAMOND_DEBUG
 endif
 CFLAGS_RELEASE := -O3 -DNDEBUG
 endif
-# -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm.c) is one ~8,000-line
+# -O1, not CFLAGS_DEBUG's -O0: run_chunk (src/vm_run_chunk.c) is one ~8,000-line
 # function whose giant opcode switch declares its own locals (registers,
 # per-opcode buffers, DiamondTypeBinding[8] arrays for generic-call
 # opcodes, TLS setup buffers, etc.) in dozens of mutually-exclusive case
@@ -137,7 +137,7 @@ endif
 # confirmed via -fstack-usage at 105,680 bytes/frame, enough that
 # depth(5000) (the DIAMOND_MAX_CALL_DEPTH regression test) hit a real
 # ASan stack-overflow at ~71 recursive frames, well before
-# DIAMOND_MAX_CALL_DEPTH=95's own guard (src/vm.c) could trip. -O1
+# DIAMOND_MAX_CALL_DEPTH=95's own guard (src/vm_run_chunk.c) could trip. -O1
 # restores stack-slot coalescing (measured 68,624 bytes/frame, ~35%
 # smaller) while keeping ASan/UBSan instrumentation and frame pointers
 # (-fno-omit-frame-pointer) fully intact for readable backtraces; some
@@ -258,10 +258,16 @@ tsan:
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_TSAN)" LDFLAGS="$(LDFLAGS_TSAN)"
 
+# The release build links with -flto: run_chunk lives in its own translation unit (src/vm_run_chunk.c,
+# docs/internal/vm-source-layout.md), and without cross-unit inlining and register allocation the
+# interpreter executes about 3% more instructions (1.5% more cycles) than it did in one file.
+LTO_FLAGS ?= -flto
+
 release:
 	$(MAKE) clean-variant
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
-		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE)"
+		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE) $(LTO_FLAGS)" \
+		LDFLAGS="$(LDFLAGS) $(CFLAGS_RELEASE) $(LTO_FLAGS)"
 
 # What a variant switch must discard: the objects and binaries built with $(CFLAGS), which the
 # variants change. Not the whole $(BUILD_DIR): the tool objects in $(DBG_OBJ_DIR) and the fuzzer

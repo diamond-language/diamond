@@ -1,7 +1,7 @@
 # VM source layout
 
 `src/vm.c` is the interpreter, the garbage collector and the native service layer. It grew to over
-26,000 lines; `vm.c` itself is now about 19,000. This note records how it is organised, what has been split out and why, and the
+26,000 lines; `vm.c` itself is now about 13,000 and `run_chunk` has its own file. This note records how it is organised, what has been split out and why, and the
 measurements that decide what is worth splitting next.
 
 ## Where the compile time is
@@ -16,11 +16,15 @@ sanitize` use), on one core:
 | `vm_program_builder.c` | 1,734 | 2 s |
 | `vm.c` after the per-handle `INVOKE_TYPED` blocks were outlined (`-O1 -g0`, asan+ubsan) | 19,080 | 273 s |
 | `vm.c` after the Array/Hash/String and Int/Float blocks were outlined too | 19,145 | 227 s |
+| `vm.c` once `run_chunk` moved to its own file | 13,053 | **6 s** |
+| `vm_run_chunk.c` (`run_chunk`, `collection_invoke_fast` and the preamble) | 5,639 | 205 s |
 
-So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file, before the `INVOKE_TYPED` blocks were outlined; 5,521 lines now).
-The other 16,700 lines compile in seconds. Splitting `vm.c` into files therefore cannot shorten a
-full instrumented build, but it does decide how much a change *outside* `run_chunk` costs: an edit
-to anything left in the same translation unit still pays for `run_chunk`.
+So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file,
+before the `INVOKE_TYPED` blocks were outlined; 5,521 lines now). Splitting `vm.c` cannot shorten a
+full instrumented build, which still compiles `run_chunk` once, but it decides how much a change
+*outside* `run_chunk` costs. With `run_chunk` in `vm_run_chunk.c`, an edit to the rest of the runtime
+recompiles a 6-second file, and an edit to `run_chunk` recompiles only the 205-second one.
+A change to `vm_internal.h` still recompiles both.
 
 Under gcc at `-O0` the whole file takes about 7 s, and at `-O3` about 34 s, so this is a
 sanitizer-build problem.
@@ -55,7 +59,8 @@ cache fall through to the helper). With it `array_ops` is 2% below its pre-outli
 ## What has been split out
 
 Code moves into its own file only when the interpreter reaches it through out-of-line helpers, so
-that the move cannot change what the compiler inlines into `run_chunk`. 123 `*_helper` functions
+that the move cannot change what the compiler inlines into `run_chunk` (`run_chunk` itself is the
+exception, below). 123 `*_helper` functions
 (6,802 lines) were already out of line on purpose, to keep `run_chunk`'s stack frame small.
 
 | file | contents |
@@ -68,10 +73,31 @@ that the move cannot change what the compiler inlines into `run_chunk`. 123 `*_h
 | `vm_database.c` | the SQLite, PostgreSQL and MySQL drivers |
 | `vm_process_io.c` | process spawning and file natives |
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution |
+| `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
 
 What a file needs from `vm.c` is declared in `src/vm_internal.h`. It is not the embedding API, and its
 symbols are hidden. Each cluster needed only 3 to 9 shared primitives (`allocate_string`,
 `allocate_array`, `allocate_hash`, `array_push`, `builder_append`, ...).
+
+## `run_chunk`'s own file
+
+`src/vm_run_chunk.c` holds `run_chunk` and `collection_invoke_fast`. What it needs from `vm.c` is in
+`src/vm_internal.h`: the frame, thread, supervisor and unwinding types, a prototype for each of the
+roughly 120 functions it calls that `vm.c` defines (the `static` is removed from those definitions),
+the four tables and counters it reads, and the small functions it inlined before. Those are
+`static inline` in the header: `is_truthy`, `is_int_value`, `class_is_a`, `lookup_singleton_method`,
+`cached_extension_lookup`, `allocate_closure`, `allocate_cell`, `gc_unprotect`, `value_is_bignum`
+and a few more. They are the ones a baseline binary's `run_chunk` never called out of line. A
+`#define` that only exists inside `vm.c` is invisible to the new file: `DIAMOND_ASAN_FIBERS` was one,
+and without it the ASan fiber-switch annotations silently disappeared from the resume path.
+
+What the split costs at run time is cross-unit inlining and interprocedural register allocation.
+`run_chunk` is the only file that loses them, and a plain `-O3` build executes about 3% more
+instructions (1.5% more cycles, geometric mean over `bench/`, up to 6% on
+`jit_native_collection_reads`) than the one-file build. The release build therefore links with
+`-flto` (`LTO_FLAGS` in the Makefile): instructions are then within 0.1% of the one-file build and
+cycles 1% below it. The sanitizer and debug builds do not use it. Neither does the AOT runtime
+archive, which `diamond build` links at `-O2`.
 
 ## How a move is done
 
