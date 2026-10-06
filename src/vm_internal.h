@@ -17,6 +17,40 @@
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
 
+/* Types shared by the files split out of vm.c. */
+/* A growable byte buffer for regexp_replace_helper's own output, the only
+ * place in this file that needs to build a string of unknown final length
+ * incrementally rather than in one allocate_string call. */
+typedef struct ByteBuffer {
+    char *data;
+    size_t length;
+    size_t capacity;
+} ByteBuffer;
+
+/* Set on a StringBuilder by stringify_value so builder_format_value can
+ * call a user-defined to_s on instances nested in an Array or Hash. Without
+ * one (every other caller), nested instances print as #<ClassName>. */
+typedef struct FormatContext {
+    DiamondVm *vm;
+    const DiamondChunk *chunk;
+    size_t depth;
+    /* Why formatting stopped, when builder_format_value returns false. */
+    DiamondVmStatus status;
+} FormatContext;
+
+typedef struct StringBuilder {
+    char *chars;
+    size_t length;
+    size_t capacity;
+    const DiamondObject *active[32];
+    size_t active_count;
+    FormatContext *format_context;
+    /* inspect() rather than to_s(): Strings are quoted and escaped, Symbols
+     * keep their colon, and an Instance without its own inspect shows its
+     * fields, so `["a", "b"]` and `["a, b"]` no longer print alike. */
+    bool inspect;
+} StringBuilder;
+
 /* Allocation and shared primitives that stay in vm.c (the garbage collector lives there). */
 DIAMOND_INTERNAL DiamondString *allocate_string(DiamondVm *vm, const char *chars, size_t length);
 DIAMOND_INTERNAL bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
@@ -48,5 +82,20 @@ DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
 DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
 DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
+
+/* vm_regexp.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL DiamondVmStatus regexp_match_helper(DiamondVm *vm, const DiamondRegexp *regexp, const DiamondString *subject, bool test_only, DiamondValue *registers, uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern, int64_t options, DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus regexp_replace_block_helper(DiamondVm *vm, const DiamondChunk *chunk,size_t depth,const DiamondRegexp *regexp, const DiamondString *subject,const DiamondClosure *block, bool replace_all,DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus regexp_replace_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,const DiamondString *replacement, bool replace_all,DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,DiamondValue *registers,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus regexp_split_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,DiamondValue *registers,uint16_t dest);
+
+/* Shared primitives that stay in vm.c (needed by vm_regexp.c) */
+DIAMOND_INTERNAL bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count);
+DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk, const DiamondFunction *fn,const DiamondClosure *called, const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth, DiamondValue *result);
+DIAMOND_INTERNAL bool gc_protect(DiamondVm *vm, DiamondValue value);
+DIAMOND_INTERNAL void gc_unprotect(DiamondVm *vm, size_t saved_count);
+DIAMOND_INTERNAL DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value, DiamondValue *out);
 
 #endif
