@@ -14,8 +14,18 @@
 
 #include "vm.h"
 #include "compiler.h"
+#include <time.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
+
+enum { TIME_BEGINNING_OF_DAY,TIME_END_OF_DAY,TIME_BEGINNING_OF_MONTH,
+    TIME_END_OF_MONTH,TIME_BEGINNING_OF_WEEK,TIME_END_OF_WEEK,
+    TIME_BEGINNING_OF_YEAR,TIME_END_OF_YEAR,TIME_BEGINNING_OF_QUARTER,
+    TIME_END_OF_QUARTER };
+
+enum { TIME_SHIFT_DAYS,TIME_SHIFT_WEEKS,TIME_SHIFT_MONTHS,TIME_SHIFT_YEARS };
+
+enum { DIAMOND_TIME_LOCAL,DIAMOND_TIME_UTC,DIAMOND_TIME_FIXED_OFFSET };
 
 /* Types shared by the files split out of vm.c. */
 typedef struct GrowBuffer {
@@ -184,5 +194,27 @@ DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,siz
     grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
 DIAMOND_INTERNAL bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key, DiamondValue value);
 DIAMOND_INTERNAL bool value_is_bignum(DiamondValue value);
+
+/* vm_time.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value, DiamondValue *out_result);
+DIAMOND_INTERNAL DiamondVmStatus time_build_helper(DiamondVm *vm,const DiamondValue *arguments, uint8_t mode,DiamondValue *out_result);
+DIAMOND_INTERNAL bool time_comparison_fallback(DiamondValue left_value,DiamondValue right_value, DiamondOpCode opcode,DiamondValue *out_result);
+DIAMOND_INTERNAL DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target, const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base, uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus time_now_helper(DiamondVm *vm,bool utc,DiamondValue *out_result);
+DIAMOND_INTERNAL DiamondVmStatus time_parse_helper(DiamondVm *vm,DiamondValue input, DiamondValue *out_result);
+DIAMOND_INTERNAL DiamondVmStatus time_relative_now_helper(DiamondVm *vm,DiamondValue duration_value, bool future,DiamondValue *out_result);
+DIAMOND_INTERNAL bool time_struct_tm(const DiamondTime *target,struct tm *out);
+DIAMOND_INTERNAL DiamondVmStatus time_subtract_fallback(DiamondVm *vm, DiamondValue left_value,DiamondValue right_value,DiamondValue *out_result);
+
+/* Shared primitives that stay in vm.c (needed by vm_time.c) */
+DIAMOND_INTERNAL DiamondTime *allocate_time(DiamondVm *vm,double epoch,uint8_t zone_mode, int32_t utc_offset);
+DIAMOND_INTERNAL int days_in_calendar_month(int year,int month);
+DIAMOND_INTERNAL bool format_time_default(const DiamondTime *target,StringBuilder *builder);
+DIAMOND_INTERNAL bool format_time_iso8601(const DiamondTime *target,int precision, StringBuilder *builder);
+DIAMOND_INTERNAL int parse_decimal_digits(const char *chars,size_t start,size_t count);
+DIAMOND_INTERNAL bool parse_time_utc_offset(const DiamondString *string,int32_t *out_offset);
+DIAMOND_INTERNAL bool parse_time_utc_offset_chars(const char *chars,size_t length, int32_t *out_offset);
+DIAMOND_INTERNAL char *substitute_fixed_offset_z(const char *format,int64_t offset);
+DIAMOND_INTERNAL int64_t weekday_calendar_distance(int wday,int64_t count,bool future);
 
 #endif
