@@ -298,17 +298,16 @@ module Arel
     def render(query) -> Array
       previous_query = @query
       begin
-      visitor = self
       params = []
       sql = self.render_ctes(query, params)
       @query = query
       projections = query.projections().map() do |projection|
-        visitor.render_expression(projection, params)
+        self.render_expression(projection, params)
       end
       table_sql = self.render_source(query, params)
       if query.joins().length() > 0
         query.joins().each() do |join|
-          table_sql += " " + visitor.render_join(join, params)
+          table_sql += " " + self.render_join(join, params)
         end
       end
       sql = sql + "SELECT "
@@ -318,7 +317,7 @@ module Arel
       sql = sql + projections.join(", ") + " FROM #{table_sql}"
 
       predicates = query.predicates().map() do |predicate|
-        visitor.render_expression(predicate, params)
+        self.render_expression(predicate, params)
       end
       if predicates.length() > 0
         sql = sql + " WHERE " + predicates.join(" AND ")
@@ -326,21 +325,21 @@ module Arel
 
       if query.groups().length() > 0
         groups = query.groups().map() do |group|
-          visitor.render_expression(group, params)
+          self.render_expression(group, params)
         end
         sql = sql + " GROUP BY " + groups.join(", ")
       end
 
       if query.havings().length() > 0
         havings = query.havings().map() do |having|
-          visitor.render_expression(having, params)
+          self.render_expression(having, params)
         end
         sql = sql + " HAVING " + havings.join(" AND ")
       end
 
       if query.orderings().length() > 0
         orderings = query.orderings().map() do |ordering|
-          visitor.render_expression(ordering, params)
+          self.render_expression(ordering, params)
         end
         sql = sql + " ORDER BY " + orderings.join(", ")
       end
@@ -365,13 +364,8 @@ module Arel
       if expressions.length() > 0
         self.require_extension("returning clauses")
       end
-      # `self` inside a `do...end` block doesn't resolve to this method's
-      # own receiver (see `render`'s own `visitor = self` above, the
-      # established workaround throughout this file) -- captured into a
-      # local first.
-      visitor = self
       rendered = expressions.map() do |expression|
-        visitor.render_expression(expression, params)
+        self.render_expression(expression, params)
       end
       if rendered.length() == 0
         ""

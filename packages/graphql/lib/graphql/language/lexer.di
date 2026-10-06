@@ -161,12 +161,63 @@ module GraphQL
         end
       end
 
+      # [decoded_text, next_pos] -- the \uXXXX escape whose `u` is at `pos`
+      # (and, for a high surrogate, the \uXXXX low surrogate that must follow
+      # it), re-encoded as UTF-8. next_pos is the index of the last hex digit
+      # consumed, matching what scan_quoted_string's own `pos += 1` expects
+      # after every other escape.
+      def self.scan_unicode_escape(source, pos, line)
+        first = self.read_hex4(source, pos + 1, line)
+        last = pos + 4
+        code = first
+        if first >= 0xD800 && first <= 0xDBFF
+          if source.slice(last + 1, 2) != "\\u"
+            raise LexError.new("unpaired surrogate in \\u#{source.slice(pos + 1, 4)}", line)
+          end
+          second = self.read_hex4(source, last + 3, line)
+          if second < 0xDC00 || second > 0xDFFF
+            raise LexError.new("unpaired surrogate in \\u#{source.slice(pos + 1, 4)}", line)
+          end
+          code = 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00)
+          last = last + 6
+        elsif first >= 0xDC00 && first <= 0xDFFF
+          raise LexError.new("unpaired surrogate in \\u#{source.slice(pos + 1, 4)}", line)
+        end
+        [self.utf8_encode(code), last]
+      end
+
+      def self.read_hex4(source, start, line)
+        digits = source.slice(start, 4)
+        if digits == nil || digits.length() != 4
+          raise LexError.new("invalid unicode escape", line)
+        end
+        index = 0
+        while index < 4
+          unless "0123456789abcdefABCDEF".include?(digits[index])
+            raise LexError.new("invalid unicode escape \\u#{digits}", line)
+          end
+          index += 1
+        end
+        digits.to_i(16)
+      end
+
+      def self.utf8_encode(code)
+        if code < 0x80
+          chr(code)
+        elsif code < 0x800
+          chr(0xC0 | (code >> 6)) + chr(0x80 | (code & 0x3F))
+        elsif code < 0x10000
+          chr(0xE0 | (code >> 12)) + chr(0x80 | ((code >> 6) & 0x3F)) + chr(0x80 | (code & 0x3F))
+        else
+          chr(0xF0 | (code >> 18)) + chr(0x80 | ((code >> 12) & 0x3F)) +
+            chr(0x80 | ((code >> 6) & 0x3F)) + chr(0x80 | (code & 0x3F))
+        end
+      end
+
       # [decoded_text, next_pos] -- a single-line quoted string. Supports
-      # the common escapes (\" \\ \/ \n \r \t); \b, \f, and \uXXXX raise a
-      # LexError for v1 (no codepoint-to-character conversion available to
-      # decode \uXXXX into a real Diamond String, and \b/\f aren't legal
-      # Diamond string-literal escapes to build with either -- see
-      # ROADMAP.md).
+      # every escape the GraphQL spec defines: \" \\ \/ \b \f \n \r \t and
+      # \uXXXX (a surrogate pair written as two \uXXXX escapes decodes to
+      # one character; a lone surrogate raises a LexError).
       def self.scan_quoted_string(source, start, line)
         length = source.length()
         pos = start + 1
@@ -199,6 +250,14 @@ module GraphQL
               sb.append("\r")
             elsif esc == "t"
               sb.append("\t")
+            elsif esc == "b"
+              sb.append(chr(8))
+            elsif esc == "f"
+              sb.append(chr(12))
+            elsif esc == "u"
+              decoded = self.scan_unicode_escape(source, pos, line)
+              sb.append(decoded[0])
+              pos = decoded[1]
             else
               raise LexError.new("unsupported escape sequence \\#{esc}", line)
             end
