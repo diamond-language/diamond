@@ -93,7 +93,8 @@ concrete driving need.
 Independent of `--sandbox`/`DIAMOND_SANDBOX` -- these bound *how much* a program can
 do, not *what kind* of thing it can do, so they're useful on their own (e.g. safely
 executing an untrusted or fuzzer-mutated program that never touches the filesystem or
-network at all) and combine naturally with `--sandbox` for defense in depth:
+network at all) and combine naturally with `--sandbox` for defense in depth (see below for what they do not
+guarantee against code that rescues them):
 
 ```sh
 DIAMOND_MAX_INSTRUCTIONS=1000000 diamond untrusted.di
@@ -123,10 +124,27 @@ end
 ```
 
 Each of the three is independently opt-in (unset = unlimited); all can be combined.
-Once any one of them fires, it *stays* fired for the rest of that VM's run -- the
-budget concept is "you get to find out once, and get one chance to react," not a
-signal that keeps re-arming and re-interrupting the very `rescue`/cleanup code meant
-to handle it.
+The instruction and wall-clock budgets fire **once**: when one is exceeded, both are
+switched off for the rest of that VM's run -- the budget concept is "you get to find out
+once, and get one chance to react," not a signal that keeps re-arming and re-interrupting
+the very `rescue`/cleanup code meant to handle it.
+
+**Consequence: these budgets stop runaway code, not hostile code.** A program that
+rescues `ResourceLimitError` and carries on is no longer bounded at all:
+
+```ruby
+begin
+  loop { }                      # fires at DIAMOND_MAX_INSTRUCTIONS
+rescue error: ResourceLimitError
+  nil
+end
+50_000_000.times { }            # runs with no limit
+```
+
+With `DIAMOND_MAX_INSTRUCTIONS=1000000`, that second loop runs to completion. Use the
+budgets to cap an honest program that loops by mistake. To contain code you do not trust,
+also bound it from outside the process (a timeout, a cgroup, or killing it), and keep it
+under `--sandbox`.
 
 **What's not covered**:
 

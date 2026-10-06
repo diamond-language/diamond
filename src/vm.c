@@ -6380,7 +6380,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         function->arity=(uint8_t)arity_value;
         function->required_arity=(uint8_t)required_value;
         function->return_type_set=DIAMOND_NO_TYPE_SET;
-        for(size_t index=0;index<16;index++)
+        for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
             function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
         const int64_t new_index=(int64_t)built->function_count-1;
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
@@ -7463,7 +7463,7 @@ static DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 set->members[member].callable_parameter_sets[index]=DIAMOND_NO_TYPE_SET;
             for(size_t index=0;index<callable_parameters->count;index++)
                 set->members[member].callable_parameter_sets[index]=
-                    (uint8_t)callable_parameters->values[index].as.integer;
+                    (uint16_t)callable_parameters->values[index].as.integer;
         }
         *result=DIAMOND_INT(new_index);return DIAMOND_VM_OK;
     }
@@ -18296,7 +18296,12 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
          * (type_variable_count==0, essentially every non-generic call)
          * never reads `execution`, so skip the 168-byte struct copy. */
         execution=*chunk;
+        /* parameter_type_sets holds one entry per declared parameter, at most
+         * DIAMOND_MAX_DECLARED_PARAMETERS. The argument count is not bounded by
+         * that (a spread call can supply any number, and the arity check comes
+         * after this loop), so bound the index by the array, not the call. */
         for(size_t parameter=0;
+            parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&
             parameter+chunk->parameter_offset<argument_count;parameter++) {
             if(arguments[parameter+chunk->parameter_offset].kind==
                DIAMOND_VALUE_UNDEFINED)continue;
