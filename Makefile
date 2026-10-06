@@ -230,7 +230,7 @@ all: debug
 debug: CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_DEBUG)
 debug: $(TARGET) $(BUILD_DIR)/run_cases
 
-# sanitize/tsan/release each need a real `clean` before they build --
+# sanitize/tsan/release each need a `clean-variant` (below) before they build --
 # switching CFLAGS between variants (debug/sanitize/tsan/release) on the
 # same build/%.o paths means a stale object from a *different* variant
 # could otherwise get silently relinked instead of rebuilt. Listing
@@ -238,30 +238,38 @@ debug: $(TARGET) $(BUILD_DIR)/run_cases
 # these three used to) does NOT guarantee that ordering under `-j`:
 # make's parallel scheduler is free to run sibling prerequisites of the
 # same target concurrently whenever nothing in the dependency graph
-# orders one before another, so `rm -rf $(BUILD_DIR)` could -- and,
+# orders one before another, so removing the objects could -- and,
 # confirmed directly under `-j$(nproc)`, did -- run concurrently with
 # gcc already compiling into that same directory (surfacing as spurious
 # "No such file or directory" on files gcc had only just finished
-# writing). A synchronous `$(MAKE) clean` in the recipe body, followed
+# writing). A synchronous `$(MAKE) clean-variant` in the recipe body, followed
 # by a second $(MAKE) for the actual build, forces `clean` to fully
 # finish first while still letting that second invocation parallelize
 # its own compile steps under -j exactly as before (a recursive
 # $(MAKE) shares the parent's jobserver, same as $(REGINOLD_LIB)'s own
 # recipe above already relies on).
 sanitize:
-	$(MAKE) clean
+	$(MAKE) clean-variant
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_SANITIZE)" LDFLAGS="$(LDFLAGS_SANITIZE)"
 
 tsan:
-	$(MAKE) clean
+	$(MAKE) clean-variant
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_TSAN)" LDFLAGS="$(LDFLAGS_TSAN)"
 
 release:
-	$(MAKE) clean
+	$(MAKE) clean-variant
 	$(MAKE) $(TARGET) $(BUILD_DIR)/run_cases \
 		CFLAGS="$(CFLAGS_COMMON) $(CFLAGS_RELEASE)"
+
+# What a variant switch must discard: the objects and binaries built with $(CFLAGS), which the
+# variants change. Not the whole $(BUILD_DIR): the tool objects in $(DBG_OBJ_DIR) and the fuzzer
+# objects in $(FUZZ_OBJ_DIR) are built with fixed flags whatever the variant, so they stay valid
+# (a clean instrumented compile of vm.c is minutes).
+.PHONY: clean-variant
+clean-variant:
+	rm -f $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(TARGET) $(BUILD_DIR)/run_cases
 
 $(REGINOLD_LIB):
 	$(MAKE) -C $(REGINOLD_DIR) libreginold.a
@@ -344,14 +352,32 @@ API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 PRELUDE_BIN := $(BUILD_DIR)/compiled_prelude.bin
 GEN_PRELUDE_SOURCES := $(filter-out src/compiled_prelude_data.c src/run_source.c,$(API_SOURCES))
 
+# Every tool and test binary below (gen_compiled_prelude, facet, the LSP and DAP servers, the
+# API and fiber tests, ...) links the same sources compiled with the same debug flags. They used
+# to recompile all of src/*.c, vm.c above all, in each one's own command; now the sources are
+# compiled once into $(DBG_OBJ_DIR) and each binary only compiles its own file and links.
+# Independent of which variant ($(TARGET)'s own flags) is active, because these binaries always
+# used the debug flags. No -DDIAMOND_BUILD_ID, as before: only $(TARGET)'s own
+# compiled_prelude.o carries it.
+DBG_OBJ_DIR := $(BUILD_DIR)/dbg
+API_DBG_OBJECTS := $(API_SOURCES:src/%.c=$(DBG_OBJ_DIR)/%.o)
+GEN_DBG_OBJECTS := $(GEN_PRELUDE_SOURCES:src/%.c=$(DBG_OBJ_DIR)/%.o)
+
+$(DBG_OBJ_DIR)/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) -MMD -MP -c $< -o $@
+
+# Same reason as $(BUILD_DIR)/compiled_prelude_data.o's own line below.
+$(DBG_OBJ_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
 # The prelude sources too (lib/core.di and lib/core/*.di): src/prelude.c
 # #embeds them, and this generator compiles the sources directly, so no .d
 # file records that dependency. Without it, editing the prelude left
 # compiled_prelude.bin -- the prelude bytecode every diamond binary
 # actually runs -- stale.
-$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_PRELUDE_SOURCES) $(PRELUDE_SOURCES) $(REGINOLD_LIB)
+$(BUILD_DIR)/gen_compiled_prelude: tools/gen_compiled_prelude.c $(GEN_DBG_OBJECTS) $(PRELUDE_SOURCES) $(REGINOLD_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_PRELUDE_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(GEN_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 $(PRELUDE_BIN): $(BUILD_DIR)/gen_compiled_prelude
 	$(BUILD_DIR)/gen_compiled_prelude $@
@@ -381,20 +407,25 @@ $(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
 # "compiled_prelude.bin: No such file or directory" on an otherwise
 # clean build -- reproduced directly under `-j$(nproc)`, gone once this
 # rule moved below the real definition).
-$(BUILD_DIR)/run_cases: tests/run_cases.c $(SOURCES) $(PRELUDE_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_SOURCES) $< $(LDFLAGS) $(LDLIBS) -o $@
+# Links the same objects $(TARGET) does (minus main.o and repl.o, as $(API_SOURCES) excludes
+# them), built with the same variant flags, instead of recompiling every source in this command:
+# under the sanitizer variant that was a second multi-minute compile of vm.c.
+API_OBJECTS := $(filter-out $(BUILD_DIR)/main.o $(BUILD_DIR)/repl.o,$(OBJECTS))
 
-$(BUILD_DIR)/compiled_prelude_test: tests/compiled_prelude_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/run_cases: tests/run_cases.c $(API_OBJECTS) $(PRELUDE_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(API_OBJECTS) $< $(LDFLAGS) $(LDLIBS) -o $@
+
+$(BUILD_DIR)/compiled_prelude_test: tests/compiled_prelude_test.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 test-compiled-prelude: $(BUILD_DIR)/compiled_prelude_test
 	$(BUILD_DIR)/compiled_prelude_test
 
-$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/api_invalidation: tests/api_invalidation.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 test-api: $(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/api_invalidation
@@ -411,24 +442,24 @@ $(BUILD_DIR)/semver_test: tests/semver_test.c tools/semver.c tools/semver.h
 test-semver: $(BUILD_DIR)/semver_test
 	$(BUILD_DIR)/semver_test
 
-$(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 test-incremental-compile: $(BUILD_DIR)/incremental_compile_test
 	$(BUILD_DIR)/incremental_compile_test
 
-$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/fiber_states: tests/fiber_states.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 test-fibers: $(BUILD_DIR)/fiber_states
 	$(BUILD_DIR)/fiber_states
 
 $(BUILD_DIR)/repl_completion_test: tests/repl_completion_test.c src/repl.c \
-		$(API_SOURCES) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+		$(API_DBG_OBJECTS) $(REPL_COMPLETION_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/repl.c $(API_SOURCES) \
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) src/repl.c $(API_DBG_OBJECTS) \
 		$(REPL_COMPLETION_SOURCES) $< $(LDLIBS) -o $@
 
 test-repl-completion: $(BUILD_DIR)/repl_completion_test
@@ -438,9 +469,9 @@ test-fiber-guards: test-fibers
 
 test-fiber-context: test-fibers
 
-$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/fiber_run: tests/fiber_run.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
 
 test-fiber-run: $(BUILD_DIR)/fiber_run
 	$(BUILD_DIR)/fiber_run
@@ -463,9 +494,9 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-$(BUILD_DIR)/facet: tools/facet.c tools/semver.c tools/semver.h $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/facet: tools/facet.c tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) tools/semver.c $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) tools/semver.c $< $(LDLIBS) -o $@
 
 facet: $(BUILD_DIR)/facet
 
@@ -563,16 +594,16 @@ test-pheint-application: $(TARGET)
 
 LSP_SOURCES := $(wildcard lsp/*.c)
 
-$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/diamond-lsp: $(LSP_SOURCES) $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(LSP_SOURCES) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $(LSP_SOURCES) $(LDLIBS) -o $@
 
 lsp: $(BUILD_DIR)/diamond-lsp
 
 $(BUILD_DIR)/receiver_test: tests/receiver_test.c lsp/receiver.c lsp/compile_buffer.c \
-		$(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+		$(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) \
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) \
 		lsp/receiver.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
 
 test-receiver: $(BUILD_DIR)/receiver_test
@@ -591,9 +622,9 @@ DAP_SOURCES := $(wildcard dap/*.c)
 # main() (which would collide with this binary's own).
 DAP_JSON_SOURCES := lsp/json.c lsp/rpc.c
 
-$(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_SOURCES) $(DAP_JSON_SOURCES) $(DAP_SOURCES) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $(DAP_JSON_SOURCES) $(DAP_SOURCES) $(LDLIBS) -o $@
 
 dap: $(BUILD_DIR)/diamond-dap
 
@@ -722,13 +753,32 @@ test-cache: debug
 	# turns caching back on for this one recipe.
 	env -u DIAMOND_NO_CACHE bash tests/cache_test.sh
 
-$(BUILD_DIR)/compile_fuzzer: fuzz/compile_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
-	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
+# Both fuzzers link the same instrumented copy of the sources. Compiling them once into
+# $(FUZZ_OBJ_DIR) means a change to a harness recompiles only that file: under clang's
+# ASan+UBSan, vm.c alone takes about six minutes, and it used to be compiled again for every
+# harness edit and once per harness. -fsanitize=fuzzer-no-link instruments the objects exactly as
+# -fsanitize=fuzzer does; only the link step pulls in libFuzzer's main.
+FUZZ_OBJ_DIR := $(BUILD_DIR)/fuzz
+FUZZ_OBJECTS := $(API_SOURCES:src/%.c=$(FUZZ_OBJ_DIR)/%.o)
+FUZZ_COMPILE_FLAGS := $(subst -fsanitize=fuzzer,-fsanitize=fuzzer-no-link,$(CFLAGS_FUZZ))
+FUZZ_LIBS := -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz
 
-$(BUILD_DIR)/execute_fuzzer: fuzz/execute_fuzzer.c $(API_SOURCES) $(REGINOLD_LIB) | $(PRELUDE_BIN)
-	@mkdir -p $(BUILD_DIR)
-	$(CC_FUZZ) $(CPPFLAGS) $(CFLAGS_FUZZ) $(API_SOURCES) $< -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb -ldl -lpthread -lssl -lcrypto -lcrypt -lz -o $@
+$(FUZZ_OBJ_DIR)/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC_FUZZ) $(CPPFLAGS) $(FUZZ_COMPILE_FLAGS) -MMD -MP -c $< -o $@
+
+$(FUZZ_OBJ_DIR)/%.o: fuzz/%.c
+	@mkdir -p $(@D)
+	$(CC_FUZZ) $(CPPFLAGS) $(FUZZ_COMPILE_FLAGS) -MMD -MP -c $< -o $@
+
+# Same reason as $(BUILD_DIR)/compiled_prelude_data.o's own line.
+$(FUZZ_OBJ_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+$(BUILD_DIR)/compile_fuzzer: $(FUZZ_OBJ_DIR)/compile_fuzzer.o $(FUZZ_OBJECTS) $(REGINOLD_LIB)
+	$(CC_FUZZ) $(CFLAGS_FUZZ) $(FUZZ_OBJECTS) $< $(FUZZ_LIBS) -o $@
+
+$(BUILD_DIR)/execute_fuzzer: $(FUZZ_OBJ_DIR)/execute_fuzzer.o $(FUZZ_OBJECTS) $(REGINOLD_LIB)
+	$(CC_FUZZ) $(CFLAGS_FUZZ) $(FUZZ_OBJECTS) $< $(FUZZ_LIBS) -o $@
 
 fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 
@@ -844,4 +894,4 @@ test-integration:
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(DEPS) $(AOT_RUNTIME_OBJECTS:.o=.d)
+-include $(DEPS) $(AOT_RUNTIME_OBJECTS:.o=.d) $(API_DBG_OBJECTS:.o=.d) $(FUZZ_OBJECTS:.o=.d) $(FUZZ_OBJ_DIR)/compile_fuzzer.d $(FUZZ_OBJ_DIR)/execute_fuzzer.d

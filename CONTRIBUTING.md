@@ -69,6 +69,14 @@ make tsan       # ThreadSanitizer
 make lsp        # build/diamond-lsp
 ```
 
+`sanitize`, `tsan` and `release` rebuild `build/diamond` and `build/run_cases` with their own flags,
+so switching between them (and back to `debug`) recompiles those. The tools (`facet`, the LSP and
+DAP servers, the API and fiber tests) share one set of debug objects in `build/dbg/`, and the two
+fuzzers share one instrumented set in `build/fuzz/`; a variant switch leaves both alone. Under
+clang's ASan+UBSan `vm.c` takes about six minutes to compile, so the first `make fuzz` is slow,
+but a later edit to a harness (or to any file but `vm.c`) rebuilds in seconds. `make clean` removes
+everything.
+
 Test targets, from fastest/narrowest to slowest/broadest:
 
 ```sh
