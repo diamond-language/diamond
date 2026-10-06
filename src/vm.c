@@ -124,70 +124,6 @@ static void diamond_resume_target_bounds(const DiamondFiber *fiber,
 }
 #endif
 
-/* Each run_chunk activation unconditionally allocates DiamondValue
- * registers[256] (4KB), DiamondTypeBinding bindings[8] (~3.2KB), and
- * UnwindHandler handlers[16] (~0.5KB) as C-stack locals, regardless of the
- * called function's actual complexity. Measured against this machine's
- * default 8MB stack, real (non-instrumented) recursion segfaults around
- * depth ~210-220 in a debug (-O0) build and ~150-160 under AddressSanitizer's
- * redzone-inflated frames -- both well below the depth this counter used to
- * allow, so the guard never had a chance to trip before the native stack
- * actually overflowed.
- *
- * Recalibrated 100 -> 95 when adding native Time support: `-fstack-usage`
- * showed only ~240 bytes of *reported* growth from the new opcodes/
- * arithmetic-and-comparison fallback branches, but that was enough to
- * flip `depth(5000)` (tests/run.sh) from a clean guard trip to a real
- * ASan stack-overflow -- exactly the redzone-per-named-local amplification
- * the READ_SHORT incident just below already documents, not a byte-count
- * story. Empirically, every value from 91 through 99 passed cleanly
- * against the post-Time frame size (100 was the only one that didn't).
- *
- * Recalibrated 95 -> 92 (2026-09-27) when Ubuntu 26.04's own apt-packaged
- * GCC moved to 15.2.0: at 95, a plain `make release` (-O3, no
- * instrumentation at all) segfaulted on `depth(5000)` under that specific
- * compiler -- this project's own GCC (Fedora, 16.2.1) still passed at 95,
- * so this was invisible until CI's `ubuntu:26.04` image actually ran it
- * (found via a local Docker container matching that image and toolchain
- * exactly, not a hunch). The safe window this time was only {92, 93} --
- * confirmed against `main` at the commit before this recalibration too,
- * so this was newly exposed by the toolchain, not by anything this
- * project changed -- much narrower than the 91-99 window above, so
- * there is very little margin left for the next opcode/local addition to
- * this function; a future recalibration may need to shrink run_chunk's
- * own stack footprint directly rather than only retuning this constant
- * again. 92 sits at the low end of that narrow window rather than the
- * middle, since a smaller value only ever makes a real overflow *less*
- * likely to be reached before this guard trips -- the one thing that
- * must still hold is `legacy_0091.di`'s own `depth(90)` succeeding (a
- * hard floor, confirmed at 92). If a future change reopens this margin
- * again, re-run the same empirical sweep -- across every build variant
- * this project ships (debug, release, sanitize, and a container image
- * matching whatever CI target regressed), not just the one you're
- * sitting at -- rebuild at a range of candidate values, check
- * `depth(5000)` at each, rather than guessing.
- *
- * run_chunk's own `registers` array (below) stays a fixed
- * DIAMOND_INLINE_REGISTER_COUNT-wide C-stack array, at the same 256 this
- * comment's own measurement was taken against, rather than a VLA sized to
- * DIAMOND_REGISTER_COUNT (4096, see vm.h) -- a function whose
- * live_register_count exceeds it (rare -- see DIAMOND_REGISTER_COUNT's
- * own comment) heap-allocates instead, which doesn't consume C stack at
- * all and so can't affect this depth calibration regardless of how large
- * it gets. That register-count widening's first pass also nearly broke
- * this guard for a completely different reason, worth remembering: the
- * new READ_SHORT (below) originally declared its own `high_`/`low_`
- * uint8_t locals to assemble each 16-bit operand, and with ~90 opcodes
- * now reading 1-4 such operands apiece, that put several hundred extra
- * named locals into this one function -- at -O0, under ASan, each got
- * its own padded/redzoned stack slot, which dwarfed the cost of the
- * registers array itself (shrinking it 256->64 barely moved the
- * measured crash depth) and pushed the real crash below depth 90,
- * *under* this very call-depth guard, silently defeating it exactly
- * like an oversized array would have. Rewriting READ_SHORT to read
- * straight out of chunk->code[] into `target_` without any named
- * intermediate restored the original margin. */
-enum { DIAMOND_MAX_CALL_DEPTH = 92 };
 enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
 
 /* How often run_chunk's own dispatch loop actually calls clock_gettime to
@@ -700,7 +636,7 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk, DiamondVm *vm,
                                  size_t argument_count, size_t depth,
                                  const DiamondClosure *closure,
                                  DiamondValue *result);
-static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
+bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value);
 bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 bool numeric_as_double(DiamondValue value, double *out);
@@ -2142,7 +2078,7 @@ DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values,
     return array;
 }
 
-static DiamondHash *allocate_hash(DiamondVm *vm) {
+DiamondHash *allocate_hash(DiamondVm *vm) {
     if (!maybe_collect(vm)) return nullptr;
     DiamondHash *hash=malloc(sizeof(DiamondHash)); if(hash==nullptr)return nullptr;
     *hash=(DiamondHash){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_HASH}};
@@ -4072,13 +4008,7 @@ static bool is_valid_method_name(const char *chars,size_t length) {
     return is_valid_identifier(chars,length);
 }
 
-typedef struct GrowBuffer {
-    char *data;
-    size_t length;
-    size_t capacity;
-} GrowBuffer;
-
-static bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length) {
+bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length) {
     if(buffer->length+text_length+1>buffer->capacity) {
         size_t new_capacity=buffer->capacity==0?256:buffer->capacity;
         while(new_capacity<buffer->length+text_length+1)new_capacity*=2;
@@ -4091,9 +4021,6 @@ static bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_l
     buffer->data[buffer->length]='\0';
     return true;
 }
-
-#define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
-    grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
 
 /* Synthesizes "class <Name>\n  attr_accessor <fields>\n  def <method_name>
  * (<params>)\n<body_source>\n  end\nend\n" -- the attr_accessor line
@@ -4739,7 +4666,7 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
     return copied;
 }
 
-static bool value_is_bignum(DiamondValue value) {
+bool value_is_bignum(DiamondValue value) {
     return value.kind==DIAMOND_VALUE_OBJECT&&
         value.as.object->kind==DIAMOND_OBJECT_BIGNUM;
 }
@@ -5209,7 +5136,7 @@ static ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
     return -1;
 }
 
-static bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
+bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value) {
     const ptrdiff_t existing=hash_find(hash,key);
     if(existing>=0) {
@@ -8657,7 +8584,7 @@ static void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
     }
 }
 
-static bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
+bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
     if(builder->length+length+1>builder->capacity) {
         size_t capacity=builder->capacity==0?64:builder->capacity;
         while(capacity<builder->length+length+1)capacity*=2;
@@ -8667,434 +8594,6 @@ static bool builder_append(StringBuilder *builder,const char *chars,size_t lengt
     }
     memcpy(builder->chars+builder->length,chars,length);
     builder->length+=length;builder->chars[builder->length]='\0';return true;
-}
-
-/* Native recursive-descent JSON parser (RFC 8259), replacing lib/core/
- * json_codec.di's own pure-Diamond JSONCodec#parse for JSON.parse's hot
- * path -- confirmed directly at ~330ms/MB (interpreted bytecode walking
- * a String one character/method-call at a time) against a real
- * training-corpus-scale dataset (examples/transformer/lib/corpus.di's
- * own comment). Semantics match JSONCodec#parse exactly: same grammar
- * (no leading '+', no rejection of leading zeros -- neither did the
- * version this replaces), same surrogate-pair combining, same result
- * shape (String/Int/Float/Bool/nil/Array/Hash), same JSONError-on-
- * malformed-input contract -- verified against every tests/cases/
- * json_parse_*.di case. Diamond String is a raw byte buffer, not UTF-8-
- * validated (see docs/design.md), so this parses bytes throughout;
- * \uXXXX escapes are the one place UTF-8 encoding happens, matching
- * json_codec.di's own utf8_encode exactly.
- *
- * GC safety: only *containers* (Array/Hash) are ever gc_protect'd, once
- * each, for the life of the whole top-level parse (unprotected together,
- * once, by the String#parse_json call site below) -- a leaf String/Int/
- * Float/Bool/nil value is never protected individually, since every
- * call site that receives one immediately either returns it straight up
- * the recursion (no allocation in between) or pushes/sets it into an
- * already-protected container with no allocation in between (array_push/
- * hash_set's own growth uses realloc, never a GC-tracked allocate_*
- * call, so neither can trigger a collection mid-push/set). The one real
- * exception is an object's own key: it must survive its *value*'s
- * parse, which can allocate arbitrarily many times before returning --
- * json_parse_object roots it as a placeholder entry in the
- * already-protected Hash first (nil needs no protection of its own),
- * the same pattern DIAMOND_OP_IO_POLL's own Hash result and
- * method_missing_helper's own args[]-building already use, overwritten
- * once the real value is ready. */
-typedef struct JsonParser {
-    DiamondVm *vm;
-    const char *source;
-    size_t length;
-    size_t pos;
-    /* Unlike ordinary Diamond-level recursion (run_chunk's own `depth`,
-     * bounded by DIAMOND_MAX_CALL_DEPTH), array/object nesting here
-     * recurses directly in C with no depth accounting at all otherwise
-     * -- a real, not hypothetical, gap for a corpus-loading parser
-     * specifically: deeply nested real-world JSON would crash the whole
-     * process via a genuine C stack overflow instead of raising a clean
-     * SystemStackError the way every other unbounded-recursion path in
-     * this VM already does. Reuses DIAMOND_MAX_CALL_DEPTH itself rather
-     * than a separate constant: this parser's own per-level C stack
-     * frames are smaller than run_chunk's own (no register file, no
-     * opcode dispatch), so the same bound that's already empirically
-     * proven safe there is safe here too. */
-    size_t depth;
-} JsonParser;
-
-static void json_skip_whitespace(JsonParser *parser) {
-    while(parser->pos<parser->length) {
-        const char c=parser->source[parser->pos];
-        if(c!=' '&&c!='\t'&&c!='\n'&&c!='\r')break;
-        parser->pos++;
-    }
-}
-
-static bool json_utf8_append(StringBuilder *builder,int64_t codepoint) {
-    char bytes[4];size_t count;
-    if(codepoint<0x80) {
-        bytes[0]=(char)codepoint;count=1;
-    } else if(codepoint<0x800) {
-        bytes[0]=(char)(0xC0|(codepoint>>6));
-        bytes[1]=(char)(0x80|(codepoint&0x3F));count=2;
-    } else if(codepoint<0x10000) {
-        bytes[0]=(char)(0xE0|(codepoint>>12));
-        bytes[1]=(char)(0x80|((codepoint>>6)&0x3F));
-        bytes[2]=(char)(0x80|(codepoint&0x3F));count=3;
-    } else {
-        bytes[0]=(char)(0xF0|(codepoint>>18));
-        bytes[1]=(char)(0x80|((codepoint>>12)&0x3F));
-        bytes[2]=(char)(0x80|((codepoint>>6)&0x3F));
-        bytes[3]=(char)(0x80|(codepoint&0x3F));count=4;
-    }
-    return builder_append(builder,bytes,count);
-}
-
-static DiamondVmStatus json_hex4(JsonParser *parser,int *out) {
-    if(parser->pos+4>parser->length) {
-        snprintf(parser->vm->error,sizeof parser->vm->error,"truncated unicode escape");
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    int value=0;
-    for(size_t index=0;index<4;index++) {
-        const char ch=parser->source[parser->pos+index];
-        int digit;
-        if(ch>='0'&&ch<='9')digit=ch-'0';
-        else if(ch>='a'&&ch<='f')digit=ch-'a'+10;
-        else if(ch>='A'&&ch<='F')digit=ch-'A'+10;
-        else {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "invalid unicode escape hex digit");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        value=value*16+digit;
-    }
-    parser->pos+=4;
-    *out=value;
-    return DIAMOND_VM_OK;
-}
-
-/* Parser is positioned right after the "\u" of a unicode escape. Appends
- * the decoded UTF-8 bytes to `builder` and advances past the whole
- * escape -- a high surrogate (0xD800-0xDBFF) consumes a second \uXXXX
- * low-surrogate escape too, combined per RFC 8259 into the single
- * codepoint >= 0x10000 the pair represents. */
-static DiamondVmStatus json_unicode_escape(JsonParser *parser,StringBuilder *builder) {
-    int code=0;
-    DiamondVmStatus status=json_hex4(parser,&code);
-    if(status!=DIAMOND_VM_OK)return status;
-    if(code>=0xD800&&code<=0xDBFF) {
-        if(parser->pos+2>parser->length||parser->source[parser->pos]!='\\'||
-           parser->source[parser->pos+1]!='u') {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "unpaired high surrogate in unicode escape");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        parser->pos+=2;
-        int low=0;
-        status=json_hex4(parser,&low);
-        if(status!=DIAMOND_VM_OK)return status;
-        if(low<0xDC00||low>0xDFFF) {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "high surrogate not followed by a low surrogate in unicode escape");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        const int64_t codepoint=0x10000+(((int64_t)code-0xD800)*0x400)+(low-0xDC00);
-        return json_utf8_append(builder,codepoint)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-    }
-    if(code>=0xDC00&&code<=0xDFFF) {
-        snprintf(parser->vm->error,sizeof parser->vm->error,
-            "unpaired low surrogate in unicode escape");
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    return json_utf8_append(builder,code)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-}
-
-static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out);
-
-static DiamondVmStatus json_parse_string(JsonParser *parser,DiamondValue *out) {
-    parser->pos++;
-    StringBuilder builder={};
-    while(true) {
-        if(parser->pos>=parser->length) {
-            free(builder.chars);
-            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated string");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        const char ch=parser->source[parser->pos];
-        if(ch=='"') {
-            parser->pos++;
-            DiamondString *result=allocate_string(parser->vm,
-                builder.chars!=nullptr?builder.chars:"",builder.length);
-            free(builder.chars);
-            if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            *out=DIAMOND_OBJECT(result);
-            return DIAMOND_VM_OK;
-        }
-        if(ch=='\\') {
-            parser->pos++;
-            if(parser->pos>=parser->length) {
-                free(builder.chars);
-                snprintf(parser->vm->error,sizeof parser->vm->error,
-                    "unterminated escape sequence");
-                return DIAMOND_VM_JSON_ERROR;
-            }
-            const char escape=parser->source[parser->pos];
-            parser->pos++;
-            bool ok=true;
-            switch(escape) {
-                case '"':ok=builder_append(&builder,"\"",1);break;
-                case '\\':ok=builder_append(&builder,"\\",1);break;
-                case '/':ok=builder_append(&builder,"/",1);break;
-                case 'n':ok=builder_append(&builder,"\n",1);break;
-                case 'r':ok=builder_append(&builder,"\r",1);break;
-                case 't':ok=builder_append(&builder,"\t",1);break;
-                case 'b':{const char b=8;ok=builder_append(&builder,&b,1);break;}
-                case 'f':{const char f=12;ok=builder_append(&builder,&f,1);break;}
-                case 'u':{
-                    const DiamondVmStatus status=json_unicode_escape(parser,&builder);
-                    if(status!=DIAMOND_VM_OK){free(builder.chars);return status;}
-                    break;
-                }
-                default:
-                    free(builder.chars);
-                    snprintf(parser->vm->error,sizeof parser->vm->error,
-                        "invalid escape character");
-                    return DIAMOND_VM_JSON_ERROR;
-            }
-            if(!ok){free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;}
-        } else {
-            if(!builder_append(&builder,&ch,1)) {
-                free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            parser->pos++;
-        }
-    }
-}
-
-static DiamondVmStatus json_parse_number(JsonParser *parser,DiamondValue *out) {
-    const size_t start=parser->pos;
-    bool negative=false;
-    if(parser->pos<parser->length&&parser->source[parser->pos]=='-') {
-        negative=true;parser->pos++;
-    }
-    const size_t digit_start=parser->pos;
-    while(parser->pos<parser->length&&
-          parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
-        parser->pos++;
-    if(parser->pos==digit_start) {
-        snprintf(parser->vm->error,sizeof parser->vm->error,
-            "invalid number at position %zu",start);
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    bool is_float=false;
-    if(parser->pos<parser->length&&parser->source[parser->pos]=='.') {
-        is_float=true;parser->pos++;
-        const size_t fraction_start=parser->pos;
-        while(parser->pos<parser->length&&
-              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
-            parser->pos++;
-        if(parser->pos==fraction_start) {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "invalid number at position %zu",start);
-            return DIAMOND_VM_JSON_ERROR;
-        }
-    }
-    if(parser->pos<parser->length&&
-       (parser->source[parser->pos]=='e'||parser->source[parser->pos]=='E')) {
-        is_float=true;parser->pos++;
-        if(parser->pos<parser->length&&
-           (parser->source[parser->pos]=='+'||parser->source[parser->pos]=='-'))
-            parser->pos++;
-        const size_t exponent_start=parser->pos;
-        while(parser->pos<parser->length&&
-              parser->source[parser->pos]>='0'&&parser->source[parser->pos]<='9')
-            parser->pos++;
-        if(parser->pos==exponent_start) {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "invalid number at position %zu",start);
-            return DIAMOND_VM_JSON_ERROR;
-        }
-    }
-    if(is_float) {
-        char *end=nullptr;
-        const double value=strtod(parser->source+start,&end);
-        *out=DIAMOND_FLOAT(value);
-        return DIAMOND_VM_OK;
-    }
-    int64_t value=0;bool overflowed=false;
-    for(size_t index=digit_start;index<parser->pos&&!overflowed;index++) {
-        int64_t widened=0;
-        if(ckd_mul(&widened,value,(int64_t)10)||
-           ckd_add(&value,widened,(int64_t)(parser->source[index]-'0')))
-            overflowed=true;
-    }
-    if(overflowed) {
-        const DiamondValue bignum_result=diamond_bignum_from_decimal_digits(
-            parser->vm,parser->source+digit_start,parser->pos-digit_start,negative);
-        if(bignum_result.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
-        *out=bignum_result;
-        return DIAMOND_VM_OK;
-    }
-    *out=DIAMOND_INT(negative?-value:value);
-    return DIAMOND_VM_OK;
-}
-
-static DiamondVmStatus json_parse_literal(JsonParser *parser,const char *literal,
-        size_t literal_length,DiamondValue value,DiamondValue *out) {
-    if(parser->pos+literal_length>parser->length||
-       memcmp(parser->source+parser->pos,literal,literal_length)!=0) {
-        snprintf(parser->vm->error,sizeof parser->vm->error,
-            "invalid literal at position %zu",parser->pos);
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    parser->pos+=literal_length;
-    *out=value;
-    return DIAMOND_VM_OK;
-}
-
-static DiamondVmStatus json_parse_array_body(JsonParser *parser,DiamondValue *out) {
-    parser->pos++;
-    json_skip_whitespace(parser);
-    DiamondArray *array=allocate_array(parser->vm,nullptr,0);
-    if(array==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-    if(!gc_protect(parser->vm,DIAMOND_OBJECT(array)))return DIAMOND_VM_OUT_OF_MEMORY;
-    if(parser->pos<parser->length&&parser->source[parser->pos]==']') {
-        parser->pos++;
-        *out=DIAMOND_OBJECT(array);
-        return DIAMOND_VM_OK;
-    }
-    while(true) {
-        DiamondValue element=DIAMOND_NIL;
-        const DiamondVmStatus status=json_parse_value(parser,&element);
-        if(status!=DIAMOND_VM_OK)return status;
-        if(!array_push(parser->vm,array,element))return DIAMOND_VM_OUT_OF_MEMORY;
-        json_skip_whitespace(parser);
-        if(parser->pos>=parser->length) {
-            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated array");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        if(parser->source[parser->pos]==',') {
-            parser->pos++;
-            json_skip_whitespace(parser);
-        } else if(parser->source[parser->pos]==']') {
-            parser->pos++;
-            *out=DIAMOND_OBJECT(array);
-            return DIAMOND_VM_OK;
-        } else {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "expected ',' or ']' in array");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-    }
-}
-
-/* Depth-guards json_parse_array_body/json_parse_object_body -- see
- * JsonParser's own `depth` field comment for why this exists at all.
- * `parser->depth` counts *current* nesting (incremented on entry,
- * decremented on every exit), not total containers seen, so a wide
- * flat array/object never trips this regardless of its element count --
- * only genuine nesting depth does. */
-static DiamondVmStatus json_parse_array(JsonParser *parser,DiamondValue *out) {
-    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
-    parser->depth++;
-    const DiamondVmStatus status=json_parse_array_body(parser,out);
-    parser->depth--;
-    return status;
-}
-
-static DiamondVmStatus json_parse_object_body(JsonParser *parser,DiamondValue *out) {
-    parser->pos++;
-    json_skip_whitespace(parser);
-    DiamondHash *hash=allocate_hash(parser->vm);
-    if(hash==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-    if(!gc_protect(parser->vm,DIAMOND_OBJECT(hash)))return DIAMOND_VM_OUT_OF_MEMORY;
-    if(parser->pos<parser->length&&parser->source[parser->pos]=='}') {
-        parser->pos++;
-        *out=DIAMOND_OBJECT(hash);
-        return DIAMOND_VM_OK;
-    }
-    while(true) {
-        json_skip_whitespace(parser);
-        if(parser->pos>=parser->length||parser->source[parser->pos]!='"') {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "expected string key in object");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        DiamondValue key=DIAMOND_NIL;
-        DiamondVmStatus status=json_parse_string(parser,&key);
-        if(status!=DIAMOND_VM_OK)return status;
-        if(!hash_set(parser->vm,hash,key,DIAMOND_NIL))return DIAMOND_VM_OUT_OF_MEMORY;
-        json_skip_whitespace(parser);
-        if(parser->pos>=parser->length||parser->source[parser->pos]!=':') {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "expected ':' after object key");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        parser->pos++;
-        json_skip_whitespace(parser);
-        DiamondValue value=DIAMOND_NIL;
-        status=json_parse_value(parser,&value);
-        if(status!=DIAMOND_VM_OK)return status;
-        if(!hash_set(parser->vm,hash,key,value))return DIAMOND_VM_OUT_OF_MEMORY;
-        json_skip_whitespace(parser);
-        if(parser->pos>=parser->length) {
-            snprintf(parser->vm->error,sizeof parser->vm->error,"unterminated object");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-        if(parser->source[parser->pos]==',') {
-            parser->pos++;
-        } else if(parser->source[parser->pos]=='}') {
-            parser->pos++;
-            *out=DIAMOND_OBJECT(hash);
-            return DIAMOND_VM_OK;
-        } else {
-            snprintf(parser->vm->error,sizeof parser->vm->error,
-                "expected ',' or '}' in object");
-            return DIAMOND_VM_JSON_ERROR;
-        }
-    }
-}
-
-static DiamondVmStatus json_parse_object(JsonParser *parser,DiamondValue *out) {
-    if(parser->depth>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
-    parser->depth++;
-    const DiamondVmStatus status=json_parse_object_body(parser,out);
-    parser->depth--;
-    return status;
-}
-
-static DiamondVmStatus json_parse_value(JsonParser *parser,DiamondValue *out) {
-    json_skip_whitespace(parser);
-    if(parser->pos>=parser->length) {
-        snprintf(parser->vm->error,sizeof parser->vm->error,"unexpected end of input");
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    const char ch=parser->source[parser->pos];
-    if(ch=='{')return json_parse_object(parser,out);
-    if(ch=='[')return json_parse_array(parser,out);
-    if(ch=='"')return json_parse_string(parser,out);
-    if(ch=='t')return json_parse_literal(parser,"true",4,DIAMOND_BOOL(true),out);
-    if(ch=='f')return json_parse_literal(parser,"false",5,DIAMOND_BOOL(false),out);
-    if(ch=='n')return json_parse_literal(parser,"null",4,DIAMOND_NIL,out);
-    if(ch=='-'||(ch>='0'&&ch<='9'))return json_parse_number(parser,out);
-    snprintf(parser->vm->error,sizeof parser->vm->error,
-        "unexpected character at position %zu",parser->pos);
-    return DIAMOND_VM_JSON_ERROR;
-}
-
-/* Top-level entry: one value, then trailing-content rejection, matching
- * JSONCodec#parse's own "parsed = parse_value(...); pos =
- * skip_whitespace(...); pos != length -> error" shape exactly. */
-static DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
-        size_t length,DiamondValue *out) {
-    JsonParser parser={.vm=vm,.source=source,.length=length,.pos=0};
-    const DiamondVmStatus status=json_parse_value(&parser,out);
-    if(status!=DIAMOND_VM_OK)return status;
-    json_skip_whitespace(&parser);
-    if(parser.pos!=parser.length) {
-        snprintf(vm->error,sizeof vm->error,"trailing content after JSON value");
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    return DIAMOND_VM_OK;
 }
 
 /* Native JSON.stringify, replacing lib/core/json_codec.di's pure-Diamond
@@ -9126,161 +8625,7 @@ static DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
  * arbitrary code and may mutate the very collection being walked, so
  * counts are re-read every step and a Hash entry is read only after its
  * key has been converted. */
-static bool builder_format_value(StringBuilder *builder,DiamondValue value);
-
-typedef struct JsonWriter {
-    DiamondVm *vm;
-    const DiamondChunk *chunk;
-    size_t call_depth;
-    size_t nesting;
-    StringBuilder out;
-} JsonWriter;
-
-static bool json_write_string(StringBuilder *out,const char *chars,size_t length) {
-    static const char hex[]="0123456789abcdef";
-    if(!builder_append(out,"\"",1))return false;
-    size_t run=0;
-    for(size_t index=0;index<length;index++) {
-        const unsigned char c=(unsigned char)chars[index];
-        if(c>=0x20&&c!='"'&&c!='\\')continue;
-        if(index>run&&!builder_append(out,chars+run,index-run))return false;
-        run=index+1;
-        bool ok;
-        switch(c) {
-            case '"':ok=builder_append(out,"\\\"",2);break;
-            case '\\':ok=builder_append(out,"\\\\",2);break;
-            case '\n':ok=builder_append(out,"\\n",2);break;
-            case '\r':ok=builder_append(out,"\\r",2);break;
-            case '\t':ok=builder_append(out,"\\t",2);break;
-            default: {
-                const char escape[6]={'\\','u','0','0',hex[c>>4],hex[c&15]};
-                ok=builder_append(out,escape,6);
-            }
-        }
-        if(!ok)return false;
-    }
-    if(length>run&&!builder_append(out,chars+run,length-run))return false;
-    return builder_append(out,"\"",1);
-}
-
-static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value);
-
-static DiamondVmStatus json_write_hash_key(JsonWriter *writer,DiamondValue key) {
-    StringBuilder *out=&writer->out;
-    if(key.kind==DIAMOND_VALUE_OBJECT) {
-        const DiamondObject *object=key.as.object;
-        if(object->kind==DIAMOND_OBJECT_STRING) {
-            const DiamondString *string=(const DiamondString *)object;
-            return json_write_string(out,string->chars,string->length)?
-                DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        }
-        if(object->kind==DIAMOND_OBJECT_SYMBOL) {
-            const DiamondSymbol *symbol=(const DiamondSymbol *)object;
-            return json_write_string(out,symbol->chars,symbol->length)?
-                DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        }
-    }
-    /* Everything else is "#{key}" -- the same conversion string
-     * interpolation does, including a user class's own to_s. */
-    DiamondValue text=DIAMOND_NIL;
-    const DiamondVmStatus status=stringify_value(writer->vm,writer->chunk,
-        writer->call_depth,key,&text);
-    if(status!=DIAMOND_VM_OK)return status;
-    const DiamondString *string=(const DiamondString *)text.as.object;
-    return json_write_string(out,string->chars,string->length)?
-        DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-}
-
-static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
-    StringBuilder *out=&writer->out;
-    switch(value.kind) {
-        case DIAMOND_VALUE_NIL:
-            return builder_append(out,"null",4)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        case DIAMOND_VALUE_BOOL:
-            return builder_append(out,value.as.boolean?"true":"false",
-                value.as.boolean?4:5)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        case DIAMOND_VALUE_INT:
-            return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        case DIAMOND_VALUE_FLOAT:
-            /* JSON has no NaN or Infinity. */
-            if(isnan(value.as.real)||isinf(value.as.real)) {
-                snprintf(writer->vm->error,sizeof writer->vm->error,
-                    "cannot convert %s to JSON",isnan(value.as.real)?"NaN":
-                    value.as.real<0?"-Infinity":"Infinity");
-                return DIAMOND_VM_JSON_ERROR;
-            }
-            return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-        case DIAMOND_VALUE_OBJECT:
-            break;
-        default:
-            snprintf(writer->vm->error,sizeof writer->vm->error,
-                "cannot convert this value to JSON");
-            return DIAMOND_VM_JSON_ERROR;
-    }
-    if(value_is_bignum(value))
-        return builder_format_value(out,value)?DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-    const DiamondObject *object=value.as.object;
-    if(object->kind==DIAMOND_OBJECT_STRING) {
-        const DiamondString *string=(const DiamondString *)object;
-        return json_write_string(out,string->chars,string->length)?
-            DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
-    }
-    if(object->kind!=DIAMOND_OBJECT_ARRAY&&object->kind!=DIAMOND_OBJECT_HASH) {
-        snprintf(writer->vm->error,sizeof writer->vm->error,
-            "cannot convert this value to JSON");
-        return DIAMOND_VM_JSON_ERROR;
-    }
-    if(writer->nesting>=DIAMOND_MAX_CALL_DEPTH)return DIAMOND_VM_STACK_OVERFLOW;
-    writer->nesting++;
-    DiamondVmStatus status=DIAMOND_VM_OK;
-    if(object->kind==DIAMOND_OBJECT_ARRAY) {
-        const DiamondArray *array=(const DiamondArray *)object;
-        if(!builder_append(out,"[",1))status=DIAMOND_VM_OUT_OF_MEMORY;
-        for(size_t index=0;status==DIAMOND_VM_OK&&index<array->count;index++) {
-            if(index>0&&!builder_append(out,",",1)) {
-                status=DIAMOND_VM_OUT_OF_MEMORY;break;
-            }
-            status=json_write_value(writer,array->values[index]);
-        }
-        if(status==DIAMOND_VM_OK&&!builder_append(out,"]",1))
-            status=DIAMOND_VM_OUT_OF_MEMORY;
-    } else {
-        const DiamondHash *hash=(const DiamondHash *)object;
-        if(!builder_append(out,"{",1))status=DIAMOND_VM_OUT_OF_MEMORY;
-        for(size_t index=0;status==DIAMOND_VM_OK&&index<hash->count;index++) {
-            if(index>0&&!builder_append(out,",",1)) {
-                status=DIAMOND_VM_OUT_OF_MEMORY;break;
-            }
-            status=json_write_hash_key(writer,hash->entries[index].key);
-            if(status!=DIAMOND_VM_OK)break;
-            if(!builder_append(out,":",1)) {
-                status=DIAMOND_VM_OUT_OF_MEMORY;break;
-            }
-            /* The key's to_s may have shrunk the Hash. */
-            if(index>=hash->count)break;
-            status=json_write_value(writer,hash->entries[index].value);
-        }
-        if(status==DIAMOND_VM_OK&&!builder_append(out,"}",1))
-            status=DIAMOND_VM_OUT_OF_MEMORY;
-    }
-    writer->nesting--;
-    return status;
-}
-
-/* JSON.stringify's single entry point; `*result` is a fresh String. */
-static DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk,
-        size_t depth,DiamondValue value,DiamondValue *result) {
-    JsonWriter writer={.vm=vm,.chunk=chunk,.call_depth=depth};
-    DiamondVmStatus status=json_write_value(&writer,value);
-    if(status==DIAMOND_VM_OK) {
-        DiamondString *text=allocate_string(vm,writer.out.chars!=nullptr?
-            writer.out.chars:"",writer.out.length);
-        if(text==nullptr)status=DIAMOND_VM_OUT_OF_MEMORY;
-        else *result=DIAMOND_OBJECT(text);
-    }
-    free(writer.out.chars);
-    return status;
-}
+bool builder_format_value(StringBuilder *builder,DiamondValue value);
 
 /* Breaks a Time's epoch into calendar fields. UTC and fixed offsets use
  * gmtime_r (the latter after shifting the epoch); process-local time uses
@@ -9886,7 +9231,7 @@ DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
                                         size_t depth,DiamondValue value,
                                         DiamondValue *out);
 
-static bool builder_format_value(StringBuilder *builder,DiamondValue value);
+bool builder_format_value(StringBuilder *builder,DiamondValue value);
 static bool builder_inspect_instance(StringBuilder *builder,DiamondValue value);
 static DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
         const DiamondChunk *owner,DiamondValue value,const DiamondMethod *method,
@@ -9920,7 +9265,7 @@ static bool builder_append_quoted(StringBuilder *builder,const char *chars,size_
     return builder_append(builder,"\"",1);
 }
 
-static bool builder_format_value(StringBuilder *builder,DiamondValue value) {
+bool builder_format_value(StringBuilder *builder,DiamondValue value) {
     char scalar[96];int length=0;
     if(value.kind==DIAMOND_VALUE_NIL)return builder_append(builder,"nil",3);
     if(value.kind==DIAMOND_VALUE_BOOL)
@@ -14541,39 +13886,6 @@ static bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
     if(body_length==(size_t)content_length)
         *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets);
     return true;
-}
-
-/* Appends `chars`/`length` to `buffer` as one double-quoted, escaped JSON
- * string literal -- same escaping rules (and the same six named escapes
- * plus \u00XX for every other control character) as lsp/json.c's own
- * writer_append_string_literal, reimplemented independently here rather
- * than shared: see debugger_structured_helper's own comment for why the
- * core VM doesn't link lsp/json.c at all. */
-static bool debug_json_append_escaped_string(GrowBuffer *buffer,
-        const char *chars,size_t length) {
-    if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\""))return false;
-    for(size_t index=0;index<length;index++) {
-        const unsigned char c=(unsigned char)chars[index];
-        switch(c) {
-            case '"':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\""))return false;break;
-            case '\\':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\\\"))return false;break;
-            case '\b':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\b"))return false;break;
-            case '\f':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\f"))return false;break;
-            case '\n':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\n"))return false;break;
-            case '\r':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\r"))return false;break;
-            case '\t':if(!GROW_BUFFER_APPEND_LITERAL(buffer,"\\t"))return false;break;
-            default:
-                if(c<0x20) {
-                    char escape[8];
-                    const int written=snprintf(escape,sizeof escape,"\\u%04x",c);
-                    if(written<0||!grow_buffer_append(buffer,escape,(size_t)written))
-                        return false;
-                } else if(!grow_buffer_append(buffer,(const char *)&chars[index],1)) {
-                    return false;
-                }
-        }
-    }
-    return GROW_BUFFER_APPEND_LITERAL(buffer,"\"");
 }
 
 /* DIAMOND_OP_DEBUGGER/DIAMOND_OP_BREAKPOINT_CHECK's shared structured,
