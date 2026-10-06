@@ -18,6 +18,78 @@
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
 
 /* Types shared by the files split out of vm.c. */
+typedef struct GrowBuffer {
+    char *data;
+    size_t length;
+    size_t capacity;
+} GrowBuffer;
+
+/* Each run_chunk activation unconditionally allocates DiamondValue
+ * registers[256] (4KB), DiamondTypeBinding bindings[8] (~3.2KB), and
+ * UnwindHandler handlers[16] (~0.5KB) as C-stack locals, regardless of the
+ * called function's actual complexity. Measured against this machine's
+ * default 8MB stack, real (non-instrumented) recursion segfaults around
+ * depth ~210-220 in a debug (-O0) build and ~150-160 under AddressSanitizer's
+ * redzone-inflated frames -- both well below the depth this counter used to
+ * allow, so the guard never had a chance to trip before the native stack
+ * actually overflowed.
+ *
+ * Recalibrated 100 -> 95 when adding native Time support: `-fstack-usage`
+ * showed only ~240 bytes of *reported* growth from the new opcodes/
+ * arithmetic-and-comparison fallback branches, but that was enough to
+ * flip `depth(5000)` (tests/run.sh) from a clean guard trip to a real
+ * ASan stack-overflow -- exactly the redzone-per-named-local amplification
+ * the READ_SHORT incident just below already documents, not a byte-count
+ * story. Empirically, every value from 91 through 99 passed cleanly
+ * against the post-Time frame size (100 was the only one that didn't).
+ *
+ * Recalibrated 95 -> 92 (2026-09-27) when Ubuntu 26.04's own apt-packaged
+ * GCC moved to 15.2.0: at 95, a plain `make release` (-O3, no
+ * instrumentation at all) segfaulted on `depth(5000)` under that specific
+ * compiler -- this project's own GCC (Fedora, 16.2.1) still passed at 95,
+ * so this was invisible until CI's `ubuntu:26.04` image actually ran it
+ * (found via a local Docker container matching that image and toolchain
+ * exactly, not a hunch). The safe window this time was only {92, 93} --
+ * confirmed against `main` at the commit before this recalibration too,
+ * so this was newly exposed by the toolchain, not by anything this
+ * project changed -- much narrower than the 91-99 window above, so
+ * there is very little margin left for the next opcode/local addition to
+ * this function; a future recalibration may need to shrink run_chunk's
+ * own stack footprint directly rather than only retuning this constant
+ * again. 92 sits at the low end of that narrow window rather than the
+ * middle, since a smaller value only ever makes a real overflow *less*
+ * likely to be reached before this guard trips -- the one thing that
+ * must still hold is `legacy_0091.di`'s own `depth(90)` succeeding (a
+ * hard floor, confirmed at 92). If a future change reopens this margin
+ * again, re-run the same empirical sweep -- across every build variant
+ * this project ships (debug, release, sanitize, and a container image
+ * matching whatever CI target regressed), not just the one you're
+ * sitting at -- rebuild at a range of candidate values, check
+ * `depth(5000)` at each, rather than guessing.
+ *
+ * run_chunk's own `registers` array (below) stays a fixed
+ * DIAMOND_INLINE_REGISTER_COUNT-wide C-stack array, at the same 256 this
+ * comment's own measurement was taken against, rather than a VLA sized to
+ * DIAMOND_REGISTER_COUNT (4096, see vm.h) -- a function whose
+ * live_register_count exceeds it (rare -- see DIAMOND_REGISTER_COUNT's
+ * own comment) heap-allocates instead, which doesn't consume C stack at
+ * all and so can't affect this depth calibration regardless of how large
+ * it gets. That register-count widening's first pass also nearly broke
+ * this guard for a completely different reason, worth remembering: the
+ * new READ_SHORT (below) originally declared its own `high_`/`low_`
+ * uint8_t locals to assemble each 16-bit operand, and with ~90 opcodes
+ * now reading 1-4 such operands apiece, that put several hundred extra
+ * named locals into this one function -- at -O0, under ASan, each got
+ * its own padded/redzoned stack slot, which dwarfed the cost of the
+ * registers array itself (shrinking it 256->64 barely moved the
+ * measured crash depth) and pushed the real crash below depth 90,
+ * *under* this very call-depth guard, silently defeating it exactly
+ * like an oversized array would have. Rewriting READ_SHORT to read
+ * straight out of chunk->code[] into `target_` without any named
+ * intermediate restored the original margin. */
+enum { DIAMOND_MAX_CALL_DEPTH = 92 };
+
+/* Types shared by the files split out of vm.c. */
 /* A growable byte buffer for regexp_replace_helper's own output, the only
  * place in this file that needs to build a string of unknown final length
  * incrementally rather than in one allocate_string call. */
@@ -97,5 +169,20 @@ DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const Diamond
 DIAMOND_INTERNAL bool gc_protect(DiamondVm *vm, DiamondValue value);
 DIAMOND_INTERNAL void gc_unprotect(DiamondVm *vm, size_t saved_count);
 DIAMOND_INTERNAL DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value, DiamondValue *out);
+
+/* vm_json.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL bool debug_json_append_escaped_string(GrowBuffer *buffer, const char *chars,size_t length);
+DIAMOND_INTERNAL DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source, size_t length,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value,DiamondValue *result);
+
+/* Shared primitives that stay in vm.c (needed by vm_json.c) */
+DIAMOND_INTERNAL DiamondHash *allocate_hash(DiamondVm *vm);
+DIAMOND_INTERNAL bool builder_append(StringBuilder *builder,const char *chars,size_t length);
+DIAMOND_INTERNAL bool builder_format_value(StringBuilder *builder,DiamondValue value);
+DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length);
+#define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
+    grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
+DIAMOND_INTERNAL bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key, DiamondValue value);
+DIAMOND_INTERNAL bool value_is_bignum(DiamondValue value);
 
 #endif
