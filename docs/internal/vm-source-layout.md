@@ -1,7 +1,7 @@
 # VM source layout
 
 `src/vm.c` is the interpreter, the garbage collector and the native service layer. It grew to over
-26,000 lines. This note records how it is organised, what has been split out and why, and the
+26,000 lines; `vm.c` itself is now about 19,000. This note records how it is organised, what has been split out and why, and the
 measurements that decide what is worth splitting next.
 
 ## Where the compile time is
@@ -48,13 +48,17 @@ that the move cannot change what the compiler inlines into `run_chunk`. 123 `*_h
 | file | contents |
 |---|---|
 | `vm_program_builder.c` | the ProgramBuilder native bridge (`allocate_program_builder`, `program_builder_run_helper`, `program_builder_invoke_helper` and their small helpers) |
+| `vm_tensor.c` | the Tensor natives |
+| `vm_regexp.c` | the Regexp natives |
+| `vm_json.c` | the native JSON parser and writer |
+| `vm_time.c` | the Time natives |
+| `vm_database.c` | the SQLite, PostgreSQL and MySQL drivers |
+| `vm_process_io.c` | process spawning and file natives |
+| `vm_network.c` | TLS, TCP, UDP and DNS resolution |
 
 What a file needs from `vm.c` is declared in `src/vm_internal.h`. It is not the embedding API, and its
 symbols are hidden. Each cluster needed only 3 to 9 shared primitives (`allocate_string`,
 `allocate_array`, `allocate_hash`, `array_push`, `builder_append`, ...).
-
-Other clusters with the same property, by size: process and files (about 1,190 lines), database
-drivers (1,070), network (780), time (810), tensors (610), JSON (500), regexps (300).
 
 ## How a move is done
 
