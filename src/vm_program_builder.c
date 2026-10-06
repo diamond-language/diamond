@@ -110,7 +110,7 @@ static DiamondClass *program_builder_class(DiamondProgram *program,
  * compilation finishes (src/compiler.c). ProgramBuilder#declare_field
  * needs the same recomputation done incrementally, since a
  * ProgramBuilder-built program never goes through diamond_compile at
- * all. See docs/roadmap.md's self-hosting Phase 3 entry. */
+ * all. */
 static void program_builder_recompute_shapes(DiamondClass *class) {
     for(size_t field_count=0;field_count<=class->field_count;field_count++)
         class->shapes[field_count]=(DiamondShape){
@@ -129,7 +129,7 @@ static void program_builder_recompute_shapes(DiamondClass *class) {
  * unconditionally -- confirmed by a real crash: depth(5000) (the existing
  * regression test for the DIAMOND_MAX_CALL_DEPTH guard) segfaulted before
  * that guard could trip, a worse version of the exact bug the Regexp
- * round already found and fixed this way (see docs/roadmap.md). Returns
+ * round already found and fixed this way. Returns
  * DIAMOND_VM_PROGRAM_ERROR (not the constructed program's own status) for
  * a nonzero exit. A heap-object result is deep-copied into the caller's
  * own vm via copy_value_into_vm before run_vm is freed; kinds that
@@ -234,8 +234,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
      * emitter can't know a forward target's offset before emitting the
      * jump itself. Phase 3's Diamond-language parser needs the same
      * capability for if/while/loop, so this mirrors patch_jump exactly
-     * (overwrite an already-emitted byte, never append). See
-     * docs/roadmap.md's self-hosting Phase 3 entry. */
+     * (overwrite an already-emitted byte, never append). */
     const bool patch_byte_method=
         method_name->length==sizeof("patch_byte")-1&&
         memcmp(method_name->chars,"patch_byte",sizeof("patch_byte")-1)==0;
@@ -255,7 +254,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
      * own class-registration side effects in compiler.c -- fields not
      * needed by any sub-phase before this one (Phase 1's own design note
      * flagged them as deferred until class-compiling logic actually
-     * needed them). See docs/roadmap.md. */
+     * needed them). */
     const bool declare_class_method=
         method_name->length==sizeof("declare_class")-1&&
         memcmp(method_name->chars,"declare_class",sizeof("declare_class")-1)==0;
@@ -373,7 +372,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             sizeof("set_source_location")-1)==0;
     /* Phase 3 sub-phase 4 (gradual typing): a scalar or union type set.
      * Nested Array[T]/Hash[K,V]/Callable/interfaces/generics remain
-     * separate future extensions. See docs/roadmap.md. */
+     * separate future extensions. */
     const bool declare_type_set_method=
         method_name->length==sizeof("declare_type_set")-1&&
         memcmp(method_name->chars,"declare_type_set",
@@ -882,8 +881,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * "explicit self receiver" bypass for every ProgramBuilder-built
          * class -- caught by the self-hosted parser's own private/public
          * support calling a private method via `self.foo()`, not by any
-         * existing scalar-argument differential case. See docs/roadmap.md's
-         * self-hosting Phase 3 follow-up entry. */
+         * existing scalar-argument differential case. */
         built->functions[target_function]->owner_class=(uint8_t)registers[base].as.integer;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -930,8 +928,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * diamond_compile's own module-method sentinel (UINT8_MAX-1,
          * distinct from UINT8_MAX's "not a method at all" so the private-
          * bypass's parameter_offset==1 check still fires for module
-         * methods too). See docs/roadmap.md's self-hosting Phase 3
-         * follow-up entry. */
+         * methods too). */
         built->functions[function_index]->owner_class=UINT8_MAX-1;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -1717,8 +1714,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
      * run_chunk deep -- so real C-stack usage is the *sum* of outer and
      * inner depth, not bounded by either guard alone. Capping outer depth
      * at 10 keeps that sum within the same call-depth budget already
-     * verified safe under ASan (see the DIAMOND_MAX_CALL_DEPTH regression
-     * entry in docs/roadmap.md) even if the inner program recurses to its
+     * verified safe under ASan even if the inner program recurses to its
      * own full limit. */
     if(depth>=10) {
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#run nested too deeply");

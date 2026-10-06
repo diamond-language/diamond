@@ -45,8 +45,7 @@ module ActiveKarma
 
     # The Ruby original exposes this as a frozen PersonaState::DEFAULT
     # constant; a factory method here instead, since a class-body
-    # constant can't safely self-reference the class it's still defining
-    # (see docs/roadmap.md's forward-reference notes) -- functionally
+    # constant can't safely self-reference the class it's still defining -- functionally
     # identical, since this class has no setters to begin with.
     def self.default() = PersonaState.new(:normal, :allowed, :normal, [])
   end

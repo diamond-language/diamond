@@ -24,8 +24,7 @@
 # Every top-level name a generated file defines is derived from the
 # input file's own basename (function_name_for below), not a fixed
 # "render" -- `require`'s compile-time expansion merges every required
-# file into one flat, shared top-level function namespace (see
-# docs/roadmap.md's "Forward and mutual calls"), so two templates
+# file into one flat, shared top-level function namespace, so two templates
 # compiled to the same fixed name would collide the moment an app
 # `require`s more than one of them together, and that's exactly the
 # common case (a page template requiring a partial). Two different

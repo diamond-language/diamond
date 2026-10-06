@@ -108,7 +108,7 @@ enum {
      * function's own live_register_count instead, so a typical small
      * function's call frame stays cheap regardless of how high this cap
      * is; only a function that actually needs this many registers pays
-     * for it, in that one call. See docs/roadmap.md. */
+     * for it, in that one call. */
     DIAMOND_REGISTER_COUNT = 4096,
     /* Per DiamondFunction, not per scope -- a function's own top-level
      * locals/parameters *and* every `rescue`-bound name across every
@@ -1291,7 +1291,7 @@ typedef enum DiamondVmStatus : uint8_t {
      * (which covers builder API misuse: bad argument types, out-of-range
      * indices) specifically because the two need different rescue targets:
      * "you called the builder wrong" vs. "the program you built didn't
-     * work." See docs/roadmap.md. */
+     * work." */
     DIAMOND_VM_PROGRAM_ERROR,
     /* Thread.new/.join failures that aren't the spawned thread's own
      * Diamond-level exception re-raised (see run_chunk's THREAD_NEW case
@@ -1579,8 +1579,8 @@ struct DiamondVm {
      * distinction bench/gc_churn's own measurements needed to show the
      * generational collector's actual cost profile -- many cheap minor
      * collections against few expensive major ones). Added so a future
-     * investigation of docs/roadmap.md's "Generational or incremental
-     * GC" item can measure real-walk cost directly instead of inferring
+     * investigation of the roadmap's "Bound pause time further" item can
+     * measure real-walk cost directly instead of inferring
      * it from external RSS sampling under live network load, which
      * conflates request-handling timing, OS scheduling, and page-cache
      * behavior with the collector's own cost (see bench/burn_in's
@@ -1748,7 +1748,7 @@ struct DiamondVm {
      * local or an unscanned buffer -- exactly the bug this fixed in
      * regexp_scan_helper/regexp_match_helper, but unreachable there since
      * both of those had a real destination register to root through
-     * immediately (see docs/roadmap.md). Push/pop discipline only (see
+     * immediately. Push/pop discipline only (see
      * gc_protect/gc_unprotect) -- always unwound back to a saved mark
      * before the pushing function returns, mirroring the strictly nested
      * lifetime of copy_value_into_vm's own recursion, so this never grows

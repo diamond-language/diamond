@@ -1,8 +1,7 @@
 # Plain top-level functions, not classes -- a real constraint, not a style
 # choice: rack middleware and gremlin_serve's handler must be zero-capture
 # Callables, and Diamond classes are compile-time metadata, not first-class
-# runtime values (docs/roadmap.md's "Classes as ordinary runtime objects"
-# section) -- there is no way to hand rack_compose a class or an instance
+# runtime values (docs/object-model.md's "Metaprogramming boundaries") -- there is no way to hand rack_compose a class or an instance
 # in place of a bare, zero-capture `def` reference. `route`'s own
 # Dials::RouterHolder.get(build_router) is exactly RackChain's own
 # per-worker-memoized-singleton pattern, reused for the same reason

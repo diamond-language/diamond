@@ -1,5 +1,5 @@
 /* See bignum.c's own identical comment: needed transitively for vm.h's
- * <ucontext.h> use, only under musl (docs/roadmap.md's "Portability"). */
+ * <ucontext.h> use, only under musl (docs/portability.md). */
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1

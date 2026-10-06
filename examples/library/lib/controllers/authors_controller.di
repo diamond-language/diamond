@@ -25,14 +25,6 @@ class AuthorsController
     Div.html_response(200, layout_html(author.name(), content))
   end
 
-  # Diamond's declaration-discovery pass lets one class forward-reference
-  # *another* class's not-yet-compiled methods, but a class's own real
-  # compile pass rebuilds its method table top to bottom as it goes
-  # (see docs/roadmap.md's "Compiler representation" section) -- so
-  # `.form` below has to come before new_form/edit, its own callers,
-  # even though it's private helper-shaped and would otherwise read
-  # better lower down.
-  #
   # The shared "new" and "edit" page: `id` is nil for a new author (blank
   # form, POSTs to /authors) or an existing id (prefilled, POSTs to
   # /authors/:id).

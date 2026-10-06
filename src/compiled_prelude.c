@@ -49,8 +49,7 @@
  * own instance-variable reads returned Nil without this. */
 
 /* See bignum.c's own identical comment: needed transitively for vm.h's
- * <ucontext.h> use (via compiler.h), only under musl (docs/roadmap.md's
- * "Portability"). */
+ * <ucontext.h> use (via compiler.h), only under musl (docs/portability.md). */
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1

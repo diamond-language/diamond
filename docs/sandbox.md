@@ -37,7 +37,7 @@ pure string manipulation with no real syscall, unlike `.directory?` (`stat`) and
 
 ```ruby
 begin
-  File.open("secrets.txt")
+  File.open("secrets.txt", "r")
 rescue error: SandboxError
   puts(error.message())  # => "sandbox denies File.open"
 end
@@ -77,7 +77,7 @@ begin
 rescue error: SandboxError
   # not reached with DIAMOND_SANDBOX_ALLOW=network
 end
-File.open("secrets.txt")  # still denied -- filesystem wasn't in the allow-list
+File.open("secrets.txt", "r")  # still denied -- filesystem wasn't in the allow-list
 ```
 
 **Not covered**: allow-listing specific paths or hosts (e.g. "deny filesystem except
@@ -134,11 +134,13 @@ rescues `ResourceLimitError` and carries on is no longer bounded at all:
 
 ```ruby
 begin
-  loop { }                      # fires at DIAMOND_MAX_INSTRUCTIONS
+  loop do                       # fires at DIAMOND_MAX_INSTRUCTIONS
+  end
 rescue error: ResourceLimitError
   nil
 end
-50_000_000.times { }            # runs with no limit
+50_000_000.times() do           # runs with no limit
+end
 ```
 
 With `DIAMOND_MAX_INSTRUCTIONS=1000000`, that second loop runs to completion. Use the

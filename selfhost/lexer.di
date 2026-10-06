@@ -2,8 +2,7 @@
 # diamond_lexer_next. Token kinds are Symbols (:integer, :left_paren, ...)
 # named after the C DIAMOND_TOKEN_* constants in lower_snake_case with the
 # prefix dropped -- there is no enum keyword, and Symbols already give
-# readable, content-compared, GC-managed values with no interning table
-# needed (see docs/roadmap.md's Symbol entry).
+# readable, content-compared, GC-managed values with no interning table needed.
 #
 # Diamond has no char type, so every character comparison here works on
 # Int codepoints (String#ord()) rather than the C original's `char`

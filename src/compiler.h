@@ -63,7 +63,7 @@ typedef struct DiamondDiagnostic {
  * so the result is immediately safe to run even before any user code is
  * compiled or emitted into it -- shared by diamond_compile and the
  * ProgramBuilder native bridge (src/vm_program_builder.c), which needs the same baseline
- * without going through the parser at all. See docs/roadmap.md. */
+ * without going through the parser at all. */
 void diamond_program_init(DiamondProgram *program);
 /* Same as diamond_program_init, but skips its memset -- ONLY safe when
  * `program` is already all-zero (a freshly calloc'd DiamondProgram

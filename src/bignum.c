@@ -3,8 +3,7 @@
  * blocks musl's own "default to _BSD_SOURCE+_XOPEN_SOURCE=700 when
  * nothing else is set" fallback (musl's features.h) -- glibc is more
  * lenient here (defaults to roughly the same exposure regardless), so
- * this only surfaced building against musl (see docs/roadmap.md's
- * "Portability"). Must come before bignum.h's own first #include
+ * this only surfaced building against musl (see docs/portability.md). Must come before bignum.h's own first #include
  * (vm.h) reaches any libc header -- once <features.h> is processed
  * once per translation unit, a later #define here has no effect. */
 #define _DEFAULT_SOURCE

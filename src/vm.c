@@ -1775,8 +1775,7 @@ static void populate_default_argv_env(DiamondVm *vm) {
          * which would free key out from under hash_set's own hash_value(key)
          * call. Confirmed via ASan as a real heap-use-after-free, not just
          * theoretical -- same "root the container first, populate
-         * incrementally" lesson as regexp_scan_helper/copy_value_into_vm
-         * (see docs/roadmap.md), just not yet applied to this newer site. */
+         * incrementally" lesson as regexp_scan_helper/copy_value_into_vm, just not yet applied to this newer site. */
         const size_t key_mark=vm->gc_protected_count;
         if(!gc_protect(vm,DIAMOND_OBJECT(key)))return;
         DiamondString *value=allocate_string(vm,equals+1,strlen(equals+1));
@@ -2075,7 +2074,7 @@ void free_channel_reference(DiamondChannel *channel) {
  * internal VM failure records the reason, bumps restart_count, and
  * loops again after a fixed 20ms delay (a safety valve bounding CPU use
  * from a child that crashes immediately every time, not a configurable
- * backoff policy -- see docs/roadmap.md's "what's next" note) unless
+ * backoff policy; the roadmap's Supervisor section lists one as open) unless
  * stop_requested has been set meanwhile. Builds its own synthetic
  * DiamondChunk once, up front, exactly the shape thread_entry_
  * trampoline's own local `child_chunk` already uses -- program_template
@@ -4851,8 +4850,7 @@ DiamondVmStatus bcrypt_hash_helper(DiamondVm *vm,DiamondValue password_value,
      * convenience function nor bcrypt ($2b$) support in crypt_r itself
      * at all (confirmed directly: crypt_r("x","$2b$04$...",&data)
      * returns "*", libcrypt's own "unsupported algorithm" signal, on
-     * musl -- not a missing-symbol problem alone). See docs/roadmap.md's
-     * "Portability" for the full finding; a truly portable BCrypt would
+     * musl -- not a missing-symbol problem alone). See docs/portability.md for the full finding; a truly portable BCrypt would
      * need to bundle its own implementation rather than delegate to the
      * system crypt(3), which is real, separate work. */
     (void)password;(void)cost;(void)out_result;
@@ -7908,8 +7906,7 @@ DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
  * interpolation's own `"#{value}"` semantics exactly, including
  * calling a user-defined to_s override on an Instance -- the behavior
  * array_join's old Diamond-level `lib/core.di` loop had via its own
- * `"#{}"` interpolation, before it became this native, O(n) method
- * (see docs/roadmap.md's "Collections and Enumerable" entry). */
+ * `"#{}"` interpolation, before it became this native, O(n) method. */
 static DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,const DiamondArray *array,const char *separator_chars,
         size_t separator_length,DiamondValue *out) {

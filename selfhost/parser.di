@@ -2,9 +2,8 @@ require "lexer"
 
 # Self-hosting Phase 3: a Diamond-language port of src/compiler.c's
 # single-pass parser. Uses selfhost/lexer.di for tokenizing and the
-# native ProgramBuilder bridge (see docs/roadmap.md's Phase 1 entry) to
-# emit and run real bytecode. Built incrementally, sub-phase by
-# sub-phase, per the self-hosting roadmap plan's suggested sequencing:
+# native ProgramBuilder bridge to emit and run real bytecode. Built incrementally, sub-phase by
+# sub-phase:
 #
 #   Sub-phase 1 ("expression evaluator core"): literals, arithmetic/
 #   comparison/logical expressions, local variables, if/while/loop/break.
@@ -23,14 +22,13 @@ require "lexer"
 #     emitted here is the generic form (ADD, not ADD_INT), which is
 #     always correct and only foregoes a speed optimization the VM would
 #     otherwise apply lazily at runtime via the interpreter's own
-#     quickening (`DIAMOND_QUICKEN`) instead -- see docs/roadmap.md.
-#   - Remaining grammar and semantic gaps are tracked by the Phase 3 roadmap
-#     and are added as independently differential-tested slices.
+#     quickening (`DIAMOND_QUICKEN`) instead.
+#   - Remaining grammar and semantic gaps are added as independently
+#     differential-tested slices.
 #
 # The opcode constants below must exactly match src/vm.h's DiamondOpCode
 # enum ordinals -- this file and the VM only ever need to agree the same
-# way compiler.c and vm.c already implicitly do (see the ProgramBuilder
-# design note in docs/roadmap.md's Phase 1 entry). Verified against a
+# way compiler.c and vm.c already implicitly do. Verified against a
 # real `sizeof`/enum-dump each time this file is touched, not hand-counted.
 # Opcode constants are grouped in a namespace and read as `Opcode::NAME`.
 module Opcode
@@ -98,7 +96,7 @@ module Opcode
   # MODULO/COMPARE fix above landed (and after it, so that fix's own
   # verification never saw this). Exactly the class of bug both that fix
   # and the "Widened function indices" self-hosting slice already warn
-  # about (docs/roadmap.md) -- caught here by bisecting a real CI
+  # about -- caught here by bisecting a real CI
   # regression (a firsthand Ubuntu 26.04 + Clang portability pass
   # restored CI far enough to actually run test-self-host-smoke for the
   # first time in 13+ days) down to this commit, then re-verifying every
@@ -113,7 +111,7 @@ module Opcode
   # here, but every opcode number below had to shift by 7 to match once
   # those 7 were inserted before REGEXP_NEW in the real enum. This is
   # exactly the class of bug the "Widened function indices" self-hosting
-  # slice already flagged (docs/roadmap.md) -- any native opcode insertion
+  # slice already flagged -- any native opcode insertion
   # ahead of an entry here silently desyncs it, and nothing catches that
   # except actually running a program through the self-hosted path.
   REGEXP_NEW = 83
@@ -317,7 +315,7 @@ class Parser
     # a class without a superclass" check. Doesn't need the superclass's
     # full identity beyond "does one exist": SUPER's own opcode operand
     # is the *current* class's index, not the superclass's -- the VM
-    # itself walks `owner->superclass` at runtime (see docs/roadmap.md).
+    # itself walks `owner->superclass` at runtime.
     @current_class_superclass_index = nil
     # The name of the method currently being compiled (compile_method),
     # needed by `super(...)`: it always calls the superclass's version
@@ -342,8 +340,7 @@ class Parser
   end
 
   # Parses and emits the whole program into function -1 (the
-  # ProgramBuilder's entry function -- see docs/roadmap.md's Phase 1
-  # entry), finishing with a RETURN of the top-level sequence's result.
+  # ProgramBuilder's entry function), finishing with a RETURN of the top-level sequence's result.
   # Returns true on success; on failure, error_message() explains why and
   # no .run() should be attempted against a partially-emitted program.
   def compile()
@@ -3948,8 +3945,7 @@ class Parser
   # function's own comment for the full design rationale (deliberate v1
   # scope cuts: plain `==` only, no subject-less boolean form, no cross-
   # branch type-fact merging). No fixed-size array bookkeeping needed
-  # here the way the native compiler's own fix needed (see docs/
-  # roadmap.md) -- @type_facts is already a plain growable Array here,
+  # here the way the native compiler's own fix needed -- @type_facts is already a plain growable Array here,
   # not indexed by register, so copy_type_facts()/direct reassignment is
   # the self-hosted parser's own existing, unbounded equivalent.
   def parse_case_branches(subject, entry_facts, destination)

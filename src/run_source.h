@@ -61,7 +61,7 @@ int diamond_run_source_with_program(const char *name, const char *source,
  * function) instead of the ordinary prelude-source-concatenated
  * diamond_compile -- skips re-lexing/re-parsing the prelude's own
  * source on every call, the dominant cost `DIAMOND_TRACE_STARTUP=1`
- * measures for an otherwise-trivial program (see docs/roadmap.md).
+ * measures for an otherwise-trivial program.
  * Meant for a caller that runs many independent programs in one
  * process against the same template, e.g. tests/run_cases.c's batch
  * corpus runner -- not the ordinary `diamond` CLI (src/main.c), which

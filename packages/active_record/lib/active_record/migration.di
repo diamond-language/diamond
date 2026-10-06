@@ -46,8 +46,7 @@ module ActiveRecord
   # Transaction. #run/#rollback build on Transaction.run itself (a zero-arg
   # Callable), one `closure` declared fresh per loop iteration so each
   # wraps that iteration's own migration and version. Getting here took
-  # two separate language-level fixes, both now resolved (docs/roadmap.md's
-  # "Language and library directions" section): a nested `def`/`closure`
+  # two separate language-level fixes, both now resolved: a nested `def`/`closure`
   # redeclared a second time inside a loop body used to raise a runtime
   # TypeError on the second iteration -- needed here, one transaction per
   # migration -- and, independently, a `def`/`closure` nested directly

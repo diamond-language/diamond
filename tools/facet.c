@@ -69,7 +69,7 @@ typedef struct FacetDependency {
     char registry[FACET_MAX_URL];
     /* Exactly one of (ref, ref_kind) or (uses_version, version_text)
      * is meaningful, set at manifest-parse time by parse_dependencies --
-     * see docs/roadmap.md's "Real semver dependency resolution". */
+     * see docs/packages.md for the version-constraint syntax. */
     char ref[FACET_MAX_REF];
     FacetRefKind ref_kind;
     bool uses_version;
@@ -138,8 +138,7 @@ typedef struct FacetPendingTable {
     size_t count;
 } FacetPendingTable;
 
-/* Real backtracking (docs/roadmap.md's own former "not attempted yet"
- * gap): the AND of every version constraint ever seen for this name,
+/* Real backtracking: the AND of every version constraint ever seen for this name,
  * across every resolve_full_graph *attempt* so far -- unlike
  * FacetPendingSemver.constraint above, this is never cleared when the
  * name resolves, and it survives a full graph-walk restart (see
@@ -429,10 +428,10 @@ static bool git_rev_parse_head(const char *repository, char *out, size_t out_siz
 /* Lists every tag on `url`'s remote whose name parses as a semver
  * version (with or without a leading v/V -- see tools/semver.h),
  * writing each matching tag's own original name (not normalized) into
- * tags[0..*out_count). This is the *entire* "version database" a
- * version-constrained dependency ever consults -- there is no registry
- * (docs/roadmap.md), so a repository's own tags are the only source of
- * "what versions exist." `--refs` excludes the `^{}` peeled-commit
+ * tags[0..*out_count). This is the entire "version database" a
+ * version-constrained git dependency consults: a repository's own tags
+ * are the only source of "what versions exist." (A registry dependency
+ * asks the registry for its versions instead.) `--refs` excludes the `^{}` peeled-commit
  * duplicate entry an annotated tag would otherwise also produce. */
 static bool git_list_semver_tags(const char *url, char tags[][FACET_MAX_REF],
         size_t capacity, size_t *out_count, char *error, size_t error_size) {
@@ -479,9 +478,9 @@ static bool git_list_semver_tags(const char *url, char tags[][FACET_MAX_REF],
 }
 
 /* Picks the highest tag in tags[0..tag_count) that satisfies
- * `constraint` -- deterministic, no backtracking (docs/roadmap.md's
- * own "no real backtracking needed for a first version"). Returns
- * false if none satisfy it. */
+ * `constraint` -- deterministic, with no
+ * backtracking of its own (that lives a level up, in resolve_full_graph's
+ * retry loop). Returns false if none satisfy it. */
 static bool pick_best_matching_tag(char tags[][FACET_MAX_REF], size_t tag_count,
         const SemverConstraint *constraint, char *out_tag, size_t out_tag_size) {
     bool found = false;
@@ -922,7 +921,7 @@ static bool write_manifest(const char *path, const FacetManifest *manifest,
  * exact ref and a version constraint for the same name is a hard
  * error in both directions (see handle_exact_dependency/
  * handle_version_dependency) -- "no principled way to compare an
- * arbitrary commit against a range's intent" (docs/roadmap.md) --
+ * arbitrary commit against a range's intent" --
  * except when the side resolved first happens to already satisfy the
  * other's own constraint, in which case there is nothing to reconcile. */
 
@@ -1089,8 +1088,7 @@ static bool handle_exact_dependency(const FacetDependency *dependency,
 }
 
 /* `history`/`needs_restart` are the real-backtracking mechanism
- * (docs/roadmap.md's own former "not attempted yet" gap; see resolve_
- * full_graph's own comment for the retry loop this feeds): every
+ * (see resolve_full_graph's own comment for the retry loop this feeds): every
  * version constraint ever seen for a name, across every graph-walk
  * attempt, is folded into `history` *before* any of the resolved/
  * pending branching below -- accumulating first means the one
@@ -1574,8 +1572,7 @@ static bool attempt_resolve_graph(const FacetManifest *manifest, FacetResolution
     return true;
 }
 
-/* Real backtracking (docs/roadmap.md's own former "not attempted yet"
- * gap): attempt_resolve_graph's only way to signal "an already-resolved
+/* Real backtracking: attempt_resolve_graph's only way to signal "an already-resolved
  * name's chosen version stopped satisfying a later-discovered
  * constraint, but some version could still satisfy everyone" is
  * `needs_restart` (see handle_version_dependency's own comment for

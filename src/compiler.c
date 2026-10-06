@@ -183,8 +183,7 @@ typedef struct Compiler {
      * covers ordinary instance methods too) because it drives whether a
      * closure nested *directly* inside this function should get the same
      * self-register-reservation/owner_class treatment an instance method
-     * gets, even though the closure itself isn't a class member -- see
-     * compile_definition's own use, and docs/roadmap.md for why. */
+     * gets, even though the closure itself isn't a class member -- see compile_definition's own use. */
     bool in_singleton_method;
     /* True while compiling a while/until/loop's own condition+body once
      * a def/closure has been found anywhere within it (loop_body_may_
@@ -197,7 +196,7 @@ typedef struct Compiler {
      * reached again via a jump back, so any reference compiled *before*
      * a mid-body capture was discovered stays a stale raw-register read
      * that only a lucky first iteration (box hasn't happened yet)
-     * survives -- confirmed directly, not assumed, see docs/roadmap.md.
+     * survives -- confirmed directly, not assumed.
      * Sticky across nested loops (an inner loop reached while this is
      * already true skips its own scan/premark -- see parse_while/
      * parse_loop's own comments). */
@@ -3971,7 +3970,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
             resolved_arguments,resolved_count);
         return destination;
     }
-    /* Keyword arguments (direct top-level calls only -- see docs/roadmap.md):
+    /* Keyword arguments (direct top-level calls only):
      * each argument is placed into its declared positional slot rather than
      * appended, so a keyword can fill any parameter regardless of the order
      * it's written at the call site. Positional arguments still fill slots
@@ -5600,8 +5599,7 @@ static uint16_t parse_regexp_new_call(Compiler *compiler) {
  * (.declare_function/.emit_byte/.add_constant/.add_string/
  * .set_register_count/.run) dispatches through the ordinary INVOKE opcode
  * like any other native-kind receiver (Fiber/File/Regexp), needing no
- * compiler changes at all. See docs/roadmap.md's self-hosting Phase 1
- * entry. */
+ * compiler changes at all. */
 static uint16_t parse_program_builder_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
@@ -9985,8 +9983,7 @@ static uint16_t parse_if(Compiler *compiler,bool inverted) {
     uint32_t before_alias[DIAMOND_MAX_LOCALS];uint32_t then_alias[DIAMOND_MAX_LOCALS];
     /* A local first bound *inside* the then-branch (no binding before the
      * if at all) sits outside flow_local_count, so none of the loops below
-     * that snapshot/restore/merge across it would otherwise touch it --
-     * same gap `known_types` already has documented in docs/roadmap.md.
+     * that snapshot/restore/merge across it would otherwise touch it -- the same gap `known_types` already has.
      * Bridged here the same way parse_if already models a missing `else`
      * for the if-expression's own result: the branch that doesn't bind it
      * contributes Nil (confirmed against the VM: an if-only-assigned local
@@ -13085,7 +13082,7 @@ static uint16_t compile_loop_control(Compiler *compiler) {
 }
 
 /* `do |param, param, ...| BODY end` attached right after a call's closing
- * `)` -- see docs/roadmap.md's design writeup for the full rationale.
+ * `).
  * Deliberately a separate, much smaller function rather than a refactor
  * of compile_definition (below): that function carries a lot of ceremony
  * that doesn't apply to an anonymous block (operator-method names,
@@ -13763,9 +13760,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * exactly this shape and require it to work. A closure nested any
      * deeper, or inside an ordinary instance method, or inside a plain
      * top-level function, gets neither: it's an ordinary closure, no
-     * implicit self of any kind. See docs/roadmap.md for the bug this
-     * replaced (the blanket at_top_level-only gate that broke redefine_
-     * method) and how it was found. */
+     * implicit self of any kind. */
     const bool direct_class_member=
         at_top_level&&compiler->current_class>=0&&!module_singleton;
     const bool direct_module_member=
@@ -14906,11 +14901,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * the final statement compile_sequence threads through as the whole
      * sequence's value -- needs a real, permanently-reserved register here.
      * Register allocation is monotonic and never recycled within a
-     * function body (see docs/roadmap.md's self-hosting register-budget
-     * notes), so for a large class this reservation is pure, cumulative
+     * function body, so for a large class this reservation is pure, cumulative
      * waste against the entry function's own register ceiling --
-     * confirmed the hard way while porting the self-hosted parser
-     * (docs/roadmap.md's Phase 3 follow-up File.open entry), which is
+     * confirmed the hard way while porting the self-hosted parser, which is
      * also why that ceiling was later widened (256 -> 4096). */
     const bool member_result_discarded =
         at_top_level && (compiler->current_class>=0||compiler->current_module>=0);
@@ -15440,8 +15433,7 @@ static void compile_alias_method(Compiler *compiler) {
  * `def name(params...) @ivar.name(params...) end`: same method metadata,
  * visibility, inheritance, interface checks, dispatch caches, arity
  * validation, and respond_to? behavior as any other method, not a
- * parallel runtime dispatch mechanism (docs/roadmap.md's "Explicit-arity
- * method delegation"). Deliberately scoped: the target must be a bare
+ * parallel runtime dispatch mechanism. Deliberately scoped: the target must be a bare
  * instance variable (no arbitrary expression, no `to: some_method()`);
  * parameters are bare names only (no type annotations or defaults). A final
  * `&block` parameter forwards the trailing block closure through the ordinary
@@ -18295,8 +18287,7 @@ static size_t align_up_max(size_t offset) {
  * diamond_program_read_compiled -- since 1 malloc instead of 6 per
  * function is the difference between a few hundred and a few thousand
  * allocations for a prelude-sized template; measured directly against a
- * cold process, not assumed (docs/roadmap.md's "Make programs start
- * faster"). */
+ * cold process, not assumed. */
 bool diamond_function_copy(DiamondFunction *destination,
                            const DiamondFunction *source) {
     *destination=*source;
@@ -18798,8 +18789,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * error there is the only thing that can stop this pass) are copied
  * into the second, real pass's own program before it starts. This is
  * what lets `SomeClass.new(...)`/`SomeClass.someMethod(...)`/a type
- * annotation reference a class/module/interface declared *later* in the
- * same source -- see docs/roadmap.md and the forward-declarations plan.
+ * annotation reference a class/module/interface declared *later* in the same source.
  * A real syntax/semantic error unrelated to a forward reference still
  * fails identically in the first pass, and the second pass never runs --
  * the caller sees exactly one clean error, same as a single-pass compile
@@ -18858,11 +18848,10 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
                                  bool debug_mode,
                                  DiamondDiagnostic *diagnostic) {
-    /* Temporary: docs/roadmap.md's "make programs start faster" first
-     * step ("measure startup and compile-time cost"). DIAMOND_TRACE_
-     * COMPILE, same env-var-gated stderr convention as DIAMOND_TRACE_GC
-     * and friends (src/run_source.c). CLOCK_MONOTONIC, matching every
-     * other wall-time measurement in this codebase. */
+    /* DIAMOND_TRACE_COMPILE: an opt-in stderr report of where compile time
+     * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
+     * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
+     * wall-time measurement in this codebase. */
     const bool trace_compile=getenv("DIAMOND_TRACE_COMPILE")!=nullptr;
     struct timespec trace_start={0},trace_discovery_done={0},trace_end={0};
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_start);
@@ -19075,9 +19064,8 @@ bool diamond_compile(const char *source, DiamondProgram *program,
  * `source` by name, exactly as if `source` had been compiled as
  * template_source + source concatenated the way diamond_run_source
  * (src/run_source.c) does today -- without re-lexing/re-parsing
- * template_source, which is the actual cost being avoided (see
- * docs/roadmap.md's "make programs start faster": the embedded prelude
- * dominates every single invocation's compile time today).
+ * template_source, which is the actual cost being avoided (the embedded
+ * prelude dominates a from-scratch compile).
  *
  * `template` itself is read-only here and never modified or freed --
  * the caller owns its lifetime and can reuse the same compiled

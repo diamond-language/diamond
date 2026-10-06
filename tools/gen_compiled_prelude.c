@@ -13,7 +13,7 @@
 
 /* See src/bignum.c's own identical comment: needed transitively for
  * vm.h's <ucontext.h> use (via compiler.h), only under musl
- * (docs/roadmap.md's "Portability"). */
+ * (docs/portability.md). */
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1
