@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Instrumented builds no longer recompile everything. The two fuzzers share one instrumented
+  copy of the sources, so editing a harness rebuilds in under a second instead of recompiling
+  `vm.c` (about six minutes under clang's ASan+UBSan). The sanitizer and release variants of
+  `run_cases` link the objects `diamond` already built instead of compiling every source a second
+  time, and the tool and test binaries (`facet`, the LSP and DAP servers, the API and fiber tests,
+  ...) share one set of debug objects. Switching between `sanitize`, `tsan`, `release` and `debug`
+  no longer deletes those shared objects.
+
 ## 0.11.2 — 2026-10-05
 
 ### Security
