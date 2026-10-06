@@ -248,7 +248,7 @@ JsonValue *workspace_symbol_compute(const DocumentTable *documents,
     }
 
     /* One DiamondProgram, reused across every file this request scans
-     * -- see tests/run_cases.c's own comment on why (docs/roadmap.md):
+     * -- see tests/run_cases.c's own comment on why:
      * malloc/free-ing an ~83MB DiamondProgram per file is real mmap/
      * munmap kernel work, and a workspace can easily have hundreds of
      * *.di files. Lazily allocated on first use, kept for the life of

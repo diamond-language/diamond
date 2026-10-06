@@ -124,8 +124,7 @@ typedef struct DiamondString {
 
 /* An interned-free, content-compared name: equality and hashing are by
  * byte content (exactly like DiamondString), and lifetime is ordinary GC,
- * not permanent -- see docs/roadmap.md for why Symbol was scoped this way
- * rather than as Ruby-style pointer-equal singletons. Deliberately its own
+ * not permanent (Symbol is deliberately not a Ruby-style pointer-equal singleton). Deliberately its own
  * struct (not just DiamondString reused under a different kind) purely for
  * type clarity, even though the layout is identical. */
 typedef struct DiamondSymbol {
@@ -647,8 +646,7 @@ typedef struct DiamondProcessHandle {
 
 /* Forward-declared, not included: DiamondProgram is defined in compiler.h,
  * which itself includes vm.h (and so, transitively, this file) -- a
- * pointer to the incomplete type is all this struct needs. See
- * docs/roadmap.md's self-hosting Phase 1 entry for the full design: this
+ * pointer to the incomplete type is all this struct needs. This
  * is the ProgramBuilder native bridge letting Diamond code construct and
  * run a DiamondProgram at runtime. Like DiamondFileHandle/
  * DiamondListenerHandle, no mark_object branch is needed -- the wrapped
@@ -660,8 +658,8 @@ typedef struct DiamondProcessHandle {
  * diamond_verify_bytecode's register-bounds/jump-alignment checks,
  * program_builder_run_helper in vm_program_builder.c): ProgramBuilder is an internal
  * mechanism the self-hosted compiler bootstrap needs, not a supported
- * embedding API -- it's exactly what docs/roadmap.md's "Explicitly
- * deferred" section means by deferring stable bytecode/embedding APIs.
+ * embedding API -- it's exactly what docs/roadmap.md's "Stable public boundaries"
+ * section means by not yet promising stable bytecode/embedding APIs.
  * It's still callable from any Diamond script (there's no way to hide a
  * builtin class from `require`d code), so the bounds/alignment
  * validation stays as real defense-in-depth against memory-unsafety --

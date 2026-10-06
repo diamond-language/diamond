@@ -1,15 +1,14 @@
 /* Semantic Versioning 2.0.0 (semver.org) parsing, precedence comparison,
- * and range/constraint handling for `facet` -- see docs/roadmap.md's
- * "Real semver dependency resolution for facet". Deliberately standalone:
+ * and range/constraint handling for `facet` (constraint syntax:
+ * docs/packages.md). Deliberately standalone:
  * no dependency on facet.c, the Diamond compiler, or the VM, since this
  * is plain string/number parsing with no need for any of that (and
  * `docs/packages.md`'s own `diamond.cut` `version` field is a plain
  * String -- nothing here needs to run *inside* the language either).
  *
- * There is no hosted registry (see docs/roadmap.md): a dependency's
- * available versions come from its own repository's git tags, so the
- * only "database" this module ever consults is whatever list of tag
- * strings a caller already fetched via `git ls-remote --tags`.
+ * This module never fetches anything: whatever list of version strings
+ * the caller already has (a git dependency's tags from `git ls-remote
+ * --tags`, or a registry's version list) is all it ever consults.
  */
 #ifndef DIAMOND_SEMVER_H
 #define DIAMOND_SEMVER_H
@@ -37,8 +36,8 @@ typedef struct Semver {
 
 /* Parses `text` as a strict semver version, optionally prefixed with a
  * single leading 'v'/'V' (the conventional git tag style, "v1.2.3") --
- * needed since "tags that parse as semver" (docs/roadmap.md) is exactly
- * how a dependency's available versions get discovered, and real-world
+ * needed since "tags that parse as semver" is how a git
+ * dependency's available versions get discovered, and real-world
  * tags are `v1.2.3` far more often than bare `1.2.3`. Strict otherwise:
  * major/minor/patch must be plain non-negative integers with no leading
  * zero (except the single digit "0" itself), matching semver.org's own
@@ -104,8 +103,8 @@ bool semver_constraint_parse(const char *text, SemverConstraint *out);
 bool semver_satisfies(const Semver *version, const SemverConstraint *constraint);
 
 /* Intersects `a` and `b` (the AND of both, needed whenever two
- * different requesters in a dependency graph constrain the same cut --
- * docs/roadmap.md's own resolver design) into `*out`. Returns false
+ * different requesters in a dependency graph constrain the same cut)
+ * into `*out`. Returns false
  * when the intersection is empty (no version can satisfy both), in
  * which case `*out` is left unspecified -- the caller already has `a`
  * and `b` themselves to report in that case, so this doesn't attempt

@@ -17,8 +17,7 @@
 #   run_tests()
 #
 # Diamond has runtime type introspection and public dynamic dispatch via
-# `class()`/`is_a?`/`public_send`, but no method enumeration or first-class
-# Class/function values (see docs/roadmap.md) -- so tests can't be
+# `class()`/`is_a?`/`public_send`, but no method enumeration or first-class Class/function values -- so tests can't be
 # auto-discovered by scanning for a `test_` prefix the way real minitest does;
 # each test is registered explicitly via
 # `test(name, callback)` instead. Each test function also has to be

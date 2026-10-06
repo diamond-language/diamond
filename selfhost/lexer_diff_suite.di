@@ -1,7 +1,6 @@
 # Batched replacement for tests/lexer_diff.sh's per-case process: the old
 # script spawned a fresh `diamond selfhost/lexer_dump.di` (recompiling
-# lexer.di from source) for every one of ~1050 cases, which dominated CI
-# time (see docs/roadmap.md). Here selfhost/lexer.di is required exactly
+# lexer.di from source) for every one of ~1050 cases, which dominated CI time. Here selfhost/lexer.di is required exactly
 # once for the whole run; dump_tokens is called directly in a loop
 # instead of shelling out per case. The native reference side still uses
 # a real subprocess per case (Process.run) since it has to reflect

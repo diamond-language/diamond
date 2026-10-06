@@ -1,8 +1,7 @@
 # Batched replacement for tests/parser_diff.sh's positive-case loop: the
 # old script spawned a fresh `diamond selfhost/parser_run_with_core.di`
 # per case, recompiling core.di + all 5354 lines of parser.di from
-# scratch every time -- by far the dominant cost of a full `make
-# test-all` run (see docs/roadmap.md). parser_run_batch.di now does that
+# scratch every time -- by far the dominant cost of a full `make test-all` run. parser_run_batch.di now does that
 # compile exactly once per whole run; this file drives it with a single
 # Process.run call, splits its one combined stdout capture back into
 # per-case segments, and compares each against a fresh (still per-case,

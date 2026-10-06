@@ -784,7 +784,7 @@ int diamond_repl_run(void) {
      * "ends with the prompt" wildcard match that never actually looked
      * for the banner text's own arrival time. Surfaced by, not caused
      * by, this file's own later dup2-based output-capture fix
-     * (docs/roadmap.md's "Portability") -- once *something* finally
+     * (docs/portability.md) -- once *something* finally
      * flushed stdout's long-stuck buffer (that fix's own fflush(stdout)
      * before its first redirect), the banner suddenly appeared, but
      * interleaved into the middle of the first evaluated expression's
@@ -1010,7 +1010,7 @@ int diamond_repl_run(void) {
          * on glibc, but POSIX only guarantees it names *some* `FILE *`
          * expression -- musl's own <stdio.h> defines it as a non-
          * assignable macro, so the direct-assignment form doesn't even
-         * compile there (docs/roadmap.md's "Portability"). Redirecting
+         * compile there (docs/portability.md). Redirecting
          * the underlying file descriptor instead works identically on
          * both: every write through the untouched `stdout` FILE*
          * (puts/print/etc., including inside the user's own running

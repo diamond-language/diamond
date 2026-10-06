@@ -224,7 +224,7 @@ choose the other two strategies -- see [Restart strategies](#restart-strategies)
 
 ```ruby
 def fetch_loop(url)
-  loop
+  loop do
     fetch_and_process(url)  # may raise on a transient network error
   end
 end
