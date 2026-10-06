@@ -15,8 +15,70 @@
 #include "vm.h"
 #include "compiler.h"
 #include <time.h>
+#include <poll.h>
+#include <netdb.h>
+#include <sys/socket.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
+
+/* Types shared by the files split out of vm.c. */
+/* Native backing struct for DiamondChannelHandle (object.h) -- see docs/
+ * threads.md's Channels section. Unlike DiamondThread (owned one-to-one
+ * by exactly one DiamondThreadHandle), a DiamondChannel is genuinely
+ * shared: `refcount` counts every live DiamondChannelHandle referencing
+ * it, possibly across several independent VM heaps at once (a Channel
+ * passed as a Thread.new argument, sent through another Channel, or
+ * copied inside an Array/Hash/Instance all bump this via copy_value_
+ * into_vm's own DIAMOND_OBJECT_CHANNEL case) -- freed only once the last
+ * one is swept (free_channel_reference).
+ *
+ * `private_vm`/`private_program` exist purely as GC-managed storage for
+ * queued values, never to run bytecode: nothing ever calls run_chunk
+ * against private_vm. private_program is a clone_program_from_chunk
+ * clone of whatever program was ambient at Channel.new time (identical
+ * shape to how Thread.new clones one for a spawned thread's own use) --
+ * send() rebases an incoming value from the sender's own ambient classes
+ * into private_program's classes (via copy_value_into_vm, exactly like
+ * Thread.new's own argument copy); receive() rebases the other direction
+ * (exactly like Thread#join's own result copy). Every value queued is
+ * therefore always a value private_vm itself owns -- queue[] doubles as
+ * private_vm->extra_roots (see that field's own comment, src/vm.h) so
+ * private_vm's own collections can find them.
+ *
+ * `queue` is a flat, non-ring `malloc`'d DiamondValue[capacity] buffer:
+ * receive() takes queue[0] and memmoves the remainder down rather than
+ * tracking a separate head index -- simpler than ring-buffer index math,
+ * and keeps the extra_roots hook a trivial flat pointer+count. Expected
+ * capacities (tens to low thousands) make the memmove cost a non-issue.
+ *
+ * `lock` serializes every access to this struct, including every
+ * allocation on private_vm -- since private_vm is never touched by more
+ * than one OS thread at a time (always under this same lock), this
+ * satisfies the real invariant GC safety needs (see diamond_vm_collect's
+ * own contract) without needing private_vm to be pinned to one thread
+ * for its whole lifetime the way a spawned Thread's own child_vm is.
+ * `not_empty`/`not_full` are this codebase's first condition variables
+ * -- see send/receive's own dispatch comments (DIAMOND_OP_INVOKE) for
+ * the exact wait/signal protocol. */
+typedef struct ChannelWaitLink {
+    struct ChannelWaitLink *next;
+    int write_fd;
+} ChannelWaitLink;
+
+/* Types shared by the files split out of vm.c. */
+typedef struct DiamondChannel {
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty;
+    pthread_cond_t not_full;
+    ChannelWaitLink *waiters;
+    DiamondVm *private_vm;
+    DiamondProgram *private_program;
+    DiamondValue *queue;
+    size_t capacity;
+    size_t count;
+    bool closed;
+    atomic_size_t refcount;
+} DiamondChannel;
 
 enum { TIME_BEGINNING_OF_DAY,TIME_END_OF_DAY,TIME_BEGINNING_OF_MONTH,
     TIME_END_OF_MONTH,TIME_BEGINNING_OF_WEEK,TIME_END_OF_WEEK,
@@ -248,5 +310,31 @@ DIAMOND_INTERNAL DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm, D
 /* Shared primitives that stay in vm.c (needed by vm_process_io.c) */
 DIAMOND_INTERNAL DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd);
 DIAMOND_INTERNAL bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner);
+
+/* vm_network.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL DiamondVmStatus dns_resolve_helper(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue host_value,DiamondValue channels,DiamondValue deadline, DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus socket_finish_connect_helper(DiamondVm *vm,DiamondSocketHandle *handle);
+DIAMOND_INTERNAL DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host, int64_t port,int64_t connect_timeout_ms,int *out_fd);
+DIAMOND_INTERNAL DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm, const DiamondString *address,int64_t port,DiamondSocketHandle **out_handle);
+DIAMOND_INTERNAL DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port, bool nonblocking,bool reuse_port,DiamondListenerHandle **out_handle);
+DIAMOND_INTERNAL void tls_abort_handshake(DiamondTlsSocketHandle *handle);
+DIAMOND_INTERNAL DiamondVmStatus tls_encode_alpn_protocols(DiamondVm *vm,const char *owner, const DiamondArray *protocols,unsigned char **out_buffer,unsigned int *out_length);
+DIAMOND_INTERNAL DiamondVmStatus tls_finish_handshake(DiamondVm *vm, DiamondTlsSocketHandle *handle,const char **direction);
+DIAMOND_INTERNAL void tls_format_error(char *buffer,size_t buffer_size);
+DIAMOND_INTERNAL DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port, const char *cert_path,const char *key_path,const DiamondArray *alpn_protocols, const char *client_ca_path,DiamondListenerHandle **out_handle);
+DIAMOND_INTERNAL int tls_new_session_callback(SSL *ssl,SSL_SESSION *session);
+DIAMOND_INTERNAL DiamondVmStatus tls_read_chunk(DiamondVm *vm,SSL *ssl,void *buffer,size_t want, size_t *out_read,bool *out_eof);
+DIAMOND_INTERNAL DiamondVmStatus tls_read_line(DiamondVm *vm,SSL *ssl,StringBuilder *builder, bool *saw_any);
+DIAMOND_INTERNAL DiamondVmStatus tls_validate_alpn_protocols(DiamondVm *vm,const char *owner, const DiamondArray *protocols);
+DIAMOND_INTERNAL DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t length);
+DIAMOND_INTERNAL DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket, int64_t port,DiamondUdpSocketHandle **out_handle);
+
+/* Shared primitives that stay in vm.c (needed by vm_network.c) */
+DIAMOND_INTERNAL DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd, bool nonblocking);
+DIAMOND_INTERNAL DiamondSocketHandle *allocate_socket_handle(DiamondVm *vm,int fd);
+DIAMOND_INTERNAL DiamondUdpSocketHandle *allocate_udp_socket_handle(DiamondVm *vm,int fd);
+DIAMOND_INTERNAL DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target, bool writable,DiamondValue cancellations,DiamondValue deadline_value, struct pollfd *fds,nfds_t fd_count,const bool *select_drained);
+DIAMOND_INTERNAL int connect_with_timeout(int fd,const struct addrinfo *candidate, int64_t timeout_ms);
+DIAMOND_INTERNAL DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,bool *any_invoked);
 
 #endif
