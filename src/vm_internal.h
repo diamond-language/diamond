@@ -217,4 +217,15 @@ DIAMOND_INTERNAL bool parse_time_utc_offset_chars(const char *chars,size_t lengt
 DIAMOND_INTERNAL char *substitute_fixed_offset_z(const char *format,int64_t offset);
 DIAMOND_INTERNAL int64_t weekday_calendar_distance(int wday,int64_t count,bool future);
 
+/* vm_database.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL DiamondVmStatus mysql_dispatch_helper(DiamondVm *vm,DiamondMysqlHandle *target_db, const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base, uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL void mysql_library_init_once_fn(void);
+DIAMOND_INTERNAL DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *target_db, const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base, uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handle *target_db, const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base, uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus sqlite3_open_helper(DiamondVm *vm,const DiamondString *path, DiamondValue mode,sqlite3 **out_db);
+DIAMOND_INTERNAL DiamondVmStatus sqlite3_statement_dispatch_helper(DiamondVm *vm, DiamondSqlite3StatementHandle *target_stmt,const DiamondStringConstant *method_name, DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest);
+
+/* Shared primitives that stay in vm.c (needed by vm_database.c) */
+DIAMOND_INTERNAL DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle( DiamondVm *vm,sqlite3_stmt *stmt);
+
 #endif
