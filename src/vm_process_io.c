@@ -68,7 +68,7 @@ enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
 #include <time.h>
 #include <unistd.h>
 
-#include "vm_internal.h"
+extern char **environ;
 
 /* File.join(*parts) -- joins every String in `parts` with '/', collapsing
  * a redundant separator at each seam (a trailing '/' on the left side,
