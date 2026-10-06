@@ -217,7 +217,7 @@ static void div_emit_wrapped(DivTranslator *translator,const DivSourceIndex *ind
  * several physical lines -- each chunk is always exactly one. */
 static void div_emit_literal(DivTranslator *translator,const DivSourceIndex *index,
         const char *source,size_t start,size_t length) {
-    static constexpr size_t chunk_size=150;
+    static constexpr size_t chunk_size=1000;
     size_t pos=0;
     while(pos<length&&translator->ok) {
         size_t chunk_length=length-pos;

@@ -20,12 +20,10 @@ assert_contains() {
     [[ "$haystack" == *"$needle"* ]]
 }
 
-# Diamond string literals cap out at 255 bytes (DIAMOND_MAX_STRING_LENGTH,
-# src/vm.h) -- any query text longer than that has to be assembled as an
-# Array of lines joined with "\n", not a single literal. run_file below
-# (source written to a temp .di file, not passed via -e) is what most
-# cases here use for exactly this reason once a query gets past a
-# one-liner.
+# Longer queries are written as an Array of lines joined with "\n" rather
+# than one literal, which keeps each line readable. run_file below (source
+# written to a temp .di file, not passed via -e) is what most cases here use
+# once a query gets past a one-liner.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

@@ -72,12 +72,13 @@ actual="$("$diamond" "$work/driver_plain.di")"
 assert_contains "$actual" '<p>static</p>'
 count=$((count + 1))
 
-# --- literal text past the 255-byte string-literal cap (DIAMOND_MAX_
-# STRING_LENGTH, src/vm.h) is chunked correctly and reassembles exactly ---
+# --- literal text past the string-literal cap (DIAMOND_MAX_STRING_LENGTH,
+# 4095 bytes, src/vm.h) is chunked correctly and reassembles exactly,
+# including text whose escaped form is twice its raw length ---
 python3 -c "
 with open('$work/long.html.div', 'w') as f:
     f.write('<%# locals: %>\n')
-    f.write('x' * 400)
+    f.write('x' * 2500 + chr(34) * 1500)
     f.write('\n')
 "
 "$diamond" bin/divc.di "$work/long.html.div" "$work/long.html.di" >/dev/null
@@ -87,7 +88,7 @@ out = long_html()
 puts("len=#{out.length()} stripped=#{out.strip().length()}")
 DRIVEREOF
 actual="$("$diamond" "$work/driver_long.di")"
-assert_contains "$actual" "len=402 stripped=400"
+assert_contains "$actual" "len=4002 stripped=4000"
 count=$((count + 1))
 
 # --- Div.escape_html (lib/div/runtime.di) and a generated template's own
