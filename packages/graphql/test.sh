@@ -886,4 +886,35 @@ assert_contains "$actual" "{data: {filtered: min=5 tag=x}}"
 assert_contains "$actual" "{data: {filtered: min=nil tag=x}}"
 count=$((count + 1))
 
+# --- string escapes: \b \f \uXXXX, a surrogate pair, and the errors for malformed ones ---
+actual="$(run_file '
+def string_value(source)
+  tokens = GraphQL::Language::Lexer.tokenize(source)
+  tokens[0].value()
+end
+def lex_error(source)
+  begin
+    GraphQL::Language::Lexer.tokenize(source)
+    "no error"
+  rescue e
+    e.message()
+  end
+end
+text = string_value("\"a\\u0041\\u00e9\\u20ac\\b\\f\"")
+puts(text.length())
+puts(text.slice(0, 7))
+puts(string_value("\"\\ud83d\\ude00\"").bytes().length())
+puts(string_value("\"\\ud83d\\ude00\"") == "\u{1F600}")
+puts(lex_error("\"\\ud83d x\""))
+puts(lex_error("\"\\ude00\""))
+puts(lex_error("\"\\u00zz\""))
+')"
+assert_contains "$actual" "9"
+assert_contains "$actual" "aAé€"
+assert_contains "$actual" "true"
+assert_contains "$actual" "unpaired surrogate in \\ud83d"
+assert_contains "$actual" "unpaired surrogate in \\ude00"
+assert_contains "$actual" "invalid unicode escape \\u00zz"
+count=$((count + 1))
+
 echo "$count graphql tests passed"
