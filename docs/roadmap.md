@@ -304,7 +304,6 @@ Current coverage and the full inventory of checked platform assumptions:
 - shared mutable heaps between OS threads;
 - free-form runtime source evaluation (`ClassName.compile_method` compiles a source
   string into one capture-free method for `define_method` and is not a general `eval`);
-- a hosted package registry without an operational owner;
 - a JIT without representative profiling evidence;
 - portability claims without continuous testing on the claimed platform;
 - runtime class *synthesis* (decided 2026-09): a class's identity is a `uint8_t

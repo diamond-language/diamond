@@ -40,8 +40,7 @@ optional manifest a cut can declare its identity with, and `facet`, the
 standalone tool that fetches and installs cuts. `facet` is a separate
 program (its own binary, `build/facet`, built from `tools/facet.c`), not
 part of the `diamond` runtime or its release — the same relationship
-RubyGems' `gem` has to `ruby`. See `docs/roadmap.md` for what's still
-aspirational.
+RubyGems' `gem` has to `ruby`.
 
 ## `require_cut "name"`
 
@@ -114,8 +113,8 @@ manifest disagrees with its own directory name fails the whole
 (this is the manifest's actual payoff today: catching a cut that was
 copied or renamed incorrectly during a manual install). An optional
 `version` key, if present, must be a String — validated for type only;
-nothing reads its value yet, since there's no dependency resolution to
-consult it (see `docs/roadmap.md`).
+nothing reads its value (see "What's deliberately out of scope so far"
+for why).
 
 A manifest must contain a single data-only Hash literal. The loader and
 `facet` parse it without compiling or running Diamond code. Expressions,
@@ -352,10 +351,11 @@ the first place.
   version satisfying both — see "Dependencies" above): there is no such
   thing as "both," so nothing could ever be resolved *to* when the
   refs themselves disagree.
-- **A hosted registry/index and search**: `facet install greeter` by short name,
-  search, or anything else that needs a default public service. Registry
-  dependencies already resolve against the explicit HTTPS source in a manifest,
-  but Diamond does not operate that service yet.
+- **A default registry and search in `facet`**: `facet install greeter` by short
+  name, or a search command, with no explicit registry. The public registry at
+  [cuts.dilang.tech](https://cuts.dilang.tech) is live, but a registry dependency
+  resolves only against the explicit HTTPS source in a manifest, and `facet` has no
+  built-in default and no search command.
 
 Each of these is a plausible next slice, sized independently rather than
-attempted together — see `docs/roadmap.md`.
+attempted together.
