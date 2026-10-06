@@ -12,6 +12,9 @@ import socket
 import struct
 import subprocess
 import time
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+from free_port import free_port  # noqa: E402
 
 here = Path(__file__).resolve().parent
 diamond = os.environ.get('DIAMOND_BIN', str(here.parents[1] / 'build/diamond'))
@@ -76,9 +79,7 @@ class Client:
         self.sock.close()
 
 
-with socket.socket() as probe:
-    probe.bind(('127.0.0.1', 0))
-    port = probe.getsockname()[1]
+port = free_port()
 env = dict(os.environ, CHAT_PORT=str(port), DIAMOND_NO_CACHE='1')
 server = subprocess.Popen([diamond, 'app.di'], cwd=here, env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

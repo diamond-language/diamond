@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+from free_port import free_port  # noqa: E402
 
 source = Path(__file__).resolve().parents[2]
 diamond = str(source / 'build/diamond')
@@ -28,9 +30,7 @@ def run(*args, **kwargs):
 
 
 def port():
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        return probe.getsockname()[1]
+    return free_port()
 
 
 def stop(process):

@@ -10,14 +10,14 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / 'tests'))
+from free_port import free_port  # noqa: E402
 
 command = sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='diamond-job-service-') as directory:
     root = pathlib.Path(directory)
     database = root / 'jobs.sqlite'
-    with socket.socket() as listener:
-        listener.bind(('127.0.0.1', 0))
-        port = listener.getsockname()[1]
+    port = free_port()
     base = f'http://127.0.0.1:{port}'
     process = None
     log = open(root / 'server.log', 'w+')

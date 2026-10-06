@@ -14,6 +14,8 @@ import sys
 import tempfile
 import threading
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+from free_port import free_port  # noqa: E402
 
 source = Path(__file__).resolve().parents[2]
 diamond = Path(os.environ.get('DIAMOND_BIN', source / 'build/diamond')).resolve()
@@ -35,9 +37,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
     (data / 'staging').mkdir()
     for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js', 'catalog.css', 'cut.html', 'cut.js'):
         shutil.copy(source / 'applications/registry' / name, work / name)
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    port = free_port()
     env = dict(os.environ, REGISTRY_ROOT=str(data), REGISTRY_FACET=str(facet),
                REGISTRY_PORT=str(port), REGISTRY_BASE='/registry', DIAMOND_NO_CACHE='1',
                REGISTRY_TIMEOUT_SECONDS='2', REGISTRY_MAX_CONNECTIONS='4',
