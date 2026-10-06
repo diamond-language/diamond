@@ -228,4 +228,25 @@ DIAMOND_INTERNAL DiamondVmStatus sqlite3_statement_dispatch_helper(DiamondVm *vm
 /* Shared primitives that stay in vm.c (needed by vm_database.c) */
 DIAMOND_INTERNAL DiamondSqlite3StatementHandle *allocate_sqlite3_statement_handle( DiamondVm *vm,sqlite3_stmt *stmt);
 
+/* vm_process_io.c: entry points called from run_chunk and the rest of vm.c */
+DIAMOND_INTERNAL DiamondVmStatus file_path_basename_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *suffix,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus file_path_dirname_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus file_path_expand_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *base,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus file_path_extname_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus file_path_join_helper(DiamondVm *vm,const DiamondValue *parts, size_t count,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *bytes);
+DIAMOND_INTERNAL DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from, const DiamondString *to);
+DIAMOND_INTERNAL DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path);
+DIAMOND_INTERNAL DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *data,DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm, DiamondProcessHandle *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm, DiamondProcessResult *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus process_run_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessResult *result);
+DIAMOND_INTERNAL DiamondVmStatus process_spawn_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessHandle *handle);
+DIAMOND_INTERNAL DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm, DiamondProcessStream *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t base,uint16_t dest);
+
+/* Shared primitives that stay in vm.c (needed by vm_process_io.c) */
+DIAMOND_INTERNAL DiamondProcessStream *allocate_process_stream(DiamondVm *vm,int fd);
+DIAMOND_INTERNAL bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner);
+
 #endif
