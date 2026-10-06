@@ -13524,6 +13524,50 @@ static DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *c
     registers[dest]=call_result;return DIAMOND_VM_OK;
 }
 
+/* Array#push and #length are the two collection calls hot loops make, and
+ * the call into collection_invoke_helper costs more than they do: its frame
+ * saves every callee-saved register and spills nine arguments. This answers
+ * them at the call site, with the same checks the helper makes in the same
+ * order: #length comes before any extension lookup there, and #push honours
+ * a user-defined Array#push exactly as the helper does. Anything unusual (an
+ * arity mismatch, a frozen array, a type constraint, a cold extension cache)
+ * is left for the helper, which then produces the error or fills the cache.
+ * Returns true when it handled the call, with the status in *status. */
+static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,
+        const DiamondStringConstant *method_name,
+        DiamondObjectKind receiver_kind,DiamondVmStatus *status) {
+    if(method_name->length==6&&argc==0&&
+       memcmp(method_name->chars,"length",6)==0) {
+        size_t length;
+        if(receiver_kind==DIAMOND_OBJECT_ARRAY)
+            length=((DiamondArray *)registers[recv].as.object)->count;
+        else if(receiver_kind==DIAMOND_OBJECT_HASH)
+            length=((DiamondHash *)registers[recv].as.object)->count;
+        else length=((DiamondString *)registers[recv].as.object)->length;
+        registers[dest]=DIAMOND_INT((int64_t)length);
+        *status=DIAMOND_VM_OK;return true;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_ARRAY&&method_name->length==4&&argc==1&&
+       memcmp(method_name->chars,"push",4)==0) {
+        DiamondArray *array=(DiamondArray *)registers[recv].as.object;
+        const DiamondFunction *extension=nullptr;
+        if(array->object.frozen||
+           !cached_extension_lookup(vm,(const uint8_t *)(const void *)method_name,
+               (uint8_t)receiver_kind,&extension)||extension!=nullptr||
+           !array_value_satisfies_constraints(array,registers[base]))
+            return false;
+        if(!array_push(vm,array,registers[base]))
+            *status=DIAMOND_VM_OUT_OF_MEMORY;
+        else {
+            registers[dest]=registers[recv];
+            *status=DIAMOND_VM_OK;
+        }
+        return true;
+    }
+    return false;
+}
+
 static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -16116,7 +16160,9 @@ static DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                    receiver_kind==DIAMOND_OBJECT_HASH||
                    receiver_kind==DIAMOND_OBJECT_STRING) {
                     if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=collection_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+                    DiamondVmStatus dispatch_status;
+                    if(!collection_invoke_fast(vm,registers,recv,base,argc,dest,method_name,receiver_kind,&dispatch_status))
+                        dispatch_status=collection_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
