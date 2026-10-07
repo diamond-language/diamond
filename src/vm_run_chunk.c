@@ -403,55 +403,66 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         READ_BYTE(instruction);
         if (instruction < DIAMOND_OP_COUNT)
             vm->opcode_counts[instruction]++;
-        /* Cheap steady-state cost (one boolean read, false unless either
-         * DIAMOND_MAX_INSTRUCTIONS or DIAMOND_MAX_WALL_MILLISECONDS is
-         * configured) for docs/sandbox.md's own "Resource limits" --
-         * same shape as diamond_pending_signals's own check just above.
-         * The instruction-count comparison itself is cheap enough to run
-         * every dispatch when active; the wall-clock check is additionally
-         * masked (see DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK's own
-         * comment) since clock_gettime is the genuinely non-trivial part.
+        /* Cheap steady-state cost (one boolean read, false unless a
+         * DIAMOND_MAX_* budget is configured) for docs/sandbox.md's own
+         * "Resource limits" -- same shape as diamond_pending_signals's own
+         * check just above. The instruction-count comparison itself is cheap
+         * enough to run every dispatch when active; the wall-clock check is
+         * additionally masked (see DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK's
+         * own comment) since clock_gettime is the genuinely non-trivial part.
          *
-         * Both branches clear resource_limits_active (and the two budgets
-         * themselves) *before* VM_RETURN -- unlike DIAMOND_MAX_CALL_DEPTH,
-         * whose own `depth` parameter naturally shrinks as the call stack
-         * unwinds (so a rescue clause in a shallower, already-returned-to
-         * frame never re-trips it), instructions_executed only ever grows
-         * and elapsed wall-clock time only ever increases: leaving either
-         * budget "armed" after it first fires would re-trip this exact
-         * check on the *very next* instruction dispatched -- including
-         * every instruction needed to run a matching `rescue`/`ensure`
-         * clause's own body -- so a program that correctly catches
-         * ResourceLimitError could still never finish handling it. Once
-         * either budget has genuinely been exceeded once, the VM has
-         * already committed to reporting that outcome; letting the
-         * program's own exception handling run to a normal conclusion
-         * afterward (with no further limit interference) is the whole
-         * point of it being a catchable exception rather than an abrupt
-         * kill. */
+         * A budget fires in two steps. The first time one is exceeded
+         * resource_limit_trip disarms both soft budgets *before* VM_RETURN
+         * (instructions_executed only ever grows and elapsed time only ever
+         * increases, so leaving either armed would re-trip on the very next
+         * instruction -- including every instruction a matching `rescue`/
+         * `ensure` body needs, so a program that correctly catches
+         * ResourceLimitError could never finish handling it) and arms the
+         * hard limits instead. Past those, the program has had its grace
+         * allowance: resource_hard_stop returns DIAMOND_VM_RESOURCE_EXHAUSTED,
+         * which no rescue clause can match. Without the second step a program
+         * that rescued the error would run unbounded. */
         if (vm->resource_limits_active) {
             vm->instructions_executed++;
             if (vm->interrupt_flag != nullptr &&
                 atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {
                 VM_RETURN(DIAMOND_VM_INTERRUPTED);
             }
-            if (vm->max_instructions != 0 &&
-                vm->instructions_executed > vm->max_instructions) {
-                vm->max_instructions = 0;
-                vm->max_wall_nanoseconds = 0;
-                vm->resource_limits_active = vm->interrupt_flag != nullptr;
-                VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
-            }
-            if (vm->max_wall_nanoseconds != 0 &&
-                (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0) {
-                struct timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                const int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
-                if (now_ns - vm->start_time_ns > vm->max_wall_nanoseconds) {
-                    vm->max_instructions = 0;
-                    vm->max_wall_nanoseconds = 0;
-                    vm->resource_limits_active = vm->interrupt_flag != nullptr;
+            if (vm->resource_grace_active) {
+                if (vm->hard_stop_instruction_count != 0 &&
+                    vm->instructions_executed > vm->hard_stop_instruction_count) {
+                    VM_RETURN(resource_hard_stop(vm, "instruction"));
+                }
+                if (vm->hard_stop_time_ns != 0 &&
+                    (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0) {
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    const int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
+                    if (now_ns > vm->hard_stop_time_ns) {
+                        VM_RETURN(resource_hard_stop(vm, "wall-clock"));
+                    }
+                }
+            } else {
+                if (vm->max_instructions != 0 &&
+                    vm->instructions_executed > vm->max_instructions) {
+                    resource_limit_trip(vm);
                     VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+                }
+                if (vm->max_wall_nanoseconds != 0 &&
+                    (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0) {
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    const int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
+                    if (now_ns - vm->start_time_ns > vm->max_wall_nanoseconds) {
+                        resource_limit_trip(vm);
+                        VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
+                    }
+                }
+            }
+            if (vm->memory_recheck) {
+                vm->memory_recheck = false;
+                if (!maybe_collect(vm)) {
+                    VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
             }
         }

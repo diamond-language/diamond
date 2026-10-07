@@ -363,6 +363,15 @@ enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
  * power of two minus one for the `&` mask below to work. */
 enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
 
+/* How much further a program may run after a budget trips and its catchable
+ * ResourceLimitError is raised, before DIAMOND_VM_RESOURCE_EXHAUSTED ends it.
+ * Enough for a rescue/ensure clause to log and release what it holds; not
+ * enough to keep working. Instructions and milliseconds past the configured
+ * budget; the memory ceiling is the budget plus a quarter of it, but at least
+ * DIAMOND_MEMORY_GRACE_MINIMUM_BYTES. */
+enum { DIAMOND_INSTRUCTION_GRACE = 1000000, DIAMOND_WALL_GRACE_MILLISECONDS = 1000,
+       DIAMOND_MEMORY_GRACE_MINIMUM_BYTES = 4 * 1024 * 1024 };
+
 typedef enum PendingKind : uint8_t {
     PENDING_NONE,
     PENDING_NORMAL,
@@ -600,6 +609,8 @@ typedef struct DiamondSupervisor {
 } DiamondSupervisor;
 
 DIAMOND_INTERNAL bool maybe_collect(DiamondVm *vm);
+DIAMOND_INTERNAL void resource_limit_trip(DiamondVm *vm);
+DIAMOND_INTERNAL DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);
 
