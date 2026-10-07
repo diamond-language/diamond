@@ -5,9 +5,10 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `be0eb0cae8790555aab3e078696908bd4429b6a0` (Diamond 0.10.2,
-upgraded 2026-10-02 with `deploy/upgrade.sh` after a verified laptop snapshot;
-previously `d951b2ac` for 0.10.1, `a4eabf76` for 0.9.2 and `26758cbfdd516860c21944d4bbfbcb2321947f18`
+Runtime revision: `8441e05cbd8d602990bce43f42963b63ab23119c` (main after
+Diamond 0.11.2, deployed 2026-10-06 with `tools/deploy_registry.sh` after a
+verified laptop snapshot; previously `c7eb036b`, `be0eb0ca` for 0.10.2,
+`d951b2ac` for 0.10.1, `a4eabf76` for 0.9.2 and `26758cbfdd516860c21944d4bbfbcb2321947f18`
 from 2026-09-25 for cut show pages;
 earlier `822114807fbc9cbdd579f29fec4e0958da8b78df` from
 2026-09-24, launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
