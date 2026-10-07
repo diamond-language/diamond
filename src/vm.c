@@ -1041,6 +1041,24 @@ void diamond_vm_collect_minor(DiamondVm *vm) {
         (double)(end.tv_nsec-start.tv_nsec)/1e9;
 }
 
+/* The three DIAMOND_MAX_* budgets bound the whole process, not each VM: a
+ * program that spawns threads, supervised children or ProgramBuilder runs would
+ * otherwise get a full allowance for every one of them. Every VM with a
+ * budget configured registers here. The first registration after the last
+ * budgeted VM was freed starts a fresh allowance (instruction total, byte
+ * total, wall-clock origin), so successive programs in one process (the test
+ * runner, an embedder) do not inherit each other's use. */
+static atomic_size_t budget_live_vms;
+static atomic_size_t budget_instructions;
+static atomic_ptrdiff_t budget_bytes;
+static atomic_int_least64_t budget_start_ns;
+
+static int64_t monotonic_nanoseconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC,&now);
+    return (int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
+}
+
 /* The single collection-trigger check every allocate_* helper in this
  * file makes before actually allocating -- originally factored out of
  * 23 previously-duplicated inline copies (confirmed by direct grep, not
@@ -1078,7 +1096,13 @@ bool maybe_collect(DiamondVm *vm) {
        vm->bytes_allocated-vm->bytes_allocated_at_last_minor_gc>=vm->minor_gc_threshold_bytes)
         diamond_vm_collect_minor(vm);
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
-    if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes) {
+    if(vm->max_memory_bytes!=0) {
+        /* Publish this VM's change since the last call into the process-wide
+         * total, and judge the budget against the total. */
+        const ptrdiff_t delta=(ptrdiff_t)vm->bytes_allocated-vm->memory_published;
+        const ptrdiff_t total=atomic_fetch_add(&budget_bytes,delta)+delta;
+        vm->memory_published=(ptrdiff_t)vm->bytes_allocated;
+        if(total<=0||(size_t)total<=vm->max_memory_bytes)return true;
         if(!vm->memory_limit_tripped) {
             /* First overrun: the catchable ResourceLimitError. The ceiling
              * moves up by the grace allowance so the exception can be built
@@ -1104,19 +1128,16 @@ bool maybe_collect(DiamondVm *vm) {
  * run_chunk is about to return the catchable DIAMOND_VM_RESOURCE_LIMIT_ERROR.
  * Disarm both soft budgets (re-tripping on the very next instruction would
  * make the rescue clause that handles the error impossible to run) and arm
- * the hard limits that bound the grace allowance instead -- each only if its
- * own budget was configured, measured from the budget, not from this moment,
- * so a program that rescues late is not given extra time. */
+ * the hard limits that bound the grace allowance instead, each only if its
+ * own budget was configured. The wall-clock limit is measured from the
+ * budget's deadline, not from this moment, so a program that rescues late is
+ * not given extra time; the instruction limit counts this VM's own further
+ * instructions, since the shared total is no longer being added to. */
 void resource_limit_trip(DiamondVm *vm) {
-    if(vm->max_instructions!=0) {
-        const size_t base=vm->instructions_executed>vm->max_instructions?
-            vm->instructions_executed:vm->max_instructions;
-        vm->hard_stop_instruction_count=base+DIAMOND_INSTRUCTION_GRACE;
-    }
+    if(vm->max_instructions!=0)
+        vm->hard_stop_instruction_count=vm->instructions_executed+DIAMOND_INSTRUCTION_GRACE;
     if(vm->max_wall_nanoseconds!=0) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC,&now);
-        const int64_t now_ns=(int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
+        const int64_t now_ns=monotonic_nanoseconds();
         const int64_t deadline=vm->start_time_ns+vm->max_wall_nanoseconds;
         vm->hard_stop_time_ns=(now_ns>deadline?now_ns:deadline)+
             (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL;
@@ -1152,15 +1173,70 @@ DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget) {
  * below -- removes the race instead of relying on the implicit path. */
 static pthread_once_t mysql_library_init_once = PTHREAD_ONCE_INIT;
 
+static void budget_register(DiamondVm *vm) {
+    if(atomic_fetch_add(&budget_live_vms,1)==0) {
+        atomic_store(&budget_instructions,0);
+        atomic_store(&budget_bytes,0);
+        atomic_store(&budget_start_ns,0);
+    }
+    vm->budgets_registered=true;
+    if(vm->max_wall_nanoseconds!=0) {
+        int_least64_t expected=0;
+        atomic_compare_exchange_strong(&budget_start_ns,&expected,monotonic_nanoseconds());
+        vm->start_time_ns=atomic_load(&budget_start_ns);
+    }
+}
+
+/* A thread that has run to completion keeps its heap until its handle is
+ * collected (join still reads the result out of it), but nothing runs in it
+ * any more: add the instructions it has not flushed to the total, and stop
+ * counting its heap against the memory budget, so a parent that is about to
+ * copy the result into its own heap is not refused for memory that is only
+ * waiting to be reclaimed. */
+void budget_release_finished(DiamondVm *vm) {
+    if(!vm->budgets_registered)return;
+    atomic_fetch_add_explicit(&budget_instructions,
+        vm->instructions_executed-vm->instructions_flushed,memory_order_relaxed);
+    vm->instructions_flushed=vm->instructions_executed;
+    atomic_fetch_sub(&budget_bytes,vm->memory_published);
+    vm->memory_published=0;
+    vm->max_memory_bytes=0;
+}
+
+static void budget_unregister(DiamondVm *vm) {
+    if(!vm->budgets_registered)return;
+    atomic_fetch_add_explicit(&budget_instructions,
+        vm->instructions_executed-vm->instructions_flushed,memory_order_relaxed);
+    atomic_fetch_sub(&budget_bytes,vm->memory_published);
+    atomic_fetch_sub(&budget_live_vms,1);
+}
+
+/* Adds this VM's instructions since its last flush to the process-wide total
+ * and reports whether the total has passed max_instructions. run_chunk calls
+ * it every DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK + 1 instructions a
+ * budgeted VM executes, so a VM is told about an exhausted budget at its next
+ * such point: promptly if it is still doing real work, never if it is only
+ * waiting to join a thread that used the allowance up. A VM that finishes
+ * before its next flush adds its remainder when it is freed, so a swarm of
+ * short-lived threads cannot slip under the count. */
+bool instruction_budget_exceeded(DiamondVm *vm) {
+    const size_t pending=vm->instructions_executed-vm->instructions_flushed;
+    vm->instructions_flushed=vm->instructions_executed;
+    const size_t total=atomic_fetch_add_explicit(&budget_instructions,pending,
+        memory_order_relaxed)+pending;
+    return total>vm->max_instructions;
+}
+
 /* A collection's backing store grew (Array#push, Hash entries or buckets): no
  * fresh object was allocated, so maybe_collect's budget check never ran. A loop
  * that only pushes onto one live array would otherwise outgrow
  * DIAMOND_MAX_MEMORY_BYTES unnoticed. The growth site is mid-operation, so it
  * only raises a flag; run_chunk's dispatch loop acts on it at the next
- * instruction, where every value is rooted and a collection is safe. */
+ * instruction, where every value is rooted and a collection is safe. The
+ * budget is a process-wide total, so even a VM whose own bytes are well under
+ * it can be the one that pushes the total over. */
 static inline void note_storage_growth(DiamondVm *vm) {
-    if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes)
-        vm->memory_recheck=true;
+    if(vm->max_memory_bytes!=0)vm->memory_recheck=true;
 }
 
 void diamond_vm_init(DiamondVm *vm) {
@@ -1242,11 +1318,7 @@ void diamond_vm_init(DiamondVm *vm) {
     }
     vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0||
         vm->max_memory_bytes!=0;
-    if(vm->max_wall_nanoseconds!=0) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC,&now);
-        vm->start_time_ns=(int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
-    }
+    if(vm->resource_limits_active)budget_register(vm);
     pthread_once(&mysql_library_init_once,mysql_library_init_once_fn);
     /* A write(2)/SSL_write to a TCP connection the peer has already reset
      * (not just cleanly closed) raises SIGPIPE, whose default disposition
@@ -1367,6 +1439,7 @@ static void free_object_list(DiamondObject *object) {
 }
 
 void diamond_vm_free(DiamondVm *vm) {
+    budget_unregister(vm);
     free_object_list(vm->young_objects);
     free_object_list(vm->old_objects);
     free_adopted_programs(vm->adopted_programs);
@@ -2047,6 +2120,7 @@ void *thread_entry_trampoline(void *argument) {
     } else {
         thread->result=run_result;
     }
+    budget_release_finished(thread->child_vm);
     atomic_store(&thread->finished,true);
     atomic_fetch_sub(&diamond_running_thread_count,1);
     return nullptr;

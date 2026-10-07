@@ -610,6 +610,8 @@ typedef struct DiamondSupervisor {
 
 DIAMOND_INTERNAL bool maybe_collect(DiamondVm *vm);
 DIAMOND_INTERNAL void resource_limit_trip(DiamondVm *vm);
+DIAMOND_INTERNAL bool instruction_budget_exceeded(DiamondVm *vm);
+DIAMOND_INTERNAL void budget_release_finished(DiamondVm *vm);
 DIAMOND_INTERNAL DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);

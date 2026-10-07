@@ -444,7 +444,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
             } else {
                 if (vm->max_instructions != 0 &&
-                    vm->instructions_executed > vm->max_instructions) {
+                    (vm->instructions_executed & DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK) == 0 &&
+                    instruction_budget_exceeded(vm)) {
                     resource_limit_trip(vm);
                     VM_RETURN(DIAMOND_VM_RESOURCE_LIMIT_ERROR);
                 }

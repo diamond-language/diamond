@@ -131,7 +131,7 @@ VM's run -- otherwise they would re-trip on the very next instruction, including
 the `rescue`/`ensure` clause needs to run. The same moment starts a grace allowance, sized
 for cleanup and not for carrying on:
 
-| budget | grace after it trips |
+| budget | grace after it trips (for each VM) |
 | --- | --- |
 | `DIAMOND_MAX_INSTRUCTIONS` | 1,000,000 more instructions |
 | `DIAMOND_MAX_WALL_MILLISECONDS` | 1,000 ms past the budget's deadline |
@@ -156,30 +156,35 @@ end
 end
 ```
 
-**These budgets still bound one VM, not hostile code.** Use them to cap an honest program
-that loops or allocates by mistake. To contain code you do not trust, also bound it from
-outside the process (a timeout, a cgroup, or killing it), and keep it under `--sandbox`. See
-"Not a shared budget" below for what a program can still multiply.
+**These budgets are not a security boundary on their own.** Use them to cap an honest
+program that loops or allocates by mistake. To contain code you do not trust, also bound it
+from outside the process (a timeout, a cgroup, or killing it), and keep it under `--sandbox`.
+The budgets are shared by every VM in the process; see below.
 
 **What's not covered**:
 
-- **Not a shared budget.** Each `DiamondVm` -- the top-level program, and independently,
-  each `Thread.new`/`Supervisor` child's own `child_vm` and each `ProgramBuilder#run`
-  (which builds a fresh VM per call) -- reads the same configured env var at its own
-  init and enforces it against its own counters. A program that spawns many threads
-  gets one independent budget *per thread*, and one that calls `ProgramBuilder#run` in
-  a loop gets a fresh instruction budget for every run (the parent's counters only see
-  the few instructions that make the call), not one shared total, so either could
-  still multiply its aggregate resource use past a single configured number. A supervised
-  child that is stopped for exhausting its budget is restarted like any other crash, with a
-  fresh VM and a fresh budget. A real fix needs a shared, atomic, cross-thread
-  counter (real precedent exists for exactly this shape --
-  `DIAMOND_MAX_THREADS`'s own process-wide atomic counter) but is real, separate,
-  higher-effort work, not attempted here.
-- **The instruction-count budget is exact; the wall-clock one is not.** Wall-clock is
-  checked periodically (every few thousand instructions, not every single one, since
-  reading the clock is comparatively expensive) -- the actual overshoot past a
-  configured millisecond budget is bounded but nonzero.
+- **The budgets are shared by every VM in the process.** The top-level program, each
+  `Thread.new`, `Supervisor` child and `ProgramBuilder#run` add to one set of counters, so
+  spawning more of them does not buy more allowance:
+  - *Instructions* are one process-wide total. Each VM adds its count and checks it every
+    4,096 instructions, and a VM that finishes adds its remainder, so a swarm of short-lived
+    threads is still counted. A budget is therefore enforced to within 4,096 instructions per
+    VM, not exactly.
+  - *Wall-clock* time runs from the first budgeted VM of the process, so a thread started
+    late inherits what is left.
+  - *Memory* is the sum of every live VM's bytes. A thread that has finished stops counting
+    (its heap stays allocated until its handle is collected, but nothing runs in it), and
+    garbage another thread has not collected yet still counts until it does.
+
+  When the total is exceeded, **each VM** that is still doing work raises its own
+  `ResourceLimitError` at its next check, then gets its own grace allowance. A parent that
+  only waits to join a thread, and so runs fewer than 4,096 instructions after the total
+  went over, is not told. A supervised child that
+  is hard-stopped is restarted like any other crash, in a fresh VM that draws on the same
+  totals.
+- **The wall-clock budget is checked, not exact.** It is read every few thousand
+  instructions, not every single one, since reading the clock is comparatively expensive,
+  so the overshoot past a configured millisecond budget is bounded but nonzero.
 - **Memory is what the VM's own accounting counts.** Objects and the storage of `Array`
   and `Hash` (including growth by `push`, which allocates no new object, checked at the next
   instruction) are counted; buffers owned by native libraries behind a socket, TLS, SQLite,

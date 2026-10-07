@@ -104,11 +104,6 @@ Current behavior: [deployment](deployment.md).
 
 Current behavior: [sandbox](sandbox.md).
 
-- **A shared budget** -- each VM (the program, every `Thread`/`Supervisor` child,
-  every `ProgramBuilder#run`) enforces the instruction, wall-clock and memory limits
-  against its own counters, so spawning threads or looping `ProgramBuilder#run`
-  multiplies the aggregate. Needs a shared atomic counter, the shape
-  `DIAMOND_MAX_THREADS`'s process-wide counter already has.
 - **A configurable grace allowance** -- the cleanup allowance after a budget trips
   (1,000,000 instructions, 1,000 ms, a quarter of the memory budget) is fixed. Needs a
   program whose rescue clause legitimately outgrows it, or one that wants it tighter.
