@@ -18018,6 +18018,12 @@ static uint16_t compile_sequence(Compiler *compiler) {
     bool last_statement_diverges = false;
 
     while (!compiler->failed && !at_block_end(compiler)) {
+        /* A narrowing belongs to the condition that produced it. One left over from the
+         * previous statement (or the previous function body, whose last expression
+         * was `v is String`) is keyed by a register number the next statement can
+         * reuse, so a later `x ? a : b` would apply type sets that belong to another
+         * function. */
+        compiler->narrowing=(Narrowing){};
         if(compiler->debug_mode) {
             /* emit_opcode (called by emit_breakpoint_check, by way of
              * emit_instruction) always tags a freshly emitted instruction
