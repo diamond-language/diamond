@@ -14,8 +14,8 @@ module Arel
     end
     def columns() = @columns
     def predicate() = @predicate
-    def where(predicate) = ConflictTarget.new(@columns, predicate)
-    def column(name: String) = ConflictAttribute.new(name)
+    def where(predicate) -> ConflictTarget = ConflictTarget.new(@columns, predicate)
+    def column(name: String) -> ConflictAttribute = ConflictAttribute.new(name)
   end
 
   # `ON CONFLICT ON CONSTRAINT name DO ...` -- names the constraint directly

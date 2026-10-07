@@ -18,9 +18,9 @@ module Arel
     end
     def query() = @query
     def negated?() = @negated
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Exists.new(@query, !@negated)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Exists = Exists.new(@query, !@negated)
   end
 
   class ScalarSubquery
@@ -28,12 +28,12 @@ module Arel
       @query = query
     end
     def query() = @query
-    def eq(value) = Predicate.new(self, "=", value)
-    def not_eq(value) = Predicate.new(self, "!=", value)
-    def lt(value) = Predicate.new(self, "<", value)
-    def lteq(value) = Predicate.new(self, "<=", value)
-    def gt(value) = Predicate.new(self, ">", value)
-    def gteq(value) = Predicate.new(self, ">=", value)
+    def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
+    def lt(value) -> Predicate = Predicate.new(self, "<", value)
+    def lteq(value) -> Predicate = Predicate.new(self, "<=", value)
+    def gt(value) -> Predicate = Predicate.new(self, ">", value)
+    def gteq(value) -> Predicate = Predicate.new(self, ">=", value)
   end
 
   class Cte

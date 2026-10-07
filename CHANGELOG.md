@@ -33,6 +33,12 @@ authoritative fine-grained record.
   insertion sort that re-split both version strings on every comparison. A 40-release listing
   went from 0.59 ms to 0.26 ms of handler time.
 
+### Packages
+
+- Arel and ActiveRecord builders now declare their return types (`Query#where`, `Table#column`,
+  `Attribute#eq`, `Relation#where`, the `Insert`/`Update`/`Delete` builders, ...), so the
+  compiler type-checks chained calls on their results and the JIT can compile them.
+
 ### Tooling
 
 - Instrumented builds no longer recompile everything. The two fuzzers share one instrumented

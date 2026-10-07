@@ -18,8 +18,8 @@ module Arel
     def expression() = @expression
     def direction() -> String = @direction
     def nulls() = @nulls
-    def nulls_first() = Ordering.new(@expression, @direction, "FIRST")
-    def nulls_last() = Ordering.new(@expression, @direction, "LAST")
+    def nulls_first() -> Ordering = Ordering.new(@expression, @direction, "FIRST")
+    def nulls_last() -> Ordering = Ordering.new(@expression, @direction, "LAST")
   end
 
   class Alias

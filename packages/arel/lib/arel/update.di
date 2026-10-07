@@ -13,24 +13,24 @@ module Arel
 
     def ctes() = @ctes
     def structure() = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
-    def set(assignments: Hash)
+    def set(assignments: Hash) -> Update
       Update.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
     end
-    def where(predicate)
+    def where(predicate) -> Update
       Update.new(@table, @assignments, @predicates.concat([predicate]), @returning,
         @allow_all, @ctes)
     end
-    def returning(expressions)
+    def returning(expressions) -> Update
       Update.new(@table, @assignments, @predicates, arel_array(expressions), @allow_all,
         @ctes)
     end
-    def all() = Update.new(@table, @assignments, @predicates, @returning, true, @ctes)
-    def with(relation_or_name, query)
+    def all() -> Update = Update.new(@table, @assignments, @predicates, @returning, true, @ctes)
+    def with(relation_or_name, query) -> Update
       name = arel_cte_name(relation_or_name)
       Update.new(@table, @assignments, @predicates, @returning, @allow_all,
         Arel.append_cte(@ctes, name, query))
     end
-    def with_recursive(relation_or_name, query)
+    def with_recursive(relation_or_name, query) -> Update
       name = arel_cte_name(relation_or_name)
       Update.new(@table, @assignments, @predicates, @returning, @allow_all,
         Arel.append_cte(@ctes, name, query, true))
