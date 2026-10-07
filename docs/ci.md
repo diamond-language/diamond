@@ -6,11 +6,9 @@ ref. Separate PRs run independently; a newer main push or manual main run
 cancels earlier main work. Keep `cancel-in-progress: true` and avoid `always()`
 on test jobs, which can keep cancelled work alive.
 
-Cancellation is asynchronous. In run 309, superseded by run 310, sixteen jobs
-finished cancellation within seconds, while FreeBSD remained until roughly
-five minutes after cancellation began. Run 310 was superseded by manual run
-311 before starting any jobs. This supports working concurrency cancellation;
-it does not establish why the FreeBSD runner was slow to stop.
+Cancellation is asynchronous: most jobs stop within seconds of a newer push, but a
+job on a slow runner (FreeBSD has been the usual one) can take up to the five minutes
+GitHub allows.
 
 GitHub documents a five-minute cancellation deadline in its
 [workflow cancellation reference](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation).
@@ -30,19 +28,26 @@ not required to stop it.
 
 ## Timeout budgets
 
-Budgets use maximum job durations from successful runs 305–308, including
-setup and teardown, with extra time for runner and package-mirror variation:
+Budgets are the longest successful job durations seen across recent `main` runs, including
+setup and teardown, with room for runner and package-mirror variation:
 
 | Job | Observed maximum | Timeout |
 | --- | ---: | ---: |
-| Matrix builds | 24.0 min | 40 min |
-| Matrix integration | 11.1 min | 20 min |
-| Matrix fuzz | 21.2 min | 35 min |
-| ARM64 | 4.3 min | 20 min |
-| ARM64 sanitizers | 32.3 min | 45 min (unchanged) |
-| musl | 5.2 min | 20 min |
-| FreeBSD | 9.2 min | 20 min |
-| macOS | 6.9 min | 20 min |
+| Matrix builds | 15.2 min | 40 min |
+| Matrix integration | 7.6 min | 20 min |
+| Matrix fuzz | 9.2 min | 35 min |
+| ARM64 | 3.6 min | 20 min |
+| ARM64 sanitizers | 10.5 min | 45 min |
+| Stress, threaded cases on two CPUs | 10.5 min | 40 min |
+| Stress under TSan | 14.8 min | 45 min |
+| Stress on ARM64 | 8.4 min | 40 min |
+| musl | 3.9 min | 20 min |
+| FreeBSD | 5.5 min | 20 min |
+| macOS | 5.5 min | 20 min |
+
+The stress jobs pin the threaded test cases to two CPUs, which is slower and orders
+threads differently than the other jobs; a timing-dependent test that passes elsewhere can
+fail only there.
 
 Job timeouts bound execution after a runner starts; they do not bound queue
 wait or guarantee immediate cancellation. Revisit these budgets if successful
