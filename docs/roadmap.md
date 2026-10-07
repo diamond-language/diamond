@@ -220,10 +220,12 @@ Current behavior and phase history: [JIT design](internal/jit-design.md).
 
 Current layout and measurements: [VM source layout](internal/vm-source-layout.md).
 
-- **Build the AOT runtime archive with LTO.** `diamond build` links the runtime at `-O2` without
-  it, so standalone apps pay the cross-unit cost of keeping `run_chunk` in its own file (about 1.5%
-  more cycles in the `-O3` CLI build without LTO). Needs the archive to be fat LTO objects that a
-  user's own compiler can link, which is unmeasured.
+- **An opt-in LTO build of the AOT runtime.** `diamond build` links the runtime at `-O2` without
+  LTO. Measured on five `bench/` programs against that: `-O2` with LTO is about 2% slower, and
+  `-O3` with LTO about 3% faster (instructions and cycles both), but the LTO link recompiles the
+  runtime for every app (about 38 s per `diamond build` instead of 0.2 s). That only makes sense
+  as an opt-in (a flag or variable), and the prebuilt kit would then need a second set of fat
+  `-O3` objects the user's compiler can link.
 
 ### Register allocation
 
