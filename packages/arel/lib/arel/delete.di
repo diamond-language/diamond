@@ -12,20 +12,20 @@ module Arel
 
     def ctes() = @ctes
     def structure() = [@table, @predicates, @returning, @allow_all, @ctes]
-    def where(predicate)
+    def where(predicate) -> Delete
       Delete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
         @ctes)
     end
-    def returning(expressions)
+    def returning(expressions) -> Delete
       Delete.new(@table, @predicates, arel_array(expressions), @allow_all, @ctes)
     end
-    def all() = Delete.new(@table, @predicates, @returning, true, @ctes)
-    def with(relation_or_name, query)
+    def all() -> Delete = Delete.new(@table, @predicates, @returning, true, @ctes)
+    def with(relation_or_name, query) -> Delete
       name = arel_cte_name(relation_or_name)
       Delete.new(@table, @predicates, @returning, @allow_all,
         Arel.append_cte(@ctes, name, query))
     end
-    def with_recursive(relation_or_name, query)
+    def with_recursive(relation_or_name, query) -> Delete
       name = arel_cte_name(relation_or_name)
       Delete.new(@table, @predicates, @returning, @allow_all,
         Arel.append_cte(@ctes, name, query, true))

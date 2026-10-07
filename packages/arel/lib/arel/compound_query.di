@@ -25,24 +25,24 @@ module Arel
     def projection_count() = @left.projection_count()
     def projection_count_known?() = true
 
-    def order(ordering)
+    def order(ordering) -> CompoundQuery
       CompoundQuery.new(@left, @operator, @right,
         @orderings.concat(arel_array(ordering)), @limit_value, @offset_value)
     end
-    def take(n: Int)
+    def take(n: Int) -> CompoundQuery
       if n < 0
         raise ArgumentError.new("limit must be non-negative")
       end
       CompoundQuery.new(@left, @operator, @right, @orderings, n, @offset_value)
     end
-    def limit(n: Int) = self.take(n)
-    def skip(n: Int)
+    def limit(n: Int) -> CompoundQuery = self.take(n)
+    def skip(n: Int) -> CompoundQuery
       if n < 0
         raise ArgumentError.new("offset must be non-negative")
       end
       CompoundQuery.new(@left, @operator, @right, @orderings, @limit_value, n)
     end
-    def offset(n: Int) = self.skip(n)
+    def offset(n: Int) -> CompoundQuery = self.skip(n)
 
     def render_default(visitor) -> Array
       left_sql, left_params = @left.render_with(visitor)

@@ -18,35 +18,35 @@ module Arel
     def ctes() = @ctes
     def structure() = [@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes]
-    def values(attributes: Hash)
+    def values(attributes: Hash) -> Insert
       Insert.new(@table, [attributes], @returning, [], nil, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
-    def values_many(rows: Array)
+    def values_many(rows: Array) -> Insert
       Insert.new(@table, rows, @returning, [], nil, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
-    def default_values()
+    def default_values() -> Insert
       Insert.new(@table, [DefaultValues.new()], @returning, [], nil,
         @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
     end
-    def from_query(columns: Array, query)
+    def from_query(columns: Array, query) -> Insert
       Insert.new(@table, [], @returning, columns, query, @conflict_target,
         @conflict_ignore, @conflict_assignments, @ctes)
     end
-    def with(relation_or_name, query)
+    def with(relation_or_name, query) -> Insert
       name = arel_cte_name(relation_or_name)
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments,
         Arel.append_cte(@ctes, name, query))
     end
-    def with_recursive(relation_or_name, query)
+    def with_recursive(relation_or_name, query) -> Insert
       name = arel_cte_name(relation_or_name)
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments,
         Arel.append_cte(@ctes, name, query, true))
     end
-    def on_conflict_do_nothing(columns = [])
+    def on_conflict_do_nothing(columns = []) -> Insert
       target = columns
       unless columns is ConflictTarget || columns is ConflictConstraintTarget
         target = arel_array(columns)
@@ -54,7 +54,7 @@ module Arel
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         target, true, nil, @ctes)
     end
-    def on_conflict_do_update(columns, assignments: Hash)
+    def on_conflict_do_update(columns, assignments: Hash) -> Insert
       target = columns
       unless columns is ConflictTarget || columns is ConflictConstraintTarget
         target = arel_array(columns)
@@ -62,7 +62,7 @@ module Arel
       Insert.new(@table, @rows, @returning, @source_columns, @source_query,
         target, false, assignments, @ctes)
     end
-    def returning(expressions)
+    def returning(expressions) -> Insert
       Insert.new(@table, @rows, arel_array(expressions), @source_columns, @source_query,
         @conflict_target, @conflict_ignore, @conflict_assignments, @ctes)
     end

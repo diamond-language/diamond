@@ -16,9 +16,9 @@ module Arel
     def left() = @left
     def operator() -> String = @operator
     def right() = @right
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Not.new(self)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Not = Not.new(self)
   end
 
   class Predicate
@@ -30,9 +30,9 @@ module Arel
     def left() = @left
     def operator() -> String = @operator
     def right() = @right
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Not.new(self)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Not = Not.new(self)
   end
 
   class Membership
@@ -44,9 +44,9 @@ module Arel
     def left() = @left
     def values() = @values
     def negated?() -> Bool = @negated
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Not.new(self)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Not = Not.new(self)
   end
 
   class Between
@@ -60,9 +60,9 @@ module Arel
     def lower() = @lower
     def upper() = @upper
     def negated?() -> Bool = @negated
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Not.new(self)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Not = Not.new(self)
   end
 
 end

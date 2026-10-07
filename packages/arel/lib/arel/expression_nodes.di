@@ -12,22 +12,22 @@ module Arel
     def name() -> String = @name
     def arguments() -> Array = @arguments
     def distinct?() -> Bool = @distinct
-    def eq(value) = Predicate.new(self, "=", value)
-    def not_eq(value) = Predicate.new(self, "!=", value)
-    def lt(value) = Predicate.new(self, "<", value)
-    def lteq(value) = Predicate.new(self, "<=", value)
-    def gt(value) = Predicate.new(self, ">", value)
-    def gteq(value) = Predicate.new(self, ">=", value)
-    def like(pattern: String) = Predicate.new(self, "LIKE", pattern)
-    def not_like(pattern: String) = Predicate.new(self, "NOT LIKE", pattern)
-    def in_list(values: Array) = Membership.new(self, values, false)
-    def not_in(values: Array) = Membership.new(self, values, true)
-    def between(lower, upper) = Between.new(self, lower, upper, false)
-    def not_between(lower, upper) = Between.new(self, lower, upper, true)
-    def asc() = Ordering.new(self, "ASC")
-    def desc() = Ordering.new(self, "DESC")
-    def as(name: String) = Alias.new(self, name)
-    def collate(name: String) = Collation.new(self, name)
+    def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
+    def lt(value) -> Predicate = Predicate.new(self, "<", value)
+    def lteq(value) -> Predicate = Predicate.new(self, "<=", value)
+    def gt(value) -> Predicate = Predicate.new(self, ">", value)
+    def gteq(value) -> Predicate = Predicate.new(self, ">=", value)
+    def like(pattern: String) -> Predicate = Predicate.new(self, "LIKE", pattern)
+    def not_like(pattern: String) -> Predicate = Predicate.new(self, "NOT LIKE", pattern)
+    def in_list(values: Array) -> Membership = Membership.new(self, values, false)
+    def not_in(values: Array) -> Membership = Membership.new(self, values, true)
+    def between(lower, upper) -> Between = Between.new(self, lower, upper, false)
+    def not_between(lower, upper) -> Between = Between.new(self, lower, upper, true)
+    def asc() -> Ordering = Ordering.new(self, "ASC")
+    def desc() -> Ordering = Ordering.new(self, "DESC")
+    def as(name: String) -> Alias = Alias.new(self, name)
+    def collate(name: String) -> Collation = Collation.new(self, name)
   end
 
   class BinaryExpression
@@ -41,16 +41,16 @@ module Arel
     def operator() -> String = @operator
     def right() = @right
     def bind_right?() -> Bool = @bind_right
-    def add(value) = BinaryExpression.new(self, "+", value)
-    def subtract(value) = BinaryExpression.new(self, "-", value)
-    def multiply(value) = BinaryExpression.new(self, "*", value)
-    def divide(value) = BinaryExpression.new(self, "/", value)
-    def eq(value) = Predicate.new(self, "=", value)
-    def not_eq(value) = Predicate.new(self, "!=", value)
-    def lt(value) = Predicate.new(self, "<", value)
-    def lteq(value) = Predicate.new(self, "<=", value)
-    def gt(value) = Predicate.new(self, ">", value)
-    def gteq(value) = Predicate.new(self, ">=", value)
+    def add(value) -> BinaryExpression = BinaryExpression.new(self, "+", value)
+    def subtract(value) -> BinaryExpression = BinaryExpression.new(self, "-", value)
+    def multiply(value) -> BinaryExpression = BinaryExpression.new(self, "*", value)
+    def divide(value) -> BinaryExpression = BinaryExpression.new(self, "/", value)
+    def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
+    def lt(value) -> Predicate = Predicate.new(self, "<", value)
+    def lteq(value) -> Predicate = Predicate.new(self, "<=", value)
+    def gt(value) -> Predicate = Predicate.new(self, ">", value)
+    def gteq(value) -> Predicate = Predicate.new(self, ">=", value)
   end
 
   class Literal

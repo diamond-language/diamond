@@ -7,36 +7,36 @@ module Arel
     end
     def table() = @table
     def name() -> String = @name
-    def eq(value) = Predicate.new(self, "=", value)
-    def not_eq(value) = Predicate.new(self, "!=", value)
-    def lt(value) = Predicate.new(self, "<", value)
-    def lteq(value) = Predicate.new(self, "<=", value)
-    def gt(value) = Predicate.new(self, ">", value)
-    def gteq(value) = Predicate.new(self, ">=", value)
-    def like(pattern: String) = Predicate.new(self, "LIKE", pattern)
-    def not_like(pattern: String) = Predicate.new(self, "NOT LIKE", pattern)
-    def in_list(values: Array) = Membership.new(self, values, false)
-    def not_in(values: Array) = Membership.new(self, values, true)
-    def in_subquery(query) = Membership.new(self, query, false)
-    def not_in_subquery(query) = Membership.new(self, query, true)
-    def between(lower, upper) = Between.new(self, lower, upper, false)
-    def not_between(lower, upper) = Between.new(self, lower, upper, true)
-    def asc() = Ordering.new(self, "ASC")
-    def desc() = Ordering.new(self, "DESC")
-    def as(name: String) = Alias.new(self, name)
-    def collate(name: String) = Collation.new(self, name)
-    def add(value) = BinaryExpression.new(self, "+", value)
-    def subtract(value) = BinaryExpression.new(self, "-", value)
-    def multiply(value) = BinaryExpression.new(self, "*", value)
-    def divide(value) = BinaryExpression.new(self, "/", value)
-    def concat(value) = BinaryExpression.new(self, "||", value)
-    def modulo(value) = BinaryExpression.new(self, "%", value)
-    def add_expression(expression) = BinaryExpression.new(self, "+", expression, false)
-    def subtract_expression(expression) = BinaryExpression.new(self, "-", expression, false)
-    def multiply_expression(expression) = BinaryExpression.new(self, "*", expression, false)
-    def divide_expression(expression) = BinaryExpression.new(self, "/", expression, false)
-    def concat_expression(expression) = BinaryExpression.new(self, "||", expression, false)
-    def modulo_expression(expression) = BinaryExpression.new(self, "%", expression, false)
+    def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
+    def lt(value) -> Predicate = Predicate.new(self, "<", value)
+    def lteq(value) -> Predicate = Predicate.new(self, "<=", value)
+    def gt(value) -> Predicate = Predicate.new(self, ">", value)
+    def gteq(value) -> Predicate = Predicate.new(self, ">=", value)
+    def like(pattern: String) -> Predicate = Predicate.new(self, "LIKE", pattern)
+    def not_like(pattern: String) -> Predicate = Predicate.new(self, "NOT LIKE", pattern)
+    def in_list(values: Array) -> Membership = Membership.new(self, values, false)
+    def not_in(values: Array) -> Membership = Membership.new(self, values, true)
+    def in_subquery(query) -> Membership = Membership.new(self, query, false)
+    def not_in_subquery(query) -> Membership = Membership.new(self, query, true)
+    def between(lower, upper) -> Between = Between.new(self, lower, upper, false)
+    def not_between(lower, upper) -> Between = Between.new(self, lower, upper, true)
+    def asc() -> Ordering = Ordering.new(self, "ASC")
+    def desc() -> Ordering = Ordering.new(self, "DESC")
+    def as(name: String) -> Alias = Alias.new(self, name)
+    def collate(name: String) -> Collation = Collation.new(self, name)
+    def add(value) -> BinaryExpression = BinaryExpression.new(self, "+", value)
+    def subtract(value) -> BinaryExpression = BinaryExpression.new(self, "-", value)
+    def multiply(value) -> BinaryExpression = BinaryExpression.new(self, "*", value)
+    def divide(value) -> BinaryExpression = BinaryExpression.new(self, "/", value)
+    def concat(value) -> BinaryExpression = BinaryExpression.new(self, "||", value)
+    def modulo(value) -> BinaryExpression = BinaryExpression.new(self, "%", value)
+    def add_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "+", expression, false)
+    def subtract_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "-", expression, false)
+    def multiply_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "*", expression, false)
+    def divide_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "/", expression, false)
+    def concat_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "||", expression, false)
+    def modulo_expression(expression) -> BinaryExpression = BinaryExpression.new(self, "%", expression, false)
   end
 
   class QualifiedStar
@@ -60,9 +60,9 @@ module Arel
         @table_alias
       end
     end
-    def as(name: String) = Table.new(@name, name)
-    def column(name: String) = Attribute.new(self, name)
-    def star() = QualifiedStar.new(self)
+    def as(name: String) -> Table = Table.new(@name, name)
+    def column(name: String) -> Attribute = Attribute.new(self, name)
+    def star() -> QualifiedStar = QualifiedStar.new(self)
   end
 
   class RawSql
@@ -72,9 +72,9 @@ module Arel
     end
     def sql() -> String = @sql
     def params() -> Array = @params
-    def and_also(other) = Logical.new(self, "AND", other)
-    def or_else(other) = Logical.new(self, "OR", other)
-    def not_() = Not.new(self)
+    def and_also(other) -> Logical = Logical.new(self, "AND", other)
+    def or_else(other) -> Logical = Logical.new(self, "OR", other)
+    def not_() -> Not = Not.new(self)
   end
 
   class ExcludedAttribute
@@ -82,7 +82,7 @@ module Arel
       @name = name
     end
     def name() -> String = @name
-    def add(value) = BinaryExpression.new(self, "+", value)
+    def add(value) -> BinaryExpression = BinaryExpression.new(self, "+", value)
   end
 
   class ConflictAttribute
@@ -90,8 +90,8 @@ module Arel
       @name = name
     end
     def name() -> String = @name
-    def eq(value) = Predicate.new(self, "=", value)
-    def not_eq(value) = Predicate.new(self, "!=", value)
+    def eq(value) -> Predicate = Predicate.new(self, "=", value)
+    def not_eq(value) -> Predicate = Predicate.new(self, "!=", value)
   end
 
 end
