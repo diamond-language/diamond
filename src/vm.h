@@ -1861,6 +1861,18 @@ struct DiamondVm {
      * that follows is then not mapped to ResourceLimitError (see
      * exception_class_for_status), so it cannot be rescued. */
     bool memory_hard_stopped;
+    /* The budgets are one process-wide allowance, not one per VM: a VM that
+     * has any DIAMOND_MAX_* budget configured registers itself (budget_
+     * register in src/vm.c) and adds to shared counters. instructions_flushed
+     * is how much of this VM's instructions_executed it has added to the
+     * shared instruction total (it flushes, and checks the total, every
+     * DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK + 1 instructions);
+     * memory_published is how much of its bytes_allocated it has added to the
+     * shared byte total. Both are taken back out of the totals when the VM is
+     * freed. */
+    bool budgets_registered;
+    size_t instructions_flushed;
+    ptrdiff_t memory_published;
     /* Non-null only for a supervised child's own per-attempt VM under a
      * non-`one_for_one` Supervisor strategy: the per-opcode check above
      * (which this also turns resource_limits_active on for) returns
