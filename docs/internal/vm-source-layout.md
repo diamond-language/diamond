@@ -97,7 +97,7 @@ instructions (1.5% more cycles, geometric mean over `bench/`, up to 6% on
 `jit_native_collection_reads`) than the one-file build. The release build therefore links with
 `-flto` (`LTO_FLAGS` in the Makefile): instructions are then within 0.1% of the one-file build and
 cycles 1% below it. The sanitizer and debug builds do not use it. Neither does the AOT runtime
-archive, which `diamond build` links at `-O2`.
+archive, which `diamond build` links at `-O2` (see the roadmap for what an LTO build of it would cost).
 
 ## How a move is done
 
