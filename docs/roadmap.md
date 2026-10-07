@@ -159,8 +159,9 @@ Results and test commands belong in the topic guides and test scripts.
 
 - Continue stress-GC, sanitizer, thread, socket, TLS, subprocess, and database coverage;
   re-run focused audits as new native services land.
-- Extend the bytecode execution fuzzer (`make fuzz`) to the I/O opcodes (under sandbox
-  mode), type sets and interfaces, which it does not reach yet.
+- Extend the bytecode execution fuzzer (`make fuzz`) to the opcodes it still rejects
+  because the sandbox does not gate them: `IO_POLL`, `TLS_START_HANDSHAKE`, `SIGNAL_TRAP`
+  and `THREAD_NEW`.
 - Document platform-dependent behavior explicitly.
 - Preserve thread safety: per-value state is preferred to mutation of process-global
   settings.

@@ -31,17 +31,14 @@
  * the identical trust boundary ProgramBuilder#run does, minus the
  * Diamond-level #emit_byte call overhead of getting there.
  *
- * Still deliberately never touches real I/O, for the same reason
- * compile_fuzzer.c stays compile-only (see its own doc comment and
- * docs/fuzzing.md's "Why compile-only, never execute"): a fuzzer-
- * mutated program that opens/writes/deletes real files, holds open
- * sockets, or spawns threads isn't safe to run unattended without
- * sandboxing/resource limits neither harness attempts. Any chunk whose
- * disassembly mentions an I/O-, thread-, or signal-capable opcode is
- * rejected before diamond_vm_run ever sees it -- reusing
- * diamond_disassemble's own proven-correct per-instruction walk via
- * open_memstream rather than duplicating its opcode/operand-width
- * knowledge in a second decoder here.
+ * Runs under DIAMOND_SANDBOX=1, so every opcode that would open a file, a socket, a
+ * database or a subprocess raises SandboxError (docs/sandbox.md) instead of doing it: the
+ * I/O opcodes execute up to their guard, and their arguments, error paths and rescue
+ * handling are fuzzed, without touching the machine. Only the opcodes the sandbox does not
+ * gate are rejected before diamond_vm_run sees them (a mnemonic search of
+ * diamond_disassemble's own per-instruction walk, via open_memstream, rather than a second
+ * decoder here): IO_POLL, TLS_START_HANDSHAKE, SIGNAL_TRAP (a process-wide side effect)
+ * and THREAD_NEW (an OS thread).
  *
  * register_count and code come from the fuzzer's own input bytes (the
  * first byte picks register_count, 1..64; the rest is the code array,
@@ -72,14 +69,7 @@ static bool references_unsafe_opcode(const DiamondChunk *chunk) {
     diamond_disassemble(sink, chunk->name, chunk);
     fclose(sink);
     static const char *const unsafe_mnemonics[] = {
-        "FILE_OPEN", "TCP_CONNECT", "TCP_LISTEN", "TCP_LISTEN_NONBLOCK",
-        "IO_POLL", "DNS_RESOLVE", "UDP_BIND", "UDP_OPEN", "SIGNAL_TRAP", "TLS_CONNECT", "TLS_START_HANDSHAKE",
-        "TLS_LISTEN", "THREAD_NEW",
-        /* Not an I/O opcode, but unbounded: the instruction and wall-clock budgets
-         * disarm after they first fire, so a program can rescue ResourceLimitError and
-         * then run without limit (docs/sandbox.md). Any program with a rescue clause can
-         * therefore hang this harness for as long as libFuzzer's timeout allows. */
-        "PUSH_RESCUE",
+        "IO_POLL", "TLS_START_HANDSHAKE", "SIGNAL_TRAP", "THREAD_NEW",
     };
     bool found = false;
     for (size_t index = 0;
@@ -384,7 +374,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!diamond_verify_bytecode(&chunk)) return 0;
     if (references_unsafe_opcode(&chunk)) return 0;
 
-    /* Read by diamond_vm_init, so set before it. */
+    /* Read by diamond_vm_init, so set before it. DIAMOND_SANDBOX is read at each guarded
+     * opcode. The budgets bound a program that rescues ResourceLimitError: the grace
+     * allowance ends in an uncatchable hard stop. */
+    setenv("DIAMOND_SANDBOX", "1", 1);
     setenv("DIAMOND_MAX_INSTRUCTIONS", "2000000", 1);
     setenv("DIAMOND_MAX_WALL_MILLISECONDS", "2000", 1);
     DiamondVm vm;
