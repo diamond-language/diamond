@@ -109,6 +109,9 @@ Current behavior: [sandbox](sandbox.md).
   against its own counters, so spawning threads or looping `ProgramBuilder#run`
   multiplies the aggregate. Needs a shared atomic counter, the shape
   `DIAMOND_MAX_THREADS`'s process-wide counter already has.
+- **A configurable grace allowance** -- the cleanup allowance after a budget trips
+  (1,000,000 instructions, 1,000 ms, a quarter of the memory budget) is fixed. Needs a
+  program whose rescue clause legitimately outgrows it, or one that wants it tighter.
 - **Path and host allow-listing** -- capabilities are whole categories; finer
   matching needs a policy format, not more environment variables.
 - **Restricting `Thread.new`/`Supervisor.add_child`** -- bounding the OS threads a

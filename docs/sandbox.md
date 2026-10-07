@@ -137,6 +137,9 @@ for cleanup and not for carrying on:
 | `DIAMOND_MAX_WALL_MILLISECONDS` | 1,000 ms past the budget's deadline |
 | `DIAMOND_MAX_MEMORY_BYTES` | a ceiling a quarter above the budget, at least 4 MiB above it |
 
+The three allowances are fixed constants (`src/vm_internal.h`); no environment variable changes
+them.
+
 A program still running past its allowance is stopped for good. The VM unwinds with an
 "... budget exhausted" runtime error that no `rescue` clause can match (exit status 70 for
 the main program; `join` raises `ThreadError` for a thread). The allowance is measured from
