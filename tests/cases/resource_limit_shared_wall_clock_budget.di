@@ -19,5 +19,13 @@ end
 origin = Time.monotonic()
 while Time.monotonic() - origin < 1.0
 end
-elapsed = Thread.new(worker).join()
+# The main program shares the deadline the worker just hit, so whichever instruction
+# it runs next can trip it too (the check runs every few thousand instructions). That
+# raises once and is rescued; the second join returns the finished worker's result.
+thread = Thread.new(worker)
+begin
+  elapsed = thread.join()
+rescue error: ResourceLimitError
+  elapsed = thread.join()
+end
 puts(elapsed < 1.2)
