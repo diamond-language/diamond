@@ -124,29 +124,39 @@ end
 ```
 
 Each of the three is independently opt-in (unset = unlimited); all can be combined.
-The instruction and wall-clock budgets fire **once**: when one is exceeded, both are
-switched off for the rest of that VM's run -- the budget concept is "you get to find out
-once, and get one chance to react," not a signal that keeps re-arming and re-interrupting
-the very `rescue`/cleanup code meant to handle it.
 
-**Consequence: these budgets stop runaway code, not hostile code.** A program that
-rescues `ResourceLimitError` and carries on is no longer bounded at all:
+A budget fires in two steps. Exceeding it raises the rescuable `ResourceLimitError`
+**once**, and switches the instruction and wall-clock budgets off for the rest of that
+VM's run -- otherwise they would re-trip on the very next instruction, including the ones
+the `rescue`/`ensure` clause needs to run. The same moment starts a grace allowance, sized
+for cleanup and not for carrying on:
+
+| budget | grace after it trips |
+| --- | --- |
+| `DIAMOND_MAX_INSTRUCTIONS` | 1,000,000 more instructions |
+| `DIAMOND_MAX_WALL_MILLISECONDS` | 1,000 ms past the budget's deadline |
+| `DIAMOND_MAX_MEMORY_BYTES` | a ceiling a quarter above the budget, at least 4 MiB above it |
+
+A program still running past its allowance is stopped for good. The VM unwinds with an
+"... budget exhausted" runtime error that no `rescue` clause can match (exit status 70 for
+the main program; `join` raises `ThreadError` for a thread). The allowance is measured from
+the budget, not from when the error was rescued, so rescuing late buys no extra time.
 
 ```ruby
 begin
   loop do                       # fires at DIAMOND_MAX_INSTRUCTIONS
   end
 rescue error: ResourceLimitError
-  nil
+  nil                           # up to 1,000,000 more instructions are allowed here
 end
-50_000_000.times() do           # runs with no limit
+50_000_000.times() do           # stopped: "instruction budget exhausted"
 end
 ```
 
-With `DIAMOND_MAX_INSTRUCTIONS=1000000`, that second loop runs to completion. Use the
-budgets to cap an honest program that loops by mistake. To contain code you do not trust,
-also bound it from outside the process (a timeout, a cgroup, or killing it), and keep it
-under `--sandbox`.
+**These budgets still bound one VM, not hostile code.** Use them to cap an honest program
+that loops or allocates by mistake. To contain code you do not trust, also bound it from
+outside the process (a timeout, a cgroup, or killing it), and keep it under `--sandbox`. See
+"Not a shared budget" below for what a program can still multiply.
 
 **What's not covered**:
 
@@ -157,7 +167,9 @@ under `--sandbox`.
   gets one independent budget *per thread*, and one that calls `ProgramBuilder#run` in
   a loop gets a fresh instruction budget for every run (the parent's counters only see
   the few instructions that make the call), not one shared total, so either could
-  still multiply its aggregate resource use past a single configured number. A real fix needs a shared, atomic, cross-thread
+  still multiply its aggregate resource use past a single configured number. A supervised
+  child that is stopped for exhausting its budget is restarted like any other crash, with a
+  fresh VM and a fresh budget. A real fix needs a shared, atomic, cross-thread
   counter (real precedent exists for exactly this shape --
   `DIAMOND_MAX_THREADS`'s own process-wide atomic counter) but is real, separate,
   higher-effort work, not attempted here.
@@ -165,14 +177,10 @@ under `--sandbox`.
   checked periodically (every few thousand instructions, not every single one, since
   reading the clock is comparatively expensive) -- the actual overshoot past a
   configured millisecond budget is bounded but nonzero.
-- **A program that only grows already-allocated collections can bypass the memory
-  budget.** The check lives where every *fresh* allocation already checks in before
-  proceeding (same central place the generational collector's own thresholds are
-  checked); a loop that only ever calls `Array#push`/`Hash#[]=` on one already-live
-  collection, never allocating anything new, grows `Array`/`Hash` backing storage via
-  a plain reallocation this check doesn't intercept. Most real memory-exhaustion
-  shapes (allocating many discrete `String`/`Hash`/`Instance` objects) are covered;
-  this narrower one isn't.
+- **Memory is what the VM's own accounting counts.** Objects and the storage of `Array`
+  and `Hash` (including growth by `push`, which allocates no new object, checked at the next
+  instruction) are counted; buffers owned by native libraries behind a socket, TLS, SQLite,
+  PostgreSQL or MySQL handle are not.
 
 ## What's not covered
 

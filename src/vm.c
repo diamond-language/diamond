@@ -1063,28 +1063,80 @@ void diamond_vm_collect_minor(DiamondVm *vm) {
  * comment in vm.h for why this deliberately reuses DIAMOND_VM_OUT_OF_
  * MEMORY rather than a new status.
  *
- * Clears max_memory_bytes (disabling this check for the rest of the VM's
- * lifetime) the *first* time it actually fires, for the same reason
- * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS clear themselves
- * in run_chunk's own dispatch loop: catch_runtime_error's own path to
- * report this failure as a real, rescuable OutOfMemoryError itself calls
- * allocate_instance/allocate_string, which would call straight back into
- * this same function -- if bytes_allocated is still (deliberately) over
- * budget, leaving the check armed would make it return false again there
- * too, making the exception impossible to ever construct, let alone
- * rescue. Once the budget has genuinely been exceeded once, further
- * allocation needed just to report and unwind that fact is let through. */
+ * The budget fires in two steps. The first time bytes_allocated exceeds
+ * max_memory_bytes it sets memory_limit_tripped, raises max_memory_bytes by the
+ * grace allowance and returns false: catch_runtime_error's own path to report
+ * this as a real, rescuable ResourceLimitError itself calls allocate_instance/
+ * allocate_string, which call straight back into this function, so the check
+ * cannot stay armed at the same level or the exception could never be built,
+ * let alone rescued. Exceeding the raised ceiling too sets memory_hard_stopped
+ * and returns false again, and that OOM is deliberately not mapped to any
+ * exception class (exception_class_for_status), so nothing can rescue it. */
 bool maybe_collect(DiamondVm *vm) {
+    vm->memory_recheck=false;
     if(vm->stress_minor_gc||
        vm->bytes_allocated-vm->bytes_allocated_at_last_minor_gc>=vm->minor_gc_threshold_bytes)
         diamond_vm_collect_minor(vm);
     if(vm->stress_gc||vm->bytes_allocated>=vm->next_gc)diamond_vm_collect(vm);
     if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes) {
-        vm->max_memory_bytes=0;
-        vm->memory_limit_tripped=true;
+        if(!vm->memory_limit_tripped) {
+            /* First overrun: the catchable ResourceLimitError. The ceiling
+             * moves up by the grace allowance so the exception can be built
+             * and a rescue clause can run. */
+            vm->memory_limit_tripped=true;
+            const size_t grace=vm->max_memory_bytes/4>DIAMOND_MEMORY_GRACE_MINIMUM_BYTES?
+                vm->max_memory_bytes/4:(size_t)DIAMOND_MEMORY_GRACE_MINIMUM_BYTES;
+            vm->max_memory_bytes=vm->max_memory_bytes>SIZE_MAX-grace?SIZE_MAX:
+                vm->max_memory_bytes+grace;
+            return false;
+        }
+        /* Past the grace ceiling too: stop for good. */
+        vm->memory_hard_stopped=true;
+        snprintf(vm->error,sizeof vm->error,
+            "memory budget exhausted: the program kept allocating after "
+            "its ResourceLimitError");
         return false;
     }
     return true;
+}
+
+/* A configured instruction or wall-clock budget has just been exceeded:
+ * run_chunk is about to return the catchable DIAMOND_VM_RESOURCE_LIMIT_ERROR.
+ * Disarm both soft budgets (re-tripping on the very next instruction would
+ * make the rescue clause that handles the error impossible to run) and arm
+ * the hard limits that bound the grace allowance instead -- each only if its
+ * own budget was configured, measured from the budget, not from this moment,
+ * so a program that rescues late is not given extra time. */
+void resource_limit_trip(DiamondVm *vm) {
+    if(vm->max_instructions!=0) {
+        const size_t base=vm->instructions_executed>vm->max_instructions?
+            vm->instructions_executed:vm->max_instructions;
+        vm->hard_stop_instruction_count=base+DIAMOND_INSTRUCTION_GRACE;
+    }
+    if(vm->max_wall_nanoseconds!=0) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC,&now);
+        const int64_t now_ns=(int64_t)now.tv_sec*1000000000LL+(int64_t)now.tv_nsec;
+        const int64_t deadline=vm->start_time_ns+vm->max_wall_nanoseconds;
+        vm->hard_stop_time_ns=(now_ns>deadline?now_ns:deadline)+
+            (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL;
+    }
+    vm->max_instructions=0;
+    vm->max_wall_nanoseconds=0;
+    vm->resource_grace_active=true;
+    /* resource_limits_active stays true: the grace checks run in the same
+     * per-instruction block. */
+}
+
+/* The grace allowance ran out. Returns the status for run_chunk to return;
+ * no exception class maps to it, so nothing can rescue it. */
+DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget) {
+    vm->hard_stop_instruction_count=0;
+    vm->hard_stop_time_ns=0;
+    snprintf(vm->error,sizeof vm->error,
+        "%s budget exhausted: the program kept running after its ResourceLimitError",
+        budget);
+    return DIAMOND_VM_RESOURCE_EXHAUSTED;
 }
 
 /* mysql_init() -- called per-connection from MySQL.open's dispatch --
@@ -1099,6 +1151,17 @@ bool maybe_collect(DiamondVm *vm) {
  * init, the same "once per VM, idempotent" shape as the SIGPIPE handling
  * below -- removes the race instead of relying on the implicit path. */
 static pthread_once_t mysql_library_init_once = PTHREAD_ONCE_INIT;
+
+/* A collection's backing store grew (Array#push, Hash entries or buckets): no
+ * fresh object was allocated, so maybe_collect's budget check never ran. A loop
+ * that only pushes onto one live array would otherwise outgrow
+ * DIAMOND_MAX_MEMORY_BYTES unnoticed. The growth site is mid-operation, so it
+ * only raises a flag; run_chunk's dispatch loop acts on it at the next
+ * instruction, where every value is rooted and a collection is safe. */
+static inline void note_storage_growth(DiamondVm *vm) {
+    if(vm->max_memory_bytes!=0&&vm->bytes_allocated>vm->max_memory_bytes)
+        vm->memory_recheck=true;
+}
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
@@ -1177,7 +1240,8 @@ void diamond_vm_init(DiamondVm *vm) {
         if(end!=max_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
             vm->max_memory_bytes=(size_t)parsed;
     }
-    vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0;
+    vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0||
+        vm->max_memory_bytes!=0;
     if(vm->max_wall_nanoseconds!=0) {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC,&now);
@@ -3984,6 +4048,7 @@ static bool hash_rehash(DiamondVm *vm,DiamondHash *hash,size_t new_capacity) {
         vm->bytes_allocated-=hash->bucket_capacity*sizeof(size_t);
     hash->buckets=buckets;hash->bucket_capacity=new_capacity;
     vm->bytes_allocated+=new_capacity*sizeof(size_t);
+    note_storage_growth(vm);
     return true;
 }
 
@@ -4017,6 +4082,7 @@ bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
         if(entries==nullptr)return false;
         hash->entries=entries;hash->capacity=capacity;
         vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondHashEntry);
+        note_storage_growth(vm);
     }
     /* Load factor >= 0.75, checked with integer arithmetic. */
     if(hash->bucket_capacity==0||
@@ -6567,6 +6633,7 @@ bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value) {
         if(values==nullptr)return false;
         array->values=values;array->capacity=capacity;
         vm->bytes_allocated+=(capacity-old_capacity)*sizeof(DiamondValue);
+        note_storage_growth(vm);
     }
     const size_t new_index=array->count;
     array->values[array->count++]=value;
@@ -6832,7 +6899,8 @@ bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
  * reusing the uncatchable path a real OOM deliberately takes. */
 static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus status) {
     if(status==DIAMOND_VM_OUT_OF_MEMORY)
-        return vm->memory_limit_tripped?DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:UINT8_MAX;
+        return vm->memory_limit_tripped&&!vm->memory_hard_stopped?
+            DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:UINT8_MAX;
     switch(status) {
         case DIAMOND_VM_TYPE_ERROR: return DIAMOND_CLASS_TYPE_ERROR;
         case DIAMOND_VM_INTEGER_OVERFLOW: return DIAMOND_CLASS_RANGE_ERROR;
@@ -13045,6 +13113,8 @@ const char *diamond_vm_status_name(DiamondVmStatus status) {
             return "frozen object cannot be modified";
         case DIAMOND_VM_INTERRUPTED:
             return "interrupted by supervisor";
+        case DIAMOND_VM_RESOURCE_EXHAUSTED:
+            return "resource budget exhausted";
     }
     return "unknown VM status";
 }

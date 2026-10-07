@@ -1387,6 +1387,15 @@ typedef enum DiamondVmStatus : uint8_t {
      * maps to it, so `rescue` cannot swallow it), and only ever
      * observed by the supervisor's own retry loop. */
     DIAMOND_VM_INTERRUPTED,
+    /* A resource budget (DIAMOND_MAX_INSTRUCTIONS, DIAMOND_MAX_WALL_
+     * MILLISECONDS or DIAMOND_MAX_MEMORY_BYTES) was exceeded and the program
+     * kept running past the grace allowance that follows the catchable
+     * DIAMOND_VM_RESOURCE_LIMIT_ERROR (docs/sandbox.md, "Resource limits").
+     * Never an exception: no class maps to it, so `rescue` cannot swallow it
+     * and the VM unwinds to the top. A memory overrun past its grace ceiling
+     * is reported as DIAMOND_VM_OUT_OF_MEMORY instead, which is uncatchable
+     * for the same reason (see DiamondVm.memory_hard_stopped). */
+    DIAMOND_VM_RESOURCE_EXHAUSTED,
 } DiamondVmStatus;
 
 typedef struct DiamondMethodCacheEntry {
@@ -1834,6 +1843,24 @@ struct DiamondVm {
     size_t instructions_executed;
     int64_t start_time_ns;
     bool resource_limits_active;
+    /* The grace allowance after a budget trips (see resource_limit_trip in
+     * src/vm.c): the catchable ResourceLimitError fires once and disarms
+     * max_instructions/max_wall_nanoseconds, so a rescue clause can run, but
+     * these two absolute limits (0 = not configured) bound how much longer
+     * the program may go on before DIAMOND_VM_RESOURCE_EXHAUSTED ends it.
+     * resource_grace_active selects the grace branch of run_chunk's check. */
+    bool resource_grace_active;
+    size_t hard_stop_instruction_count;
+    int64_t hard_stop_time_ns;
+    /* Set by a collection's backing store growing (Array#push, Hash growth)
+     * past max_memory_bytes without any fresh allocation to notice it: the
+     * dispatch loop then runs maybe_collect at the next instruction, where
+     * every value is rooted, instead of trusting only allocation sites. */
+    bool memory_recheck;
+    /* Set when the memory budget's grace ceiling is also exceeded. The OOM
+     * that follows is then not mapped to ResourceLimitError (see
+     * exception_class_for_status), so it cannot be rescued. */
+    bool memory_hard_stopped;
     /* Non-null only for a supervised child's own per-attempt VM under a
      * non-`one_for_one` Supervisor strategy: the per-opcode check above
      * (which this also turns resource_limits_active on for) returns
