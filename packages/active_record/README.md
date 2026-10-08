@@ -4,9 +4,92 @@ Repositories, associations, validation, migrations, and an optional model layer 
 
 ## Installation
 
-Install the cut at `cuts/active_record/` and load it with `require_cut "active_record"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
-Requires `arel`.
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add active_record --registry https://cuts.dilang.tech --version "^0.19.2"
+facet update
+```
+
+This installs the cut into `cuts/active_record/`; load it with `require_cut "active_record"`. `arel` is installed with it.
+
+## Quick start
+
+A small program that connects, migrates, defines a model, validates and queries. Run it
+from the project directory with `diamond app.di`; it reads `config/database.json` (the
+[`database_config`](https://github.com/diamond-language/diamond/tree/main/packages/database_config) cut's format) and creates `app.db` the first time.
+
+```json
+{"development": {"adapter": "sqlite", "database": "app.db"}}
+```
+
+```ruby
+# app.di
+require_cut "active_record"
+require_cut "database_config"
+
+class Game < ActiveRecord::Model
+  attr_accessor title: String, owner_id: Int
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @title = attributes["title"]
+    @owner_id = attributes["owner_id"]
+  end
+
+  def to_attributes() = {"title": @title, "owner_id": @owner_id}
+
+  def repository() = @@repository
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+end
+
+def build_game(row) = Game.new(row)
+
+def create_games_up(db)
+  db.execute("CREATE TABLE games (id INTEGER PRIMARY KEY, title TEXT NOT NULL, owner_id INTEGER NOT NULL)")
+end
+def create_games_down(db)
+  db.execute("DROP TABLE games")
+end
+def create_games_migration() = {"version": "20261005120000", "up": create_games_up, "down": create_games_down}
+
+config = DatabaseConfig.load("config/database.json", ENV["DIAMOND_ENV"] || "development")
+db = DatabaseConfig.open(config)
+ActiveRecord::Migrator.run(db, [create_games_migration()])   # safe on every boot
+
+validator = ActiveRecord::Validators.combine([
+  ActiveRecord::Validators.presence("title"),
+  ActiveRecord::Validators.length("title", 1, 80)
+])
+Game.configure(ActiveRecord::Repository.new(
+  Arel.table("games"), build_game, "id", nil, validator,
+  nil, nil, nil, ["id", "title", "owner_id"]))
+
+id = Game.create(db, {"title": "Chess", "owner_id": 7})          # returns the new id
+Game.create(db, {"title": "Go", "owner_id": 7})
+
+games = Game.where({"owner_id": 7}).order(Arel.table("games").column("title").asc()).to_a(db)
+puts(games.map() do |g| g.title() end.join(", "))                # Chess, Go
+puts(Game.find(db, id).title())                                  # Chess
+
+game = Game.new({"title": "Shogi", "owner_id": 7})
+game.save(db)                  # inserts and sets game.id()
+game.title = "Xiangqi"
+game.save(db)                  # updates
+
+begin
+  Game.create(db, {"title": "", "owner_id": 1})
+rescue error: ActiveRecord::ValidationError
+  puts(error.errors().inspect())   # ["title is required", "title is too short (minimum 1)"]
+end
+```
+
+In a larger project, put each model in its own file and `require` it, keep migrations in
+a `db/` file that lists them in order, and run the migrator at startup as above.
 
 ## Design
 

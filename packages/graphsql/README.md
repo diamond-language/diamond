@@ -4,20 +4,126 @@ Select GraphQL-requested columns and preload associations through `active_record
 
 ## Installation
 
-Install the cut at `cuts/graphsql/` and load it with `require_cut "graphsql"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
-Requires `graphql`, `active_record`.
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add graphsql --registry https://cuts.dilang.tech --version "^0.1.2"
+facet update
+```
+
+This installs the cut into `cuts/graphsql/`; load it with `require_cut "graphsql"`. `active_record` and `graphql` are installed with it.
 
 ## Usage
 
-```diamond
+GraphSQL sits between a [`graphql`](https://github.com/diamond-language/diamond/tree/main/packages/graphql) resolver and an [`active_record`](https://github.com/diamond-language/diamond/tree/main/packages/active_record)
+relation. Describe how GraphQL fields map to columns and associations once, then hand each
+resolver's lookahead to `GraphSQL.resolve`. This complete program wires an in-memory SQLite
+database, two models, a schema, and a query:
+
+```ruby
+# app.di
+require_cut "graphql"
 require_cut "graphsql"
 
+class Book < ActiveRecord::Model
+  attr_accessor author_id: Int, title: String
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @author_id = attributes["author_id"]
+    @title = attributes["title"]
+  end
+
+  def to_attributes() = {"author_id": @author_id, "title": @title}
+  def repository() = @@repository
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+end
+
+class Author < ActiveRecord::Model
+  attr_accessor name: String, country: String
+
+  def initialize(attributes: Hash = {})
+    super(attributes)
+    @name = attributes["name"]
+    @country = attributes["country"]
+  end
+
+  def to_attributes() = {"name": @name, "country": @country}
+  def repository() = @@repository
+  def self.repository() = @@repository
+  def self.configure(repository: ActiveRecord::Repository)
+    @@repository = repository
+  end
+  def books(db) = self.has_many(Book.repository(), "author_id").all(db, self.id())
+end
+
+def build_book(row) = Book.new(row)
+def build_author(row) = Author.new(row)
+
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
+db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, author_id INTEGER, title TEXT)")
+
+Book.configure(ActiveRecord::Repository.new(Arel.table("books"), build_book, "id", nil, nil, nil, nil, nil,
+  ["id", "author_id", "title"]))
+Author.configure(ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id", nil, nil, nil, nil, nil,
+  ["id", "name", "country"], nil, [
+    ActiveRecord::AssociationReflection.new("books", "has_many", Book.repository(), "author_id", "id")]))
+
+Author.create(db, {"name": "Ada", "country": "UK"})
+Book.create(db, {"author_id": 1, "title": "Notes"})
+Book.create(db, {"author_id": 1, "title": "Sketch"})
+
+book_mapping = GraphSQL::Mapping.new(Book.repository(), "Book")
+book_mapping.column("title")
 author_mapping = GraphSQL::Mapping.new(Author.repository(), "Author")
-author_mapping.column("name").column("country", "homeCountry")
+author_mapping.column("id").column("name").column("country", "homeCountry")
 author_mapping.association("books", "books", book_mapping)
-results = GraphSQL.resolve(Author.all(), db, context["lookahead"], author_mapping)
+
+module AuthorResolvers
+  module_function
+  def id(object, args, context) = "#{object.id()}"
+  def name(object, args, context) = object.name()
+  def home_country(object, args, context) = object.country()
+  def books(object, args, context) = object.preloaded_association("books")
+end
+module BookResolvers
+  module_function
+  def title(object, args, context) = object.title()
+end
+module QueryResolvers
+  module_function
+  def authors(object, args, context)
+    planned = GraphSQL.resolve(Author.all(), context["db"], context["lookahead"], context["mapping"])
+    if planned is ActiveRecord::Relation then planned.to_a(context["db"]) else planned end
+  end
+end
+
+book_type = GraphQL::ObjectType.new("Book")
+book_type.field("title", GraphQL::ScalarType.string().non_null(), BookResolvers.title)
+author_type = GraphQL::ObjectType.new("Author")
+author_type.field("id", GraphQL::ScalarType.id().non_null(), AuthorResolvers.id)
+author_type.field("name", GraphQL::ScalarType.string(), AuthorResolvers.name)
+author_type.field("homeCountry", GraphQL::ScalarType.string(), AuthorResolvers.home_country)
+author_type.field("books", GraphQL::ListType.of(book_type), AuthorResolvers.books)
+query_type = GraphQL::ObjectType.new("Query")
+query_type.field("authors", GraphQL::ListType.of(author_type), QueryResolvers.authors)
+schema = GraphQL::Schema.new()
+schema.query(query_type)
+
+result = schema.execute("{ authors { name homeCountry books { title } } }", {}, {"db": db, "mapping": author_mapping})
+puts(JSON.stringify(result))
+# {"data":{"authors":[{"name":"Ada","homeCountry":"UK","books":[{"title":"Notes"},{"title":"Sketch"}]}]}}
 ```
+
+The `authors` query selects only `id`, `name`, and `country` from `authors` (the columns the query
+named, plus the primary key), then loads all the books in a single `books` query rather than one
+per author. In a server, build the mapping and schema once per worker and pass the database
+connection in the `execute` context, as shown in the `graphql` README.
 
 ## What it does
 
@@ -96,4 +202,4 @@ end
 
 - Selecting the same association under two different GraphQL field names in one query raises `GraphSQL::AliasedAssociationError`, because both would map to a single preload.
 - Polymorphic and `has_many :through` associations are preloaded through the plain `includes` path instead of nested column selection.
-- Lookahead over-approximates on polymorphic fields (see the [graphql README](../graphql/README.md#lookahead)), so GraphSQL may select a column or preload an association a runtime type never uses. It never selects too little.
+- Lookahead over-approximates on polymorphic fields (see the [graphql README](https://github.com/diamond-language/diamond/blob/main/packages/graphql/README.md#lookahead)), so GraphSQL may select a column or preload an association a runtime type never uses. It never selects too little.

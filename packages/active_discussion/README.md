@@ -4,9 +4,14 @@ Threaded comments, karma votes, and flame-signal cooldowns backed by `active_rec
 
 ## Installation
 
-Install the cut at `cuts/active_discussion/` and load it with `require_cut "active_discussion"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+`active_discussion` is not published to the registry yet. Until it is, copy `packages/active_discussion` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_discussion/`, then load it with `require_cut "active_discussion"`. `facet update` leaves hand-copied cuts in place.
 
-Requires `active_record`.
+It depends on `active_record`, which is published. Add it with `facet`:
+
+```sh
+facet add active_record --registry https://cuts.dilang.tech --version "^0.19.0"
+facet update
+```
 
 ## SQL schema
 
@@ -46,6 +51,8 @@ CREATE TABLE active_discussion_karma_votes (
 
 ```ruby
 require_cut "active_discussion"
+
+db = SQLite3.open("app.db")   # with the four tables above created
 
 ActiveDiscussion::Discussion.configure(ActiveRecord::Repository.new(
   Arel.table("active_discussions"), build_discussion, "id"))

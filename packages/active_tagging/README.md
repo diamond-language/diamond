@@ -4,25 +4,13 @@ Normalize tag names and manage tags on records using `active_record`.
 
 ## Installation
 
-Install the cut at `cuts/active_tagging/` and load it with `require_cut "active_tagging"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+`active_tagging` is not published to the registry yet. Until it is, copy `packages/active_tagging` from a checkout of the [Diamond repository](https://github.com/diamond-language/diamond) into your project as `cuts/active_tagging/`, then load it with `require_cut "active_tagging"`. `facet update` leaves hand-copied cuts in place.
 
-Requires `active_record`.
+It depends on `active_record`, which is published. Add it with `facet`:
 
-## SQL schema
-
-```sql
-CREATE TABLE tags (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE
-);
-CREATE TABLE taggings (
-  id INTEGER PRIMARY KEY,
-  tag_id INTEGER NOT NULL,
-  taggable_id INTEGER NOT NULL,
-  UNIQUE(taggable_id, tag_id)
-);
-CREATE INDEX taggings_taggable_idx ON taggings(taggable_id);
-CREATE INDEX taggings_tag_idx ON taggings(tag_id);
+```sh
+facet add active_record --registry https://cuts.dilang.tech --version "^0.19.0"
+facet update
 ```
 
 ## Usage
@@ -30,24 +18,35 @@ CREATE INDEX taggings_tag_idx ON taggings(tag_id);
 ```ruby
 require_cut "active_tagging"
 
+db = SQLite3.open(":memory:")
+db.execute("CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+db.execute("CREATE TABLE taggings (
+  id INTEGER PRIMARY KEY,
+  tag_id INTEGER NOT NULL,
+  taggable_id INTEGER NOT NULL,
+  UNIQUE(taggable_id, tag_id)
+)")
+
 ActiveTagging::Tag.configure(ActiveRecord::Repository.new(
   Arel.table("tags"), build_active_tagging_tag, "id", nil,
   build_active_tagging_tag_validator()))
 ActiveTagging::Tagging.configure(ActiveRecord::Repository.new(
   Arel.table("taggings"), build_active_tagging_tagging, "id"))
 
-# On create/update, from a free-typed form field:
-names = ActiveTagging::Tag.parse_names(params["tags"])   # "Dark Mode, Minimal" -> ["dark-mode", "minimal"]
-ActiveTagging::Tagging.set_tags(db, record.id(), names)
+post_id = 42   # the id of any record you want to tag
+# From a free-typed form field: "Dark Mode, Minimal" -> ["dark-mode", "minimal"]
+names = ActiveTagging::Tag.parse_names("Dark Mode, Minimal")
+ActiveTagging::Tagging.set_tags(db, post_id, names)
 
-# Reading them back:
-tags = ActiveTagging::Tagging.tags_for(db, record.id())     # -> [Tag, Tag]
+# Reading them back (Tag models):
+tags = ActiveTagging::Tagging.tags_for(db, post_id)
+tags.map() do |t| t.name() end        # => ["dark-mode", "minimal"]
 
-# Find record IDs tagged "dark-mode":
+# Find the ids of everything tagged "dark-mode":
 tag = ActiveTagging::Tag.find_or_create(db, "dark-mode")
-record_ids = ActiveTagging::Tagging.taggable_ids_for_tag(db, tag.id())
+ActiveTagging::Tagging.taggable_ids_for_tag(db, tag.id())   # => [42]
 ```
 
 ## Notes
 
-Configure `Tag` and `Tagging` with repositories before use. `taggable_id` is an opaque ID; map returned IDs to your own records.
+Configure `Tag` and `Tagging` with repositories before use. `taggable_id` is an opaque ID; map returned IDs to your own records. Add indexes on `taggings(taggable_id)` and `taggings(tag_id)` for lookups.

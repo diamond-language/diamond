@@ -4,12 +4,31 @@ Define GraphQL schemas and execute queries in Diamond.
 
 ## Installation
 
-Install the cut at `cuts/graphql/` and load it with `require_cut "graphql"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add graphql --registry https://cuts.dilang.tech --version "^0.1.3"
+facet update
+```
+
+This installs the cut into `cuts/graphql/`; load it with `require_cut "graphql"`.
 
 ## Usage
 
+Types are built from plain values, resolvers are callables, and `schema.execute` takes the
+query text, variables, and a context Hash. This program serves a schema at `POST /graphql`
+using `gremlin`; the "database" is an in-memory Hash so it runs as is:
+
 ```ruby
+# app.di
+require_cut "gremlin"
 require_cut "graphql"
+
+AUTHORS = {
+  "1": {"id": "1", "name": "Ada Lovelace", "books": [{"title": "Notes"}, {"title": "Sketch"}]},
+  "2": {"id": "2", "name": "Alan Turing", "books": []}
+}
 
 module BookResolvers
   module_function
@@ -25,26 +44,57 @@ end
 
 module QueryResolvers
   module_function
-  def author(object, args, context) = context["db"][args["id"]]
+  def author(object, args, context) = context["db"]["#{args["id"]}"]
 end
 
-BookType = GraphQL::ObjectType.new("Book")
-BookType.field("title", GraphQL::ScalarType.string().non_null(), BookResolvers.title)
+def build_schema()
+  book = GraphQL::ObjectType.new("Book")
+  book.field("title", GraphQL::ScalarType.string().non_null(), BookResolvers.title)
 
-AuthorType = GraphQL::ObjectType.new("Author")
-AuthorType.field("id", GraphQL::ScalarType.id().non_null(), AuthorResolvers.id)
-AuthorType.field("name", GraphQL::ScalarType.string().non_null(), AuthorResolvers.name)
-AuthorType.field("books", GraphQL::ListType.of(BookType), AuthorResolvers.books)
+  author = GraphQL::ObjectType.new("Author")
+  author.field("id", GraphQL::ScalarType.id().non_null(), AuthorResolvers.id)
+  author.field("name", GraphQL::ScalarType.string().non_null(), AuthorResolvers.name)
+  author.field("books", GraphQL::ListType.of(book), AuthorResolvers.books)
 
-QueryType = GraphQL::ObjectType.new("Query")
-QueryType.field("author", AuthorType, QueryResolvers.author,
-  [GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())])
+  query = GraphQL::ObjectType.new("Query")
+  query.field("author", author, QueryResolvers.author,
+    [GraphQL::Argument.new("id", GraphQL::ScalarType.id().non_null())])
 
-Schema = GraphQL::Schema.new()
-Schema.query(QueryType)
+  schema = GraphQL::Schema.new()
+  schema.query(query)
+  schema
+end
 
-result = Schema.execute("{ author(id: \"1\") { name } }", {}, {"db": db})
+class Endpoint
+  def self.handle(request, context)
+    if request["method"] != "POST" || request["path"] != "/graphql"
+      return [404, {"Content-Type": "text/plain"}, "not found"]
+    end
+    payload = JSON.parse(request["body"])
+    schema = context["schema"]
+    if schema == nil
+      schema = build_schema()
+      context["schema"] = schema
+    end
+    result = schema.execute(payload["query"], payload["variables"] || {}, {"db": AUTHORS})
+    [200, {"Content-Type": "application/json"}, JSON.stringify(result)]
+  end
+end
+
+gremlin_serve(8080, Endpoint.handle)
 ```
+
+```sh
+diamond app.di
+curl -d '{"query":"query($id: ID!) { author(id: $id) { name books { title } } }","variables":{"id":"1"}}' \
+  localhost:8080/graphql
+# {"data":{"author":{"name":"Ada Lovelace","books":[{"title":"Notes"},{"title":"Sketch"}]}}}
+```
+
+The schema is built once per server worker and kept in the worker's `context`, because each
+`gremlin_serve` worker thread has its own VM. Replace `AUTHORS` with your database connection in
+the context Hash; every resolver receives that Hash as its third argument. To resolve straight
+from SQL tables, see [`graphsql`](https://github.com/diamond-language/diamond/tree/main/packages/graphsql).
 
 ## Defining a schema
 
@@ -133,7 +183,7 @@ end
 
 ### Lookahead
 
-Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](../graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
+Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/diamond/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.
 
 Lookahead honours `@include`/`@skip` and expands fragments, but it does not filter by a fragment's type condition. A selection that appears only under `... on OtherType` on a polymorphic field will look "selected" even if the runtime type doesn't match. It is an over-approximation, never an under-approximation.
 

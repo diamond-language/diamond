@@ -4,7 +4,15 @@ Queue and run durable background jobs using the application database.
 
 ## Installation
 
-Install the cut at `cuts/jobs/` and load it with `require_cut "jobs"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add jobs --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/jobs/`; load it with `require_cut "jobs"`.
 
 ## SQL schema
 
@@ -58,6 +66,45 @@ Jobs::Worker.run_once(db, handlers: HANDLERS)
 
 Jobs::Worker.run_forever(db, handlers: HANDLERS, poll_interval_seconds: 2)
 ```
+
+## In a project
+
+Producers and workers only share the database, so run the worker as its own process next to
+your web server. Keep the handler table in a file both can `require`, enqueue from request
+handlers, and start the worker from a small script (run it under your process supervisor,
+for example a second systemd unit):
+
+```ruby
+# worker.di
+require_cut "jobs"
+require_cut "database_config"
+require "./handlers"      # defines HANDLERS, a Hash of job kind => callable taking args
+
+config = DatabaseConfig.load("config/database.json", ENV["DIAMOND_ENV"] || "development")
+db = DatabaseConfig.open(config)
+Jobs.schedule_recurring(db, name: "nightly_cleanup", kind: "cleanup", every_seconds: 86400)   # idempotent
+Jobs::Worker.run_forever(db, handlers: HANDLERS, poll_interval_seconds: 2)
+```
+
+```ruby
+# handlers.di
+class Handlers
+  def self.send_welcome_email(args)
+    puts("emailing user #{args["user_id"]}")
+  end
+
+  def self.cleanup(args)
+    puts("cleaning up")
+  end
+end
+
+HANDLERS = {"send_welcome_email": Handlers.send_welcome_email, "cleanup": Handlers.cleanup}
+```
+
+A request handler then calls `Jobs.enqueue(db, kind: "send_welcome_email", args: {"user_id": 7})`
+and returns immediately. Failed handlers are retried with backoff until `max_attempts`, then
+the row's `status` becomes `failed` with the error in `last_error`; a successful run sets
+`succeeded`.
 
 ## Notes
 

@@ -7,7 +7,17 @@ The authenticated publish transaction verifies archives with `facet` and stores
 release metadata with its audit event. The HTTP adapter is available as
 `Registry::API`; a runnable service lives in `applications/registry`. Local credential commands are documented with the application.
 
-Install with `facet` and load with `require_cut "registry"`.
+## Installation
+
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add registry --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/registry/` along with `active_record` and `arel`; load it with `require_cut "registry"`. To run a registry service rather than embed these primitives, see `applications/registry` in the Diamond repository.
 
 `BlobStore.read` verifies the stored bytes against their digest and raises
 `IOError` for corrupt or incomplete files. `contains?` returns false when the

@@ -4,9 +4,15 @@ Reject local names and private or reserved IPv4 literals before an outbound HTTP
 
 ## Installation
 
-Install the cut at `cuts/network_safety/` and load it with `require_cut "network_safety"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
 
-Requires `http`.
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add network_safety --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/network_safety/`; load it with `require_cut "network_safety"`. `http` is installed with it.
 
 ## Usage
 
@@ -19,6 +25,27 @@ parsed = resolve_public_hostname("https://api.example.com/data")
 
 resolve_public_hostname("http://127.0.0.1/x")
 # => raises ArgumentError: "URL host is a private/reserved IPv4 address: 127.0.0.1"
+```
+
+## In a project
+
+Put the check in front of every outbound request that uses a URL a user can influence, such as
+a webhook or an avatar import:
+
+```ruby
+require_cut "http"
+require_cut "network_safety"
+
+def fetch_public(url)
+  resolve_public_hostname(url)    # raises ArgumentError for localhost and private ranges
+  http_get(url)
+end
+
+begin
+  fetch_public("http://localhost/admin")
+rescue error: ArgumentError
+  # reject the request, e.g. return a 422 to the caller
+end
 ```
 
 ## Notes

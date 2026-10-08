@@ -4,7 +4,15 @@ Accept and exchange WebSocket frames on a live HTTP connection.
 
 ## Installation
 
-Install the cut at `cuts/websocket/` and load it with `require_cut "websocket"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add websocket --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/websocket/`; load it with `require_cut "websocket"`.
 
 ## Usage
 

@@ -4,7 +4,15 @@ Connect to Redis using RESP2 or RESP3.
 
 ## Installation
 
-Install the cut at `cuts/redis/` and load it with `require_cut "redis"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add redis --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/redis/`; load it with `require_cut "redis"`.
 
 ## Usage
 

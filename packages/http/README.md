@@ -4,7 +4,15 @@ Serve HTTP/1.1 requests and make outbound HTTP requests.
 
 ## Installation
 
-Install the cut at `cuts/http/` and load it with `require_cut "http"`. See the [Diamond package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md).
+From your project directory (see the [package guide](https://github.com/diamond-language/diamond/blob/main/docs/packages.md) for `facet`):
+
+```sh
+facet init myapp          # once, if the project has no diamond.cut yet
+facet add http --registry https://cuts.dilang.tech --version "^0.1.1"
+facet update
+```
+
+This installs the cut into `cuts/http/`; load it with `require_cut "http"`.
 
 ## Usage
 
@@ -20,6 +28,27 @@ def run()
 end
 run()
 ```
+
+## Making requests
+
+`http_get`, `http_post`, `http_put`, `http_patch`, `http_delete`, `http_head`, and
+`http_options` return a Hash with `status`, `headers` (lower-case names), and `body`. Against
+the server above:
+
+```ruby
+require_cut "http"
+
+response = http_get("http://127.0.0.1:8080/ping", {"Accept": "application/json"})
+response["status"]                      # => 200
+JSON.parse(response["body"])
+
+posted = http_post("http://127.0.0.1:8080/items", "name=widget",
+  {"Content-Type": "application/x-www-form-urlencoded"})
+```
+
+`http_request(method, url, headers = {}, body = "", options = {})` is the general form.
+`https://` URLs are supported. To fetch a URL a user supplied, check it first with the
+[`network_safety`](https://github.com/diamond-language/diamond/tree/main/packages/network_safety) cut.
 
 ## Notes
 
