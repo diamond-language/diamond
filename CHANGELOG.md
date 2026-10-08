@@ -13,6 +13,12 @@ authoritative fine-grained record.
   of a line are unaffected, and the LSP formatter indents the chain one level (and a `do` body
   one more).
 
+### Packages
+
+- `mjolnir` 0.1.0, a stateless data mapper on Arel: schemas declared in code, immutable queries,
+  value-type changesets (cast, validate, declared unique constraints), and a `Repo` whose writes
+  return a sealed `Ok`/`Err`. No identity map, change tracking, callbacks, or lazy loading.
+
 ### Performance
 
 - `Hash#dup` copies the entry and bucket tables directly instead of re-inserting every key, so
