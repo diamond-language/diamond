@@ -23,7 +23,7 @@ module Arel
       @ctes = ctes
     end
 
-    def self.for_table(table: Arel::Table)
+    def self.for_table(table: Arel::Table) -> Query
       Query.new(table.name(), [], [], nil, nil, [RawSql.new("*", [])], true, true,
         table.table_alias())
     end
@@ -66,13 +66,13 @@ module Arel
       end
     end
 
-    def copy(predicates, orderings, limit_value, offset_value, projections)
+    def copy(predicates, orderings, limit_value, offset_value, projections) -> Query
       Query.new(@table_name, predicates, orderings, limit_value, offset_value,
         projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins, @source_query, @correlations, @ctes)
     end
 
-    def where(condition, params = nil)
+    def where(condition, params = nil) -> Query
       additions = []
       if condition is Hash
         table = Table.new(@table_name)
@@ -100,22 +100,22 @@ module Arel
         @offset_value, @projections)
     end
 
-    def project(columns)
+    def project(columns) -> Query
       self.copy(@predicates, @orderings, @limit_value, @offset_value, arel_array(columns))
     end
-    def select(columns) = self.project(columns)
-    def distinct()
+    def select(columns) -> Query = self.project(columns)
+    def distinct() -> Query
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
         @havings, @joins, @source_query, @correlations, @ctes)
     end
-    def group(expressions)
+    def group(expressions) -> Query
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups.concat(arel_array(expressions)), @havings, @joins, @source_query,
         @correlations, @ctes)
     end
-    def having(predicate)
+    def having(predicate) -> Query
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings.concat([predicate]), @joins, @source_query,
@@ -138,28 +138,28 @@ module Arel
         raise ArgumentError.new("duplicate relation alias in query")
       end
     end
-    def join(table: Arel::Table, predicate)
+    def join(table: Arel::Table, predicate) -> Query
       self.ensure_join_alias_available(table)
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins.concat([Join.new(table, predicate, "INNER")]),
         @source_query, @correlations, @ctes)
     end
-    def left_join(table: Arel::Table, predicate)
+    def left_join(table: Arel::Table, predicate) -> Query
       self.ensure_join_alias_available(table)
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins.concat([Join.new(table, predicate, "LEFT OUTER")]),
         @source_query, @correlations, @ctes)
     end
-    def cross_join(table: Arel::Table)
+    def cross_join(table: Arel::Table) -> Query
       self.ensure_join_alias_available(table)
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
         @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins.concat([Join.new(table, nil, "CROSS")]),
         @source_query, @correlations, @ctes)
     end
-    def correlate(table: Arel::Table)
+    def correlate(table: Arel::Table) -> Query
       candidate = table.reference_name()
       if candidate.downcase() == self.base_reference_name().downcase()
         raise ArgumentError.new("correlation must reference an outer relation")
@@ -180,7 +180,7 @@ module Arel
         @groups, @havings, @joins, @source_query,
         @correlations.concat([table]), @ctes)
     end
-    def correlate_all(tables: Array)
+    def correlate_all(tables: Array) -> Query
       query = self
       index = 0
       while index < tables.length()
@@ -189,7 +189,7 @@ module Arel
       end
       query
     end
-    def with(relation_or_name, query)
+    def with(relation_or_name, query) -> Query
       name = arel_cte_name(relation_or_name)
       self.ensure_cte_name_available(name)
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
@@ -210,7 +210,7 @@ module Arel
         raise ArgumentError.new("duplicate CTE name")
       end
     end
-    def with_recursive(relation_or_name, query)
+    def with_recursive(relation_or_name, query) -> Query
       name = arel_cte_name(relation_or_name)
       self.ensure_cte_name_available(name)
       Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
@@ -218,25 +218,25 @@ module Arel
         @groups, @havings, @joins, @source_query, @correlations,
         @ctes.concat([Cte.new(name, query, true)]))
     end
-    def order(column_or_columns)
+    def order(column_or_columns) -> Query
       self.copy(@predicates, @orderings.concat(arel_array(column_or_columns)),
         @limit_value, @offset_value, @projections)
     end
-    def take(n: Int)
+    def take(n: Int) -> Query
       if n < 0
         raise ArgumentError.new("limit must be non-negative")
       end
       self.copy(@predicates, @orderings, n, @offset_value, @projections)
     end
-    def limit(n: Int) = self.take(n)
-    def skip(n: Int)
+    def limit(n: Int) -> Query = self.take(n)
+    def skip(n: Int) -> Query
       if n < 0
         raise ArgumentError.new("offset must be non-negative")
       end
       self.copy(@predicates, @orderings, @limit_value, n, @projections)
     end
-    def offset(n: Int) = self.skip(n)
-    def render_with(visitor) = visitor.render(self)
+    def offset(n: Int) -> Query = self.skip(n)
+    def render_with(visitor) -> Array = visitor.render(self)
     # Every real caller in this codebase either passes an explicit
     # dialect visitor (PostgreSQL/MySQL/MariaDB -- only ever constructed
     # directly in their own dialect test suites, never wired into
@@ -256,7 +256,7 @@ module Arel
     # for`, every one of them). `@@default_visitor` is a per-thread class
     # variable like any other in this codebase (Thread.new clones a
     # separate heap; each thread's own copy lazily initializes once).
-    def to_sql(visitor = nil)
+    def to_sql(visitor = nil) -> Array
       renderer = visitor
       if renderer == nil
         if @@default_visitor == nil
