@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add mjolnir --registry https://cuts.dilang.tech --version "^0.1.0"
+facet add mjolnir --registry https://cuts.dilang.tech --version "^0.2.0"
 facet update
 ```
 
@@ -83,6 +83,41 @@ repo.count(adults)
 ```
 
 Queries are immutable: every method returns a new one. `where` takes a Hash (ANDed equality; `nil` means `IS NULL`) or any Arel predicate from `users.column(name)`. `query.arel()` is the underlying `Arel::Query` for anything else Arel can express. A misspelled field raises `Mjolnir::UnknownFieldError` instead of generating bad SQL.
+
+Beyond `all`/`one`/`get`/`count`:
+
+```ruby
+repo.get_by(users, {"email": "ada@example.com"})   # first row matching fields, or nil
+repo.exists?(users.query().where({"age": 36}))      # Bool
+users.query().where({"id": [1, 2, 3]})              # an Array is IN (an empty one matches nothing)
+users.query().order_by(Arel.sql("RANDOM()"))        # a raw Arel expression orders as is
+repo.update_all(users.query().where({"role": "guest"}), {"role": "user"})   # rows changed
+repo.delete_all(users.query().where({"age": 0}))                             # rows removed
+```
+
+`update_all` and `delete_all` refuse a query with no condition. `insert!` and `update!` return the entity and raise `Mjolnir::InvalidChangesetError` (carrying the changeset) instead of returning `Err`.
+
+### Associations
+
+Declare them once, after the schemas exist, and load them explicitly. There is no lazy loading: an association is only ever fetched by `preload`, which runs one query for any number of entities.
+
+```ruby
+users.has_many("posts", posts, "user_id")
+posts.belongs_to("author", users, "user_id")
+
+listed = repo.all(users.query().limit(20))
+posts_by_user = repo.preload(users, listed, "posts")
+posts_by_user[listed[0].id()]            # Array of Post (empty when none)
+
+authors = repo.preload(posts, some_posts, "author")
+authors[some_posts[0].id()]              # a User, or nil
+```
+
+The result is a Hash keyed by each entity's primary key. An optional fourth argument is a `Query` on the target schema, applied before the lookup: `repo.preload(users, listed, "posts", posts.query().order_by("id", :desc))`.
+
+### Timestamps
+
+`Schema.new(..., "id", true)` (or `timestamps: true`) requires `created_at` and `updated_at` integer fields. `insert` stamps both with the current epoch seconds, and `update` and `update_all` refresh `updated_at`, unless the changeset sets them itself.
 
 ### Transactions
 
