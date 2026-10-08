@@ -37,7 +37,7 @@ module Arel
     def quoted_identifiers() -> Bool = @quoted_identifiers
     def bind_limits() -> Bool = @bind_limits
     def table_alias() = @table_alias
-    def base_reference_name()
+    def base_reference_name() -> String
       if @table_alias == nil
         @table_name
       else

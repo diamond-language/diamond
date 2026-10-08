@@ -1491,8 +1491,8 @@ real accessors are `left()`/`right()` on `BinaryExpression`, `CompoundQuery` and
 the boolean nodes in `packages/arel/lib/arel/`. They return `@left`/`@right`,
 which hold any expression node, so they have no single class to declare and stay
 unannotated. Re-measured on Skindicate's batch loaders after the annotations
-landed: only about 1-2% (see "Where the next win is"), so the annotations were not
-the main limit on that workload.
+landed: about 1-2% for the first batch and about 4% more for the second (see "Where
+the next win is"), so they helped but were not the main limit on that workload.
 
 ### Phase 14: `DIAMOND_OP_IS_TYPE` gets JIT codegen (and stops poisoning unrelated eligibility scans)
 
@@ -1970,8 +1970,11 @@ Two measurements that used to sit in the roadmap and should survive its cleanup:
   `Skin.all().order().take().to_a()`, 3000 rounds against a copy of the local
   development database, baseline and annotated packages interleaved, five runs each)
   the gain was 2.4% interpreted (4.94 s to 4.82 s) and 1.3% with the JIT (5.00 s to
-  4.94 s), faster in every paired run. SQLite and row-to-object mapping dominate
-  there. The same loop ran about 1% slower with `DIAMOND_JIT=1` than without it, so the
+  4.94 s), faster in every paired run. A second batch (`Model.all`/`.where`,
+  `Repository#primary_key`/`#where`, `Query#base_reference_name`, the association
+  builders) measured about 4% more against that first batch (5.33 s to 5.12 s, then
+  5.08 s to 4.89 s, 11 of 12 pairs faster). SQLite and row-to-object mapping still
+  dominate there. The same loop ran about 1% slower with `DIAMOND_JIT=1` than without it, so the
   JIT is not what speeds this workload up. The [roadmap](../roadmap.md) lists the
   methods that could still be annotated; accessors such as `left()`/`right()` cannot
   be, since they hold arbitrary nodes and have no single class to declare.
