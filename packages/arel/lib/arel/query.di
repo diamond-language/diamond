@@ -267,7 +267,7 @@ module Arel
       self.render_with(renderer)
     end
 
-    def to_a(db, visitor = nil)
+    def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
     end

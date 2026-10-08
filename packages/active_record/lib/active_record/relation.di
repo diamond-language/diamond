@@ -27,28 +27,28 @@ module ActiveRecord
       @included_associations = included_associations
     end
 
-    def wrap(query) = Relation.new(query, @mapper, @visitor, @repository, @included_associations)
+    def wrap(query) -> Relation = Relation.new(query, @mapper, @visitor, @repository, @included_associations)
 
     # Query#where already accepts a plain Hash and ANDs its keys together
     # via `eq` (see packages/arel/README.md's "Compatibility where"), so
     # there is no predicate-building of this Relation's own -- unlike
     # Repository#where, which still hand-rolls that loop for its own
     # eager, non-Relation callers.
-    def where(conditions) = self.wrap(@query.where(conditions))
-    def order(column_or_columns) = self.wrap(@query.order(column_or_columns))
-    def take(n: Int) = self.wrap(@query.take(n))
-    def limit(n: Int) = self.take(n)
-    def skip(n: Int) = self.wrap(@query.skip(n))
-    def offset(n: Int) = self.skip(n)
+    def where(conditions) -> Relation = self.wrap(@query.where(conditions))
+    def order(column_or_columns) -> Relation = self.wrap(@query.order(column_or_columns))
+    def take(n: Int) -> Relation = self.wrap(@query.take(n))
+    def limit(n: Int) -> Relation = self.take(n)
+    def skip(n: Int) -> Relation = self.wrap(@query.skip(n))
+    def offset(n: Int) -> Relation = self.skip(n)
 
     # Explicit projection, matching Arel::Query#select. Callers pass an Array
     # of column names/Arel expressions; the returned Relation is independent
     # and remains lazy. `reselect` is the Rails spelling for replacing an
     # existing projection and is intentionally identical here because Arel's
     # own #select already replaces rather than appends.
-    def select(columns) = self.wrap(@query.select(columns))
-    def reselect(columns) = self.select(columns)
-    def includes(associations)
+    def select(columns) -> Relation = self.wrap(@query.select(columns))
+    def reselect(columns) -> Relation = self.select(columns)
+    def includes(associations) -> Relation
       additions = if associations is Array then associations else [associations] end
       names = @included_associations
       index = 0
@@ -62,7 +62,7 @@ module ActiveRecord
       Relation.new(@query, @mapper, @visitor, @repository, names)
     end
 
-    def to_a(db)
+    def to_a(db) -> Array
       rows = @query.to_a(db, @visitor)
       mapped = []
       index = 0

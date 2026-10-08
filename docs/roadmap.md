@@ -171,8 +171,10 @@ New package work should be driven by a concrete application or interoperability 
 
 - Deepen ActiveRecord and Arel only where applications expose a missing query,
   association, migration, or dialect feature.
-- Add return-type annotations (`-> Type`) to Arel and ActiveRecord's hot methods. The
-  JIT never trusts an unannotated return, and that, not receiver kind, is what limits
+- Add return-type annotations (`-> Type`) to the Arel and ActiveRecord methods still
+  without one: the nullable accessors (`Query#limit_value`, `Query#offset_value`,
+  `Query#table_alias`), `Relation#first`/`#count`, and most of `Repository` and `Model`.
+  The JIT never trusts an unannotated return, and that, not receiver kind, is what limits
   it on Skindicate's ORM path (see [JIT design](internal/jit-design.md#where-the-next-win-is)).
 - Add another SQL dialect only with a live server for verification.
 - Improve package documentation, examples, and compatibility tests.
