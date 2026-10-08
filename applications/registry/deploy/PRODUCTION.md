@@ -7,8 +7,9 @@ certificates (see "Proxy and certificates" below); Caddy was retired.
 
 Runtime revision: `0def8edbcd717dc7e1a30a0fabc75c5e6cabce66` (main, deployed
 2026-10-08 with `tools/deploy_registry.sh --no-verify` after a verified backup; it
-carries the cut-card README previews and `arel` 0.34.4 in the bundled seed, which is
-not yet published to the live registry; previously `6dfb7dae` (the `versions` merge
+carries the cut-card README previews and `arel` 0.34.4 in the bundled seed; `arel` 0.34.4
+and `mjolnir` 0.1.0 were published the same day with a 30-minute credential (revoked);
+previously `6dfb7dae` (the `versions` merge
 sort and the 18 README patch releases, published the same day), `8441e05c` from 2026-10-06, `c7eb036b`, `be0eb0ca` for 0.10.2,
 `d951b2ac` for 0.10.1, `a4eabf76` for 0.9.2 and `26758cbfdd516860c21944d4bbfbcb2321947f18`
 from 2026-09-25 for cut show pages;
