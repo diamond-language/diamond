@@ -51,8 +51,11 @@ def run_tests()
 
   suite.test("validations accumulate errors without mutating the original") do
     base = Mjolnir::Changeset.cast(users, nil, {"name": "A", "email": "nope", "age": 200}, ["name", "email", "age"])
-    checked = base.validate_required(["name", "email"]).validate_length("name", 2, 10)
-    checked = checked.validate_format("email", "@").validate_number("age", 0, 150)
+    checked = base
+      .validate_required(["name", "email"])
+      .validate_length("name", 2, 10)
+      .validate_format("email", "@")
+      .validate_number("age", 0, 150)
     Minitest.assert(base.valid?())
     Minitest.assert(!checked.valid?())
     Minitest.assert_equal(1, checked.errors()["name"].length())

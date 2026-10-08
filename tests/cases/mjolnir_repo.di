@@ -12,9 +12,9 @@ def repo_users()
 end
 
 def user_changeset(users, entity, attrs)
-  changeset = Mjolnir::Changeset.cast(users, entity, attrs, ["name", "email", "age"])
-  changeset = changeset.validate_required(["name", "email"])
-  changeset.unique_constraint("email")
+  Mjolnir::Changeset.cast(users, entity, attrs, ["name", "email", "age"])
+    .validate_required(["name", "email"])
+    .unique_constraint("email")
 end
 
 def fresh_repo()
