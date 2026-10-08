@@ -9866,8 +9866,47 @@ static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
 static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
                                   uint16_t left, uint16_t right);
 
+/* Is this string token a plain literal -- no unescaped `#{` interpolation -- the same scan
+ * parse_string uses to decide whether it builds a single STRING or a concatenation? */
+static bool string_token_is_plain(const Compiler *compiler,DiamondSpan span) {
+    const size_t end=span.start+span.length-1;
+    for(size_t index=span.start+1;index+1<end;) {
+        if(compiler->source[index]=='\\') {index+=2;continue;}
+        if(compiler->source[index]=='#'&&compiler->source[index+1]=='{')return false;
+        index++;
+    }
+    return true;
+}
+
+static bool token_is_index_assignment(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_EQUAL||kind==DIAMOND_TOKEN_OR_OR_EQUAL||
+        kind==DIAMOND_TOKEN_AND_AND_EQUAL||kind==DIAMOND_TOKEN_PLUS_EQUAL||
+        kind==DIAMOND_TOKEN_MINUS_EQUAL||kind==DIAMOND_TOKEN_STAR_EQUAL||
+        kind==DIAMOND_TOKEN_SLASH_EQUAL||kind==DIAMOND_TOKEN_PERCENT_EQUAL;
+}
+
 static uint16_t parse_index(Compiler *compiler,uint16_t receiver) {
     advance_token(compiler);
+    /* `receiver["literal"]` read: skip the STRING instruction that would allocate the key on
+     * every execution and emit INDEX_GET_STRING, which looks a Hash up by the constant's
+     * bytes. Only for a read (an assignment still needs the key in a register, for
+     * INDEX_SET) and only for a plain literal followed directly by `]` (not the
+     * `value["a", n]` slice form). */
+    if(compiler->current.kind==DIAMOND_TOKEN_STRING&&
+       string_token_is_plain(compiler,compiler->current.span)) {
+        DiamondLexer ahead=compiler->lexer;
+        if(diamond_lexer_next(&ahead).kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
+           !token_is_index_assignment(diamond_lexer_next(&ahead).kind)) {
+            advance_token(compiler);
+            const uint16_t key=add_string(compiler,compiler->previous.span);
+            advance_token(compiler);
+            const uint16_t destination=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_INDEX_GET_STRING,destination,receiver,key,3);
+            set_index_provenance(compiler,destination,receiver);
+            publish_indexed_result_type(compiler,destination,receiver);
+            return destination;
+        }
+    }
     const uint16_t index=parse_expression(compiler);
     /* `value[start, length]` reads a run, as value.slice(start, length)
      * does (Array and String both have slice). */

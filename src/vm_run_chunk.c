@@ -3640,6 +3640,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=indexed;
                 break;
             }
+            case DIAMOND_OP_INDEX_GET_STRING: {
+                uint16_t destination=0,receiver=0,string_index=0;
+                READ_SHORT(destination);READ_SHORT(receiver);READ_SHORT(string_index);
+                const uint8_t *site=chunk->code+instruction_offset;
+                DiamondValue indexed=DIAMOND_NIL;
+                const DiamondVmStatus status=diamond_jit_index_get_string(vm,chunk,depth,site,
+                    &registers[receiver],string_index,&indexed);
+                VM_PROPAGATE(status);
+                registers[destination]=indexed;
+                break;
+            }
             case DIAMOND_OP_INDEX_SET: {
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_SHORT(receiver);READ_SHORT(index_register);READ_SHORT(source);

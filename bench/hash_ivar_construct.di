@@ -6,8 +6,9 @@
 # in the compiled function itself, so no DiamondFrame/GC-root publishing
 # is needed, unlike a realistic Hash-literal-keyed constructor would
 # require (see object_hydration.di's own note on why that one still isn't
-# JIT-eligible). The key is a parameter, not a literal, specifically to
-# avoid the DIAMOND_OP_STRING allocation a literal key would compile to.
+# JIT-eligible). The key is a parameter, not a literal, so this keeps exercising the
+# general INDEX_GET (a literal-key read now compiles to INDEX_GET_STRING instead, which
+# looks the Hash up by the literal's bytes and allocates nothing).
 class Box
   attr_accessor value: Int
 

@@ -339,6 +339,30 @@ static bool disassemble_chunk(FILE *stream, const char *name,
                 offset += 5;
                 break;
             }
+            case DIAMOND_OP_INDEX_GET_STRING: {
+                if (!require_bytes(stream, chunk, offset, 7)) {
+                    valid = false;
+                    offset = chunk->code_count;
+                    break;
+                }
+                const uint16_t destination =
+                    checked_register(chunk, stream, read_operand(chunk, offset + 1), &valid);
+                const uint16_t receiver =
+                    checked_register(chunk, stream, read_operand(chunk, offset + 3), &valid);
+                const uint16_t string = read_operand(chunk, offset + 5);
+                fprintf(stream, "%-18s r%u, r%u, s%u", "INDEX_GET_STRING", destination,
+                        receiver, string);
+                if ((size_t)string < chunk->string_count) {
+                    const DiamondStringConstant *constant = &chunk->strings[string];
+                    fprintf(stream, " (\"%.*s\")", (int)constant->length, constant->chars);
+                } else {
+                    fputs(" <invalid string>", stream);
+                    valid = false;
+                }
+                fputc('\n', stream);
+                offset += 7;
+                break;
+            }
             case DIAMOND_OP_SYMBOL: {
                 if (!require_bytes(stream, chunk, offset, 5)) {
                     valid = false;

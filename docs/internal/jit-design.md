@@ -1726,6 +1726,36 @@ design would miss it), and `_redefine` (the safety-gate negative test).
 Full debug suite, ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`,
 all green.
 
+### Phase 15: `DIAMOND_OP_INDEX_GET_STRING` -- literal-key reads stop allocating the key
+
+Profiling Skindicate's row-to-model mapping (24 `Skin` rows, `build_skin`) put hashing,
+lookup and key comparison at about 23% of the time and `malloc`/`free`/`sweep_list` at about
+20%. Every `attributes["title"]` compiled to a `STRING` instruction, which allocates a fresh
+`DiamondString` from the constant pool on each execution, followed by `INDEX_GET`. Caching a
+hash inside the String object would not have helped: the String is thrown away after one
+lookup.
+
+The compiler now emits `INDEX_GET_STRING dest, receiver, string_constant` for `x["literal"]`
+when the literal has no `#{` interpolation, is followed directly by `]` (not the
+`x["a", n]` slice form) and is not the target of `=`, `||=`, `+=` and friends, which still
+need the key in a register for `INDEX_SET`. A Hash receiver is searched by the constant's
+bytes (`hash_find_string_bytes`, the same FNV hash `hash_find` uses, matching only String
+keys: `values_equal` never equates a String with a Symbol). Any other receiver allocates the
+key, `gc_protect`s it and calls `diamond_jit_index_get`, so Array/String/Instance `[]`
+behavior and error messages are unchanged. The JIT calls the same
+`diamond_jit_index_get_string` trampoline (`compile_index_get_string`, 7 arguments, with
+`needs_frame` and `has_called` set exactly as for `INDEX_GET`), and the three bytecode-walking
+scans in `src/jit.c` list the new opcode with the same three-`u16` shape as `INDEX_GET`. The
+opcode goes after `CHANNEL_SELECT`, so `selfhost/parser.di`'s hard-coded numbers are
+unaffected, and the self-hosted compiler does not emit it.
+
+Measured on Skindicate's row mapping (100k iterations of 24 rows, JIT on): about 30% faster
+(2.97 s to 2.07 s per 40k iterations). On the full batch-loader loop described under "Where
+the next win is", 5.30 s to 5.02 s (about 5%, all six interleaved pairs faster) against a
+control binary built from the commit before this one. `tests/cases/index_get_literal_key.di`
+compares every literal read against the same read through a variable, for Hash, Instance
+`[]`, String, Array, nil and Int receivers, under JIT and GC stress.
+
 ## Why the interop seam is already clean
 
 Every Diamond call recurses `run_chunk` (`src/vm.c:13823`), which pushes a
