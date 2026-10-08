@@ -1,0 +1,1 @@
+{"name": "mjolnir", "version": "0.1.0", "summary": "Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}], "dependencies": {"arel": "^0.34.0"}}
