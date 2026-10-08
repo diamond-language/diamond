@@ -1973,7 +1973,8 @@ Two measurements that used to sit in the roadmap and should survive its cleanup:
   4.94 s), faster in every paired run. A second batch (`Model.all`/`.where`,
   `Repository#primary_key`/`#where`, `Query#base_reference_name`, the association
   builders) measured about 4% more against that first batch (5.33 s to 5.12 s, then
-  5.08 s to 4.89 s, 11 of 12 pairs faster). SQLite and row-to-object mapping still
+  5.08 s to 4.89 s, 11 of 12 pairs faster; with `DIAMOND_JIT=1`, as production runs, 5.10 s to
+  4.94 s, about 3%, every pair faster). SQLite and row-to-object mapping still
   dominate there. The same loop ran about 1% slower with `DIAMOND_JIT=1` than without it, so the
   JIT is not what speeds this workload up. The [roadmap](../roadmap.md) lists the
   methods that could still be annotated; accessors such as `left()`/`right()` cannot
