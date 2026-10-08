@@ -10007,6 +10007,30 @@ bool sandbox_category_allowed(const char *category) {
  * treat as "not handled here, fall back" by any caller that only ever
  * reaches these before jc->has_called could be true (see compile_body's
  * own comment for why that's guaranteed). */
+/* Copies `source`'s entries and bucket table into the freshly allocated, still-empty
+ * `copy` without hashing or probing anything: each entry already carries its hash, and a
+ * copy with identical entry indices and bucket_capacity can reuse the bucket table
+ * byte for byte. `copy` is young (allocate_hash just made it and nothing has collected
+ * since), so no write barrier or dirty card is needed. entries is sized to exactly
+ * `count`; hash_set grows it from there on the first insert. The typed-container
+ * constraints are deliberately not copied, as before (docs/internal/jit-design.md's
+ * Phase 4). */
+static bool hash_clone_contents(DiamondVm *vm,DiamondHash *copy,const DiamondHash *source) {
+    if(source->count==0)return true;
+    DiamondHashEntry *entries=malloc(source->count*sizeof(DiamondHashEntry));
+    if(entries==nullptr)return false;
+    size_t *buckets=malloc(source->bucket_capacity*sizeof(size_t));
+    if(buckets==nullptr){free(entries);return false;}
+    memcpy(entries,source->entries,source->count*sizeof(DiamondHashEntry));
+    memcpy(buckets,source->buckets,source->bucket_capacity*sizeof(size_t));
+    copy->entries=entries;copy->capacity=source->count;copy->count=source->count;
+    copy->buckets=buckets;copy->bucket_capacity=source->bucket_capacity;
+    vm->bytes_allocated+=source->count*sizeof(DiamondHashEntry)+
+        source->bucket_capacity*sizeof(size_t);
+    note_storage_growth(vm);
+    return true;
+}
+
 DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out) {
     if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=*receiver;return DIAMOND_VM_OK;}
@@ -10032,9 +10056,7 @@ DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
         const DiamondHash *source=(const DiamondHash *)receiver->as.object;
         DiamondHash *copy=allocate_hash(vm);
         if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        for(size_t index=0;index<source->count;index++)
-            if(!hash_set(vm,copy,source->entries[index].key,source->entries[index].value))
-                return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!hash_clone_contents(vm,copy,source))return DIAMOND_VM_OUT_OF_MEMORY;
         *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
     }
     if(dup_kind==DIAMOND_OBJECT_INSTANCE) {
