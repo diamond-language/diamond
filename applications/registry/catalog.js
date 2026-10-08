@@ -10,6 +10,22 @@ function node(tag, text, className) {
   if (className) element.className = className;
   return element;
 }
+function safeHref(url) {
+  try {
+    const parsed = new URL(url, base);
+    return ['https:', 'mailto:'].includes(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+function link(text, url) {
+  const href = safeHref(url);
+  if (!href) return document.createTextNode(text);
+  const anchor = node('a', text);
+  anchor.href = href;
+  anchor.rel = 'nofollow noopener';
+  return anchor;
+}
 function formatSize(bytes) {
   const units = ['bytes', 'KB', 'MB', 'GB'];
   let value = bytes, unit = 0;
@@ -38,6 +54,49 @@ function field(label, value) {
   else paragraph.append(...value);
   return paragraph;
 }
+// README previews: fetched lazily, once per cut, when its card scrolls into
+// view. The excerpt is the first part of the README without its title line;
+// CSS clips it and fades it out.
+const previews = new Map();
+const PREVIEW_CHARS = 1200;
+function excerpt(readme) {
+  let text = readme.replace(/\r\n?/g, '\n').replace(/^\s*#\s+.*\n/, '').trim();
+  if (text.length > PREVIEW_CHARS) text = text.slice(0, PREVIEW_CHARS);
+  return text;
+}
+function fillPreview(box, text) {
+  if (!text) { box.hidden = true; return; }
+  box.hidden = false;
+  markdown(text, box);
+}
+const observer = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    observer.unobserve(entry.target);
+    previewText(entry.target.dataset.cut).then(text => {
+      if (entry.target.isConnected) fillPreview(entry.target, text);
+    });
+  });
+}, {rootMargin: '300px'}) : null;
+// One in-flight or settled promise per cut, so a re-render (search typing)
+// reuses it instead of fetching again.
+function previewText(name) {
+  if (!previews.has(name)) {
+    previews.set(name, fetch(new URL(`catalog/${encodeURIComponent(name)}.json`, base))
+      .then(response => response.ok ? response.json() : {})
+      .then(cut => excerpt(cut.readme || ''))
+      .catch(() => { previews.delete(name); return ''; }));
+  }
+  return previews.get(name);
+}
+function previewBox(name) {
+  const box = node('div', '', 'readme preview');
+  box.dataset.cut = name;
+  box.setAttribute('aria-hidden', 'true');
+  if (previews.has(name)) previewText(name).then(text => { if (box.isConnected) fillPreview(box, text); });
+  else if (observer) observer.observe(box);
+  return box;
+}
 function render() {
   const query = document.querySelector('#search').value.trim().toLowerCase();
   const visible = releases.filter(release => release.name.toLowerCase().includes(query));
@@ -50,6 +109,7 @@ function render() {
     title.append(show);
     head.append(title, node('span', release.version, 'version'));
     card.append(head);
+    card.append(previewBox(release.name));
     if (release.yanked) card.append(node('span', 'Yanked', 'yanked'));
     const dependencies = Object.entries(JSON.parse(release.dependencies)).map(([name, range]) => name + ' ' + range).join(', ');
     card.append(field('Dependencies', dependencies || 'None'));

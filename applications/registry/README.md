@@ -220,12 +220,13 @@ yanked versions are marked. The catalog lists one row per cut: its newest
 unyanked release by SemVer precedence, or its newest release if every version
 is yanked. Each row carries the release's `maintainers` as a JSON string, or
 `null` for releases published before manifests declared them. Pages contain at
-most 100 cuts, with `next_after` as an ascending cut-ID cursor. Search filters the loaded releases; load more
+most 100 cuts, with `next_after` as an ascending cut-ID cursor. Each card previews the start of the cut's README, fetched lazily from `catalog/<name>.json`
+and faded out at the bottom. Search filters the loaded releases; load more
 to search additional pages. The catalog uses text rendering for metadata and a
 same-origin script policy. It contains no publishing credential or administration UI.
 
 Keep `catalog.di`, `catalog.html`, `catalog.js`, `catalog.css`, `cut.html`, and
-`cut.js` beside `app.di` when deploying. `/cuts/<name>` is a cut's show page
+`cut.js`, and `markdown.js` beside `app.di` when deploying. `/cuts/<name>` is a cut's show page
 (README, install command, and version history), backed by `catalog/<name>.json`.
 `REGISTRY_BASE` prefixes the catalog and its assets as well as the API. Install
 commands use the catalog's origin/base; the public quickstart uses cuts.dilang.tech.
