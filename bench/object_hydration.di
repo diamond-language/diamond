@@ -24,19 +24,11 @@
 # STRING), and this benchmark's own `row` always supplies "role" anyway,
 # so the fallback branch never actually ran even before this change.
 #
-# Still not JIT-eligible even after both changes above: every
-# `attributes["email"]`-shaped access ALSO compiles to a fresh
-# DIAMOND_OP_STRING construction for the literal key ("email"/"username"/
-# "role"/"is_seed") on every call, not just the removed default-value
-# cases -- confirmed via --dump-bytecode. String-literal hash keys are
-# pervasive in ordinary Diamond code (this is not a benchmark-specific
-# quirk), so a real allocation-capable trampoline plus the general frame/
-# GC-root contract docs/internal/jit-design.md describes is a real
-# prerequisite for compiling this exact method, not an edge case --
-# tests/cases/jit_hash_ivar_construct.di is the same INDEX_GET/SET_IVAR/
-# CHECK_TYPE/self/argument machinery validated instead, with the Hash key
-# passed as a parameter rather than a literal to sidestep this specific
-# gap and prove the rest of the mechanism end-to-end today.
+# Each `attributes["email"]`-shaped read compiles to INDEX_GET_STRING, which looks the
+# Hash up by the literal's bytes and allocates no key String (it used to build one with
+# DIAMOND_OP_STRING on every call -- see --dump-bytecode). tests/cases/
+# jit_hash_ivar_construct.di is the same INDEX_GET/SET_IVAR/CHECK_TYPE/self/argument
+# machinery validated with the Hash key passed as a parameter.
 class HydratedUser
   attr_accessor email: String, username: String, role: String, is_seed
 

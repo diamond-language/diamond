@@ -919,6 +919,30 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     emit_bail_if_al_nonzero(jc);
 }
 
+/* INDEX_GET_STRING: compile_index_get with the key given as a string constant index (passed
+ * as an immediate in R9) instead of a register. Same unconditional needs_frame/has_called
+ * (the non-Hash path allocates and can run an Instance `[]` override), same 7-argument
+ * stack-plus-padding shape. */
+static void compile_index_get_string(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                     uint16_t recv, uint16_t string_index) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_imm64(buf, REG_RAX, 0);
+    emit_push(buf, REG_RAX);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_DEPTH);
+    emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_mov_imm64(buf, REG_R9, string_index);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_get_string);
+    emit_add_rsp_imm32(buf, 16);
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* INDEX_SET (Phase 2e, new -- was entirely unsupported before). Full
  * Hash/String/Instance-overload/Array support, mirroring compile_index_
  * get's own treatment (jc->needs_frame and jc->has_called both
@@ -1285,6 +1309,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_ARGUMENT_PROVIDED:
         case DIAMOND_OP_STRING:
         case DIAMOND_OP_INDEX_GET:
+        case DIAMOND_OP_INDEX_GET_STRING:
         case DIAMOND_OP_HASH:
         case DIAMOND_OP_SUPER:
         case DIAMOND_OP_INVOKE:
@@ -1367,6 +1392,7 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
             case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return false;
@@ -1492,6 +1518,7 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
             case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
@@ -1737,6 +1764,13 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
                 compile_index_get(jc, instruction_start, dest, recv, index);
+                break;
+            }
+            case DIAMOND_OP_INDEX_GET_STRING: {
+                uint16_t dest = 0, recv = 0, string_index = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                    !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return; }
+                compile_index_get_string(jc, instruction_start, dest, recv, string_index);
                 break;
             }
             case DIAMOND_OP_INDEX_SET: {

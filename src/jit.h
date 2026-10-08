@@ -210,6 +210,13 @@ DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
 DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
         size_t depth, const uint8_t *site, const DiamondValue *receiver,
         const DiamondValue *index, DiamondValue *out);
+/* DIAMOND_OP_INDEX_GET_STRING's trampoline: `string_index` names a string constant of `chunk`
+ * used as the key. A Hash receiver is searched by the constant's bytes with no allocation;
+ * anything else allocates the key and defers to diamond_jit_index_get, so it can invoke an
+ * Instance `[]` override and is compiled with jc->has_called like INDEX_GET. */
+DiamondVmStatus diamond_jit_index_get_string(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        uint16_t string_index, DiamondValue *out);
 DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
         size_t depth, const uint8_t *site, const DiamondValue *receiver,
         const DiamondValue *index, const DiamondValue *source);

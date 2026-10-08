@@ -4141,6 +4141,29 @@ ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key) {
     return -1;
 }
 
+/* hash_find for a String key given only as bytes, so DIAMOND_OP_INDEX_GET_STRING can look up a
+ * literal without allocating it. Must agree with hash_find(hash,<String with these bytes>):
+ * the same hash_bytes hash, and values_equal's rule that objects of different kinds are never
+ * equal (a Symbol entry with the same bytes does not match a String key). */
+static ptrdiff_t hash_find_string_bytes(const DiamondHash *hash,const char *chars,size_t length) {
+    if(hash->bucket_capacity==0)return -1;
+    const uint64_t key_hash=hash_bytes(chars,length);
+    size_t slot=(size_t)(key_hash&(hash->bucket_capacity-1));
+    for(size_t probe=0;probe<hash->bucket_capacity;probe++) {
+        const size_t index=hash->buckets[slot];
+        if(index==SIZE_MAX)return -1;
+        const DiamondHashEntry *entry=&hash->entries[index];
+        if(entry->hash==key_hash&&entry->key.kind==DIAMOND_VALUE_OBJECT&&
+           entry->key.as.object->kind==DIAMOND_OBJECT_STRING) {
+            const DiamondString *key=(const DiamondString *)entry->key.as.object;
+            if(key->length==length&&memcmp(key->chars,chars,length)==0)
+                return (ptrdiff_t)index;
+        }
+        slot=(slot+1)&(hash->bucket_capacity-1);
+    }
+    return -1;
+}
+
 bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                      DiamondValue value) {
     const ptrdiff_t existing=hash_find(hash,key);
@@ -6829,6 +6852,33 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     }
     *out = array->values[(size_t)array_index];
     return DIAMOND_VM_OK;
+}
+
+/* DIAMOND_OP_INDEX_GET_STRING (see its comment in vm.h; shared by the interpreter and the JIT).
+ * A Hash receiver is by far the common case and is searched by the constant's bytes. Any
+ * other receiver gets the key String INDEX_GET would have been handed; that String is
+ * gc_protect'ed across diamond_jit_index_get, whose Instance `[]` path can allocate and
+ * collect before the argument is copied anywhere the collector scans. */
+DiamondVmStatus diamond_jit_index_get_string(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, const uint8_t *site, const DiamondValue *receiver,
+        uint16_t string_index, DiamondValue *out) {
+    if (string_index >= chunk->string_count) return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondStringConstant *constant = &chunk->strings[string_index];
+    if (receiver->kind == DIAMOND_VALUE_OBJECT &&
+        receiver->as.object->kind == DIAMOND_OBJECT_HASH) {
+        const DiamondHash *hash = (const DiamondHash *)receiver->as.object;
+        const ptrdiff_t found = hash_find_string_bytes(hash, constant->chars, constant->length);
+        *out = found < 0 ? DIAMOND_NIL : hash->entries[(size_t)found].value;
+        return DIAMOND_VM_OK;
+    }
+    DiamondString *key = allocate_string(vm, constant->chars, constant->length);
+    if (key == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    const DiamondValue index = DIAMOND_OBJECT(key);
+    const size_t mark = vm->gc_protected_count;
+    if (!gc_protect(vm, index)) return DIAMOND_VM_OUT_OF_MEMORY;
+    const DiamondVmStatus status = diamond_jit_index_get(vm, chunk, depth, site, receiver, &index, out);
+    gc_unprotect(vm, mark);
+    return status;
 }
 
 /* JIT trampoline for DIAMOND_OP_INDEX_SET -- Phase 2e, extracted verbatim

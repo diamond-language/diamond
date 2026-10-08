@@ -565,6 +565,12 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TLS_START_HANDSHAKE, /* dest, connected Socket, hostname, options */
     DIAMOND_OP_JSON_STRINGIFY, /* dest, value (native JSON.stringify); selfhost/parser.di hard-codes this value, so new opcodes go after it */
     DIAMOND_OP_CHANNEL_SELECT, /* dest, Array of Channels, deadline */
+    /* `receiver["literal"]` with a plain (non-interpolated) string literal and no `=` after it:
+     * dest, receiver, string constant index. A Hash receiver is searched by the constant's
+     * bytes without allocating the key String that STRING + INDEX_GET would build on every
+     * execution; any other receiver builds that String and runs INDEX_GET's own logic
+     * (diamond_jit_index_get). selfhost/parser.di does not emit it. */
+    DIAMOND_OP_INDEX_GET_STRING,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
