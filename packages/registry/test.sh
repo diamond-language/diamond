@@ -158,3 +158,15 @@ if File.sync(root + "/race") != root + "/race" then raise "wrong sync return val
 count')"
 [[ "$output" == 3 ]]
 echo "recovery synchronization tests passed"
+output="$("$diamond" -e 'require_cut "registry"
+db = SQLite3.open(":memory:")
+Registry::Schema.apply(db)
+db.execute("INSERT INTO cuts (id, name, created_at) VALUES (1, '"'"'a'"'"', 0)")
+["1.0.0","1.0.0-alpha","1.0.0-alpha.1","1.0.0-alpha.beta","1.0.0-beta","1.0.0-beta.2","1.0.0-beta.11","1.0.0-rc.1","0.9.10","0.9.2","2.0.0","1.10.0","1.2.0","10.0.0"].each() do |v|
+  db.execute("INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (1, ?, '"'"'{}'"'"', ?, 1, 0)", [v, "d" + v])
+end
+api = Registry::API.new(db, nil, nil)
+body = JSON.parse(api.call({"method": "GET", "path": "/v1/cuts/a/versions", "headers": {}})[2])
+body["versions"].map() do |x| x["version"] end.join(" ")')"
+[[ "$output" == "0.9.2 0.9.10 1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0 1.2.0 1.10.0 2.0.0 10.0.0" ]]
+echo "version ordering tests passed"

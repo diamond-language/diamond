@@ -16,6 +16,10 @@ authoritative fine-grained record.
   receivers behave as before. Building 24 `Skin` models from query rows got about 30% faster,
   and Skindicate's batch-loader loop about 5%.
 
+- The registry's `versions` endpoint sorts with a merge sort over versions parsed once, instead of an
+  insertion sort that re-split both version strings on every comparison. A 40-release listing
+  went from 0.59 ms to 0.26 ms of handler time.
+
 ### Tooling
 
 - Instrumented builds no longer recompile everything. The two fuzzers share one instrumented

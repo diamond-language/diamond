@@ -30,49 +30,86 @@ module Registry
       true
     end
 
-    # SemVer precedence for the canonical versions emitted by facet verify.
-    def before?(left, right)
-      left_parts = left.split("-")
-      right_parts = right.split("-")
-      a = left_parts[0].split(".")
-      b = right_parts[0].split(".")
+    # Parses a canonical version once into [major, minor, patch, prerelease
+    # identifiers or nil], so sorting does not re-split strings per comparison.
+    def version_key(version)
+      parts = version.split("-")
+      core = parts[0].split(".")
+      pre = nil
+      if parts.length() > 1 then pre = version.slice(parts[0].length() + 1, version.length()).split(".") end
+      [core[0].to_i(), core[1].to_i(), core[2].to_i(), pre]
+    end
+
+    # SemVer precedence on parsed keys.
+    def key_before?(a, b)
       i = 0
       while i < 3
-        if a[i].to_i() != b[i].to_i() then return a[i].to_i() < b[i].to_i() end
+        if a[i] != b[i] then return a[i] < b[i] end
         i += 1
       end
-      if left_parts.length() == 1 then return false end
-      if right_parts.length() == 1 then return true end
-      a = left.slice(left_parts[0].length() + 1, left.length()).split(".")
-      b = right.slice(right_parts[0].length() + 1, right.length()).split(".")
+      left = a[3]
+      right = b[3]
+      if left == nil then return false end
+      if right == nil then return true end
       i = 0
-      while i < a.length() && i < b.length()
-        if a[i] != b[i]
-          an = self.numeric?(a[i])
-          bn = self.numeric?(b[i])
-          if an && bn then return a[i].to_i() < b[i].to_i() end
+      while i < left.length() && i < right.length()
+        if left[i] != right[i]
+          an = self.numeric?(left[i])
+          bn = self.numeric?(right[i])
+          if an && bn then return left[i].to_i() < right[i].to_i() end
           if an != bn then return an end
-          return a[i] < b[i]
+          return left[i] < right[i]
         end
         i += 1
       end
-      a.length() < b.length()
+      left.length() < right.length()
+    end
+
+    # SemVer precedence for the canonical versions emitted by facet verify.
+    def before?(left, right)
+      self.key_before?(self.version_key(left), self.version_key(right))
+    end
+
+    # Stable merge sort of [key, entry] pairs, O(n log n) comparisons.
+    def merge_sort(items)
+      if items.length() <= 1 then return items end
+      middle = items.length() / 2
+      left = self.merge_sort(items.slice(0, middle))
+      right = self.merge_sort(items.slice(middle, items.length() - middle))
+      merged = []
+      i = 0
+      j = 0
+      while i < left.length() && j < right.length()
+        if self.key_before?(right[j][0], left[i][0])
+          merged.push(right[j])
+          j += 1
+        else
+          merged.push(left[i])
+          i += 1
+        end
+      end
+      while i < left.length()
+        merged.push(left[i])
+        i += 1
+      end
+      while j < right.length()
+        merged.push(right[j])
+        j += 1
+      end
+      merged
     end
 
     def index(name)
       cuts = @db.query("SELECT id FROM cuts WHERE name = ?", [name])
       if cuts.length() == 0 then return self.error(404, "not_found") end
       rows = @db.query("SELECT version, yanked FROM releases WHERE cut_id = ? AND takedown_reason IS NULL", [cuts[0]["id"]])
-      versions = []
+      keyed = []
       rows.each() do |row|
-        versions.push({"version": row["version"], "yanked": row["yanked"] == 1})
-        i = versions.length() - 1
-        while i > 0 && self.before?(versions[i]["version"], versions[i - 1]["version"])
-          previous = versions[i - 1]
-          versions[i - 1] = versions[i]
-          versions[i] = previous
-          i -= 1
-        end
+        keyed.push([self.version_key(row["version"]), {"version": row["version"], "yanked": row["yanked"] == 1}])
+      end
+      versions = []
+      self.merge_sort(keyed).each() do |pair|
+        versions.push(pair[1])
       end
       self.json(200, {"protocol": 1, "versions": versions})
     end
