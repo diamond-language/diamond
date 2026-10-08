@@ -4,6 +4,15 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Packages
+
+- `mjolnir` 0.2.0: `has_many`/`belongs_to` declarations with a batched `Repo#preload` (one query for
+  any number of entities, loaded only when asked), `get_by`, `exists?`, `insert!`/`update!`,
+  `update_all`/`delete_all` (both refuse a query with no condition), an Array in `where` as `IN`,
+  raw-expression `order_by`, and opt-in `created_at`/`updated_at` stamping.
+
 ## 0.12.0 — 2026-10-08
 
 ### Language
