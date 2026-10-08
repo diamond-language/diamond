@@ -206,7 +206,10 @@ class Lexer
       return self.make_token(:percent)
     end
     return self.make_token(:caret) if code == "^".ord()
-    return self.make_token(:newline) if code == "\n".ord()
+    if code == "\n".ord()
+      return self.next_token() if self.newline_continues_chain?()
+      return self.make_token(:newline)
+    end
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()
       return self.make_token(:equal_equal) if self.match?("=".ord())
@@ -237,6 +240,28 @@ class Lexer
       0
     else
       @source[index].ord()
+    end
+  end
+
+  # After a newline: does the next code line (past blank space and comment
+  # lines) start with a `.` method call? Then the newline does not end the
+  # statement. `..` is a range and `.5` is not a call, so neither counts.
+  def newline_continues_chain?()
+    index = @current
+    while true
+      code = self.code_at(index)
+      if code == " ".ord() || code == "\t".ord() || code == "\r".ord() || code == "\n".ord()
+        index = index + 1
+      elsif code == "#".ord()
+        return false if index + 7 <= @source.length() && @source.slice(index, 7) == "#line 1"
+        while index < @source.length() && self.code_at(index) != "\n".ord()
+          index = index + 1
+        end
+      else
+        return false if code != ".".ord()
+        after = self.code_at(index + 1)
+        return after != ".".ord() && !(after >= "0".ord() && after <= "9".ord())
+      end
     end
   end
 

@@ -2148,6 +2148,33 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_string_uri"'"}}}'
 read_message >/dev/null
 
+# A method chain continued on leading-dot lines: the chain lines print one level
+# deeper than the statement, and a `do` body one level deeper again. Already
+# correct here, so no edits; the flush-left copy gets its `.map` line fixed.
+fmt_chain_uri="file:///fmt_chain.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_chain_uri"'","text":"def f(items)\n  result = items\n    .map() do |v|\n      v + 1\n    end\n    .reverse()\n  result\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":182,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_chain_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":182,"result":[]}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_chain_uri"'"}}}'
+read_message >/dev/null
+
+fmt_flush_uri="file:///fmt_flush.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_flush_uri"'","text":"def f(items)\n  result = items\n  .reverse()\n  result\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":183,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_flush_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == '{"jsonrpc":"2.0","id":183,"result":[{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":2}},"newText":"    "}]}' ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_flush_uri"'"}}}'
+read_message >/dev/null
+
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---
 
 send '{"jsonrpc":"2.0","id":2,"method":"textDocument/bogusMethod","params":{}}'

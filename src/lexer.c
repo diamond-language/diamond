@@ -1,5 +1,7 @@
 #include "lexer.h"
 
+#include <string.h>
+
 static bool at_end(const DiamondLexer *lexer) {
     return lexer->source[lexer->current] == '\0';
 }
@@ -140,6 +142,29 @@ static bool is_base_digit(char character, int base) {
                (character >= 'a' && character <= 'f') ||
                (character >= 'A' && character <= 'F');
     return character >= '0' && character < (char)('0' + base);
+}
+
+/* After a newline: does the next code line (past blank space and comment
+ * lines) start with a `.` method call? Then the newline does not end the
+ * statement, so a chain can continue on a leading-dot line. `..` is a
+ * range and `.5` is not a call, so neither counts. */
+static bool newline_continues_chain(const DiamondLexer *lexer) {
+    size_t index = lexer->current;
+    while (true) {
+        const char next = lexer->source[index];
+        if (next == ' ' || next == '\t' || next == '\r' || next == '\n') {
+            index++;
+            continue;
+        }
+        if (next == '#') {
+            if (strncmp(lexer->source + index, "#line 1", 7) == 0) return false;
+            while (lexer->source[index] != '\0' && lexer->source[index] != '\n') index++;
+            continue;
+        }
+        if (next != '.') return false;
+        const char after = lexer->source[index + 1];
+        return after != '.' && !(after >= '0' && after <= '9');
+    }
 }
 
 DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
@@ -415,6 +440,7 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         case '^':
             return token(lexer, DIAMOND_TOKEN_CARET);
         case '\n':
+            if (newline_continues_chain(lexer)) return diamond_lexer_next(lexer);
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case ';':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);

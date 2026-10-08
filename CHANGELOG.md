@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- A line starting with `.` continues the previous expression, so a method chain can be written
+  one call per line. Comment and blank lines may sit between the links. `..` and `.5` at the start
+  of a line are unaffected, and the LSP formatter indents the chain one level (and a `do` body
+  one more).
+
 ### Performance
 
 - `Hash#dup` copies the entry and bucket tables directly instead of re-inserting every key, so
