@@ -1,6 +1,6 @@
 module Arel
 
-  def self.table(name: String) = Table.new(name)
+  def self.table(name: String) -> Table = Table.new(name)
   def self.cte(name: String) = CteRelation.new(name)
   def self.as(expression, name: String) = Alias.new(expression, name)
   def self.asc(expression) = Ordering.new(expression, "ASC")
@@ -51,11 +51,11 @@ module Arel
   def self.insert_into(table: Arel::Table) = Insert.new(table)
   def self.update(table: Arel::Table) = Update.new(table)
   def self.delete_from(table: Arel::Table) = Delete.new(table)
-  def self.from_subquery(query, name: String)
+  def self.from_subquery(query, name: String) -> Query
     Query.new(name, [], [], nil, nil, [RawSql.new("*", [])], true, true,
       name, false, [], [], [], query)
   end
-  def self.from(table)
+  def self.from(table) -> Query
     if table is Table
       Query.for_table(table)
     else

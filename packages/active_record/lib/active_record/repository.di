@@ -109,7 +109,7 @@ module ActiveRecord
       end
     end
 
-    def all(db)
+    def all(db) -> Array
       rows = Arel.from(@table).to_a(db, @visitor)
       mapped = []
       index = 0
@@ -155,7 +155,7 @@ module ActiveRecord
     # see Relation below. Unlike #all/#where above (which hit the database
     # immediately), nothing here runs until a terminal call
     # (#to_a/#first/#count) on the Relation it returns.
-    def relation() = Relation.new(Arel.from(@table), @mapper, @visitor, self)
+    def relation() -> Relation = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
     def create(db, attributes: Hash)
       self.validate!(attributes)
