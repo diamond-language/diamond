@@ -80,7 +80,7 @@ module ActiveRecord
       @association_reflections = association_reflections
     end
 
-    def primary_key() = @id_column
+    def primary_key() -> String = @id_column
     def has_column?(name) -> Bool = @column_names.include?("#{name}")
     def reflect_on_association(name)
       string_name = "#{name}"
@@ -130,7 +130,7 @@ module ActiveRecord
     # a repository caller actually needs (see HasMany#all,
     # which now builds one of these instead of taking a bare column/value
     # pair).
-    def where(db, conditions: Hash)
+    def where(db, conditions: Hash) -> Array
       keys = conditions.keys()
       predicate = nil
       index = 0

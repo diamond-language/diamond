@@ -173,10 +173,10 @@ New package work should be driven by a concrete application or interoperability 
   association, migration, or dialect feature.
 - Add return-type annotations (`-> Type`) to the Arel and ActiveRecord methods still
   without one: the nullable accessors (`Query#limit_value`, `Query#offset_value`,
-  `Query#table_alias`), `Relation#first`/`#count`, and most of `Repository` and `Model`.
-  The JIT never trusts an unannotated return, but annotating `Query`, `Relation` and
-  `Arel` module functions moved Skindicate's batch loaders only about 1-2%, so expect
-  little from the rest (see [JIT design](internal/jit-design.md#where-the-next-win-is)).
+  `Query#table_alias`, `Query#source_query`), `Query#count`, `Relation#first`/`#count`,
+  `Repository#find`/`#create`/`#update`/`#delete`, and the rest of `Model`. The JIT never
+  trusts an unannotated return, and each batch measured so far paid off on Skindicate's
+  batch loaders (see [JIT design](internal/jit-design.md#where-the-next-win-is)).
 - Add another SQL dialect only with a live server for verification.
 - Improve package documentation, examples, and compatibility tests.
 - Avoid framework magic that hides database access or weakens Diamond's type and error

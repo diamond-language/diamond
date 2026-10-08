@@ -84,9 +84,9 @@ module ActiveRecord
     # reader on a subclass (see README.md) -- these just construct the
     # association object; #all/#get/#preload on it work exactly as
     # documented above.
-    def has_many(repository: Repository, foreign_key: String) = HasMany.new(repository, foreign_key)
-    def has_one(repository: Repository, foreign_key: String) = HasOne.new(repository, foreign_key)
-    def belongs_to(repository: Repository) = BelongsTo.new(repository)
+    def has_many(repository: Repository, foreign_key: String) -> HasMany = HasMany.new(repository, foreign_key)
+    def has_one(repository: Repository, foreign_key: String) -> HasOne = HasOne.new(repository, foreign_key)
+    def belongs_to(repository: Repository) -> BelongsTo = BelongsTo.new(repository)
 
     # has_secure_password-style helpers, deliberately not a macro -- there
     # is no `has_secure_password :password` conjuring a real method into
@@ -179,8 +179,8 @@ module ActiveRecord
       raise RuntimeError.new("Model subclass must override self.repository")
     end
     def self.find(db, id) = self.repository().find(db, id)
-    def self.all() = self.repository().relation()
-    def self.where(conditions: Hash) = self.repository().relation().where(conditions)
+    def self.all() -> Relation = self.repository().relation()
+    def self.where(conditions: Hash) -> Relation = self.repository().relation().where(conditions)
     # `where(...).first`, one line -- a single matching instance, or nil,
     # with the same "no implicit ORDER BY" caveat #first(db) already has.
     def self.find_by(db, conditions: Hash) = self.repository().relation().where(conditions).first(db)
