@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Performance
+
+- `Hash#dup` copies the entry and bucket tables directly instead of re-inserting every key, so
+  it no longer hashes or probes anything. Building 24 `Skin` models from query rows (every
+  model's `initialize` dups its row) went from 8.9 s to 7.2 s over 2.4 million rows.
+
 ### Tooling
 
 - Instrumented builds no longer recompile everything. The two fuzzers share one instrumented
