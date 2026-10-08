@@ -4,7 +4,7 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.12.0 — 2026-10-08
 
 ### Language
 
@@ -13,11 +13,50 @@ authoritative fine-grained record.
   of a line are unaffected, and the LSP formatter indents the chain one level (and a `do` body
   one more).
 
+### Security
+
+- The sandbox's resource budgets are process-wide. Each `Thread`, `Supervisor` child and
+  `ProgramBuilder#run` used to read the budgets at its own VM start and count against its own
+  counters, so spawning them multiplied the allowance. Budgeted VMs now share one instruction
+  total, one wall-clock origin (a late thread inherits what is left) and one memory total.
+- A program that outlives a tripped budget is now stopped. The instruction, wall-clock and memory
+  budgets raised `ResourceLimitError` once and then disarmed, so a program that rescued it ran
+  unbounded. Tripping a budget now arms a grace allowance (1,000,000 instructions, 1,000 ms, or
+  25% / at least 4 MiB of memory); a program still running past it ends with an uncatchable
+  `DIAMOND_VM_RESOURCE_EXHAUSTED`. Growth of an Array's or Hash's own storage now triggers the
+  memory check, so a push-only loop is covered too. This replaces 0.11.2's note that the budgets
+  switch off after firing.
+
+### Fixed
+
+- A function ending in `v is String` left its type narrowing behind, and a later top-level `@s?`
+  parsed as a ternary condition and applied the old function's type sets to a function that had
+  none: a segfault in the compiler on plain source, found by the compile fuzzer. The pending
+  narrowing is now reset at each statement.
+- `div` and `graphql` cut template text into chunks sized for the old 255-byte string cap. Chunks
+  are now 1000 raw bytes, so a template emits a fifth of the `sb.append` calls.
+- `graphql`'s lexer now decodes the `\b`, `\f` and `\uXXXX` string escapes (a surrogate pair becomes
+  one character, a lone surrogate is a `LexError`).
+
 ### Packages
 
 - `mjolnir` 0.1.0, a stateless data mapper on Arel: schemas declared in code, immutable queries,
   value-type changesets (cast, validate, declared unique constraints), and a `Repo` whose writes
   return a sealed `Ok`/`Err`. No identity map, change tracking, callbacks, or lazy loading.
+- `arel` 0.34.4: Arel and ActiveRecord builders now declare their return types (`Query#where`,
+  `Table#column`, `Attribute#eq`, `Relation#where`, the `Insert`/`Update`/`Delete` builders, ...),
+  so the compiler type-checks chained calls on their results and the JIT can compile them. The
+  annotations change the archive, so they ship as a new `arel` version.
+- Every package README now installs through facet or says plainly that the cut is not on the
+  registry yet, and its examples are complete programs run against the current sources.
+
+### Registry
+
+- Each card on the cuts index previews the start of the cut's README, faded out at the bottom. The
+  Markdown renderer moved from `cut.js` into a shared `markdown.js`.
+- The `versions` endpoint sorts with a merge sort over versions parsed once, instead of an
+  insertion sort that re-split both version strings on every comparison. A 40-release listing
+  went from 0.59 ms to 0.26 ms of handler time.
 
 ### Performance
 
@@ -28,17 +67,12 @@ authoritative fine-grained record.
   instruction that looks a Hash up by the literal's bytes, in the interpreter and the JIT; other
   receivers behave as before. Building 24 `Skin` models from query rows got about 30% faster,
   and Skindicate's batch-loader loop about 5%.
-
-- The registry's `versions` endpoint sorts with a merge sort over versions parsed once, instead of an
-  insertion sort that re-split both version strings on every comparison. A 40-release listing
-  went from 0.59 ms to 0.26 ms of handler time.
-
-### Packages
-
-- `arel` 0.34.4: the return-type annotations on its builders (below) change the archive, so they ship as a new version; the registry's launch seed now pins 0.34.4.
-- Arel and ActiveRecord builders now declare their return types (`Query#where`, `Table#column`,
-  `Attribute#eq`, `Relation#where`, the `Insert`/`Update`/`Delete` builders, ...), so the
-  compiler type-checks chained calls on their results and the JIT can compile them.
+- `Array#push`, `Array#length` and `length` on Hash and String are answered at the typed call
+  site again after the cold native-method blocks were outlined; `array_ops` is 2.3% below its
+  cycles from before the outlining.
+- `run_chunk` lives in its own file and `make release` links with LTO. A plain `-O3` build of the
+  split sources runs about 3% more instructions than the one-file build; with LTO it is +0.1%
+  instructions and -1.1% cycles.
 
 ### Tooling
 
@@ -49,6 +83,14 @@ authoritative fine-grained record.
   time, and the tool and test binaries (`facet`, the LSP and DAP servers, the API and fiber tests,
   ...) share one set of debug objects. Switching between `sanitize`, `tsan`, `release` and `debug`
   no longer deletes those shared objects.
+- `vm.c` is split by subsystem: the tensor, regexp, JSON, time, database, process/file and network
+  natives, the `ProgramBuilder` bridge and `run_chunk` each have their own file, so an edit to one
+  no longer recompiles the rest.
+- The execution fuzzer runs under the sandbox, so the file, socket, DNS, database and subprocess
+  opcodes execute up to their guard and raise `SandboxError` instead of being filtered out;
+  `PUSH_RESCUE` is fuzzed too.
+- `tools/deploy_registry.sh --no-verify` skips public verification when the bundled seed names
+  versions that are not published yet.
 
 ## 0.11.2 — 2026-10-05
 
