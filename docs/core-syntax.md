@@ -320,6 +320,20 @@ x > 3 ?
   "small"
 ```
 
+## Method chains across lines
+
+A line that starts with `.` continues the previous expression, so a long
+chain can be written one call per line. Blank lines and `#` comment lines
+may sit between the links:
+```ruby
+names = users
+  .select() do |user| user.active?() end
+  # newest first
+  .sort_by() do |user| user.created_at() end
+  .map() do |user| user.name() end
+```
+`..` at the start of a line is still a range, not a method call.
+
 ## Compound assignment
 
 ```ruby

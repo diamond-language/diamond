@@ -256,6 +256,12 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * individually. */
     bool interface_level[DIAMOND_FORMAT_MAX_DEPTH]={0};
     DiamondTokenKind prev_kind=DIAMOND_TOKEN_NEWLINE; /* sentinel: nothing before EOF-of-nothing yet counts as a fresh line */
+    /* Depth a leading-dot chain started at, or -1 outside one. A line
+     * starting with `.` continues the previous statement (the lexer drops
+     * the newline before it), so it and the lines after it print one level
+     * deeper, until a later line that does not start with `.` (NEWLINE
+     * tokens never reach this pass, see tokenize) ends it. */
+    int chain_base=-1;
     size_t token_index=0;
     size_t last_processed_line=0;
     for(size_t line=1;line<=line_count&&token_index<token_count;line++) {
@@ -267,6 +273,10 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
             continue;
         }
         size_t k=token_index;
+        if(chain_base>=0&&depth==chain_base+1&&tokens[k].kind!=DIAMOND_TOKEN_DOT) {
+            depth--;
+            chain_base=-1;
+        }
         int leading_dedent=0;
         while(k<token_count&&(size_t)tokens[k].span.line==line&&
               is_leading_dedent_kind(tokens[k].kind)) {
@@ -278,7 +288,9 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
         (void)leading_dedent;
         const bool branch_line=k<token_count&&(size_t)tokens[k].span.line==line&&
             is_branch_kind(tokens[k].kind);
-        const int print_depth=depth-(branch_line?1:0);
+        const bool chain_line=k<token_count&&(size_t)tokens[k].span.line==line&&
+            tokens[k].kind==DIAMOND_TOKEN_DOT&&chain_base<0;
+        const int print_depth=depth-(branch_line?1:0)+(chain_line?1:0);
         if(print_depth<0)return false;
         lines[line-1]=(FormatLineDepth){.has_tokens=true,.depth=print_depth};
 
@@ -299,6 +311,12 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
         while(k<token_count&&(size_t)tokens[k].span.line==line) {
             const DiamondTokenKind kind=tokens[k].kind;
             switch(kind) {
+                case DIAMOND_TOKEN_DOT:
+                    if(chain_line&&first_in_rest_of_line) {
+                        chain_base=depth;
+                        if(!push_level(&depth,false,interface_level))return false;
+                    }
+                    break;
                 case DIAMOND_TOKEN_LEFT_PAREN:
                 case DIAMOND_TOKEN_LEFT_BRACKET:
                 case DIAMOND_TOKEN_LEFT_BRACE:
@@ -439,6 +457,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * overwrite a real line's own computed depth. */
     for(size_t line=last_processed_line+1;line<=line_count;line++)
         lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=depth};
+    if(chain_base>=0&&depth==chain_base+1)depth--;
     return depth==0;
 }
 
