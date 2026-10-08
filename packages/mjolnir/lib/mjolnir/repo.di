@@ -64,8 +64,10 @@ module Mjolnir
       end
       schema = changeset.schema()
       id = changeset.get_field(schema.primary_key())
-      statement = Arel.update(schema.table()).set(changeset.changes())
-      statement = statement.where(schema.column(schema.primary_key()).eq(id)).returning(["*"])
+      statement = Arel.update(schema.table())
+        .set(changeset.changes())
+        .where(schema.column(schema.primary_key()).eq(id))
+        .returning(["*"])
       result = self.write(changeset, statement)
       if result is Ok && result.value() == nil
         raise StaleEntryError.new(schema.table_name(), id)

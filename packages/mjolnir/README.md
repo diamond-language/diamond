@@ -42,9 +42,10 @@ A changeset whitelists and casts untrusted attributes, then validates them. It i
 
 ```ruby
 def user_changeset(users, entity, attrs)
-  changeset = Mjolnir::Changeset.cast(users, entity, attrs, ["name", "email", "age"])
-  changeset = changeset.validate_required(["name", "email"]).validate_format("email", "@")
-  changeset.unique_constraint("email")
+  Mjolnir::Changeset.cast(users, entity, attrs, ["name", "email", "age"])
+    .validate_required(["name", "email"])
+    .validate_format("email", "@")
+    .unique_constraint("email")
 end
 ```
 
