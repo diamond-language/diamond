@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add active_record --registry https://cuts.dilang.tech --version "^0.19.2"
+facet add active_record --registry https://cuts.dilang.tech --version "^0.19.3"
 facet update
 ```
 

@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add graphsql --registry https://cuts.dilang.tech --version "^0.1.2"
+facet add graphsql --registry https://cuts.dilang.tech --version "^0.1.3"
 facet update
 ```
 

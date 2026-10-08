@@ -72,10 +72,12 @@ name, in deterministic dependency-first publication order. Changing a selected p
 its inventory entry before the launch gate will pass.
 
 After 0.7.0, every selected cut received a patch release that adds
-`maintainers`; the checked-in selection and inventory describe those versions.
-Production still serves the launch versions until an operator publishes the
-new seed. Until then, `verify_registry_launch.py` against production fails on
-the missing versions; the launch digests remain in the `v0.7.0` tag.
+`maintainers`, and later patch releases carried README and code fixes. The
+checked-in selection and inventory describe the newest versions, which are
+published to the registry by an operator with `tools/publish_registry_seed.py`
+and are immutable once published. Until that happens,
+`verify_registry_launch.py` against production fails on the missing versions;
+the launch digests remain in the `v0.7.0` tag.
 
 Build the exact candidate without publishing anything:
 
