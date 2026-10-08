@@ -1,6 +1,6 @@
 {
   "active_record": "0.19.3",
-  "arel": "0.34.3",
+  "arel": "0.34.4",
   "cookies": "0.1.2",
   "database_config": "0.1.2",
   "div": "0.2.3",

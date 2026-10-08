@@ -4,9 +4,9 @@
       "archive": "arel.tar",
       "dependencies": {},
       "name": "arel",
-      "sha256": "425bffc555c4476a02ee32af7b50f12340f0abc869903b179642345a6e9556e3",
-      "size": 153088,
-      "version": "0.34.3"
+      "sha256": "28481af685c9b3546f51da8e9ccdfac235e48a20d21b6bd9a640ae8686ecf741",
+      "size": 156160,
+      "version": "0.34.4"
     },
     {
       "archive": "active_record.tar",

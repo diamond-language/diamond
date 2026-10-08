@@ -35,6 +35,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `arel` 0.34.4: the return-type annotations on its builders (below) change the archive, so they ship as a new version; the registry's launch seed now pins 0.34.4.
 - Arel and ActiveRecord builders now declare their return types (`Query#where`, `Table#column`,
   `Attribute#eq`, `Relation#where`, the `Insert`/`Update`/`Delete` builders, ...), so the
   compiler type-checks chained calls on their results and the JIT can compile them.
