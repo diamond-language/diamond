@@ -19,13 +19,17 @@ end
 origin = Time.monotonic()
 while Time.monotonic() - origin < 1.0
 end
-# The main program shares the deadline the worker just hit, so whichever instruction
-# it runs next can trip it too (the check runs every few thousand instructions). That
-# raises once and is rescued; the second join returns the finished worker's result.
+# The main program shares the deadline the worker hits, and each VM looks at the clock only
+# every 4096 instructions, so where main trips is arbitrary: whichever instruction it runs
+# next at a multiple of 4096 after the deadline. It trips once. If that landed on the join,
+# or on the print below, nothing would rescue it and the program would exit with
+# ResourceLimitError (about one run in 200 under two pinned CPUs). So main spins here, inside
+# the rescue, until it trips; the single trip is then always caught.
 thread = Thread.new(worker)
 begin
-  elapsed = thread.join()
+  while true
+  end
 rescue error: ResourceLimitError
-  elapsed = thread.join()
 end
+elapsed = thread.join()
 puts(elapsed < 1.2)
