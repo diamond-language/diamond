@@ -1490,8 +1490,9 @@ since been annotated too. `BinaryNode` above is a loose name, not a class: the
 real accessors are `left()`/`right()` on `BinaryExpression`, `CompoundQuery` and
 the boolean nodes in `packages/arel/lib/arel/`. They return `@left`/`@right`,
 which hold any expression node, so they have no single class to declare and stay
-unannotated. Nobody has re-run the Skindicate ORM benchmark since the
-annotations landed.
+unannotated. Re-measured on Skindicate's batch loaders after the annotations
+landed: only about 1-2% (see "Where the next win is"), so the annotations were not
+the main limit on that workload.
 
 ### Phase 14: `DIAMOND_OP_IS_TYPE` gets JIT codegen (and stops poisoning unrelated eligibility scans)
 
@@ -1957,18 +1958,23 @@ successful, clamped, bounds-error, and type-error paths.
 
 Two measurements that used to sit in the roadmap and should survive its cleanup:
 
-- **Receiver kind is no longer the limit on Skindicate's ORM path.** Phase 13's
-  re-benchmark of `Skin.random_sample` and the `_for` batch loaders, which are
-  `self`-receiver-shaped, showed no improvement. The cause then was that Arel's hot
-  methods had no explicit `-> Type` return annotation, and this mechanism deliberately
-  never trusts an unannotated return (Phase 12's restriction). Annotating
-  `Query`'s builders and render methods cut `bench/arel_render.di` from 1.78 s to
-  1.56 s interpreted and from 1.70 s to 1.50 s with `DIAMOND_JIT=1` (about 12% in
-  both modes, three runs each). The Skindicate ORM benchmark has not been re-run
-  against the annotated packages, so what is left of the gap there is unmeasured.
-  The [roadmap](../roadmap.md) lists the methods that could still be annotated.
-  Accessors such as `left()`/`right()` cannot be: they hold arbitrary nodes and have
-  no single class to declare.
+- **Neither receiver kind nor missing return annotations is the main limit on
+  Skindicate's ORM path.** Phase 13's re-benchmark of the `_for` batch loaders, which
+  are `self`-receiver-shaped, showed no improvement, and the suspected cause was that
+  Arel's hot methods had no explicit `-> Type` return annotation, which this mechanism
+  deliberately never trusts (Phase 12's restriction). Annotating `Query`'s builders and
+  render methods does speed the render path in isolation: `bench/arel_render.di` went
+  from 1.78 s to 1.56 s interpreted and from 1.70 s to 1.50 s with `DIAMOND_JIT=1`
+  (about 12%, three runs each). On Skindicate's real loop (`Skin.uploaders_for`,
+  `SkinPlatform.platforms_for`, `SkinScreenshot.screenshots_for` and a 24-row
+  `Skin.all().order().take().to_a()`, 3000 rounds against a copy of the local
+  development database, baseline and annotated packages interleaved, five runs each)
+  the gain was 2.4% interpreted (4.94 s to 4.82 s) and 1.3% with the JIT (5.00 s to
+  4.94 s), faster in every paired run. SQLite and row-to-object mapping dominate
+  there. The same loop ran about 1% slower with `DIAMOND_JIT=1` than without it, so the
+  JIT is not what speeds this workload up. The [roadmap](../roadmap.md) lists the
+  methods that could still be annotated; accessors such as `left()`/`right()` cannot
+  be, since they hold arbitrary nodes and have no single class to declare.
 - **Phase 9 alone moved Skindicate's `/` route only about 4-6%** in a controlled A/B
   re-profile, well short of the ~11.5 ms / ~10 ms that the diffuse remainder of
   non-`self` instance calls still costs (Phases 8, 9 and 10 above).
