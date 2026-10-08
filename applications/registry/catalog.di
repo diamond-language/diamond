@@ -73,7 +73,7 @@ def registry_catalog(request, db, base, api, context = {})
     return [302, {"Location": "#{base}/"}, ""]
   end
   if path == "#{base}/" then return registry_catalog_page("catalog.html") end
-  if path == "#{base}/catalog.js" || path == "#{base}/cut.js"
+  if path == "#{base}/catalog.js" || path == "#{base}/cut.js" || path == "#{base}/markdown.js"
     return [200, {"Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff"}, registry_catalog_file(path.slice(base.length() + 1, path.length() - base.length() - 1))]
   end
   if path == "#{base}/catalog.css"

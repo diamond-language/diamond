@@ -102,6 +102,15 @@ section{padding:92px 0}
 @media (max-width:680px){section{padding:64px 0}.grid{grid-template-columns:1fr}.footer-top{grid-template-columns:1fr}.nav-actions .btn-ghost{display:none}.logo-mark{width:40px;height:40px}.terminal{font-size:15.5px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 
+/* Card README preview: clipped, fading out at the bottom */
+.release-card .preview{max-height:6.5em;overflow:hidden;font-size:16px;line-height:1.5;color:var(--text-dim);-webkit-mask-image:linear-gradient(to bottom,#000 55%,transparent);mask-image:linear-gradient(to bottom,#000 55%,transparent);pointer-events:none}
+.release-card .preview[hidden]{display:none}
+.release-card .preview:empty{margin-top:-12px}
+.release-card .preview h1,.release-card .preview h2,.release-card .preview h3,.release-card .preview h4{font-size:16px;margin:0 0 .4em;color:var(--text)}
+.release-card .preview pre{padding:8px 10px;font-size:13.5px;margin:0 0 .6em}
+.release-card .preview p{font-size:16px}
+.release-card .preview a{color:inherit;font-weight:inherit}
+
 /* Cut show page */
 .release-card h3 a{color:var(--text)}
 .release-card h3 a:hover{color:var(--cyan)}

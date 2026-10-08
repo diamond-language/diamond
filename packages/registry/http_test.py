@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
     data = work / 'data'
     (data / 'blobs').mkdir(parents=True)
     (data / 'staging').mkdir()
-    for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js', 'catalog.css', 'cut.html', 'cut.js'):
+    for name in ('app.di', 'catalog.di', 'catalog.html', 'catalog.js', 'catalog.css', 'cut.html', 'cut.js', 'markdown.js'):
         shutil.copy(source / 'applications/registry' / name, work / name)
     port = free_port()
     env = dict(os.environ, REGISTRY_ROOT=str(data), REGISTRY_FACET=str(facet),
@@ -314,9 +314,9 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
             assert request('/catalog.json?after=' + cursor)[0] == 400, cursor
         # Show pages: every served version newest first, plus the latest
         # release's summary and README read from its verified archive.
-        assert request('/catalog.css')[0] == 200 and request('/cut.js')[0] == 200
+        assert request('/catalog.css')[0] == 200 and request('/cut.js')[0] == 200 and request('/markdown.js')[0] == 200
         status, page = request('/cuts/helper')
-        assert status == 200 and b'cut.js' in page
+        assert status == 200 and b'cut.js' in page and b'markdown.js' in page
         assert request('/cuts/Not-A-Name')[0] == 404
         status, shown = request('/catalog/helper.json')
         assert status == 200 and shown['name'] == 'helper' and shown['latest'] == '2.0.0'
