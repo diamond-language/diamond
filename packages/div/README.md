@@ -11,7 +11,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add div --registry https://cuts.dilang.tech --version "^0.2.2"
+facet add div --registry https://cuts.dilang.tech --version "^0.2.3"
 facet update
 ```
 
