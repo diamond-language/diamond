@@ -13,20 +13,27 @@ module Mjolnir
     def schema() -> Schema = @schema
     def arel() = @arel
 
-    # A Hash of field => value (ANDed equality; nil means IS NULL) or an
-    # Arel predicate built from `schema.column(...)`.
+    # A Hash of field => value (ANDed; nil means IS NULL, an Array means IN)
+    # or an Arel predicate built from `schema.column(...)`.
     def where(condition) -> Query
       unless condition is Hash
         return Query.new(@schema, @arel.where(condition))
       end
       result = @arel
       condition.keys().each() do |name|
-        result = result.where(@schema.column(name).eq(condition[name]))
+        value = condition[name]
+        column = @schema.column(name)
+        result = result.where(if value is Array then column.in_list(value) else column.eq(value) end)
       end
       Query.new(@schema, result)
     end
 
+    # A field name (with :asc or :desc), or an Arel ordering / raw
+    # expression such as `Arel.sql("RANDOM()")`, passed through as is.
     def order_by(field, direction = :asc) -> Query
+      unless field is String || field is Symbol
+        return Query.new(@schema, @arel.order(field))
+      end
       column = @schema.column(field)
       ordering = if direction == :desc then column.desc() else column.asc() end
       Query.new(@schema, @arel.order(ordering))

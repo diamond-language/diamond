@@ -10,5 +10,6 @@ cd "$test_project"
 
 "$diamond" "$root/tests/cases/mjolnir_changeset.di"
 "$diamond" "$root/tests/cases/mjolnir_repo.di"
+"$diamond" "$root/tests/cases/mjolnir_repo_extras.di"
 
-echo "2 mjolnir test programs passed"
+echo "3 mjolnir test programs passed"
