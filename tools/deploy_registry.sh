@@ -3,7 +3,7 @@
 # is needed, take a verified backup, build the bundle in the local build VM, upload
 # it, run deploy/upgrade.sh as root, verify the public registry, and prune.
 #
-#   tools/deploy_registry.sh [--force] [--dry-run]
+#   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify]
 #
 # By default it stops when tools/registry_needs_upgrade.py says NONE or OPTIONAL;
 # --force upgrades anyway. --dry-run prints every mutating command instead of
@@ -14,12 +14,13 @@
 # is kept. Needs: the build VM running (REGISTRY_VM_PORT, REGISTRY_VM_KNOWN_HOSTS as
 # for tools/build_registry_vm.sh) and root ssh to the host (REGISTRY_HOST).
 set -euo pipefail
-force=false dry=false
+force=false dry=false verify=true
 for arg in "$@"; do
     case "$arg" in
         --force) force=true ;;
         --dry-run) dry=true ;;
-        *) echo "usage: $0 [--force] [--dry-run]" >&2; exit 64 ;;
+        --no-verify) verify=false ;;
+        *) echo "usage: $0 [--force] [--dry-run] [--no-verify]" >&2; exit 64 ;;
     esac
 done
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -75,7 +76,8 @@ if ! $dry; then
     [[ -x build/facet ]] || make -s facet >/dev/null
     curl -fsS https://cuts.dilang.tech/health; echo
 fi
-run python3 tools/verify_registry_launch.py https://cuts.dilang.tech
+if $verify; then run python3 tools/verify_registry_launch.py https://cuts.dilang.tech
+else echo "skipped: --no-verify (run tools/verify_registry_launch.py after publishing the new versions)"; fi
 
 echo; echo "== prune: keep only the newest backup and bundle, remove uploads from the host"
 run ssh "$host" 'rm -f /root/registry-deployment.tar.gz /root/upgrade.sh'

@@ -104,8 +104,10 @@ target (default `HEAD`) and answers:
 `tools/deploy_registry.sh` runs the whole routine: the check above, swap in the build
 VM, a verified backup, the bundle build, upload and `upgrade.sh`, public verification
 (`verify_registry_launch.py`), and pruning. It stops unless the verdict is REQUIRED;
-`--force` upgrades anyway and `--dry-run` prints every mutating command instead of
-running it. Backups and bundles live in `~/diamond-registry-backups/` (outside every
+`--force` upgrades anyway, `--dry-run` prints every mutating command instead of
+running it, and `--no-verify` skips the public verification when the bundled seed names
+versions you have not published yet (an upgrade never publishes; run
+`verify_registry_launch.py` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
 checkout) and only the newest of each is kept. Afterwards update the "Runtime
 revision" line in `PRODUCTION.md`.
 
