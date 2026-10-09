@@ -678,8 +678,13 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         const DiamondString *name=(const DiamondString *)registers[base].as.object;
-        if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME||
-           built->module_count==DIAMOND_MAX_MODULES) {
+        if(built->module_count==DIAMOND_MAX_MODULES) {
+            snprintf(vm->error,sizeof vm->error,
+                "too many modules: a program holds at most %u modules",
+                (unsigned)DIAMOND_MAX_MODULES);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(name->length==0||name->length>=DIAMOND_MAX_FUNCTION_NAME) {
             snprintf(vm->error,sizeof vm->error,
                 "ProgramBuilder#declare_module has an invalid name");
             return DIAMOND_VM_TYPE_ERROR;

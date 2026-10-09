@@ -8,6 +8,7 @@ authoritative fine-grained record.
 
 ### Language
 
+- A program may declare 255 modules (was 32), including the prelude and required cuts.
 - A spawned `Thread` now sees the module-level constants defined when `Thread.new` ran. A worker
   never runs top-level statements, so every constant (even `PAGE_SIZE = 30`) used to be unset in
   it; a multi-worker Gremlin server using constants failed on every worker but the main thread.
@@ -16,7 +17,7 @@ authoritative fine-grained record.
 - A `Regexp` can be passed to `Thread.new` and held in a constant a thread reads (it is compiled
   again in the receiving thread).
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
-  holds at most 32 ..." instead of "expected valid module name".
+  holds at most 255 ..." instead of "expected valid module name".
 
 ## 0.12.1 — 2026-10-08
 
