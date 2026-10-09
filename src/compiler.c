@@ -9460,7 +9460,7 @@ static uint16_t parse_array(Compiler *compiler) {
 }
 
 static uint16_t parse_hash(Compiler *compiler) {
-    uint16_t keys[16],values[16];
+    uint16_t keys[DIAMOND_MAX_ARGUMENTS],values[DIAMOND_MAX_ARGUMENTS];
     size_t count=0;
     uint16_t expected_key=DIAMOND_NO_TYPE_SET;
     uint16_t expected_value=DIAMOND_NO_TYPE_SET;
@@ -9477,7 +9477,7 @@ static uint16_t parse_hash(Compiler *compiler) {
     skip_newlines(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
         do {
-            if(count==16) {
+            if(count==DIAMOND_MAX_ARGUMENTS) {
                 fail(compiler,compiler->current.span,"hash literal has too many entries");
                 return 0;
             }
@@ -9508,7 +9508,7 @@ static uint16_t parse_hash(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i*2+1),values[i],0,2);
     }
     const uint16_t destination=allocate_register(compiler);
-    emit_instruction(compiler,DIAMOND_OP_HASH,destination,base,(uint8_t)count,3);
+    emit_instruction(compiler,DIAMOND_OP_HASH,destination,base,(uint16_t)count,3);
     compiler->known_types[destination]=DIAMOND_TYPE_HASH;
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_HASH,
         joined_value_type_set(compiler,keys,count),
@@ -16377,6 +16377,7 @@ static uint16_t compile_struct(Compiler *compiler) {
         return 0;
     }
     advance_token(compiler);
+    skip_newlines(compiler);
     DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
     int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     size_t field_count=0;
@@ -16419,8 +16420,11 @@ static uint16_t compile_struct(Compiler *compiler) {
             field_name_spans[field_count]=field_span;
             field_type_sets[field_count]=type_set;
             field_count++;class->field_count++;
+            skip_newlines(compiler);
             if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
             advance_token(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN)break;
         }
     }
     if(compiler->failed)return 0;
