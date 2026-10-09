@@ -11,6 +11,10 @@ authoritative fine-grained record.
 - A hash literal may have up to 255 entries (was 16), in both the C and the self-hosted compiler.
 - A `struct` field list may span several lines and end with a trailing comma.
 
+### Registry
+
+- The cuts index lists the most recently updated cut first (it was oldest-first by cut id, which buried new cuts on the last page). `catalog.json`'s `next_after` is now an opaque descending cursor.
+
 ### Packages
 
 - `mjolnir` 0.2.0: `has_many`/`belongs_to` declarations with a batched `Repo#preload` (one query for

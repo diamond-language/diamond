@@ -91,7 +91,7 @@ def registry_catalog(request, db, base, api, context = {})
     return registry_cut_details(context, db, api, name)
   end
   if path != "#{base}/catalog.json" && !path.start_with?("#{base}/catalog.json?after=") then return nil end
-  after = 0
+  after = 9223372036854775807
   if path != "#{base}/catalog.json"
     prefix = "#{base}/catalog.json?after="
     value = path.slice(prefix.length(), path.length() - prefix.length())
@@ -104,23 +104,28 @@ def registry_catalog(request, db, base, api, context = {})
     end
   end
   # One row per cut: its newest unyanked release, or its newest release when
-  # every version is yanked. The cursor is the cut id.
-  cuts = db.query("SELECT id FROM cuts WHERE id > ? AND EXISTS (SELECT 1 FROM releases WHERE releases.cut_id = cuts.id AND releases.takedown_reason IS NULL) ORDER BY id LIMIT 101", [after])
+  # every version is yanked. Cuts are ordered by their most recent release,
+  # newest first. The cursor is that release time * 2^20 + the cut id (a total
+  # order over cuts), and a page continues strictly below the previous page's last key.
+  cuts = db.query("SELECT cuts.id AS id, MAX(releases.created_at) * 1048576 + cuts.id AS sort_key FROM cuts JOIN releases ON releases.cut_id = cuts.id WHERE releases.takedown_reason IS NULL GROUP BY cuts.id HAVING sort_key < ? ORDER BY sort_key DESC LIMIT 101", [after])
   more = cuts.length() > 100
   if more then cuts.pop() end
   rows = []
   if cuts.length() > 0
-    releases = db.query("SELECT cuts.id, cuts.name, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.id >= ? AND cuts.id <= ? AND releases.takedown_reason IS NULL ORDER BY cuts.id", [cuts[0]["id"], cuts[cuts.length() - 1]["id"]])
+    ids = cuts.map() do |cut| cut["id"] end
+    marks = ids.map() do |id| "?" end
+    releases = db.query("SELECT cuts.id, cuts.name, releases.version, releases.dependencies, releases.maintainers, releases.yanked, releases.sha256, releases.size FROM releases JOIN cuts ON cuts.id = releases.cut_id WHERE cuts.id IN (#{marks.join(",")}) AND releases.takedown_reason IS NULL", ids)
+    best = {}
     releases.each() do |release|
-      last = if rows.length() > 0 then rows[rows.length() - 1] else nil end
-      if last == nil || last["id"] != release["id"]
-        rows.push(release)
-      elsif (last["yanked"] == 1 && release["yanked"] == 0) || (last["yanked"] == release["yanked"] && api.before?(last["version"], release["version"]))
-        rows[rows.length() - 1] = release
+      key = "#{release["id"]}"
+      current = best[key]
+      if current == nil || (current["yanked"] == 1 && release["yanked"] == 0) || (current["yanked"] == release["yanked"] && api.before?(current["version"], release["version"]))
+        best[key] = release
       end
     end
+    cuts.each() do |cut| rows.push(best["#{cut["id"]}"]) end
   end
   next_after = nil
-  if more then next_after = cuts[cuts.length() - 1]["id"] end
+  if more then next_after = cuts[cuts.length() - 1]["sort_key"] end
   [200, {"Content-Type": "application/json", "Cache-Control": "no-store"}, JSON.stringify({"protocol": 1, "releases": rows, "next_after": next_after})]
 end

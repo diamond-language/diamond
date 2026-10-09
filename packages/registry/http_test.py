@@ -476,25 +476,33 @@ with tempfile.TemporaryDirectory(prefix='diamond-registry-http-') as temporary:
                            (cut_id, version, '{}', hashlib.sha256(f'catalog-{index}-{version}'.encode()).hexdigest(), yanked))
         db.commit()
         seen = []
-        after = 0
+        path = '/catalog.json'
+        previous = None
         while True:
-            status, page = request('/catalog.json?after=' + str(after))
+            status, page = request(path)
             assert status == 200 and len(page['releases']) <= 100
             seen.extend(page['releases'])
             if page['next_after'] is None:
                 break
-            assert page['next_after'] > after
-            after = page['next_after']
+            assert previous is None or page['next_after'] < previous
+            previous = page['next_after']
+            path = '/catalog.json?after=' + str(previous)
         listed_cuts = [row['id'] for row in seen]
-        assert listed_cuts == sorted(set(listed_cuts))
-        expected_cuts = [row[0] for row in db.execute('SELECT DISTINCT cut_id FROM releases WHERE takedown_reason IS NULL ORDER BY cut_id')]
+        assert len(listed_cuts) == len(set(listed_cuts))
+        # Most recently updated first; equal times fall back to the newest cut id.
+        expected_cuts = [row[0] for row in db.execute('SELECT cut_id FROM releases WHERE takedown_reason IS NULL GROUP BY cut_id ORDER BY MAX(created_at) DESC, cut_id DESC')]
         assert listed_cuts == expected_cuts
         latest = {row['name']: (row['version'], row['yanked']) for row in seen}
         assert latest['catalog_page_0'] == ('1.0.9', 0)
         assert all(latest[f'catalog_page_{index}'] == ('1.0.10', 0) for index in range(1, 105))
         db.execute('UPDATE releases SET yanked = 1 WHERE cut_id = ?', (temporary_cuts[1],))
         db.commit()
-        assert {row['name']: row['version'] for row in request('/catalog.json')[1]['releases']}['catalog_page_1'] == '1.1.0'
+        refreshed, path = {}, '/catalog.json'
+        while path:
+            page = request(path)[1]
+            refreshed.update({row['name']: row['version'] for row in page['releases']})
+            path = None if page['next_after'] is None else '/catalog.json?after=' + str(page['next_after'])
+        assert refreshed['catalog_page_1'] == '1.1.0'
         for cut_id in temporary_cuts:
             db.execute('DELETE FROM releases WHERE cut_id = ?', (cut_id,))
             db.execute('DELETE FROM cuts WHERE id = ?', (cut_id,))
