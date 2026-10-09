@@ -159,3 +159,5 @@ section{padding:92px 0}
 .versions .tag.yanked-tag{color:var(--warn);background:rgba(240,184,110,.08);border:1px solid rgba(240,184,110,.3)}
 .empty{color:var(--text-faint);font-style:italic}
 @media (max-width:920px){.cut-layout{grid-template-columns:minmax(0,1fr)}}
+
+[hidden]{display:none!important}
