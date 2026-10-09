@@ -220,7 +220,7 @@ yanked versions are marked. The catalog lists one row per cut: its newest
 unyanked release by SemVer precedence, or its newest release if every version
 is yanked. Each row carries the release's `maintainers` as a JSON string, or
 `null` for releases published before manifests declared them. Pages contain at
-most 100 cuts, with `next_after` as an ascending cut-ID cursor. Each card previews the start of the cut's README, fetched lazily from `catalog/<name>.json`
+most 100 cuts, ordered by most recent release first, with `next_after` as an opaque descending cursor (pass it back as `after`; omit `after` for the first page). Each card previews the start of the cut's README, fetched lazily from `catalog/<name>.json`
 and faded out at the bottom. Search filters the loaded releases; load more
 to search additional pages. The catalog uses text rendering for metadata and a
 same-origin script policy. It contains no publishing credential or administration UI.
