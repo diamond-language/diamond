@@ -16103,7 +16103,8 @@ static uint16_t compile_class(Compiler *compiler) {
         }
     } else {
         if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-            fail(compiler, name, "expected valid class name"); return 0;
+            fail(compiler, name, "too many classes: a program holds at most 180 "
+                 "classes and structs, cuts included"); return 0;
         }
         index=(int)compiler->program->class_count++;
         class=&compiler->program->classes[(size_t)index];
@@ -16341,7 +16342,8 @@ static uint16_t compile_struct(Compiler *compiler) {
         index=existing_class;
     } else {
         if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-            fail(compiler,name,"expected valid struct name");return 0;
+            fail(compiler,name,"too many classes: a program holds at most 180 "
+                 "classes and structs, cuts included");return 0;
         }
         index=(int)compiler->program->class_count++;
         class=&compiler->program->classes[(size_t)index];
@@ -17018,7 +17020,9 @@ static uint16_t compile_module(Compiler *compiler) {
          * top without resetting anything. */
     } else {
         if(compiler->program->module_count==DIAMOND_MAX_MODULES) {
-            fail(compiler,name,"expected valid module name");return 0;
+            fail(compiler,name,"too many modules: a program holds at most 32 "
+                 "modules, cuts included (a namespace of class methods can be a "
+                 "class instead)");return 0;
         }
         index=(int)compiler->program->module_count++;
         module=&compiler->program->modules[(size_t)index];
@@ -17204,7 +17208,8 @@ static uint16_t compile_interface(Compiler *compiler) {
         fail(compiler,name,"type name is already defined");return 0;
     }
     if(!claiming&&compiler->program->interface_count==DIAMOND_MAX_INTERFACES) {
-        fail(compiler,name,"expected valid interface name");return 0;
+        fail(compiler,name,"too many interfaces: a program holds at most 32 "
+             "interfaces, cuts included");return 0;
     }
     DiamondInterface *interface=claiming
         ? &compiler->program->interfaces[(size_t)existing_interface]

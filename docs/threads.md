@@ -47,13 +47,14 @@ These values may cross a thread boundary:
 - `nil`, booleans, integers, floats, strings, symbols, and bignums;
 - arrays and hashes containing transferable values;
 - instances whose fields contain transferable values;
+- `Regexp` (compiled again in the receiving thread from its pattern and options);
 - zero-capture callables; and
 - `Channel` (see [Channels](#channels) below) -- the one value that crosses
   by *reference*, not by deep copy: every thread that receives one gets its
   own handle onto the same underlying channel, not an independent copy.
 
 Capturing closures and native-resource values such as Fiber, File, Listener,
-Socket, TLS socket, Regexp, ProgramBuilder, and Thread cannot cross the
+Socket, TLS socket, ProgramBuilder, and Thread cannot cross the
 boundary. Passing one raises `TypeError`.
 
 The process permits at most 64 live spawned threads. Exceeding the limit
@@ -71,6 +72,16 @@ the calling thread does not configure every request worker. Program
 definitions are available in every thread, so top-level methods, classes, and
 modules can be called normally. It is their mutable runtime state that remains
 isolated.
+
+Module-level constants are the exception that makes the above workable. A
+spawned thread never runs the program's top-level statements, which is what
+sets constants, so `Thread.new` hands the thread a deep copy of every constant
+already defined when it is called (including a `Regexp`, which is compiled
+again). A constant defined after `Thread.new`, or whose value cannot cross
+the boundary (a `File`, a `Socket`, ...), is unset in that thread, and reading
+it there raises `uninitialized constant`. The copy is the thread's own, like
+an argument: mutating a constant's array in one thread does not show in
+another. Supervisor children do not receive constants.
 
 ## Results and exceptions
 

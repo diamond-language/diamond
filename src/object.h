@@ -510,6 +510,12 @@ typedef struct DiamondTlsSocketHandle {
 typedef struct DiamondRegexp {
     DiamondObject object;
     reginold_regex *handle;
+    /* The pattern text and compile options, kept so a Regexp can be copied
+     * into another VM (Thread.new arguments, constants handed to a spawned
+     * thread) by compiling it again there. Owned; freed with `handle`. */
+    char *source;
+    size_t source_length;
+    unsigned int options;
 } DiamondRegexp;
 
 /* Unlike DiamondRegexp, this *does* own a real OS resource (an open
