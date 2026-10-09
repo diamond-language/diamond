@@ -4,29 +4,14 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.12.1 — 2026-10-08
+
+0.12.0 was prepared but never tagged; its changes are part of this release.
 
 ### Language
 
 - A hash literal may have up to 255 entries (was 16), in both the C and the self-hosted compiler.
 - A `struct` field list may span several lines and end with a trailing comma.
-
-### Registry
-
-- Fixed duplicate cards when "Load more cuts" was clicked after the last page (the hidden button still showed and refetched page one). The index also dedupes by cut name.
-- The cuts index lists the most recently updated cut first (it was oldest-first by cut id, which buried new cuts on the last page). `catalog.json`'s `next_after` is now an opaque descending cursor.
-
-### Packages
-
-- `mjolnir` 0.2.0: `has_many`/`belongs_to` declarations with a batched `Repo#preload` (one query for
-  any number of entities, loaded only when asked), `get_by`, `exists?`, `insert!`/`update!`,
-  `update_all`/`delete_all` (both refuse a query with no condition), an Array in `where` as `IN`,
-  raw-expression `order_by`, and opt-in `created_at`/`updated_at` stamping.
-
-## 0.12.0 — 2026-10-08
-
-### Language
-
 - A line starting with `.` continues the previous expression, so a method chain can be written
   one call per line. Comment and blank lines may sit between the links. `..` and `.5` at the start
   of a line are unaffected, and the LSP formatter indents the chain one level (and a `do` body
@@ -59,6 +44,10 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `mjolnir` 0.2.0: `has_many`/`belongs_to` declarations with a batched `Repo#preload` (one query for
+  any number of entities, loaded only when asked), `get_by`, `exists?`, `insert!`/`update!`,
+  `update_all`/`delete_all` (both refuse a query with no condition), an Array in `where` as `IN`,
+  raw-expression `order_by`, and opt-in `created_at`/`updated_at` stamping.
 - `mjolnir` 0.1.0, a stateless data mapper on Arel: schemas declared in code, immutable queries,
   value-type changesets (cast, validate, declared unique constraints), and a `Repo` whose writes
   return a sealed `Ok`/`Err`. No identity map, change tracking, callbacks, or lazy loading.
@@ -71,6 +60,8 @@ authoritative fine-grained record.
 
 ### Registry
 
+- Fixed duplicate cards when "Load more cuts" was clicked after the last page (the hidden button still showed and refetched page one). The index also dedupes by cut name.
+- The cuts index lists the most recently updated cut first (it was oldest-first by cut id, which buried new cuts on the last page). `catalog.json`'s `next_after` is now an opaque descending cursor.
 - Each card on the cuts index previews the start of the cut's README, faded out at the bottom. The
   Markdown renderer moved from `cut.js` into a shared `markdown.js`.
 - The `versions` endpoint sorts with a merge sort over versions parsed once, instead of an
