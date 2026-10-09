@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- A hash literal may have up to 255 entries (was 16), in both the C and the self-hosted compiler.
+- A `struct` field list may span several lines and end with a trailing comma.
+
 ### Packages
 
 - `mjolnir` 0.2.0: `has_many`/`belongs_to` declarations with a batched `Repo#preload` (one query for

@@ -4495,7 +4495,7 @@ class Parser
     values = []
     self.skip_newlines()
     while !@failed && @current.kind() != :right_brace
-      if keys.length() == 16
+      if keys.length() == 255
         self.fail("hash literal has too many entries")
       else
         keys.push(self.parse_expression())
