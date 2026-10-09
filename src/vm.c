@@ -727,6 +727,7 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
         } else if(unreached->kind==DIAMOND_OBJECT_REGEXP) {
             size=sizeof(DiamondRegexp);
             reginold_regex_free(((DiamondRegexp *)unreached)->handle);
+            free(((DiamondRegexp *)unreached)->source);
         } else if(unreached->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
             size=sizeof(DiamondProgramBuilder)+sizeof(DiamondProgram);
             DiamondProgramBuilder *builder=(DiamondProgramBuilder *)unreached;
@@ -1403,6 +1404,7 @@ static void free_object_list(DiamondObject *object) {
                 SSL_SESSION_free(tls_handle->received_session);
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
+            free(((DiamondRegexp *)object)->source);
         } else if(object->kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
             DiamondProgramBuilder *builder=(DiamondProgramBuilder *)object;
             if(builder->source_bundle!=nullptr) {
@@ -3645,6 +3647,19 @@ static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
             }
             *out=DIAMOND_OBJECT(copy);return true;
         }
+        /* A Regexp owns no shared state, only a compiled pattern: copy it by
+         * compiling the same source and options again in dest_vm. */
+        case DIAMOND_OBJECT_REGEXP: {
+            const DiamondRegexp *source=(const DiamondRegexp *)value.as.object;
+            reginold_regex *compiled=nullptr;
+            reginold_error compile_error={0};
+            if(reginold_compile(source->source,source->source_length,source->options,
+                    &compiled,&compile_error)!=REGINOLD_OK)return false;
+            DiamondRegexp *copy=allocate_regexp_handle(dest_vm,compiled,source->source,
+                source->source_length,source->options);
+            if(copy==nullptr) {reginold_regex_free(compiled);return false;}
+            *out=DIAMOND_OBJECT(copy);return true;
+        }
         default: return false;
     }
 }
@@ -3683,6 +3698,29 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
         rebase_source_classes,rebase_dest_classes,adopted_owner,out);
     copy_depth--;
     return copied;
+}
+
+/* Gives a spawned Thread's VM the constants the program had defined when
+ * Thread.new ran. The thread never executes the program's top-level
+ * statements (that is what sets constants), so without this every
+ * module-level constant, even `PAGE_SIZE = 30`, would be unset in it. Each
+ * value is deep-copied like a Thread.new argument, so the thread owns its
+ * own copy and nothing is shared. A constant whose value cannot cross a
+ * thread boundary (a Regexp, a File, a capturing closure, ...) is left unset
+ * in the thread, and reading it there raises the usual "uninitialized
+ * constant" error. Each copy is stored immediately, where the collector
+ * reaches it, so no allocation happens between producing it and rooting it. */
+void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
+                                      const DiamondClass *source_classes,
+                                      const DiamondClass *dest_classes) {
+    for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++) {
+        if(!parent->namespace_constant_initialized[index])continue;
+        DiamondValue copy=DIAMOND_NIL;
+        if(!copy_value_into_vm(child,parent->namespace_constants[index],nullptr,
+                source_classes,dest_classes,nullptr,&copy))continue;
+        child->namespace_constants[index]=copy;
+        child->namespace_constant_initialized[index]=true;
+    }
 }
 
 bool numeric_as_double(DiamondValue value, double *out) {

@@ -3007,7 +3007,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(index>=DIAMOND_MAX_NAMESPACE_CONSTANTS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(!vm->namespace_constant_initialized[index]) {
-                    snprintf(vm->error,sizeof vm->error,"uninitialized constant");
+                    snprintf(vm->error,sizeof vm->error,vm->spawned_thread?
+                        "uninitialized constant (in a spawned thread: its value "
+                        "cannot cross a thread boundary, or it was defined after "
+                        "the thread started)":"uninitialized constant");
                     VM_RETURN(DIAMOND_VM_CONSTANT_ERROR);
                 }
                 registers[destination]=vm->namespace_constants[index];break;
@@ -4659,6 +4662,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * child_vm between this loop finishing and the child
                  * thread's first run_chunk frame taking over as the real
                  * root. */
+                /* Constants first: each is rooted the moment it is stored,
+                 * whereas the argument copies below are only protected while
+                 * the loop runs, so nothing may allocate on child_vm after it. */
+                child_vm->spawned_thread=true;
+                copy_namespace_constants_into_vm(vm,child_vm,chunk->classes,
+                    child_program->classes);
                 const size_t args_mark=child_vm->gc_protected_count;
                 for(size_t index=0;index<argc;index++) {
                     if(!copy_value_into_vm(child_vm,registers[(size_t)base+index],

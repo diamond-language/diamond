@@ -4,6 +4,20 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Language
+
+- A spawned `Thread` now sees the module-level constants defined when `Thread.new` ran. A worker
+  never runs top-level statements, so every constant (even `PAGE_SIZE = 30`) used to be unset in
+  it; a multi-worker Gremlin server using constants failed on every worker but the main thread.
+  Each thread gets its own deep copy; a constant whose value cannot cross a thread boundary stays
+  unset, and the error now says why.
+- A `Regexp` can be passed to `Thread.new` and held in a constant a thread reads (it is compiled
+  again in the receiving thread).
+- Exceeding a program's class, module or interface limit reports "too many modules: a program
+  holds at most 32 ..." instead of "expected valid module name".
+
 ## 0.12.1 — 2026-10-08
 
 0.12.0 was prepared but never tagged; its changes are part of this release.

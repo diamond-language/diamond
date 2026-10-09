@@ -215,6 +215,12 @@ DIAMOND_INTERNAL bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                          const DiamondClass *rebase_dest_classes,
                                          const DiamondChunk **adopted_owner,
                                          DiamondValue *out);
+DIAMOND_INTERNAL DiamondRegexp *allocate_regexp_handle(DiamondVm *vm, reginold_regex *compiled,
+                                                       const char *source, size_t source_length,
+                                                       unsigned int options);
+DIAMOND_INTERNAL void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
+                                                       const DiamondClass *source_classes,
+                                                       const DiamondClass *dest_classes);
 DIAMOND_INTERNAL bool methods_have_own_named(const DiamondMethod *methods, size_t count,
                                              const char *name);
 DIAMOND_INTERNAL bool sandbox_category_allowed(const char *category);

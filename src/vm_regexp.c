@@ -68,12 +68,16 @@
 
 #include "vm_internal.h"
 
-static DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled) {
+DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled,
+        const char *source,size_t source_length,unsigned int options) {
     if (!maybe_collect(vm)) return nullptr;
     DiamondRegexp *regexp=malloc(sizeof(DiamondRegexp));
     if(regexp==nullptr)return nullptr;
+    char *source_copy=malloc(source_length+1);
+    if(source_copy==nullptr) {free(regexp);return nullptr;}
+    memcpy(source_copy,source,source_length);source_copy[source_length]='\0';
     *regexp=(DiamondRegexp){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_REGEXP},
-        .handle=compiled};
+        .handle=compiled,.source=source_copy,.source_length=source_length,.options=options};
     vm->young_objects=&regexp->object;vm->bytes_allocated+=sizeof(DiamondRegexp);return regexp;
 }
 
@@ -105,7 +109,7 @@ DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern,
             (int)compile_error.message_len,compile_error.message);
         return DIAMOND_VM_REGEXP_ERROR;
     }
-    DiamondRegexp *regexp=allocate_regexp_handle(vm,compiled);
+    DiamondRegexp *regexp=allocate_regexp_handle(vm,compiled,pattern->chars,pattern->length,(unsigned int)options);
     if(regexp==nullptr) {
         reginold_regex_free(compiled);
         return DIAMOND_VM_OUT_OF_MEMORY;

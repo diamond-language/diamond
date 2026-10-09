@@ -1668,6 +1668,12 @@ struct DiamondVm {
     uint8_t range_class_index;
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
+    /* True for a VM that Thread.new created: it never ran the program's
+     * top-level code, so a constant that is unset in it was either not
+     * defined yet when the thread started or holds a value that cannot cross
+     * a thread boundary (see copy_namespace_constants_into_vm). Only changes
+     * the wording of the "uninitialized constant" error. */
+    bool spawned_thread;
     /* Class variable values, indexed as class_variables[class_index *
      * DIAMOND_MAX_FIELDS + slot], slot assigned exactly as DiamondClass's
      * own class_variables[]/class_variable_count name table does at
