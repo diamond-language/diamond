@@ -13,6 +13,7 @@ authoritative fine-grained record.
 
 ### Registry
 
+- Fixed duplicate cards when "Load more cuts" was clicked after the last page (the hidden button still showed and refetched page one). The index also dedupes by cut name.
 - The cuts index lists the most recently updated cut first (it was oldest-first by cut id, which buried new cuts on the last page). `catalog.json`'s `next_after` is now an opaque descending cursor.
 
 ### Packages

@@ -1,6 +1,8 @@
 'use strict';
 const releases = [];
 let cursor = null;
+let finished = false;
+let loading = false;
 const status = document.querySelector('#status');
 const more = document.querySelector('#more');
 const base = new URL('.', location.href);
@@ -142,20 +144,24 @@ function render() {
   });
   document.querySelector('#releases').replaceChildren(...cards);
   const plural = count => `${count} ${count === 1 ? 'cut' : 'cuts'}`;
-  const loaded = cursor === null ? '' : ' loaded';
+  const loaded = finished ? '' : ' loaded';
   if (!releases.length) status.textContent = 'No cuts have been published yet.';
   else if (query) status.textContent = `${visible.length} matching ${visible.length === 1 ? 'cut' : 'cuts'} of ${plural(releases.length)}${loaded}.`;
   else status.textContent = `${plural(releases.length)}${loaded}.`;
 }
 async function load() {
+  if (finished || loading) return;
+  loading = true;
   more.disabled = true;
   try {
     const response = await fetch(new URL('catalog.json' + (cursor === null ? '' : '?after=' + cursor), base));
     if (!response.ok) throw new Error('request failed');
     const page = await response.json();
-    releases.push(...page.releases);
+    const known = new Set(releases.map(release => release.name));
+    releases.push(...page.releases.filter(release => !known.has(release.name)));
     cursor = page.next_after;
-    more.hidden = cursor === null;
+    finished = cursor === null;
+    more.hidden = finished;
     more.textContent = 'Load more cuts';
     render();
   } catch {
@@ -163,6 +169,7 @@ async function load() {
     more.hidden = false;
     more.textContent = 'Retry loading cuts';
   } finally {
+    loading = false;
     more.disabled = false;
   }
 }
