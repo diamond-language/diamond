@@ -22,6 +22,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Inherited unannotated readers retain receiver-specific completion, hover, and
+  definition through call chains and local assignments. Unknown or conflicting
+  writes in an ancestor or subclass leave the result unresolved.
+
 - Editor completion, hover, and definition follow unannotated `attr_reader` results
   when the compiler knows the field's class, including across required files and
   chained calls. Unknown writes and subclassed owners remain unresolved.

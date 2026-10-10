@@ -353,8 +353,10 @@ end
 class ImportedSchema
   def query() = ImportedQuery.new()
 end
-class ImportedSchemas
+class ImportedSchemaReaders
   attr_reader skins
+end
+class ImportedSchemas < ImportedSchemaReaders
   def initialize()
     @skins = ImportedSchema.new()
   end

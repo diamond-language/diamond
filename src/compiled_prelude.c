@@ -369,6 +369,12 @@ static bool read_class(const uint8_t **cursor, const uint8_t *end, DiamondClass 
     if (!read_bytes(cursor, end, out->fields, (size_t)field_count * sizeof out->fields[0])) return false;
     if (!read_bytes(cursor, end, out->field_type_status, (size_t)field_count * sizeof out->field_type_status[0])) return false;
     if (!read_bytes(cursor, end, out->field_known_class, (size_t)field_count * sizeof out->field_known_class[0])) return false;
+    /* At this boundary all methods are compiled; final field facts also
+     * supply receiver-dependent reader inference in the restored program. */
+    memcpy(out->discovered_field_type_status,out->field_type_status,
+        (size_t)field_count*sizeof out->field_type_status[0]);
+    memcpy(out->discovered_field_known_class,out->field_known_class,
+        (size_t)field_count*sizeof out->field_known_class[0]);
 
     uint64_t class_variable_count = 0;
     if (!read_u64(cursor, end, &class_variable_count)) return false;

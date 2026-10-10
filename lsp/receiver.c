@@ -742,7 +742,15 @@ static size_t resolve_call(const DiamondProgram *program,const DiamondChunk *chu
                 end-1,function,&call,candidate_bindings,
                 &candidate_binding_count,depth))return 0;
         size_t returned[DIAMOND_MAX_UNION_TYPES];
-        const size_t returned_count=function_return_classes_bound(chunk,function,
+        size_t returned_count;
+        if(function->tooling_reader_field!=0&&
+           function->return_type_set==DIAMOND_NO_TYPE_SET) {
+            if(targets.receiver_singleton||index>=targets.receiver_count)return 0;
+            const int returned_class=diamond_reader_return_class(chunk->classes,
+                chunk->class_count,function,targets.receiver_classes[index]);
+            if(returned_class<0)return 0;
+            returned[0]=(size_t)returned_class;returned_count=1;
+        } else returned_count=function_return_classes_bound(chunk,function,
             candidate_bindings,candidate_binding_count,returned,
             DIAMOND_MAX_UNION_TYPES);
         if(returned_count==0)return 0;

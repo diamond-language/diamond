@@ -193,4 +193,10 @@ size_t diamond_resolve_source_position(const char *path, const char *combined,
  * offsets instead. */
 size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 
+/* Concrete tooling return for an unannotated generated reader on this
+ * receiver, or -1 when any discovered write in its ancestry is unknown or
+ * conflicting. Does not establish a checked return contract. */
+int diamond_reader_return_class(const DiamondClass *classes,size_t class_count,
+    const DiamondFunction *function,size_t receiver_class);
+
 #endif

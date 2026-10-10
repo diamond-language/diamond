@@ -8622,12 +8622,96 @@ static uint16_t compile_instance_contextual_block(Compiler *compiler,
     return block;
 }
 
+int diamond_reader_return_class(const DiamondClass *classes,size_t class_count,
+        const DiamondFunction *function,size_t receiver_class) {
+    if(function->return_type_set!=DIAMOND_NO_TYPE_SET||
+       function->tooling_reader_field==0||function->owner_class>=class_count||
+       receiver_class>=class_count)return -1;
+    const DiamondClass *owner=&classes[function->owner_class];
+    const size_t owner_field=(size_t)function->tooling_reader_field-1;
+    if(owner_field>=owner->field_count)return -1;
+    const char *name=owner->fields[owner_field];
+    int result=-1;bool found_owner=false;
+    /* Revisit every ancestor's final facts instead of trusting the field
+     * snapshot copied when a subclass was declared: a later reopening can
+     * invalidate that snapshot. Keep all writes, even overridden initializer
+     * writes, since an explicit super call can still execute them. */
+    for(size_t depth=0;receiver_class<class_count&&depth<class_count;depth++) {
+        const DiamondClass *class=&classes[receiver_class];
+        if(receiver_class==function->owner_class)found_owner=true;
+        for(size_t field=0;field<class->field_count;field++) {
+            if(strcmp(class->fields[field],name)!=0)continue;
+            const uint8_t status=class->declared_by_discovery?
+                class->field_type_status[field]:
+                class->discovered_field_type_status[field];
+            const uint8_t known=class->declared_by_discovery?
+                class->field_known_class[field]:
+                class->discovered_field_known_class[field];
+            if(status==2)return -1;
+            if(status==1) {
+                if(known>=class_count||(result>=0&&result!=known))return -1;
+                result=known;
+            }
+            break;
+        }
+        receiver_class=class->superclass;
+    }
+    return found_owner?result:-1;
+}
+
+/* Return true when reader metadata owns this call, including an unresolved
+ * reader. Never fall back to the shared function's owner-class guess. */
+static bool publish_reader_return_type(Compiler *compiler,uint16_t reg,
+        uint16_t receiver,int32_t receiver_set,DiamondSpan name) {
+    uint8_t types[DIAMOND_MAX_UNION_TYPES];size_t count=0;
+    const uint8_t known=compiler->known_types[receiver];
+    if(known>=DIAMOND_TYPE_CLASS_BASE&&known<DIAMOND_TYPE_VARIABLE_BASE)
+        types[count++]=known;
+    else {
+        if(receiver_set<0)receiver_set=compiler->tooling_type_sets[receiver];
+        if(receiver_set<0||
+           (size_t)receiver_set>=compiler->function->type_set_count)return false;
+        const DiamondTypeSet *set=&compiler->function->type_sets[receiver_set];
+        count=set->count;
+        for(size_t index=0;index<count;index++)types[index]=set->members[index].id;
+    }
+    bool reader=false,complete=count>0;
+    int returns[DIAMOND_MAX_UNION_TYPES];
+    for(size_t index=0;index<count;index++) {
+        returns[index]=-1;
+        const DiamondFunction *target=class_instance_signature(compiler,
+            types[index],name);
+        if(target!=nullptr&&target->tooling_reader_field!=0) {
+            reader=true;
+            returns[index]=diamond_reader_return_class(compiler->program->classes,
+                compiler->program->class_count,target,
+                (size_t)(types[index]-DIAMOND_TYPE_CLASS_BASE));
+        }
+        if(returns[index]<0)complete=false;
+    }
+    if(!reader)return false;
+    if(!complete)return true;
+    int32_t joined=-1;
+    for(size_t index=0;index<count;index++) {
+        const uint16_t current=concrete_type_set(compiler,
+            (uint8_t)(DIAMOND_TYPE_CLASS_BASE+returns[index]));
+        if(current==DIAMOND_NO_TYPE_SET)return true;
+        joined=joined<0?(int32_t)current:
+            join_type_set_indices(compiler,joined,(int32_t)current);
+        if(joined<0)return true;
+    }
+    compiler->tooling_type_sets[reg]=joined;
+    return true;
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         uint16_t receiver,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
         size_t binding_count) {
-    if(matching_target!=nullptr)
+    if(publish_reader_return_type(compiler,reg,receiver,receiver_set_index,name)) {
+        /* Only advisory scope metadata was published. */
+    } else if(matching_target!=nullptr)
         publish_call_return_type(compiler,reg,matching_target,bindings,
             binding_count);
     else {
@@ -15126,11 +15210,13 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         if(writer)function->parameter_type_sets[0]=(uint16_t)type_set;
         else function->return_type_set=(uint16_t)type_set;
     }
+    if(!writer&&type_set<0&&compiler->current_class>=0)
+        function->tooling_reader_field=(uint16_t)(field+1u);
     /* Match a hand-written reader's tooling inference without adding a
      * checked return annotation. Discovery has seen writes in every reopen,
      * including generated writers, so source order cannot hide a conflict.
-     * Inherited readers share this function: defer inference for an owner
-     * with subclasses until return facts can depend on the receiver class. */
+     * Keep a function-wide fallback only for owners without subclasses;
+     * instance calls resolve tooling_reader_field against their receiver. */
     if(!writer&&type_set<0&&!compiler->discovery_pass&&
        compiler->current_class>=0) {
         const DiamondClass *class=
