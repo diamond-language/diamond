@@ -500,7 +500,7 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
         local_type_at_offset(owner,local,name_token.span.start,&known_type,
             &known_set,&tooling_set);
         (void)known_type;
-        if(known_set<0)known_set=tooling_set;
+        if(tooling_set>=0)known_set=tooling_set;
         type_sets=owner->type_sets;type_set_count=owner->type_set_count;
     } else {
         if(first_index<start+3||

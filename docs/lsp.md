@@ -151,6 +151,11 @@ search over a real (if scoped) lexical symbol table:
     preserves its element graph when assigned to another local, including
     repeated indexing through nested Arrays. These facts stay editor-only;
     unknown element graphs and inferred Hash indexing remain unresolved.
+    Array literals also carry inferred factory element graphs, including nested
+    literals and mixtures of known and inferred class results. Locals and
+    unannotated returns retain the richer editor graph alongside the compiler's
+    broader checked shape. An unknown element suppresses the graph; tracked
+    indexed writes and pushes discard it for the mutated local and its aliases.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:

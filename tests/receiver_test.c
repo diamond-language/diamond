@@ -392,6 +392,20 @@ int main(void) {
         "  indexed_union = indexed_union_factory()[0]\n"
         "  indexed_union.bark()\n"
         "end\n"
+        "def literal_pet_factory() = Pet.new()\n"
+        "def literal_nested_factory() = [[literal_pet_factory()]]\n"
+        "def inspect_literal_results(value)\n"
+        "  literal_pets = [literal_pet_factory()]\n"
+        "  literal_pets[0].bark()\n"
+        "  literal_pet = literal_pets[0]\n"
+        "  literal_pet.bark()\n"
+        "  nested_literal_pet = literal_nested_factory()[0][0]\n"
+        "  nested_literal_pet.bark()\n"
+        "  literal_union = [literal_pet_factory(), Leaf.new()]\n"
+        "  literal_union[0].bark()\n"
+        "  unknown_literal = [literal_pet_factory(), value]\n"
+        "  unknown_literal[0].bark()\n"
+        "end\n"
         "def inspect_inferred_unions(value: Pet | Leaf, values: Array[Pet | Leaf], map: Hash[String, Pet | Leaf])\n"
         "  identity(value).bark()\n"
         "  array_identity(values)[0].bark()\n"
@@ -456,6 +470,11 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"uncertain_pet.",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"indexed_pet.","Pet",false);
     failed|=check_receiver_pair(program,&chunk,combined,"indexed_union.","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"literal_pets[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"literal_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_literal_pet.","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"literal_union[0].","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"unknown_literal[0].",nullptr,false);
     /* Inferred element facts must stay outside checked compiler contracts. */
     bool found_indexed_local=false;
     for(size_t index=0;index<chunk.function_count;index++) {
@@ -472,11 +491,31 @@ int main(void) {
         }
     }
     if(!found_indexed_local)failed=1;
+    bool found_literal_local=false;
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(strcmp(function->name,"inspect_literal_results")!=0)continue;
+        for(size_t local=0;local<function->scope_local_count;local++) {
+            const DiamondScopeLocal *fact=&function->scope_locals[local];
+            if(strcmp(fact->name,"literal_pets")!=0)continue;
+            found_literal_local=true;
+            if(fact->known_type!=DIAMOND_TYPE_ARRAY||
+               fact->known_type_set>=0||fact->tooling_type_set<0) {
+                fprintf(stderr,"literal element graph entered checked facts\n");
+                failed=1;
+            }
+        }
+    }
+    if(!found_literal_local)failed=1;
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
     } else {
         const DiamondChunk restored_chunk=diamond_program_chunk(restored);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "literal_pets[0].","Pet",false);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "nested_literal_pet.","Pet",false);
         failed|=check_receiver(restored,&restored_chunk,combined,
             "indexed_pet.","Pet",false);
         failed|=check_receiver(restored,&restored_chunk,combined,

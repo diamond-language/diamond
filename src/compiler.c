@@ -1120,10 +1120,10 @@ static int32_t joined_value_type_set(Compiler *compiler,
     return joined;
 }
 
-static void record_collection_type_set(Compiler *compiler,uint16_t reg,
+static int32_t collection_type_set(Compiler *compiler,
         uint8_t type,int32_t argument_set,int32_t second_argument_set) {
     if(argument_set<0||
-       (type==DIAMOND_TYPE_HASH&&second_argument_set<0))return;
+       (type==DIAMOND_TYPE_HASH&&second_argument_set<0))return -1;
     const uint16_t second=second_argument_set<0?DIAMOND_NO_TYPE_SET:
         (uint16_t)second_argument_set;
     for(size_t index=0;index<compiler->function->type_set_count;index++) {
@@ -1131,10 +1131,10 @@ static void record_collection_type_set(Compiler *compiler,uint16_t reg,
         if(known->count==1&&known->members[0].id==type&&
            known->members[0].argument_set==(uint16_t)argument_set&&
            known->members[0].second_argument_set==second) {
-            compiler->known_type_sets[reg]=(int32_t)index;return;
+            return (int32_t)index;
         }
     }
-    if(!reserve_type_sets(compiler,1))return;
+    if(!reserve_type_sets(compiler,1))return -1;
     const size_t index=compiler->function->type_set_count++;
     DiamondTypeSet *set=&compiler->function->type_sets[index];
     set->count=1;set->inferred=true;
@@ -1146,7 +1146,42 @@ static void record_collection_type_set(Compiler *compiler,uint16_t reg,
         .callable_parameters_typed=false};
     for(size_t parameter=0;parameter<16;parameter++)
         set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
-    compiler->known_type_sets[reg]=(int32_t)index;
+    return (int32_t)index;
+}
+
+static void record_collection_type_set(Compiler *compiler,uint16_t reg,
+        uint8_t type,int32_t argument_set,int32_t second_argument_set) {
+    const int32_t set=collection_type_set(compiler,type,argument_set,
+        second_argument_set);
+    if(set>=0)compiler->known_type_sets[reg]=set;
+}
+
+/* A literal built from unannotated factory results can still describe its
+ * elements to the editor. Keep this graph separate from checked contracts,
+ * and give up if any element has no representable result. */
+static void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *values,size_t count) {
+    if(count==0)return;
+    bool have_tooling=false;
+    for(size_t index=0;index<count;index++)
+        if(compiler->tooling_type_sets[values[index]]>=0) {have_tooling=true;break;}
+    if(!have_tooling)return;
+    int32_t joined=-1;
+    for(size_t index=0;index<count;index++) {
+        const uint16_t value=values[index];
+        int32_t current=compiler->tooling_type_sets[value];
+        if(current<0)current=compiler->known_type_sets[value];
+        if(current<0) {
+            const uint8_t type=compiler->known_types[value];
+            if(type==TYPE_UNKNOWN||type>=DIAMOND_TYPE_VARIABLE_BASE)return;
+            current=(int32_t)concrete_type_set(compiler,type);
+        }
+        if(current<0||(size_t)current>=compiler->function->type_set_count)return;
+        joined=joined<0?current:join_type_set_indices(compiler,joined,current);
+        if(joined<0)return;
+    }
+    compiler->tooling_type_sets[reg]=collection_type_set(compiler,
+        DIAMOND_TYPE_ARRAY,joined,-1);
 }
 
 static int32_t array_element_type_set(const Compiler *compiler,uint16_t reg) {
@@ -8465,6 +8500,7 @@ static void propagate_collection_alias_fact(Compiler *compiler,uint16_t reg) {
         if(local->alias_identity!=identity||local->reg==reg)continue;
         compiler->known_types[local->reg]=compiler->known_types[reg];
         compiler->known_type_sets[local->reg]=compiler->known_type_sets[reg];
+        compiler->tooling_type_sets[local->reg]=compiler->tooling_type_sets[reg];
         record_scope_type_fact(compiler,local->reg,compiler->current.span.start);
     }
 }
@@ -8472,6 +8508,7 @@ static void propagate_collection_alias_fact(Compiler *compiler,uint16_t reg) {
 static void record_mutated_collection_fact(Compiler *compiler,uint16_t reg,
         uint8_t collection_type,int32_t first,int32_t second) {
     record_collection_type_set(compiler,reg,collection_type,first,second);
+    compiler->tooling_type_sets[reg]=-1;
     for(size_t index=0;index<compiler->local_count;index++)
         if(compiler->locals[index].reg==reg) {
             record_scope_type_fact(compiler,reg,compiler->current.span.start);
@@ -8484,6 +8521,7 @@ static void clear_mutated_collection_fact(Compiler *compiler,uint16_t reg,
         uint8_t collection_type) {
     compiler->known_types[reg]=collection_type;
     compiler->known_type_sets[reg]=-1;
+    compiler->tooling_type_sets[reg]=-1;
     for(size_t index=0;index<compiler->local_count;index++)
         if(compiler->locals[index].reg==reg) {
             record_scope_type_fact(compiler,reg,compiler->current.span.start);
@@ -9591,6 +9629,7 @@ static uint16_t parse_array_literal(Compiler *compiler,
     compiler->known_types[destination]=DIAMOND_TYPE_ARRAY;
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_ARRAY,
         joined_value_type_set(compiler,elements,count),-1);
+    publish_array_literal_tooling_type(compiler,destination,elements,count);
     if(expected_function!=nullptr) {
         compiler->positional_spread_literal=true;
         compiler->positional_spread_first=first_parameter;
@@ -9975,6 +10014,9 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
  * value graph it actually just read. */
 static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
         uint16_t receiver) {
+    const int32_t tooling_element=joined_collection_argument(compiler,
+        compiler->tooling_type_sets[receiver],DIAMOND_TYPE_ARRAY,false);
+    if(tooling_element>=0)compiler->tooling_type_sets[destination]=tooling_element;
     int32_t receiver_set=compiler->known_type_sets[receiver];
     const bool tooling_only=receiver_set<0;
     if(tooling_only)receiver_set=compiler->tooling_type_sets[receiver];
@@ -12881,8 +12923,8 @@ static uint16_t compile_return(Compiler *compiler) {
      * compile_definition's inference reads this back once the whole body
      * finishes compiling; harmless to keep accumulating even when an
      * explicit `-> Type` annotation already makes that inference moot. */
-    const int32_t tooling_set=compiler->known_type_sets[value]>=0?
-        compiler->known_type_sets[value]:compiler->tooling_type_sets[value];
+    const int32_t tooling_set=compiler->tooling_type_sets[value]>=0?
+        compiler->tooling_type_sets[value]:compiler->known_type_sets[value];
     if(!compiler->return_flow_seen) {
         compiler->return_tooling_type=compiler->known_types[value];
         compiler->return_tooling_set=tooling_set;
@@ -14782,9 +14824,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             bool have_inference=false;
             if(!body_diverges&&!compiler->method_has_block_return) {
                 inferred_type=compiler->known_types[body_result];
-                inferred_set=compiler->known_type_sets[body_result]>=0?
-                    compiler->known_type_sets[body_result]:
-                    compiler->tooling_type_sets[body_result];
+                inferred_set=compiler->tooling_type_sets[body_result]>=0?
+                    compiler->tooling_type_sets[body_result]:
+                    compiler->known_type_sets[body_result];
                 /* A reachable unknown tail still participates in the join;
                  * dropping it would publish only the known early returns. */
                 have_inference=true;
