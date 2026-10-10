@@ -150,6 +150,7 @@ static bool reference_list_push(ReferenceList *list,const char *uri,size_t line,
  * own scan_file); only a real allocation failure returns false. */
 static bool scan_file_for_references(const DocumentTable *documents,DiamondProgram *scratch,
         const char *path,const char *name,size_t name_length,bool include_declaration,
+        const char *blocked_name,size_t blocked_length,bool *out_collision,
         ReferenceList *list) {
     char *text=read_file_preferring_open(documents,path);
     if(text==nullptr)return true;
@@ -167,6 +168,13 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
         return true;
     }
     const DiamondChunk chunk=diamond_program_chunk(scratch);
+    /* Check even files with no old-name usages: globals share a namespace
+     * when these files are later loaded together. */
+    if(blocked_name!=nullptr&&name_is_global_symbol(&chunk,blocked_name,blocked_length)) {
+        *out_collision=true;
+        free(combined);diamond_source_bundle_free(&bundle);
+        return true;
+    }
 
     /* Tokenize the whole combined buffer once, newline-filtered (same as
      * receiver_resolve_classes) so a next/previous-token adjacency check
@@ -262,7 +270,8 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
  * comment already promises its own callers. */
 static bool find_workspace_occurrences(const DocumentTable *documents,const char *workspace_root,
         const char *uri,const char *text,size_t length,size_t line,size_t character,
-        bool include_declaration,ReferenceList *out_list,size_t *out_name_length,
+        bool include_declaration,const char *blocked_name,size_t blocked_length,
+        ReferenceList *out_list,size_t *out_name_length,
         bool *out_allocation_failed) {
     *out_list=(ReferenceList){0};
     *out_name_length=0;
@@ -287,6 +296,9 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
     memcpy(name,source_copy+identifier.span.start,name_length);
     name[name_length]='\0';
     free(source_copy);
+    /* Renaming to the current name is harmless, including class reopenings. */
+    if(blocked_name!=nullptr&&blocked_length==name_length&&
+       memcmp(blocked_name,name,name_length)==0)blocked_name=nullptr;
 
     char *path=diagnostics_uri_to_path(uri);
     DiamondSourceBundle bundle;
@@ -322,6 +334,8 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
             name_is_global_symbol(&origin_chunk,name,name_length)&&
             !name_is_non_global_declaration(&origin_chunk,name,name_length,offset)&&
             !receiver_name_is_local(origin_scratch,&origin_chunk,name,name_length,offset);
+        if(blocked_name!=nullptr&&name_is_global_symbol(&origin_chunk,blocked_name,blocked_length))
+            is_global=false;
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
     if(!origin_ok||!is_global)return false;
@@ -347,11 +361,11 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
     }
 
     ReferenceList list={0};
-    bool scan_ok=true;
+    bool scan_ok=true,collision=false;
     for(size_t index=0;index<path_count;index++) {
-        if(scan_ok)
+        if(scan_ok&&!collision)
             scan_ok=scan_file_for_references(documents,scan_scratch,paths[index],
-                name,name_length,include_declaration,&list);
+                name,name_length,include_declaration,blocked_name,blocked_length,&collision,&list);
         free(paths[index]);
     }
     free(paths);
@@ -360,6 +374,7 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
         *out_allocation_failed=true;
         return false;
     }
+    if(collision) {reference_list_free(&list);return false;}
     *out_list=list;
     *out_name_length=name_length;
     return true;
@@ -370,7 +385,7 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
         bool include_declaration) {
     ReferenceList list;size_t name_length=0;bool allocation_failed=false;
     if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
-            include_declaration,&list,&name_length,&allocation_failed))
+            include_declaration,nullptr,0,&list,&name_length,&allocation_failed))
         return allocation_failed?nullptr:json_null();
 
     JsonValue *result=json_array();
@@ -447,7 +462,7 @@ JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_r
 
     ReferenceList list;size_t name_length=0;bool allocation_failed=false;
     if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
-            true,&list,&name_length,&allocation_failed))
+            true,new_name,new_name_length,&list,&name_length,&allocation_failed))
         return allocation_failed?nullptr:json_null();
 
     JsonValue *changes=json_object();

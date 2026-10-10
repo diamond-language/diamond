@@ -56,10 +56,13 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
  * shaped occurrence" false-positive/under-approximation tradeoffs,
  * references_compute's own doc comment above describes (this shares
  * that scan directly, differing only in how the results get built into
- * JSON). No collision detection against an existing same-named symbol
- * at the rename's own target scope -- that would need real semantic
- * resolution this deliberately name-based pass doesn't have, the same
- * conservative-scope cut references_compute itself already makes.
+ * JSON). Rejects a different target name already used by a top-level
+ * function, class, module, or interface in the origin compilation or any
+ * successfully compiled workspace file, including imported and prelude
+ * symbols. Open documents take precedence over disk contents. Renaming to
+ * the current name is allowed. This is a conservative workspace-wide global
+ * check; it does not detect capture by same-named locals or methods. Files
+ * that cannot be read or compiled are skipped as in the references scan.
  *
  * `new_name` additionally has to lex as exactly one DIAMOND_TOKEN_
  * IDENTIFIER consuming the whole string (rejects empty, a keyword, a
@@ -73,8 +76,8 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
  *
  * Returns a WorkspaceEdit (`{"changes": {uri: TextEdit[], ...}}`)
  * JsonValue on success, `json_null()` under every condition
- * references_compute itself returns it for, plus an invalid `new_name`,
- * and nullptr only on allocation failure. */
+ * references_compute itself returns it for, plus an invalid or colliding
+ * `new_name`, and nullptr only on allocation failure. */
 JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_root,
     const char *uri,const char *text,size_t length,size_t line,size_t character,
     const char *new_name,size_t new_name_length);
