@@ -9975,7 +9975,9 @@ static void finish_loop_flow(Compiler *compiler,LoopContext *loop,
  * value graph it actually just read. */
 static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
         uint16_t receiver) {
-    const int32_t receiver_set=compiler->known_type_sets[receiver];
+    int32_t receiver_set=compiler->known_type_sets[receiver];
+    const bool tooling_only=receiver_set<0;
+    if(tooling_only)receiver_set=compiler->tooling_type_sets[receiver];
     if(receiver_set<0)return;
     const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)receiver_set];
     uint16_t indexed_sets[DIAMOND_MAX_UNION_TYPES];
@@ -10003,10 +10005,16 @@ static void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
                 (int32_t)indexed_sets[member_index]);
         if(indexed<0)compatible=false;
     }
+    /* Keep inferred Hash indexing unresolved: its value may be Nil. */
+    if(tooling_only&&collection_type!=DIAMOND_TYPE_ARRAY)return;
     if(compatible&&collection_type==DIAMOND_TYPE_HASH)
         indexed=type_set_with_nil(compiler,(uint16_t)indexed);
-    if(compatible&&indexed>=0)
-        publish_known_type_set(compiler,destination,(uint16_t)indexed);
+    if(compatible&&indexed>=0) {
+        /* An inferred call's collection shape can identify an assigned
+         * element for the editor, but cannot change checks or dispatch. */
+        if(tooling_only)compiler->tooling_type_sets[destination]=indexed;
+        else publish_known_type_set(compiler,destination,(uint16_t)indexed);
+    }
 }
 
 static uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,

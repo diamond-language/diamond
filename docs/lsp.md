@@ -147,6 +147,10 @@ search over a real (if scoped) lexical symbol table:
     `Array[Pet | Leaf]`, or `Hash[String, T]` versus
     `Hash[String, Pet | Leaf]`. Direct `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`.
+    Indexing an inferred Array call result, directly or through a local, also
+    preserves its element graph when assigned to another local, including
+    repeated indexing through nested Arrays. These facts stay editor-only;
+    unknown element graphs and inferred Hash indexing remain unresolved.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:

@@ -22,6 +22,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Locals assigned from indexed inferred Array returns retain completion, hover,
+  and definition across imports and nested indexing.
+
 - Editor receiver inference follows forward-declared factory and wrapper chains
   through direct calls and local assignments, with bounded refinement of return
   facts. Unknown paths and unsupported recursive graphs remain unresolved.
