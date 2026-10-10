@@ -18,6 +18,14 @@
 
 enum { TYPE_UNKNOWN = UINT8_MAX };
 
+typedef struct ToolingDependencies {
+    bool forward_calls;
+    /* Indices in the immutable completed snapshot, including unknown returns:
+     * an unknown callee becoming known must trigger another pass too. */
+    bool *used;
+    size_t count;
+} ToolingDependencies;
+
 typedef enum Precedence {
     PREC_NONE,
     /* Looser than every other binary operator (including ||/&&), matching
@@ -288,7 +296,7 @@ typedef struct Compiler {
     /* Editor-only refinement uses a previous completed compile's return
      * facts for forward callees, never its bytecode or checked contracts. */
     const DiamondProgram *tooling_returns;
-    bool *tooling_forward_calls;
+    ToolingDependencies *tooling_forward_calls;
     bool return_flow_seen;
     uint8_t return_flow_type;
     int32_t return_flow_set;
@@ -1311,7 +1319,7 @@ static void publish_call_return_type(Compiler *compiler,uint16_t reg,
     if(target==nullptr)return;
     if(target->return_type_set==DIAMOND_NO_TYPE_SET&&
        target->declared_by_discovery&&compiler->tooling_forward_calls!=nullptr) {
-        *compiler->tooling_forward_calls=true;
+        compiler->tooling_forward_calls->forward_calls=true;
         if(compiler->tooling_returns!=nullptr) {
             size_t index=0;
             while(index<compiler->program->function_count&&
@@ -1321,6 +1329,9 @@ static void publish_call_return_type(Compiler *compiler,uint16_t reg,
             if(previous->declaration_start!=target->declaration_start||
                previous->owner_class!=target->owner_class||
                strcmp(previous->name,target->name)!=0)return;
+            if(compiler->tooling_forward_calls->used!=nullptr&&
+               index<compiler->tooling_forward_calls->count)
+                compiler->tooling_forward_calls->used[index]=true;
             target=previous;
         }
     }
@@ -18943,7 +18954,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
                              DiamondDiagnostic *diagnostic, bool discovery_pass,
                              size_t function_claim_start, bool debug_mode,
                              const DiamondProgram *tooling_returns,
-                             bool *tooling_forward_calls) {
+                             ToolingDependencies *tooling_forward_calls) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -19084,7 +19095,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
                                  bool debug_mode,
                                  DiamondDiagnostic *diagnostic,
                                  const DiamondProgram *tooling_returns,
-                                 bool *tooling_forward_calls) {
+                                 ToolingDependencies *tooling_forward_calls) {
     /* DIAMOND_TRACE_COMPILE: an opt-in stderr report of where compile time
      * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
      * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
@@ -19295,9 +19306,10 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 }
 
 static bool tooling_returns_equal(const DiamondProgram *left,
-        const DiamondProgram *right) {
+        const DiamondProgram *right,const ToolingDependencies *dependencies) {
     if(left->function_count!=right->function_count)return false;
     for(size_t index=0;index<left->function_count;index++) {
+        if(dependencies->used!=nullptr&&!dependencies->used[index])continue;
         const DiamondFunction *a=left->functions[index],*b=right->functions[index];
         if(a->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
            b->inferred_return_type_set==DIAMOND_NO_TYPE_SET) {
@@ -19311,10 +19323,10 @@ static bool tooling_returns_equal(const DiamondProgram *left,
 
 bool diamond_compile_for_tooling(const char *source,DiamondProgram *program,
         DiamondDiagnostic *diagnostic) {
-    bool forward_calls=false;
+    ToolingDependencies dependencies={};
     if(!diamond_compile_impl(source,program,nullptr,false,diagnostic,
-            nullptr,&forward_calls))return false;
-    if(!forward_calls||program->allow_top_level_redefinition)return true;
+            nullptr,&dependencies))return false;
+    if(!dependencies.forward_calls||program->allow_top_level_redefinition)return true;
     /* Most documents need no additional pass. Bound editor work even for a
      * long graph or a recursive generic graph whose shapes never stabilize.
      * Each pass reads an immutable completed snapshot; declaration order
@@ -19326,17 +19338,25 @@ bool diamond_compile_for_tooling(const char *source,DiamondProgram *program,
          * literal here: DiamondProgram is much too large for a stack temporary. */
         memcpy(previous,program,sizeof *previous);
         memset(program,0,sizeof *program);
-        forward_calls=false;
+        dependencies.forward_calls=false;
+        dependencies.count=previous->function_count;
+        dependencies.used=calloc(dependencies.count,sizeof *dependencies.used);
+        /* Allocation failure falls back to comparing all returns. */
         if(!diamond_compile_impl(source,program,nullptr,false,diagnostic,
-                previous,&forward_calls)) {
+                previous,&dependencies)) {
+            free(dependencies.used);
             diamond_program_free(program);
             memcpy(program,previous,sizeof *program);free(previous);
             *diagnostic=(DiamondDiagnostic){};
             return true;
         }
-        const bool stable=tooling_returns_equal(previous,program);
+        /* Only returns read from the snapshot can invalidate this pass.
+         * Changes to callers already compiled using current facts do not
+         * require another whole-document compile. */
+        const bool stable=tooling_returns_equal(previous,program,&dependencies);
+        free(dependencies.used);dependencies.used=nullptr;
         diamond_program_free(previous);free(previous);
-        if(stable||!forward_calls)break;
+        if(stable||!dependencies.forward_calls)break;
     }
     return true;
 }
