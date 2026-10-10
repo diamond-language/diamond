@@ -121,7 +121,16 @@ static char *format_function_signature(const DiamondChunk *chunk,
     FILE *stream=open_memstream(&buffer,&buffer_length);
     if(stream==nullptr)return nullptr;
     fprintf(stream,"def %s(",function->name);
-    for(size_t index=0;index<function->arity;index++) {
+    /* Runtime method arity includes self, but parameter metadata is indexed
+     * only by declared arguments. Captured-self closures use the sentinel
+     * owner UINT8_MAX-2 and do not receive an implicit argument. */
+    const size_t receiver_slots=function->owner_class!=UINT8_MAX&&
+        function->owner_class!=UINT8_MAX-2?1u:0u;
+    const size_t arity=function->arity>=receiver_slots
+        ?function->arity-receiver_slots:0;
+    const size_t required_arity=function->required_arity>=receiver_slots
+        ?function->required_arity-receiver_slots:0;
+    for(size_t index=0;index<arity;index++) {
         if(index>0)fputs(", ",stream);
         /* A trailing `*name` (splat/variadic) parameter is the last
          * slot whenever function->has_variadic is set (src/vm.h's own
@@ -132,9 +141,9 @@ static char *format_function_signature(const DiamondChunk *chunk,
          * required_arity" rule below would misprint it as an ordinary
          * optional parameter (`rest = ...`) instead of `*rest`. */
         const bool is_block_slot=function->has_block_parameter&&
-            index+1==function->arity;
+            index+1==arity;
         const bool is_variadic_slot=function->has_variadic&&
-            index+(function->has_block_parameter?2u:1u)==function->arity;
+            index+(function->has_block_parameter?2u:1u)==arity;
         if(is_variadic_slot)fputc('*',stream);
         if(is_block_slot)fputc('&',stream);
         fputs(function->parameter_names[index],stream);
@@ -144,7 +153,7 @@ static char *format_function_signature(const DiamondChunk *chunk,
             diamond_print_type_set(stream,&function_chunk,function->parameter_type_sets[index]);
         }
         if(!is_variadic_slot&&!is_block_slot&&
-           index>=function->required_arity)fputs(" = ...",stream);
+           index>=required_arity)fputs(" = ...",stream);
     }
     fputc(')',stream);
     if(function->return_type_set!=DIAMOND_NO_TYPE_SET) {

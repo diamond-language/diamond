@@ -628,6 +628,7 @@ $(BUILD_DIR)/analysis_cache_test: tests/analysis_cache_test.c lsp/analysis_cache
 test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/analysis_cache_test
 	$(BUILD_DIR)/receiver_test
 	bash tests/analysis_cache_test.sh
+	bash tests/v3_editor_test.sh
 	bash tests/lsp_test.sh
 
 DAP_SOURCES := $(wildcard dap/*.c)

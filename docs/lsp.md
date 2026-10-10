@@ -488,6 +488,14 @@ that doesn't currently compile, document symbols excluding the prelude
 and anything pulled in via `require`, plus the unknown-method and
 exit-without-shutdown edge cases.
 
+It also runs `tests/v3_editor_test.sh`, a self-contained version of
+SkindicateV3's imported schema, inherited reader, and forward-wrapper query
+workflow. The test checks completion, hover, and definition sharing one
+analysis, then verifies fresh results after unsaved transitive import edits,
+broken imports, closing an import, and disk edits. It needs no sibling checkout,
+installed cuts, or database. Method hover signatures cover required, optional,
+variadic, and block parameters, including singleton methods.
+
 `editors/vscode/extension.js` wires all three up client-side too, via
 `vscode.languages.registerHoverProvider`/`registerDefinitionProvider`/
 `registerDocumentSymbolProvider` — see its own file and
