@@ -1045,6 +1045,10 @@ typedef struct DiamondFunction {
      * exactly one reader: lsp/receiver.c's call-chain resolution, as a
      * fallback when return_type_set itself is DIAMOND_NO_TYPE_SET. */
     uint16_t inferred_return_type_set;
+    /* Tooling-only generated reader identity: owner field index + 1, or
+     * zero for other functions. Resolve against the call's receiver rather
+     * than publishing one return class for a shared inherited function. */
+    uint16_t tooling_reader_field;
     uint16_t parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     /* JIT-only (src/jit.c, "ivar load" INVOKE-receiver phase, docs/internal/
      * jit-design.md): for a real class method (owner_class is a genuine

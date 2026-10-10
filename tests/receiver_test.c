@@ -1,9 +1,30 @@
 #include "compile_buffer.h"
+#include "compiled_prelude.h"
 #include "receiver.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static DiamondProgram *round_trip(const DiamondProgram *program) {
+    FILE *file=tmpfile();
+    if(file==nullptr)return nullptr;
+    if(!diamond_program_write_compiled(program,file)) {fclose(file);return nullptr;}
+    const long length=ftell(file);
+    if(length<=0) {fclose(file);return nullptr;}
+    rewind(file);
+    uint8_t *bytes=malloc((size_t)length);
+    DiamondProgram *restored=calloc(1,sizeof *restored);
+    const bool ok=bytes!=nullptr&&restored!=nullptr&&
+        fread(bytes,1,(size_t)length,file)==(size_t)length&&
+        diamond_program_read_compiled(bytes,(size_t)length,restored);
+    fclose(file);free(bytes);
+    if(!ok) {
+        if(restored!=nullptr)diamond_program_free(restored);
+        free(restored);return nullptr;
+    }
+    return restored;
+}
 
 static int check_receiver(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *combined,const char *needle,const char *expected,bool singleton) {
@@ -121,6 +142,49 @@ int main(void) {
         "    @pet = Leaf.new()\n"
         "  end\n"
         "end\n"
+        "class InheritedHolder < ParentHolder\n"
+        "end\n"
+        "class GrandchildHolder < InheritedHolder\n"
+        "end\n"
+        "class SameHolder < ParentHolder\n"
+        "  def initialize()\n"
+        "    @pet = Pet.new()\n"
+        "  end\n"
+        "end\n"
+        "class EmptyParent\n"
+        "  attr_reader pet\n"
+        "end\n"
+        "class LeafHolder < EmptyParent\n"
+        "  def initialize()\n"
+        "    @pet = Leaf.new()\n"
+        "  end\n"
+        "end\n"
+        "class PetHolder < EmptyParent\n"
+        "  def initialize()\n"
+        "    @pet = Pet.new()\n"
+        "  end\n"
+        "end\n"
+        "class MutableChild < ParentHolder\n"
+        "  attr_writer pet\n"
+        "end\n"
+        "class ReopenedParent\n"
+        "  attr_reader pet\n"
+        "  def initialize()\n"
+        "    @pet = Pet.new()\n"
+        "  end\n"
+        "end\n"
+        "class EarlyChild < ReopenedParent\n"
+        "end\n"
+        "class ReopenedParent\n"
+        "  def replace(value)\n"
+        "    @pet = value\n"
+        "  end\n"
+        "end\n"
+        "class ExplicitChild < AnnotatedHolder\n"
+        "end\n"
+        "class OverrideReader < ParentHolder\n"
+        "  def pet() = Leaf.new()\n"
+        "end\n"
         "def identity[T](value: T)\n"
         "  value\n"
         "end\n"
@@ -160,6 +224,21 @@ int main(void) {
         "  UnknownHolder.new().pet().bark()\n"
         "  ParentHolder.new().pet().bark()\n"
         "  ChildHolder.new().pet().bark()\n"
+        "  InheritedHolder.new().pet().bark()\n"
+        "  GrandchildHolder.new().pet().bark()\n"
+        "  SameHolder.new().pet().bark()\n"
+        "  LeafHolder.new().pet().bark()\n"
+        "  PetHolder.new().pet().bark()\n"
+        "  MutableChild.new().pet().bark()\n"
+        "  EarlyChild.new().pet().bark()\n"
+        "  inherited_pet = InheritedHolder.new().pet()\n"
+        "  inherited_pet.bark()\n"
+        "  leaf_pet = LeafHolder.new().pet()\n"
+        "  leaf_pet.bark()\n"
+        "  ExplicitChild.new().pet().bark()\n"
+        "  OverrideReader.new().pet().bark()\n"
+        "  overridden_pet = OverrideReader.new().pet()\n"
+        "  overridden_pet.bark()\n"
         "  holder = SchemaHolder.new()\n"
         "  holder.pet().bark()\n"
         "  held_pet = holder.pet()\n"
@@ -171,6 +250,14 @@ int main(void) {
         "  identity[Array[Pet | Leaf]]([Pet.new()])[0].bark()\n"
         "  matching_factory(true).pets()[0].bark()\n"
         "  conflicting_factory(true).pets()[0].bark()\n"
+        "end\n"
+        "def inspect_reader_unions(holders: PetHolder | LeafHolder, uncertain: PetHolder | MutableChild)\n"
+        "  holders.pet().bark()\n"
+        "  union_pet = holders.pet()\n"
+        "  union_pet.bark()\n"
+        "  uncertain.pet().bark()\n"
+        "  uncertain_pet = uncertain.pet()\n"
+        "  uncertain_pet.bark()\n"
         "end\n"
         "def inspect_inferred_unions(value: Pet | Leaf, values: Array[Pet | Leaf], map: Hash[String, Pet | Leaf])\n"
         "  identity(value).bark()\n"
@@ -196,8 +283,20 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"ReopenedHolder.new().pet().",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"AnnotatedHolder.new().pet().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"UnknownHolder.new().pet().",nullptr,false);
-    failed|=check_receiver(program,&chunk,combined,"ParentHolder.new().pet().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"ParentHolder.new().pet().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ChildHolder.new().pet().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"InheritedHolder.new().pet().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"GrandchildHolder.new().pet().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"SameHolder.new().pet().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"LeafHolder.new().pet().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"PetHolder.new().pet().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"MutableChild.new().pet().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"EarlyChild.new().pet().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"inherited_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"leaf_pet.","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"ExplicitChild.new().pet().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"OverrideReader.new().pet().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"overridden_pet.","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"holder.pet().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"held_pet.","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"Pet.new().","Pet",false);
@@ -218,6 +317,25 @@ int main(void) {
         "matching_factory(true).pets()[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,
         "conflicting_factory(true).pets()[0].",nullptr,false);
+    failed|=check_receiver_pair(program,&chunk,combined,"holders.pet().","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,"union_pet.","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"uncertain.pet().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"uncertain_pet.",nullptr,false);
+    DiamondProgram *restored=round_trip(program);
+    if(restored==nullptr) {
+        fprintf(stderr,"receiver program serialization failed\n");failed=1;
+    } else {
+        const DiamondChunk restored_chunk=diamond_program_chunk(restored);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "GrandchildHolder.new().pet().","Pet",false);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "LeafHolder.new().pet().","Leaf",false);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "EarlyChild.new().pet().",nullptr,false);
+        failed|=check_receiver_pair(restored,&restored_chunk,combined,
+            "holders.pet().","Pet","Leaf");
+        diamond_program_free(restored);free(restored);
+    }
     diamond_program_free(program);
     free(program);free(combined);
     return failed?1:0;

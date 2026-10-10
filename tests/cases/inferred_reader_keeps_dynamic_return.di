@@ -5,8 +5,11 @@ interface ReaderContract
   def value() -> ReaderValue
 end
 
-class ReaderHolder
+class ReaderBase
   attr_reader value
+end
+
+class ReaderHolder < ReaderBase
   def initialize()
     @value = ReaderValue.new()
   end

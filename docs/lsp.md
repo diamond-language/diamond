@@ -191,8 +191,11 @@ search over a real (if scoped) lexical symbol table:
     return when every discovered write to its field has the same concrete class.
     This works through `require`, chained calls, and assignment to a local. Unknown
     or conflicting writes (including generated writers and later class reopenings)
-    suppress it. Owners with subclasses remain unresolved because their inherited
-    readers share a function while the field's type can vary by receiver class.
+    suppress it. Inherited readers resolve against the call's receiver class,
+    including different sibling subclasses that initialize an otherwise unwritten
+    field. Every ancestor's final writes are checked, including late reopenings;
+    conflicting parent/child initializer writes remain unresolved even if the child
+    overrides `initialize`. Unions require a known result for every receiver arm.
     Explicit reader annotations still take precedence; inferred reader results do
     not add runtime checks or satisfy typed structural interfaces.
     Capturing/boxing a local preserves the separate tooling fact through the
