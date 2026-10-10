@@ -3703,13 +3703,13 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
     return copied;
 }
 
-/* Gives a spawned Thread's VM the constants the program had defined when
- * Thread.new ran. The thread never executes the program's top-level
+/* Gives a spawned Thread or Supervisor child the constants defined when
+ * Thread.new or add_child ran. The thread never executes the program's top-level
  * statements (that is what sets constants), so without this every
  * module-level constant, even `PAGE_SIZE = 30`, would be unset in it. Each
  * value is deep-copied like a Thread.new argument, so the thread owns its
  * own copy and nothing is shared. A constant whose value cannot cross a
- * thread boundary (a Regexp, a File, a capturing closure, ...) is left unset
+ * thread boundary (a File, a capturing closure, ...) is left unset
  * in the thread, and reading it there raises the usual "uninitialized
  * constant" error. Each copy is stored immediately, where the collector
  * reaches it, so no allocation happens between producing it and rooting it. */
