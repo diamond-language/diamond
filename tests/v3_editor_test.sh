@@ -169,7 +169,7 @@ EOF
 
 # Position-based lookup must beat a global name collision, choose the right
 # class/nested definition, and preserve module, setter, and reopened signatures.
-declaration_source='def shared(value: Bool) -> Bool = value\nclass First\n  def shared(value: Int) -> Int = value\n  def value=(value: Int) -> Int = value\n  def outer()\n    def shared(value: String) -> String = value\n    self.shared(1)\n  end\nend\nclass Second\n  def shared(value: String) -> String = value\nend\nclass First\n  def later(value: Float) -> Float = value\n  def self.shared(value: Float) -> Float = value\nend\nmodule Methods\n  def shared(value: Int = 1, *rest, &block) = nil\nend\ndef missing_site(value)\n  value.unknown()\nend\ndef absent(value: Bool) -> Bool = value\nclass Child < First\nend\ndef inspect_calls(first: First, second: Second, both: First | Second, child: Child, unknown, text: String)\n  first.shared(1)\n  second.shared(text)\n  both.shared(unknown)\n  child.shared(1)\n  First.shared(1.0)\n  shared(true)\n  unknown.shared(1)\n  first.absent(1)\nend\ndef inspect_local_name(first: First, shared: Int)\n  first.shared(1)\nend\ndef call_multiline(first: First)\n  first\n    # A comment and newline do not turn this into a bare function call.\n    .shared(1)\nend\n'
+declaration_source='def shared(value: Bool) -> Bool = value\nclass First\n  def shared(value: Int) -> Int = value\n  def value=(value: Int) -> Int = value\n  def outer()\n    def shared(value: String) -> String = value\n    self.shared(1)\n  end\nend\nclass Second\n  def shared(value: String) -> String = value\nend\nclass First\n  def later(value: Float) -> Float = value\n  def self.shared(value: Float) -> Float = value\nend\nmodule Methods\n  def shared(value: Int = 1, *rest, &block) = nil\nend\ndef missing_site(value)\n  value.unknown()\nend\ndef absent(value: Bool) -> Bool = value\nclass Child < First\nend\ndef inspect_calls(first: First, second: Second, both: First | Second, child: Child, unknown, text: String)\n  first.shared(1)\n  second.shared(text)\n  both.shared(unknown)\n  child.shared(1)\n  First.shared(1.0)\n  shared(true)\n  unknown.shared(1)\n  first.absent(1)\nend\ndef inspect_local_name(first: First, shared: Int)\n  first.shared(1)\nend\ndef call_multiline(first: First)\n  first\n    # A comment and newline do not turn this into a bare function call.\n    .shared(1)\nend\ndef local_reference(shared: Int)\n  shared\nend\n'
 send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$root_uri"'"},"contentChanges":[{"text":"'"$declaration_source"'"}]}}'
 while IFS='|' read -r line character expected; do
     response="$(request 40 hover "$line" "$character")"
@@ -232,6 +232,55 @@ for position in '32 12' '33 10'; do
     done
 done
 
+# Global references and rename must never select or edit colliding methods.
+# Materialize the open root so the workspace scan sees it, plus an importer
+# whose real bare call must be included exactly once despite require bundling.
+printf '%b' "$declaration_source" > "$work/main.di"
+cat > "$work/shared_user.di" <<'EOF'
+require "./main"
+def invoke_global()
+  shared(true)
+end
+EOF
+shared_user_uri="file://$work/shared_user.di"
+request_symbol_action() {
+    local id="$1" method="$2" line="$3" character="$4" extra
+    if [[ "$method" == rename ]]; then
+        extra=',"newName":"renamed_shared"'
+    else
+        extra=',"context":{"includeDeclaration":true}'
+    fi
+    send '{"jsonrpc":"2.0","id":'"$id"',"method":"textDocument/'"$method"'","params":{"textDocument":{"uri":"'"$root_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}'"$extra"'}}'
+    read_response "$id"
+}
+for position in '2 8' '5 10' '10 8' '14 13' '17 8' '6 11' '26 10' '28 9' '29 10' '30 10' '32 12' '33 10' '36 10' '41 7' '43 22' '44 4'; do
+    read -r line character <<< "$position"
+    for method in references rename; do
+        response="$(request_symbol_action 60 "$method" "$line" "$character")"
+        [[ "$response" == *'"result":null'* ]]
+    done
+done
+for position in '0 6' '31 4'; do
+    read -r line character <<< "$position"
+    response="$(request_symbol_action 61 references "$line" "$character")"
+    check_location "$response" "$root_uri" 0 4 10
+    check_location "$response" "$root_uri" 31 2 8
+    check_location "$response" "$shared_user_uri" 2 2 8
+    count="$(printf '%s' "$response" | grep -o '"uri":' | wc -l | tr -d '[:space:]')"
+    [[ "$count" == 3 ]]
+    response="$(request_symbol_action 62 rename "$line" "$character")"
+    [[ "$response" == *"\"$root_uri\":["* ]]
+    [[ "$response" == *"\"$shared_user_uri\":["* ]]
+    for range in '0 4 10' '31 2 8' '2 2 8'; do
+        read -r target_line start end <<< "$range"
+        [[ "$response" == *"\"start\":{\"line\":$target_line,\"character\":$start}"* ]]
+        [[ "$response" == *"\"end\":{\"line\":$target_line,\"character\":$end}"* ]]
+    done
+    count="$(printf '%s' "$response" | grep -o '"newText":"renamed_shared"' | wc -l | tr -d '[:space:]')"
+    [[ "$count" == 3 ]]
+done
+[[ "$(cat "$work/main.di")" != *renamed_shared* ]]
+
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
 send '{"jsonrpc":"2.0","method":"exit","params":{}}'
@@ -239,3 +288,4 @@ wait "$lsp_pid"
 lsp_pid=''
 echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
 echo 'method signatures, declarations, and receiver call precedence passed'
+echo 'global references and rename exclude colliding methods and locals'

@@ -308,7 +308,11 @@ search over a real (if scoped) lexical symbol table:
   name is in scope there (`receiver_name_is_local`, `lsp/receiver.h`),
   ruling out a keyword-argument label, a hash key, or a shadowing local —
   the same conservative bias every other receiver-aware feature here
-  already has. This is deliberately name-based, not a full alias-aware
+  already has. Explicit receiver calls and method or nested-function
+  declarations are excluded from the global scan. Selecting one of those
+  occurrences, or a shadowing local/parameter, returns no global references
+  or rename edits even when a reachable global shares the name.
+  This is deliberately name-based, not a full alias-aware
   resolver: a bare-name reference with none of those three adjacent
   shapes (a class passed as a first-class value, say) isn't found — a
   known, deliberate under-approximation, not a bug (see `lsp/
