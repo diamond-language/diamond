@@ -25,12 +25,10 @@
  * `(`/`.` of its own), and when no lexical local of the same name is in
  * scope there (receiver_name_is_local, lsp/receiver.h) -- ruling out the
  * common false-positive shapes (a keyword-argument label, a hash key, a
- * shadowing local or parameter). It does not rule out the rarer
- * inverse: if the cursor itself sits on a local/parameter that merely
- * happens to share a name with an unrelated global declared elsewhere,
- * this still searches for that global (there is no requirement that the
- * *origin* occurrence itself resolve to the global -- only that a
- * same-named global declaration exists somewhere reachable). A
+ * shadowing local or parameter). Explicit receiver calls and non-global
+ * function/method declarations are excluded from both origin selection and
+ * the workspace scan. A local/parameter origin cannot select a same-named
+ * global elsewhere. A
  * bare-name reference with none of those three adjacent shapes (e.g. a
  * class passed as a first-class value, `puts(ClassName)`) is not found
  * -- a known, deliberate under-approximation in the "conservative"

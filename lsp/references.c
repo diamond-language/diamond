@@ -56,6 +56,20 @@ static JsonValue *references_location(const char *uri,size_t line,size_t column,
     return result;
 }
 
+/* Methods and nested definitions are not workspace-global symbols. */
+static bool name_is_non_global_declaration(const DiamondChunk *chunk,
+        const char *name,size_t name_length,size_t offset) {
+    for(size_t index=0;index<chunk->function_count;index++) {
+        const DiamondFunction *function=chunk->functions[index];
+        if(function->declaration_start!=offset||
+           strncmp(function->name,name,name_length)!=0)continue;
+        const char *suffix=function->name+name_length;
+        if(*suffix!='\0'&&strcmp(suffix,"=")!=0)continue;
+        return function->owner_class!=UINT8_MAX||function->nested;
+    }
+    return false;
+}
+
 /* True iff `name` names a top-level function, class, interface, or
  * module anywhere in `chunk` -- deliberately not filtered by
  * declaration_start against a user_offset (unlike definition.c's own
@@ -184,6 +198,8 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
         if(token.span.length!=name_length||
            memcmp(combined+token.span.start,name,name_length)!=0)
             continue;
+        if(index>0&&tokens[index-1].kind==DIAMOND_TOKEN_DOT)continue;
+        if(name_is_non_global_declaration(&chunk,name,name_length,token.span.start))continue;
         const bool call_or_access=index+1<token_count&&
             (tokens[index+1].kind==DIAMOND_TOKEN_LEFT_PAREN||
              tokens[index+1].kind==DIAMOND_TOKEN_DOT);
@@ -256,6 +272,9 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
         free(source_copy);
         return false;
     }
+    if(receiver_has_explicit_receiver(source_copy,identifier.span.start)) {
+        free(source_copy);return false;
+    }
     char name[64];
     size_t name_length=identifier.span.length;
     if(name_length>=sizeof name)name_length=sizeof name-1;
@@ -289,7 +308,14 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
     bool is_global=false;
     if(origin_ok) {
         const DiamondChunk origin_chunk=diamond_program_chunk(origin_scratch);
-        is_global=name_is_global_symbol(&origin_chunk,name,name_length);
+        const size_t offset=path!=nullptr
+            ?diamond_resolve_source_position(path,combined,&bundle,user_offset,
+                identifier.span.line,identifier.span.column)
+            :user_offset+identifier.span.start;
+        is_global=offset!=SIZE_MAX&&
+            name_is_global_symbol(&origin_chunk,name,name_length)&&
+            !name_is_non_global_declaration(&origin_chunk,name,name_length,offset)&&
+            !receiver_name_is_local(origin_scratch,&origin_chunk,name,name_length,offset);
     }
     free(combined);free(path);diamond_source_bundle_free(&bundle);
     if(!origin_ok||!is_global)return false;
