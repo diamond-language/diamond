@@ -361,9 +361,9 @@ class ImportedSchemas < ImportedSchemaReaders
     @skins = ImportedSchema.new()
   end
 end
-def imported_skin(schemas: ImportedSchemas) = schemas.skins()
-def imported_skin_again(schemas: ImportedSchemas) = imported_skin(schemas)
 def imported_query(schemas: ImportedSchemas) = imported_skin_again(schemas).query()
+def imported_skin_again(schemas: ImportedSchemas) = imported_skin(schemas)
+def imported_skin(schemas: ImportedSchemas) = schemas.skins()
 EOF
 reader_uri="file://$work/reader_import.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reader_uri"'","text":"require \"reader_dependency\"\ndef reader_queries(schemas: ImportedSchemas)\n  schema = imported_skin_again(schemas)\n  schema.query().limit(2)\n  query = imported_query(schemas)\n  query.limit(3)\n  schemas.skins().query().limit(4)\n  imported_query(schemas).limit(5)\nend"}}}'

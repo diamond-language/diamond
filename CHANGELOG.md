@@ -22,6 +22,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Editor receiver inference follows forward-declared factory and wrapper chains
+  through direct calls and local assignments, with bounded refinement of return
+  facts. Unknown paths and unsupported recursive graphs remain unresolved.
+
 - Inherited unannotated readers retain receiver-specific completion, hover, and
   definition through call chains and local assignments. Unknown or conflicting
   writes in an ancestor or subclass leave the result unresolved.

@@ -285,6 +285,10 @@ typedef struct Compiler {
      * compile_block's own outer_* dance), and reset to "not seen" at the
      * start of each one, so an inner def's own returns never leak into an
      * outer one's inference or vice versa. */
+    /* Editor-only refinement uses a previous completed compile's return
+     * facts for forward callees, never its bytecode or checked contracts. */
+    const DiamondProgram *tooling_returns;
+    bool *tooling_forward_calls;
     bool return_flow_seen;
     uint8_t return_flow_type;
     int32_t return_flow_set;
@@ -1305,6 +1309,22 @@ static void publish_call_return_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target,const uint16_t *bindings,
         size_t binding_count) {
     if(target==nullptr)return;
+    if(target->return_type_set==DIAMOND_NO_TYPE_SET&&
+       target->declared_by_discovery&&compiler->tooling_forward_calls!=nullptr) {
+        *compiler->tooling_forward_calls=true;
+        if(compiler->tooling_returns!=nullptr) {
+            size_t index=0;
+            while(index<compiler->program->function_count&&
+                  compiler->program->functions[index]!=target)index++;
+            if(index>=compiler->tooling_returns->function_count)return;
+            const DiamondFunction *previous=compiler->tooling_returns->functions[index];
+            if(previous->declaration_start!=target->declaration_start||
+               previous->owner_class!=target->owner_class||
+               strcmp(previous->name,target->name)!=0)return;
+            target=previous;
+        }
+    }
+
     if(target->return_type_set==DIAMOND_NO_TYPE_SET) {
         /* Unlike a declared return, this remains tooling-only: it may feed
          * scope facts for receiver completion after assignment, but never
@@ -8708,11 +8728,38 @@ static bool publish_reader_return_type(Compiler *compiler,uint16_t reg,
     return true;
 }
 
+static const DiamondFunction *tooling_forward_instance_target(
+        Compiler *compiler,uint16_t receiver,DiamondSpan name) {
+    if(compiler->tooling_forward_calls==nullptr)return nullptr;
+    const uint8_t type=compiler->known_types[receiver];
+    if(type<DIAMOND_TYPE_CLASS_BASE||type>=DIAMOND_TYPE_VARIABLE_BASE)return nullptr;
+    size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
+    for(size_t depth=0;class_index<compiler->program->class_count&&
+            depth<compiler->program->class_count;depth++) {
+        const DiamondClass *class=&compiler->program->classes[class_index];
+        for(size_t index=0;index<class->method_count;index++)
+            if(singleton_call_name_equals(compiler,class->methods[index].name,name))
+                return nullptr;
+        for(size_t index=0;index<class->discovered_method_count;index++) {
+            const uint16_t id=class->discovered_methods[index];
+            if(id>=compiler->program->function_count)continue;
+            const DiamondFunction *target=compiler->program->functions[id];
+            if(target->declared_by_discovery&&
+               singleton_call_name_equals(compiler,target->name,name))return target;
+        }
+        class_index=class->superclass;
+    }
+    return nullptr;
+}
+
 static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
         uint16_t receiver,
         int32_t receiver_set_index,DiamondSpan name,
         const DiamondFunction *matching_target,const uint16_t *bindings,
         size_t binding_count) {
+    const DiamondFunction *forward_target=
+        tooling_forward_instance_target(compiler,receiver,name);
+    if(forward_target!=nullptr)matching_target=forward_target;
     if(publish_reader_return_type(compiler,reg,receiver,receiver_set_index,name)) {
         /* Only advisory scope metadata was published. */
     } else if(matching_target!=nullptr)
@@ -18894,7 +18941,9 @@ size_t diamond_combined_buffer_line(const char *combined,size_t offset) {
  * program, so it stays there rather than duplicated in here. */
 static bool run_compile_pass(const char *source, DiamondProgram *program,
                              DiamondDiagnostic *diagnostic, bool discovery_pass,
-                             size_t function_claim_start, bool debug_mode) {
+                             size_t function_claim_start, bool debug_mode,
+                             const DiamondProgram *tooling_returns,
+                             bool *tooling_forward_calls) {
     *diagnostic = (DiamondDiagnostic){};
     Compiler compiler = {
         .source = source,
@@ -18912,6 +18961,8 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
         .diagnostic = diagnostic,
         .discovery_pass = discovery_pass,
         .next_function_claim = function_claim_start,
+        .tooling_returns=tooling_returns,
+        .tooling_forward_calls=tooling_forward_calls,
         /* Never set for the discovery pass -- see the field's own
          * comment in the Compiler struct. */
         .debug_mode = discovery_pass?false:debug_mode,
@@ -19031,7 +19082,9 @@ static bool seed_program_from_template(DiamondProgram *destination,
 static bool diamond_compile_impl(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
                                  bool debug_mode,
-                                 DiamondDiagnostic *diagnostic) {
+                                 DiamondDiagnostic *diagnostic,
+                                 const DiamondProgram *tooling_returns,
+                                 bool *tooling_forward_calls) {
     /* DIAMOND_TRACE_COMPILE: an opt-in stderr report of where compile time
      * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
      * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
@@ -19061,7 +19114,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
     DiamondDiagnostic discovery_diagnostic = {0};
     const bool discovered = run_compile_pass(
         source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
-        function_claim_start, false);
+        function_claim_start, false,nullptr,nullptr);
     if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
 
     diamond_program_init(program);
@@ -19206,7 +19259,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
 
     const bool compiled=run_compile_pass(
         source,program,diagnostic,/*discovery_pass=*/false,function_claim_start,
-        debug_mode);
+        debug_mode,tooling_returns,tooling_forward_calls);
     if(compiled)
         for(size_t index=0;index<program->interface_count;index++)
             program->interfaces[index].type_sets=program->entry.type_sets;
@@ -19238,7 +19291,54 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
 
 bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic) {
-    return diamond_compile_impl(source,program,nullptr,false,diagnostic);
+    return diamond_compile_impl(source,program,nullptr,false,diagnostic,nullptr,nullptr);
+}
+
+static bool tooling_returns_equal(const DiamondProgram *left,
+        const DiamondProgram *right) {
+    if(left->function_count!=right->function_count)return false;
+    for(size_t index=0;index<left->function_count;index++) {
+        const DiamondFunction *a=left->functions[index],*b=right->functions[index];
+        if(a->inferred_return_type_set==DIAMOND_NO_TYPE_SET||
+           b->inferred_return_type_set==DIAMOND_NO_TYPE_SET) {
+            if(a->inferred_return_type_set!=b->inferred_return_type_set)return false;
+        } else if(!type_sets_structurally_equal(a->type_sets,a->type_set_count,
+                a->inferred_return_type_set,b->type_sets,b->type_set_count,
+                b->inferred_return_type_set,0))return false;
+    }
+    return true;
+}
+
+bool diamond_compile_for_tooling(const char *source,DiamondProgram *program,
+        DiamondDiagnostic *diagnostic) {
+    bool forward_calls=false;
+    if(!diamond_compile_impl(source,program,nullptr,false,diagnostic,
+            nullptr,&forward_calls))return false;
+    if(!forward_calls||program->allow_top_level_redefinition)return true;
+    /* Most documents need no additional pass. Bound editor work even for a
+     * long graph or a recursive generic graph whose shapes never stabilize.
+     * Each pass reads an immutable completed snapshot; declaration order
+     * cannot expose a half-written type-set table from the current pass. */
+    for(size_t pass=0;pass<8;pass++) {
+        DiamondProgram *previous=malloc(sizeof *previous);
+        if(previous==nullptr)return true;
+        /* Move ownership, avoiding a whole-program deep clone. No C compound
+         * literal here: DiamondProgram is much too large for a stack temporary. */
+        memcpy(previous,program,sizeof *previous);
+        memset(program,0,sizeof *program);
+        forward_calls=false;
+        if(!diamond_compile_impl(source,program,nullptr,false,diagnostic,
+                previous,&forward_calls)) {
+            diamond_program_free(program);
+            memcpy(program,previous,sizeof *program);free(previous);
+            *diagnostic=(DiamondDiagnostic){};
+            return true;
+        }
+        const bool stable=tooling_returns_equal(previous,program);
+        diamond_program_free(previous);free(previous);
+        if(stable||!forward_calls)break;
+    }
+    return true;
 }
 
 /* Compiles `source` against a `template` program (itself the result of
@@ -19268,12 +19368,12 @@ bool diamond_compile(const char *source, DiamondProgram *program,
 bool diamond_compile_incremental(const char *source, DiamondProgram *program,
                                  const DiamondProgram *template,
                                  DiamondDiagnostic *diagnostic) {
-    return diamond_compile_impl(source,program,template,false,diagnostic);
+    return diamond_compile_impl(source,program,template,false,diagnostic,nullptr,nullptr);
 }
 
 bool diamond_compile_with_breakpoints(const char *source, DiamondProgram *program,
                                       DiamondDiagnostic *diagnostic) {
-    return diamond_compile_impl(source,program,nullptr,true,diagnostic);
+    return diamond_compile_impl(source,program,nullptr,true,diagnostic,nullptr,nullptr);
 }
 
 DiamondChunk diamond_program_chunk(const DiamondProgram *program) {

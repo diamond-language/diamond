@@ -112,7 +112,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     }
     DiamondDiagnostic diagnostic;
     diamond_program_free(scratch);
-    const bool ok=diamond_compile(combined,scratch,&diagnostic);
+    const bool ok=diamond_compile_for_tooling(combined,scratch,&diagnostic);
     if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return json_null();
