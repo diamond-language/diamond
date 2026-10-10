@@ -285,6 +285,7 @@ int main(void) {
         "def forward_generic_wrapper() = forward_generic[Pet](Pet.new())\n"
         "def forward_generic[T](value: T) = value\n"
         "def forward_outer() = forward_middle()\n"
+        "def backward_consumer() = forward_outer()\n"
         "def forward_middle() = forward_inner()\n"
         "def forward_inner() = Pet.new()\n"
         "def recursive_left() = recursive_right()\n"
@@ -356,6 +357,8 @@ int main(void) {
         "  ForwardAnnotated.new().wrapped().bark()\n"
         "  forward_outer().bark()\n"
         "  forward_return().bark()\n"
+        "  backward_pet = backward_consumer()\n"
+        "  backward_pet.bark()\n"
         "  ForwardFactory.new().outer().bark()\n"
         "  ForwardFactory.outer().bark()\n"
         "  forward_pet = forward_outer()\n"
@@ -477,6 +480,7 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"forward_outer().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ForwardFactory.outer().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"forward_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"backward_pet.","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"recursive_left().",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"early_pet.","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"forward_return().","Pet",false);
