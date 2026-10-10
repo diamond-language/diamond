@@ -68,6 +68,10 @@ search over a real (if scoped) lexical symbol table:
     that exact source position, including instance, singleton, module, nested,
     setter, and reopened-class definitions. Names shared by other classes or
     top-level functions do not override the declaration under the cursor.
+    Go-to-definition uses the same position matching at function and method
+    declarations, returning that declaration's name range in its own document.
+    Setter ranges include the trailing `=`, and imported declarations use the
+    current open buffer's source map.
     Lexical locals with compiler-recorded structural facts are also hoverable;
     their position-sensitive type set is rendered from the owning function's
     table, including Callable, collection, primitive, and union graphs.

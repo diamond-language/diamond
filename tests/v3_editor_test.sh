@@ -64,6 +64,12 @@ request_at_uri() {
     read_response "$1"
 }
 request() { request_at_uri "$1" "$2" "$root_uri" "$3" "$4"; }
+check_location() {
+    local response="$1" uri="$2" line="$3" start="$4" end="$5"
+    [[ "$response" == *"\"uri\":\"$uri\""* ]]
+    [[ "$response" == *"\"start\":{\"line\":$line,\"character\":$start}"* ]]
+    [[ "$response" == *"\"end\":{\"line\":$line,\"character\":$end}"* ]]
+}
 compile_count() { grep -c '^compile: discovery ' "$work/trace"; }
 check_query() {
     local member="$1" absent="$2" parameter="$3" declaration_line="$4" response count
@@ -98,10 +104,14 @@ send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
 check_query initial refreshed count 4
 response="$(request_at_uri 14 hover "$query_uri" 4 8)"
 [[ "$response" == *'"value":"def limit(count: Int) -> Query"'* ]]
+response="$(request_at_uri 15 definition "$query_uri" 4 8)"
+check_location "$response" "$query_uri" 4 6 11
 send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$query_uri"'"},"contentChanges":[{"text":"'"$query_edited"'"}]}}'
 check_query refreshed initial size 5
 response="$(request_at_uri 14 hover "$query_uri" 5 8)"
 [[ "$response" == *'"value":"def limit(size: Int) -> Query"'* ]]
+response="$(request_at_uri 15 definition "$query_uri" 5 8)"
+check_location "$response" "$query_uri" 5 6 11
 [[ "$(cat "$work/query.di")" != *refreshed* ]]
 
 # A broken imported buffer cannot expose the preceding successful analysis.
@@ -130,6 +140,14 @@ send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument
 while IFS='|' read -r line character expected; do
     response="$(request 30 hover "$line" "$character")"
     [[ "$response" == *"\"value\":\"$expected\""* ]]
+    if (( line < 10 )); then
+        start=6
+        if (( line == 6 )); then start=11; fi
+        if (( line == 9 )); then start=4; fi
+        method="${expected#def }"; method="${method%%(*}"
+        response="$(request 31 definition "$line" "$character")"
+        check_location "$response" "$root_uri" "$line" "$start" "$((start+${#method}))"
+    fi
 done <<'EOF'
 1|8|def required(first: Int, second: Int) -> Int
 2|8|def optional(first: Int = ..., second: Int = ...) -> Int
@@ -156,6 +174,13 @@ send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument
 while IFS='|' read -r line character expected; do
     response="$(request 40 hover "$line" "$character")"
     [[ "$response" == *"\"value\":\"$expected\""* ]]
+    start=6
+    if (( line == 0 )); then start=4; fi
+    if (( line == 5 )); then start=8; fi
+    if (( line == 14 )); then start=11; fi
+    method="${expected#def }"; method="${method%%(*}"
+    response="$(request 43 definition "$line" "$character")"
+    check_location "$response" "$root_uri" "$line" "$start" "$((start+${#method}))"
 done <<'EOF'
 0|6|def shared(value: Bool) -> Bool
 2|8|def shared(value: Int) -> Int
@@ -168,7 +193,11 @@ done <<'EOF'
 EOF
 response="$(request 41 hover 1 8)"
 [[ "$response" == *'"value":"class First"'* ]]
+response="$(request 44 definition 1 8)"
+check_location "$response" "$root_uri" 12 6 11
 response="$(request 42 hover 20 10)"
+[[ "$response" == *'"result":null'* ]]
+response="$(request 45 definition 20 10)"
 [[ "$response" == *'"result":null'* ]]
 
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
@@ -177,4 +206,4 @@ send '{"jsonrpc":"2.0","method":"exit","params":{}}'
 wait "$lsp_pid"
 lsp_pid=''
 echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
-echo 'method hover parameter signatures and declarations passed'
+echo 'method hover signatures and declaration navigation passed'
