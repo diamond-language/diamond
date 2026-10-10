@@ -187,6 +187,14 @@ search over a real (if scoped) lexical symbol table:
     exactly that type variable and a class-union receiver argument. Other
     source-level type arguments and more complex inference shapes remain
     deliberately unresolved.
+    An unannotated generated `attr_reader` also publishes a tooling-only class
+    return when every discovered write to its field has the same concrete class.
+    This works through `require`, chained calls, and assignment to a local. Unknown
+    or conflicting writes (including generated writers and later class reopenings)
+    suppress it. Owners with subclasses remain unresolved because their inherited
+    readers share a function while the field's type can vary by receiver class.
+    Explicit reader annotations still take precedence; inferred reader results do
+    not add runtime checks or satisfy typed structural interfaces.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this

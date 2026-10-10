@@ -15126,6 +15126,29 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
         if(writer)function->parameter_type_sets[0]=(uint16_t)type_set;
         else function->return_type_set=(uint16_t)type_set;
     }
+    /* Match a hand-written reader's tooling inference without adding a
+     * checked return annotation. Discovery has seen writes in every reopen,
+     * including generated writers, so source order cannot hide a conflict.
+     * Inherited readers share this function: defer inference for an owner
+     * with subclasses until return facts can depend on the receiver class. */
+    if(!writer&&type_set<0&&!compiler->discovery_pass&&
+       compiler->current_class>=0) {
+        const DiamondClass *class=
+            &compiler->program->classes[(size_t)compiler->current_class];
+        bool has_subclasses=false;
+        for(size_t index=0;index<compiler->program->class_count;index++)
+            if(compiler->program->classes[index].superclass==
+               (uint8_t)compiler->current_class)has_subclasses=true;
+        if(!has_subclasses&&class->discovered_field_type_status[field]==1) {
+            DiamondFunction *outer_function=compiler->function;
+            compiler->function=function;
+            function->inferred_return_type_set=concrete_type_set(compiler,
+                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+
+                    class->discovered_field_known_class[field]));
+            compiler->function=outer_function;
+            if(compiler->failed)return;
+        }
+    }
     /* GET_IVAR/SET_IVAR/GET_IVAR_NAME/SET_IVAR_NAME/CHECK_TYPE/RETURN are
      * all emitted elsewhere via emit_instruction, which widens *every*
      * operand slot to 2 bytes uniformly (see its own comment) -- this
