@@ -22,6 +22,9 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- Array literals preserve inferred factory element types for receiver completion,
+  hover, and definition, including nested literals and unannotated returns.
+
 - Locals assigned from indexed inferred Array returns retain completion, hover,
   and definition across imports and nested indexing.
 
