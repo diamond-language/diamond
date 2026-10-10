@@ -547,6 +547,40 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"}}}'
 read_message >/dev/null
 
+# Indexed inferred call results retain advisory class facts after assignment.
+assigned_index_uri="file://$work/assigned_index.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$assigned_index_uri"'","text":"require \"receiver_dependency\"\ndef assigned_indexed_receiver()\n  pets = build_imported_pets()\n  pet = pets[0]\n  pet.bark()\n  direct_pet = build_imported_pets()[0]\n  direct_pet.bark()\nend\n\ndef imported_nested_pets()\n  [[ImportedPet.new()]]\nend\n\ndef assigned_nested_receiver()\n  nested_pet = imported_nested_pets()[0][0]\n  nested_pet.bark()\nend\n\ndef imported_pet_hash()\n  {\"one\": ImportedPet.new()}\nend\n\ndef assigned_nullable_receiver()\n  nullable_pet = imported_pet_hash()[\"one\"]\n  nullable_pet.bark()\nend\n\ndef opaque_pets(value)\n  [value]\nend\n\ndef assigned_unknown_receiver(value)\n  unknown_pet = opaque_pets(value)[0]\n  unknown_pet.bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '700 4 6' '701 6 13' '702 15 13'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$assigned_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","id":703,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$assigned_index_uri"'"},"position":{"line":4,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":704,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$assigned_index_uri"'"},"position":{"line":4,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+for request in '705 24 15' '706 33 14'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$assigned_index_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" != *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$assigned_index_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"

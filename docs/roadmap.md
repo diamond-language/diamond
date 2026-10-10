@@ -135,8 +135,9 @@ Current behavior: [language server](lsp.md). The language server recompiles comp
 documents and loses precision across some dependency and dynamic-flow boundaries.
 
 - Improve receiver facts across imported files where they still lose precision:
-  element types (`items[0].`), methods whose result varies, unrepresentable dynamic
-  results, and nullable `Hash` indexing remain unresolved.
+  element graphs of collections built from inferred call results, methods whose
+  result varies, unrepresentable dynamic results, and nullable `Hash` indexing
+  remain unresolved.
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.
 - Keep editor results conservative when a receiver cannot be proven.
