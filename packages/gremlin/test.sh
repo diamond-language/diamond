@@ -64,12 +64,18 @@ run()
 SRCEOF
 }
 
+# Use --foreground for every timeout-wrapped server: GNU timeout normally
+# relays TERM to both its child PID and its process group. If the child handles
+# the first before the group delivery, one kill becomes two signal callbacks
+# and Gremlin correctly takes its forced-shutdown path. These servers have
+# threads, not child processes, so signaling the monitored PID alone is enough.
+
 # Basic GET/POST round trip -- proves gremlin_serve's Rack-style handler
 # contract and packages/http's request-parsing/response-writing work
 # unmodified against the non-blocking connection wrapper.
 port=19410
 out="$(mktemp)"
-timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -96,7 +102,7 @@ rm -f "$out"
 # gremlin_serve's whole reason to exist is that it doesn't.
 port=19411
 out="$(mktemp)"
-timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -139,7 +145,7 @@ rm -f "$out"
 # fail outright.
 port=19412
 out="$(mktemp)"
-timeout 10 "$diamond" -e "$(server_src "$port" 3)" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(server_src "$port" 3)" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -166,7 +172,7 @@ rm -f "$out"
 # refers to the right thing for both `kill -TERM` and `wait`.
 port=19413
 out="$(mktemp)"
-timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -200,7 +206,7 @@ rm -f "$out"
 # connection, not one that already finished before the signal.
 port=19414
 out="$(mktemp)"
-timeout 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(server_src "$port")" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -307,7 +313,7 @@ end
 run()
 SRCEOF
 }
-timeout 10 "$diamond" -e "$(raw_handler_src "$port")" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" -e "$(raw_handler_src "$port")" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -347,7 +353,7 @@ def run()
 end
 run()
 SRCEOF
-timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -385,7 +391,7 @@ def run()
 end
 run()
 SRCEOF
-timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -422,7 +428,7 @@ def run()
 end
 run()
 SRCEOF
-timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -470,7 +476,7 @@ def run()
 end
 run()
 SRCEOF
-timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
