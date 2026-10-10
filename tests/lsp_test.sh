@@ -616,6 +616,40 @@ done
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$literal_array_uri"'"}}}'
 read_message >/dev/null
 
+# A spread literal joins inferred prefix, spread-element, and suffix graphs.
+spread_array_uri="file://$work/spread_array.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$spread_array_uri"'","text":"require \"receiver_dependency\"\ndef imported_spread_pets()\n  [build_imported_pet(), *build_imported_pets(), build_imported_pet()]\nend\n\ndef imported_nested_spread()\n  [*[build_imported_pets()]]\nend\n\ndef inspect_spreads(value, checked: Array[ImportedPet])\n  pets = [*build_imported_pets()]\n  pets[0].bark()\n  pet = imported_spread_pets()[0]\n  pet.bark()\n  nested = imported_nested_spread()\n  nested[0][0].bark()\n  known_spread = [build_imported_pet(), *checked]\n  known_spread[0].bark()\n  suffix = [*checked, build_imported_pet()]\n  suffix[0].bark()\n  unknown_prefix = [value, *build_imported_pets()]\n  unknown_prefix[0].bark()\n  unknown_suffix = [*build_imported_pets(), value]\n  unknown_suffix[0].bark()\n  unknown_spread = [build_imported_pet(), *value]\n  unknown_spread[0].bark()\n  mutable = [*build_imported_pets()]\n  alias_pets = mutable\n  mutable[0] = value\n  alias_pets[0].bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '720 11 10' '721 13 6' '722 15 15' '723 17 18' '724 19 12'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$spread_array_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","id":725,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$spread_array_uri"'"},"position":{"line":13,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":726,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$spread_array_uri"'"},"position":{"line":13,"character":7}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+for request in '727 21 20' '728 23 20' '729 25 20' '730 29 16'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$spread_array_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" != *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$spread_array_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
