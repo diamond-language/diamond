@@ -169,7 +169,7 @@ EOF
 
 # Position-based lookup must beat a global name collision, choose the right
 # class/nested definition, and preserve module, setter, and reopened signatures.
-declaration_source='def shared(value: Bool) -> Bool = value\nclass First\n  def shared(value: Int) -> Int = value\n  def value=(value: Int) -> Int = value\n  def outer()\n    def shared(value: String) -> String = value\n    nil\n  end\nend\nclass Second\n  def shared(value: String) -> String = value\nend\nclass First\n  def later(value: Float) -> Float = value\n  def self.shared(value: Float) -> Float = value\nend\nmodule Methods\n  def shared(value: Int = 1, *rest, &block) = nil\nend\ndef missing_site(value)\n  value.unknown()\nend\n'
+declaration_source='def shared(value: Bool) -> Bool = value\nclass First\n  def shared(value: Int) -> Int = value\n  def value=(value: Int) -> Int = value\n  def outer()\n    def shared(value: String) -> String = value\n    self.shared(1)\n  end\nend\nclass Second\n  def shared(value: String) -> String = value\nend\nclass First\n  def later(value: Float) -> Float = value\n  def self.shared(value: Float) -> Float = value\nend\nmodule Methods\n  def shared(value: Int = 1, *rest, &block) = nil\nend\ndef missing_site(value)\n  value.unknown()\nend\ndef absent(value: Bool) -> Bool = value\nclass Child < First\nend\ndef inspect_calls(first: First, second: Second, both: First | Second, child: Child, unknown, text: String)\n  first.shared(1)\n  second.shared(text)\n  both.shared(unknown)\n  child.shared(1)\n  First.shared(1.0)\n  shared(true)\n  unknown.shared(1)\n  first.absent(1)\nend\ndef inspect_local_name(first: First, shared: Int)\n  first.shared(1)\nend\ndef call_multiline(first: First)\n  first\n    # A comment and newline do not turn this into a bare function call.\n    .shared(1)\nend\n'
 send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$root_uri"'"},"contentChanges":[{"text":"'"$declaration_source"'"}]}}'
 while IFS='|' read -r line character expected; do
     response="$(request 40 hover "$line" "$character")"
@@ -200,10 +200,42 @@ response="$(request 42 hover 20 10)"
 response="$(request 45 definition 20 10)"
 [[ "$response" == *'"result":null'* ]]
 
+# Explicit receiver calls select methods before same-named globals or locals.
+while IFS='|' read -r line character target_line target_start expected; do
+    response="$(request 50 hover "$line" "$character")"
+    [[ "$response" == *"\"value\":\"$expected\""* ]]
+    response="$(request 51 definition "$line" "$character")"
+    check_location "$response" "$root_uri" "$target_line" "$target_start" "$((target_start+6))"
+done <<'EOF'
+6|11|2|6|def shared(value: Int) -> Int
+26|10|2|6|def shared(value: Int) -> Int
+27|11|10|6|def shared(value: String) -> String
+29|10|2|6|def shared(value: Int) -> Int
+30|10|14|11|def shared(value: Float) -> Float
+31|4|0|4|def shared(value: Bool) -> Bool
+36|10|2|6|def shared(value: Int) -> Int
+41|7|2|6|def shared(value: Int) -> Int
+EOF
+response="$(request 52 hover 28 9)"
+[[ "$response" == *'First#def shared(value: Int) -> Int'* ]]
+[[ "$response" == *'Second#def shared(value: String) -> String'* ]]
+[[ "$response" != *'Bool'* ]]
+response="$(request 53 definition 28 9)"
+[[ "$response" == *'"result":['* ]]
+check_location "$response" "$root_uri" 2 6 12
+check_location "$response" "$root_uri" 10 6 12
+for position in '32 12' '33 10'; do
+    read -r line character <<< "$position"
+    for method in hover definition; do
+        response="$(request 54 "$method" "$line" "$character")"
+        [[ "$response" == *'"result":null'* ]]
+    done
+done
+
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
 send '{"jsonrpc":"2.0","method":"exit","params":{}}'
 wait "$lsp_pid"
 lsp_pid=''
 echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
-echo 'method hover signatures and declaration navigation passed'
+echo 'method signatures, declarations, and receiver call precedence passed'

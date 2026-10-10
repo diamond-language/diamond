@@ -894,6 +894,17 @@ static bool locate_receiver(const char *source,size_t stop_offset,
     return true;
 }
 
+bool receiver_has_explicit_receiver(const char *source,size_t stop_offset) {
+    DiamondLexer lexer;diamond_lexer_init(&lexer,source);
+    DiamondTokenKind previous=DIAMOND_TOKEN_EOF;
+    while(true) {
+        const DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.span.start>=stop_offset)break;
+        if(token.kind!=DIAMOND_TOKEN_NEWLINE)previous=token.kind;
+    }
+    return previous==DIAMOND_TOKEN_DOT;
+}
+
 size_t receiver_resolve_classes(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
         size_t *class_indices,size_t max_candidates,bool *is_singleton) {

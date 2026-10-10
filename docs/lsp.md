@@ -72,6 +72,10 @@ search over a real (if scoped) lexical symbol table:
     declarations, returning that declaration's name range in its own document.
     Setter ranges include the trailing `=`, and imported declarations use the
     current open buffer's source map.
+    At explicit receiver calls such as `pet.shared()`, hover and definition
+    resolve the method before any same-named top-level function or local.
+    Unknown receivers and missing methods return no result rather than the
+    unrelated global function. Bare function calls keep top-level lookup.
     Lexical locals with compiler-recorded structural facts are also hoverable;
     their position-sensitive type set is rendered from the owning function's
     table, including Callable, collection, primitive, and union graphs.
