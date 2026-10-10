@@ -10,8 +10,8 @@ module Arel
       @ctes = ctes
     end
 
-    def ctes() = @ctes
-    def structure() = [@table, @predicates, @returning, @allow_all, @ctes]
+    def ctes() -> Array = @ctes
+    def structure() -> Array = [@table, @predicates, @returning, @allow_all, @ctes]
     def where(predicate) -> Delete
       Delete.new(@table, @predicates.concat([predicate]), @returning, @allow_all,
         @ctes)
@@ -68,11 +68,11 @@ module Arel
       self.render_with(renderer)
     end
 
-    def execute(db, visitor = nil)
+    def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
-    def to_a(db, visitor = nil)
+    def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
     end

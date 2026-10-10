@@ -14,9 +14,9 @@ module Arel
   # values in a VALUES row, and named-constraint conflict targets --
   # SQLiteVisitor's own supports_extension? explicitly excludes both.
   class PostgreSQLVisitor < Visitor
-    def visitor_name() = "PostgreSQL"
+    def visitor_name() -> String = "PostgreSQL"
     def quote_identifier(name: String) -> String = arel_quote_identifier(name)
-    def supports_extension?(name: String) = true
+    def supports_extension?(name: String) -> Bool = true
     def render_pagination(limit_value, offset_value, params: Array,
                           bind_values = true) -> String
       sql = ""

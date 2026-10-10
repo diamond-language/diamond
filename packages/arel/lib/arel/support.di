@@ -17,7 +17,7 @@ interface ArelReplaceableNode
   def arel_with_children(replacements: Array)
 end
 
-def arel_array(value)
+def arel_array(value) -> Array
   if value is Array
     value
   else

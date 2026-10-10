@@ -6,9 +6,9 @@ module Arel
       @predicate = predicate
       @kind = kind
     end
-    def table() = @table
+    def table() -> Arel::Table = @table
     def predicate() = @predicate
-    def kind() = @kind
+    def kind() -> String = @kind
   end
 
   class Exists
@@ -17,7 +17,7 @@ module Arel
       @negated = negated
     end
     def query() = @query
-    def negated?() = @negated
+    def negated?() -> Bool = @negated
     def and_also(other) -> Logical = Logical.new(self, "AND", other)
     def or_else(other) -> Logical = Logical.new(self, "OR", other)
     def not_() -> Exists = Exists.new(@query, !@negated)
@@ -42,9 +42,9 @@ module Arel
       @query = query
       @recursive = recursive
     end
-    def name() = @name
+    def name() -> String = @name
     def query() = @query
-    def recursive?() = @recursive
+    def recursive?() -> Bool = @recursive
   end
 
 end

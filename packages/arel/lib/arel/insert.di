@@ -15,8 +15,8 @@ module Arel
       @ctes = ctes
     end
 
-    def ctes() = @ctes
-    def structure() = [@table, @rows, @returning, @source_columns, @source_query,
+    def ctes() -> Array = @ctes
+    def structure() -> Array = [@table, @rows, @returning, @source_columns, @source_query,
       @conflict_target, @conflict_ignore, @conflict_assignments, @ctes]
     def values(attributes: Hash) -> Insert
       Insert.new(@table, [attributes], @returning, [], nil, @conflict_target,
@@ -168,11 +168,11 @@ module Arel
       self.render_with(renderer)
     end
 
-    def execute(db, visitor = nil)
+    def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
-    def to_a(db, visitor = nil)
+    def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
     end

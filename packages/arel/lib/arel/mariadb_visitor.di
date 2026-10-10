@@ -49,7 +49,7 @@ module Arel
   # `VALUES` list, and integer bitwise operators all match SQLite/PostgreSQL
   # exactly.
   class MariaDBVisitor < Visitor
-    def visitor_name() = "MariaDB"
+    def visitor_name() -> String = "MariaDB"
     def quote_identifier(name: String) -> String = arel_quote_identifier_backtick(name)
     def supports_extension?(name: String) -> Bool
       name != "conflict-target predicates" && name != "named-constraint conflict targets" &&

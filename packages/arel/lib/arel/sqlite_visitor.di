@@ -1,7 +1,7 @@
 module Arel
 
   class SQLiteVisitor < Visitor
-    def visitor_name() = "SQLite"
+    def visitor_name() -> String = "SQLite"
     def quote_identifier(name: String) -> String = arel_quote_identifier(name)
     # Every other capability is genuine SQLite syntax; these two are not --
     # verified directly (both raise a real SQLite syntax error) rather than

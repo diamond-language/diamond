@@ -14,8 +14,8 @@ module Arel
       @sql = sql
     end
 
-    def query(params = nil) = @db.query(@sql, params)
-    def execute(params = nil) = @db.execute(@sql, params)
+    def query(params = nil) -> Array = @db.query(@sql, params)
+    def execute(params = nil) -> Int = @db.execute(@sql, params)
   end
 
   # Reuses one compiled `Statement` per (connection, SQL text) pair

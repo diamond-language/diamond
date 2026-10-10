@@ -11,8 +11,8 @@ module Arel
       @ctes = ctes
     end
 
-    def ctes() = @ctes
-    def structure() = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
+    def ctes() -> Array = @ctes
+    def structure() -> Array = [@table, @assignments, @predicates, @returning, @allow_all, @ctes]
     def set(assignments: Hash) -> Update
       Update.new(@table, assignments, @predicates, @returning, @allow_all, @ctes)
     end
@@ -90,11 +90,11 @@ module Arel
       self.render_with(renderer)
     end
 
-    def execute(db, visitor = nil)
+    def execute(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).execute(params)
     end
-    def to_a(db, visitor = nil)
+    def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       PreparedStatements.for(db, sql).query(params)
     end

@@ -36,7 +36,7 @@ module Arel
   #   works there. See @mysql_insert_uses_row_alias's own comment below for
   #   how the two forms are chosen per render.
   class MySQLVisitor < Visitor
-    def visitor_name() = "MySQL"
+    def visitor_name() -> String = "MySQL"
     def quote_identifier(name: String) -> String = arel_quote_identifier_backtick(name)
     def supports_extension?(name: String) -> Bool
       name != "conflict-target predicates" && name != "named-constraint conflict targets" &&

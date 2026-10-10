@@ -17,13 +17,13 @@ module Arel
       @offset_value = offset_value
     end
     def left() = @left
-    def operator() = @operator
+    def operator() -> String = @operator
     def right() = @right
-    def orderings() = @orderings
-    def limit_value() = @limit_value
-    def offset_value() = @offset_value
-    def projection_count() = @left.projection_count()
-    def projection_count_known?() = true
+    def orderings() -> Array = @orderings
+    def limit_value() -> Int | Nil = @limit_value
+    def offset_value() -> Int | Nil = @offset_value
+    def projection_count() -> Int = @left.projection_count()
+    def projection_count_known?() -> Bool = true
 
     def order(ordering) -> CompoundQuery
       CompoundQuery.new(@left, @operator, @right,
@@ -74,7 +74,7 @@ module Arel
       self.render_with(renderer)
     end
 
-    def to_a(db, visitor = nil)
+    def to_a(db, visitor = nil) -> Array
       sql, params = self.to_sql(visitor)
       db.query(sql, params)
     end
