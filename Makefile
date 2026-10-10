@@ -207,7 +207,8 @@ OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 # completion_compute_with_resolver directly (in-process, no LSP
 # transport) rather than re-implementing candidate-list logic -- these
 # are its own transitive dependencies (compile_buffer.c for the shared
-# "build the buffer diamond_compile expects" step, receiver.c for
+# "build the buffer diamond_compile expects" step, analysis_cache.c for
+# reusing completed tooling analysis, receiver.c for
 # receiver.method resolution, json.c for the CompletionItem-shaped
 # result), deliberately not the full $(LSP_SOURCES) below: no
 # document.c (the REPL has no open-document table -- see
@@ -218,7 +219,7 @@ OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 # in $(BUILD_DIR) (a flat directory) from src/'s own objects -- no
 # actual basename collision exists today, but this stays true even if
 # one is ever introduced.
-REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c \
+REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_cache.c \
 	lsp/receiver.c lsp/json.c
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
@@ -618,8 +619,15 @@ $(BUILD_DIR)/receiver_test: tests/receiver_test.c lsp/receiver.c lsp/compile_buf
 test-receiver: $(BUILD_DIR)/receiver_test
 	$(BUILD_DIR)/receiver_test
 
-test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test
+$(BUILD_DIR)/analysis_cache_test: tests/analysis_cache_test.c lsp/analysis_cache.c lsp/analysis_cache.h lsp/compile_buffer.c \
+		$(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) \
+		lsp/analysis_cache.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
+
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/analysis_cache_test
 	$(BUILD_DIR)/receiver_test
+	bash tests/analysis_cache_test.sh
 	bash tests/lsp_test.sh
 
 DAP_SOURCES := $(wildcard dap/*.c)

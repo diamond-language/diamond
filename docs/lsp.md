@@ -212,6 +212,11 @@ search over a real (if scoped) lexical symbol table:
     return paths and unsupported recursive graphs remain unresolved; very long
     chains may exceed the refinement budget. Runtime compilation, diagnostics,
     and symbol indexing retain the ordinary two-pass compile.
+    Completion, hover, and definition share one cached analysis of the most
+    recently requested source bundle. Each request reloads imports and open
+    document overrides before comparing the complete source, so root edits,
+    unsaved import edits, and disk changes invalidate the cache. Requests keep
+    their own source maps. A failed compile never returns a stale cached result.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this
