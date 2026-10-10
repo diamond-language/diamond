@@ -34,11 +34,10 @@
  * -- a known, deliberate under-approximation in the "conservative"
  * direction: every location this does report is a real occurrence of
  * the name in a resolvable position, but not every real reference is
- * guaranteed to be found. `context.includeDeclaration` is not read; a
- * function's declaration is always included when found (it's always
- * followed by its own `(`), and a class/module/interface's own
- * declaration is now covered by the same header rule above -- the
- * common client default in both cases.
+ * guaranteed to be found. `include_declaration` controls whether function
+ * declarations and class/module/interface headers (including reopenings)
+ * are included. The protocol handler defaults to including declarations
+ * when context.includeDeclaration is absent.
  *
  * Returns a (possibly empty) `Location[]` JsonValue when the identifier
  * under the cursor names a workspace-visible top-level declaration,
@@ -48,7 +47,8 @@
  * symbol, one unparseable file among many is silently skipped rather
  * than failing the whole request. */
 JsonValue *references_compute(const DocumentTable *documents,const char *workspace_root,
-    const char *uri,const char *text,size_t length,size_t line,size_t character);
+    const char *uri,const char *text,size_t length,size_t line,size_t character,
+    bool include_declaration);
 
 /* Computes a textDocument/rename result: a WorkspaceEdit renaming every
  * workspace occurrence of the top-level symbol under the cursor to

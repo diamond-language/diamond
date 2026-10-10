@@ -248,7 +248,7 @@ request_symbol_action() {
     if [[ "$method" == rename ]]; then
         extra=',"newName":"renamed_shared"'
     else
-        extra=',"context":{"includeDeclaration":true}'
+        extra=',"context":{"includeDeclaration":'"${5:-true}"'}'
     fi
     send '{"jsonrpc":"2.0","id":'"$id"',"method":"textDocument/'"$method"'","params":{"textDocument":{"uri":"'"$root_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}'"$extra"'}}'
     read_response "$id"
@@ -268,6 +268,12 @@ for position in '0 6' '31 4'; do
     check_location "$response" "$shared_user_uri" 2 2 8
     count="$(printf '%s' "$response" | grep -o '"uri":' | wc -l | tr -d '[:space:]')"
     [[ "$count" == 3 ]]
+    response="$(request_symbol_action 63 references "$line" "$character" false)"
+    [[ "$response" != *'"start":{"line":0,"character":4}'* ]]
+    check_location "$response" "$root_uri" 31 2 8
+    check_location "$response" "$shared_user_uri" 2 2 8
+    count="$(printf '%s' "$response" | grep -o '"uri":' | wc -l | tr -d '[:space:]')"
+    [[ "$count" == 2 ]]
     response="$(request_symbol_action 62 rename "$line" "$character")"
     [[ "$response" == *"\"$root_uri\":["* ]]
     [[ "$response" == *"\"$shared_user_uri\":["* ]]
@@ -281,6 +287,39 @@ for position in '0 6' '31 4'; do
 done
 [[ "$(cat "$work/main.di")" != *renamed_shared* ]]
 
+# Declaration-only types return an empty array, not null, when excluded.
+# Reopened class headers are declarations too; constructor calls remain.
+context_source='class ContextClass\nend\nclass ContextClass\nend\nmodule ContextModule\nend\ninterface ContextInterface\nend\ndef context_usage() = ContextClass.new()\ndef context_unused() = 1\ndef context_typed(value: ContextClass) -> ContextClass = value\n'
+printf '%b' "$context_source" > "$work/context.di"
+context_uri="file://$work/context.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$context_uri"'","text":"'"$context_source"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+for position in '0 8 2' '4 9 0' '6 12 0' '9 8 0'; do
+    read -r line character uses <<< "$position"
+    for include in true false omitted; do
+        extra=''
+        if [[ "$include" != omitted ]]; then
+            extra=',"context":{"includeDeclaration":'"$include"'}'
+        fi
+        send '{"jsonrpc":"2.0","id":64,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$context_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}'"$extra"'}}'
+        response="$(read_response 64)"
+        if [[ "$include" == false ]]; then
+            if (( uses == 0 )); then
+                [[ "$response" == *'"result":[]'* ]]
+            else
+                [[ "$response" != *'"start":{"line":0,'* ]]
+                [[ "$response" != *'"start":{"line":2,'* ]]
+                check_location "$response" "$context_uri" 8 22 34
+                check_location "$response" "$context_uri" 10 25 37
+            fi
+        else
+            [[ "$response" == *"\"start\":{\"line\":$line,"* ]]
+            if (( line == 0 )); then check_location "$response" "$context_uri" 2 6 18; fi
+        fi
+    done
+done
+
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
 send '{"jsonrpc":"2.0","method":"exit","params":{}}'
@@ -289,3 +328,4 @@ lsp_pid=''
 echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
 echo 'method signatures, declarations, and receiver call precedence passed'
 echo 'global references and rename exclude colliding methods and locals'
+echo 'reference context excludes declarations and preserves usages and rename'
