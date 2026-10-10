@@ -205,6 +205,13 @@ search over a real (if scoped) lexical symbol table:
     annotations still win, and returns from nested definitions or blocks do not
     leak into the enclosing function's facts. Nonlocal block returns remain
     conservatively unresolved. These facts do not become runtime return contracts.
+    Completion, hover, definition, and references refine inferred forward-call
+    returns using completed compiler snapshots, so short factory/wrapper chains
+    can resolve even when their callees are declared later. Refinement stops when
+    return facts stabilize and is limited to eight additional passes. Unknown
+    return paths and unsupported recursive graphs remain unresolved; very long
+    chains may exceed the refinement budget. Runtime compilation, diagnostics,
+    and symbol indexing retain the ordinary two-pass compile.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this

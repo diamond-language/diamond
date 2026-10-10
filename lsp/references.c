@@ -147,7 +147,7 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
     if(combined==nullptr)return true;
     DiamondDiagnostic diagnostic;
     diamond_program_free(scratch);
-    if(!diamond_compile(combined,scratch,&diagnostic)) {
+    if(!diamond_compile_for_tooling(combined,scratch,&diagnostic)) {
         free(combined);diamond_source_bundle_free(&bundle);
         return true;
     }
@@ -285,7 +285,7 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
     }
     DiamondDiagnostic diagnostic;
     diamond_program_free(origin_scratch);
-    const bool origin_ok=diamond_compile(combined,origin_scratch,&diagnostic);
+    const bool origin_ok=diamond_compile_for_tooling(combined,origin_scratch,&diagnostic);
     bool is_global=false;
     if(origin_ok) {
         const DiamondChunk origin_chunk=diamond_program_chunk(origin_scratch);

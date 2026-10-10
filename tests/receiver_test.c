@@ -267,6 +267,47 @@ int main(void) {
         "  end\n"
         "  make_pet()\n"
         "end\n"
+        "def forward_use()\n"
+        "  early_pet = forward_outer()\n"
+        "  early_pet.bark()\n"
+        "end\n"
+        "def forward_return()\n"
+        "  return forward_outer()\n"
+        "end\n"
+        "def forward_unknown_tail(flag, value)\n"
+        "  if flag then return forward_inner() end\n"
+        "  value\n"
+        "end\n"
+        "def forward_unknown_early(flag, value)\n"
+        "  if flag then return value end\n"
+        "  forward_inner()\n"
+        "end\n"
+        "def forward_generic_wrapper() = forward_generic[Pet](Pet.new())\n"
+        "def forward_generic[T](value: T) = value\n"
+        "def forward_outer() = forward_middle()\n"
+        "def forward_middle() = forward_inner()\n"
+        "def forward_inner() = Pet.new()\n"
+        "def recursive_left() = recursive_right()\n"
+        "def recursive_right() = recursive_left()\n"
+        "class ForwardFactory\n"
+        "  def self.outer() = ForwardFactory.middle()\n"
+        "  def self.middle() = ForwardFactory.inner()\n"
+        "  def self.inner() = Leaf.new()\n"
+        "  def outer() = self.middle()\n"
+        "  def middle() = self.inner()\n"
+        "  def inner() = Pet.new()\n"
+        "end\n"
+        "class ForwardBase\n"
+        "  def item() = Leaf.new()\n"
+        "end\n"
+        "class ForwardOverride < ForwardBase\n"
+        "  def wrapped() = self.item()\n"
+        "  def item() = Pet.new()\n"
+        "end\n"
+        "class ForwardAnnotated < ForwardBase\n"
+        "  def wrapped() = self.item()\n"
+        "  def item() -> Pet = Pet.new()\n"
+        "end\n"
         "def inspect_receivers()\n"
         "  LateSchemaHolder.new().pet().bark()\n"
         "  MutableHolder.new().pet().bark()\n"
@@ -308,6 +349,18 @@ int main(void) {
         "  annotated_wrapper().bark()\n"
         "  block_wrapper(true).bark()\n"
         "  nonlocal_wrapper(true).bark()\n"
+        "  ForwardOverride.new().wrapped().bark()\n"
+        "  forward_unknown_tail(true, nil).bark()\n"
+        "  forward_unknown_early(true, nil).bark()\n"
+        "  forward_generic_wrapper().bark()\n"
+        "  ForwardAnnotated.new().wrapped().bark()\n"
+        "  forward_outer().bark()\n"
+        "  forward_return().bark()\n"
+        "  ForwardFactory.new().outer().bark()\n"
+        "  ForwardFactory.outer().bark()\n"
+        "  forward_pet = forward_outer()\n"
+        "  forward_pet.bark()\n"
+        "  recursive_left().bark()\n"
         "  holder = SchemaHolder.new()\n"
         "  holder.pet().bark()\n"
         "  held_pet = holder.pet()\n"
@@ -340,7 +393,7 @@ int main(void) {
     DiamondProgram *program=calloc(1,sizeof *program);
     if(program==nullptr) {free(combined);return 1;}
     DiamondDiagnostic diagnostic;
-    if(!diamond_compile(combined,program,&diagnostic)) {
+    if(!diamond_compile_for_tooling(combined,program,&diagnostic)) {
         fprintf(stderr,"receiver test compile failed: %s\n",diagnostic.message);
         free(combined);free(program);return 1;
     }
@@ -421,6 +474,18 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"annotated_wrapper().","Leaf",false);
     failed|=check_receiver(program,&chunk,combined,"block_wrapper(true).","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"nonlocal_wrapper(true).",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"forward_outer().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardFactory.outer().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"forward_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"recursive_left().",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"early_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"forward_return().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardFactory.new().outer().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardOverride.new().wrapped().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"forward_unknown_tail(true, nil).",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"forward_unknown_early(true, nil).",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"forward_generic_wrapper().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ForwardAnnotated.new().wrapped().","Pet",false);
     diamond_program_free(program);
     free(program);free(combined);
     return failed?1:0;
