@@ -899,6 +899,9 @@ itself.
 
 ## Modules
 
+A program may declare up to 255 distinct modules, including the prelude and
+all required cuts. Reopening a module does not consume another slot.
+
 `module Name ... end` declares a module; `include Name` copies its method
 descriptors into the receiving class (mixin-style composition, not
 inheritance). A class's (or module's) own methods always beat

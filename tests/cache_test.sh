@@ -166,4 +166,15 @@ with_strings="$(stat -c %s "$work/strings.dic" 2>/dev/null || stat -f %z "$work/
 [[ "$(cd "$work" && "$diamond" strings.di)" == "400" ]]
 count=$((count + 1))
 
+# A full module table must survive serialization, including calls and
+# includes referring to its final entry.
+cp tests/cases/module_limit_boundary.di "$work/modules.di"
+out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" modules.di 2>&1)"
+[[ "$out" == *"cache: wrote"* ]]
+[[ "$out" == *$'\n'"[42, 42, 42, 42]" ]]
+out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" modules.di 2>&1)"
+[[ "$out" == *"cache: hit"* ]]
+[[ "$out" == *$'\n'"[42, 42, 42, 42]" ]]
+count=$((count + 1))
+
 echo "$count cache tests passed"

@@ -17020,9 +17020,11 @@ static uint16_t compile_module(Compiler *compiler) {
          * top without resetting anything. */
     } else {
         if(compiler->program->module_count==DIAMOND_MAX_MODULES) {
-            fail(compiler,name,"too many modules: a program holds at most 32 "
-                 "modules, cuts included (a namespace of class methods can be a "
-                 "class instead)");return 0;
+            char message[128];
+            snprintf(message,sizeof message,
+                "too many modules: a program holds at most %u modules, prelude and cuts included",
+                (unsigned)DIAMOND_MAX_MODULES);
+            fail(compiler,name,message);return 0;
         }
         index=(int)compiler->program->module_count++;
         module=&compiler->program->modules[(size_t)index];
@@ -18622,9 +18624,8 @@ void diamond_program_init(DiamondProgram *program) {
      * Two memsets, not one covering the whole struct: `classes`/
      * `interfaces`/`modules` (and the class_count/interface_count/
      * module_count fields sitting between them) are deliberately
-     * skipped, since they're ~14.2MB of DiamondProgram's own ~14.2MB
-     * total size -- confirmed directly (`sizeof(DiamondProgram)`), and a
-     * full memset of that scale measured at several milliseconds per
+     * skipped: these tables dominate DiamondProgram's size, and a
+     * full memset measured at several milliseconds per
      * call, every single diamond_compile/diamond_compile_incremental
      * call regardless of source size (see diamond_program_init_fresh's
      * own comment and CHANGELOG.md's "Performance").
@@ -18867,15 +18868,8 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
  * slots up except by an ordinary, successful by-name reference. */
 static bool seed_program_from_template(DiamondProgram *destination,
                                        const DiamondProgram *template) {
-    /* Only template's own *used* prefix of each fixed-size table, not
-     * the whole DIAMOND_MAX_CLASSES=180/DIAMOND_MAX_INTERFACES=32/
-     * DIAMOND_MAX_MODULES=32-sized array (~14MB combined, dwarfing
-     * anything diamond_compile_incremental saves by skipping the
-     * template's own lex/parse/codegen -- measured directly, not
-     * assumed): `destination` was just diamond_program_init'd, whose own
-     * memset already leaves every slot past what's copied here in
-     * exactly the same all-zero state a full-array copy would have left
-     * them in anyway, since template's own unused suffix is zero too. */
+    /* Copy only the used prefix of each metadata table. Unused slots are
+     * initialized explicitly when claimed, just as after program_init. */
     memcpy(destination->classes,template->classes,
         template->class_count*sizeof destination->classes[0]);
     destination->class_count=template->class_count;
