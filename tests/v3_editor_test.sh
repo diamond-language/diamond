@@ -350,6 +350,53 @@ count="$(printf '%s' "$response" | grep -o '"newText":"RenamedContext"' | wc -l 
 [[ "$count" == 7 ]]
 [[ "$(cat "$work/context_user.di")" != *RenamedContext* ]]
 
+# Unrelated workspace globals also collide, across every declaration kind.
+cat > "$work/collisions.di" <<'EOF'
+def ExistingFunction() -> Int = 1
+class ExistingClass
+end
+module ExistingModule
+end
+interface ExistingInterface
+end
+EOF
+collision_uri="file://$work/collisions.di"
+rename_context() {
+    send '{"jsonrpc":"2.0","id":66,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$context_uri"'"},"position":{"line":10,"character":44},"newName":"'"$1"'"}}'
+    read_response 66
+}
+for target in ExistingFunction ExistingClass ExistingModule ExistingInterface ContextModule ContextInterface context_import StringBuilder array_first shared; do
+    response="$(rename_context "$target")"
+    [[ "$response" == *'"result":null'* ]]
+done
+# Cross-kind collision: a function cannot be renamed to an existing class.
+send '{"jsonrpc":"2.0","id":67,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$root_uri"'"},"position":{"line":0,"character":6},"newName":"ExistingClass"}}'
+response="$(read_response 67)"
+[[ "$response" == *'"result":null'* ]]
+# An unsaved declaration takes effect immediately and disappears on close.
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$collision_uri"'","text":"class UnsavedTarget\nend\n"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+response="$(rename_context UnsavedTarget)"
+[[ "$response" == *'"result":null'* ]]
+# Disk-only declarations replaced by the open text no longer collide.
+response="$(rename_context ExistingClass)"
+count="$(printf '%s' "$response" | grep -o '"newText":"ExistingClass"' | wc -l | tr -d '[:space:]')"
+[[ "$count" == 7 ]]
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$collision_uri"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+response="$(rename_context ExistingClass)"
+[[ "$response" == *'"result":null'* ]]
+# Fresh names, the unchanged name (including reopenings), and method-only
+# names remain valid and yield the complete seven edits.
+for target in UnsavedTarget ContextClass later; do
+    response="$(rename_context "$target")"
+    count="$(printf '%s' "$response" | grep -o '"newText":"'"$target"'"' | wc -l | tr -d '[:space:]')"
+    [[ "$count" == 7 ]]
+done
+[[ "$(cat "$work/collisions.di")" != *UnsavedTarget* ]]
+
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
 send '{"jsonrpc":"2.0","method":"exit","params":{}}'
@@ -360,3 +407,4 @@ echo 'method signatures, declarations, and receiver call precedence passed'
 echo 'global references and rename exclude colliding methods and locals'
 echo 'reference context excludes declarations and preserves usages and rename'
 echo 'references and rename include return-type annotations across imports'
+echo 'rename rejects global collisions and respects unsaved document lifetimes'
