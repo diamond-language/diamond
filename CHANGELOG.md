@@ -20,6 +20,12 @@ authoritative fine-grained record.
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
   holds at most 255 ..." instead of "expected valid module name".
 
+### Tooling
+
+- Editor completion, hover, and definition follow unannotated `attr_reader` results
+  when the compiler knows the field's class, including across required files and
+  chained calls. Unknown writes and subclassed owners remain unresolved.
+
 ## 0.12.1 — 2026-10-08
 
 0.12.0 was prepared but never tagged; its changes are part of this release.

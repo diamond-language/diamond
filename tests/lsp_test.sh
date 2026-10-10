@@ -344,6 +344,44 @@ def build_conflicting_union_array_receiver(flag)
   flag ? UnionArrayLeft.new() : UnionArrayOther.new()
 end
 EOF
+# Generated readers retain a proven field class across a require boundary,
+# including a subsequent unannotated method call and assignment of its result.
+cat > "$work/reader_dependency.di" <<'EOF'
+class ImportedQuery
+  def limit(count: Int) -> ImportedQuery = self
+end
+class ImportedSchema
+  def query() = ImportedQuery.new()
+end
+class ImportedSchemas
+  attr_reader skins
+  def initialize()
+    @skins = ImportedSchema.new()
+  end
+end
+EOF
+reader_uri="file://$work/reader_import.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reader_uri"'","text":"require \"reader_dependency\"\ndef reader_queries(schemas: ImportedSchemas)\n  schema = schemas.skins()\n  schema.query().limit(2)\n  query = schemas.skins().query()\n  query.limit(3)\n  schemas.skins().query().limit(4)\nend"}}}'
+response="$(read_message)"
+[[ "$response" == *'"diagnostics":[]'* ]]
+count=$((count + 1))
+for position in '3,17' '5,8' '6,26'; do
+    line="${position%,*}"; character="${position#*,}"
+    send '{"jsonrpc":"2.0","id":2000,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reader_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}}}'
+    response="$(read_message)"
+    [[ "$response" == *'"label":"limit","kind":3'* ]]
+    count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":2001,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$reader_uri"'"},"position":{"line":5,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *'def limit('* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":2002,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$reader_uri"'"},"position":{"line":5,"character":10}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"file://$work/reader_dependency.di\""* ]]
+[[ "$response" == *'"start":{"line":1,"character":6}'* ]]
+count=$((count + 1))
+
 receiver_import_uri="file://$work/receiver_import.di"
 receiver_dependency_uri="file://$work/receiver_dependency.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\n  branch = ImportedFactory.build()\n  leaf = branch.leaf()\n  leaf.ping()\nend"}}}'
