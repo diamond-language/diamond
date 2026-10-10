@@ -90,6 +90,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     name[name_length]='\0';
     const size_t identifier_line=identifier.span.line;
     const size_t identifier_column=identifier.span.column;
+    const bool explicit_receiver=receiver_has_explicit_receiver(source_copy,identifier.span.start);
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
@@ -130,7 +131,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         found=true;
         break;
     }
-    for(size_t index=0;index<chunk.function_count&&!found;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.function_count&&!found;index++) {
         const DiamondFunction *function=chunk.functions[index];
         /* declaration_start>=user_offset excludes lib/core.di's own
          * prelude -- see definition.h for why a prelude match returns
@@ -145,7 +146,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             found=true;
         }
     }
-    for(size_t index=0;index<chunk.class_count&&!found;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.class_count&&!found;index++) {
         const DiamondClass *class=&chunk.classes[index];
         if(class->declaration_start>=user_offset&&strcmp(class->name,name)==0) {
             declaration_line=class->declaration_line;
@@ -155,7 +156,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             found=true;
         }
     }
-    for(size_t index=0;index<chunk.interface_count&&!found;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.interface_count&&!found;index++) {
         const DiamondInterface *interface=&chunk.interfaces[index];
         if(interface->declaration_start>=user_offset&&strcmp(interface->name,name)==0) {
             declaration_line=interface->declaration_line;
@@ -165,7 +166,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             found=true;
         }
     }
-    for(size_t index=0;index<chunk.module_count&&!found;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.module_count&&!found;index++) {
         const DiamondModule *module=&chunk.modules[index];
         if(module->declaration_start>=user_offset&&strcmp(module->name,name)==0) {
             declaration_line=module->declaration_line;
@@ -181,10 +182,8 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         /* An exact declaration or a top-level name selects one location. */
         matched_functions[match_count++]=nullptr;
     } else {
-        /* Not a top-level function/class/interface/module name -- see
-         * whether `identifier` is instead a method name reached through
-         * `receiver.method(...)` (lsp/receiver.h), possibly against
-         * several candidate classes for a union receiver. */
+        /* Resolve explicit receiver calls and other symbol misses against
+         * receiver.method(...), possibly with several union candidates. */
         size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
         const size_t candidate_count=identifier_offset!=SIZE_MAX
             ? receiver_resolve_classes(scratch,&chunk,combined,identifier_offset,

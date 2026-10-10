@@ -229,6 +229,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     name[name_length]='\0';
     const size_t identifier_line=identifier.span.line;
     const size_t identifier_column=identifier.span.column;
+    const bool explicit_receiver=receiver_has_explicit_receiver(source_copy,identifier.span.start);
     free(source_copy);
 
     char *path=diagnostics_uri_to_path(uri);
@@ -273,11 +274,11 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         free(signature);
         return result;
     }
-    if(strcmp(name,"block_given?")==0) {
+    if(!explicit_receiver&&strcmp(name,"block_given?")==0) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return hover_result("block_given?() -> Bool");
     }
-    for(size_t index=0;index<chunk.function_count;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.function_count;index++) {
         const DiamondFunction *function=chunk.functions[index];
         if(function->owner_class==UINT8_MAX&&!function->nested&&
            strcmp(function->name,name)==0) {
@@ -289,7 +290,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
             return result;
         }
     }
-    for(size_t index=0;index<chunk.class_count;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.class_count;index++) {
         if(strcmp(chunk.classes[index].name,name)==0) {
             char *signature=format_class_signature(&chunk,&chunk.classes[index]);
             free(combined);free(path);diamond_source_bundle_free(&bundle);
@@ -299,7 +300,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
             return result;
         }
     }
-    for(size_t index=0;index<chunk.interface_count;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.interface_count;index++) {
         if(strcmp(chunk.interfaces[index].name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"interface %s",name);
@@ -307,7 +308,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
             return hover_result(signature);
         }
     }
-    for(size_t index=0;index<chunk.module_count;index++) {
+    for(size_t index=0;!explicit_receiver&&index<chunk.module_count;index++) {
         if(strcmp(chunk.modules[index].name,name)==0) {
             char signature[96];
             (void)snprintf(signature,sizeof signature,"module %s",name);
@@ -316,11 +317,10 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         }
     }
 
-    /* Fallback: not a top-level function/class/interface/module name --
-     * see whether `identifier` is instead a method name reached through
-     * `receiver.method(...)` (lsp/receiver.h). */
+    /* Explicit receiver calls skip unrelated symbols and locals. Other
+     * symbol misses may still refer to a lexical local. */
     const DiamondFunction *local_owner=nullptr;uint16_t local_set=0;
-    if(identifier_offset!=SIZE_MAX&&receiver_resolve_local_type_set(scratch,
+    if(!explicit_receiver&&identifier_offset!=SIZE_MAX&&receiver_resolve_local_type_set(scratch,
             &chunk,name,name_length,identifier_offset,&local_owner,&local_set)) {
         char *type=format_local_type_set(&chunk,local_owner,local_set);
         free(combined);free(path);diamond_source_bundle_free(&bundle);

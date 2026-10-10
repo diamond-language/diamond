@@ -6,6 +6,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* Whether the preceding non-newline token is a dot. Distinguishes an explicit
+ * receiver even when its class cannot be resolved; such a call must not fall
+ * back to a same-named top-level symbol. stop_offset is the method name start. */
+bool receiver_has_explicit_receiver(const char *source,size_t stop_offset);
+
 /* Resolves the class(es) named by a `receiver.` expression's receiver,
  * for the forms the LSP understands (see docs/lsp.md): a literal class
  * name (`Author.find`), `self` inside an instance method or a
