@@ -14,6 +14,7 @@ authoritative fine-grained record.
   it; a multi-worker Gremlin server using constants failed on every worker but the main thread.
   Each thread gets its own deep copy; a constant whose value cannot cross a thread boundary stays
   unset, and the error now says why.
+- A `Supervisor` child sees the constants defined when `add_child` ran (a fresh copy on each restart).
 - A `Regexp` can be passed to `Thread.new` and held in a constant a thread reads (it is compiled
   again in the receiving thread).
 - Exceeding a program's class, module or interface limit reports "too many modules: a program

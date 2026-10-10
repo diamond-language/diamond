@@ -81,7 +81,8 @@ again). A constant defined after `Thread.new`, or whose value cannot cross
 the boundary (a `File`, a `Socket`, ...), is unset in that thread, and reading
 it there raises `uninitialized constant`. The copy is the thread's own, like
 an argument: mutating a constant's array in one thread does not show in
-another. Supervisor children do not receive constants.
+another. A `Supervisor` child gets the constants defined when `add_child` ran, a fresh copy
+for every restart.
 
 ## Results and exceptions
 

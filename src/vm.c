@@ -2273,6 +2273,9 @@ static void *supervisor_child_entry_trampoline(void *argument) {
          * already copied into it this iteration. */
         DiamondValue run_args[DIAMOND_MAX_ARGUMENTS]={};
         bool copy_failed=false;
+        run_vm->spawned_thread=true;
+        copy_namespace_constants_into_vm(child->args_vm,run_vm,
+            child->program_template->classes,child->program_template->classes);
         const size_t args_mark=run_vm->gc_protected_count;
         for(uint8_t index=0;index<child->arg_count;index++) {
             if(!copy_value_into_vm(run_vm,child->args[index],nullptr,
@@ -3700,13 +3703,13 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
     return copied;
 }
 
-/* Gives a spawned Thread's VM the constants the program had defined when
- * Thread.new ran. The thread never executes the program's top-level
+/* Gives a spawned Thread or Supervisor child the constants defined when
+ * Thread.new or add_child ran. The thread never executes the program's top-level
  * statements (that is what sets constants), so without this every
  * module-level constant, even `PAGE_SIZE = 30`, would be unset in it. Each
  * value is deep-copied like a Thread.new argument, so the thread owns its
  * own copy and nothing is shared. A constant whose value cannot cross a
- * thread boundary (a Regexp, a File, a capturing closure, ...) is left unset
+ * thread boundary (a File, a capturing closure, ...) is left unset
  * in the thread, and reading it there raises the usual "uninitialized
  * constant" error. Each copy is stored immediately, where the collector
  * reaches it, so no allocation happens between producing it and rooting it. */
@@ -11163,6 +11166,13 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
     diamond_vm_init(args_vm);
+    /* The child's constants, as of now: args_vm lives as long as the child,
+     * and every attempt copies from it (the adding thread's own heap is not
+     * safe to read from the child thread). Copied before the arguments for
+     * the same GC-rooting reason as in Thread.new. */
+    args_vm->spawned_thread=true;
+    copy_namespace_constants_into_vm(vm,args_vm,chunk->classes,
+        program_template->classes);
     DiamondSupervisorChild *new_child=
         &target_supervisor->children[new_index];
     new_child->supervisor=target_supervisor;
