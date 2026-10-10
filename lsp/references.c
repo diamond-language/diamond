@@ -207,7 +207,8 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
         const bool type_position=index>0&&
             (tokens[index-1].kind==DIAMOND_TOKEN_COLON||
              tokens[index-1].kind==DIAMOND_TOKEN_PIPE||
-             tokens[index-1].kind==DIAMOND_TOKEN_LESS);
+             tokens[index-1].kind==DIAMOND_TOKEN_LESS||
+             tokens[index-1].kind==DIAMOND_TOKEN_ARROW);
         /* A class/module/interface declaration header (`class Widget`,
          * with no following `(`/`.` and no preceding `:`/`|`/`<`)
          * matches neither rule above -- without this, only a function's

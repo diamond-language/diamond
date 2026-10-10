@@ -19,7 +19,7 @@
  * Deliberately name-based, not a full alias/shadow-aware reference
  * resolver: a candidate occurrence only counts when it sits in a
  * call/access position (immediately followed by `(` or `.`), a type
- * position (immediately preceded by `:`, `|`, or `<`), or a class/
+ * position (immediately preceded by `:`, `|`, `<`, or `->`), or a class/
  * module/interface declaration header (immediately preceded by `class`/
  * `module`/`interface`, the one declaration shape with no following
  * `(`/`.` of its own), and when no lexical local of the same name is in

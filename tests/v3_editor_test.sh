@@ -292,10 +292,15 @@ done
 context_source='class ContextClass\nend\nclass ContextClass\nend\nmodule ContextModule\nend\ninterface ContextInterface\nend\ndef context_usage() = ContextClass.new()\ndef context_unused() = 1\ndef context_typed(value: ContextClass) -> ContextClass = value\n'
 printf '%b' "$context_source" > "$work/context.di"
 context_uri="file://$work/context.di"
+cat > "$work/context_user.di" <<'EOF'
+require "./context"
+def context_import(value: ContextClass) -> ContextClass = value
+EOF
+context_user_uri="file://$work/context_user.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$context_uri"'","text":"'"$context_source"'"}}}'
 response="$(read_message)"
 [[ "$response" == *'"diagnostics":[]'* ]]
-for position in '0 8 2' '4 9 0' '6 12 0' '9 8 0'; do
+for position in '0 8 5' '10 44 5' '4 9 0' '6 12 0' '9 8 0'; do
     read -r line character uses <<< "$position"
     for include in true false omitted; do
         extra=''
@@ -312,13 +317,38 @@ for position in '0 8 2' '4 9 0' '6 12 0' '9 8 0'; do
                 [[ "$response" != *'"start":{"line":2,'* ]]
                 check_location "$response" "$context_uri" 8 22 34
                 check_location "$response" "$context_uri" 10 25 37
+                check_location "$response" "$context_uri" 10 42 54
+                check_location "$response" "$context_user_uri" 1 26 38
+                check_location "$response" "$context_user_uri" 1 43 55
+                count="$(printf '%s' "$response" | grep -o '"uri":' | wc -l | tr -d '[:space:]')"
+                [[ "$count" == 5 ]]
             fi
         else
             [[ "$response" == *"\"start\":{\"line\":$line,"* ]]
-            if (( line == 0 )); then check_location "$response" "$context_uri" 2 6 18; fi
+            if (( uses > 0 )); then
+                check_location "$response" "$context_uri" 0 6 18
+                check_location "$response" "$context_uri" 2 6 18
+                count="$(printf '%s' "$response" | grep -o '"uri":' | wc -l | tr -d '[:space:]')"
+                [[ "$count" == 7 ]]
+            fi
         fi
     done
 done
+
+# A return-type origin selects the global class; rename includes its headers
+# and all supported usages in both files, including both return annotations.
+send '{"jsonrpc":"2.0","id":65,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$context_uri"'"},"position":{"line":10,"character":44},"newName":"RenamedContext"}}'
+response="$(read_response 65)"
+[[ "$response" == *"\"$context_uri\":["* ]]
+[[ "$response" == *"\"$context_user_uri\":["* ]]
+for range in '10 42 54' '1 43 55'; do
+    read -r target_line start end <<< "$range"
+    [[ "$response" == *"\"start\":{\"line\":$target_line,\"character\":$start}"* ]]
+    [[ "$response" == *"\"end\":{\"line\":$target_line,\"character\":$end}"* ]]
+done
+count="$(printf '%s' "$response" | grep -o '"newText":"RenamedContext"' | wc -l | tr -d '[:space:]')"
+[[ "$count" == 7 ]]
+[[ "$(cat "$work/context_user.di")" != *RenamedContext* ]]
 
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
@@ -329,3 +359,4 @@ echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
 echo 'method signatures, declarations, and receiver call precedence passed'
 echo 'global references and rename exclude colliding methods and locals'
 echo 'reference context excludes declarations and preserves usages and rename'
+echo 'references and rename include return-type annotations across imports'
