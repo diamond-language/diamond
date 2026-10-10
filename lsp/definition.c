@@ -106,9 +106,30 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     }
 
     const DiamondChunk chunk=diamond_program_chunk(scratch);
+    const size_t identifier_offset=path!=nullptr
+        ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
+              identifier_line,identifier_column)
+        : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
     uint32_t declaration_line=0,declaration_column=0;
     size_t declaration_start=0,declaration_name_length=0;
     bool found=false;
+    /* A declaration selects its own function, regardless of other symbols
+     * sharing the name. Use the same source-position and setter-name rules
+     * as hover before falling back to ordinary symbol or receiver lookup. */
+    for(size_t index=0;identifier_offset!=SIZE_MAX&&index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(function->declaration_start<user_offset||
+           function->declaration_start!=identifier_offset||
+           strncmp(function->name,name,name_length)!=0)continue;
+        const char *suffix=function->name+name_length;
+        if(*suffix!='\0'&&strcmp(suffix,"=")!=0)continue;
+        declaration_line=function->declaration_line;
+        declaration_column=function->declaration_column;
+        declaration_start=function->declaration_start;
+        declaration_name_length=strlen(function->name);
+        found=true;
+        break;
+    }
     for(size_t index=0;index<chunk.function_count&&!found;index++) {
         const DiamondFunction *function=chunk.functions[index];
         /* declaration_start>=user_offset excludes lib/core.di's own
@@ -157,18 +178,13 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     const DiamondFunction *matched_functions[DIAMOND_MAX_UNION_TYPES];
     size_t match_count=0;
     if(found) {
-        /* A top-level name is unambiguous by construction (single
-         * inheritance, no overloading) -- always exactly one match. */
+        /* An exact declaration or a top-level name selects one location. */
         matched_functions[match_count++]=nullptr;
     } else {
         /* Not a top-level function/class/interface/module name -- see
          * whether `identifier` is instead a method name reached through
          * `receiver.method(...)` (lsp/receiver.h), possibly against
          * several candidate classes for a union receiver. */
-        const size_t identifier_offset=path!=nullptr
-            ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
-                  identifier_line,identifier_column)
-            : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
         size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
         const size_t candidate_count=identifier_offset!=SIZE_MAX
             ? receiver_resolve_classes(scratch,&chunk,combined,identifier_offset,
@@ -192,8 +208,8 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     const char *display_name=path!=nullptr?path:uri;
     JsonValue *locations[DIAMOND_MAX_UNION_TYPES];
     for(size_t index=0;index<match_count;index++) {
-        /* matched_functions[index]==nullptr means the top-level-name
-         * path already populated declaration_line/column/start/
+        /* matched_functions[index]==nullptr means an exact declaration or
+         * top-level name already populated declaration_line/column/start/
          * declaration_name_length directly -- otherwise pull them from
          * the resolved receiver method's own DiamondFunction. */
         uint32_t match_line=declaration_line,match_column=declaration_column;
