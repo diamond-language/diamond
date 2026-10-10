@@ -10,6 +10,7 @@
 #include "hover.h"
 
 #include "compile_buffer.h"
+#include "analysis_cache.h"
 #include "compiler.h"
 #include "diagnostics.h"
 #include "disassemble.h"
@@ -235,31 +236,8 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         document_resolve_source,(void *)documents,&bundle,&user_offset);
     if(combined==nullptr) {free(path);return json_null();}
 
-    /* Same lazily-allocated, reused-across-calls scratch buffer
-     * diagnostics_compute keeps (see its own comment) -- a fresh
-     * multi-ten-MB DiamondProgram malloc per hover request would be
-     * wasteful for no benefit. The explicit diamond_program_free below,
-     * right before compiling, is still required on every reuse: the
-     * function table is independently heap-allocated, and
-     * diamond_program_init's memset alone would leak the previous
-     * request's functions instead of freeing them. A separate instance from
-     * diagnostics_compute's own static, not the same one: hover and
-     * diagnostics can each be mid-request independently (didChange
-     * publishing diagnostics while a hover request from before the
-     * edit is still being answered), and sharing one buffer between
-     * them would let one clobber the other's in-flight compile. */
-    static DiamondProgram *scratch=nullptr;
+    const DiamondProgram *scratch=diamond_lsp_analyze(combined);
     if(scratch==nullptr) {
-        scratch=calloc(1,sizeof *scratch);
-        if(scratch==nullptr) {
-            free(combined);free(path);diamond_source_bundle_free(&bundle);
-            return nullptr;
-        }
-    }
-    DiamondDiagnostic diagnostic;
-    diamond_program_free(scratch);
-    const bool ok=diamond_compile_for_tooling(combined,scratch,&diagnostic);
-    if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return json_null();
     }

@@ -6,6 +6,7 @@
 #include "definition.h"
 
 #include "compile_buffer.h"
+#include "analysis_cache.h"
 #include "compiler.h"
 #include "diagnostics.h"
 #include "lexer.h"
@@ -98,22 +99,8 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         document_resolve_source,(void *)documents,&bundle,&user_offset);
     if(combined==nullptr) {free(path);return json_null();}
 
-    /* A third independent lazily-allocated scratch DiamondProgram --
-     * see hover.c's own comment on why diagnostics.c/hover.c each keep
-     * a separate one rather than sharing: a didChange, a hover request,
-     * and a definition request can all be genuinely in flight at once. */
-    static DiamondProgram *scratch=nullptr;
+    const DiamondProgram *scratch=diamond_lsp_analyze(combined);
     if(scratch==nullptr) {
-        scratch=calloc(1,sizeof *scratch);
-        if(scratch==nullptr) {
-            free(combined);free(path);diamond_source_bundle_free(&bundle);
-            return nullptr;
-        }
-    }
-    DiamondDiagnostic diagnostic;
-    diamond_program_free(scratch);
-    const bool ok=diamond_compile_for_tooling(combined,scratch,&diagnostic);
-    if(!ok) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return json_null();
     }

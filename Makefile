@@ -618,8 +618,15 @@ $(BUILD_DIR)/receiver_test: tests/receiver_test.c lsp/receiver.c lsp/compile_buf
 test-receiver: $(BUILD_DIR)/receiver_test
 	$(BUILD_DIR)/receiver_test
 
-test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test
+$(BUILD_DIR)/analysis_cache_test: tests/analysis_cache_test.c lsp/analysis_cache.c lsp/analysis_cache.h lsp/compile_buffer.c \
+		$(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) \
+		lsp/analysis_cache.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
+
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/analysis_cache_test
 	$(BUILD_DIR)/receiver_test
+	bash tests/analysis_cache_test.sh
 	bash tests/lsp_test.sh
 
 DAP_SOURCES := $(wildcard dap/*.c)

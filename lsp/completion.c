@@ -10,6 +10,7 @@
 #include "completion.h"
 
 #include "compile_buffer.h"
+#include "analysis_cache.h"
 #include "compiler.h"
 #include "loader.h"
 #include "receiver.h"
@@ -172,21 +173,8 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
         resolver,resolver_data,&bundle,&user_offset);
     if(combined==nullptr) {return json_null();}
 
-    /* A fifth independent lazily-allocated scratch DiamondProgram --
-     * see hover.c's own comment on why each lsp/ handler keeps a
-     * separate one rather than sharing. */
-    static DiamondProgram *scratch=nullptr;
+    const DiamondProgram *scratch=diamond_lsp_analyze(combined);
     if(scratch==nullptr) {
-        scratch=calloc(1,sizeof *scratch);
-        if(scratch==nullptr) {
-            free(combined);diamond_source_bundle_free(&bundle);
-            return nullptr;
-        }
-    }
-    DiamondDiagnostic diagnostic;
-    diamond_program_free(scratch);
-    const bool ok=diamond_compile_for_tooling(combined,scratch,&diagnostic);
-    if(!ok) {
         free(combined);diamond_source_bundle_free(&bundle);
         return json_null();
     }

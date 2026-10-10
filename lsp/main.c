@@ -1,4 +1,5 @@
 #include "completion.h"
+#include "analysis_cache.h"
 #include "definition.h"
 #include "dependencies.h"
 #include "diagnostics.h"
@@ -479,6 +480,7 @@ int main(void) {
             json_free(message);
             document_table_free(documents);
             dependency_table_free(dependencies);
+            diamond_lsp_analysis_clear();
             return shutdown_requested?0:1;
         } else if(strcmp(method,"textDocument/didOpen")==0) {
             handle_did_open(documents,dependencies,params);
@@ -509,5 +511,6 @@ int main(void) {
     }
     document_table_free(documents);
     dependency_table_free(dependencies);
+    diamond_lsp_analysis_clear();
     return 0;
 }
