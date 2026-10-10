@@ -156,6 +156,10 @@ search over a real (if scoped) lexical symbol table:
     unannotated returns retain the richer editor graph alongside the compiler's
     broader checked shape. An unknown element suppresses the graph; tracked
     indexed writes and pushes discard it for the mutated local and its aliases.
+    A literal spread such as `[first, *make_pets(), last]` joins the prefix,
+    spread element, and suffix graphs by the same editor-only rules. Inferred
+    and checked Array shapes can mix, including nested Arrays and class unions;
+    an unknown prefix, spread element graph, or suffix leaves it unresolved.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:

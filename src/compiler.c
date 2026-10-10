@@ -1156,16 +1156,10 @@ static void record_collection_type_set(Compiler *compiler,uint16_t reg,
     if(set>=0)compiler->known_type_sets[reg]=set;
 }
 
-/* A literal built from unannotated factory results can still describe its
- * elements to the editor. Keep this graph separate from checked contracts,
- * and give up if any element has no representable result. */
-static void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
+/* Joins editor facts without publishing them as checked compiler types. */
+static int32_t joined_tooling_value_type_set(Compiler *compiler,
         const uint16_t *values,size_t count) {
-    if(count==0)return;
-    bool have_tooling=false;
-    for(size_t index=0;index<count;index++)
-        if(compiler->tooling_type_sets[values[index]]>=0) {have_tooling=true;break;}
-    if(!have_tooling)return;
+    if(count==0)return -1;
     int32_t joined=-1;
     for(size_t index=0;index<count;index++) {
         const uint16_t value=values[index];
@@ -1173,15 +1167,52 @@ static void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
         if(current<0)current=compiler->known_type_sets[value];
         if(current<0) {
             const uint8_t type=compiler->known_types[value];
-            if(type==TYPE_UNKNOWN||type>=DIAMOND_TYPE_VARIABLE_BASE)return;
+            if(type==TYPE_UNKNOWN||type>=DIAMOND_TYPE_VARIABLE_BASE)return -1;
             current=(int32_t)concrete_type_set(compiler,type);
         }
-        if(current<0||(size_t)current>=compiler->function->type_set_count)return;
+        if(current<0||(size_t)current>=compiler->function->type_set_count)return -1;
         joined=joined<0?current:join_type_set_indices(compiler,joined,current);
-        if(joined<0)return;
+        if(joined<0)return -1;
     }
+    return joined;
+}
+
+/* A literal built from unannotated factory results can still describe its
+ * elements to the editor. Keep this graph separate from checked contracts,
+ * and give up if any element has no representable result. */
+static void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *values,size_t count) {
+    bool have_tooling=false;
+    for(size_t index=0;index<count;index++)
+        if(compiler->tooling_type_sets[values[index]]>=0) {have_tooling=true;break;}
+    if(!have_tooling)return;
+    const int32_t joined=joined_tooling_value_type_set(compiler,values,count);
     compiler->tooling_type_sets[reg]=collection_type_set(compiler,
         DIAMOND_TYPE_ARRAY,joined,-1);
+}
+
+static void publish_array_spread_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *prefix,size_t prefix_count,uint16_t spread,
+        const uint16_t *suffix,size_t suffix_count) {
+    bool have_tooling=compiler->tooling_type_sets[spread]>=0;
+    for(size_t index=0;index<prefix_count&&!have_tooling;index++)
+        have_tooling=compiler->tooling_type_sets[prefix[index]]>=0;
+    for(size_t index=0;index<suffix_count&&!have_tooling;index++)
+        have_tooling=compiler->tooling_type_sets[suffix[index]]>=0;
+    if(!have_tooling)return;
+    int32_t spread_set=compiler->tooling_type_sets[spread];
+    if(spread_set<0)spread_set=compiler->known_type_sets[spread];
+    if(spread_set<0||(size_t)spread_set>=compiler->function->type_set_count)return;
+    const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)spread_set];
+    if(set->count!=1||set->members[0].id!=DIAMOND_TYPE_ARRAY||
+       set->members[0].argument_set==DIAMOND_NO_TYPE_SET)return;
+    int32_t elements=(int32_t)set->members[0].argument_set;
+    if(prefix_count>0)elements=join_type_set_indices(compiler,elements,
+        joined_tooling_value_type_set(compiler,prefix,prefix_count));
+    if(suffix_count>0)elements=join_type_set_indices(compiler,elements,
+        joined_tooling_value_type_set(compiler,suffix,suffix_count));
+    compiler->tooling_type_sets[reg]=collection_type_set(compiler,
+        DIAMOND_TYPE_ARRAY,elements,-1);
 }
 
 static int32_t array_element_type_set(const Compiler *compiler,uint16_t reg) {
@@ -9617,8 +9648,12 @@ static uint16_t parse_array_literal(Compiler *compiler,
     if(spread_at!=SIZE_MAX) {
         /* The same builder a call's `f(a, *rest, z)` uses: fixed prefix,
          * one spread Array (TypeError if it isn't one), fixed suffix. */
-        return emit_build_spread_arguments(compiler,elements,spread_at,
-            elements[spread_at],elements+spread_at+1,count-spread_at-1,false);
+        const uint16_t destination=emit_build_spread_arguments(compiler,elements,
+            spread_at,elements[spread_at],elements+spread_at+1,
+            count-spread_at-1,false);
+        publish_array_spread_tooling_type(compiler,destination,elements,spread_at,
+            elements[spread_at],elements+spread_at+1,count-spread_at-1);
+        return destination;
     }
     const uint16_t base=allocate_register(compiler);
     for(size_t i=1;i<count;i++) (void)allocate_register(compiler);
