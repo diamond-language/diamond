@@ -198,6 +198,13 @@ search over a real (if scoped) lexical symbol table:
     overrides `initialize`. Unions require a known result for every receiver arm.
     Explicit reader annotations still take precedence; inferred reader results do
     not add runtime checks or satisfy typed structural interfaces.
+    Unannotated factories and wrappers preserve those advisory call-result types
+    through their trailing expressions and explicit `return` statements, including
+    nested wrapper calls and imports. Every reachable return path must be known;
+    an unknown early return or trailing value suppresses inference. Declared return
+    annotations still win, and returns from nested definitions or blocks do not
+    leak into the enclosing function's facts. Nonlocal block returns remain
+    conservatively unresolved. These facts do not become runtime return contracts.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
     Any other receiver this

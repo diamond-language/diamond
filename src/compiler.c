@@ -288,6 +288,10 @@ typedef struct Compiler {
     bool return_flow_seen;
     uint8_t return_flow_type;
     int32_t return_flow_set;
+    /* Parallel advisory return facts may include inferred call results.
+     * Never feed these into a block's checked return_type_set. */
+    uint8_t return_tooling_type;
+    int32_t return_tooling_set;
     LoopContext *current_loop;
     int current_exception;
     size_t current_retry_target;
@@ -12811,6 +12815,16 @@ static uint16_t compile_return(Compiler *compiler) {
      * compile_definition's inference reads this back once the whole body
      * finishes compiling; harmless to keep accumulating even when an
      * explicit `-> Type` annotation already makes that inference moot. */
+    const int32_t tooling_set=compiler->known_type_sets[value]>=0?
+        compiler->known_type_sets[value]:compiler->tooling_type_sets[value];
+    if(!compiler->return_flow_seen) {
+        compiler->return_tooling_type=compiler->known_types[value];
+        compiler->return_tooling_set=tooling_set;
+    } else {
+        merge_flow_types(compiler,compiler->return_tooling_type,
+            compiler->return_tooling_set,compiler->known_types[value],tooling_set,
+            &compiler->return_tooling_type,&compiler->return_tooling_set);
+    }
     if(!compiler->return_flow_seen) {
         compiler->return_flow_type=compiler->known_types[value];
         compiler->return_flow_set=compiler->known_type_sets[value];
@@ -13304,6 +13318,8 @@ static uint16_t compile_block(Compiler *compiler) {
     const bool outer_return_flow_seen=compiler->return_flow_seen;
     const uint8_t outer_return_flow_type=compiler->return_flow_type;
     const int32_t outer_return_flow_set=compiler->return_flow_set;
+    const uint8_t outer_return_tooling_type=compiler->return_tooling_type;
+    const int32_t outer_return_tooling_set=compiler->return_tooling_set;
     compiler->return_flow_seen=false;
     const bool outer_block_has_break=compiler->block_has_break;
     compiler->block_has_break=false;
@@ -13686,6 +13702,8 @@ static uint16_t compile_block(Compiler *compiler) {
     compiler->return_flow_seen=outer_return_flow_seen;
     compiler->return_flow_type=outer_return_flow_type;
     compiler->return_flow_set=outer_return_flow_set;
+    compiler->return_tooling_type=outer_return_tooling_type;
+    compiler->return_tooling_set=outer_return_tooling_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;
@@ -14053,6 +14071,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool outer_return_flow_seen=compiler->return_flow_seen;
     const uint8_t outer_return_flow_type=compiler->return_flow_type;
     const int32_t outer_return_flow_set=compiler->return_flow_set;
+    const uint8_t outer_return_tooling_type=compiler->return_tooling_type;
+    const int32_t outer_return_tooling_set=compiler->return_tooling_set;
     compiler->return_flow_seen=false;
     const int outer_exception=compiler->current_exception;
     const size_t outer_retry_target=compiler->current_retry_target;
@@ -14667,8 +14687,9 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
              * receiver.c's call-chain resolution only (inferred_return_
              * type_set, not return_type_set itself -- see that field's
              * own comment in vm.h for why they're kept separate).
-             * Mirrors compile_block's own identical fallback for a
-             * block with no explicit return annotation. Combines two
+             * Includes advisory call-result facts; unlike compile_block's
+             * checked return inference, these never form a runtime contract.
+             * Combines two
              * independent sources of "what this function can actually
              * return": the body's own trailing value (skipped when it
              * always raises/returns early -- body_diverges means
@@ -14695,17 +14716,21 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             bool have_inference=false;
             if(!body_diverges&&!compiler->method_has_block_return) {
                 inferred_type=compiler->known_types[body_result];
-                inferred_set=compiler->known_type_sets[body_result];
-                have_inference=inferred_set>=0||inferred_type!=TYPE_UNKNOWN;
+                inferred_set=compiler->known_type_sets[body_result]>=0?
+                    compiler->known_type_sets[body_result]:
+                    compiler->tooling_type_sets[body_result];
+                /* A reachable unknown tail still participates in the join;
+                 * dropping it would publish only the known early returns. */
+                have_inference=true;
             }
             if(compiler->return_flow_seen&&!compiler->method_has_block_return) {
                 if(have_inference)
                     merge_flow_types(compiler,inferred_type,inferred_set,
-                        compiler->return_flow_type,compiler->return_flow_set,
+                        compiler->return_tooling_type,compiler->return_tooling_set,
                         &inferred_type,&inferred_set);
                 else {
-                    inferred_type=compiler->return_flow_type;
-                    inferred_set=compiler->return_flow_set;
+                    inferred_type=compiler->return_tooling_type;
+                    inferred_set=compiler->return_tooling_set;
                 }
                 have_inference=true;
             }
@@ -14789,6 +14814,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->return_flow_seen=outer_return_flow_seen;
     compiler->return_flow_type=outer_return_flow_type;
     compiler->return_flow_set=outer_return_flow_set;
+    compiler->return_tooling_type=outer_return_tooling_type;
+    compiler->return_tooling_set=outer_return_tooling_set;
     compiler->current_exception=outer_exception;
     compiler->current_retry_target=outer_retry_target;
     compiler->current_loop=outer_loop;

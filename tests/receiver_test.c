@@ -215,6 +215,58 @@ int main(void) {
         "def conflicting_factory(flag)\n"
         "  flag ? PetFactoryLeft.new() : LeafFactory.new()\n"
         "end\n"
+        "def make_pet() = Pet.new()\n"
+        "def wrap_pet() = make_pet()\n"
+        "def wrap_again() = wrap_pet()\n"
+        "def wrap_reader(holder: SchemaHolder) = holder.pet()\n"
+        "def early_wrapper(flag)\n"
+        "  if flag then return make_pet() end\n"
+        "  wrap_again()\n"
+        "end\n"
+        "def unknown_wrapper(flag, unknown)\n"
+        "  if flag then return make_pet() end\n"
+        "  unknown\n"
+        "end\n"
+        "def unknown_early_wrapper(flag, unknown)\n"
+        "  if flag then return unknown end\n"
+        "  make_pet()\n"
+        "end\n"
+        "def union_wrapper(flag)\n"
+        "  if flag then return make_pet() end\n"
+        "  Leaf.new()\n"
+        "end\n"
+        "def nested_wrapper(flag)\n"
+        "  if flag then return make_pet() end\n"
+        "  def unrelated()\n"
+        "    return Leaf.new()\n"
+        "  end\n"
+        "  make_pet()\n"
+        "end\n"
+        "class PetWrappers\n"
+        "  def self.make() = wrap_again()\n"
+        "  def make() = wrap_again()\n"
+        "end\n"
+        "def known_then_unknown(flag, unknown)\n"
+        "  if flag then return Pet.new() end\n"
+        "  unknown\n"
+        "end\n"
+        "def all_early_wrapper(flag)\n"
+        "  if flag then return make_pet() else return wrap_again() end\n"
+        "end\n"
+        "def annotated_wrapper() -> Leaf = make_pet()\n"
+        "def block_wrapper(flag)\n"
+        "  if flag then return make_pet() end\n"
+        "  [1].each() do |item|\n"
+        "    next Leaf.new()\n"
+        "  end\n"
+        "  wrap_again()\n"
+        "end\n"
+        "def nonlocal_wrapper(flag)\n"
+        "  [1].each() do |item|\n"
+        "    if flag then return Leaf.new() end\n"
+        "  end\n"
+        "  make_pet()\n"
+        "end\n"
         "def inspect_receivers()\n"
         "  LateSchemaHolder.new().pet().bark()\n"
         "  MutableHolder.new().pet().bark()\n"
@@ -239,6 +291,23 @@ int main(void) {
         "  OverrideReader.new().pet().bark()\n"
         "  overridden_pet = OverrideReader.new().pet()\n"
         "  overridden_pet.bark()\n"
+        "  wrap_pet().bark()\n"
+        "  wrap_again().bark()\n"
+        "  wrap_reader(SchemaHolder.new()).bark()\n"
+        "  early_wrapper(true).bark()\n"
+        "  unknown_wrapper(true, nil).bark()\n"
+        "  unknown_early_wrapper(true, nil).bark()\n"
+        "  union_wrapper(true).bark()\n"
+        "  nested_wrapper(true).bark()\n"
+        "  PetWrappers.make().bark()\n"
+        "  PetWrappers.new().make().bark()\n"
+        "  wrapped_pet = wrap_again()\n"
+        "  wrapped_pet.bark()\n"
+        "  known_then_unknown(true, nil).bark()\n"
+        "  all_early_wrapper(true).bark()\n"
+        "  annotated_wrapper().bark()\n"
+        "  block_wrapper(true).bark()\n"
+        "  nonlocal_wrapper(true).bark()\n"
         "  holder = SchemaHolder.new()\n"
         "  holder.pet().bark()\n"
         "  held_pet = holder.pet()\n"
@@ -336,6 +405,22 @@ int main(void) {
             "holders.pet().","Pet","Leaf");
         diamond_program_free(restored);free(restored);
     }
+    failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"wrap_again().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"wrap_reader(SchemaHolder.new()).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"early_wrapper(true).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nested_wrapper(true).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"PetWrappers.make().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"PetWrappers.new().make().","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"wrapped_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"unknown_wrapper(true, nil).",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"unknown_early_wrapper(true, nil).",nullptr,false);
+    failed|=check_receiver_pair(program,&chunk,combined,"union_wrapper(true).","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"known_then_unknown(true, nil).",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"all_early_wrapper(true).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"annotated_wrapper().","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"block_wrapper(true).","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"nonlocal_wrapper(true).",nullptr,false);
     diamond_program_free(program);
     free(program);free(combined);
     return failed?1:0;

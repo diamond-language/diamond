@@ -361,13 +361,16 @@ class ImportedSchemas < ImportedSchemaReaders
     @skins = ImportedSchema.new()
   end
 end
+def imported_skin(schemas: ImportedSchemas) = schemas.skins()
+def imported_skin_again(schemas: ImportedSchemas) = imported_skin(schemas)
+def imported_query(schemas: ImportedSchemas) = imported_skin_again(schemas).query()
 EOF
 reader_uri="file://$work/reader_import.di"
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reader_uri"'","text":"require \"reader_dependency\"\ndef reader_queries(schemas: ImportedSchemas)\n  schema = schemas.skins()\n  schema.query().limit(2)\n  query = schemas.skins().query()\n  query.limit(3)\n  schemas.skins().query().limit(4)\nend"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reader_uri"'","text":"require \"reader_dependency\"\ndef reader_queries(schemas: ImportedSchemas)\n  schema = imported_skin_again(schemas)\n  schema.query().limit(2)\n  query = imported_query(schemas)\n  query.limit(3)\n  schemas.skins().query().limit(4)\n  imported_query(schemas).limit(5)\nend"}}}'
 response="$(read_message)"
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
-for position in '3,17' '5,8' '6,26'; do
+for position in '3,17' '5,8' '6,26' '7,26'; do
     line="${position%,*}"; character="${position#*,}"
     send '{"jsonrpc":"2.0","id":2000,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$reader_uri"'"},"position":{"line":'"$line"',"character":'"$character"'}}}'
     response="$(read_message)"
