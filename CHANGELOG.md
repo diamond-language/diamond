@@ -25,6 +25,9 @@ authoritative fine-grained record.
 - Inherited unannotated readers retain receiver-specific completion, hover, and
   definition through call chains and local assignments. Unknown or conflicting
   writes in an ancestor or subclass leave the result unresolved.
+- Unannotated factory and wrapper methods preserve editor receiver information
+  through inferred call results, including explicit returns. An unknown return
+  path suppresses inference instead of exposing only the known paths.
 
 - Editor completion, hover, and definition follow unannotated `attr_reader` results
   when the compiler knows the field's class, including across required files and
