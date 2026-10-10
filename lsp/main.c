@@ -331,8 +331,11 @@ static void handle_references(DocumentTable *documents,const char *workspace_roo
     if(!extract_document_position(documents,id,params,uri_copy,sizeof uri_copy,
             &text,&text_length,&line,&character))
         return;
+    bool include_declaration=true;
+    json_as_bool(json_object_get(json_object_get(params,"context"),"includeDeclaration"),
+        &include_declaration);
     JsonValue *result=references_compute(documents,workspace_root,uri_copy,text,
-        text_length,line,character);
+        text_length,line,character,include_declaration);
     if(result==nullptr) {
         send_response(id,json_null());
         return;

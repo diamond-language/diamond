@@ -149,7 +149,8 @@ static bool reference_list_push(ReferenceList *list,const char *uri,size_t line,
  * one file can't be read or doesn't compile (matches workspace_symbol.c's
  * own scan_file); only a real allocation failure returns false. */
 static bool scan_file_for_references(const DocumentTable *documents,DiamondProgram *scratch,
-        const char *path,const char *name,size_t name_length,ReferenceList *list) {
+        const char *path,const char *name,size_t name_length,bool include_declaration,
+        ReferenceList *list) {
     char *text=read_file_preferring_open(documents,path);
     if(text==nullptr)return true;
     const size_t length=strlen(text);
@@ -217,6 +218,9 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
             (tokens[index-1].kind==DIAMOND_TOKEN_CLASS||
              tokens[index-1].kind==DIAMOND_TOKEN_MODULE||
              tokens[index-1].kind==DIAMOND_TOKEN_INTERFACE);
+        const bool declaration=declaration_header||
+            (index>0&&tokens[index-1].kind==DIAMOND_TOKEN_DEF);
+        if(declaration&&!include_declaration)continue;
         if(!call_or_access&&!type_position&&!declaration_header)continue;
         if(receiver_name_is_local(scratch,&chunk,name,name_length,token.span.start))continue;
 
@@ -257,7 +261,8 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
  * comment already promises its own callers. */
 static bool find_workspace_occurrences(const DocumentTable *documents,const char *workspace_root,
         const char *uri,const char *text,size_t length,size_t line,size_t character,
-        ReferenceList *out_list,size_t *out_name_length,bool *out_allocation_failed) {
+        bool include_declaration,ReferenceList *out_list,size_t *out_name_length,
+        bool *out_allocation_failed) {
     *out_list=(ReferenceList){0};
     *out_name_length=0;
     *out_allocation_failed=false;
@@ -345,7 +350,7 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
     for(size_t index=0;index<path_count;index++) {
         if(scan_ok)
             scan_ok=scan_file_for_references(documents,scan_scratch,paths[index],
-                name,name_length,&list);
+                name,name_length,include_declaration,&list);
         free(paths[index]);
     }
     free(paths);
@@ -360,10 +365,11 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
 }
 
 JsonValue *references_compute(const DocumentTable *documents,const char *workspace_root,
-        const char *uri,const char *text,size_t length,size_t line,size_t character) {
+        const char *uri,const char *text,size_t length,size_t line,size_t character,
+        bool include_declaration) {
     ReferenceList list;size_t name_length=0;bool allocation_failed=false;
     if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
-            &list,&name_length,&allocation_failed))
+            include_declaration,&list,&name_length,&allocation_failed))
         return allocation_failed?nullptr:json_null();
 
     JsonValue *result=json_array();
@@ -440,7 +446,7 @@ JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_r
 
     ReferenceList list;size_t name_length=0;bool allocation_failed=false;
     if(!find_workspace_occurrences(documents,workspace_root,uri,text,length,line,character,
-            &list,&name_length,&allocation_failed))
+            true,&list,&name_length,&allocation_failed))
         return allocation_failed?nullptr:json_null();
 
     JsonValue *changes=json_object();
