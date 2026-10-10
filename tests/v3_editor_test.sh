@@ -59,10 +59,11 @@ read_response() {
         fi
     done
 }
-request() {
-    send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/'"$2"'","params":{"textDocument":{"uri":"'"$root_uri"'"},"position":{"line":'"$3"',"character":'"$4"'}}}'
+request_at_uri() {
+    send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/'"$2"'","params":{"textDocument":{"uri":"'"$3"'"},"position":{"line":'"$4"',"character":'"$5"'}}}'
     read_response "$1"
 }
+request() { request_at_uri "$1" "$2" "$root_uri" "$3" "$4"; }
 compile_count() { grep -c '^compile: discovery ' "$work/trace"; }
 check_query() {
     local member="$1" absent="$2" parameter="$3" declaration_line="$4" response count
@@ -95,8 +96,12 @@ check_query initial refreshed count 4
 # Warm the cache, then edit a transitive import without saving or changing main.
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$query_uri"'","text":"'"$query_initial"'"}}}'
 check_query initial refreshed count 4
+response="$(request_at_uri 14 hover "$query_uri" 4 8)"
+[[ "$response" == *'"value":"def limit(count: Int) -> Query"'* ]]
 send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$query_uri"'"},"contentChanges":[{"text":"'"$query_edited"'"}]}}'
 check_query refreshed initial size 5
+response="$(request_at_uri 14 hover "$query_uri" 5 8)"
+[[ "$response" == *'"value":"def limit(size: Int) -> Query"'* ]]
 [[ "$(cat "$work/query.di")" != *refreshed* ]]
 
 # A broken imported buffer cannot expose the preceding successful analysis.
@@ -126,6 +131,14 @@ while IFS='|' read -r line character expected; do
     response="$(request 30 hover "$line" "$character")"
     [[ "$response" == *"\"value\":\"$expected\""* ]]
 done <<'EOF'
+1|8|def required(first: Int, second: Int) -> Int
+2|8|def optional(first: Int = ..., second: Int = ...) -> Int
+3|8|def variadic(*items)
+4|8|def block(&callback)
+5|8|def mixed(first: Int = ..., *items, &callback)
+6|13|def create(first: Int = ..., *items, &callback)
+7|8|def zero()
+9|6|def standalone(first: Int = ..., *items, &callback)
 11|8|def required(first: Int, second: Int) -> Int
 12|8|def optional(first: Int = ..., second: Int = ...) -> Int
 13|8|def variadic(*items)
@@ -136,10 +149,32 @@ done <<'EOF'
 18|4|def standalone(first: Int = ..., *items, &callback)
 EOF
 
+# Position-based lookup must beat a global name collision, choose the right
+# class/nested definition, and preserve module, setter, and reopened signatures.
+declaration_source='def shared(value: Bool) -> Bool = value\nclass First\n  def shared(value: Int) -> Int = value\n  def value=(value: Int) -> Int = value\n  def outer()\n    def shared(value: String) -> String = value\n    nil\n  end\nend\nclass Second\n  def shared(value: String) -> String = value\nend\nclass First\n  def later(value: Float) -> Float = value\n  def self.shared(value: Float) -> Float = value\nend\nmodule Methods\n  def shared(value: Int = 1, *rest, &block) = nil\nend\ndef missing_site(value)\n  value.unknown()\nend\n'
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$root_uri"'"},"contentChanges":[{"text":"'"$declaration_source"'"}]}}'
+while IFS='|' read -r line character expected; do
+    response="$(request 40 hover "$line" "$character")"
+    [[ "$response" == *"\"value\":\"$expected\""* ]]
+done <<'EOF'
+0|6|def shared(value: Bool) -> Bool
+2|8|def shared(value: Int) -> Int
+3|8|def value=(value: Int) -> Int
+5|10|def shared(value: String) -> String
+10|8|def shared(value: String) -> String
+13|8|def later(value: Float) -> Float
+14|13|def shared(value: Float) -> Float
+17|8|def shared(value: Int = ..., *rest, &block)
+EOF
+response="$(request 41 hover 1 8)"
+[[ "$response" == *'"value":"class First"'* ]]
+response="$(request 42 hover 20 10)"
+[[ "$response" == *'"result":null'* ]]
+
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null
 send '{"jsonrpc":"2.0","method":"exit","params":{}}'
 wait "$lsp_pid"
 lsp_pid=''
 echo 'V3 imported query workflow, cache reuse, and edit recovery passed'
-echo 'method hover parameter signatures passed'
+echo 'method hover parameter signatures and declarations passed'

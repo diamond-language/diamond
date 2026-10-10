@@ -252,6 +252,27 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     }
 
     const DiamondChunk chunk=diamond_program_chunk(scratch);
+    const size_t identifier_offset=path!=nullptr
+        ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
+              identifier_line,identifier_column)
+        : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
+    /* A declaration names its own function, even when other classes or a
+     * top-level function share that name. Match its compiled source position
+     * before trying name-based symbols or receiver expressions. Setter names
+     * include '=' in metadata, while the identifier token excludes it. */
+    for(size_t index=0;identifier_offset!=SIZE_MAX&&index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(function->declaration_start!=identifier_offset||
+           strncmp(function->name,name,name_length)!=0)continue;
+        const char *suffix=function->name+name_length;
+        if(*suffix!='\0'&&strcmp(suffix,"=")!=0)continue;
+        char *signature=format_function_signature(&chunk,function);
+        free(combined);free(path);diamond_source_bundle_free(&bundle);
+        if(signature==nullptr)return nullptr;
+        JsonValue *result=hover_result(signature);
+        free(signature);
+        return result;
+    }
     if(strcmp(name,"block_given?")==0) {
         free(combined);free(path);diamond_source_bundle_free(&bundle);
         return hover_result("block_given?() -> Bool");
@@ -298,10 +319,6 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     /* Fallback: not a top-level function/class/interface/module name --
      * see whether `identifier` is instead a method name reached through
      * `receiver.method(...)` (lsp/receiver.h). */
-    const size_t identifier_offset=path!=nullptr
-        ? diamond_resolve_source_position(path,combined,&bundle,user_offset,
-              identifier_line,identifier_column)
-        : user_offset+raw_offset_for(text,length,identifier_line,identifier_column);
     const DiamondFunction *local_owner=nullptr;uint16_t local_set=0;
     if(identifier_offset!=SIZE_MAX&&receiver_resolve_local_type_set(scratch,
             &chunk,name,name_length,identifier_offset,&local_owner,&local_set)) {
