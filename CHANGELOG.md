@@ -24,6 +24,8 @@ authoritative fine-grained record.
 
 - Array literals preserve inferred factory element types for receiver completion,
   hover, and definition, including nested literals, spreads, and unannotated returns.
+  Array `reverse`, `uniq`, `compact`, `take`, and `drop` retain those editor element
+  facts through call chains and local assignments.
 
 - Locals assigned from indexed inferred Array returns retain completion, hover,
   and definition across imports and nested indexing.

@@ -8346,6 +8346,23 @@ static int32_t joined_collection_argument(Compiler *compiler,
     return joined;
 }
 
+/* These native Array transforms copy/subset the source elements. Carry an
+ * inferred factory graph to the editor without narrowing checked contracts.
+ * Callback transforms need their own result inference; methods returning the
+ * receiver itself also need alias tracking before joining this path. */
+static void publish_array_transform_tooling_type(Compiler *compiler,
+        uint16_t result,uint16_t receiver,DiamondSpan name) {
+    if(!name_equals(compiler,"reverse",name,false)&&
+       !name_equals(compiler,"uniq",name,false)&&
+       !name_equals(compiler,"compact",name,false)&&
+       !name_equals(compiler,"take",name,false)&&
+       !name_equals(compiler,"drop",name,false))return;
+    const int32_t elements=joined_collection_argument(compiler,
+        compiler->tooling_type_sets[receiver],DIAMOND_TYPE_ARRAY,false);
+    if(elements>=0)compiler->tooling_type_sets[result]=collection_type_set(
+        compiler,DIAMOND_TYPE_ARRAY,elements,-1);
+}
+
 static int32_t joined_callable_return(Compiler *compiler,uint16_t reg) {
     const int32_t set_index=compiler->known_type_sets[reg];
     if(set_index<0||(size_t)set_index>=compiler->function->type_set_count)
@@ -8494,8 +8511,13 @@ static void publish_collection_keyword_return_type(Compiler *compiler,
 }
 
 static bool register_holds_collection(const Compiler *compiler,uint16_t reg) {
-    return compiler->known_types[reg]==DIAMOND_TYPE_ARRAY||
-        compiler->known_types[reg]==DIAMOND_TYPE_HASH;
+    if(compiler->known_types[reg]==DIAMOND_TYPE_ARRAY||
+       compiler->known_types[reg]==DIAMOND_TYPE_HASH)return true;
+    const int32_t tooling=compiler->tooling_type_sets[reg];
+    if(tooling<0||(size_t)tooling>=compiler->function->type_set_count)return false;
+    const DiamondTypeSet *set=&compiler->function->type_sets[(size_t)tooling];
+    return set->count==1&&(set->members[0].id==DIAMOND_TYPE_ARRAY||
+        set->members[0].id==DIAMOND_TYPE_HASH);
 }
 
 static uint32_t fresh_alias_identity(Compiler *compiler) {
@@ -8592,6 +8614,16 @@ static void update_collection_mutation_type(Compiler *compiler,uint16_t receiver
         const uint16_t *keys,size_t key_count,const uint16_t *values,
         size_t value_count) {
     if(value_count==0)return;
+    /* An inferred collection still needs alias invalidation, but its editor
+     * graph must not become a checked collection contract through mutation. */
+    if(compiler->known_types[receiver]!=DIAMOND_TYPE_ARRAY&&
+       compiler->known_types[receiver]!=DIAMOND_TYPE_HASH&&
+       register_holds_collection(compiler,receiver)) {
+        compiler->tooling_type_sets[receiver]=-1;
+        record_scope_type_fact(compiler,receiver,compiler->current.span.start);
+        propagate_collection_alias_fact(compiler,receiver);
+        return;
+    }
     const int32_t receiver_set=compiler->known_type_sets[receiver];
     const int32_t array_elements=joined_collection_argument(compiler,
         receiver_set,DIAMOND_TYPE_ARRAY,false);
@@ -8880,6 +8912,7 @@ static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
                 (uint8_t)(known-DIAMOND_TYPE_CLASS_BASE):UINT8_MAX;
     }
     publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
+    publish_array_transform_tooling_type(compiler,reg,receiver,name);
 }
 
 /* `receiver.method` -- a capturing, variadic Callable whose single captured

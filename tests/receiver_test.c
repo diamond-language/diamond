@@ -424,6 +424,40 @@ int main(void) {
         "  spread_dynamic = [literal_pet_factory(), *value]\n"
         "  spread_dynamic[0].bark()\n"
         "end\n"
+        "class TransformOwner\n"
+        "  def reverse() = [Leaf.new()]\n"
+        "end\n"
+        "def transform_wrapper() = spread_factory().reverse().take(1)\n"
+        "def inspect_transform_results(value)\n"
+        "  spread_factory().reverse().take(1)[0].bark()\n"
+        "  TransformOwner.new().reverse()[0].bark()\n"
+        "  reversed_pet = spread_factory().reverse()[0]\n"
+        "  reversed_pet.bark()\n"
+        "  unique_pets = spread_factory().uniq()\n"
+        "  unique_pets[0].bark()\n"
+        "  compact_pets = spread_factory().compact()\n"
+        "  compact_pets[0].bark()\n"
+        "  taken_pets = spread_factory().take(1)\n"
+        "  taken_pets[0].bark()\n"
+        "  dropped_pets = spread_factory().drop(n: 0)\n"
+        "  dropped_pets[0].bark()\n"
+        "  transformed_nested = literal_nested_factory().reverse().take(1)\n"
+        "  transformed_nested[0][0].bark()\n"
+        "  transformed_union = [literal_pet_factory(), Leaf.new()].reverse()\n"
+        "  transformed_union[0].bark()\n"
+        "  wrapped_pet = transform_wrapper()[0]\n"
+        "  wrapped_pet.bark()\n"
+        "  unknown_transform = [literal_pet_factory(), value].reverse()\n"
+        "  unknown_transform[0].bark()\n"
+        "  mutable_transform = spread_factory().reverse()\n"
+        "  transform_alias = mutable_transform\n"
+        "  mutable_transform.push(value)\n"
+        "  transform_alias[0].bark()\n"
+        "  changed_transform = spread_factory().reverse()\n"
+        "  changed_alias = changed_transform\n"
+        "  changed_transform[0] = value\n"
+        "  changed_alias[0].bark()\n"
+        "end\n"
         "def inspect_inferred_unions(value: Pet | Leaf, values: Array[Pet | Leaf], map: Hash[String, Pet | Leaf])\n"
         "  identity(value).bark()\n"
         "  array_identity(values)[0].bark()\n"
@@ -500,6 +534,21 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"spread_checked[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"spread_unknown[0].",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"spread_dynamic[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "spread_factory().reverse().take(1)[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,
+        "TransformOwner.new().reverse()[0].","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"reversed_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"unique_pets[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"compact_pets[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"taken_pets[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"dropped_pets[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"transformed_nested[0][0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"wrapped_pet.","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"transformed_union[0].","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"unknown_transform[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"transform_alias[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"changed_alias[0].",nullptr,false);
     /* Inferred element facts must stay outside checked compiler contracts. */
     bool found_indexed_local=false;
     for(size_t index=0;index<chunk.function_count;index++) {
@@ -548,11 +597,30 @@ int main(void) {
         }
     }
     if(!found_spread_local)failed=1;
+    bool found_transform_local=false;
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(strcmp(function->name,"inspect_transform_results")!=0)continue;
+        for(size_t local=0;local<function->scope_local_count;local++) {
+            const DiamondScopeLocal *fact=&function->scope_locals[local];
+            if(strcmp(fact->name,"taken_pets")!=0)continue;
+            found_transform_local=true;
+            if(fact->known_type_set>=0||fact->tooling_type_set<0) {
+                fprintf(stderr,"transform element graph entered checked facts\n");
+                failed=1;
+            }
+        }
+    }
+    if(!found_transform_local)failed=1;
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
     } else {
         const DiamondChunk restored_chunk=diamond_program_chunk(restored);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "taken_pets[0].","Pet",false);
+        failed|=check_receiver(restored,&restored_chunk,combined,
+            "transformed_nested[0][0].","Pet",false);
         failed|=check_receiver(restored,&restored_chunk,combined,
             "spread_pets[0].","Pet",false);
         failed|=check_receiver(restored,&restored_chunk,combined,
