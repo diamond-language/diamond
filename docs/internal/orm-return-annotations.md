@@ -487,3 +487,50 @@ binary with forced JIT and fresh compilation. The four-variant audit completed
 in both modes for both benchmarks, with matching outputs and successful
 Array/Hash default-allocation probes. A normal debug build was restored after
 sanitizer validation.
+
+## Plain built-in JIT guards
+
+Native CHECK_TYPE now accepts plain built-in types by comparing value tags
+and object kinds. Int includes Bignum. Mismatches retain the existing C
+matcher and error propagation, and any union with a generic or structural
+member retains the complete matcher. The interpreter is unchanged.
+
+Five alternating, CPU-pinned release samples compared the previous ARRAY-JIT
+binary with the new runtime, using the same committed Arel package. Timing
+covered the benchmark loop, with fresh compilation, sanitized DIAMOND
+variables, and tracing performed separately. Outputs matched.
+
+| Existing unannotated Query | Previous median | New median | Change |
+| --- | ---: | ---: | ---: |
+| Builder, interpreter | 1.4912 s | 1.4878 s | -0.2% |
+| Builder, JIT | 1.0995 s | 1.0611 s | -3.5% |
+| Render, interpreter | 1.4011 s | 1.3969 s | -0.3% |
+| Render, JIT | 1.3279 s | 1.3153 s | -1.0% |
+
+The four-variant audit then used three rotated samples per variant, the
+previous committed Arel package, and the new runtime. Builder medians:
+
+| Execution mode | Baseline | Constructor | Copy | Both |
+| --- | ---: | ---: | ---: | ---: |
+| Interpreter | 1.4862 s | 1.6869 s (+13.5%) | 1.5433 s (+3.8%) | 1.7830 s (+20.0%) |
+| JIT | 1.0565 s | 1.0912 s (+3.3%) | 1.0693 s (+1.2%) | 1.0708 s (+1.4%) |
+
+The prior runtime's corresponding JIT constructor penalty was +15.5%,
+measured in the earlier audit rather than this alternating comparison.
+Render changes across variants were small (-1.4% to -2.8% with JIT) and
+remain sensitive to instruction/cache layout. These results support the
+native guard optimization, but not landing the hot Query annotations:
+the interpreter constructor regression remains substantial.
+
+Next: reduce interpreter guard overhead while preserving generic constraints,
+then repeat this audit before accepting Query constructor/copy annotations.
+
+Validation: the debug and ASan/UBSan full suites each passed all 1,792 tests
+(1,639 corpus cases; 39 skipped), with the sanitizer suite passing on its
+first attempt. All 25 Arel files passed on the release binary with forced
+JIT. The dedicated guard fixture checks big integers, primitive/object tags,
+unions, rejected tags, generic constraint attachment, and plain collection
+fallback under forced JIT and major GC stress. It and the existing
+failure-after-mutation fixture produced matching output on the old/new
+release binaries in both execution modes. The four-variant audit preserved
+benchmark output and passed its default-allocation probes.

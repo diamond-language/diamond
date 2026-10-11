@@ -2040,3 +2040,18 @@ an otherwise empty default-array constructor actually compiles, so interpreter
 fallback cannot silently satisfy the test. A guard failure after allocation
 also propagates without replaying an earlier mutation. The Arel guard audit measures the
 remaining check costs; array construction support does not remove guards.
+
+### Plain built-in CHECK_TYPE fast path
+
+For a union containing only unconstrained Int, Float, Bool, Nil, String,
+Symbol, Array, or Hash members, native code compares value tags and, for
+objects, object kinds directly. Int accepts both immediate integers and
+Bignum objects. Object pointers are read only after the OBJECT tag matches.
+A mismatch calls the existing matcher and retains the existing bailout or
+hard-propagation behavior.
+
+Any union containing a generic collection, Callable, class, interface,
+structural type, native type, or type variable keeps the complete matcher.
+In particular, a generic member before a plain collection member may attach
+constraints; skipping that member would change later mutation behavior.
+The interpreter and bytecode format remain unchanged.
