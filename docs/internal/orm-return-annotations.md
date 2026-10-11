@@ -742,3 +742,48 @@ there. Shared guard definitions now live in tests/support, and the probe
 matches the runtime's glibc x86-64 gate. The interpreter fixture passed in an
 isolated tree with all JIT cases absent, and the full suite passed after both
 fixes. Remote platform verification requires the new CI run.
+
+## Cumulative guard workload confirmation
+
+A seven-sample cumulative audit of committed pagination head b625934d used
+the same established release runtime, CPU pinning, alternating variant order,
+and seven-constructor/five-copy selection as the previous audit. The
+interpreter builder medians were 1.4906 s untyped, 1.5494 s constructor-only
+(+3.9%), 1.5220 s copy-only (+2.1%), and 1.5744 s combined (+5.6%). The combined
+range (1.5472–1.6069 s) did not overlap the control range (1.4634–1.5259 s).
+This reproduces the earlier +5.9% combined result.
+
+The JIT-enabled combined median was 1.0676 s versus 1.0536 s (+1.3%), rather
+than the earlier +3.2%. Its ranges overlap (combined 1.0507–1.1311 s; control
+1.0330–1.1090 s), so a stable native slowdown of exactly 3% is not established.
+Rendering changed -1.2% interpreter and -3.6% JIT; layout-sensitive results
+remain separate from the repeated construction guard cost. Outputs matched
+throughout, and both default-allocation probes passed.
+
+| Builder variant | Interpreted CHECK_TYPE executions | Field-cache misses |
+| --- | ---: | ---: |
+| Untyped Query parameter control | 4,400,002 | 9,400,046 |
+| Seven constructor parameters | 11,400,002 | 2,400,052 |
+| Five copy parameters | 8,400,002 | 9,800,048 |
+| Combined | 15,400,002 | 2,400,052 |
+
+The extra 11 million checks follow directly from one million constructor
+entries and 800,000 copy entries. Constructor entry still checks parameters
+after a typed copy caller forwards them. Lower field misses and unchanged
+method misses (15) argue against cache deterioration as the cause of this
+interpreter slowdown. With JIT enabled, all variants compile 13 functions
+with zero bailouts or hard propagations; only 588 additional interpreted
+checks remain in the combined variant. Interpreter guard dispatch and native
+guard execution therefore need separate optimization evidence.
+
+The audit now includes sample ranges and named diagnostic counts alongside
+raw traces, deriving CHECK_TYPE's opcode from the repository header. Tracing
+remains outside measured samples. The decoder was checked against all 16
+existing benchmark/mode/variant traces and rejects missing diagnostics.
+The updated audit also passed end to end with reduced loops in all four
+variants and both modes, including output equality, JSON range/count fields,
+and default-allocation probes. Reduced-loop timings are validation only.
+
+Next: measure a safe way to reduce repeated parameter guard work, preserving
+dynamic-call errors and generic constraint attachment. Do not remove entry
+checks merely because this benchmark's callers already provide valid values.

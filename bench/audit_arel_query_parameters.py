@@ -25,6 +25,39 @@ COPY_TYPES = {name: CONSTRUCTOR_TYPES[name] for name in
               ('predicates', 'orderings', 'limit_value', 'offset_value', 'projections')}
 
 
+def summarize_diagnostics(diagnostic):
+    """Expose guard/dispatch evidence without mixing tracing into timings."""
+    header = re.sub(r'/\*.*?\*/|//[^\n]*', '', (REPO / 'src/vm.h').read_text(),
+                    flags=re.DOTALL)
+    enum = header.split(
+        'typedef enum DiamondOpCode : uint8_t {', 1)[1].split('}', 1)[0]
+    # Refuse explicit enum assignments rather than silently mislabel an opcode.
+    if '=' in enum:
+        raise RuntimeError('opcode enum assignments require updating trace decoding')
+    opcodes = re.findall(r'\bDIAMOND_OP_[A-Z_]+\b', enum)
+    check_opcode = opcodes.index('DIAMOND_OP_CHECK_TYPE')
+    patterns = {
+        'interpreted_type_checks': rf'^opcode\[{check_opcode}\]: (\d+)$',
+        'method_cache': r'^inline caches: (\d+) hits, (\d+) misses$',
+        'field_cache': r'^field caches: (\d+) hits, (\d+) misses$',
+        'jit': r'^jit: (\d+) compiled function\(s\), (\d+) bailout\(s\), (\d+) hard propagation\(s\)$',
+    }
+    summary = {'check_type_opcode': check_opcode}
+    for name, pattern in patterns.items():
+        match = re.search(pattern, diagnostic, re.MULTILINE)
+        if match is None:
+            raise RuntimeError(f'missing {name} trace diagnostic')
+        values = [int(value) for value in match.groups()]
+        if name == 'jit':
+            summary[name] = dict(zip(('compiled_functions', 'bailouts',
+                                      'hard_propagations'), values))
+        elif name.endswith('_cache'):
+            summary[name] = dict(zip(('hits', 'misses'), values))
+        else:
+            summary[name] = values[0]
+    return summary
+
+
 def annotate(source, method, types):
     start = source.index(f'    def {method}(')
     end = source.index(')', start) + 1
@@ -193,8 +226,11 @@ def main():
                     diagnostics[variant] = diagnostic
                 mode = 'jit' if jit else 'interpreter'
                 summary = {'samples': samples, 'medians': medians,
+                           'sample_ranges': {v: [min(s), max(s)] for v, s in samples.items()},
                            'change_percent': {v: 100 * (m / medians['baseline'] - 1)
                                               for v, m in medians.items()},
+                           'diagnostic_counts': {v: summarize_diagnostics(d)
+                                                 for v, d in diagnostics.items()},
                            'diagnostics': diagnostics}
                 results['benchmarks'][bench][mode] = summary
                 args.output.write_text(json.dumps(results, indent=2) + '\n')
