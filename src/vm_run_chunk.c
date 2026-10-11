@@ -4861,8 +4861,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_SUPERVISOR_NEW: {
                 /* One optional operand: the restart strategy symbol (nil
                  * register when Supervisor.new() is called with none).
-                 * Restart delay/child cap remain fixed constants, see
-                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment. */
+                 * The child cap is a fixed constant, see
+                 * DIAMOND_MAX_SUPERVISOR_CHILDREN's own comment; the restart
+                 * delay and intensity limit come from Supervisor#restart_policy. */
                 uint16_t dest=0,strategy_reg=0;
                 READ_SHORT(dest);READ_SHORT(strategy_reg);
                 /* calloc, never a `(DiamondSupervisor){}` compound literal --
@@ -4902,6 +4903,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 DiamondSupervisor *new_supervisor=calloc(1,sizeof *new_supervisor);
                 if(new_supervisor==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 new_supervisor->strategy=strategy;
+                new_supervisor->max_restarts=-1;
+                new_supervisor->within_ms=5000;
+                new_supervisor->backoff_ms=20;
+                new_supervisor->max_backoff_ms=20;
                 atomic_init(&new_supervisor->refcount,1);
                 atomic_init(&new_supervisor->stop_requested,false);
                 pthread_mutex_init(&new_supervisor->lock,nullptr);

@@ -20,6 +20,11 @@ authoritative fine-grained record.
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
   holds at most 255 ..." instead of "expected valid module name".
 
+- `Supervisor#restart_policy` bounds restarts: `max_restarts` crashes within `within_ms` make
+  the supervisor give up (its other children are interrupted, `failed?` is true, `add_child`
+  and `join` raise `SupervisorError`), and `backoff_ms`/`max_backoff_ms` grow the pause before
+  a crashed child restarts. Without a policy nothing changes: a fixed 20 ms pause, no limit.
+
 ### Security
 
 - A blocking wait no longer outlives `DIAMOND_MAX_WALL_MILLISECONDS`. The budget is read between

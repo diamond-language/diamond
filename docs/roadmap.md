@@ -81,8 +81,6 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Restart intensity and backoff** -- a policy such as "give up after N crashes in M
-  seconds", instead of a fixed 20 ms delay with no cap.
 - **Cancel-on-timeout** -- `Supervisor.stop` still requires workers to cooperate.
   Blocking TLS and SQL interruption and implicit cancellation checkpoints are open
   (see [cancellation](cancellation.md)).
