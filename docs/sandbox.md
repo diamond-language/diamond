@@ -185,6 +185,12 @@ The budgets are shared by every VM in the process; see below.
 - **The wall-clock budget is checked, not exact.** It is read every few thousand
   instructions, not every single one, since reading the clock is comparatively expensive,
   so the overshoot past a configured millisecond budget is bounded but nonzero.
+- **A blocking wait is bounded, a blocking read is not.** `IO.poll` and channel
+  `send`/`receive`/`select` sleep in the kernel between instructions, so they clamp their
+  wait to the budget's remaining time and raise `ResourceLimitError` (or hard-stop, past the
+  grace allowance) when it runs out. A read on a file, pipe or socket is not interrupted, and
+  `Thread#join` waits for the thread, which has its own budget check. Under `--sandbox` the
+  I/O opcodes are denied before they can block.
 - **Memory is what the VM's own accounting counts.** Objects and the storage of `Array`
   and `Hash` (including growth by `push`, which allocates no new object, checked at the next
   instruction) are counted; buffers owned by native libraries behind a socket, TLS, SQLite,

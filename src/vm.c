@@ -275,6 +275,7 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         if(vm->trapped_signal_handlers[i].kind==DIAMOND_VALUE_OBJECT)
             signal_aware=true;
     int wait_error=0;
+    DiamondVmStatus budget_status=DIAMOND_VM_OK;
     while(!ready) {
         int milliseconds=-1;
         if(timed) {
@@ -286,7 +287,13 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
             milliseconds=rounded>INT_MAX?INT_MAX:(int)rounded;
         }
         if(signal_aware&&(milliseconds<0||milliseconds>10))milliseconds=10;
+        bool budget_bounded=false;
+        milliseconds=bound_wait_by_wall_budget(vm,milliseconds,&budget_bounded);
         const int result=poll(fds,fd_count+1,milliseconds);
+        if(result==0&&budget_bounded) {
+            budget_status=wall_budget_after_wait(vm);
+            if(budget_status!=DIAMOND_VM_OK)break;
+        }
         if(result>0) {
             if(fds[fd_count].revents&(POLLERR|POLLHUP|POLLNVAL))wait_error=EIO;
             break;
@@ -313,7 +320,7 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         snprintf(vm->error,sizeof vm->error,"channel wait: %s",strerror(wait_error));
         return DIAMOND_VM_IO_ERROR;
     }
-    return DIAMOND_VM_OK;
+    return budget_status;
 }
 
 static void mark_value(DiamondValue value, bool minor);
@@ -1159,6 +1166,72 @@ DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget) {
         "%s budget exhausted: the program kept running after its ResourceLimitError",
         budget);
     return DIAMOND_VM_RESOURCE_EXHAUSTED;
+}
+
+/* The absolute CLOCK_MONOTONIC time at which the wall-clock budget next stops
+ * this VM, or 0 when none is configured: the soft budget's deadline while it is
+ * armed, the end of the grace allowance once it has tripped. */
+static int64_t wall_budget_limit_ns(const DiamondVm *vm) {
+    if(vm->max_wall_nanoseconds!=0)return vm->start_time_ns+vm->max_wall_nanoseconds;
+    if(vm->resource_grace_active&&vm->hard_stop_time_ns!=0)return vm->hard_stop_time_ns;
+    return 0;
+}
+
+/* A blocking wait (IO.poll, a channel wait) sleeps in the kernel, where the
+ * per-instruction budget check cannot run, so an unbounded or long wait would
+ * outlive DIAMOND_MAX_WALL_MILLISECONDS entirely. Clamps `timeout_ms` (-1 for
+ * none) to just past the budget's remaining time and sets *bounded when it did,
+ * so the caller can tell a budget expiry from an ordinary timeout. */
+int bound_wait_by_wall_budget(const DiamondVm *vm,int timeout_ms,bool *bounded) {
+    *bounded=false;
+    const int64_t limit=wall_budget_limit_ns(vm);
+    if(limit==0)return timeout_ms;
+    const int64_t remaining_ns=limit-monotonic_nanoseconds();
+    const int64_t remaining_ms=remaining_ns<=0?0:(remaining_ns+999999)/1000000;
+    const int64_t slice=remaining_ms+1;
+    if(timeout_ms>=0&&timeout_ms<=slice)return timeout_ms;
+    *bounded=true;
+    return slice>INT_MAX?INT_MAX:(int)slice;
+}
+
+/* Called after a wait that bound_wait_by_wall_budget clamped returned with
+ * nothing ready. DIAMOND_VM_OK if the budget has not actually run out yet (the
+ * caller treats it as the timeout it is); otherwise the same status the
+ * per-instruction check would have produced. */
+DiamondVmStatus wall_budget_after_wait(DiamondVm *vm) {
+    const int64_t limit=wall_budget_limit_ns(vm);
+    if(limit==0||monotonic_nanoseconds()<=limit)return DIAMOND_VM_OK;
+    if(vm->max_wall_nanoseconds!=0) {
+        resource_limit_trip(vm);
+        return DIAMOND_VM_RESOURCE_LIMIT_ERROR;
+    }
+    return resource_hard_stop(vm,"wall-clock");
+}
+
+/* pthread_cond_wait, bounded by the wall-clock budget (see
+ * bound_wait_by_wall_budget). `lock` is held on entry and on return. Returns
+ * DIAMOND_VM_OK when the caller should re-test its condition, or the budget's
+ * status when the budget ran out while waiting. The channels' condition
+ * variables use the default CLOCK_REALTIME. */
+static DiamondVmStatus channel_wait_bounded(DiamondVm *vm,pthread_cond_t *condition,
+        pthread_mutex_t *lock) {
+    bool bounded=false;
+    const int milliseconds=bound_wait_by_wall_budget(vm,-1,&bounded);
+    if(!bounded) {
+        pthread_cond_wait(condition,lock);
+        return DIAMOND_VM_OK;
+    }
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME,&deadline);
+    deadline.tv_sec+=milliseconds/1000;
+    deadline.tv_nsec+=(long)(milliseconds%1000)*1000000L;
+    if(deadline.tv_nsec>=1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec-=1000000000L;
+    }
+    if(pthread_cond_timedwait(condition,lock,&deadline)==ETIMEDOUT)
+        return wall_budget_after_wait(vm);
+    return DIAMOND_VM_OK;
 }
 
 /* mysql_init() -- called per-connection from MySQL.open's dispatch --
@@ -10949,8 +11022,12 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
                     "channel send would block");
                 return DIAMOND_VM_WOULD_BLOCK;
             }
-            pthread_cond_wait(&target_channel->not_full,
-                &target_channel->lock);
+            const DiamondVmStatus wait_status=channel_wait_bounded(vm,
+                &target_channel->not_full,&target_channel->lock);
+            if(wait_status!=DIAMOND_VM_OK) {
+                pthread_mutex_unlock(&target_channel->lock);
+                return wait_status;
+            }
         }
         if(target_channel->closed) {
             pthread_mutex_unlock(&target_channel->lock);
@@ -11000,8 +11077,12 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
                 "channel receive would block");
             return DIAMOND_VM_WOULD_BLOCK;
         }
-        pthread_cond_wait(&target_channel->not_empty,
-            &target_channel->lock);
+        const DiamondVmStatus wait_status=channel_wait_bounded(vm,
+            &target_channel->not_empty,&target_channel->lock);
+        if(wait_status!=DIAMOND_VM_OK) {
+            pthread_mutex_unlock(&target_channel->lock);
+            return wait_status;
+        }
     }
     if(target_channel->count==0) {
         /* Closed and drained: nil means "nothing ever

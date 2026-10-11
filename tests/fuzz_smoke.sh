@@ -75,6 +75,24 @@ printf '\x1b\x00\x00\x6e\x00\x00\x10\x3a\x00\x00\x0b\x4c\x16' \
 printf '\x00\x00\x00\x81\x00\x00\x00\x04\x00\x00\x39\x00\x00' \
     > "$execute_corpus/collect_variadic_null_arguments"
 
+# The four opcodes the sandbox does not gate (IO_POLL, SIGNAL_TRAP, THREAD_NEW, and
+# TLS_START_HANDSHAKE, which the sandbox refuses before reading its operands) used to be
+# rejected by the harness. libFuzzer essentially never builds the register setup they need
+# unaided (a closure for the thread and the trap, two Arrays for the poll), so each gets a
+# hand-built seed that reaches it: empty-Array IO.poll with a 5 ms timeout and with none (the
+# wall-clock budget has to end that one), Signal.trap("INT") with a callable, Thread.new of a
+# capture-free callable, and TLSSocket.start_handshake.
+printf '\x04\x01\x00\x02\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x33\x00\x01\x00\x00\x00\x00\x33\x00\x02\x00\x00\x00\x00\x4d\x00\x00\x00\x01\x00\x02\x00\x03' \
+    > "$execute_corpus/io_poll_empty"
+printf '\x04\x01\x00\x02\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x03\x00\x00\x33\x00\x01\x00\x00\x00\x00\x33\x00\x02\x00\x00\x00\x00\x4d\x00\x00\x00\x01\x00\x02\x00\x03' \
+    > "$execute_corpus/io_poll_forever"
+printf '\x03\x48\x00\x03\x49\x4e\x54\x00\x00\x00\x01\x00\x01\x00\x00\x1f\x00\x02\x00\x00\x00\x50\x00\x00\x00\x01\x00\x02' \
+    > "$execute_corpus/signal_trap_int"
+printf '\x03\x40\x00\x00\x00\x00\x1f\x00\x01\x00\x00\x00\x5b\x00\x00\x00\x01\x00\x02\x00' \
+    > "$execute_corpus/thread_new_empty"
+printf '\x03\x00\x00\xb1\x00\x00\x00\x01\x00\x02\x00\x03' \
+    > "$execute_corpus/tls_start_handshake"
+
 # The first three bytes of every execute_fuzzer input are the register count, a
 # constants/strings/functions count byte and a type-set/interface/type-variable count
 # byte (fuzz/execute_fuzzer.c), so the seeds above carry two 0x00 count bytes after the

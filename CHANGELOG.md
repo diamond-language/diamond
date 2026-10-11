@@ -20,6 +20,16 @@ authoritative fine-grained record.
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
   holds at most 255 ..." instead of "expected valid module name".
 
+### Security
+
+- A blocking wait no longer outlives `DIAMOND_MAX_WALL_MILLISECONDS`. The budget is read between
+  instructions, so `IO.poll([], [], -1)` or a `Channel#receive` nothing ever feeds slept in the
+  kernel for good, and a program that rescued `ResourceLimitError` could block through the
+  grace allowance too. `IO.poll` (with an Int timeout or cancellation options) and channel
+  `send`/`receive`/`select` now wake when the budget runs out and raise `ResourceLimitError`
+  (or, past the grace allowance, stop for good). A read on a file, pipe or socket is still
+  not interrupted; under `--sandbox` those are denied anyway.
+
 ### Packages
 
 - Arel checks its node constructors and visitor pagination hooks at the call that builds
