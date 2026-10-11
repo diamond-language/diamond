@@ -6224,18 +6224,8 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         return value_matches_bound_node(chunk,value,
             &chunk->type_variable_bindings[variable],0);
     }
-    if(type==DIAMOND_TYPE_INT) return is_int_value(value);
-    if(type==DIAMOND_TYPE_FLOAT) return value.kind==DIAMOND_VALUE_FLOAT;
-    if(type==DIAMOND_TYPE_BOOL) return value.kind==DIAMOND_VALUE_BOOL;
-    if(type==DIAMOND_TYPE_NIL) return value.kind==DIAMOND_VALUE_NIL;
-    if(type==DIAMOND_TYPE_STRING) return value.kind==DIAMOND_VALUE_OBJECT &&
-        value.as.object->kind==DIAMOND_OBJECT_STRING;
-    if(type==DIAMOND_TYPE_SYMBOL) return value.kind==DIAMOND_VALUE_OBJECT &&
-        value.as.object->kind==DIAMOND_OBJECT_SYMBOL;
-    if(type==DIAMOND_TYPE_ARRAY) return value.kind==DIAMOND_VALUE_OBJECT &&
-        value.as.object->kind==DIAMOND_OBJECT_ARRAY;
-    if(type==DIAMOND_TYPE_HASH) return value.kind==DIAMOND_VALUE_OBJECT &&
-        value.as.object->kind==DIAMOND_OBJECT_HASH;
+    const int plain=diamond_plain_type_match(value,type);
+    if(plain>=0)return plain!=0;
     if(type==DIAMOND_TYPE_CALLABLE) return value.kind==DIAMOND_VALUE_OBJECT &&
         value.as.object->kind==DIAMOND_OBJECT_CLOSURE;
     if(type==DIAMOND_TYPE_SIZED) {
@@ -6670,21 +6660,7 @@ static inline int plain_member_match(DiamondValue value,
                                     const DiamondTypeMember *member) {
     if (member->argument_set != DIAMOND_NO_TYPE_SET ||
         member->second_argument_set != DIAMOND_NO_TYPE_SET) return -1;
-    switch (member->id) {
-        case DIAMOND_TYPE_INT: return is_int_value(value);
-        case DIAMOND_TYPE_FLOAT: return value.kind == DIAMOND_VALUE_FLOAT;
-        case DIAMOND_TYPE_BOOL: return value.kind == DIAMOND_VALUE_BOOL;
-        case DIAMOND_TYPE_NIL: return value.kind == DIAMOND_VALUE_NIL;
-        case DIAMOND_TYPE_STRING: return value.kind == DIAMOND_VALUE_OBJECT &&
-            value.as.object->kind == DIAMOND_OBJECT_STRING;
-        case DIAMOND_TYPE_SYMBOL: return value.kind == DIAMOND_VALUE_OBJECT &&
-            value.as.object->kind == DIAMOND_OBJECT_SYMBOL;
-        case DIAMOND_TYPE_ARRAY: return value.kind == DIAMOND_VALUE_OBJECT &&
-            value.as.object->kind == DIAMOND_OBJECT_ARRAY;
-        case DIAMOND_TYPE_HASH: return value.kind == DIAMOND_VALUE_OBJECT &&
-            value.as.object->kind == DIAMOND_OBJECT_HASH;
-        default: return -1;
-    }
+    return diamond_plain_type_match(value, member->id);
 }
 
 /* Keep structural calls out of the plain matcher's register lifetimes.

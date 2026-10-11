@@ -977,12 +977,9 @@ static void compile_index_set(JitCompiler *jc, size_t instruction_start,
 static bool simple_guard_member(DiamondTypeMember member) {
     if (member.argument_set != DIAMOND_NO_TYPE_SET ||
         member.second_argument_set != DIAMOND_NO_TYPE_SET) return false;
-    switch (member.id) {
-        case DIAMOND_TYPE_INT: case DIAMOND_TYPE_FLOAT: case DIAMOND_TYPE_BOOL:
-        case DIAMOND_TYPE_NIL: case DIAMOND_TYPE_STRING: case DIAMOND_TYPE_SYMBOL:
-        case DIAMOND_TYPE_ARRAY: case DIAMOND_TYPE_HASH: return true;
-        default: return false;
-    }
+    /* diamond_plain_type_match (vm.h) is the single definition of which
+     * ids are plain; the kind switches below emit its tests as code. */
+    return diamond_plain_type_match(DIAMOND_NIL, member.id) >= 0;
 }
 
 static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_index) {

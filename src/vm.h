@@ -662,6 +662,34 @@ enum { DIAMOND_NATIVE_TYPE_OPERAND_BASE = 256 };
 bool diamond_native_type_kind(const char *name, uint8_t *kind);
 const char *diamond_native_type_name(uint8_t kind);
 
+/* The one definition of what the built-in, unparameterized types accept.
+ * Returns 1/0 for a plain type id and -1 for any id that needs the full
+ * matcher (generics, interfaces, type variables, native kinds). The
+ * interpreter's matchers call this; the JIT's guard emitter in jit.c asks
+ * it which ids are plain and mirrors the same kind tests as machine code,
+ * so a change here must be reflected in compile_check_type's two kind
+ * switches. tests/cases/plain_type_guard_matrix.di checks every plain id
+ * against every value kind. */
+static inline int diamond_plain_type_match(DiamondValue value, uint8_t id) {
+    const bool object = value.kind == DIAMOND_VALUE_OBJECT;
+    switch (id) {
+        case DIAMOND_TYPE_INT: return value.kind == DIAMOND_VALUE_INT ||
+            (object && value.as.object->kind == DIAMOND_OBJECT_BIGNUM);
+        case DIAMOND_TYPE_FLOAT: return value.kind == DIAMOND_VALUE_FLOAT;
+        case DIAMOND_TYPE_BOOL: return value.kind == DIAMOND_VALUE_BOOL;
+        case DIAMOND_TYPE_NIL: return value.kind == DIAMOND_VALUE_NIL;
+        case DIAMOND_TYPE_STRING: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_STRING;
+        case DIAMOND_TYPE_SYMBOL: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_SYMBOL;
+        case DIAMOND_TYPE_ARRAY: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_ARRAY;
+        case DIAMOND_TYPE_HASH: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_HASH;
+        default: return -1;
+    }
+}
+
 /* These direct-mapped tables are shared by all bytecode call/field sites in
  * a VM. At 64 slots, adding Arel return checks shifted site addresses into
  * a collision cliff. 256 keeps the same lookup policy while reducing that
