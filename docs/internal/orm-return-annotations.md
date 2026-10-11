@@ -830,3 +830,53 @@ with forced JIT plus major GC stress. The only retained change is this record.
 Next: investigate reducing matcher cost through prepared plain-type metadata,
 rather than changing general dispatch layout. Preserve ordered generic-union
 behavior and measure arithmetic/rendering controls alongside the builder.
+
+## Rejected prepared plain-type masks
+
+Two candidates prepared a builtin membership mask for wholly plain type sets
+at compilation completion, function copying (including cache loading and
+thread/template copies), and ProgramBuilder type-set creation. Execution
+never mutated shared sets. A zero mask retained ordered structural matching
+for any generic, callable, class, interface, native, or type-variable member.
+Plain matching classified the value once, including Bignum as Int, then
+tested membership. The cache format version was advanced for the changed
+serialized layout. Both candidates and the format change were discarded.
+
+The first candidate added a uint16_t field, expanding DiamondTypeSet from
+354 to 356 bytes. The second packed count, inferred status, and mask into
+four, one, and ten bits respectively, retaining the baseline's measured
+354-byte size and two-byte alignment. Separate five-sample, CPU-pinned,
+alternating comparisons used the established release runtime as control,
+identical production annotations, loop-only timing, equal outputs, fresh
+compilation, sanitized environments, and tracing outside measured samples.
+
+| Workload | Larger mask variant | Same-size mask variant |
+| --- | ---: | ---: |
+| Builder, interpreter | +5.4% | +2.5% |
+| Builder, JIT enabled | +5.2% | +2.2% |
+| Rendering, interpreter | +8.2% | +0.3% |
+| Rendering, JIT enabled | +8.1% | +0.9% |
+| Arithmetic, interpreter | -0.3% | +1.6% |
+| Arithmetic, JIT enabled | -0.2% | +2.0% |
+
+The larger variant shifted builder method-cache misses from 15 to 400,013
+and field misses from 2,400,052 to 2,000,052. Rendering method misses rose
+from 120,053 to 280,046 and field misses from 120,079 to 240,096. Its changed
+allocation layout introduces cache effects, so its slowdown cannot be
+attributed solely to matcher execution. The same-size variant restored all
+four Arel diagnostic summaries exactly to baseline, yet did not improve
+builder time. Neither variant changes JIT compilation coverage or bailout
+counts. Arithmetic remains interpreted in both modes at the default threshold.
+
+Both candidates passed the existing interpreter guard fixture with major GC
+stress (result 40). Performance audits checked all sample outputs and guard/
+JIT counters. Full runtime validation was not performed because neither
+candidate met the performance gate. The runtime, compiler, ProgramBuilder,
+type-set layout, and cache format are restored to the established versions.
+The restored debug build passed the guard fixture normally, with an instruction
+budget, and with forced JIT plus major GC stress. CI run 38108719326 completed
+successfully on commit 0317f7f4, verifying the preceding portability fixes.
+
+Next: profile the established matcher and guard dispatch before another
+optimization. The retained Query annotation overhead remains unresolved;
+the remaining collection constructor annotations are still deferred.
