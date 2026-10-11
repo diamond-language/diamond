@@ -1029,6 +1029,25 @@ static void compile_new_hash(JitCompiler *jc, uint16_t dest, uint16_t base, uint
     emit_bail_if_al_nonzero(jc);
 }
 
+/* ARRAY uses the same rooted allocation path as HASH, including empty
+ * literals used by default arguments. Preserve element registers across GC. */
+static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uint16_t count) {
+    if (dest >= DIAMOND_JIT_MAX_REGISTERS ||
+        (size_t)base + count > DIAMOND_JIT_MAX_REGISTERS) {
+        jc->bailed = true;
+        return;
+    }
+    jc->needs_frame = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RDX, base);
+    emit_mov_imm64(buf, REG_RCX, count);
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_array);
+    emit_bail_if_al_nonzero(jc);
+}
+
 /* SUPER (Phase 2d) -- the first opcode that can run arbitrary interpreted
  * code with real side effects; sets both jc->needs_frame (invoke_
  * resolved_method_helper can allocate/trigger GC arbitrarily deep inside
@@ -1310,6 +1329,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_STRING:
         case DIAMOND_OP_INDEX_GET:
         case DIAMOND_OP_INDEX_GET_STRING:
+        case DIAMOND_OP_ARRAY:
         case DIAMOND_OP_HASH:
         case DIAMOND_OP_SUPER:
         case DIAMOND_OP_INVOKE:
@@ -1391,7 +1411,7 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
@@ -1517,7 +1537,7 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
@@ -1778,6 +1798,13 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &index) ||
                     !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
                 compile_index_set(jc, instruction_start, recv, index, source);
+                break;
+            }
+            case DIAMOND_OP_ARRAY: {
+                uint16_t dest = 0, base = 0, count = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u16(fn, &pc, &count)) { jc->bailed = true; return; }
+                compile_new_array(jc, dest, base, count);
                 break;
             }
             case DIAMOND_OP_HASH: {

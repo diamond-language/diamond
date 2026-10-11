@@ -79,7 +79,7 @@ static_assert((unsigned)DIAMOND_VM_SANDBOX_ERROR < (unsigned)DIAMOND_JIT_RETRY,
  * run_chunk's own callee registers (see run_chunk's own entry setup in
  * vm.c for the shape this mirrors); `vm` and `chunk` are threaded through
  * purely so generated code can pass them to a trampoline call (SET_IVAR/
- * INDEX_GET/CHECK_TYPE/STRING/HASH/SUPER), never dereferenced by
+ * INDEX_GET/CHECK_TYPE/STRING/ARRAY/HASH/SUPER), never dereferenced by
  * generated code itself -- `chunk` specifically is the same DiamondChunk
  * view the interpreter itself would have built for this exact call (see
  * both jit_call_or_interpret call sites in vm.c), needed because a type
@@ -266,6 +266,11 @@ DiamondVmStatus diamond_jit_new_string(DiamondVm *vm, const DiamondChunk *chunk,
  * case reads; the whole key/value-pair loop lives in this trampoline
  * rather than generated code. */
 DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out);
+
+/* Array literals and default arguments allocate at a GC safepoint. The
+ * generated function must publish its registers through a DiamondFrame. */
+DiamondVmStatus diamond_jit_new_array(DiamondVm *vm, DiamondValue *registers,
         uint16_t base, uint16_t count, DiamondValue *out);
 
 /* Phase 2e. JIT trampoline for DIAMOND_OP_EQUAL/NOT_EQUAL's general case

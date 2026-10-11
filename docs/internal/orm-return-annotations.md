@@ -428,3 +428,62 @@ Next: add GC-safe JIT support for `DIAMOND_OP_ARRAY`, then repeat this audit
 before adding the hot constructor annotations. Interpreter guard cost remains
 a separate issue and must also be addressed or explicitly accepted; JIT
 eligibility alone does not make the interpreter regression disappear.
+
+## GC-safe JIT array construction
+
+The shared branch now compiles `DIAMOND_OP_ARRAY`, including default `[]`
+arguments, through a rooted allocation trampoline. The interpreter uses the
+same allocation/bounds-check helper. Both JIT register-write scans recognize
+the new opcode; compilation rejects operands outside the JIT register frame.
+No Arel parameter contracts or type guards are removed or broadened.
+
+A five-sample alternating comparison used identical `c9f71779` Arel packages
+with the previous and new release binaries, measuring inside each loop. Fresh
+compilation, one CPU, sanitized `DIAMOND_*` environment, and output-identity
+checks match the isolated audit controls:
+
+| Benchmark | Mode | Previous median | Array-JIT median | Change |
+| --- | --- | ---: | ---: | ---: |
+| Arel render | Interpreter | 1.4319 s | 1.4106 s | −1.5% |
+| Arel render | JIT enabled | 1.3449 s | 1.3326 s | −0.9% |
+| Arel builder chain | Interpreter | 1.4831 s | 1.5038 s | +1.4% |
+| Arel builder chain | JIT enabled | 1.3240 s | 1.0868 s | −17.9% |
+
+The builder JIT improvement is material; the other differences are small.
+
+Repeating the four-variant guard audit with this release binary (three samples
+per variant/mode) shows why the hot annotations remain deferred:
+
+| Variant | Builder interpreter | Builder JIT enabled |
+| --- | ---: | ---: |
+| Baseline | 1.4927 s | 1.0790 s |
+| Constructor only | 1.6994 s (+13.9%) | 1.2465 s (+15.5%) |
+| Copy only | 1.5549 s (+4.2%) | 1.1292 s (+4.6%) |
+| Both | 1.8055 s (+21.0%) | 1.3136 s (+21.7%) |
+
+Both default-allocation probes now compile one function. The Arel builder
+trace compiles 13 functions instead of the previous 10, with no bailout or
+hard propagation. Constructor annotations add only 735 interpreted guards
+after warmup, rather than 15,000,000: the remaining checks execute natively and
+still cost time. Interpreter opcode and cache counts match the prior isolated
+experiment, including the 15,000,000 extra constructor guards. This change
+closes JIT eligibility, not the remaining guard-overhead problem.
+
+New fixtures check nested object elements, fresh default arrays, explicit
+array arguments, full/minor stress GC, and propagation of a failed return
+guard after array allocation without replaying a prior hash mutation. The
+CLI eligibility probe asserts actual compilation at threshold one.
+
+Next: investigate the cost of primitive and non-generic collection guards in
+both execution modes before accepting the deferred Query annotations. Retain
+all type-check behavior, including generic constraints and failure diagnostics.
+
+Validation: the debug full suite passed 1,790 tests before the final
+post-mutation failure fixture was added. That fixture passed separately on
+the release binary, and the subsequent ASan/UBSan full suite passed all
+1,791 tests (1,638 corpus cases; 39 skipped without an expectation or `run!`
+marker), on its first attempt. All 25 Arel case files passed on the new release
+binary with forced JIT and fresh compilation. The four-variant audit completed
+in both modes for both benchmarks, with matching outputs and successful
+Array/Hash default-allocation probes. A normal debug build was restored after
+sanitizer validation.

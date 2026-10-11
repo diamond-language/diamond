@@ -4263,6 +4263,18 @@ static bool hash_delete(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                                   hash->count-index);
 }
 
+/* Shared ARRAY implementation. allocate_array can collect before copying
+ * elements, so its source registers must already be published as GC roots. */
+DiamondVmStatus diamond_jit_new_array(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out) {
+    if ((size_t)base + count > DIAMOND_REGISTER_COUNT)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    DiamondArray *array = allocate_array(vm, &registers[base], count);
+    if (array == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+    *out = DIAMOND_OBJECT(array);
+    return DIAMOND_VM_OK;
+}
+
 /* JIT trampoline for DIAMOND_OP_HASH -- extracted from that case's own
  * body (below) so the interpreter and the JIT share one implementation
  * rather than risking the two drifting apart. Allocates via

@@ -3625,11 +3625,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_ARRAY: {
                 uint16_t destination=0,base=0,count=0;
                 READ_SHORT(destination);READ_SHORT(base);READ_SHORT(count);
-                if((size_t)base+count>DIAMOND_REGISTER_COUNT)
-                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondArray *array=allocate_array(vm,&registers[base],count);
-                if(array==nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                registers[destination]=DIAMOND_OBJECT(array);
+                const DiamondVmStatus status=diamond_jit_new_array(vm,registers,
+                    base,count,&registers[destination]);
+                VM_PROPAGATE(status);
                 break;
             }
             case DIAMOND_OP_INDEX_GET: {

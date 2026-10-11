@@ -2015,3 +2015,28 @@ Two measurements that used to sit in the roadmap and should survive its cleanup:
 
 A value the JIT cannot prove is an `Int` at run time (a String, Instance, Float, ...)
 correctly takes the slow trampoline every time; that is expected cost, not a gap.
+
+### Array construction and default-array constructors
+
+`DIAMOND_OP_ARRAY` now compiles through `diamond_jit_new_array`, sharing the
+interpreter's bounds check, allocation, and element-copy implementation.
+`compile_new_array` marks the function as needing a published `DiamondFrame`
+before allocation: `allocate_array` can collect before copying its source
+registers, so nested arrays, strings, and other element objects must be roots.
+The helper stores the result after allocation, and uses the existing bailout
+policy for allocation or bytecode errors. The JIT additionally rejects array
+operands outside its register-frame bound.
+
+Both register-write analyses recognize ARRAY's three 16-bit operands and its
+destination write. An array assignment therefore cannot leave stale proof of a
+user-class receiver behind. Default `[]` expressions no longer make an otherwise
+supported constructor ineligible, even when a caller supplies that argument.
+Every omitted default still allocates a separate mutable array; explicit
+arguments retain their ordinary type checks.
+
+The regression fixtures exercise nested elements and constructor defaults with
+forced compilation and full/minor stress GC. A separate CLI probe asserts that
+an otherwise empty default-array constructor actually compiles, so interpreter
+fallback cannot silently satisfy the test. A guard failure after allocation
+also propagates without replaying an earlier mutation. The Arel guard audit measures the
+remaining check costs; array construction support does not remove guards.
