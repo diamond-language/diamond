@@ -1,8 +1,8 @@
 module Arel
 
   class CompoundQuery
-    def initialize(left, operator: String, right, orderings = [], limit_value = nil,
-                   offset_value = nil)
+    def initialize(left, operator: String, right, orderings: Array = [], limit_value: Int | Nil = nil,
+                   offset_value: Int | Nil = nil)
       if !left.projection_count_known?() || !right.projection_count_known?()
         raise ArgumentError.new("compound queries require explicit projections")
       end

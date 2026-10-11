@@ -37,7 +37,7 @@ module Arel
   end
 
   class Cte
-    def initialize(name: String, query, recursive = false)
+    def initialize(name: String, query, recursive: Bool = false)
       @name = name
       @query = query
       @recursive = recursive

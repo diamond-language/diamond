@@ -10,7 +10,7 @@ module Arel
   end
 
   class Ordering
-    def initialize(expression, direction: String, nulls = nil)
+    def initialize(expression, direction: String, nulls: String | Nil = nil)
       @expression = expression
       @direction = direction
       @nulls = nulls
