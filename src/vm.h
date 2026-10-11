@@ -690,12 +690,16 @@ static inline int diamond_plain_type_match(DiamondValue value, uint8_t id) {
     }
 }
 
-/* These direct-mapped tables are shared by all bytecode call/field sites in
- * a VM. At 64 slots, adding Arel return checks shifted site addresses into
- * a collision cliff. 256 keeps the same lookup policy while reducing that
- * interference; the three tables together occupy 72 KiB on 64-bit builds.
- * See docs/internal/orm-return-annotations.md for before/after measurements. */
+/* The method, extension and field tables are shared by every bytecode call
+ * and field site in a VM. Each is organized as DIAMOND_INLINE_CACHE_COUNT /
+ * DIAMOND_INLINE_CACHE_WAYS sets of WAYS slots, and a site may occupy any
+ * way of its set (diamond_cache_slot, src/vm_internal.h), so a call site's
+ * residency no longer depends on where its bytecode happens to sit. 256 is
+ * the smallest size measured to hold the Arel render path's working set
+ * (see docs/internal/orm-return-annotations.md); 64 and 128 still thrash on
+ * capacity alone. */
 enum { DIAMOND_INLINE_CACHE_COUNT = 256 };
+enum { DIAMOND_INLINE_CACHE_WAYS = 4 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 /* INT, TERM, HUP -- see docs/io.md's signals section for why this
  * specific small, fixed set rather than every signal name POSIX knows
@@ -1957,9 +1961,10 @@ struct DiamondVm {
      * so this is never read concurrently with a write). */
     DiamondValue *extra_roots;
     size_t extra_root_count;
-    /* Keep the large site tables after VM control state. Their capacity must
-     * not spread the dispatch counters, quickening/JIT flags, and instruction
+    /* Keep the site tables after VM control state, so their size does not
+     * spread the dispatch counters, quickening/JIT flags and instruction
      * budgets across the tables' working set. */
+    uint8_t cache_victim_cursor;
     DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
     DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];

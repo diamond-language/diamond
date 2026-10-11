@@ -4320,9 +4320,12 @@ const DiamondMethod *lookup_method(const DiamondChunk *chunk,
 
 static const DiamondMethod *lookup_method_cached(
     DiamondVm *vm, const DiamondChunk *chunk, const uint8_t *site,
-    const DiamondClass *class, const char *name, size_t length) {
-    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    const DiamondClass *class, const char *name, size_t length,
+    const DiamondMethodCache **cache_out) {
+    const size_t slot=diamond_cache_slot(site,vm->method_caches,
+        sizeof vm->method_caches[0],&vm->cache_victim_cursor);
     DiamondMethodCache *cache=&vm->method_caches[slot];
+    if(cache_out!=nullptr)*cache_out=cache;
     if(cache->site!=site) {
         *cache=(DiamondMethodCache){.site=site};
     } else {
@@ -4385,7 +4388,7 @@ DiamondVmStatus invoke_operator_method(DiamondVm *vm,
     (void)chunk;
     const DiamondChunk *owner=receiver->owner!=nullptr?receiver->owner:vm->root_chunk;
     const DiamondMethod *method=lookup_method_cached(vm,owner,site,
-        receiver->class,name,name_length);
+        receiver->class,name,name_length,nullptr);
     if(method==nullptr) {*found=false;return DIAMOND_VM_OK;}
     *found=true;
     /* method->arity/required_arity are stored receiver-exclusive (see
@@ -5903,7 +5906,8 @@ enum {
 
 static void store_extension_lookup(DiamondVm *vm,const uint8_t *site,
         uint8_t kind,const DiamondFunction *function) {
-    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    const size_t slot=diamond_cache_slot(site,vm->extension_caches,
+        sizeof vm->extension_caches[0],&vm->cache_victim_cursor);
     DiamondExtensionCache *cache=&vm->extension_caches[slot];
     if(cache->site!=site) *cache=(DiamondExtensionCache){.site=site};
     for(size_t index=0;index<cache->entry_count;index++)
@@ -5943,7 +5947,8 @@ static bool record_rewritten_site(DiamondVm *vm, const uint8_t *site) {
 DiamondFieldCacheEntry *lookup_field_cached(
     DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
     uint8_t field, bool write) {
-    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    const size_t slot=diamond_cache_slot(site,vm->field_caches,
+        sizeof vm->field_caches[0],&vm->cache_victim_cursor);
     DiamondFieldCache *cache=&vm->field_caches[slot];
     if(cache->site!=site) {
         *cache=(DiamondFieldCache){.site=site};
@@ -9036,12 +9041,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
         *out=instance->field_count>2?instance->fields[2]:DIAMOND_NIL;
         return DIAMOND_VM_OK;
     }
-    const size_t cache_slot=((size_t)(uintptr_t)site>>2)%
-        DIAMOND_INLINE_CACHE_COUNT;
-    DiamondMethodCache *cache=&vm->method_caches[cache_slot];
+    const size_t cache_slot=diamond_cache_find(site,vm->method_caches,
+        sizeof vm->method_caches[0]);
+    const DiamondMethodCache *cache=cache_slot==SIZE_MAX?nullptr:
+        &vm->method_caches[cache_slot];
     const DiamondMethod *method=nullptr;
     if (instruction==DIAMOND_OP_INVOKE_MONO &&
-        cache->site==site && cache->entry_count==1 &&
+        cache!=nullptr && cache->entry_count==1 &&
         cache->entries[0].receiver_class==instance->class) {
         method=cache->entries[0].method;
         vm->inline_cache_hits++;
@@ -9051,7 +9057,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
             *(uint8_t *)(void *)site=(uint8_t)DIAMOND_OP_INVOKE;
         }
         method=lookup_method_cached(vm,owner,site,instance->class,
-            method_name->chars,method_name->length);
+            method_name->chars,method_name->length,&cache);
         if (instruction==DIAMOND_OP_INVOKE &&
             cache->entry_count==1 &&
             cache->hits>=vm->monomorphic_threshold) {
