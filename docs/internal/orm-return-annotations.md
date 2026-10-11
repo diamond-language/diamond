@@ -534,3 +534,49 @@ fallback under forced JIT and major GC stress. It and the existing
 failure-after-mutation fixture produced matching output on the old/new
 release binaries in both execution modes. The four-variant audit preserved
 benchmark output and passed its default-allocation probes.
+
+## Interpreter plain-member matching and Query.copy
+
+The shared runtime matcher now reads members by reference and compares plain
+built-in types directly, avoiding a member copy and the deep matcher call.
+It still processes union members in source order; generic collections,
+Callable, structural/class/native types, and type variables retain their
+full matching behavior. Both immediate and promoted integers remain Int.
+
+Five alternating, CPU-pinned release samples on the same unannotated Query
+package measured builder changes of -1.5% in interpreter mode and -0.3%
+with JIT. Rendering changed -0.5% and +0.6%, respectively. Outputs matched;
+these small differences should not be treated as broad performance gains.
+
+Three rotated samples per variant with the new runtime measured:
+
+| Builder mode | Untyped control | Constructor | Copy | Both |
+| --- | ---: | ---: | ---: | ---: |
+| Interpreter | 1.4975 s | 1.6023 s (+7.0%) | 1.5176 s (+1.3%) | 1.6392 s (+9.5%) |
+| JIT | 1.0682 s | 1.0628 s (-0.5%) | 1.0402 s (-2.6%) | 1.0781 s (+0.9%) |
+
+The interpreter constructor penalty is lower than the previous audit's
++13.5%, but remains substantial, so constructor annotations stay deferred.
+The copy-only variant's small changes support accepting its five fixed
+parameters: predicates/orderings/projections are plain Array, and
+limit_value/offset_value are Int | Nil. The production signature exactly
+matches the measured copy variant. Dynamic node contents remain unrestricted.
+The contract fixture covers nil/zero/promoted integers, plain array mutation,
+all five rejected parameter shapes, and unchanged original query state.
+
+The audit now removes only the known audited annotations from temporary
+copies before producing its four variants, so HEAD remains a valid input
+after some annotations land. It records this untyped-control normalization
+in the JSON output and still rejects unexpected signatures.
+
+Next: investigate further constructor guard cost or safe compiler proofs
+before accepting the remaining Query constructor annotations.
+
+Validation: the release and ASan/UBSan full suites each passed all 1,794
+tests (1,641 corpus cases; 39 skipped), with the sanitizer run passing on
+its first attempt. All 26 Arel files passed with forced JIT. The new
+Array/Hash union fixture, existing plain-guard fixture, and post-mutation
+failure fixture matched before/after in both modes under minor GC stress;
+focused contract checks also passed under major GC stress. The audit's
+annotation removal was checked against the original untyped source, and
+the production copy signature was checked against the measured variant.

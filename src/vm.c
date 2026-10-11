@@ -6527,11 +6527,11 @@ static bool constraint_already_implies(const DiamondChunk *chunk,
 }
 
 static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
-                                 DiamondTypeMember member,bool attach) {
-    if(member.id==DIAMOND_TYPE_NATIVE)
-        return value_is_native_kind(value,member.callable_arity);
-    if(!value_matches_type(chunk,value,member.id))return false;
-    if(member.id==DIAMOND_TYPE_CALLABLE) {
+                                 const DiamondTypeMember *member,bool attach) {
+    if(member->id==DIAMOND_TYPE_NATIVE)
+        return value_is_native_kind(value,member->callable_arity);
+    if(!value_matches_type(chunk,value,member->id))return false;
+    if(member->id==DIAMOND_TYPE_CALLABLE) {
         const DiamondClosure *closure=(const DiamondClosure *)value.as.object;
         /* A compile_method result is scoped to define_method, not a
          * general typed Callable -- see DIAMOND_OP_CALL_CLOSURE's own
@@ -6543,45 +6543,45 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
          * some owner_class shapes (see diamond_function_self_offset's own
          * comment, src/vm.h) -- a *value* satisfying Callable[N] only ever
          * supplies N real, self-less arguments, so that offset must come
-         * out here before comparing against member.callable_arity. */
+         * out here before comparing against member->callable_arity. */
         const uint8_t self_offset=diamond_function_self_offset(function);
         const uint8_t declared_arity=(uint8_t)(function->arity-self_offset);
         const uint8_t declared_required_arity=
             (uint8_t)(function->required_arity-self_offset);
-        if(member.callable_arity!=UINT8_MAX&&
-           (member.callable_arity<declared_required_arity||
-            (member.callable_arity>declared_arity&&!function->has_variadic)))
+        if(member->callable_arity!=UINT8_MAX&&
+           (member->callable_arity<declared_required_arity||
+            (member->callable_arity>declared_arity&&!function->has_variadic)))
             return false;
-        if(member.callable_parameters_typed)
-            for(size_t parameter=0;parameter<member.callable_arity;parameter++) {
+        if(member->callable_parameters_typed)
+            for(size_t parameter=0;parameter<member->callable_arity;parameter++) {
                 const uint16_t actual=function->parameter_type_sets[parameter];
                 if(actual!=DIAMOND_NO_TYPE_SET&&
                    !runtime_set_satisfies(chunk,chunk->type_sets,
-                       member.callable_parameter_sets[parameter],
+                       member->callable_parameter_sets[parameter],
                        function->type_sets,actual))return false;
             }
-        return member.callable_return_set==DIAMOND_NO_TYPE_SET||
-            ((size_t)member.callable_return_set<chunk->type_set_count&&
+        return member->callable_return_set==DIAMOND_NO_TYPE_SET||
+            ((size_t)member->callable_return_set<chunk->type_set_count&&
              function->return_type_set!=DIAMOND_NO_TYPE_SET&&
              (size_t)function->return_type_set<function->type_set_count&&
              runtime_set_satisfies(chunk,function->type_sets,
                 function->return_type_set,chunk->type_sets,
-                member.callable_return_set));
+                member->callable_return_set));
     }
-    if(member.argument_set==DIAMOND_NO_TYPE_SET)return true;
-    if((size_t)member.argument_set>=chunk->type_set_count)return false;
-    if(member.id==DIAMOND_TYPE_ARRAY) {
+    if(member->argument_set==DIAMOND_NO_TYPE_SET)return true;
+    if((size_t)member->argument_set>=chunk->type_set_count)return false;
+    if(member->id==DIAMOND_TYPE_ARRAY) {
         DiamondArray *array=(DiamondArray *)value.as.object;
         for(size_t index=0;index<array->count;index++)
-            if(!value_matches_set(chunk,array->values[index],member.argument_set,false))
+            if(!value_matches_set(chunk,array->values[index],member->argument_set,false))
                 return false;
         if(!attach)return true;
         for(size_t index=0;index<array->count;index++)
-            if(!value_matches_set(chunk,array->values[index],member.argument_set,true))
+            if(!value_matches_set(chunk,array->values[index],member->argument_set,true))
                 return false;
         for(size_t index=0;index<array->constraint_count;index++)
             if(array->constraints[index].type_sets==chunk->type_sets&&
-               array->constraints[index].set_index==member.argument_set)return true;
+               array->constraints[index].set_index==member->argument_set)return true;
         for(size_t index=0;index<array->constraint_count;index++)
             if(constraint_already_implies(chunk,array->constraints[index].type_sets,
                    array->constraints[index].type_set_count,
@@ -6589,11 +6589,11 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                    array->constraints[index].classes,
                    array->constraints[index].interfaces,
                    array->constraints[index].type_variable_count,
-                   member.argument_set))return true;
+                   member->argument_set))return true;
         if(array->constraint_count==4)return false;
         array->constraints[array->constraint_count++]=(typeof(array->constraints[0])){
             .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
-            .set_index=member.argument_set,.classes=chunk->classes,
+            .set_index=member->argument_set,.classes=chunk->classes,
             .class_count=chunk->class_count,.interfaces=chunk->interfaces,
             .interface_count=chunk->interface_count,
             .type_variable_count=chunk->type_variable_count};
@@ -6610,22 +6610,22 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
         }
         return true;
     }
-    if(member.id!=DIAMOND_TYPE_HASH||member.second_argument_set==DIAMOND_NO_TYPE_SET||
-       (size_t)member.second_argument_set>=chunk->type_set_count)return false;
+    if(member->id!=DIAMOND_TYPE_HASH||member->second_argument_set==DIAMOND_NO_TYPE_SET||
+       (size_t)member->second_argument_set>=chunk->type_set_count)return false;
     DiamondHash *hash=(DiamondHash *)value.as.object;
     for(size_t index=0;index<hash->count;index++)
-        if(!value_matches_set(chunk,hash->entries[index].key,member.argument_set,false)||
+        if(!value_matches_set(chunk,hash->entries[index].key,member->argument_set,false)||
            !value_matches_set(chunk,hash->entries[index].value,
-                              member.second_argument_set,false))return false;
+                              member->second_argument_set,false))return false;
     if(!attach)return true;
     for(size_t index=0;index<hash->count;index++)
-        if(!value_matches_set(chunk,hash->entries[index].key,member.argument_set,true)||
+        if(!value_matches_set(chunk,hash->entries[index].key,member->argument_set,true)||
            !value_matches_set(chunk,hash->entries[index].value,
-                              member.second_argument_set,true))return false;
+                              member->second_argument_set,true))return false;
     for(size_t index=0;index<hash->constraint_count;index++)
         if(hash->constraints[index].type_sets==chunk->type_sets&&
-           hash->constraints[index].key_set==member.argument_set&&
-           hash->constraints[index].value_set==member.second_argument_set)return true;
+           hash->constraints[index].key_set==member->argument_set&&
+           hash->constraints[index].value_set==member->second_argument_set)return true;
     for(size_t index=0;index<hash->constraint_count;index++)
         if(constraint_already_implies(chunk,hash->constraints[index].type_sets,
                hash->constraints[index].type_set_count,
@@ -6633,18 +6633,18 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
                hash->constraints[index].classes,
                hash->constraints[index].interfaces,
                hash->constraints[index].type_variable_count,
-               member.argument_set)&&
+               member->argument_set)&&
            constraint_already_implies(chunk,hash->constraints[index].type_sets,
                hash->constraints[index].type_set_count,
                hash->constraints[index].value_set,
                hash->constraints[index].classes,
                hash->constraints[index].interfaces,
                hash->constraints[index].type_variable_count,
-               member.second_argument_set))return true;
+               member->second_argument_set))return true;
     if(hash->constraint_count==4)return false;
     hash->constraints[hash->constraint_count++]=(typeof(hash->constraints[0])){
         .type_sets=chunk->type_sets,.type_set_count=chunk->type_set_count,
-        .key_set=member.argument_set,.value_set=member.second_argument_set,
+        .key_set=member->argument_set,.value_set=member->second_argument_set,
         .classes=chunk->classes,.class_count=chunk->class_count};
     hash->constraints[hash->constraint_count-1].interfaces=chunk->interfaces;
     hash->constraints[hash->constraint_count-1].interface_count=chunk->interface_count;
@@ -6664,12 +6664,40 @@ static bool value_matches_member(const DiamondChunk *chunk,DiamondValue value,
     return true;
 }
 
+/* -1 requires the full matcher. Handle each member in declaration order:
+ * a preceding generic member may attach constraints before a plain fallback. */
+static inline int plain_member_match(DiamondValue value,
+                                    const DiamondTypeMember *member) {
+    if (member->argument_set != DIAMOND_NO_TYPE_SET ||
+        member->second_argument_set != DIAMOND_NO_TYPE_SET) return -1;
+    switch (member->id) {
+        case DIAMOND_TYPE_INT: return is_int_value(value);
+        case DIAMOND_TYPE_FLOAT: return value.kind == DIAMOND_VALUE_FLOAT;
+        case DIAMOND_TYPE_BOOL: return value.kind == DIAMOND_VALUE_BOOL;
+        case DIAMOND_TYPE_NIL: return value.kind == DIAMOND_VALUE_NIL;
+        case DIAMOND_TYPE_STRING: return value.kind == DIAMOND_VALUE_OBJECT &&
+            value.as.object->kind == DIAMOND_OBJECT_STRING;
+        case DIAMOND_TYPE_SYMBOL: return value.kind == DIAMOND_VALUE_OBJECT &&
+            value.as.object->kind == DIAMOND_OBJECT_SYMBOL;
+        case DIAMOND_TYPE_ARRAY: return value.kind == DIAMOND_VALUE_OBJECT &&
+            value.as.object->kind == DIAMOND_OBJECT_ARRAY;
+        case DIAMOND_TYPE_HASH: return value.kind == DIAMOND_VALUE_OBJECT &&
+            value.as.object->kind == DIAMOND_OBJECT_HASH;
+        default: return -1;
+    }
+}
+
 bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
                               uint16_t set_index,bool attach) {
     if((size_t)set_index>=chunk->type_set_count)return false;
     const DiamondTypeSet *set=&chunk->type_sets[set_index];
-    for(size_t index=0;index<set->count;index++)
-        if(value_matches_member(chunk,value,set->members[index],attach))return true;
+    for(size_t index=0;index<set->count;index++) {
+        const DiamondTypeMember *member=&set->members[index];
+        const int plain=plain_member_match(value,member);
+        if(plain>=0) {
+            if(plain)return true;
+        } else if(value_matches_member(chunk,value,member,attach))return true;
+    }
     return false;
 }
 

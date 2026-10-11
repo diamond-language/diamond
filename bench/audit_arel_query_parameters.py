@@ -37,6 +37,18 @@ def annotate(source, method, types):
     return source[:start] + signature + source[end:]
 
 
+def remove_known_annotations(source, method, types):
+    """Build an untyped control even after some audited annotations land."""
+    start = source.index(f'    def {method}(')
+    end = source.index(')', start) + 1
+    signature = source[start:end]
+    for name, kind in types.items():
+        kind_pattern = r'\s*\|\s*'.join(re.escape(part.strip()) for part in kind.split('|'))
+        signature = re.sub(r'\b' + name + r':\s*' + kind_pattern +
+                           r'(?=,| =|\))', name, signature)
+    return source[:start] + signature + source[end:]
+
+
 def environment(jit, tracing=False):
     env = {k: v for k, v in os.environ.items() if not k.startswith('DIAMOND_')}
     env['DIAMOND_NO_CACHE'] = '1'
@@ -114,6 +126,7 @@ def main():
     results = {'baseline_commit': commit, 'binary': str(binary),
                'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'cpu': cpu,
                'runs': args.runs, 'timing': 'benchmark loop only',
+               'control': 'audited constructor/copy annotations removed',
                'constructor_parameter_types': CONSTRUCTOR_TYPES,
                'copy_parameter_types': COPY_TYPES, 'benchmarks': {}}
     variants = ('baseline', 'constructor', 'copy', 'both')
@@ -126,6 +139,8 @@ def main():
                 files.extractall(directory, filter='data')
             query = directory / 'packages/arel/lib/arel/query.di'
             source = query.read_text()
+            source = remove_known_annotations(source, 'initialize', CONSTRUCTOR_TYPES)
+            source = remove_known_annotations(source, 'copy', COPY_TYPES)
             if variant in ('constructor', 'both'):
                 source = annotate(source, 'initialize', CONSTRUCTOR_TYPES)
             if variant in ('copy', 'both'):

@@ -66,7 +66,7 @@ module Arel
       end
     end
 
-    def copy(predicates, orderings, limit_value, offset_value, projections) -> Query
+    def copy(predicates: Array, orderings: Array, limit_value: Int | Nil, offset_value: Int | Nil, projections: Array) -> Query
       Query.new(@table_name, predicates, orderings, limit_value, offset_value,
         projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins, @source_query, @correlations, @ctes)
