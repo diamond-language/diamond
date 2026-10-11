@@ -1,4 +1,4 @@
-/* struct sigaction and sigaction (POSIX.1-2008) are hidden by glibc's signal.h
+/* open_memstream and struct sigaction (POSIX.1-2008) are hidden by glibc's headers
  * under a strict -std=c23 with no feature-test macro set. */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
@@ -39,7 +39,11 @@
  * run for real, and the harness contains what they can reach: IO_POLL and channel waits are
  * bounded by the wall-clock budget below, THREAD_NEW's threads are joined when the VM is
  * freed (and run under the same process-wide budgets), and SIGNAL_TRAP's process-wide
- * handlers are restored after every input so a trapped INT/TERM/HUP cannot outlive it.
+ * handlers are restored after every input so a trapped INT/TERM/HUP cannot outlive it. Two
+ * opcodes are still rejected before diamond_vm_run sees them (a mnemonic search of
+ * diamond_disassemble's own per-instruction walk, via open_memstream, rather than a second
+ * decoder here), because no budget makes them safe: EXIT calls libc exit(), which libFuzzer
+ * reports as a crash, and DEBUGGER stops to read a line from stdin.
  *
  * register_count and code come from the fuzzer's own input bytes (the
  * first byte picks register_count, 1..64; the rest is the code array,
@@ -62,6 +66,26 @@
  * thread-local mark stack mid-drain, and the next input's collection marked
  * stale pointers (a heap-use-after-free found by this fuzzer, in the harness
  * and not in the runtime). Nothing may longjmp out of the VM. */
+
+static bool references_unsafe_opcode(const DiamondChunk *chunk) {
+    char *text = nullptr;
+    size_t text_size = 0;
+    FILE *sink = open_memstream(&text, &text_size);
+    if (sink == nullptr) return true; /* fail closed: skip this input */
+    diamond_disassemble(sink, chunk->name, chunk);
+    fclose(sink);
+    static const char *const unsafe_mnemonics[] = {"EXIT", "DEBUGGER"};
+    bool found = false;
+    for (size_t index = 0;
+         index < sizeof unsafe_mnemonics / sizeof unsafe_mnemonics[0]; index++) {
+        if (strstr(text, unsafe_mnemonics[index]) != nullptr) {
+            found = true;
+            break;
+        }
+    }
+    free(text);
+    return found;
+}
 
 /* The input is more than code now. The first harness gave the entry function
  * bytes and nothing else, so every opcode that names a constant, string or
@@ -351,6 +375,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     const DiamondChunk chunk = diamond_program_chunk(program);
     if (!diamond_verify_bytecode(&chunk)) return 0;
+    if (references_unsafe_opcode(&chunk)) return 0;
 
     /* Read by diamond_vm_init, so set before it. DIAMOND_SANDBOX is read at each guarded
      * opcode. The budgets bound a program that rescues ResourceLimitError: the grace
