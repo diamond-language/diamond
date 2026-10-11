@@ -245,3 +245,55 @@ python3 bench/compare_arel_annotations.py \
 
 Keep this comparison in the validation of later Arel annotation batches; a green
 correctness suite alone does not establish performance safety.
+
+## Arel write-statement parameter batch
+
+The next retained batch checks `Insert`, `Update`, and `Delete` constructor
+collections as `Array`, assignment maps as `Hash | Nil`, and control flags as
+`Bool`. Default `nil` assignments, empty arrays, explicit `false`, and false
+bound values remain valid. Insert source queries and conflict targets remain
+dynamic: conflict targets include arrays and dedicated target nodes, while
+source queries and visitors support extension protocols. Collection element
+values also remain dynamic.
+
+The initial broader experiment annotated Query construction/copy state,
+nullable table/ordering metadata, compound pagination, and function/CTE flags.
+Five interleaved samples with the same release binary found about 19% slower
+interpreter builder chains and 18% slower JIT-enabled chains. Removing only
+Query constructor checks left a 15–17% rendering regression and a 2–6% builder
+regression. A further reduced batch still shifted rendering by about 5% and
+builders by 3–4%, despite adding no checks inside the render loop. These
+experiments were discarded; the hot Query, table, ordering, binary-expression,
+and remaining compound/helper parameters are deferred. This result warrants
+further investigation of dispatch/cache sensitivity before broadening them.
+
+Retained measurements compare the package at `2be1dcfa` with this batch using
+`/tmp/diamond-cache256-compact-release` for both snapshots. Five alternating
+samples per package and mode use a single CPU, fresh compilation, no inherited
+`DIAMOND_*` settings, `DIAMOND_NO_CACHE=1`, and either an unset `DIAMOND_JIT` or
+`DIAMOND_JIT=1`. SQL and parameter output match in every run. Timings include
+process startup and compilation; these read-query benchmarks do not quantify
+the added checks in write-construction workloads.
+
+| Benchmark | Mode | Baseline median | Annotated median | Change |
+| --- | --- | ---: | ---: | ---: |
+| Arel render | Interpreter | 1.5631 s | 1.5699 s | +0.4% |
+| Arel render | JIT enabled | 1.4784 s | 1.4580 s | −1.4% |
+| Arel builder chain | Interpreter | 1.6239 s | 1.6322 s | +0.5% |
+| Arel builder chain | JIT enabled | 1.4760 s | 1.4842 s | +0.6% |
+
+The retained read-path differences are small; they do not establish a speedup.
+`arel_parameter_contracts.di` checks constructor rejection through dynamic
+callers and preservation of defaults and false bind values. The separate
+`arel_invalid_flag_parameter.di` checks a direct invalid flag call and its
+runtime diagnostic. Existing dialect, write, conflict-target, and extension
+cases cover the preserved protocols.
+
+Next: audit the remaining Arel visitor parameters, then investigate the hot
+constructor/check and cache sensitivity before attempting another broad batch.
+
+Validation: `make -j6 test` passed all 1,787 tests (1,634 corpus cases;
+39 cases skipped without an expectation or `run!` marker). All 24 Arel case
+files passed separately with forced JIT (`DIAMOND_JIT=1`,
+`DIAMOND_JIT_THRESHOLD=1`, `DIAMOND_NO_CACHE=1`), including both negative
+contract fixtures.

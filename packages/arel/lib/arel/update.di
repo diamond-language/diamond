@@ -1,8 +1,8 @@
 module Arel
 
   class Update
-    def initialize(table: Arel::Table, assignments = nil, predicates = [], returning = [],
-                   allow_all = false, ctes = [])
+    def initialize(table: Arel::Table, assignments: Hash | Nil = nil, predicates: Array = [],
+                   returning: Array = [], allow_all: Bool = false, ctes: Array = [])
       @table = table
       @assignments = assignments
       @predicates = predicates

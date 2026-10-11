@@ -1,9 +1,10 @@
 module Arel
 
   class Insert
-    def initialize(table: Arel::Table, rows = [], returning = [], source_columns = [],
-                   source_query = nil, conflict_target = [], conflict_ignore = false,
-                   conflict_assignments = nil, ctes = [])
+    def initialize(table: Arel::Table, rows: Array = [], returning: Array = [],
+                   source_columns: Array = [], source_query = nil, conflict_target = [],
+                   conflict_ignore: Bool = false, conflict_assignments: Hash | Nil = nil,
+                   ctes: Array = [])
       @table = table
       @rows = rows
       @returning = returning

@@ -1,8 +1,8 @@
 module Arel
 
   class Delete
-    def initialize(table: Arel::Table, predicates = [], returning = [], allow_all = false,
-                   ctes = [])
+    def initialize(table: Arel::Table, predicates: Array = [], returning: Array = [],
+                   allow_all: Bool = false, ctes: Array = [])
       @table = table
       @predicates = predicates
       @returning = returning
