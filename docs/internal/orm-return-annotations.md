@@ -297,3 +297,52 @@ Validation: `make -j6 test` passed all 1,787 tests (1,634 corpus cases;
 files passed separately with forced JIT (`DIAMOND_JIT=1`,
 `DIAMOND_JIT_THRESHOLD=1`, `DIAMOND_NO_CACHE=1`), including both negative
 contract fixtures.
+
+## Built-in visitor pagination parameters
+
+SQLite, PostgreSQL, MariaDB, and MySQL pagination renderers now declare both
+pagination values as `Int | Nil` and `bind_values` as `Bool`. Their bind array
+already had an `Array` annotation. These are the same values supplied by the
+query pagination accessors and flags; no node, expression, statement, visitor,
+or connection protocol is narrowed.
+
+A direct-call fixture covers all four dialects: omitted pagination, zero limit
+and offset, binding enabled by default, explicit unbound rendering, and each
+offset-only sentinel. Invalid limit, offset, and binding types received through
+a dynamic forwarding function raise `TypeError` before mutating the bind array.
+A subclass with an untyped pagination override still accepts its custom value
+and can delegate ordinary integers to `super`.
+
+The remaining visitor inputs describe expression or statement protocols and
+remain dynamic. Upsert assignment maps also remain dynamic: built-in writes supply
+`Hash | Nil`, but these helpers can be reached from custom statements exposing
+`structure()`. Their operations (`length`, `key_at`, and indexing) can also be
+provided by an adapter. Narrowing that path requires an explicit protocol
+decision, rather than assuming every statement uses the built-in constructor.
+
+Performance compares `e344281e` packages with this batch using the same saved
+release binary and environment controls as the write-statement batch. Five
+interleaved rendering samples and a seven-sample builder repeat produced:
+
+| Benchmark | Mode | Baseline median | Annotated median | Change |
+| --- | --- | ---: | ---: | ---: |
+| Arel render | Interpreter | 1.4549 s | 1.4706 s | +1.1% |
+| Arel render | JIT enabled | 1.3796 s | 1.3918 s | +0.9% |
+| Arel builder chain | Interpreter | 1.6288 s | 1.6474 s | +1.1% |
+| Arel builder chain | JIT enabled | 1.4414 s | 1.4591 s | +1.2% |
+
+The first five-sample builder pass measured +0.8% interpreter and +3.6% JIT
+with upward drift during the JIT samples; the seven-sample repeat above reduced
+that difference. Outputs matched in every sample. Treat the retained batch as
+adding a small measured cost, not as a performance optimization. Builder loops
+do not call pagination renderers, so their change cannot come from executing
+the new pagination checks alone.
+
+Next: investigate the deferred hot Query constructor checks and dispatch/cache
+sensitivity before adding more constructor annotations. Leave expression and
+statement adapters dynamic unless their protocol is deliberately changed.
+
+Validation: `make -j6 test` passed all 1,788 tests (1,635 corpus cases;
+39 cases skipped without an expectation or `run!` marker). All 25 Arel case
+files also passed with forced JIT and fresh compilation. This batch changes
+parameter checks and documentation only; dialect SQL generation is unchanged.

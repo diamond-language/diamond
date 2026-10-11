@@ -43,8 +43,8 @@ module Arel
         name != "explicit NULL ordering" && name != "write CTEs" &&
         name != "returning clauses"
     end
-    def render_pagination(limit_value, offset_value, params: Array,
-                          bind_values = true) -> String
+    def render_pagination(limit_value: Int | Nil, offset_value: Int | Nil,
+                          params: Array, bind_values: Bool = true) -> String
       sql = ""
       if limit_value == nil && offset_value != nil
         # Same 2^64-1 "effectively unlimited" sentinel MariaDBVisitor uses

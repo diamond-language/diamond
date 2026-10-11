@@ -10,8 +10,8 @@ module Arel
     def supports_extension?(name: String) -> Bool
       name != "per-column default values" && name != "named-constraint conflict targets"
     end
-    def render_pagination(limit_value, offset_value, params: Array,
-                          bind_values = true) -> String
+    def render_pagination(limit_value: Int | Nil, offset_value: Int | Nil,
+                          params: Array, bind_values: Bool = true) -> String
       sql = ""
       if limit_value == nil && offset_value != nil
         sql = " LIMIT -1"

@@ -6,6 +6,12 @@ A visitor renders an Arel statement as `[sql, bind_params]`. Pass it to `stateme
 
 Inherit from `Arel::Visitor` for shared AST traversal and validation. A concrete visitor supplies `visitor_name()`, `supports_extension?(name)`, `quote_identifier(name)`, and `render_pagination(limit, offset, params, bind_values)`. It can override `render_literal(value)` and the statement renderers for dialect-specific SQL.
 
+The built-in dialects declare `limit` and `offset` as `Int | Nil`, `params`
+as `Array`, and `bind_values` as `Bool` (default `true`). Zero is valid; `nil`
+omits that pagination component. With binding enabled, pagination appends
+integers to the supplied bind array in SQL order. Invalid argument types fail
+before changing that array. Custom overrides can retain their own contracts.
+
 The main render entry points are:
 
 - `render(query)` for SELECT queries;
