@@ -54,14 +54,19 @@ for help_flag in -h --help; do
 done
 
 # A default array must compile rather than silently pass through the fallback.
-# This probe has exactly one eligible function and no other user methods.
-# Match the runtime backend gate: native JIT is enabled only on glibc x86-64.
-if [[ "$(uname -m)" == "x86_64" ]] &&
-   [[ "$(getconf GNU_LIBC_VERSION 2>/dev/null || true)" == glibc* ]]; then
-    jit_array_probe="$(DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 \
-        DIAMOND_STRESS_GC=1 "$diamond" -e $'class ArrayDefaultProbe\n  def initialize(values: Array = [])\n    @values = values\n  end\nend\ni = 0\nwhile i < 10\n  value = ArrayDefaultProbe.new()\n  i += 1\nend\nputs(i)' 2>&1)"
-    [[ "$jit_array_probe" == *"jit: 1 compiled function(s), 0 bailout(s), 0 hard propagation(s)"* ]]
-fi
+# The control program differs only in its default (nil), so whether the JIT is
+# active on this platform is measured rather than re-derived here: where the
+# control compiles nothing there is no JIT to check, and where it does, the
+# array default must compile exactly as much.
+jit_compiled_count() {
+    local type="$1" default="$2" trace
+    trace="$(DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 \
+        DIAMOND_STRESS_GC=1 "$diamond" -e $'class DefaultProbe\n  def initialize(values: '"$type"$' = '"$default"$')\n    @values = values\n  end\nend\ni = 0\nwhile i < 10\n  value = DefaultProbe.new()\n  i += 1\nend\nputs(i)' 2>&1)"
+    sed -n 's/^jit: \([0-9]*\) compiled function(s), 0 bailout(s), 0 hard propagation(s)$/\1/p' <<<"$trace"
+}
+jit_control_count="$(jit_compiled_count "Array | Nil" nil)"
+jit_array_count="$(jit_compiled_count Array '[]')"
+[[ -n "$jit_control_count" && "$jit_array_count" == "$jit_control_count" ]]
 
 # Once program input has started, option-looking values belong to the script.
 actual="$($diamond -e 'ARGV' -h --version)"
