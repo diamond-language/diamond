@@ -781,6 +781,9 @@ DIAMOND_INTERNAL ptrdiff_t hash_find(const DiamondHash *hash,DiamondValue key);
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_new_hash(DiamondVm *vm, DiamondValue *registers,
         uint16_t base, uint16_t count, DiamondValue *out);
 
+DIAMOND_INTERNAL DiamondVmStatus diamond_jit_new_array(DiamondVm *vm, DiamondValue *registers,
+        uint16_t base, uint16_t count, DiamondValue *out);
+
 static inline bool is_truthy(DiamondValue value) {
     return value.kind != DIAMOND_VALUE_NIL &&
            !(value.kind == DIAMOND_VALUE_BOOL && !value.as.boolean);
