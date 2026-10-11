@@ -160,6 +160,13 @@ search over a real (if scoped) lexical symbol table:
     spread element, and suffix graphs by the same editor-only rules. Inferred
     and checked Array shapes can mix, including nested Arrays and class unions;
     an unknown prefix, spread element graph, or suffix leaves it unresolved.
+    Array `reverse`, `uniq`, `compact`, `take`, and `drop` also preserve these
+    inferred element graphs through direct chains, locals, and unannotated
+    wrappers, including nested Arrays and class unions. The copied result has
+    its own outer collection identity: replacing an element in the source does
+    not discard the copy's graph, while tracked writes or pushes to the copy
+    invalidate its graph and those of its aliases. These facts remain editor-only;
+    unknown source elements and callback-dependent transforms stay unresolved.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:

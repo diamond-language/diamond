@@ -650,6 +650,38 @@ done
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$spread_array_uri"'"}}}'
 read_message >/dev/null
 
+# Copying/subsetting Array transforms retain inferred imported element facts.
+transform_array_uri="file://$work/transform_array.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$transform_array_uri"'","text":"require \"receiver_dependency\"\ndef transformed_factory() = build_imported_pets().reverse().take(1)\ndef inspect_transforms(value)\n  reversed = build_imported_pets().reverse()\n  reversed[0].bark()\n  unique = build_imported_pets().uniq()\n  unique[0].bark()\n  compacted = build_imported_pets().compact()\n  compacted[0].bark()\n  taken = build_imported_pets().take(1)\n  taken[0].bark()\n  dropped = build_imported_pets().drop(n: 0)\n  dropped[0].bark()\n  build_imported_pets().reverse()[0].bark()\n  wrapped = transformed_factory()[0]\n  wrapped.bark()\n  nested = [build_imported_pets()].reverse().take(1)\n  nested[0][0].bark()\n  unknown = [build_imported_pet(), value].reverse()\n  unknown[0].bark()\n  original = build_imported_pets()\n  copied = original.reverse()\n  original[0] = value\n  copied[0].bark()\n  alias_copy = copied\n  copied.push(value)\n  alias_copy[0].bark()\n  changed = build_imported_pets()\n  changed[0] = value\n  changed.reverse()[0].bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '731 4 14' '732 6 12' '733 8 15' '734 10 11' '735 12 13' '736 13 37' '737 15 10' '738 17 15' '739 23 12'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$transform_array_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+
+send '{"jsonrpc":"2.0","id":740,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$transform_array_uri"'"},"position":{"line":4,"character":15}}}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","id":741,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$transform_array_uri"'"},"position":{"line":4,"character":15}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+for request in '742 19 13' '743 26 16' '744 29 23'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$transform_array_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" != *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$transform_array_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
