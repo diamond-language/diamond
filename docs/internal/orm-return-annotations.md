@@ -1,8 +1,7 @@
 # ORM return annotation audit
 
-The working branch is `orm-type-annotations`. Keep Arel and later ActiveRecord
-annotation batches on this branch, with separate verified commits; open one
-consolidated PR when the work is ready.
+Working notes for annotating the Arel and ActiveRecord returns and parameters: what is
+fixed, what stays dynamic, and the measurements behind each decision.
 
 ## Arel fixed contracts
 
@@ -268,7 +267,8 @@ and remaining compound/helper parameters are deferred. This result warrants
 further investigation of dispatch/cache sensitivity before broadening them.
 
 Retained measurements compare the package at `2be1dcfa` with this batch using
-`/tmp/diamond-cache256-compact-release` for both snapshots. Five alternating
+one `build/diamond` release binary built with the 256-slot inline cache for both
+snapshots. Five alternating
 samples per package and mode use a single CPU, fresh compilation, no inherited
 `DIAMOND_*` settings, `DIAMOND_NO_CACHE=1`, and either an unset `DIAMOND_JIT` or
 `DIAMOND_JIT=1`. SQL and parameter output match in every run. Timings include

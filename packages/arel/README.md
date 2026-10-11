@@ -77,4 +77,4 @@ Defaults, explicit `false`, and zero pagination remain valid. Query operands,
 visitors, expression children, bound values, and extensible query/node returns
 remain dynamic.
 The annotation audit and measurements are tracked in
-[the ORM annotation notes](../../docs/internal/orm-return-annotations.md).
+[the ORM annotation notes](https://github.com/diamond-language/diamond/blob/main/docs/internal/orm-return-annotations.md).
