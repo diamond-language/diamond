@@ -6687,16 +6687,32 @@ static inline int plain_member_match(DiamondValue value,
     }
 }
 
-bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
-                              uint16_t set_index,bool attach) {
-    if((size_t)set_index>=chunk->type_set_count)return false;
-    const DiamondTypeSet *set=&chunk->type_sets[set_index];
-    for(size_t index=0;index<set->count;index++) {
+/* Keep structural calls out of the plain matcher's register lifetimes.
+ * Start at the first nonplain member, preserving generic attachment before
+ * any later plain fallback. Runtime type sets remain read-only. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static bool value_matches_set_structural(const DiamondChunk *chunk,DiamondValue value,
+        const DiamondTypeSet *set,size_t start,bool attach) {
+    for(size_t index=start;index<set->count;index++) {
         const DiamondTypeMember *member=&set->members[index];
         const int plain=plain_member_match(value,member);
         if(plain>=0) {
             if(plain)return true;
         } else if(value_matches_member(chunk,value,member,attach))return true;
+    }
+    return false;
+}
+
+bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
+                              uint16_t set_index,bool attach) {
+    if((size_t)set_index>=chunk->type_set_count)return false;
+    const DiamondTypeSet *set=&chunk->type_sets[set_index];
+    for(size_t index=0;index<set->count;index++) {
+        const int plain=plain_member_match(value,&set->members[index]);
+        if(plain<0)return value_matches_set_structural(chunk,value,set,index,attach);
+        if(plain)return true;
     }
     return false;
 }

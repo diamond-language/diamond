@@ -928,3 +928,57 @@ python3 bench/profile_arel_query_guards.py --binary build/diamond \
 Validation: the tool passed a reduced-loop end-to-end run and a full one-million
 iteration run, including report generation, output checks, JSON metadata and
 separate trace decoding. Output directories must be new to preserve evidence.
+
+## Separate structural matcher remainder
+
+The retained candidate gives plain-member matching its own small function.
+At the first member requiring structural matching, it tail-calls a separate
+non-inlined helper starting at that member. The helper retains the original
+ordered matching loop, including generic constraint attachment and later
+plain fallbacks. Earlier plain members have no attachment effects and are
+not revisited. No dispatch, compiler, type-set layout, cache format, or native
+plain-guard emission changes are involved.
+
+The optimized plain matcher no longer sets up the 72-byte stack frame or
+saves six callee-saved registers on entry. Five alternating, CPU-pinned
+baseline/candidate samples measured the following loop-only changes on the
+production annotation signature:
+
+| Workload | Baseline median | Candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Builder, interpreter | 1.5969 s | 1.5631 s | -2.1% |
+| Builder, JIT enabled | 1.0976 s | 1.0907 s | -0.6% |
+| Rendering, interpreter | 1.4281 s | 1.4207 s | -0.5% |
+| Rendering, JIT enabled | 1.3371 s | 1.3387 s | +0.1% |
+| Arithmetic, interpreter | 0.3035 s | 0.3029 s | -0.2% |
+| Arithmetic, JIT enabled | 0.3028 s | 0.3018 s | -0.3% |
+
+A separate nine-sample builder repeat measured -1.1% interpreter (1.5993 s
+to 1.5817 s) and -0.3% JIT enabled (1.0931 s to 1.0898 s). Sample ranges
+overlap, so do not claim a precise 2% speedup. Outputs and all four Arel
+diagnostic summaries match exactly between binaries in both audits, including
+opcode, cache, compilation, bailout and hard-propagation counts. Arithmetic
+remains interpreted at the default JIT threshold.
+
+Two alternating hardware counter comparisons of one million builder
+iterations measured 89.1204/89.1204 billion retired instructions on the
+baseline and 87.9544/87.9548 billion on the candidate, about 1.3% fewer in
+both runs. These counters cover the whole process, including compilation;
+they support the reduced instruction-work hypothesis without attributing
+an exact loop-only cycle gain. The small repeated builder gains and neutral
+rendering/arithmetic controls justify retaining the narrower matcher split.
+
+The new ordered-fallback fixture exercises a successful plain prefix,
+promoted Int values, generic Array/Hash attachment after a failed plain prefix,
+heterogeneous plain fallbacks, plain-first unions, and invalid dynamically
+forwarded values. It passed with major GC stress in interpreter and forced
+JIT modes. The full release suite passed all 1,798 tests (1,645 corpus cases;
+39 skipped). The full ASan/UBSan suite also passed all 1,798 tests, all 29 Arel
+case files passed with forced JIT on the sanitizer build, and the new ordered
+fixture passed with forced JIT and major GC stress under ASan/UBSan. Focused
+sanitizer checks used the same execution permissions as the full suite because
+LeakSanitizer cannot inspect threads in the restricted ptrace environment.
+
+Next: repeat the cumulative constructor/copy audit on this runtime before
+adding the remaining collection constructor annotations. This local matcher
+improvement does not establish that the earlier cumulative cost is resolved.
