@@ -619,6 +619,8 @@ DIAMOND_INTERNAL void resource_limit_trip(DiamondVm *vm);
 DIAMOND_INTERNAL bool instruction_budget_exceeded(DiamondVm *vm);
 DIAMOND_INTERNAL void budget_release_finished(DiamondVm *vm);
 DIAMOND_INTERNAL DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget);
+DIAMOND_INTERNAL int bound_wait_by_wall_budget(const DiamondVm *vm,int timeout_ms,bool *bounded);
+DIAMOND_INTERNAL DiamondVmStatus wall_budget_after_wait(DiamondVm *vm);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);
 

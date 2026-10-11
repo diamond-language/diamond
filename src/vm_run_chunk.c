@@ -5438,12 +5438,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                     /* Unlink before returning to the VM's signal dispatcher:
                      * handlers can close sockets or cancellation sources. */
-                    VM_PROPAGATE(cancellable_wait_helper(vm,nullptr,false,
-                        cancellations,deadline,fds,fd_count,nullptr));
+                    const DiamondVmStatus wait_status=cancellable_wait_helper(vm,
+                        nullptr,false,cancellations,deadline,fds,fd_count,nullptr);
+                    VM_PROPAGATE(wait_status);
                 } else if(timeout.kind==DIAMOND_VALUE_INT) {
                     const int64_t timeout_value=registers[timeout_reg].as.integer;
-                    const int timeout_ms=timeout_value<0?-1:
-                        (timeout_value>INT_MAX?INT_MAX:(int)timeout_value);
+                    bool budget_bounded=false;
+                    const int timeout_ms=bound_wait_by_wall_budget(vm,
+                        timeout_value<0?-1:
+                        (timeout_value>INT_MAX?INT_MAX:(int)timeout_value),
+                        &budget_bounded);
                     int poll_result=0;
                     errno=0;
                     poll_result=poll(fds,fd_count,timeout_ms);
@@ -5468,6 +5472,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(poll_result<0) {
                         snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
                         VM_RETURN(DIAMOND_VM_IO_ERROR);
+                    }
+                    if(poll_result==0&&budget_bounded) {
+                        const DiamondVmStatus budget_status=
+                            wall_budget_after_wait(vm);
+                        VM_PROPAGATE(budget_status);
                     }
                 } else {
                     snprintf(vm->error,sizeof vm->error,"IO.poll timeout must be an Int or cancellation options Hash");
