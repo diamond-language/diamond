@@ -193,8 +193,41 @@ them across drivers. Separate interpreter traces show:
 The return checks remain active; the improvement comes with reduced cache
 interference and the new VM layout. The three tables grow from 18 KiB to 72 KiB
 on this 64-bit build, adding **54 KiB per VM** (`sizeof(DiamondVm)` grows from
-25,800 to 81,096 bytes). They remain direct-mapped and address-sensitive, so this
-mitigates the measured collision cliff rather than eliminating collisions.
+25,800 to 81,096 bytes). That step was a mitigation: the tables were still
+direct-mapped and address-sensitive. The next section replaces the mapping.
+
+## Set-associative site tables
+
+The three tables are now 256 slots organized as 64 sets of 4 ways
+(`diamond_cache_slot`, `src/vm_internal.h`). A site's set comes from a
+multiplicative hash of its bytecode address, and it may take any way of that
+set: the way already tagged with it, else an empty way, else a victim rotated by a
+per-VM cursor. Lookup semantics, receiver and shape guards, replacement within a
+site's entries, and invalidation are unchanged. `INVOKE_MONO` probes with
+`diamond_cache_find`, which never claims a way, and then reuses the cache that
+`lookup_method_cached` returns.
+
+Method-cache misses on `bench/arel_render.di` (20,000 renders, interpreter) for
+the two package layouts `55c363ed` and the annotated package:
+
+| Cache | Baseline package | Annotated package |
+| --- | ---: | ---: |
+| 256 slots, direct-mapped | 200,049 | 280,045 |
+| 64 slots, 4-way | 299,187 | 310,060 |
+| 128 slots, 4-way | 100,054 | 180,057 |
+| 256 slots, 4-way | 59 | 59 |
+
+Associativity at 256 slots removes both the collisions and the sensitivity to
+layout: the miss count no longer depends on which package is loaded. 64 and 128
+slots miss on capacity, because the render path's hot call sites exceed them even
+with perfect placement, so the size stays at 256. Timings are within noise of the
+direct-mapped 256 build (interleaved, one pinned CPU, five samples per
+combination; every ratio between 0.985 and 1.012 except 64-slot Arel at 1.02-1.05),
+so this change buys stability rather than speed: miss counts stop depending on
+where code lands.
+
+`DIAMOND_INLINE_CACHE_COUNT` must stay a multiple of `DIAMOND_INLINE_CACHE_WAYS`;
+`tests/inline_cache_slots.c` checks placement, residency and eviction.
 
 Fourteen other controls were measured in three interleaved pairs per mode,
 pinned to CPU 0, with in-process `DIAMOND_REPEAT` execution. The percentages

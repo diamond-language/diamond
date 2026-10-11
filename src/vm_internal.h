@@ -920,18 +920,60 @@ DIAMOND_INTERNAL bool resolve_class_operand(DiamondVm *vm,const DiamondChunk *ch
 
 DIAMOND_INTERNAL DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value);
 
+/* Picks the slot a call or field site uses in one of the VM's site tables.
+ * `table` is an array of structs whose first member is the `const uint8_t *`
+ * site tag (DiamondMethodCache, DiamondExtensionCache, DiamondFieldCache),
+ * `stride` is their size. The site's set is chosen by a multiplicative hash
+ * of its bytecode address -- the old `address>>2 % N` mapped the neighboring
+ * call sites of one function to neighboring slots, so unrelated code shifting
+ * by a few bytes changed which sites collided. Within the set: the way
+ * already tagged with `site`, else an empty way, else a victim rotated by
+ * `cursor`. Callers reset the slot when its tag differs from `site`. */
+static inline size_t diamond_cache_first_way(const uint8_t *site) {
+    const size_t sets=DIAMOND_INLINE_CACHE_COUNT/DIAMOND_INLINE_CACHE_WAYS;
+    const uint64_t mixed=((uint64_t)(uintptr_t)site)*0x9E3779B97F4A7C15ull;
+    return (size_t)(mixed>>40)%sets*DIAMOND_INLINE_CACHE_WAYS;
+}
+
+/* The slot already tagged with `site`, or SIZE_MAX. Never claims a way. */
+static inline size_t diamond_cache_find(const uint8_t *site,const void *table,
+        size_t stride) {
+    const size_t first=diamond_cache_first_way(site);
+    for(size_t way=0;way<DIAMOND_INLINE_CACHE_WAYS;way++) {
+        const uint8_t *const *tag=(const uint8_t *const *)
+            (const void *)((const char *)table+(first+way)*stride);
+        if(*tag==site)return first+way;
+    }
+    return SIZE_MAX;
+}
+
+static inline size_t diamond_cache_slot(const uint8_t *site,const void *table,
+        size_t stride,uint8_t *cursor) {
+    const size_t first=diamond_cache_first_way(site);
+    size_t empty=SIZE_MAX;
+    for(size_t way=0;way<DIAMOND_INLINE_CACHE_WAYS;way++) {
+        const uint8_t *const *tag=(const uint8_t *const *)
+            (const void *)((const char *)table+(first+way)*stride);
+        if(*tag==site)return first+way;
+        if(*tag==nullptr&&empty==SIZE_MAX)empty=first+way;
+    }
+    if(empty!=SIZE_MAX)return empty;
+    return first+(size_t)((*cursor)++%DIAMOND_INLINE_CACHE_WAYS);
+}
+
 /* Cache lookup/store for find_collection_extension/find_value_extension --
  * see DiamondExtensionCache's own comment (src/vm.h). `kind` is whatever
  * distinguishes the receiver at that one call site: a DiamondObjectKind
  * for the collection protocol (DIAMOND_OBJECT_ARRAY/_HASH), or a small
  * fixed tag the three value-extension call sites each pick for their own
  * receiver type (Int/Float/String can never collide at the same site,
- * so any distinct values work). Mirrors lookup_method_cached's hashing
+ * so any distinct values work). Mirrors lookup_method_cached's slot choice
  * and replacement policy exactly, just against a value/bool pair instead
  * of a DiamondMethod pointer. */
 static inline bool cached_extension_lookup(DiamondVm *vm,const uint8_t *site,
         uint8_t kind,const DiamondFunction **out_function) {
-    const size_t slot=((size_t)(uintptr_t)site>>2)%DIAMOND_INLINE_CACHE_COUNT;
+    const size_t slot=diamond_cache_slot(site,vm->extension_caches,
+        sizeof vm->extension_caches[0],&vm->cache_victim_cursor);
     DiamondExtensionCache *cache=&vm->extension_caches[slot];
     if(cache->site!=site) {
         *cache=(DiamondExtensionCache){.site=site};

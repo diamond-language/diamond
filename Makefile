@@ -224,7 +224,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit install test-aot-kit test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -448,6 +448,13 @@ $(BUILD_DIR)/semver_test: tests/semver_test.c tools/semver.c tools/semver.h
 
 test-semver: $(BUILD_DIR)/semver_test
 	$(BUILD_DIR)/semver_test
+
+$(BUILD_DIR)/inline_cache_slots: tests/inline_cache_slots.c src/vm_internal.h src/vm.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $< -o $@
+
+test-inline-cache-slots: $(BUILD_DIR)/inline_cache_slots
+	$(BUILD_DIR)/inline_cache_slots
 
 $(BUILD_DIR)/incremental_compile_test: tests/incremental_compile_test.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
@@ -861,6 +868,7 @@ test-integration:
 	bash tools/install_local_cuts.sh . >/dev/null
 	$(MAKE) test-api
 	$(MAKE) test-semver
+	$(MAKE) test-inline-cache-slots
 	$(MAKE) test-incremental-compile
 	$(MAKE) test-compiled-prelude
 	$(MAKE) test-aot-cache
