@@ -55,7 +55,9 @@ done
 
 # A default array must compile rather than silently pass through the fallback.
 # This probe has exactly one eligible function and no other user methods.
-if [[ "$(uname -m)" == "x86_64" ]]; then
+# Match the runtime backend gate: native JIT is enabled only on glibc x86-64.
+if [[ "$(uname -m)" == "x86_64" ]] &&
+   [[ "$(getconf GNU_LIBC_VERSION 2>/dev/null || true)" == glibc* ]]; then
     jit_array_probe="$(DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 \
         DIAMOND_STRESS_GC=1 "$diamond" -e $'class ArrayDefaultProbe\n  def initialize(values: Array = [])\n    @values = values\n  end\nend\ni = 0\nwhile i < 10\n  value = ArrayDefaultProbe.new()\n  i += 1\nend\nputs(i)' 2>&1)"
     [[ "$jit_array_probe" == *"jit: 1 compiled function(s), 0 bailout(s), 0 hard propagation(s)"* ]]

@@ -1,4 +1,4 @@
-require "./jit_simple_type_guards"
+require "../support/simple_type_guards"
 
 def constrained_hash(value: Hash[String, Int]|Hash) -> Hash[String, Int]|Hash = value
 
