@@ -108,9 +108,13 @@ def main():
     parser.add_argument('--constructor-parameters', nargs='+',
                         choices=list(CONSTRUCTOR_TYPES),
                         help='audit only these constructor parameters (default: all)')
+    parser.add_argument('--incremental', action='store_true',
+                        help='retain existing annotations and compare only selected constructor parameters')
     parser.add_argument('--cpu', type=int)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
+    if args.incremental and not args.constructor_parameters:
+        parser.error('--incremental requires --constructor-parameters')
     binary = args.binary.resolve()
     if args.runs < 1 or not os.access(binary, os.X_OK):
         parser.error('positive runs and an executable binary are required')
@@ -129,13 +133,15 @@ def main():
     results = {'baseline_commit': commit, 'binary': str(binary),
                'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'cpu': cpu,
                'runs': args.runs, 'timing': 'benchmark loop only',
-               'control': 'audited constructor/copy annotations removed',
+               'control': ('existing annotations retained' if args.incremental else
+                           'audited constructor/copy annotations removed'),
                'constructor_parameter_types': CONSTRUCTOR_TYPES,
                'copy_parameter_types': COPY_TYPES, 'benchmarks': {}}
     constructor_types = {name: CONSTRUCTOR_TYPES[name] for name in
                          (args.constructor_parameters or CONSTRUCTOR_TYPES)}
     results['constructor_parameter_types'] = constructor_types
-    variants = ('baseline', 'constructor', 'copy', 'both')
+    variants = (('baseline', 'constructor') if args.incremental else
+                ('baseline', 'constructor', 'copy', 'both'))
     with tempfile.TemporaryDirectory(prefix='diamond-query-guards-') as temporary:
         directories = {}
         for variant in variants:
@@ -145,8 +151,9 @@ def main():
                 files.extractall(directory, filter='data')
             query = directory / 'packages/arel/lib/arel/query.di'
             source = query.read_text()
-            source = remove_known_annotations(source, 'initialize', CONSTRUCTOR_TYPES)
-            source = remove_known_annotations(source, 'copy', COPY_TYPES)
+            if not args.incremental:
+                source = remove_known_annotations(source, 'initialize', CONSTRUCTOR_TYPES)
+                source = remove_known_annotations(source, 'copy', COPY_TYPES)
             if variant in ('constructor', 'both'):
                 source = annotate(source, 'initialize', constructor_types)
             if variant in ('copy', 'both'):
@@ -163,10 +170,13 @@ def main():
                 samples = {variant: [] for variant in variants}
                 # Rotate positions, then reverse alternate rounds to limit ordering bias.
                 for round_number in range(args.runs):
-                    shift = round_number % len(variants)
-                    order = variants[shift:] + variants[:shift]
-                    if round_number % 2:
-                        order = order[::-1]
+                    if args.incremental:
+                        order = variants if round_number % 2 == 0 else variants[::-1]
+                    else:
+                        shift = round_number % len(variants)
+                        order = variants[shift:] + variants[:shift]
+                        if round_number % 2:
+                            order = order[::-1]
                     for variant in order:
                         elapsed, output, _ = run(binary, directories[variant], bench, jit)
                         if expected is None:

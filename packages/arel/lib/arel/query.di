@@ -1,8 +1,8 @@
 module Arel
 
   class Query
-    def initialize(table_name, predicates, orderings, limit_value, offset_value,
-                   projections, quoted_identifiers: Bool, bind_limits: Bool, table_alias = nil,
+    def initialize(table_name: String, predicates, orderings, limit_value, offset_value,
+                   projections, quoted_identifiers: Bool, bind_limits: Bool, table_alias: String | Nil = nil,
                    distinct_value: Bool = false, groups = [], havings = [], joins = [],
                    source_query = nil, correlations = [], ctes = [])
       @table_name = table_name

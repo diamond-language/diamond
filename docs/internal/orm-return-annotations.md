@@ -636,3 +636,51 @@ union-order fixture passed under major GC stress, and the production
 constructor signature matched the measured temporary variant exactly.
 The five-sample subset audit preserved outputs and passed default-allocation
 probes. No C runtime changes remained after the experiments were reverted.
+
+## Incremental table name and alias annotations
+
+The next constructor group is table_name: String and table_alias: String | Nil.
+Both getters already declared these return types; the entry annotations now
+reject invalid state before it is stored. Nil/default aliases, empty string
+aliases, quoted names, and normal aliased/unaliased rendering remain supported.
+
+The audit gained --incremental for this decision. Its control retains the
+committed constructor and copy annotations exactly; its only candidate adds
+selected, currently untyped constructor parameters. The two variants alternate
+order each round. The original four-variant mode retains its earlier behavior.
+An explicit constructor selection is required in incremental mode.
+
+Five CPU-pinned release samples per variant, with tracing separate from timing
+and equal outputs, measured against commit 51cb7579:
+
+| Workload | Current branch median | Add name/alias median | Change |
+| --- | ---: | ---: | ---: |
+| Builder, interpreter | 1.5528 s | 1.5788 s | +1.7% |
+| Builder, JIT | 1.1067 s | 1.1197 s | +1.2% |
+| Render, interpreter | 1.3509 s | 1.3483 s | -0.2% |
+| Render, JIT | 1.3220 s | 1.3073 s | -1.1% |
+
+These small incremental costs support adding the pair. The production
+signature exactly matches the measured candidate. No runtime changes were
+needed. Ten other fixed constructor parameters remain deferred; source_query
+continues to use its dynamic protocol.
+
+```sh
+python3 bench/audit_arel_query_parameters.py \
+  --baseline-ref 51cb7579 --binary /path/to/release-diamond --runs 5 \
+  --incremental --constructor-parameters table_name table_alias \
+  --output /tmp/arel-identity-audit.json
+```
+
+Next: use the incremental audit to measure limit_value and offset_value before
+adding their nullable Int annotations.
+
+Validation: the full debug suite passed all 1,796 tests (1,643 corpus cases;
+39 skipped), and all 28 Arel files passed with forced JIT on the established
+release runtime. The new contracts passed in both modes, including major GC
+stress, and the five-sample incremental audit preserved outputs and passed
+its default-allocation probes. The measured signature matched production.
+
+Before accepting the cumulative constructor changes for the consolidated PR,
+repeat the untyped-control comparison as well: small incremental costs do
+not by themselves establish acceptable total overhead.
