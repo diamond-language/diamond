@@ -2318,6 +2318,17 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         .has_variadic=target_fn->has_variadic,
         .range_class_index=child->program_template->range_class_index};
     for(;;) {
+        /* A child added after the supervisor gave up (or racing with it)
+         * must not start: nothing would ever interrupt it. */
+        pthread_mutex_lock(&supervisor->lock);
+        const bool supervisor_failed=supervisor->failed;
+        if(supervisor_failed) {
+            snprintf(child->last_error,sizeof child->last_error,
+                "stopped: the supervisor's restart intensity was exceeded");
+            child->done=true;
+        }
+        pthread_mutex_unlock(&supervisor->lock);
+        if(supervisor_failed)break;
         DiamondVm *run_vm=malloc(sizeof *run_vm);
         if(run_vm==nullptr) {
             /* System-level OOM allocating this attempt's own VM -- give up
@@ -2334,7 +2345,8 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         diamond_vm_init(run_vm);
         run_vm->range_class_index=child->program_template->range_class_index;
         run_vm->root_chunk=&child_chunk;
-        if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE) {
+        if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE||
+           supervisor->max_restarts>=0) {
             atomic_store(&child->interrupt,false);
             run_vm->interrupt_flag=&child->interrupt;
             run_vm->resource_limits_active=true;
@@ -2361,6 +2373,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         }
         gc_unprotect(run_vm,args_mark);
         DiamondValue run_result=DIAMOND_NIL;
+        const int64_t attempt_started_ns=monotonic_nanoseconds();
         const DiamondVmStatus status=copy_failed?DIAMOND_VM_OUT_OF_MEMORY:
             run_chunk(&child_chunk,run_vm,run_args,child->arg_count,0,
                       nullptr,&run_result);
@@ -2371,23 +2384,71 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             diamond_vm_free(run_vm);free(run_vm);
             break;
         }
-        child->restart_count++;
         const bool interrupted_by_sibling=status==DIAMOND_VM_INTERRUPTED;
-        if(interrupted_by_sibling) {
+        if(interrupted_by_sibling&&supervisor->failed) {
+            /* The supervisor gave up: this is a shutdown, not a restart. */
+            snprintf(child->last_error,sizeof child->last_error,
+                "stopped: the supervisor's restart intensity was exceeded");
+        } else if(interrupted_by_sibling) {
             /* Not this child's own crash: a sibling's failure restarted
              * it, and last_error says so. No restart delay below, since
              * this attempt wasn't failing on its own. */
+            child->restart_count++;
             snprintf(child->last_error,sizeof child->last_error,
                 "restarted: a sibling crashed");
         } else if(status==DIAMOND_VM_EXCEPTION) {
+            child->restart_count++;
             format_uncaught_exception_message(run_vm,run_vm->exception,false);
             snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
         } else {
+            child->restart_count++;
             const char *message=run_vm->error[0]!='\0'?run_vm->error:
                 diamond_vm_status_name(status);
             snprintf(child->last_error,sizeof child->last_error,"%s",message);
         }
+        int64_t restart_delay_ms=supervisor->backoff_ms;
+        if(!interrupted_by_sibling) {
+            const int64_t now_ns=monotonic_nanoseconds();
+            /* An attempt that outlived the longest pause was healthy: the
+             * crash that ended it starts a new run of consecutive crashes. */
+            if((now_ns-attempt_started_ns)/1000000>supervisor->max_backoff_ms)
+                child->consecutive_crashes=0;
+            child->consecutive_crashes++;
+            for(size_t doubling=1;doubling<child->consecutive_crashes&&
+                    restart_delay_ms<supervisor->max_backoff_ms;doubling++)
+                restart_delay_ms*=2;
+            if(restart_delay_ms>supervisor->max_backoff_ms)
+                restart_delay_ms=supervisor->max_backoff_ms;
+            if(supervisor->max_restarts>=0&&!supervisor->failed&&
+               !atomic_load(&supervisor->stop_requested)) {
+                /* Drop crashes that left the window, then count this one. */
+                const int64_t window_ns=supervisor->within_ms*1000000;
+                size_t kept=0;
+                for(size_t index=0;index<supervisor->crash_time_count;index++)
+                    if(now_ns-supervisor->crash_times_ns[index]<=window_ns)
+                        supervisor->crash_times_ns[kept++]=
+                            supervisor->crash_times_ns[index];
+                supervisor->crash_time_count=kept;
+                supervisor->crash_times_ns[supervisor->crash_time_count++]=now_ns;
+                if((int64_t)supervisor->crash_time_count>supervisor->max_restarts) {
+                    supervisor->failed=true;
+                    /* This crash is not followed by a restart. */
+                    child->restart_count--;
+                    snprintf(supervisor->failure_message,
+                        sizeof supervisor->failure_message,
+                        "supervisor gave up: more than %" PRId64 " crashes within "
+                        "%" PRId64 " ms (last error: %s)",
+                        supervisor->max_restarts,supervisor->within_ms,
+                        child->last_error);
+                    atomic_store(&supervisor->stop_requested,true);
+                    for(size_t other=0;other<supervisor->child_count;other++)
+                        if(other!=child->index&&!supervisor->children[other].done)
+                            atomic_store(&supervisor->children[other].interrupt,true);
+                }
+            }
+        }
         if(!interrupted_by_sibling&&
+           !supervisor->failed&&
            supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE&&
            !atomic_load(&supervisor->stop_requested)) {
             /* This child's own crash: take down the siblings its strategy
@@ -2415,7 +2476,8 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             break;
         }
         if(interrupted_by_sibling)continue;
-        struct timespec delay={.tv_nsec=20*1000*1000};
+        struct timespec delay={.tv_sec=(time_t)(restart_delay_ms/1000),
+            .tv_nsec=(long)(restart_delay_ms%1000)*1000000L};
         nanosleep(&delay,nullptr);
     }
     atomic_fetch_sub(&diamond_active_thread_count,1);
@@ -11143,12 +11205,93 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"last_error",10)==0;
     const bool alive_method=method_name->length==6&&
         memcmp(method_name->chars,"alive?",6)==0;
+    const bool restart_policy_method=method_name->length==14&&
+        memcmp(method_name->chars,"restart_policy",14)==0;
+    const bool failed_method=method_name->length==7&&
+        memcmp(method_name->chars,"failed?",7)==0;
     if(!add_child_method&&!stop_method&&!join_method&&
        !child_count_method&&!restart_count_method&&
-       !last_error_method&&!alive_method) {
+       !last_error_method&&!alive_method&&
+       !restart_policy_method&&!failed_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Supervisor");
         return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(failed_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        pthread_mutex_lock(&target_supervisor->lock);
+        const bool gave_up=target_supervisor->failed;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_BOOL(gave_up);return DIAMOND_VM_OK;
+    }
+    if(restart_policy_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        const DiamondValue given=registers[base];
+        if(given.kind!=DIAMOND_VALUE_OBJECT||
+           given.as.object->kind!=DIAMOND_OBJECT_HASH) {
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#restart_policy expects a Hash of options");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        int64_t max_restarts=-1,within_ms=5000,backoff_ms=20,max_backoff_ms=-1;
+        bool max_backoff_given=false;
+        const DiamondHash *options=(const DiamondHash *)given.as.object;
+        for(size_t entry=0;entry<options->count;entry++) {
+            const DiamondValue key=options->entries[entry].key;
+            const DiamondValue value=options->entries[entry].value;
+            if(key.kind!=DIAMOND_VALUE_OBJECT||
+               key.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Supervisor#restart_policy option keys must be Strings");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const DiamondString *name=(const DiamondString *)key.as.object;
+            int64_t *target=nullptr;
+            int64_t minimum=0,maximum=INT32_MAX;
+            if(name->length==12&&memcmp(name->chars,"max_restarts",12)==0) {
+                target=&max_restarts;maximum=DIAMOND_MAX_SUPERVISOR_RESTARTS;
+            } else if(name->length==9&&memcmp(name->chars,"within_ms",9)==0) {
+                target=&within_ms;minimum=1;
+            } else if(name->length==10&&memcmp(name->chars,"backoff_ms",10)==0) {
+                target=&backoff_ms;minimum=1;
+            } else if(name->length==14&&
+                      memcmp(name->chars,"max_backoff_ms",14)==0) {
+                target=&max_backoff_ms;minimum=1;max_backoff_given=true;
+            } else {
+                snprintf(vm->error,sizeof vm->error,
+                    "unknown Supervisor#restart_policy option '%.*s' (expected "
+                    "max_restarts, within_ms, backoff_ms or max_backoff_ms)",
+                    (int)name->length,name->chars);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            if(value.kind!=DIAMOND_VALUE_INT||value.as.integer<minimum||
+               value.as.integer>maximum) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Supervisor#restart_policy '%.*s' must be an Int from %" PRId64
+                    " to %" PRId64,(int)name->length,name->chars,minimum,maximum);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            *target=value.as.integer;
+        }
+        if(!max_backoff_given)max_backoff_ms=backoff_ms;
+        if(max_backoff_ms<backoff_ms) {
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#restart_policy max_backoff_ms must be at least backoff_ms");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        pthread_mutex_lock(&target_supervisor->lock);
+        if(target_supervisor->child_count!=0) {
+            pthread_mutex_unlock(&target_supervisor->lock);
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#restart_policy must be set before the first add_child");
+            return DIAMOND_VM_SUPERVISOR_ERROR;
+        }
+        target_supervisor->max_restarts=max_restarts;
+        target_supervisor->within_ms=within_ms;
+        target_supervisor->backoff_ms=backoff_ms;
+        target_supervisor->max_backoff_ms=max_backoff_ms;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(child_count_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
@@ -11218,6 +11361,17 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
          * it only returns once every child finishes on its
          * own (see docs/threads.md). */
         supervisor_join_all_children(target_supervisor);
+        if(join_method) {
+            /* A supervisor that gave up escalates here, to whoever waits on
+             * it. stop() is cleanup and never raises. */
+            pthread_mutex_lock(&target_supervisor->lock);
+            const bool gave_up=target_supervisor->failed;
+            if(gave_up)
+                snprintf(vm->error,sizeof vm->error,"%.1000s",
+                    target_supervisor->failure_message);
+            pthread_mutex_unlock(&target_supervisor->lock);
+            if(gave_up)return DIAMOND_VM_SUPERVISOR_ERROR;
+        }
         registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* add_child_method, per the exhaustive unknown-method
@@ -11235,6 +11389,12 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         pthread_mutex_unlock(&target_supervisor->lock);
         snprintf(vm->error,sizeof vm->error,
             "Supervisor#add_child called after stop()");
+        return DIAMOND_VM_SUPERVISOR_ERROR;
+    }
+    if(target_supervisor->failed) {
+        snprintf(vm->error,sizeof vm->error,"Supervisor#add_child called after the "
+            "supervisor gave up: %.900s",target_supervisor->failure_message);
+        pthread_mutex_unlock(&target_supervisor->lock);
         return DIAMOND_VM_SUPERVISOR_ERROR;
     }
     if(target_supervisor->child_count>=DIAMOND_MAX_SUPERVISOR_CHILDREN) {

@@ -257,11 +257,12 @@ across restarts, but a plain Array argument does not accumulate mutations
 from a previous, crashed attempt).
 
 A clean, non-raising return ends that child for good -- v1 restarts on
-crash only, never on an ordinary return. There is a fixed 20ms delay
-between a crash and the next restart attempt, a safety valve bounding CPU
-use if a worker crashes immediately every time; it is not currently
-configurable. A `Supervisor` accepts at most 32 children, raising
-`SupervisorError` past that.
+crash only, never on an ordinary return. By default there is a fixed 20ms
+delay between a crash and the next restart attempt, a safety valve bounding
+CPU use if a worker crashes immediately every time, and a child that crashes
+forever is restarted forever; see [Restart policy](#restart-policy) to bound
+both. A `Supervisor` accepts at most 32 children, raising `SupervisorError`
+past that.
 
 ```ruby
 sup.restart_count(0)  # => how many times child 0 has crashed and restarted
@@ -282,6 +283,41 @@ restarts -- a child that keeps crashing and restarting forever blocks
 `join()` forever too, exactly as joining a `Thread` that never returns
 already does. With the cancellation cut, cancel a shared source first and have
 workers catch expected cancellation and return normally before calling `stop()`.
+
+### Restart policy
+
+`restart_policy(options)` bounds how hard a supervisor retries. It takes a
+`Hash` with `String` keys, all optional, and must be called before the first
+`add_child` (a later call raises `SupervisorError`):
+
+```ruby
+sup = Supervisor.new()
+sup.restart_policy({"max_restarts": 5, "within_ms": 10000,
+                    "backoff_ms": 50, "max_backoff_ms": 2000})
+```
+
+- `max_restarts` (0 to 100) and `within_ms` (default 5000): the supervisor
+  gives up when more than `max_restarts` crashes, counted across all of its
+  children, fall inside a sliding `within_ms` window. Without `max_restarts`
+  there is no limit, as before. Restarts a sibling's crash caused do not count.
+- `backoff_ms` (default 20) and `max_backoff_ms` (default `backoff_ms`, so no
+  growth): the pause before a crashed child restarts starts at `backoff_ms` and
+  doubles with each consecutive crash of that child up to `max_backoff_ms`. A
+  child whose attempt stays up longer than `max_backoff_ms` starts over at
+  `backoff_ms`.
+
+When the supervisor gives up it stops restarting anything and interrupts its
+other children the way a sibling restart does (cooperatively, so a worker
+parked in a blocking call is stopped once that call returns). Those children
+get `alive?` false and a `last_error` of `"stopped: the supervisor's restart
+intensity was exceeded"`. `failed?()` is then `true`, `add_child` raises
+`SupervisorError`, and `join()` raises `SupervisorError` with the crash count,
+the window and the last error, which is how a program waiting on a supervisor
+learns it failed. `stop()` never raises. `restart_count` does not count the
+crash that made it give up, since nothing was restarted after it.
+
+Invalid options raise `TypeError`: an unknown key, a value that is not an
+`Int` in range, or a `max_backoff_ms` below `backoff_ms`.
 
 ### Restart strategies
 

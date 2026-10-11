@@ -172,10 +172,21 @@ text (`format_uncaught_exception_message` for an uncaught exception,
 `char[]`, not a rehydrated exception value, since nothing needs to survive
 a restart boundary as a live `DiamondValue` and a plain string sidesteps
 having to give crash records their own GC-rooted storage) into
-`last_error`, bumps `restart_count`, and loops again after a fixed 20ms
-`nanosleep` unless `stop_requested` -- a safety valve bounding CPU use from
-a child that crashes immediately every time, not a configurable backoff
-policy.
+`last_error`, bumps `restart_count`, and loops again after a `nanosleep` unless
+`stop_requested`. The pause is `backoff_ms` doubled per consecutive crash up to
+`max_backoff_ms` (both 20 by default, the old fixed valve bounding CPU use from
+a child that crashes immediately every time).
+
+The restart policy (`Supervisor#restart_policy`) lives on the `DiamondSupervisor`
+under its lock: a window of recent crash times (a sibling-interrupted attempt is
+not a crash and is not recorded), and a one-way `failed` flag. The crash that
+pushes the window past `max_restarts` sets `failed` and `stop_requested`, and
+sets the `interrupt` flag of every other live child, which is why a policy that
+sets `max_restarts` also installs `interrupt_flag` on each attempt VM (the same
+cooperative interruption the `one_for_all`/`rest_for_one` strategies use) and
+must be set before the first `add_child`. A child that starts after the failure
+checks `failed` at the top of its loop and ends without running, since nothing
+would interrupt it; `join()` reads `failed` and raises, `stop()` does not.
 
 **A `(DiamondSupervisor){}`/`(DiamondSupervisorChild){}` compound literal
 must never appear inside `run_chunk`.** `DIAMOND_OP_SUPERVISOR_NEW`

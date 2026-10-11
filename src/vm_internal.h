@@ -505,6 +505,9 @@ DIAMOND_INTERNAL void notify_channel_waiters(DiamondChannel *channel);
  * this cap exists to bound one DiamondSupervisor's own fixed-size
  * children[] array, not as an independent resource budget. */
 enum { DIAMOND_MAX_SUPERVISOR_CHILDREN = 32 };
+/* Largest max_restarts Supervisor#restart_policy accepts: the window of
+ * recent crash times is a fixed array of this size plus one. */
+enum { DIAMOND_MAX_SUPERVISOR_RESTARTS = 100 };
 
 typedef struct DiamondSupervisor DiamondSupervisor;
 
@@ -576,6 +579,11 @@ typedef struct DiamondSupervisorChild {
      * consumed by its retry loop. Cleared at the start of each attempt,
      * since a fresh attempt is already the restart being asked for. */
     atomic_bool interrupt;
+    /* Crashes in a row, for the restart backoff: reset once an attempt
+     * stays up longer than the supervisor's max_backoff_ms (the longest
+     * pause it could have been asked to sit out). Written only by this
+     * child's own retry loop. */
+    size_t consecutive_crashes;
 } DiamondSupervisorChild;
 
 /* Restart strategy, chosen once by Supervisor.new(:strategy). Mirrors
@@ -612,6 +620,25 @@ typedef struct DiamondSupervisor {
     bool stopped;
     DiamondSupervisorStrategy strategy;
     atomic_size_t refcount;
+    /* Restart policy (Supervisor#restart_policy), fixed before the first
+     * add_child. max_restarts < 0 means no limit, the default; otherwise
+     * more than max_restarts crashes (of any child, restarts a sibling's
+     * crash caused do not count) within within_ms makes the supervisor give
+     * up. A crashed child waits backoff_ms before restarting, doubling per
+     * consecutive crash up to max_backoff_ms; the defaults (20, 20) are the
+     * old fixed delay. Guarded by `lock`. */
+    int64_t max_restarts;
+    int64_t within_ms;
+    int64_t backoff_ms;
+    int64_t max_backoff_ms;
+    /* Monotonic times of the crashes still inside the window, oldest first. */
+    int64_t crash_times_ns[DIAMOND_MAX_SUPERVISOR_RESTARTS+1];
+    size_t crash_time_count;
+    /* Set once, under `lock`, when the intensity limit is exceeded: no
+     * child restarts any more, every sibling is interrupted, and join()
+     * raises SupervisorError with failure_message. */
+    bool failed;
+    char failure_message[1280];
 } DiamondSupervisor;
 
 DIAMOND_INTERNAL bool maybe_collect(DiamondVm *vm);
