@@ -36,15 +36,15 @@ module Arel
   #   works there. See @mysql_insert_uses_row_alias's own comment below for
   #   how the two forms are chosen per render.
   class MySQLVisitor < Visitor
-    def visitor_name() = "MySQL"
+    def visitor_name() -> String = "MySQL"
     def quote_identifier(name: String) -> String = arel_quote_identifier_backtick(name)
     def supports_extension?(name: String) -> Bool
       name != "conflict-target predicates" && name != "named-constraint conflict targets" &&
         name != "explicit NULL ordering" && name != "write CTEs" &&
         name != "returning clauses"
     end
-    def render_pagination(limit_value, offset_value, params: Array,
-                          bind_values = true) -> String
+    def render_pagination(limit_value: Int | Nil, offset_value: Int | Nil,
+                          params: Array, bind_values: Bool = true) -> String
       sql = ""
       if limit_value == nil && offset_value != nil
         # Same 2^64-1 "effectively unlimited" sentinel MariaDBVisitor uses

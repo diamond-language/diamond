@@ -52,8 +52,8 @@ module Arel
       @table_alias = table_alias
     end
     def name() -> String = @name
-    def table_alias() = @table_alias
-    def reference_name()
+    def table_alias() -> String | Nil = @table_alias
+    def reference_name() -> String
       if @table_alias == nil
         @name
       else

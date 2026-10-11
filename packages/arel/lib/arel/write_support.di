@@ -12,7 +12,7 @@ module Arel
       @columns = columns
       @predicate = predicate
     end
-    def columns() = @columns
+    def columns() -> Array = @columns
     def predicate() = @predicate
     def where(predicate) -> ConflictTarget = ConflictTarget.new(@columns, predicate)
     def column(name: String) -> ConflictAttribute = ConflictAttribute.new(name)
@@ -29,7 +29,7 @@ module Arel
     def initialize(name: String)
       @name = name
     end
-    def name() = @name
+    def name() -> String = @name
   end
 
   class DefaultValues

@@ -120,12 +120,12 @@ static void program_builder_recompute_shapes(DiamondClass *class) {
 /* ProgramBuilder#run's real body, factored out of run_chunk's own opcode
  * switch for the same stack-frame-isolation reason as regexp_new_helper
  * above -- but far more load-bearing here: a bare local DiamondVm is
- * ~20KB (method/field caches, opcode
+ * ~80KB (method/field caches, opcode
  * counters, namespace constants), not the ~100 bytes regexp_new_helper's
  * own locals needed. At -O0, every local anywhere in run_chunk's switch
  * contributes to its one shared stack frame regardless of which case
- * actually runs, so leaving `DiamondVm run_vm` inline in the INVOKE case
- * body would have added that ~50KB to *every* recursive run_chunk level
+ * actually runs, so leaving a `DiamondVm` local inline in the INVOKE case
+ * body would have added that to *every* recursive run_chunk level
  * unconditionally -- confirmed by a real crash: depth(5000) (the existing
  * regression test for the DIAMOND_MAX_CALL_DEPTH guard) segfaulted before
  * that guard could trip, a worse version of the exact bug the Regexp
@@ -179,25 +179,33 @@ DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
             "run: constructed bytecode is invalid");
         return DIAMOND_VM_PROGRAM_ERROR;
     }
-    DiamondVm run_vm;diamond_vm_init(&run_vm);
+    /* Heap-allocated: a DiamondVm is ~80KB, and this helper can nest
+     * (ProgramBuilder#run inside a program that ProgramBuilder#run built),
+     * so a stack-local one would put that much on the C stack per level. */
+    DiamondVm *run_vm=malloc(sizeof *run_vm);
+    if(run_vm==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    diamond_vm_init(run_vm);
     DiamondValue run_result=DIAMOND_NIL;
-    const DiamondVmStatus run_status=diamond_vm_run(&run_vm,&built_chunk,&run_result);
+    const DiamondVmStatus run_status=diamond_vm_run(run_vm,&built_chunk,&run_result);
     if(run_status!=DIAMOND_VM_OK) {
         snprintf(vm->error,sizeof vm->error,"%s",
-            run_vm.error[0]!='\0'?run_vm.error:diamond_vm_status_name(run_status));
-        diamond_vm_free(&run_vm);
+            run_vm->error[0]!='\0'?run_vm->error:diamond_vm_status_name(run_status));
+        diamond_vm_free(run_vm);
+        free(run_vm);
         return DIAMOND_VM_PROGRAM_ERROR;
     }
     DiamondValue copied_result=DIAMOND_NIL;
     const DiamondChunk *adopted_owner=nullptr;
     if(!copy_value_into_vm(vm,run_result,built,nullptr,nullptr,&adopted_owner,&copied_result)) {
-        diamond_vm_free(&run_vm);
+        diamond_vm_free(run_vm);
+        free(run_vm);
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
             "run does not support this result type");
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(adopted_owner!=nullptr)builder->program=nullptr;
-    diamond_vm_free(&run_vm);
+    diamond_vm_free(run_vm);
+    free(run_vm);
     *result=copied_result;
     return DIAMOND_VM_OK;
 }

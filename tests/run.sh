@@ -53,6 +53,21 @@ for help_flag in -h --help; do
     [[ "$help_output" == *"-v, --version"* ]]
 done
 
+# A default array must compile rather than silently pass through the fallback.
+# The control program differs only in its default (nil), so whether the JIT is
+# active on this platform is measured rather than re-derived here: where the
+# control compiles nothing there is no JIT to check, and where it does, the
+# array default must compile exactly as much.
+jit_compiled_count() {
+    local type="$1" default="$2" trace
+    trace="$(DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 \
+        DIAMOND_STRESS_GC=1 "$diamond" -e $'class DefaultProbe\n  def initialize(values: '"$type"$' = '"$default"$')\n    @values = values\n  end\nend\ni = 0\nwhile i < 10\n  value = DefaultProbe.new()\n  i += 1\nend\nputs(i)' 2>&1)"
+    sed -n 's/^jit: \([0-9]*\) compiled function(s), 0 bailout(s), 0 hard propagation(s)$/\1/p' <<<"$trace"
+}
+jit_control_count="$(jit_compiled_count "Array | Nil" nil)"
+jit_array_count="$(jit_compiled_count Array '[]')"
+[[ -n "$jit_control_count" && "$jit_array_count" == "$jit_control_count" ]]
+
 # Once program input has started, option-looking values belong to the script.
 actual="$($diamond -e 'ARGV' -h --version)"
 [[ "$actual" == "[-h, --version]" ]]

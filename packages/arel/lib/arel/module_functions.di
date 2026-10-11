@@ -5,7 +5,7 @@ module Arel
   def self.as(expression, name: String) -> Alias = Alias.new(expression, name)
   def self.asc(expression) -> Ordering = Ordering.new(expression, "ASC")
   def self.desc(expression) -> Ordering = Ordering.new(expression, "DESC")
-  def self.sql(fragment: String, params = nil)
+  def self.sql(fragment: String, params = nil) -> RawSql
     bound = params
     if bound == nil
       bound = []
@@ -28,7 +28,7 @@ module Arel
   def self.excluded(name: String) -> ExcludedAttribute = ExcludedAttribute.new(name)
   def self.literal(value) -> Literal = Literal.new(value)
   def self.cast(expression, type_name: String) -> Cast = Cast.new(expression, type_name)
-  def self.integer_operator(expression, operator: String, value)
+  def self.integer_operator(expression, operator: String, value) -> BinaryExpression
     if operator != "&" && operator != "|" && operator != "<<" && operator != ">>"
       raise ArgumentError.new("unsupported SQL integer operator")
     end
@@ -37,11 +37,11 @@ module Arel
   def self.conflict_target(columns) -> ConflictTarget = ConflictTarget.new(arel_array(columns))
   def self.conflict_target_on_constraint(name: String) -> ConflictConstraintTarget = ConflictConstraintTarget.new(name)
   def self.column_default() -> ColumnDefault = ColumnDefault.new()
-  def self.render(statement, visitor = nil) = statement.to_sql(visitor)
-  def self.inspect(node) = Inspector.new().inspect(node)
-  def self.same?(left, right) = Inspector.new().same?(left, right)
-  def self.children(node) = Inspector.new().children(node)
-  def self.walk(node, visitor = nil) = Inspector.new().walk(node, visitor)
+  def self.render(statement, visitor = nil) -> Array = statement.to_sql(visitor)
+  def self.inspect(node) -> String = Inspector.new().inspect(node)
+  def self.same?(left, right) -> Bool = Inspector.new().same?(left, right)
+  def self.children(node) -> Array = Inspector.new().children(node)
+  def self.walk(node, visitor = nil) -> Array = Inspector.new().walk(node, visitor)
   def self.simplify(node, rules = [], report = false) = Inspector.new().simplify(node, rules, report)
   def self.with_children(node, replacements: Array) = Inspector.new().with_children(node, replacements)
   def self.union(left, right) -> CompoundQuery = CompoundQuery.new(left, "UNION", right)

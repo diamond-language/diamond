@@ -1,9 +1,9 @@
 module Arel
 
   class Query
-    def initialize(table_name, predicates, orderings, limit_value, offset_value,
-                   projections, quoted_identifiers, bind_limits, table_alias = nil,
-                   distinct_value = false, groups = [], havings = [], joins = [],
+    def initialize(table_name: String, predicates, orderings, limit_value: Int | Nil, offset_value: Int | Nil,
+                   projections, quoted_identifiers: Bool, bind_limits: Bool, table_alias: String | Nil = nil,
+                   distinct_value: Bool = false, groups = [], havings = [], joins = [],
                    source_query = nil, correlations = [], ctes = [])
       @table_name = table_name
       @predicates = predicates
@@ -31,12 +31,12 @@ module Arel
     def table_name() -> String = @table_name
     def predicates() -> Array = @predicates
     def orderings() -> Array = @orderings
-    def limit_value() = @limit_value
-    def offset_value() = @offset_value
+    def limit_value() -> Int | Nil = @limit_value
+    def offset_value() -> Int | Nil = @offset_value
     def projections() -> Array = @projections
     def quoted_identifiers() -> Bool = @quoted_identifiers
     def bind_limits() -> Bool = @bind_limits
-    def table_alias() = @table_alias
+    def table_alias() -> String | Nil = @table_alias
     def base_reference_name() -> String
       if @table_alias == nil
         @table_name
@@ -66,7 +66,7 @@ module Arel
       end
     end
 
-    def copy(predicates, orderings, limit_value, offset_value, projections) -> Query
+    def copy(predicates: Array, orderings: Array, limit_value: Int | Nil, offset_value: Int | Nil, projections: Array) -> Query
       Query.new(@table_name, predicates, orderings, limit_value, offset_value,
         projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
         @groups, @havings, @joins, @source_query, @correlations, @ctes)
@@ -272,7 +272,7 @@ module Arel
       PreparedStatements.for(db, sql).query(params)
     end
 
-    def count(db, visitor = nil)
+    def count(db, visitor = nil) -> Int
       sql, params = self.to_sql(visitor)
       count_sql = "SELECT COUNT(*) AS count FROM (#{sql})"
       rows = PreparedStatements.for(db, count_sql).query(params)

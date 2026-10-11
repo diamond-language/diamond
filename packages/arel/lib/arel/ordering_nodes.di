@@ -10,14 +10,14 @@ module Arel
   end
 
   class Ordering
-    def initialize(expression, direction: String, nulls = nil)
+    def initialize(expression, direction: String, nulls: String | Nil = nil)
       @expression = expression
       @direction = direction
       @nulls = nulls
     end
     def expression() = @expression
     def direction() -> String = @direction
-    def nulls() = @nulls
+    def nulls() -> String | Nil = @nulls
     def nulls_first() -> Ordering = Ordering.new(@expression, @direction, "FIRST")
     def nulls_last() -> Ordering = Ordering.new(@expression, @direction, "LAST")
   end

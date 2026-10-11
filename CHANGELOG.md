@@ -20,6 +20,19 @@ authoritative fine-grained record.
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
   holds at most 255 ..." instead of "expected valid module name".
 
+### Packages
+
+- Arel checks its node constructors and visitor pagination hooks at the call that builds
+  them. `Query`, `Insert`, `Update`, `Delete`, `Cte`, `Ordering` and `CompoundQuery` raise
+  `TypeError` for a wrongly typed table name, alias, flag, ordering, limit or offset, where an
+  invalid value used to surface only when it was read or rendered. Code that passed `nil` for
+  a Boolean flag or a `String` for a limit must now pass the declared type.
+
+### Performance
+
+- The JIT compiles functions that build array literals or take a default `[]` argument, and
+  inlines built-in type guards, which speeds up annotated parameters.
+
 ### Tooling
 
 - Array literals preserve inferred factory element types for receiver completion,

@@ -662,7 +662,40 @@ enum { DIAMOND_NATIVE_TYPE_OPERAND_BASE = 256 };
 bool diamond_native_type_kind(const char *name, uint8_t *kind);
 const char *diamond_native_type_name(uint8_t kind);
 
-enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
+/* The one definition of what the built-in, unparameterized types accept.
+ * Returns 1/0 for a plain type id and -1 for any id that needs the full
+ * matcher (generics, interfaces, type variables, native kinds). The
+ * interpreter's matchers call this; the JIT's guard emitter in jit.c asks
+ * it which ids are plain and mirrors the same kind tests as machine code,
+ * so a change here must be reflected in compile_check_type's two kind
+ * switches. tests/cases/plain_type_guard_matrix.di checks every plain id
+ * against every value kind. */
+static inline int diamond_plain_type_match(DiamondValue value, uint8_t id) {
+    const bool object = value.kind == DIAMOND_VALUE_OBJECT;
+    switch (id) {
+        case DIAMOND_TYPE_INT: return value.kind == DIAMOND_VALUE_INT ||
+            (object && value.as.object->kind == DIAMOND_OBJECT_BIGNUM);
+        case DIAMOND_TYPE_FLOAT: return value.kind == DIAMOND_VALUE_FLOAT;
+        case DIAMOND_TYPE_BOOL: return value.kind == DIAMOND_VALUE_BOOL;
+        case DIAMOND_TYPE_NIL: return value.kind == DIAMOND_VALUE_NIL;
+        case DIAMOND_TYPE_STRING: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_STRING;
+        case DIAMOND_TYPE_SYMBOL: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_SYMBOL;
+        case DIAMOND_TYPE_ARRAY: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_ARRAY;
+        case DIAMOND_TYPE_HASH: return object &&
+            value.as.object->kind == DIAMOND_OBJECT_HASH;
+        default: return -1;
+    }
+}
+
+/* These direct-mapped tables are shared by all bytecode call/field sites in
+ * a VM. At 64 slots, adding Arel return checks shifted site addresses into
+ * a collision cliff. 256 keeps the same lookup policy while reducing that
+ * interference; the three tables together occupy 72 KiB on 64-bit builds.
+ * See docs/internal/orm-return-annotations.md for before/after measurements. */
+enum { DIAMOND_INLINE_CACHE_COUNT = 256 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 /* INT, TERM, HUP -- see docs/io.md's signals section for why this
  * specific small, fixed set rather than every signal name POSIX knows
@@ -1616,9 +1649,6 @@ struct DiamondVm {
     double gc_major_total_seconds;
     size_t gc_minor_collection_count;
     double gc_minor_total_seconds;
-    DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;
     size_t monomorphic_dispatches;
@@ -1927,6 +1957,12 @@ struct DiamondVm {
      * so this is never read concurrently with a write). */
     DiamondValue *extra_roots;
     size_t extra_root_count;
+    /* Keep the large site tables after VM control state. Their capacity must
+     * not spread the dispatch counters, quickening/JIT flags, and instruction
+     * budgets across the tables' working set. */
+    DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
 };
 
 void diamond_vm_init(DiamondVm *vm);

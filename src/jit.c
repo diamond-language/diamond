@@ -971,14 +971,71 @@ static void compile_index_set(JitCompiler *jc, size_t instruction_start,
     emit_bail_if_al_nonzero(jc);
 }
 
-/* CHECK_TYPE -- calls diamond_jit_check_type(chunk, &registers[source], set_index). */
+/* Only wholly unconstrained built-in unions can skip the matcher. A generic
+ * member may attach collection constraints even when a later plain member
+ * accepts the value, so preserve the complete matcher for such unions. */
+static bool simple_guard_member(DiamondTypeMember member) {
+    if (member.argument_set != DIAMOND_NO_TYPE_SET ||
+        member.second_argument_set != DIAMOND_NO_TYPE_SET) return false;
+    /* diamond_plain_type_match (vm.h) is the single definition of which
+     * ids are plain; the kind switches below emit its tests as code. */
+    return diamond_plain_type_match(DIAMOND_NIL, member.id) >= 0;
+}
+
 static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_index) {
     JitBuffer *buf = &jc->buf;
+    size_t accepted[DIAMOND_MAX_UNION_TYPES * 2];
+    size_t accepted_count = 0;
+    const DiamondTypeSet *set = set_index < jc->function->type_set_count
+        ? &jc->function->type_sets[set_index] : nullptr;
+    bool simple = set != nullptr && set->count != 0;
+    if (simple) {
+        for (size_t i = 0; i < set->count; i++)
+            if (!simple_guard_member(set->members[i])) simple = false;
+    }
+    if (simple) {
+        emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, KIND_OFF));
+        bool objects = false;
+        for (size_t i = 0; i < set->count; i++) {
+            uint32_t kind;
+            switch (set->members[i].id) {
+                case DIAMOND_TYPE_INT: kind = DIAMOND_VALUE_INT; objects = true; break;
+                case DIAMOND_TYPE_FLOAT: kind = DIAMOND_VALUE_FLOAT; break;
+                case DIAMOND_TYPE_BOOL: kind = DIAMOND_VALUE_BOOL; break;
+                case DIAMOND_TYPE_NIL: kind = DIAMOND_VALUE_NIL; break;
+                default: objects = true; continue;
+            }
+            emit_cmp_imm32_32(buf, REG_RAX, kind);
+            accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+        }
+        if (objects) {
+            emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_OBJECT);
+            size_t not_object = emit_jcc_placeholder(buf, JCC_NE);
+            emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, AS_OFF));
+            emit_load_byte_zx(buf, REG_RAX, REG_RAX, offsetof(DiamondObject, kind));
+            for (size_t i = 0; i < set->count; i++) {
+                uint32_t kind;
+                switch (set->members[i].id) {
+                    case DIAMOND_TYPE_INT: kind = DIAMOND_OBJECT_BIGNUM; break;
+                    case DIAMOND_TYPE_STRING: kind = DIAMOND_OBJECT_STRING; break;
+                    case DIAMOND_TYPE_SYMBOL: kind = DIAMOND_OBJECT_SYMBOL; break;
+                    case DIAMOND_TYPE_ARRAY: kind = DIAMOND_OBJECT_ARRAY; break;
+                    case DIAMOND_TYPE_HASH: kind = DIAMOND_OBJECT_HASH; break;
+                    default: continue;
+                }
+                emit_cmp_imm32_32(buf, REG_RAX, kind);
+                accepted[accepted_count++] = emit_jcc_placeholder(buf, JCC_E);
+            }
+            patch_rel32_to_here(buf, not_object);
+        }
+    }
+    /* Failure retains the existing status and propagation path. */
     emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
     emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
     emit_mov_imm64(buf, REG_RDX, set_index);
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_check_type);
     emit_bail_if_al_nonzero(jc);
+    for (size_t i = 0; i < accepted_count; i++) patch_rel32_to_here(buf, accepted[i]);
 }
 
 /* IS_TYPE -- calls diamond_jit_is_type(chunk, &registers[source], type,
@@ -1026,6 +1083,25 @@ static void compile_new_hash(JitCompiler *jc, uint16_t dest, uint16_t base, uint
     emit_mov_imm64(buf, REG_RCX, count);
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_hash);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* ARRAY uses the same rooted allocation path as HASH, including empty
+ * literals used by default arguments. Preserve element registers across GC. */
+static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uint16_t count) {
+    if (dest >= DIAMOND_JIT_MAX_REGISTERS ||
+        (size_t)base + count > DIAMOND_JIT_MAX_REGISTERS) {
+        jc->bailed = true;
+        return;
+    }
+    jc->needs_frame = true;
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RDX, base);
+    emit_mov_imm64(buf, REG_RCX, count);
+    emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_array);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1310,6 +1386,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_STRING:
         case DIAMOND_OP_INDEX_GET:
         case DIAMOND_OP_INDEX_GET_STRING:
+        case DIAMOND_OP_ARRAY:
         case DIAMOND_OP_HASH:
         case DIAMOND_OP_SUPER:
         case DIAMOND_OP_INVOKE:
@@ -1391,7 +1468,7 @@ static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t targe
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
@@ -1517,7 +1594,7 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_HASH:
+            case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
                 uint16_t a = 0, b = 0;
@@ -1778,6 +1855,13 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &index) ||
                     !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
                 compile_index_set(jc, instruction_start, recv, index, source);
+                break;
+            }
+            case DIAMOND_OP_ARRAY: {
+                uint16_t dest = 0, base = 0, count = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
+                    !decode_u16(fn, &pc, &count)) { jc->bailed = true; return; }
+                compile_new_array(jc, dest, base, count);
                 break;
             }
             case DIAMOND_OP_HASH: {

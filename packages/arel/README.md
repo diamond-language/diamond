@@ -63,3 +63,18 @@ Most applications put a repository on top of this; see [`active_record`](https:/
 ## Notes
 
 `to_sql(visitor)` returns SQL and ordered bind values. The default visitor targets SQLite; pass `PostgreSQLVisitor`, `MariaDBVisitor`, or `MySQLVisitor` for those dialects. See [VISITORS.md](https://github.com/diamond-language/diamond/blob/main/packages/arel/VISITORS.md) for the renderer protocol.
+
+## Type contracts
+
+Query pagination accessors return `Int | Nil`; table aliases and ordering NULL
+placement return `String | Nil`. `Query#count` and write `execute` methods return
+`Int`, while statement `to_a` methods return `Array`. Connection decorators must
+preserve those query and execution result types.
+
+Write-statement constructors check collection state (`Array`), assignment maps
+(`Hash | Nil`), and Boolean flags.
+Defaults, explicit `false`, and zero pagination remain valid. Query operands,
+visitors, expression children, bound values, and extensible query/node returns
+remain dynamic.
+The annotation audit and measurements are tracked in
+[the ORM annotation notes](https://github.com/diamond-language/diamond/blob/main/docs/internal/orm-return-annotations.md).
