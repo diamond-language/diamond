@@ -346,3 +346,85 @@ Validation: `make -j6 test` passed all 1,788 tests (1,635 corpus cases;
 39 cases skipped without an expectation or `run!` marker). All 25 Arel case
 files also passed with forced JIT and fresh compilation. This batch changes
 parameter checks and documentation only; dialect SQL generation is unchanged.
+
+## Isolated hot Query constructor investigation
+
+`bench/audit_arel_query_parameters.py` isolates Query constructor annotations,
+copy annotations, and both from all other changes. It archives the baseline
+package into temporary snapshots, applies only those signatures, and times
+inside each benchmark loop. It rotates sample order, compares complete outputs,
+and collects tracing separately from timing. It also probes default Array and
+Hash allocation with the JIT threshold forced to one. Production Arel
+signatures and runtime type guards are unchanged by this investigation.
+
+Three samples per variant/mode with the same release binary, baseline
+`771765dc`, fresh compilation, and one CPU produced these loop medians:
+
+| Variant | Render interpreter | Render JIT enabled | Builder interpreter | Builder JIT enabled |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 1.4155 s | 1.3746 s | 1.4824 s | 1.3826 s |
+| Constructor only | 1.4153 s (−0.0%) | 1.3304 s (−3.2%) | 1.7653 s (+19.1%) | 1.7041 s (+23.3%) |
+| Copy only | 1.4056 s (−0.7%) | 1.3145 s (−4.4%) | 1.6376 s (+10.5%) | 1.4246 s (+3.0%) |
+| Both | 1.4018 s (−1.0%) | 1.3412 s (−2.4%) | 1.8297 s (+23.4%) | 1.6680 s (+20.6%) |
+
+The isolated experiment reproduces the large construction regression, without
+the rendering cliff seen when several unrelated signatures changed together.
+Do not treat the small rendering differences as established improvements.
+
+Interpreter builder traces explain the main cost:
+
+| Variant | CHECK_TYPE executions | Field-cache misses | Method-cache misses |
+| --- | ---: | ---: | ---: |
+| Baseline | 4,400,002 | 9,400,046 | 15 |
+| Constructor only | 19,400,002 | 2,400,054 | 15 |
+| Copy only | 8,400,002 | 9,800,048 | 15 |
+| Both | 23,400,002 | 2,800,053 | 15 |
+
+The 200,000 builder iterations create 1,000,000 Queries and call `copy` 800,000
+times. Fifteen constructor annotations add exactly 15,000,000 guards; five
+copy annotations add exactly 4,000,000. The constructor-only variant slows
+substantially despite *fewer* field-cache misses and unchanged method-cache
+misses. Thus cache deterioration cannot explain that variant's regression;
+executing the extra guards is the primary observed cost. Plain `Array` checks
+return after matching the collection type: unlike `Array[T]`, they do not walk
+elements or attach element constraints (`value_matches_member`, `src/vm.c`).
+
+Cache sensitivity remains real and separate. Cache slots use the low bits of
+the bytecode-site address (`site >> 2` modulo 256), so instruction and allocation
+layout changes can alter collisions. In the render trace, constructor-only
+annotations change field misses from 160,083 to 80,083 and method misses from
+420,044 to 240,049, while adding only 45 startup guards. These are layout
+changes rather than checks executed in the render loop. They explain why
+construction and rendering results need separate measurements and why the
+combined variants' costs are not additive.
+
+The JIT does not eliminate the constructor's 15,000,000 interpreted checks.
+`Query#initialize` includes default empty-array construction; `DIAMOND_OP_ARRAY`
+is unsupported in `src/jit.c`'s opcode switch, making the whole method
+ineligible even when callers supply those arguments. A minimal typed
+constructor with `values: Array = []` compiles zero functions at threshold one;
+the otherwise identical `values: Hash = {}` probe compiles one. The audit tool
+records both probe sources and diagnostics. Copy checks mostly leave the
+interpreter under JIT (only 245 additional interpreted CHECK_TYPE executions
+after warmup); native checks still run through `diamond_jit_check_type` and
+are not included in interpreter opcode counts.
+
+Reproduce with a release binary built from the shared annotation branch:
+
+```sh
+python3 bench/audit_arel_query_parameters.py \
+  --baseline-ref 771765dc --binary build/diamond --runs 5 \
+  --output /tmp/arel-query-guards.json
+```
+
+The JSON records timing samples, complete diagnostics, baseline commit,
+binary path and SHA-256, parameter maps, and default-allocation probes.
+Verification exercised all four variants in both modes for both benchmarks,
+with identical outputs, plus the separate default-allocation probes. Python
+syntax and CLI validation passed. Native code and production package contracts
+are unchanged, so the already-passing repository suite was not repeated.
+
+Next: add GC-safe JIT support for `DIAMOND_OP_ARRAY`, then repeat this audit
+before adding the hot constructor annotations. Interpreter guard cost remains
+a separate issue and must also be addressed or explicitly accepted; JIT
+eligibility alone does not make the interpreter regression disappear.
