@@ -880,3 +880,51 @@ successfully on commit 0317f7f4, verifying the preceding portability fixes.
 Next: profile the established matcher and guard dispatch before another
 optimization. The retained Query annotation overhead remains unresolved;
 the remaining collection constructor annotations are still deferred.
+
+## Loop-only hardware profiles
+
+The reproducible tool bench/profile_arel_query_guards.py archives the selected
+commit's Arel package, removes only Query constructor/copy annotations for
+its control, and runs one million builder iterations in the interpreter.
+It pins a CPU, clears inherited DIAMOND settings, disables caching, and records
+cycles:u at 1,999 Hz with DWARF call stacks. Driver timestamps and perf use
+CLOCK_MONOTONIC; reports restrict samples to the loop's actual start/finish
+interval, excluding compilation and package loading. Raw data, symbol/source
+reports, binary hash, inputs, timestamps, and separately collected diagnostic
+counts are retained in the requested output directory. Profiling elapsed
+times are not treated as uninstrumented benchmark measurements.
+
+Two profile pairs on the established optimized runtime with debug symbols
+identified the same costs. The second pair contained approximately 15,000
+untyped and 16,000 typed loop samples, with zero lost samples:
+
+| Symbol self-cycle share | Untyped control | Production Query annotations |
+| --- | ---: | ---: |
+| run_chunk | 52.51% | 54.42% |
+| value_matches_set.constprop.0 | 1.83% | 4.85% |
+
+The first pair measured matcher shares of 1.80% and 4.72%. These percentages
+are sampled relative shares, not exact costs or additive benchmark deltas.
+Diagnostics confirm 22,000,002 versus 77,000,002 interpreted checks, 15 method
+misses in both variants, and zero compiled functions/bailouts/propagations.
+Production annotations reduce field misses from 47,000,046 to 12,000,052.
+
+Source samples concentrate in the union/member loop and plain member switch.
+The optimized matcher reserves 72 stack bytes and saves six callee-saved
+registers before plain checks, keeping loop state available for structural
+matching calls. That suggests a focused experiment: move the structural
+remainder into a separate helper reached only when a member needs it,
+retaining declaration order, attachment effects, and error behavior. Do not
+change general dispatch or type-set layout to test this hypothesis.
+
+Reproduce with an optimized symbol-bearing build:
+
+```sh
+make -j6 release CFLAGS_RELEASE='-O3 -DNDEBUG -march=native -g'
+python3 bench/profile_arel_query_guards.py --binary build/diamond \
+  --output-dir /tmp/arel-guard-profile-new
+```
+
+Validation: the tool passed a reduced-loop end-to-end run and a full one-million
+iteration run, including report generation, output checks, JSON metadata and
+separate trace decoding. Output directories must be new to preserve evidence.
