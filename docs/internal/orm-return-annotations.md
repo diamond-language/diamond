@@ -787,3 +787,46 @@ and default-allocation probes. Reduced-loop timings are validation only.
 Next: measure a safe way to reduce repeated parameter guard work, preserving
 dynamic-call errors and generic constraint attachment. Do not remove entry
 checks merely because this benchmark's callers already provide valid values.
+
+## Rejected consecutive-guard dispatch experiment
+
+An interpreter-only candidate handled adjacent CHECK_TYPE instructions in
+one switch case. After a successful check, it consumed the next guard only
+when resource limits were inactive and no signal was pending. It retained
+the existing matcher, declaration order, error instruction offsets, and
+per-opcode counters; other instructions still returned to normal dispatch.
+This reduced dispatch boundaries without eliding any parameter checks or
+changing type-set metadata. The candidate is discarded in full.
+
+Five CPU-pinned, alternating baseline/candidate runs used identical current
+Arel signatures and timed only each benchmark loop. The baseline was the
+established release runtime; the candidate used the same release/LTO build
+configuration. All DIAMOND environment variables were cleared before enabling
+the requested mode, and caching was disabled. Tracing ran separately.
+
+| Workload | Baseline median | Candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Builder, interpreter | 1.5853 s | 1.5667 s | -1.2% |
+| Builder, JIT enabled | 1.0750 s | 1.0907 s | +1.5% |
+| Rendering, interpreter | 1.4324 s | 1.4457 s | +0.9% |
+| Rendering, JIT enabled | 1.3239 s | 1.3436 s | +1.5% |
+| Arithmetic, interpreter | 0.3054 s | 0.3191 s | +4.5% |
+| Arithmetic, JIT enabled | 0.3032 s | 0.3229 s | +6.5% |
+
+Builder sample ranges overlapped in both modes; the modest interpreter
+median gain does not establish a reliable improvement. Arithmetic calls
+its function only once, so enabling JIT with the default threshold does not
+compile that function; both arithmetic rows measure interpreter execution.
+The general interpreter slowdown outweighs the uncertain builder gain.
+Outputs matched for all samples. All four Arel diagnostic summaries were
+identical across binaries, including interpreted guard counts, method/field
+cache counts, and JIT compilation/bailout/propagation counts. The existing
+interpreter guard fixture returned 40 on the candidate. No candidate runtime
+change is retained, and these checks do not constitute full runtime validation.
+After discarding the patch, the established runtime was rebuilt in debug mode.
+Its guard fixture passed normally, with a configured instruction budget, and
+with forced JIT plus major GC stress. The only retained change is this record.
+
+Next: investigate reducing matcher cost through prepared plain-type metadata,
+rather than changing general dispatch layout. Preserve ordered generic-union
+behavior and measure arithmetic/rendering controls alongside the builder.
