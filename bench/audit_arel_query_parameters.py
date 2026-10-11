@@ -105,6 +105,9 @@ def main():
     parser.add_argument('--baseline-ref', default='HEAD')
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--runs', type=int, default=5)
+    parser.add_argument('--constructor-parameters', nargs='+',
+                        choices=list(CONSTRUCTOR_TYPES),
+                        help='audit only these constructor parameters (default: all)')
     parser.add_argument('--cpu', type=int)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
@@ -129,6 +132,9 @@ def main():
                'control': 'audited constructor/copy annotations removed',
                'constructor_parameter_types': CONSTRUCTOR_TYPES,
                'copy_parameter_types': COPY_TYPES, 'benchmarks': {}}
+    constructor_types = {name: CONSTRUCTOR_TYPES[name] for name in
+                         (args.constructor_parameters or CONSTRUCTOR_TYPES)}
+    results['constructor_parameter_types'] = constructor_types
     variants = ('baseline', 'constructor', 'copy', 'both')
     with tempfile.TemporaryDirectory(prefix='diamond-query-guards-') as temporary:
         directories = {}
@@ -142,7 +148,7 @@ def main():
             source = remove_known_annotations(source, 'initialize', CONSTRUCTOR_TYPES)
             source = remove_known_annotations(source, 'copy', COPY_TYPES)
             if variant in ('constructor', 'both'):
-                source = annotate(source, 'initialize', CONSTRUCTOR_TYPES)
+                source = annotate(source, 'initialize', constructor_types)
             if variant in ('copy', 'both'):
                 source = annotate(source, 'copy', COPY_TYPES)
             query.write_text(source)

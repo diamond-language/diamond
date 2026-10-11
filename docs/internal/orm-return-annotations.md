@@ -580,3 +580,59 @@ failure fixture matched before/after in both modes under minor GC stress;
 focused contract checks also passed under major GC stress. The audit's
 annotation removal was checked against the original untyped source, and
 the production copy signature was checked against the measured variant.
+
+## Constructor Bool flags and rejected runtime experiments
+
+Two runtime experiments were discarded. Inlining plain matching into the
+interpreter dispatch did not improve the existing Arel workloads, and its
+three-sample audit still measured a +9.5% interpreter constructor penalty.
+Making opcode diagnostics opt-in improved some Arel timings but regressed
+the arithmetic control by +11.0% when the flag was read on each dispatch.
+Caching a counter pointer removed that arithmetic regression (-2.6%), but
+its Arel interpreter builder comparison was +2.8% and its constructor audit
+still cost +6.8%. These experiments did not establish a worthwhile runtime
+improvement. No runtime or diagnostic-counter changes were retained.
+Plain-before-generic Array/Hash union coverage was retained for future work.
+
+A smaller annotation batch was then tested on the established runtime:
+quoted_identifiers, bind_limits, and distinct_value as Bool. Five rotated,
+CPU-pinned samples per variant used the previous committed package and the
+saved release binary, with tracing separate from timing and outputs equal.
+
+| Builder mode | Untyped control | Bool flags only | Existing copy only | Flags + copy |
+| --- | ---: | ---: | ---: | ---: |
+| Interpreter | 1.5248 s | 1.5490 s (+1.6%) | 1.5739 s (+3.2%) | 1.5981 s (+4.8%) |
+| JIT | 1.0878 s | 1.0749 s (-1.2%) | 1.0945 s (+0.6%) | 1.1088 s (+1.9%) |
+
+Relative to the current copy-annotated branch, the added Bool flags cost
++1.5% in interpreter mode and +1.3% with JIT. This small incremental cost
+supports accepting these three annotations, while the other twelve fixed
+constructor parameters remain deferred. The production signature exactly
+matches the measured flags-plus-copy variant. True, false, the default
+false distinct flag, and invalid values for all three flags are covered.
+
+The audit now supports constructor subsets, for example:
+
+```sh
+python3 bench/audit_arel_query_parameters.py \
+  --baseline-ref b24c3260 --binary /path/to/release-diamond --runs 5 \
+  --constructor-parameters quoted_identifiers bind_limits distinct_value \
+  --output /tmp/arel-flags-audit.json
+```
+
+The control removes all known audited constructor/copy annotations from
+its temporary source. The constructor variant adds only the selected
+parameters; the copy and both variants retain their previous meanings.
+The selected parameter map is recorded in the JSON output.
+
+Next: measure the remaining constructor parameters in smaller groups,
+without accepting the full constructor regression or broadening the
+runtime based on inconclusive microbenchmarks.
+
+Validation: the full debug suite passed all 1,795 tests (1,642 corpus cases;
+39 skipped). All 27 Arel files passed with forced JIT on the established
+release runtime. The new flag contracts passed in both modes, the expanded
+union-order fixture passed under major GC stress, and the production
+constructor signature matched the measured temporary variant exactly.
+The five-sample subset audit preserved outputs and passed default-allocation
+probes. No C runtime changes remained after the experiments were reverted.
