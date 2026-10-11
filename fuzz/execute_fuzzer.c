@@ -1,5 +1,5 @@
-/* open_memstream (POSIX.1-2008) is hidden by glibc's stdio.h under a
- * strict -std=c23 with no feature-test macro set. */
+/* struct sigaction and sigaction (POSIX.1-2008) are hidden by glibc's signal.h
+ * under a strict -std=c23 with no feature-test macro set. */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #define __BSD_VISIBLE 1
@@ -9,6 +9,7 @@
 #include "disassemble.h"
 #include "vm.h"
 
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,11 +35,11 @@
  * Runs under DIAMOND_SANDBOX=1, so every opcode that would open a file, a socket, a
  * database or a subprocess raises SandboxError (docs/sandbox.md) instead of doing it: the
  * I/O opcodes execute up to their guard, and their arguments, error paths and rescue
- * handling are fuzzed, without touching the machine. Only the opcodes the sandbox does not
- * gate are rejected before diamond_vm_run sees them (a mnemonic search of
- * diamond_disassemble's own per-instruction walk, via open_memstream, rather than a second
- * decoder here): IO_POLL, TLS_START_HANDSHAKE, SIGNAL_TRAP (a process-wide side effect)
- * and THREAD_NEW (an OS thread).
+ * handling are fuzzed, without touching the machine. The opcodes the sandbox does not gate
+ * run for real, and the harness contains what they can reach: IO_POLL and channel waits are
+ * bounded by the wall-clock budget below, THREAD_NEW's threads are joined when the VM is
+ * freed (and run under the same process-wide budgets), and SIGNAL_TRAP's process-wide
+ * handlers are restored after every input so a trapped INT/TERM/HUP cannot outlive it.
  *
  * register_count and code come from the fuzzer's own input bytes (the
  * first byte picks register_count, 1..64; the rest is the code array,
@@ -61,28 +62,6 @@
  * thread-local mark stack mid-drain, and the next input's collection marked
  * stale pointers (a heap-use-after-free found by this fuzzer, in the harness
  * and not in the runtime). Nothing may longjmp out of the VM. */
-static bool references_unsafe_opcode(const DiamondChunk *chunk) {
-    char *text = nullptr;
-    size_t text_size = 0;
-    FILE *sink = open_memstream(&text, &text_size);
-    if (sink == nullptr) return true; /* fail closed: skip this input */
-    diamond_disassemble(sink, chunk->name, chunk);
-    fclose(sink);
-    static const char *const unsafe_mnemonics[] = {
-        "IO_POLL", "TLS_START_HANDSHAKE", "SIGNAL_TRAP", "THREAD_NEW",
-    };
-    bool found = false;
-    for (size_t index = 0;
-         index < sizeof(unsafe_mnemonics) / sizeof(unsafe_mnemonics[0]);
-         index++) {
-        if (strstr(text, unsafe_mnemonics[index]) != nullptr) {
-            found = true;
-            break;
-        }
-    }
-    free(text);
-    return found;
-}
 
 /* The input is more than code now. The first harness gave the entry function
  * bytes and nothing else, so every opcode that names a constant, string or
@@ -372,7 +351,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     const DiamondChunk chunk = diamond_program_chunk(program);
     if (!diamond_verify_bytecode(&chunk)) return 0;
-    if (references_unsafe_opcode(&chunk)) return 0;
 
     /* Read by diamond_vm_init, so set before it. DIAMOND_SANDBOX is read at each guarded
      * opcode. The budgets bound a program that rescues ResourceLimitError: the grace
@@ -380,10 +358,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     setenv("DIAMOND_SANDBOX", "1", 1);
     setenv("DIAMOND_MAX_INSTRUCTIONS", "2000000", 1);
     setenv("DIAMOND_MAX_WALL_MILLISECONDS", "2000", 1);
+    /* Signal.trap installs a process-wide handler. libFuzzer owns INT and TERM (it dumps the
+     * crashing input and exits on them), so put back whatever was installed before the run. */
+    static const int trapped[] = {SIGINT, SIGTERM, SIGHUP};
+    struct sigaction saved[sizeof trapped / sizeof trapped[0]];
+    for (size_t index = 0; index < sizeof trapped / sizeof trapped[0]; index++)
+        (void)sigaction(trapped[index], nullptr, &saved[index]);
     DiamondVm vm;
     diamond_vm_init(&vm);
     DiamondValue result = DIAMOND_NIL;
     (void)diamond_vm_run(&vm, &chunk, &result);
     diamond_vm_free(&vm);
+    for (size_t index = 0; index < sizeof trapped / sizeof trapped[0]; index++)
+        (void)sigaction(trapped[index], &saved[index], nullptr);
     return 0;
 }
