@@ -684,3 +684,61 @@ its default-allocation probes. The measured signature matched production.
 Before accepting the cumulative constructor changes for the consolidated PR,
 repeat the untyped-control comparison as well: small incremental costs do
 not by themselves establish acceptable total overhead.
+
+## Nullable pagination and cumulative constructor audit
+
+limit_value and offset_value now declare Int | Nil at Query constructor
+entry, matching the existing getters and visitor pagination contracts.
+The checks retain nil, zero, negative and promoted integers without adding
+numeric policy. Bound LIMIT/OFFSET parameters and offset-only SQLite
+rendering are covered, along with rejection of float/string/Bool/Array
+values forwarded dynamically into the constructor.
+
+Five alternating, CPU-pinned samples of the incremental candidate against
+commit 6746a207 measured:
+
+| Builder mode | Current branch median | Add pagination median | Change |
+| --- | ---: | ---: | ---: |
+| Interpreter | 1.5889 s | 1.5835 s | -0.3% |
+| JIT | 1.0805 s | 1.0677 s | -1.2% |
+
+Rendering was essentially unchanged. These small changes show no incremental
+slowdown, rather than establishing a general performance improvement.
+
+A separate five-sample, four-variant audit measured the cumulative seven
+constructor annotations (names/alias, three Bool flags, nullable pagination)
+and five existing copy annotations against an untyped Query-parameter control:
+
+| Builder mode | Untyped control | Constructor only | Copy only | Both |
+| --- | ---: | ---: | ---: | ---: |
+| Interpreter | 1.5007 s | 1.5556 s (+3.7%) | 1.5174 s (+1.1%) | 1.5897 s (+5.9%) |
+| JIT | 1.0692 s | 1.0645 s (-0.4%) | 1.0640 s (-0.5%) | 1.1034 s (+3.2%) |
+
+Both production annotations and the cumulative measured candidate match
+exactly. Outputs were equal, with tracing separate from timing. Combined
+rendering changed -1.2% in both modes. The cumulative builder cost is material:
+small incremental groups do not eliminate it. The pagination pair is accepted
+because it did not worsen the current branch; the remaining eight collection
+constructor annotations are deferred while this total cost is investigated.
+source_query retains its dynamic protocol.
+
+Reproduce the incremental audit with --baseline-ref 6746a207 --incremental
+--constructor-parameters limit_value offset_value. For the cumulative audit,
+omit --incremental and select table_name table_alias quoted_identifiers
+bind_limits distinct_value limit_value offset_value. Both used --runs 5 and
+the established release runtime.
+
+Next: investigate the cumulative builder overhead before adding the remaining
+collection constructor annotations or declaring the consolidated PR ready.
+
+Validation: all 1,797 debug tests passed (1,644 corpus cases; 39 skipped),
+and all 29 Arel case files passed with forced JIT on the established release
+runtime. Pagination contracts also passed with major GC stress in both modes.
+
+The preceding CI run exposed two test portability errors: the interpreter
+fixture imported a JIT-only case removed on unsupported platforms, and the
+native array compilation probe ran on musl despite the runtime disabling JIT
+there. Shared guard definitions now live in tests/support, and the probe
+matches the runtime's glibc x86-64 gate. The interpreter fixture passed in an
+isolated tree with all JIT cases absent, and the full suite passed after both
+fixes. Remote platform verification requires the new CI run.
