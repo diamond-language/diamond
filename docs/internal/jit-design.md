@@ -1842,7 +1842,7 @@ frame on `vm->frames`. This is close to the best case for a JIT:
 No per-function invocation or loop-backedge counter exists today -- inline
 cache counters (`inline_cache_hits`/`misses`, `monomorphic_dispatches`,
 `method_cache_probes` at `src/vm.h:1204-1221`) are keyed per cache-*slot*
-(64 slots total, `DIAMOND_INLINE_CACHE_COUNT`, `src/vm.h:523`), not per
+(256 slots total, `DIAMOND_INLINE_CACHE_COUNT`, `src/vm.h`), not per
 `DiamondFunction`. A tier-up trigger needs new state: a single invocation
 counter added to `DiamondFunction`, checked at call entry against a threshold
 field on `DiamondVm` (mirroring `quickening_threshold`'s existing precedent

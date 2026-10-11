@@ -662,7 +662,12 @@ enum { DIAMOND_NATIVE_TYPE_OPERAND_BASE = 256 };
 bool diamond_native_type_kind(const char *name, uint8_t *kind);
 const char *diamond_native_type_name(uint8_t kind);
 
-enum { DIAMOND_INLINE_CACHE_COUNT = 64 };
+/* These direct-mapped tables are shared by all bytecode call/field sites in
+ * a VM. At 64 slots, adding Arel return checks shifted site addresses into
+ * a collision cliff. 256 keeps the same lookup policy while reducing that
+ * interference; the three tables together occupy 72 KiB on 64-bit builds.
+ * See docs/internal/orm-return-annotations.md for before/after measurements. */
+enum { DIAMOND_INLINE_CACHE_COUNT = 256 };
 enum { DIAMOND_INLINE_CACHE_WIDTH = 4 };
 /* INT, TERM, HUP -- see docs/io.md's signals section for why this
  * specific small, fixed set rather than every signal name POSIX knows
@@ -1616,9 +1621,6 @@ struct DiamondVm {
     double gc_major_total_seconds;
     size_t gc_minor_collection_count;
     double gc_minor_total_seconds;
-    DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
-    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
     size_t inline_cache_hits;
     size_t inline_cache_misses;
     size_t monomorphic_dispatches;
@@ -1927,6 +1929,12 @@ struct DiamondVm {
      * so this is never read concurrently with a write). */
     DiamondValue *extra_roots;
     size_t extra_root_count;
+    /* Keep the large site tables after VM control state. Their capacity must
+     * not spread the dispatch counters, quickening/JIT flags, and instruction
+     * budgets across the tables' working set. */
+    DiamondMethodCache method_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondExtensionCache extension_caches[DIAMOND_INLINE_CACHE_COUNT];
+    DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
 };
 
 void diamond_vm_init(DiamondVm *vm);

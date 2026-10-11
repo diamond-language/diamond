@@ -55,14 +55,19 @@ every commit, and compare benchmark output as well as timing.
 
 Release render benchmark on this checkout (`make release`, GCC, `-O3`, native
 architecture, LTO; `bench/arel_render.di`, 20,000 renders, cache disabled):
-five before/after runs per mode, alternating order, with identical SQL and
+five before/after runs per batch, alternating order, with identical SQL and
 parameter-count output. Both variants used the same binary and isolated copies
 of the package; the baseline package came from `55c363ed`.
 
 | Mode | Baseline median | Annotated median | Change |
 | --- | ---: | ---: | ---: |
-| Interpreter | 1.450 s | 1.581 s | 9.1% slower |
-| `DIAMOND_JIT=1` | 1.436 s | 1.561 s | 8.7% slower |
+| JIT enabled, batch A | 1.450 s | 1.581 s | 9.1% slower |
+| JIT enabled, batch B | 1.436 s | 1.561 s | 8.7% slower |
+
+Correction: the initial harness set `DIAMOND_JIT=0` for its intended interpreter
+mode, but Diamond enables JIT whenever the variable is present. Both batches
+above enabled JIT. The corrected comparison below unsets the variable for
+interpreter runs.
 
 These are whole-process microbenchmark timings, including compilation, not
 application request measurements. Removing only the Query nullable annotations,
@@ -81,8 +86,8 @@ baseline package, and 20,000-render workload described above.
 
 | Mode | Baseline render median | Annotated render median | Change |
 | --- | ---: | ---: | ---: |
-| Interpreter | 1.330 s | 1.431 s | 7.6% slower |
-| `DIAMOND_JIT=1` | 1.337 s | 1.473 s | 10.2% slower |
+| JIT enabled, batch A | 1.330 s | 1.431 s | 7.6% slower |
+| JIT enabled, batch B | 1.337 s | 1.473 s | 10.2% slower |
 
 Compilation stayed around 70–72 ms, with approximately 1 ms difference between
 variants. SQL and parameter-count output matched. The slowdown therefore occurs
@@ -105,7 +110,8 @@ Every other opcode count matched. Normalized `--dump-bytecode` output showed
 instructions. The annotation batch introduces both extra guard work and a
 substantial loss of monomorphic method dispatch.
 
-The method, extension, and field caches use 64 direct-mapped slots selected by
+At the time of the investigation, the method, extension, and field caches used
+64 direct-mapped slots selected by
 `((uintptr_t)site >> 2) % DIAMOND_INLINE_CACHE_COUNT` (see `src/vm.c`,
 `src/vm_internal.h`, and `src/vm.h`). Added bytecode changes call-site addresses
 and therefore collisions. An `INVOKE_MONO` whose slot belongs to another site
@@ -137,7 +143,105 @@ Add `Time.monotonic()` immediately before the existing render loop in
 trace counters separately from timings; trace flags and allocation layout can
 change collision counts. Compare complete SQL and parameter output in every run.
 
-Next, benchmark a cache-collision mitigation against both package snapshots and
-other runtime workloads, preserving all return checks. Keep that VM change
-separate from this annotation audit. Do not remove contracts or claim an
+The mitigation must be measured against both package snapshots and other runtime
+workloads, preserving all return checks. Do not remove contracts or claim an
 annotation speedup based on the current evidence.
+
+## Cache mitigation
+
+The follow-up increases the three shared site tables from 64 to 256 slots and
+moves them to the end of `DiamondVm`. GC state, dispatch counters, opcode
+counters, quickening/JIT flags, and instruction-budget state are no longer
+separated by the tables. Lookup, receiver/shape guards, replacement, invalidation,
+and return checks retain their existing behavior.
+
+Capacity alone was insufficient: 128 slots improved annotated rendering only
+about 1–2% in exploratory JIT-enabled runs, while 256 slots in the original
+struct position improved rendering but slowed several dispatch controls by
+4–5% and struct access by about 9%. Those candidates were not retained. The
+combined capacity/layout change below avoids those large control regressions.
+
+Corrected measurements use `bench/compare_arel_annotations.py`, CPU 0, five
+interleaved samples per binary/package combination, identical SQL and parameter
+output, no package cache, and the same 20,000-render loop. The original binary
+has the VM source from `6ceaf2a4`; both binaries are GCC release builds with LTO.
+Package snapshots are `55c363ed` and `d53ab581`. Interpreter runs **unset**
+`DIAMOND_JIT`; enabled runs set it to `1`. The script removes inherited
+`DIAMOND_*` experiment settings and records samples and separate trace counters.
+
+| Render-only median | Original VM, baseline package | Original VM, annotated package | New VM, baseline package | New VM, annotated package |
+| --- | ---: | ---: | ---: | ---: |
+| Interpreter | 1.454 s | 1.552 s | 1.415 s | 1.428 s |
+| `DIAMOND_JIT=1` | 1.351 s | 1.474 s | 1.323 s | 1.331 s |
+
+Annotated rendering improves **8.0%** in the interpreter and **9.7%** with JIT
+enabled. Within the new VM, the annotation gaps are **1.0%** and **0.6%**,
+respectively, compared with **6.7%** and **9.1%** on the original VM in this
+corrected comparison. These small residual gaps should not be interpreted as
+precise guard-cost estimates or guarantees for other queries.
+
+The new trace driver changes some original-binary collision counts relative to
+the earlier traces; compare counters within this run, rather than combining
+them across drivers. Separate interpreter traces show:
+
+| Annotated-package counter | Original VM | New VM |
+| --- | ---: | ---: |
+| Method-cache misses | 740,027 | 260,045 |
+| Field-cache misses | 740,080 | 160,076 |
+| Direct dispatch rewrites | 160,015 | 60,037 |
+| `CHECK_TYPE` executions | 1,460,019 | 1,460,019 |
+
+The return checks remain active; the improvement comes with reduced cache
+interference and the new VM layout. The three tables grow from 18 KiB to 72 KiB
+on this 64-bit build, adding **54 KiB per VM** (`sizeof(DiamondVm)` grows from
+25,800 to 81,096 bytes). They remain direct-mapped and address-sensitive, so this
+mitigates the measured collision cliff rather than eliminating collisions.
+
+Fourteen other controls were measured in three interleaved pairs per mode,
+pinned to CPU 0, with in-process `DIAMOND_REPEAT` execution. The percentages
+below compare median whole-process time divided by the repeat count; negative
+means faster. Output matched between binaries in every run.
+
+| Workload | Repeats | Interpreter change | JIT-enabled change |
+| --- | ---: | ---: | ---: |
+| `dispatch_monomorphic` | 4 | +1.5% | -1.5% |
+| `dispatch_polymorphic_no_index` | 4 | +0.6% | -0.9% |
+| `dispatch_megamorphic` | 2 | -0.2% | -0.4% |
+| `dispatch_reassign_control` | 4 | +0.0% | +0.1% |
+| `typed_dispatch` | 2 | -0.3% | -5.6% |
+| `int_arithmetic` | 3 | +2.5% | +2.6% |
+| `array_ops` | 6 | -1.0% | +0.9% |
+| `closures` | 4 | +1.5% | +2.9% |
+| `struct_field_access` | 6 | -2.9% | -0.6% |
+| `object_hydration` | 12 | -1.6% | -0.1% |
+| `hash_ivar_construct` | 16 | +0.1% | -1.3% |
+| `iterator_blocks` | 2 | -2.0% | -1.8% |
+| `jit_native_collection_reads` | 4 | -2.0% | -2.4% |
+| `arel_builder_chain` | 1 | -2.0% | -2.5% |
+
+A longer JIT-enabled recheck (five interleaved pairs, eight repeats for
+`int_arithmetic`, twelve for `closures`) found arithmetic **3.5% slower**
+and closures **0.9% faster**. Arithmetic is a confirmed small
+tradeoff of the retained layout on this build, not evidence of universal runtime
+improvement. Hoisting dispatch flags to the front of the VM was also tried and
+rejected: it increased the arithmetic slowdown to about 8%. Given the Arel
+priority, retain the compact 256-slot mitigation on the shared branch for review,
+with both the arithmetic cost and increased per-VM storage visible before merge.
+
+The retained change passed a clean debug build and `make -j6 test` (1,785 tests).
+All 22 Arel case files also passed with `DIAMOND_JIT=1`,
+`DIAMOND_JIT_THRESHOLD=1`, and `DIAMOND_NO_CACHE=1`, including the negative
+String-return-contract case.
+
+To reproduce, save an original release binary before rebuilding this checkout,
+then run:
+
+```sh
+python3 bench/compare_arel_annotations.py \
+  --baseline-ref 55c363ed --annotated-ref d53ab581 \
+  --baseline-binary /tmp/diamond-cache64 \
+  --candidate-binary build/diamond --output /tmp/arel-cache-comparison.json
+```
+
+Keep this comparison in the validation of later Arel annotation batches; a green
+correctness suite alone does not establish performance safety.
