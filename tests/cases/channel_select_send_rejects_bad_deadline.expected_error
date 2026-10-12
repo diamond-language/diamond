@@ -1,0 +1,1 @@
+Channel.select_send's deadline must be a finite monotonic Float or nil

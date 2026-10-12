@@ -4863,6 +4863,97 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=selected;
                 break;
             }
+            case DIAMOND_OP_CHANNEL_SELECT_SEND: {
+                /* Channel.select_send(channels, value, deadline) -- the
+                 * send-side twin of CHANNEL_SELECT above (docs/threads.md).
+                 * Sends `value` to the first channel (in array order) with
+                 * room, returning its index; blocks until one has room. A
+                 * closed channel is skipped, like a drained one in select.
+                 * nil means nothing can accept it: the deadline passed, or
+                 * every channel is closed. The value is copied only into the
+                 * channel actually chosen, under that channel's own lock. */
+                uint16_t dest=0,channels_reg=0,value_reg=0,deadline_reg=0;
+                READ_SHORT(dest);READ_SHORT(channels_reg);
+                READ_SHORT(value_reg);READ_SHORT(deadline_reg);
+                const DiamondValue channels_value=registers[channels_reg];
+                const DiamondValue deadline_value=registers[deadline_reg];
+                bool valid_channels=channels_value.kind==DIAMOND_VALUE_OBJECT&&
+                    channels_value.as.object->kind==DIAMOND_OBJECT_ARRAY;
+                const DiamondArray *candidates=valid_channels?
+                    (const DiamondArray *)channels_value.as.object:nullptr;
+                for(size_t i=0;valid_channels&&i<candidates->count;i++)
+                    valid_channels=candidates->values[i].kind==DIAMOND_VALUE_OBJECT&&
+                        candidates->values[i].as.object->kind==DIAMOND_OBJECT_CHANNEL;
+                if(!valid_channels||candidates->count==0) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.select_send's first argument must be a non-empty Array of Channels");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                const bool select_timed=deadline_value.kind!=DIAMOND_VALUE_NIL;
+                if(select_timed&&(deadline_value.kind!=DIAMOND_VALUE_FLOAT||
+                                  !isfinite(deadline_value.as.real))) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "Channel.select_send's deadline must be a finite monotonic Float or nil");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                bool *skipped=calloc(candidates->count,sizeof *skipped);
+                if(skipped==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                DiamondValue selected=DIAMOND_NIL;
+                bool found=false;
+                while(!found) {
+                    size_t open_count=0;
+                    for(size_t i=0;i<candidates->count&&!found;i++) {
+                        DiamondChannel *candidate=
+                            ((DiamondChannelHandle *)candidates->values[i].as.object)->channel;
+                        pthread_mutex_lock(&candidate->lock);
+                        if(candidate->closed) {
+                            skipped[i]=true;
+                            pthread_mutex_unlock(&candidate->lock);
+                            continue;
+                        }
+                        open_count++;
+                        if(candidate->count==candidate->capacity) {
+                            pthread_mutex_unlock(&candidate->lock);
+                            continue;
+                        }
+                        DiamondValue copied=DIAMOND_NIL;
+                        candidate->private_vm->extra_root_count=candidate->count;
+                        if(!copy_value_into_vm(candidate->private_vm,registers[value_reg],
+                               nullptr,chunk->classes,candidate->private_program->classes,
+                               nullptr,&copied)) {
+                            pthread_mutex_unlock(&candidate->lock);
+                            free(skipped);
+                            snprintf(vm->error,sizeof vm->error,
+                                "%s %s","Channel.select_send value",copy_failure_reason());
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                        candidate->queue[candidate->count++]=copied;
+                        candidate->private_vm->extra_root_count=candidate->count;
+                        notify_channel_waiters(candidate);
+                        pthread_cond_signal(&candidate->not_empty);
+                        pthread_mutex_unlock(&candidate->lock);
+                        selected=DIAMOND_INT((int64_t)i);
+                        found=true;
+                    }
+                    if(found||open_count==0)break;
+                    if(select_timed) {
+                        struct timespec now;
+                        if(clock_gettime(CLOCK_MONOTONIC,&now)!=0 ||
+                           deadline_value.as.real-(double)now.tv_sec-(double)now.tv_nsec/1e9<=0)
+                            break;
+                    }
+                    struct pollfd wait_fd[1];
+                    const DiamondVmStatus select_status=cancellable_wait_helper(vm,nullptr,
+                        true,channels_value,deadline_value,wait_fd,0,skipped);
+                    if(select_status!=DIAMOND_VM_OK) {
+                        free(skipped);
+                        VM_RETURN(select_status);
+                    }
+                }
+                free(skipped);
+                registers[dest]=selected;
+                break;
+            }
             case DIAMOND_OP_SUPERVISOR_NEW: {
                 /* One optional operand: the restart strategy symbol (nil
                  * register when Supervisor.new() is called with none).
