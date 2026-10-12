@@ -270,7 +270,6 @@ if [[ "$(id -u)" != 0 ]]; then
     out="$(cd "$work/ro" && DIAMOND_TRACE_CACHE=1 "$diamond" app.di 2>&1)"
     [[ "$out" == *"cache: hit"* && "$out" == *"from ro"* ]]
     # Warming where nothing can be written says so instead of claiming success.
-    printf 'puts(1)\n' > "$work/ro/other.di" 2>/dev/null || true
     chmod u+w "$work/ro"
     printf 'puts(1)\n' > "$work/ro/other.di"
     chmod a-w "$work/ro"
