@@ -1118,8 +1118,9 @@ bool maybe_collect(DiamondVm *vm) {
              * moves up by the grace allowance so the exception can be built
              * and a rescue clause can run. */
             vm->memory_limit_tripped=true;
-            const size_t grace=vm->max_memory_bytes/4>DIAMOND_MEMORY_GRACE_MINIMUM_BYTES?
+            const size_t default_grace=vm->max_memory_bytes/4>DIAMOND_MEMORY_GRACE_MINIMUM_BYTES?
                 vm->max_memory_bytes/4:(size_t)DIAMOND_MEMORY_GRACE_MINIMUM_BYTES;
+            const size_t grace=vm->grace_memory_bytes!=0?vm->grace_memory_bytes:default_grace;
             vm->max_memory_bytes=vm->max_memory_bytes>SIZE_MAX-grace?SIZE_MAX:
                 vm->max_memory_bytes+grace;
             return false;
@@ -1134,6 +1135,21 @@ bool maybe_collect(DiamondVm *vm) {
     return true;
 }
 
+/* The cap on live spawned threads: DIAMOND_MAX_THREADS (the process-wide
+ * hard cap) unless DIAMOND_MAX_LIVE_THREADS asks for fewer. Read on each
+ * Thread.new/add_child like DIAMOND_SANDBOX, so every VM agrees without
+ * propagation. An unparseable, zero or too-large value keeps the hard cap;
+ * a limit can only tighten it. */
+size_t diamond_live_thread_limit(void) {
+    const char *env=getenv("DIAMOND_MAX_LIVE_THREADS");
+    if(env==nullptr||env[0]=='\0')return DIAMOND_MAX_THREADS;
+    char *end=nullptr;
+    const unsigned long long parsed=strtoull(env,&end,10);
+    if(end==env||*end!='\0'||parsed==0||parsed>DIAMOND_MAX_THREADS)
+        return DIAMOND_MAX_THREADS;
+    return (size_t)parsed;
+}
+
 /* A configured instruction or wall-clock budget has just been exceeded:
  * run_chunk is about to return the catchable DIAMOND_VM_RESOURCE_LIMIT_ERROR.
  * Disarm both soft budgets (re-tripping on the very next instruction would
@@ -1145,12 +1161,14 @@ bool maybe_collect(DiamondVm *vm) {
  * instructions, since the shared total is no longer being added to. */
 void resource_limit_trip(DiamondVm *vm) {
     if(vm->max_instructions!=0)
-        vm->hard_stop_instruction_count=vm->instructions_executed+DIAMOND_INSTRUCTION_GRACE;
+        vm->hard_stop_instruction_count=vm->instructions_executed+
+            (vm->grace_instructions!=0?vm->grace_instructions:(size_t)DIAMOND_INSTRUCTION_GRACE);
     if(vm->max_wall_nanoseconds!=0) {
         const int64_t now_ns=monotonic_nanoseconds();
         const int64_t deadline=vm->start_time_ns+vm->max_wall_nanoseconds;
         vm->hard_stop_time_ns=(now_ns>deadline?now_ns:deadline)+
-            (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL;
+            (vm->grace_wall_nanoseconds!=0?vm->grace_wall_nanoseconds:
+                (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL);
     }
     vm->max_instructions=0;
     vm->max_wall_nanoseconds=0;
@@ -1391,6 +1409,30 @@ void diamond_vm_init(DiamondVm *vm) {
         const unsigned long long parsed=strtoull(max_memory_env,&end,10);
         if(end!=max_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
             vm->max_memory_bytes=(size_t)parsed;
+    }
+    /* The grace allowance after a budget trips; same parsing rules, and
+     * unset or invalid keeps the built-in default (docs/sandbox.md). */
+    const char *grace_instructions_env=getenv("DIAMOND_GRACE_INSTRUCTIONS");
+    if(grace_instructions_env!=nullptr&&grace_instructions_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_instructions_env,&end,10);
+        if(end!=grace_instructions_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->grace_instructions=(size_t)parsed;
+    }
+    const char *grace_wall_env=getenv("DIAMOND_GRACE_WALL_MILLISECONDS");
+    if(grace_wall_env!=nullptr&&grace_wall_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_wall_env,&end,10);
+        if(end!=grace_wall_env&&*end=='\0'&&parsed>0&&
+           parsed<=(unsigned long long)INT64_MAX/1000000ULL)
+            vm->grace_wall_nanoseconds=(int64_t)parsed*1000000LL;
+    }
+    const char *grace_memory_env=getenv("DIAMOND_GRACE_MEMORY_BYTES");
+    if(grace_memory_env!=nullptr&&grace_memory_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_memory_env,&end,10);
+        if(end!=grace_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->grace_memory_bytes=(size_t)parsed;
     }
     vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0||
         vm->max_memory_bytes!=0;
@@ -11414,7 +11456,7 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
     }
     const size_t new_index=target_supervisor->child_count;
     pthread_mutex_unlock(&target_supervisor->lock);
-    if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+    if(atomic_load(&diamond_active_thread_count)>=diamond_live_thread_limit()) {
         snprintf(vm->error,sizeof vm->error,
             "too many concurrently active threads");
         return DIAMOND_VM_THREAD_ERROR;

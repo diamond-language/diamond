@@ -702,6 +702,7 @@ DIAMOND_INTERNAL DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,Diamond
 enum { DIAMOND_MAX_THREADS = 64 };
 
 extern DIAMOND_INTERNAL atomic_size_t diamond_active_thread_count;
+DIAMOND_INTERNAL size_t diamond_live_thread_limit(void);
 
 DIAMOND_INTERNAL int create_vm_thread(pthread_t *handle,
         void *(*entry)(void *), void *argument);

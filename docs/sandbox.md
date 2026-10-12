@@ -30,6 +30,7 @@ anything:
 - `TLSSocket.connect`, `TLSServer.listen`
 - `SQLite3.open`, `PostgreSQL.open`, `MySQL.open`
 - `Process.run`, `Process.spawn`
+- `Signal.trap`
 
 `File.dirname`/`.basename`/`.extname`/`.absolute?`/`.join` are **not** denied -- they're
 pure string manipulation with no real syscall, unlike `.directory?` (`stat`) and
@@ -53,7 +54,7 @@ through instead:
 DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.di   # filesystem/database/subprocess still denied
 ```
 
-Four categories, comma-separated when combining more than one:
+Five categories, comma-separated when combining more than one:
 
 - `filesystem` -- `File.open`/`.publish`/`.sync`/`.delete`/`.directory?`/`.expand_path`, `Dir.entries`
 - `network` -- `TCPSocket.connect`, `TCPServer.listen`/`listen_nonblocking`,
@@ -63,6 +64,10 @@ Four categories, comma-separated when combining more than one:
   are technically network -- "allow DB access but not raw sockets/files" is a real,
   distinct policy shape)
 - `subprocess` -- `Process.run`, `Process.spawn`
+- `signals` -- `Signal.trap`. A handler is a process-wide side effect: it can redirect what
+  `SIGINT` or `SIGTERM` does to the whole process, which is why it is not on by default
+  under `--sandbox`. A program that has to run a shutdown handler needs
+  `DIAMOND_SANDBOX_ALLOW=signals`.
 
 **Deliberately an allow-list, not a deny-list.** An unrecognized or misspelled category
 name in `DIAMOND_SANDBOX_ALLOW` (a typo, a name from some future category that doesn't
@@ -125,6 +130,13 @@ end
 
 Each of the three is independently opt-in (unset = unlimited); all can be combined.
 
+`DIAMOND_MAX_LIVE_THREADS=N` lowers the cap on live spawned threads (`Thread.new` and
+`Supervisor#add_child` together) below the built-in 64: past it, `Thread.new` raises
+`ThreadError` ("too many concurrently active threads") and `add_child` raises the same.
+A value above 64, zero or unparseable keeps 64; the limit can only tighten it. It counts
+live threads process-wide, so it bounds what a sandboxed program can spawn, but it is not a
+memory budget for them.
+
 A budget fires in two steps. Exceeding it raises the rescuable `ResourceLimitError`
 **once**, and switches the instruction and wall-clock budgets off for the rest of that
 VM's run -- otherwise they would re-trip on the very next instruction, including the ones
@@ -137,8 +149,18 @@ for cleanup and not for carrying on:
 | `DIAMOND_MAX_WALL_MILLISECONDS` | 1,000 ms past the budget's deadline |
 | `DIAMOND_MAX_MEMORY_BYTES` | a ceiling a quarter above the budget, at least 4 MiB above it |
 
-The three allowances are fixed constants (`src/vm_internal.h`); no environment variable changes
-them.
+Each allowance has a default and an override, read once per VM at start-up like the budgets
+themselves. An unset, unparseable or zero value keeps the default.
+
+| budget | override |
+| --- | --- |
+| `DIAMOND_MAX_INSTRUCTIONS` | `DIAMOND_GRACE_INSTRUCTIONS=N` -- N more instructions |
+| `DIAMOND_MAX_WALL_MILLISECONDS` | `DIAMOND_GRACE_WALL_MILLISECONDS=N` -- N ms past the deadline |
+| `DIAMOND_MAX_MEMORY_BYTES` | `DIAMOND_GRACE_MEMORY_BYTES=N` -- a ceiling N bytes above the budget (replaces the quarter-of-budget rule and its 4 MiB floor) |
+
+A smaller value gives a rescue clause less room; a larger one is the caller's choice and
+keeps a rescued program alive for correspondingly longer, so tighten rather than loosen
+anything that runs code you do not trust.
 
 A program still running past its allowance is stopped for good. The VM unwinds with an
 "... budget exhausted" runtime error that no `rescue` clause can match (exit status 70 for
@@ -204,9 +226,8 @@ known limitations:
 - **No path/host allow-listing**, only whole-category granularity -- see "Per-capability
   granularity" above for exactly what's covered and why finer-grained matching stays
   out of scope for now.
-- **`Thread.new`/`Supervisor.add_child` are not restricted.** A sandboxed program can
-  still spawn OS threads (up to the existing 64-thread process-wide cap) -- this is a
-  resource-exhaustion concern, a different category from "touching the outside world,"
+- **Spawning threads is bounded, not denied.** `DIAMOND_MAX_LIVE_THREADS` lowers the live
+  thread cap (see "Resource limits"); a sandboxed program can still spawn up to that many,
   and each spawned thread's own code is still fully subject to every restriction above
   (see [Concurrency internals](internal/concurrency-internals.md) -- sandbox mode checks
   the real process environment directly at each gated opcode, so it applies identically
@@ -217,8 +238,6 @@ known limitations:
   readable from sandboxed code. Sandbox mode stops the program touching the outside
   world; it does not hide what the process was started with, so do not put secrets in the
   environment of a sandboxed process that you would not hand to the code inside it.
-- **`Signal.trap` is not restricted.** A process-wide side effect, adjacent to but
-  distinct from resource-opening.
 - **The compile-time `require` graph is not restricted.** Sandbox mode restricts
   *runtime* behavior; the entry script itself (and whatever it `require`s) is assumed
   to already be source the caller chose to run. A `require` the program triggers at run

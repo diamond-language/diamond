@@ -4619,7 +4619,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc<target_fn->required_arity||
                    (argc>target_fn->arity && !target_fn->has_variadic))
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+                if(atomic_load(&diamond_active_thread_count)>=diamond_live_thread_limit()) {
                     snprintf(vm->error,sizeof vm->error,
                         "too many concurrently active threads");
                     VM_RETURN(DIAMOND_VM_THREAD_ERROR);
@@ -5141,6 +5141,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SIGNAL_TRAP: {
+                VM_SANDBOX_GUARD("Signal.trap", "signals");
                 uint16_t dest=0,name_reg=0,handler_reg=0;
                 READ_SHORT(dest);READ_SHORT(name_reg);READ_SHORT(handler_reg);
                 if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||

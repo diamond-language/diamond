@@ -1889,6 +1889,12 @@ struct DiamondVm {
     size_t max_instructions;
     int64_t max_wall_nanoseconds;
     size_t max_memory_bytes;
+    /* The grace allowance after a budget trips (docs/sandbox.md): zero means
+     * the built-in default for that budget (DIAMOND_INSTRUCTION_GRACE and
+     * friends in vm_internal.h); set from DIAMOND_GRACE_* at init. */
+    size_t grace_instructions;
+    int64_t grace_wall_nanoseconds;
+    size_t grace_memory_bytes;
     /* Runtime state for the two above -- instructions_executed increments
      * once per opcode dispatch in run_chunk's own loop (only when
      * resource_limits_active), start_time_ns is set once in diamond_vm_

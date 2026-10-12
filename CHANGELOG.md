@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Security
+
+- `Signal.trap` is now a sandbox capability: `--sandbox` denies it (`SandboxError`) unless
+  `DIAMOND_SANDBOX_ALLOW` includes `signals`. A sandboxed program that installs a signal
+  handler must now be granted it.
+- `DIAMOND_MAX_LIVE_THREADS=N` lowers the live thread cap (64) for `Thread.new` and
+  `Supervisor#add_child`.
+- The grace allowance after a tripped budget is configurable: `DIAMOND_GRACE_INSTRUCTIONS`,
+  `DIAMOND_GRACE_WALL_MILLISECONDS` and `DIAMOND_GRACE_MEMORY_BYTES`.
+
 ### Packages
 
 - `arel` 0.34.5: the parameter checks and return annotations added after 0.34.4 was published change
