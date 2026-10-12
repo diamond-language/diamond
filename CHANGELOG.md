@@ -4,7 +4,7 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.13.0 — 2026-10-12
 
 ### Language
 
@@ -19,15 +19,12 @@ authoritative fine-grained record.
   again in the receiving thread).
 - Exceeding a program's class, module or interface limit reports "too many modules: a program
   holds at most 255 ..." instead of "expected valid module name".
-
-- `Supervisor#restart_policy` bounds restarts: `max_restarts` crashes within `within_ms` make
+- `Supervisor#restart_policy` bounds restarts: more than `max_restarts` crashes within `within_ms` make
   the supervisor give up (its other children are interrupted, `failed?` is true, `add_child`
   and `join` raise `SupervisorError`), and `backoff_ms`/`max_backoff_ms` grow the pause before
   a crashed child restarts. Without a policy nothing changes: a fixed 20 ms pause, no limit.
-
 - `Channel.select_send(channels, value, deadline = nil)` sends to the first channel with room and
   returns its index (nil when the deadline passes or every channel is closed).
-
 - A `case` `when` naming a base class now covers its subclasses for exhaustiveness checking:
   `when Shape` satisfies a sealed `Shape` subject (and a `Circle | Square` union) without a branch
   per subclass.
@@ -48,10 +45,10 @@ authoritative fine-grained record.
   them. `Query`, `Insert`, `Update`, `Delete`, `Cte`, `Ordering` and `CompoundQuery` raise
   `TypeError` for a wrongly typed table name, alias, flag, ordering, limit or offset, where an
   invalid value used to surface only when it was read or rendered. Code that passed `nil` for
-  a Boolean flag or a `String` for a limit must now pass the declared type.
+  a Boolean flag or a `String` for a limit must now pass the declared type. Fixed-shape results
+  (pagination, aliases, factories, row queries, execution counts) declare their return types.
 
 ### Tooling
-
 - `diamond cache warm SOURCE...` compiles scripts and writes their bytecode caches without running
   them, so a read-only deployment can be warmed at image-build time.
 - `diamond cache clear [--dry-run] [PATH...]` removes bytecode caches: one script's, every `.dic`
@@ -61,6 +58,34 @@ authoritative fine-grained record.
   waits bounded, rescue-and-finish, and the hard stop after the grace allowance.
 - `examples/dispatcher`: routing work with `Channel.select_send`, a priority `Channel.select` drain,
   a supervisor restart policy that gives up on a crash loop, and group coverage in `case`.
+- `tools/platform_report`: one command that builds Diamond on a Mac or Linux machine, runs the
+  suites, every example, a threaded stress run and some benchmarks, and writes a report file.
+- Hover and go-to-definition at a method or function declaration select the signature under the
+  cursor, even when other classes or top-level functions share the name. At an explicit receiver
+  call (`pet.shared()`) they resolve the method before any same-named top-level function or
+  local, and return nothing for an unknown receiver instead of the unrelated global.
+- Find-references and rename no longer treat explicit receiver calls and method declarations as
+  occurrences of a same-named top-level function.
+- Completion, hover and definition share one cached analysis of the most recent source bundle,
+  invalidated by edits to the root, to unsaved imports, or on disk.
+- Array literals preserve inferred factory element types for receiver completion,
+  hover, and definition, including nested literals, spreads, and unannotated returns.
+  Array `reverse`, `uniq`, `compact`, `take`, and `drop` retain those editor element
+  facts through call chains and local assignments.
+- Locals assigned from indexed inferred Array returns retain completion, hover,
+  and definition across imports and nested indexing.
+- Editor receiver inference follows forward-declared factory and wrapper chains
+  through direct calls and local assignments, with bounded refinement of return
+  facts. Unknown paths and unsupported recursive graphs remain unresolved.
+- Inherited unannotated readers retain receiver-specific completion, hover, and
+  definition through call chains and local assignments. Unknown or conflicting
+  writes in an ancestor or subclass leave the result unresolved.
+- Unannotated factory and wrapper methods preserve editor receiver information
+  through inferred call results, including explicit returns. An unknown return
+  path suppresses inference instead of exposing only the known paths.
+- Editor completion, hover, and definition follow unannotated `attr_reader` results
+  when the compiler knows the field's class, including across required files and
+  chained calls. Unknown writes and subclassed owners remain unresolved.
 
 ### Performance
 
@@ -74,33 +99,10 @@ authoritative fine-grained record.
 - A debug session polls its control channel every 32nd statement instead of every statement, so a
   debugged loop runs about 3x faster (4.0 s to 1.3 s over 6 million statements). A live
   `setBreakpoints` takes effect up to 32 statements later.
+- Inline call, extension and field caches are 4-way set-associative (256 slots), so call sites
+  no longer evict each other, which a program with many annotated methods used to trigger.
 - The JIT compiles functions that build array literals or take a default `[]` argument, and
   inlines built-in type guards, which speeds up annotated parameters.
-
-### Tooling
-
-- Array literals preserve inferred factory element types for receiver completion,
-  hover, and definition, including nested literals, spreads, and unannotated returns.
-  Array `reverse`, `uniq`, `compact`, `take`, and `drop` retain those editor element
-  facts through call chains and local assignments.
-
-- Locals assigned from indexed inferred Array returns retain completion, hover,
-  and definition across imports and nested indexing.
-
-- Editor receiver inference follows forward-declared factory and wrapper chains
-  through direct calls and local assignments, with bounded refinement of return
-  facts. Unknown paths and unsupported recursive graphs remain unresolved.
-
-- Inherited unannotated readers retain receiver-specific completion, hover, and
-  definition through call chains and local assignments. Unknown or conflicting
-  writes in an ancestor or subclass leave the result unresolved.
-- Unannotated factory and wrapper methods preserve editor receiver information
-  through inferred call results, including explicit returns. An unknown return
-  path suppresses inference instead of exposing only the known paths.
-
-- Editor completion, hover, and definition follow unannotated `attr_reader` results
-  when the compiler knows the field's class, including across required files and
-  chained calls. Unknown writes and subclassed owners remain unresolved.
 
 ## 0.12.1 — 2026-10-08
 

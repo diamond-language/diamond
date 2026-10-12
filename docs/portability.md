@@ -31,7 +31,7 @@ enough POSIX-adjacent surface area to matter here.
   Redis/external-database integration, and the remaining package suites have
   not been validated on Linux arm64 yet.
 - **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
-  of focused targets (`test-musl` job, same workflow) on every push. Every
+  of focused targets (`test-musl` job, same workflow) on every pull-request update. Every
   `tests/cases/*.di` corpus case passes except two known failures
   (`bcrypt.di`, `active_record_secure_password.di`) are excluded from the
   CI run itself rather than left to fail it -- both are the same real,
@@ -44,7 +44,7 @@ enough POSIX-adjacent surface area to matter here.
   findings" below for exactly what building there required.
 - **FreeBSD 15.1, Clang, x86_64** -- CI runs `make test` plus the same
   curated focused-target set as musl (`test-freebsd` job, same workflow),
-  via a real QEMU-booted VM (`vmactions/freebsd-vm`), on every push. Four
+  via a real QEMU-booted VM (`vmactions/freebsd-vm`), on every pull-request update. Four
   known failures excluded the same way musl's two are: `bcrypt.di`/
   `active_record_secure_password.di` (BCrypt.hash needs libxcrypt's
   `crypt_gensalt_rn`, unavailable with no `<crypt.h>` at all on FreeBSD --
@@ -57,7 +57,7 @@ enough POSIX-adjacent surface area to matter here.
   avoid an extra ports build).
 - **macOS/Darwin, Clang, arm64 (Apple Silicon)** -- CI runs `make test` on
   a real `macos-latest` GitHub-hosted runner (`test-macos` job, same
-  workflow) on every push, with GNU coreutils/sed and a real bash 5+
+  workflow) on every pull-request update, with GNU coreutils/sed and a real bash 5+
   installed via Homebrew and shadowed onto `PATH` (see "macOS/Darwin"
   below for why the test harness needs those specifically). Same one
   known BCrypt failure excluded the same way musl/FreeBSD's own are.

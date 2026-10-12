@@ -259,7 +259,7 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
      * writing at all: diamond_program_init/calloc already zero it on
      * the reading side, exactly matching what an unused slot already
      * looks like in a freshly compiled program. Shrinks the serialized
-     * form from a full ~14MB DiamondProgram-shaped dump (dominated by
+     * form from a full ~27MB DiamondProgram-shaped dump (dominated by
      * 180-slot method tables sized for a program far larger than the
      * prelude) down to roughly what's actually declared. */
     const uint64_t class_count = (uint64_t)program->class_count;

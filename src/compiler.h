@@ -72,7 +72,7 @@ void diamond_program_init(DiamondProgram *program);
  * NOT and must go through diamond_program_init instead). See
  * diamond_program_init_builtins's own comment (src/compiler.c) for
  * measurements: that memset alone costs several milliseconds per call
- * purely from first-touch page faults across DiamondProgram's ~14MB,
+ * purely from first-touch page faults across DiamondProgram's ~27MB,
  * paid for nothing when the memory was already zero. */
 void diamond_program_init_fresh(DiamondProgram *program);
 void diamond_program_free(DiamondProgram *program);
