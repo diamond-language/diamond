@@ -4,6 +4,13 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Packages
+
+- `arel` 0.34.5: the parameter checks and return annotations added after 0.34.4 was published change
+  the archive, so they ship as a new version; the registry's launch seed now pins 0.34.5.
+
 ## 0.13.0 — 2026-10-12
 
 ### Language
