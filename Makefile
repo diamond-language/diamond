@@ -632,8 +632,19 @@ $(BUILD_DIR)/analysis_cache_test: tests/analysis_cache_test.c lsp/analysis_cache
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) \
 		lsp/analysis_cache.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
 
-test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/analysis_cache_test
+$(BUILD_DIR)/formatting_test: tests/formatting_test.c lsp/formatting.c lsp/formatting.h lsp/json.c src/lexer.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/formatting_test.c \
+		lsp/formatting.c lsp/json.c src/lexer.c $(LDFLAGS) -o $@
+
+# Spacing, blank-line and range rules, plus whitespace-only and idempotence
+# invariants over every Diamond source in the tree.
+test-formatting: $(BUILD_DIR)/formatting_test
+	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
+
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/analysis_cache_test $(BUILD_DIR)/formatting_test
 	$(BUILD_DIR)/receiver_test
+	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
 	bash tests/analysis_cache_test.sh
 	bash tests/v3_editor_test.sh
 	bash tests/lsp_test.sh

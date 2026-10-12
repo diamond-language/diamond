@@ -16,6 +16,12 @@ authoritative fine-grained record.
 - The grace allowance after a tripped budget is configurable: `DIAMOND_GRACE_INSTRUCTIONS`,
   `DIAMOND_GRACE_WALL_MILLISECONDS` and `DIAMOND_GRACE_MEMORY_BYTES`.
 
+### Tooling
+
+- The language server formats more: a space after commas and around assignment, comparison and
+  logical operators, runs of blank lines collapsed to one, and `textDocument/rangeFormatting`. Only
+  whitespace between tokens changes, checked against every `.di` file in the tree.
+
 ### Packages
 
 - `arel` 0.34.5: the parameter checks and return annotations added after 0.34.4 was published change

@@ -193,6 +193,7 @@ static void handle_initialize(const JsonValue *id,const JsonValue *params,
     json_object_set(capabilities,"referencesProvider",json_bool(true));
     json_object_set(capabilities,"renameProvider",json_bool(true));
     json_object_set(capabilities,"documentFormattingProvider",json_bool(true));
+    json_object_set(capabilities,"documentRangeFormattingProvider",json_bool(true));
     json_object_set(result,"capabilities",capabilities);
     send_response(id,result);
 }
@@ -366,7 +367,7 @@ static void handle_rename(DocumentTable *documents,const char *workspace_root,
 }
 
 static void handle_formatting(DocumentTable *documents,const JsonValue *id,
-        const JsonValue *params) {
+        const JsonValue *params,bool range_request) {
     const JsonValue *text_document=json_object_get(params,"textDocument");
     const char *uri=nullptr;
     size_t uri_length=0;
@@ -384,7 +385,27 @@ static void handle_formatting(DocumentTable *documents,const JsonValue *id,
         send_response(id,json_null());
         return;
     }
-    JsonValue *result=formatting_compute(text,text_length);
+    size_t first_line=0,last_line=(size_t)-1;
+    if(range_request) {
+        /* LSP positions are zero-based; formatting_compute_range takes
+         * one-based physical lines. A range ending at column 0 of a line
+         * does not include that line. */
+        const JsonValue *range=json_object_get(params,"range");
+        const JsonValue *start=json_object_get(range,"start");
+        const JsonValue *end=json_object_get(range,"end");
+        double start_line=0,end_line=0,end_character=0;
+        if(!json_as_number(json_object_get(start,"line"),&start_line)||
+           !json_as_number(json_object_get(end,"line"),&end_line)||
+           start_line<0||end_line<start_line) {
+            send_response(id,json_null());
+            return;
+        }
+        json_as_number(json_object_get(end,"character"),&end_character);
+        first_line=(size_t)start_line+1;
+        last_line=(size_t)end_line+(end_character>0?1:0);
+        if(last_line<first_line)last_line=first_line;
+    }
+    JsonValue *result=formatting_compute_range(text,text_length,first_line,last_line);
     if(result==nullptr) {
         send_response(id,json_null());
         return;
@@ -506,7 +527,9 @@ int main(void) {
         } else if(strcmp(method,"textDocument/rename")==0) {
             handle_rename(documents,workspace_root,id,params);
         } else if(strcmp(method,"textDocument/formatting")==0) {
-            handle_formatting(documents,id,params);
+            handle_formatting(documents,id,params,false);
+        } else if(strcmp(method,"textDocument/rangeFormatting")==0) {
+            handle_formatting(documents,id,params,true);
         } else if(id!=nullptr) {
             send_error(id,-32601,"method not found");
         }

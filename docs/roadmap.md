@@ -97,16 +97,6 @@ documents and loses precision across some dependency and dynamic-flow boundaries
   that makes incremental synchronization worthwhile.
 - Keep editor results conservative when a receiver cannot be proven.
 
-### LSP formatting
-
-Current behavior: [language server](lsp.md). The formatter normalizes indentation and
-trailing whitespace; the native compiler keeps no AST to reflow against.
-
-- **Operator and comma spacing** -- needs its own token-adjacency heuristic.
-- **Blank-line collapsing** -- a cosmetic judgment call with no single correct answer.
-- **`textDocument/rangeFormatting`** -- the depth tracking would need a starting depth
-  handed in from outside the selection.
-
 ### Harden the end-user runtime surface
 
 The native service layer is broad enough to build real applications. Work here should

@@ -11,9 +11,12 @@
  * interface/struct/begin/case/loop/do, plus block-form if/unless/
  * while/until -- never a postfix modifier, see formatting.c's own
  * doc comment) and open brackets ((/[/{), and trims trailing
- * whitespace. Deliberately narrow, not a full pretty-printer: no
- * line-reflow, no reordering, no normalizing internal spacing (`a+b`
- * stays `a+b`) -- Diamond's native compiler retains no AST at all
+ * whitespace, inserts a space after a comma and around assignment,
+ * comparison and logical operators where there is none (`a=1` becomes
+ * `a = 1`, `f(a,b)` becomes `f(a, b)`; arithmetic and block/union bars are
+ * left alone), and collapses runs of blank lines to one. Deliberately
+ * narrow, not a full pretty-printer: no line-reflow, no reordering, no
+ * collapsing of existing alignment -- Diamond's native compiler retains no AST at all
  * (docs/roadmap.md's "Compiler representation"), so a real structural
  * formatter would need a whole new tree-building parser kept in sync
  * with the real grammar; this instead tracks nesting from the same
@@ -36,5 +39,13 @@
  * than to guess at indentation for source this pass isn't confident it
  * understood. `nullptr` only on allocation failure. */
 JsonValue *formatting_compute(const char *text, size_t length);
+
+/* The same edits, limited to those that begin on a 1-based physical line in
+ * [first_line, last_line] (textDocument/rangeFormatting). The nesting depth is
+ * still computed from the whole document, so a range starting mid-block
+ * indents correctly. Returns `json_null()` and `nullptr` under the same
+ * conditions as formatting_compute. */
+JsonValue *formatting_compute_range(const char *text, size_t length, size_t first_line,
+        size_t last_line);
 
 #endif
