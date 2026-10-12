@@ -29,12 +29,15 @@ BENCHMARKS = [("fibonacci", 15), ("int_arithmetic", 15), ("dispatch_monomorphic"
               ("dispatch_polymorphic", 12), ("closures", 25), ("array_ops", 30),
               ("hash_ops", 40), ("string_ops", 40), ("struct_field_access", 15),
               ("regexp_match", 15), ("tensor_matmul", 20), ("exception_handling", 12),
-              ("fiber_switch", 10), ("channel_message_passing", 15), ("thread_pool", 15)]
+              ("fiber_switch", 10), ("channel_message_passing", 15), ("thread_pool", 15),
+              ("dispatch_megamorphic", 12), ("object_hydration", 8), ("iterator_blocks", 15),
+              ("case_pattern_matching", 15), ("hash_ivar_construct", 15)]
 # (make target, rough duration shown so a quiet step doesn't look stuck)
 TEST_TARGETS = [("test", "the main suite: 5-15 minutes"), ("test-api", "about a minute"),
                 ("test-fibers", "about a minute"), ("test-facet", "1-3 minutes"),
                 ("test-aot-cache", "about a minute"), ("test-aot-kit", "1-2 minutes"),
-                ("test-lsp", "about a minute"), ("test-repl", "under a minute")]
+                ("test-lsp", "about a minute"), ("test-repl", "under a minute"),
+                ("test-examples", "every standalone example, interpreted and built: 3-6 minutes")]
 report_lines = []
 
 
@@ -94,7 +97,10 @@ def machine_info():
                   ("CPU cores", capture(["sysctl", "-n", "hw.ncpu"])),
                   ("Performance cores", capture(["sysctl", "-n", "hw.perflevel0.physicalcpu"])),
                   ("Efficiency cores", capture(["sysctl", "-n", "hw.perflevel1.physicalcpu"])),
-                  ("Memory bytes", capture(["sysctl", "-n", "hw.memsize"]))]
+                  ("Memory bytes", capture(["sysctl", "-n", "hw.memsize"])),
+                  ("Power", (capture(["pmset", "-g", "batt"]).splitlines() or [""])[0]),
+                  ("Low power mode", capture(["pmset", "-g"]).split("lowpowermode")[-1].split()[0]
+                   if "lowpowermode" in capture(["pmset", "-g"]) else "unknown")]
     else:
         facts += [("CPU cores", str(os.cpu_count()))]
     facts += [("C compiler", capture(["cc", "--version"]).splitlines()[0] if capture(["cc", "--version"]) else "missing"),
@@ -140,6 +146,47 @@ def prerequisites():
     record("Homebrew packages: present")
     say("  everything needed is installed")
     return True
+
+
+# The test suite writes a bytecode cache (.dic, about 4 MB each because every
+# one embeds the prelude) next to each of its ~1,700 test programs: roughly
+# 6-7 GiB at the peak of `make test`, plus the build itself. Leave headroom so
+# a nearly full disk is reported up front rather than as a dozen unrelated-
+# looking compiler errors.
+MIN_FREE_BYTES = 14 * 1024 ** 3
+OUT_OF_SPACE = ("No space left on device", "Disk quota exceeded")
+
+
+def choose_work_directory():
+    """The directory to work in: the system temp directory when it has room,
+    else the home directory (a RAM-backed /tmp is common on Linux)."""
+    candidates = [Path(tempfile.gettempdir()), Path.home()]
+    for candidate in candidates:
+        if shutil.disk_usage(candidate).free >= MIN_FREE_BYTES:
+            return candidate
+    return None
+
+
+def check_free_space():
+    """Returns the directory to work in, or None (after saying why)."""
+    section("Disk space")
+    for candidate in [Path(tempfile.gettempdir()), Path.home()]:
+        free = shutil.disk_usage(candidate).free
+        record(f"free space in {candidate}: {free / 1024 ** 3:.1f} GiB")
+        say(f"  {free / 1024 ** 3:.1f} GiB free in {candidate}")
+    chosen = choose_work_directory()
+    if chosen is not None:
+        say(f"  working in {chosen}")
+        record(f"working directory: {chosen}")
+        return chosen
+    say(f"  That is less than the {MIN_FREE_BYTES // 1024 ** 3} GiB the test suite needs.")
+    say("  Free some space (or empty the Trash) and run this again.")
+    record("not enough free disk space (stopped)")
+    return None
+
+
+def mentions_out_of_space(text):
+    return any(phrase in text for phrase in OUT_OF_SPACE)
 
 
 def build_environment():
@@ -195,11 +242,19 @@ def build_and_test(work, env, make_args, jobs):
         last = output.strip().splitlines()[-1] if output.strip() else ""
         say(f"    {verdict} in {seconds:.0f}s  {last[:80]}")
         record(f"make {target}: {verdict} in {seconds:.0f}s -- {last}")
+        if status != 0 and mentions_out_of_space(output):
+            say("    (the disk filled up; this failure is not a Diamond problem)")
+            record("NOTE: the machine ran out of disk space during this step, so the "
+                   "failure is an environment problem, not a Diamond one.")
         if status != 0:
             record("```")
             record(tail(output))
             record("```")
         results.append(status == 0)
+        # Each test program leaves a multi-megabyte cache file behind; drop
+        # them before the next step so the disk does not stay full.
+        for cache in (work / "tests/cases").glob("*.dic"):
+            cache.unlink()
     return all(results)
 
 
@@ -273,19 +328,102 @@ def benchmarks(work, env, make_args, jobs):
         record(line)
 
 
+def threaded_cases(work):
+    """Test cases that use threads, channels or supervisors and have a plain
+    stdout expectation (the shape tests/stress_threads.sh re-runs on Linux)."""
+    found = []
+    for source in sorted((work / "tests/cases").glob("*.di")):
+        text = source.read_text(errors="replace")
+        if not any(word in text for word in ("Thread.new", "Channel.", "Supervisor.new")):
+            continue
+        if source.with_suffix(".expected").exists() and not source.with_suffix(".flags").exists():
+            found.append(source)
+    return found
+
+
+def stress_threads(work, env, runs=20):
+    """The Linux stress loop (tests/stress_threads.sh) pins CPUs with taskset,
+    which macOS lacks. Oversubscribe the machine with busy processes instead,
+    so threads interleave unevenly. Apple Silicon's weak memory model is the
+    reason this is worth running here at all."""
+    section("Threaded stress (Apple Silicon memory ordering)")
+    cases = threaded_cases(work)
+    diamond = str(work / "build/diamond")
+    cores = os.cpu_count() or 4
+    hogs = [subprocess.Popen([sys.executable, "-c", "while True: pass"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(cores)]
+    failures = []
+    started = time.perf_counter()
+    say(f"  {len(cases)} threaded test cases, {runs} runs each, with {cores} busy "
+        "background processes (a few minutes) ...")
+    try:
+        for source in cases:
+            expected = source.with_suffix(".expected").read_text().strip()
+            case_env = dict(env, DIAMOND_NO_CACHE="1")
+            env_file = source.with_suffix(".env")
+            if env_file.exists():
+                for line in env_file.read_text().splitlines():
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        case_env[key.strip()] = value.strip()
+            for attempt in range(runs):
+                status, output, _ = run([diamond, str(source)], cwd=work, env=case_env,
+                                        timeout=90)
+                if status != 0 or output.strip() != expected:
+                    failures.append((source.stem, attempt + 1, status, tail(output, 6)))
+                    break
+    finally:
+        for hog in hogs:
+            hog.kill()
+    seconds = time.perf_counter() - started
+    verdict = "passed" if not failures else f"FAILED ({len(failures)} case(s))"
+    say(f"  {len(cases)} cases x {runs} runs: {verdict} in {seconds:.0f}s")
+    record(f"threaded stress: {len(cases)} cases x {runs} runs under CPU oversubscription: "
+           f"{verdict} in {seconds:.0f}s")
+    for name, attempt, status, output in failures:
+        record(f"  {name}: failed on run {attempt} (exit {status})")
+        record(output)
+
+
+def jit_probe(work, env):
+    """The JIT is x86-64 only. On Apple Silicon asking for it must be a quiet
+    no-op that still prints the right answer, never a crash."""
+    section("JIT request on this CPU")
+    diamond = str(work / "build/diamond")
+    program = str(work / "bench/dispatch_monomorphic.di")
+    plain_status, plain_output, _ = run([diamond, program], env=dict(env, DIAMOND_NO_CACHE="1"),
+                                        timeout=300)
+    status, output, seconds = run([diamond, program],
+                                  env=dict(env, DIAMOND_NO_CACHE="1", DIAMOND_JIT="1",
+                                           DIAMOND_JIT_THRESHOLD="1", DIAMOND_TRACE_JIT="1"),
+                                  timeout=300)
+    same = status == 0 and plain_status == 0 and \
+        [line for line in output.splitlines() if not line.startswith("jit:")] == \
+        plain_output.splitlines()
+    trace = next((line for line in output.splitlines() if line.startswith("jit:")), "no trace line")
+    verdict = "ok" if same else "DIFFERS from the plain run"
+    say(f"  DIAMOND_JIT=1 on {platform.machine()}: {verdict}; {trace}")
+    record(f"DIAMOND_JIT=1 on {platform.machine()}: output {verdict} in {seconds:.1f}s; {trace}")
+
+
 def main():
     say("Diamond platform report")
     say("This builds Diamond, runs its tests and some benchmarks, and writes a")
-    say("report file to send back. It takes roughly 20-40 minutes. Your checkout is")
+    say("report file to send back. It takes roughly 30-60 minutes. Your checkout is")
     say("not modified; the work happens in a temporary copy.")
     record("# Diamond platform report")
     machine_info()
     if not prerequisites():
         write_report()
         return 1
+    base = check_free_space()
+    if base is None:
+        write_report()
+        return 1
     env, make_args = build_environment()
     jobs = os.cpu_count() or 4
-    with tempfile.TemporaryDirectory(prefix="diamond-report-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="diamond-report-", dir=base) as temporary:
         work = Path(temporary) / "diamond"
         # --no-hardlinks: the temporary directory may be on another filesystem.
         status, output, _ = run(["git", "clone", "--quiet", "--no-hardlinks", str(REPO), str(work)])
@@ -299,6 +437,8 @@ def main():
         record(f"excluded known-gap test files: {exclude_known_gaps(work)}")
         tests_passed = build_and_test(work, env, make_args, jobs)
         examples(work, env)
+        jit_probe(work, env)
+        stress_threads(work, env)
         benchmarks(work, env, make_args, jobs)
     section("Summary")
     summary = "all test targets passed" if tests_passed else "some test targets FAILED (details above)"

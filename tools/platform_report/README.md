@@ -1,12 +1,14 @@
 # Diamond platform report
 
 This tries Diamond on your computer and writes a report file to send back. You
-don't need to know anything about Diamond. It takes about 20-40 minutes, mostly
+don't need to know anything about Diamond. It takes about 30-60 minutes, mostly
 unattended.
 
 ## Before you start
 
 - Plug your laptop in.
+- Have about 15 GB of free disk space. The test suite leaves a few GB of temporary
+  cache files behind while it runs; they're deleted afterwards.
 - You need **Homebrew**. If you don't have it, install it from
   [brew.sh](https://brew.sh) first (copy the one line from that page into
   Terminal and follow its prompts).
@@ -50,8 +52,11 @@ Send that file back. That's everything.
   folder can be deleted when you're done (`rm -rf ~/diamond`).
 - It uses the network to download Diamond, the Homebrew packages, and one
   package from Diamond's registry, cuts.dilang.tech, for an example app.
+- The threaded-stress step runs one busy background process per core for a few
+  minutes so the fans may spin up; they are stopped when it finishes.
 - The report contains your Mac's model, chip, core count, memory size, and
-  macOS version, plus build logs and timings. Nothing personal.
+  macOS version, plus whether it is on battery or in Low Power Mode, build logs and timings.
+  Nothing personal.
 
 If something goes wrong, the report still gets written with whatever it
 learned. Send it anyway.
