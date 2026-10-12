@@ -1,0 +1,29 @@
+== routing
+  job 1 -> primary
+  job 2 -> primary
+  job 3 -> overflow
+  job 4 -> overflow
+  job 5 -> overflow
+  job 6 shed
+  job 7 shed
+queued: primary 2, overflow 3, shed [6, 7]
+
+== draining
+  took primary:1
+  took primary:2
+  took overflow:3
+  took overflow:4
+  took overflow:5
+  worker drained
+  with both ready, select picks channel 0
+
+== crash loop
+  join raised SupervisorError
+  failed?: true
+  restarts before giving up: 2
+  add_child refused after failure
+
+== outcomes
+  done
+  failed (Shed)
+  failed (Crashed)
