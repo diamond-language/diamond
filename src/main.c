@@ -9,6 +9,7 @@
 #include "run_source.h"
 #include "vm.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -563,11 +564,106 @@ static int handle_build_command(int argc, char **argv) {
     return status;
 }
 
+/* `diamond cache clear [--dry-run] [PATH...]`: removes bytecode caches
+ * (docs/caching.md). A PATH that is a file names that script's own cache; a
+ * directory is searched recursively for `.dic` files; with no PATH it is the
+ * current directory. Only files that start with a cache's magic bytes are
+ * removed, and symbolic links are never followed. */
+typedef struct CacheClearTotals {
+    size_t files;
+    uint64_t bytes;
+    bool dry_run;
+    bool failed;
+} CacheClearTotals;
+
+static void cache_clear_file(const char *path, CacheClearTotals *totals) {
+    struct stat info;
+    if (lstat(path, &info) != 0 || !S_ISREG(info.st_mode)) return;
+    if (!diamond_cache_file_is_cache(path)) return;
+    if (!totals->dry_run && unlink(path) != 0) {
+        fprintf(stderr, "diamond: cannot remove %s: %s\n", path, strerror(errno));
+        totals->failed = true;
+        return;
+    }
+    printf("%s %s\n", totals->dry_run ? "would remove" : "removed", path);
+    totals->files++;
+    totals->bytes += (uint64_t)info.st_size;
+}
+
+static void cache_clear_directory(const char *directory, CacheClearTotals *totals) {
+    DIR *handle = opendir(directory);
+    if (handle == nullptr) {
+        fprintf(stderr, "diamond: cannot read %s: %s\n", directory, strerror(errno));
+        totals->failed = true;
+        return;
+    }
+    const struct dirent *entry;
+    while ((entry = readdir(handle)) != nullptr) {
+        const char *name = entry->d_name;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || strcmp(name, ".git") == 0)
+            continue;
+        const size_t directory_length = strlen(directory);
+        const size_t name_length = strlen(name);
+        char *path = malloc(directory_length + name_length + 2);
+        if (path == nullptr) continue;
+        memcpy(path, directory, directory_length);
+        path[directory_length] = '/';
+        memcpy(path + directory_length + 1, name, name_length + 1);
+        struct stat info;
+        if (lstat(path, &info) == 0) {
+            if (S_ISDIR(info.st_mode)) {
+                cache_clear_directory(path, totals);
+            } else if (name_length > 4 && strcmp(name + name_length - 4, ".dic") == 0) {
+                cache_clear_file(path, totals);
+            }
+        }
+        free(path);
+    }
+    closedir(handle);
+}
+
+static int handle_cache_command(int argc, char **argv) {
+    if (argc < 3 || strcmp(argv[2], "clear") != 0) {
+        fprintf(stderr, "usage: diamond cache clear [--dry-run] [PATH...]\n");
+        return 64;
+    }
+    CacheClearTotals totals = {0};
+    int first_path = 3;
+    if (first_path < argc && strcmp(argv[first_path], "--dry-run") == 0) {
+        totals.dry_run = true;
+        first_path++;
+    }
+    if (first_path >= argc) {
+        cache_clear_directory(".", &totals);
+    }
+    for (int index = first_path; index < argc; index++) {
+        struct stat info;
+        if (stat(argv[index], &info) != 0) {
+            fprintf(stderr, "diamond: cannot read %s: %s\n", argv[index], strerror(errno));
+            totals.failed = true;
+        } else if (S_ISDIR(info.st_mode)) {
+            cache_clear_directory(argv[index], &totals);
+        } else {
+            char *path = diamond_cache_path_for(argv[index]);
+            if (path != nullptr) {
+                cache_clear_file(path, &totals);
+                free(path);
+            }
+        }
+    }
+    const bool megabytes = totals.bytes >= 1000000;
+    printf("%s %zu cache file%s (%.1f %s)\n", totals.dry_run ? "would remove" : "removed",
+           totals.files, totals.files == 1 ? "" : "s",
+           (double)totals.bytes / (megabytes ? 1e6 : 1e3), megabytes ? "MB" : "KB");
+    return totals.failed ? 1 : 0;
+}
+
 static void print_usage(FILE *stream) {
     fputs("Usage: diamond [OPTIONS] [FILE [ARGS...]]\n"
           "       diamond -e CODE [ARGS...]\n"
           "       diamond --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
           "       diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]\n"
+          "       diamond cache clear [--dry-run] [PATH...]\n"
           "\n"
           "Run a Diamond program, evaluate source, or start the REPL when no\n"
           "arguments are given and standard input is a terminal.\n"
@@ -584,6 +680,10 @@ static void print_usage(FILE *stream) {
           "'diamond build' compiles SOURCE into a standalone executable (default\n"
           "output: SOURCE's own basename with its extension stripped) -- see\n"
           "docs/deployment.md. The Diamond build checkout must be available.\n"
+          "\n"
+          "'diamond cache clear' removes the bytecode caches (.dic files) next to\n"
+          "scripts: those of the given files, every one under the given\n"
+          "directories, or under the current directory -- see docs/caching.md.\n"
           "\n"
           "ARGS after FILE or CODE are available to the program through ARGV.\n",
           stream);
@@ -614,6 +714,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "build") == 0) {
         return handle_build_command(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "cache") == 0) {
+        return handle_cache_command(argc, argv);
     }
     /* This process runs one program, so a failed program with threads
      * still running may exit instead of waiting on them (see vm.h). */

@@ -32,6 +32,10 @@ typedef enum {
  * process per case) -- both stay behaviorally identical to each other,
  * and to every already-recorded `.expected` file under tests/cases/,
  * which was originally captured by running the CLI itself. */
+/* `app.di` -> `app.dic`, or nullptr for `-e`/on allocation failure. The caller
+ * frees the result. */
+char *diamond_cache_path_for(const char *name);
+
 int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump dump_bytecode,
     int script_argc, char *const *script_argv);
 

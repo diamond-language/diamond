@@ -83,6 +83,13 @@ typedef struct DiamondCacheFingerprint {
  * elsewhere. */
 DiamondCacheFingerprint diamond_cache_fingerprint(void);
 
+/* True when `path` is a readable file that starts with a bytecode cache's
+ * magic bytes. Only the magic is checked, so a file from another build or
+ * format version still counts: `diamond cache clear` uses this to remove
+ * stale caches while leaving an unrelated file that happens to end in
+ * `.dic` alone. */
+bool diamond_cache_file_is_cache(const char *path);
+
 /* Reads a cache file previously written by diamond_program_write_cache_
  * file at `path`. Returns false -- a plain cache miss, never an error
  * the caller needs to report -- if the file doesn't exist, its magic/

@@ -99,8 +99,6 @@ Current behavior: [caching](caching.md).
 - **Sharing the embedded prelude with programs that use `JSON`** -- such a program compiles
   against the prelude with JSON included, which the embedded copy is built without, so its
   cache still stores the whole prelude (about 4 MB for one that requires ActiveRecord).
-- **A `diamond cache clear`-style command** -- today a stale `.dic` is discarded by
-  deleting it or editing the source. Needs someone hitting that friction.
 - **Moving the cache out from next to the source** -- a read-only deployment (a
   container image, a system-wide install) cannot write a sibling `.dic` and silently
   never caches. `XDG_CACHE_HOME`-style storage would fix it but needs a different cache

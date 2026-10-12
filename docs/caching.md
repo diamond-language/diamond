@@ -55,7 +55,7 @@ directory's `.di` files. Set `DIAMOND_NO_CACHE=1` where that isn't true. Validat
 guarantees memory safety, not that the bytecode matches the source. Cache format
 version 4 added the body checksum; older files are ignored and rebuilt.
 
-## How big a cache file is
+## Size
 
 A `.dic` holds the program's own bytecode, not the prelude: the binary already embeds a
 compiled copy, and a cache file leaves out the prelude's functions and rebuilds them from
@@ -64,7 +64,23 @@ its used bytes, not its full in-memory record (about 11 KB).
 
 A program that needs `JSON` is compiled against the prelude with JSON included, which the
 embedded copy is not shared with, so its cache keeps the whole prelude too and is larger
-(about 4 MB for a program that requires ActiveRecord).
+(about 4 MB for a program that requires ActiveRecord). Format version 2 stored string
+constants as length-prefixed bytes rather than fixed 4 KB records, and version 6 stored the
+prelude once in the binary instead of in every file; older files are ignored and rebuilt.
+
+## Removing caches
+
+```sh
+diamond cache clear app.di        # app.dic only
+diamond cache clear src/ lib/     # every .dic under those directories
+diamond cache clear               # every .dic under the current directory
+diamond cache clear --dry-run     # list what would go, remove nothing
+```
+
+It removes only files that start with a Diamond cache's magic bytes, so an unrelated file
+that happens to end in `.dic` is left alone, and it never follows symbolic links or enters
+`.git`. A script whose cache was removed just recompiles and writes a new one on its next
+run, so clearing is always safe.
 
 
 ## Disabling it
@@ -85,20 +101,14 @@ stderr, useful for confirming the feature is actually doing something.
 - **`diamond build`.** Its own AOT-embed mechanism already means the *produced* binary
   never recompiles at all at run time; this cache is unrelated to that one-shot build
   command.
-- **`tests/run_cases.c`'s own batch corpus runner** (and, by extension, every `make
-  test*` target) never touches this cache at all, by construction -- it calls
-  `diamond_run_source_with_template`, a distinct entry point from the CLI's own
-  auto-dispatch that caching only ever hooks into. This is deliberate: a stale-but-
-  fingerprint-compatible cache surviving between two test runs could otherwise mask a
-  real compiler regression the test suite exists to catch.
-
-## Size
-
-A `.dic` holds the whole compiled program, prelude included, so even a one-line
-script's cache is about 2 MB; application code adds comparatively little (the
-guestbook example's is about 3.5 MB). Format version 2 stores string constants as
-length-prefixed bytes rather than fixed 4 KB records; version 1 caches were tens
-to hundreds of megabytes for ordinary apps and are simply ignored and rebuilt.
+- **`tests/run_cases.c`'s own batch corpus runner** (the default for `make test`) never
+  touches this cache at all, by construction -- it calls `diamond_run_source_with_template`,
+  a distinct entry point from the CLI's own auto-dispatch that caching only ever hooks
+  into. This is deliberate: a stale-but-fingerprint-compatible cache surviving between two
+  test runs could otherwise mask a real compiler regression the test suite exists to
+  catch. `DIAMOND_CASE_RUNNER=subprocess` runs every case through the real CLI instead,
+  which does write caches next to the test sources (`diamond cache clear tests/cases`
+  removes them).
 
 See [the roadmap](roadmap.md#bytecode-caching) for possible follow-ups,
-including cache removal and read-only deployments.
+including read-only deployments.

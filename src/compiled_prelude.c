@@ -731,6 +731,16 @@ static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
     return true;
 }
 
+bool diamond_cache_file_is_cache(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == nullptr) return false;
+    char magic[DIAMOND_CACHE_MAGIC_LENGTH];
+    const bool is_cache = fread(magic, 1, sizeof magic, file) == sizeof magic &&
+        memcmp(magic, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) == 0;
+    fclose(file);
+    return is_cache;
+}
+
 bool diamond_program_read_cache_file(const char *path,
         const uint8_t source_hash[32], DiamondProgram *program,
         const DiamondProgram *prelude_template) {
