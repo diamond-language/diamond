@@ -3563,8 +3563,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
                         size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
                         bool are_offsets=false;
+                        char step_target[64];
                         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets))
+                                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets,step_target))
                             break;
                         if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
                             memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
@@ -3592,7 +3593,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 bool stepped=false;
                 if(!armed&&vm->debug_step_mode!=DIAMOND_STEP_NONE) {
                     switch(vm->debug_step_mode) {
-                        case DIAMOND_STEP_IN: stepped=true; break;
+                        case DIAMOND_STEP_IN:
+                            /* A named target (stepInTargets) pauses only on
+                             * entering that callee one level down; if it
+                             * turns out to be native, or never runs, the
+                             * next statement at this depth or shallower
+                             * stops instead, as `next` would. */
+                            if(vm->debug_step_in_target[0]=='\0')stepped=true;
+                            else stepped=depth<=vm->debug_step_target_depth||
+                                (depth==vm->debug_step_target_depth+1&&chunk->name!=nullptr&&
+                                 strcmp(chunk->name,vm->debug_step_in_target)==0);
+                            break;
                         case DIAMOND_STEP_OVER:
                             stepped=depth<=vm->debug_step_target_depth; break;
                         case DIAMOND_STEP_OUT:
@@ -3602,6 +3613,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if(armed||stepped) {
                     vm->debug_step_mode=DIAMOND_STEP_NONE;
+                    vm->debug_step_in_target[0]='\0';
                     const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
                         instruction_offset,(size_t)source_line_offset,registers,name_indices,local_registers,local_count,
                         armed?"breakpoint":"step");
@@ -4619,7 +4631,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(argc<target_fn->required_arity||
                    (argc>target_fn->arity && !target_fn->has_variadic))
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+                if(atomic_load(&diamond_active_thread_count)>=diamond_live_thread_limit()) {
                     snprintf(vm->error,sizeof vm->error,
                         "too many concurrently active threads");
                     VM_RETURN(DIAMOND_VM_THREAD_ERROR);
@@ -5141,6 +5153,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_SIGNAL_TRAP: {
+                VM_SANDBOX_GUARD("Signal.trap", "signals");
                 uint16_t dest=0,name_reg=0,handler_reg=0;
                 READ_SHORT(dest);READ_SHORT(name_reg);READ_SHORT(handler_reg);
                 if(registers[name_reg].kind!=DIAMOND_VALUE_OBJECT||

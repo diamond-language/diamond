@@ -26,7 +26,8 @@ search over a real (if scoped) lexical symbol table:
   `documentSymbolProvider: true`, `completionProvider: {}` (no
   `triggerCharacters` — see completion below for why none are needed),
   `workspaceSymbolProvider: true`, `referencesProvider: true`,
-  `renameProvider: true`, and `documentFormattingProvider: true`. Also
+  `renameProvider: true`, `documentFormattingProvider: true`, and
+  `documentRangeFormattingProvider: true`. Also
   reads `workspaceFolders[0]`/
   `rootUri` from the request's own params (the one place this server
   reads anything from `initialize`'s params at all) to know what
@@ -363,8 +364,10 @@ search over a real (if scoped) lexical symbol table:
   and calls `rename` anyway, which still correctly returns `null` when
   the position isn't renameable.
 - `textDocument/formatting` (`lsp/formatting.c`) normalizes every
-  physical line's own leading indentation to `depth * 2` spaces and
-  trims trailing whitespace -- deliberately not a full AST-based
+  physical line's own leading indentation to `depth * 2` spaces,
+  trims trailing whitespace, adds the spacing around commas and
+  operators described below, and collapses blank-line runs --
+  deliberately not a full AST-based
   pretty-printer: the native compiler retains no AST at all (`docs/
   roadmap.md`'s "Compiler representation"), so a real structural
   formatter would need a whole new tree-building parser kept in sync
@@ -389,18 +392,35 @@ search over a real (if scoped) lexical symbol table:
   body. `value.class()` is the one keyword the compiler itself accepts
   as a method name right after a dot (`src/compiler.c`'s own
   `parse_invoke`), so it's excluded from opening a level there too.
-  Verified against every real (non-test-fixture) `*.di` file in this
-  repository -- 309 files, zero bailouts, each proposed change
-  manually spot-checked. Lines that start (or whose newline falls) inside a
+  Between two tokens on the same line, a comma takes no space before it
+  and one after it (unless a closing bracket follows), and an assignment,
+  compound-assignment, comparison (`==`, `!=`, `<=`, `>=`, `<=>`) or
+  logical (`&&`, `||`) operator gets a space on each side where it has
+  none: `x=1` becomes `x = 1`, `f(a,b)` becomes `f(a, b)`. Existing runs
+  of spaces are never collapsed, so aligned columns stay aligned; arithmetic
+  operators, block bars, unions and ranges are left alone because the same
+  token means a unary or non-spacing form elsewhere. Operators used as
+  method names (`def ==(other)`, `a.==(b)`) and the `=` of a setter header
+  (`def value=(v)`, `def []=(k, v)`) are recognized and untouched. Only
+  the whitespace between two tokens is ever edited, so no string, comment or
+  identifier changes. A run of two or more blank lines outside a string
+  literal collapses to one. `textDocument/rangeFormatting` returns the same
+  edits restricted to those starting on the requested lines; the nesting
+  depth still comes from the whole document, so a range that starts inside
+  a block indents correctly. A range ending at column 0 of a line does not
+  include that line.
+  `tests/formatting_test.c` checks the rules and, over every `.di` file in the
+  tests, examples, packages and `lib` (2,500+ files), that the token stream
+  is unchanged apart from NEWLINE counts and that a second pass proposes
+  nothing. Lines that start (or whose newline falls) inside a
   multi-line string literal are string content and are never re-indented
   or trimmed. Returns `json_null()` rather than a guess
   when the source contains a lexer error or the tracked depth doesn't
   balance to exactly zero by EOF -- a real grammar shape this pass
   doesn't yet model should mean no edits, not a corrupted one. No
-  range formatting, no on-type formatting, and no reflowing a long
-  line, reordering anything, or normalizing operator/argument spacing
-  (`a+b` stays `a+b`) -- see `lsp/formatting.h`'s own doc comment for
-  the full contract.
+  on-type formatting, and no reflowing a long line or reordering
+  anything -- see `lsp/formatting.h`'s own doc comment for the full
+  contract.
 - `shutdown` / `exit` — the ordinary LSP lifecycle; `exit`'s process exit
   code is 0 if `shutdown` was requested first, 1 otherwise, per spec.
 - Any other request gets a JSON-RPC `MethodNotFound` (-32601) error;

@@ -71,6 +71,8 @@ count=$((count + 1))
 count=$((count + 1))
 [[ "$response" == *'"workspaceSymbolProvider":true'* ]]
 count=$((count + 1))
+[[ "$response" == *'"documentRangeFormattingProvider":true'* ]]
+count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
@@ -2351,6 +2353,36 @@ response="$(read_message)"
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_flush_uri"'"}}}'
+read_message >/dev/null
+
+# --- textDocument/rangeFormatting: only edits on the requested lines, with the
+# nesting depth still taken from the whole document; and the spacing and
+# blank-line rules from the same pass ---
+
+fmt_range_uri="file:///fmt_range.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_range_uri"'","text":"def f()\nx=1\ny=[1,2]\nend\n\n\nz=3"}}}'
+read_message >/dev/null
+
+# Lines 1-2 (zero-based) are x=1 and y=[1,2]; only they are touched, and the
+# blank-line run and z=3 further down are left alone.
+send '{"jsonrpc":"2.0","id":184,"method":"textDocument/rangeFormatting","params":{"textDocument":{"uri":"'"$fmt_range_uri"'"},"range":{"start":{"line":1,"character":0},"end":{"line":2,"character":6}},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == *'"id":184'* ]]
+count=$((count + 1))
+[[ "$response" == *'"newText":"  "'* ]]
+count=$((count + 1))
+[[ "$response" == *'"newText":" "'* ]]
+count=$((count + 1))
+[[ "$response" != *'"line":5'* && "$response" != *'"line":6'* ]]
+count=$((count + 1))
+
+# The whole-document request collapses the two blank lines too.
+send '{"jsonrpc":"2.0","id":185,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$fmt_range_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == *'"range":{"start":{"line":5,"character":0},"end":{"line":6,"character":0}},"newText":""'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_range_uri"'"}}}'
 read_message >/dev/null
 
 # --- an unrecognized method gets a JSON-RPC MethodNotFound error ---

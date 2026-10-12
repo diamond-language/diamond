@@ -369,6 +369,8 @@ enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
  * power of two minus one for the `&` mask below to work. */
 enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
 enum { DIAMOND_DEBUG_POLL_STATEMENT_MASK = 31 };
+/* Most calls one paused statement reports as step-in targets. */
+enum { DIAMOND_MAX_STEP_IN_TARGETS = 24 };
 
 /* How much further a program may run after a budget trips and its catchable
  * ResourceLimitError is raised, before DIAMOND_VM_RESOURCE_EXHAUSTED ends it.
@@ -702,6 +704,7 @@ DIAMOND_INTERNAL DiamondFiberHandle *allocate_fiber_handle(DiamondVm *vm,Diamond
 enum { DIAMOND_MAX_THREADS = 64 };
 
 extern DIAMOND_INTERNAL atomic_size_t diamond_active_thread_count;
+DIAMOND_INTERNAL size_t diamond_live_thread_limit(void);
 
 DIAMOND_INTERNAL int create_vm_thread(pthread_t *handle,
         void *(*entry)(void *), void *argument);
@@ -1203,7 +1206,8 @@ typedef enum DiamondDebugCommandKind {
 } DiamondDebugCommandKind;
 
 DIAMOND_INTERNAL bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
-        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets);
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets,
+        char *step_target);
 
 DIAMOND_INTERNAL DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,size_t instruction_offset,size_t source_line_offset,DiamondValue *registers,

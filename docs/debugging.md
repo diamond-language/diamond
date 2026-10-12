@@ -97,6 +97,30 @@ new invocation rather than skipping it entirely. Not fixed: an
 accepted, narrow consequence of two features that were never designed
 to interact, not a bug in either one on its own.
 
+### Choosing which call to step into
+
+A line with several calls, such as `total = add(one(), two())`, has more than
+one place to step into. `stepInTargets` (`supportsStepInTargetsRequest: true`)
+lists the calls the paused statement makes, in the order they run (here `one`,
+`two`, `add`), and `stepIn` with a `targetId` enters that one and runs the
+others to completion.
+
+The list comes from the pause itself: every `paused` payload carries a
+`"targets"` array (`{"name","line","column"}` per call), built by walking the
+statement's bytecode up to the next checkpoint
+(`diamond_collect_call_sites`, `src/disassemble.c`), so `stepInTargets` answers
+from what the adapter already holds and costs no round trip. A target is named
+by its callee: a method name for a method call, a function name for a function
+call, `new` for a constructor and `call` for a call through a closure value.
+
+Entering a target is by name: the VM resumes and pauses at the first
+checkpoint exactly one frame deeper whose function is called that, so two
+calls to like-named methods on different receivers on one line cannot be told
+apart (the first to run wins). If the chosen call is native (a built-in such as
+`.length()`) or never runs, the debuggee pauses at the next statement at that
+depth or shallower, as `next` would, instead of running on. Only the innermost
+frame has targets.
+
 ## How it fits together
 
 ```text
@@ -174,7 +198,7 @@ The stopped frame uses that offset to report the source file and line.
 - `DIAMOND_DEBUG_FD=<fd>` -- an already-open, connected file descriptor
   number in the child process (read once, in `diamond_vm_init`,
   `src/vm.c`) that every pause writes its `{"event":"paused","stack":
-  [...],"locals":[...]}` payload to and reads framed commands back from,
+  [...],"targets":[...],"locals":[...]}` payload to and reads framed commands back from,
   on the *same* fd -- a plain pipe can't do that; it needs to be a
   full-duplex descriptor (a `socketpair` end, as `dap/main.c` uses).
   Unset (or a negative/unparseable value) keeps `debugger()`/

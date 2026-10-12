@@ -6,6 +6,7 @@
 #define _DARWIN_C_SOURCE
 #include "disassemble.h"
 #include <stdlib.h>
+#include <string.h>
 
 static bool require_bytes(FILE *stream, const DiamondChunk *chunk,
                           size_t offset, size_t count) {
@@ -250,8 +251,32 @@ bool diamond_print_type_set(FILE *stream, const DiamondChunk *chunk, uint16_t se
     return print_type_set(stream, chunk, set_index);
 }
 
+static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
+        const DiamondChunk *chunk, size_t source_start, bool *starts,
+        size_t *pending_targets);
+
+/* The two DIAMOND_MAX_CODE-sized scratch arrays (about 580 KB together) live
+ * on the heap: this walk also runs from the debugger's pause path, which can
+ * be deep inside a thread or fiber with a small native stack. */
 static bool disassemble_chunk(FILE *stream, const char *name,
                               const DiamondChunk *chunk, size_t source_start) {
+    bool *starts = calloc(DIAMOND_MAX_CODE, sizeof *starts);
+    size_t *pending_targets = malloc(DIAMOND_MAX_CODE * sizeof *pending_targets);
+    if (starts == nullptr || pending_targets == nullptr) {
+        free(starts);
+        free(pending_targets);
+        return false;
+    }
+    const bool result = disassemble_chunk_with_scratch(stream, name, chunk, source_start,
+                                                       starts, pending_targets);
+    free(starts);
+    free(pending_targets);
+    return result;
+}
+
+static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
+        const DiamondChunk *chunk, size_t source_start, bool *starts,
+        size_t *pending_targets) {
     fprintf(stream, "== %s ==\n", name);
     FILE *output=stream;
     FILE *hidden=source_start==0?nullptr:fopen("/dev/null","w");
@@ -271,8 +296,6 @@ static bool disassemble_chunk(FILE *stream, const char *name,
      * jump to any offset in [0, code_count]. Sized to DIAMOND_MAX_CODE
      * (this function's own code[] bound), not chunk->code_count, so
      * `offset < chunk->code_count` below never risks writing past it. */
-    bool starts[DIAMOND_MAX_CODE] = {};
-    size_t pending_targets[DIAMOND_MAX_CODE];
     size_t pending_count = 0;
 
     while (offset < chunk->code_count) {
@@ -1615,4 +1638,88 @@ bool diamond_verify_bytecode(const DiamondChunk *chunk) {
     const bool valid = diamond_disassemble(sink, chunk->name, chunk);
     if (sink != stderr) fclose(sink);
     return valid;
+}
+
+/* Walks the chunk with the disassembler itself (the one authority on
+ * instruction lengths) into a memory stream and reads the call
+ * instructions back out of the text: `NNNN LINE:COL  MNEMONIC operands`. */
+size_t diamond_collect_call_sites(const DiamondChunk *chunk, size_t start_offset,
+        DiamondCallSite *out, size_t capacity) {
+    if(chunk==nullptr||out==nullptr||capacity==0)return 0;
+    char *text=nullptr;
+    size_t text_size=0;
+    FILE *stream=open_memstream(&text,&text_size);
+    if(stream==nullptr)return 0;
+    (void)disassemble_chunk(stream,"",chunk,0);
+    fclose(stream);
+    if(text==nullptr)return 0;
+    size_t count=0;
+    bool in_range=false;
+    for(char *line=text;line!=nullptr&&*line!='\0'&&count<capacity;) {
+        char *next=strchr(line,'\n');
+        if(next!=nullptr)*next='\0';
+        char *cursor=line;
+        char *end=nullptr;
+        const unsigned long offset=strtoul(cursor,&end,10);
+        if(end!=cursor&&*end==' ') {
+            /* Skip the position column, then read the mnemonic. */
+            cursor=end;
+            while(*cursor==' ')cursor++;
+            unsigned long line_number=0,column_number=0;
+            if(*cursor>='0'&&*cursor<='9') {
+                line_number=strtoul(cursor,&end,10);
+                if(*end==':')column_number=strtoul(end+1,&end,10);
+                cursor=end;
+            }
+            while(*cursor==' ')cursor++;
+            char mnemonic[40]={0};
+            size_t length=0;
+            while(cursor[length]!='\0'&&cursor[length]!=' '&&length<sizeof mnemonic-1) {
+                mnemonic[length]=cursor[length];length++;
+            }
+            const char *operands=cursor+length;
+            if(offset==start_offset)in_range=true;
+            else if(in_range&&strcmp(mnemonic,"BREAKPOINT_CHECK")==0&&offset>start_offset)
+                break;
+            if(in_range) {
+                DiamondCallSite site={.line=(uint32_t)line_number,.column=(uint32_t)column_number};
+                bool is_call=false;
+                if(strncmp(mnemonic,"INVOKE",6)==0) {
+                    /* r<dest>, r<receiver>, s<name>, ... */
+                    const char *string=strstr(operands,", s");
+                    if(string!=nullptr) {
+                        const unsigned long index=strtoul(string+3,nullptr,10);
+                        if(index<chunk->string_count) {
+                            const DiamondStringConstant name=chunk->strings[index];
+                            const size_t copy=name.length<sizeof site.name-1?
+                                name.length:sizeof site.name-1;
+                            memcpy(site.name,name.chars,copy);
+                            site.name[copy]='\0';
+                            is_call=true;
+                        }
+                    }
+                } else if(strcmp(mnemonic,"CALL")==0||strcmp(mnemonic,"CALL_TYPED")==0) {
+                    const char *function=strstr(operands,", f");
+                    if(function!=nullptr) {
+                        const unsigned long index=strtoul(function+3,nullptr,10);
+                        if(index<chunk->function_count&&chunk->functions[index]!=nullptr) {
+                            snprintf(site.name,sizeof site.name,"%s",
+                                chunk->functions[index]->name);
+                            is_call=true;
+                        }
+                    }
+                } else if(strcmp(mnemonic,"NEW")==0) {
+                    snprintf(site.name,sizeof site.name,"new");
+                    is_call=true;
+                } else if(strncmp(mnemonic,"CALL_",5)==0) {
+                    snprintf(site.name,sizeof site.name,"call");
+                    is_call=true;
+                }
+                if(is_call&&site.name[0]!='\0')out[count++]=site;
+            }
+        }
+        line=next!=nullptr?next+1:nullptr;
+    }
+    free(text);
+    return count;
 }

@@ -1118,8 +1118,9 @@ bool maybe_collect(DiamondVm *vm) {
              * moves up by the grace allowance so the exception can be built
              * and a rescue clause can run. */
             vm->memory_limit_tripped=true;
-            const size_t grace=vm->max_memory_bytes/4>DIAMOND_MEMORY_GRACE_MINIMUM_BYTES?
+            const size_t default_grace=vm->max_memory_bytes/4>DIAMOND_MEMORY_GRACE_MINIMUM_BYTES?
                 vm->max_memory_bytes/4:(size_t)DIAMOND_MEMORY_GRACE_MINIMUM_BYTES;
+            const size_t grace=vm->grace_memory_bytes!=0?vm->grace_memory_bytes:default_grace;
             vm->max_memory_bytes=vm->max_memory_bytes>SIZE_MAX-grace?SIZE_MAX:
                 vm->max_memory_bytes+grace;
             return false;
@@ -1134,6 +1135,21 @@ bool maybe_collect(DiamondVm *vm) {
     return true;
 }
 
+/* The cap on live spawned threads: DIAMOND_MAX_THREADS (the process-wide
+ * hard cap) unless DIAMOND_MAX_LIVE_THREADS asks for fewer. Read on each
+ * Thread.new/add_child like DIAMOND_SANDBOX, so every VM agrees without
+ * propagation. An unparseable, zero or too-large value keeps the hard cap;
+ * a limit can only tighten it. */
+size_t diamond_live_thread_limit(void) {
+    const char *env=getenv("DIAMOND_MAX_LIVE_THREADS");
+    if(env==nullptr||env[0]=='\0')return DIAMOND_MAX_THREADS;
+    char *end=nullptr;
+    const unsigned long long parsed=strtoull(env,&end,10);
+    if(end==env||*end!='\0'||parsed==0||parsed>DIAMOND_MAX_THREADS)
+        return DIAMOND_MAX_THREADS;
+    return (size_t)parsed;
+}
+
 /* A configured instruction or wall-clock budget has just been exceeded:
  * run_chunk is about to return the catchable DIAMOND_VM_RESOURCE_LIMIT_ERROR.
  * Disarm both soft budgets (re-tripping on the very next instruction would
@@ -1145,12 +1161,14 @@ bool maybe_collect(DiamondVm *vm) {
  * instructions, since the shared total is no longer being added to. */
 void resource_limit_trip(DiamondVm *vm) {
     if(vm->max_instructions!=0)
-        vm->hard_stop_instruction_count=vm->instructions_executed+DIAMOND_INSTRUCTION_GRACE;
+        vm->hard_stop_instruction_count=vm->instructions_executed+
+            (vm->grace_instructions!=0?vm->grace_instructions:(size_t)DIAMOND_INSTRUCTION_GRACE);
     if(vm->max_wall_nanoseconds!=0) {
         const int64_t now_ns=monotonic_nanoseconds();
         const int64_t deadline=vm->start_time_ns+vm->max_wall_nanoseconds;
         vm->hard_stop_time_ns=(now_ns>deadline?now_ns:deadline)+
-            (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL;
+            (vm->grace_wall_nanoseconds!=0?vm->grace_wall_nanoseconds:
+                (int64_t)DIAMOND_WALL_GRACE_MILLISECONDS*1000000LL);
     }
     vm->max_instructions=0;
     vm->max_wall_nanoseconds=0;
@@ -1391,6 +1409,30 @@ void diamond_vm_init(DiamondVm *vm) {
         const unsigned long long parsed=strtoull(max_memory_env,&end,10);
         if(end!=max_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
             vm->max_memory_bytes=(size_t)parsed;
+    }
+    /* The grace allowance after a budget trips; same parsing rules, and
+     * unset or invalid keeps the built-in default (docs/sandbox.md). */
+    const char *grace_instructions_env=getenv("DIAMOND_GRACE_INSTRUCTIONS");
+    if(grace_instructions_env!=nullptr&&grace_instructions_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_instructions_env,&end,10);
+        if(end!=grace_instructions_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->grace_instructions=(size_t)parsed;
+    }
+    const char *grace_wall_env=getenv("DIAMOND_GRACE_WALL_MILLISECONDS");
+    if(grace_wall_env!=nullptr&&grace_wall_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_wall_env,&end,10);
+        if(end!=grace_wall_env&&*end=='\0'&&parsed>0&&
+           parsed<=(unsigned long long)INT64_MAX/1000000ULL)
+            vm->grace_wall_nanoseconds=(int64_t)parsed*1000000LL;
+    }
+    const char *grace_memory_env=getenv("DIAMOND_GRACE_MEMORY_BYTES");
+    if(grace_memory_env!=nullptr&&grace_memory_env[0]!='\0') {
+        char *end=nullptr;
+        const unsigned long long parsed=strtoull(grace_memory_env,&end,10);
+        if(end!=grace_memory_env&&*end=='\0'&&parsed>0&&parsed<=SIZE_MAX)
+            vm->grace_memory_bytes=(size_t)parsed;
     }
     vm->resource_limits_active=vm->max_instructions!=0||vm->max_wall_nanoseconds!=0||
         vm->max_memory_bytes!=0;
@@ -9752,7 +9794,8 @@ static bool debug_pipe_read_header_line(int fd,char *buffer,size_t capacity) {
  * convention elsewhere in this codebase) -- the caller only ever copies
  * min(*line_count,capacity) entries out. */
 static DiamondDebugCommandKind parse_debug_command(const char *body,
-        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets,
+        char *step_target) {
     if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
         size_t count=0;
         const char *lines_key=strstr(body,"\"offsets\"");
@@ -9777,7 +9820,19 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
     }
     if(strstr(body,"\"continue\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_CONTINUE;
     if(strstr(body,"\"next\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_NEXT;
-    if(strstr(body,"\"stepIn\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    if(strstr(body,"\"stepIn\"")!=nullptr) {
+        /* An optional `"target":"name"` (stepInTargets): at most 63 bytes. */
+        step_target[0]='\0';
+        const char *key=strstr(body,"\"target\"");
+        const char *open=key!=nullptr?strchr(key+8,'"'):nullptr;
+        if(open!=nullptr) {
+            size_t length=0;
+            for(const char *cursor=open+1;*cursor!='\0'&&*cursor!='"'&&length<63;cursor++)
+                step_target[length++]=*cursor;
+            step_target[length]='\0';
+        }
+        return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    }
     if(strstr(body,"\"stepOut\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_OUT;
     return DIAMOND_DEBUG_COMMAND_NONE;
 }
@@ -9795,8 +9850,10 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
  * DIAMOND_DEBUG_COMMAND_NONE; the caller treats that the same as an
  * ordinary "continue" (see its own comment). */
 bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
-        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets,
+        char *step_target) {
     *kind=DIAMOND_DEBUG_COMMAND_NONE;
+    step_target[0]='\0';
     *line_count=0;
     long content_length=-1;
     char line[256];
@@ -9826,7 +9883,7 @@ bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
         remaining-=next;
     }
     if(body_length==(size_t)content_length)
-        *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets);
+        *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets,step_target);
     return true;
 }
 
@@ -9865,7 +9922,6 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         size_t source_line_offset,
         DiamondValue *registers,const uint16_t *name_indices,
         const uint16_t *local_registers,uint8_t local_count,const char *reason) {
-    (void)instruction_offset;
     GrowBuffer body={};
     bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"reason\":");
     if(ok)ok=debug_json_append_escaped_string(&body,reason,strlen(reason));
@@ -9893,6 +9949,25 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
                 ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
         if(ok&&written>0)ok=grow_buffer_append(&body,numbers,(size_t)written);
         else if(written<0)ok=false;
+    }
+    /* The calls the statement about to run makes, in order, for DAP's
+     * stepInTargets: `{"name","line","column"}` each. */
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"targets\":[");
+    {
+        DiamondCallSite sites[DIAMOND_MAX_STEP_IN_TARGETS];
+        const size_t site_count=diamond_collect_call_sites(chunk,instruction_offset,sites,
+            DIAMOND_MAX_STEP_IN_TARGETS);
+        for(size_t index=0;ok&&index<site_count;index++) {
+            if(index>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+            ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+            if(ok)ok=debug_json_append_escaped_string(&body,sites[index].name,
+                strlen(sites[index].name));
+            char position[64];
+            const int written=snprintf(position,sizeof position,
+                ",\"line\":%u,\"column\":%u}",sites[index].line,sites[index].column);
+            if(ok&&written>0)ok=grow_buffer_append(&body,position,(size_t)written);
+            else if(written<0)ok=false;
+        }
     }
     if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"locals\":[");
     size_t locals_emitted=0;
@@ -9927,8 +10002,9 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
         size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
         bool are_offsets=false;
+        char step_target[64];
         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets))
+                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets,step_target))
             break;
         if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
             memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
@@ -9943,8 +10019,12 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
          * the same way `continue` does. DIAMOND_OP_BREAKPOINT_CHECK's own
          * case (further down this file) is what actually consumes this
          * on the next qualifying checkpoint hit. */
+        vm->debug_step_in_target[0]='\0';
         if(kind==DIAMOND_DEBUG_COMMAND_NEXT)vm->debug_step_mode=DIAMOND_STEP_OVER;
-        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN)vm->debug_step_mode=DIAMOND_STEP_IN;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN) {
+            vm->debug_step_mode=DIAMOND_STEP_IN;
+            memcpy(vm->debug_step_in_target,step_target,sizeof vm->debug_step_in_target);
+        }
         else if(kind==DIAMOND_DEBUG_COMMAND_STEP_OUT)vm->debug_step_mode=DIAMOND_STEP_OUT;
         if(vm->debug_step_mode!=DIAMOND_STEP_NONE)vm->debug_step_target_depth=depth;
         break;
@@ -11414,7 +11494,7 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
     }
     const size_t new_index=target_supervisor->child_count;
     pthread_mutex_unlock(&target_supervisor->lock);
-    if(atomic_load(&diamond_active_thread_count)>=DIAMOND_MAX_THREADS) {
+    if(atomic_load(&diamond_active_thread_count)>=diamond_live_thread_limit()) {
         snprintf(vm->error,sizeof vm->error,
             "too many concurrently active threads");
         return DIAMOND_VM_THREAD_ERROR;

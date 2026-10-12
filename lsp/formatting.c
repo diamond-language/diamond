@@ -482,6 +482,105 @@ static JsonValue *text_edit(size_t line,size_t start_col,size_t end_col,
     return result;
 }
 
+/* Spacing rules (docs/lsp.md "Formatting"): between two tokens on the same
+ * physical line, a gap that is only spaces/tabs may be edited. A comma takes
+ * no space before it and one after it (unless a closing bracket follows); a
+ * binary assignment/comparison/logical operator takes a space on each side
+ * where it has none. Existing runs of spaces are never collapsed, so aligned
+ * columns survive. Operators used as method names (`def ==(other)`,
+ * `a.==(b)`) are left alone, and so is anything adjacent to a token on
+ * another line. Only the gap between two tokens is ever touched, so no
+ * string, comment or identifier text can change. */
+static bool is_spaced_operator(DiamondTokenKind kind) {
+    switch(kind) {
+        case DIAMOND_TOKEN_EQUAL:
+        case DIAMOND_TOKEN_EQUAL_EQUAL:
+        case DIAMOND_TOKEN_BANG_EQUAL:
+        case DIAMOND_TOKEN_LESS_EQUAL:
+        case DIAMOND_TOKEN_GREATER_EQUAL:
+        case DIAMOND_TOKEN_SPACESHIP:
+        case DIAMOND_TOKEN_AND_AND:
+        case DIAMOND_TOKEN_OR_OR:
+        case DIAMOND_TOKEN_PLUS_EQUAL:
+        case DIAMOND_TOKEN_MINUS_EQUAL:
+        case DIAMOND_TOKEN_STAR_EQUAL:
+        case DIAMOND_TOKEN_SLASH_EQUAL:
+        case DIAMOND_TOKEN_PERCENT_EQUAL:
+        case DIAMOND_TOKEN_OR_OR_EQUAL:
+        case DIAMOND_TOKEN_AND_AND_EQUAL:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool is_closing_bracket(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_RIGHT_PAREN||kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+        kind==DIAMOND_TOKEN_RIGHT_BRACE;
+}
+
+/* True when tokens[index] is an operator token standing in for a method
+ * name: directly after `def` or `.`, or the `=` of a setter header
+ * (`def value=(v)`, `def self.[]=(k, v)`), which the lexer emits as a
+ * name followed by a separate EQUAL token. The setter case walks back over
+ * the tokens a method name can be made of, on the same line, looking for
+ * the `def`. */
+static bool operator_is_method_name(const DiamondToken *tokens,size_t index) {
+    if(index==0)return false;
+    const DiamondTokenKind before=tokens[index-1].kind;
+    if(before==DIAMOND_TOKEN_DEF||before==DIAMOND_TOKEN_DOT||
+       before==DIAMOND_TOKEN_DOUBLE_COLON)return true;
+    if(tokens[index].kind!=DIAMOND_TOKEN_EQUAL)return false;
+    for(size_t back=index;back>0;back--) {
+        const DiamondToken candidate=tokens[back-1];
+        if(candidate.span.line!=tokens[index].span.line)return false;
+        switch(candidate.kind) {
+            case DIAMOND_TOKEN_DEF:return true;
+            case DIAMOND_TOKEN_IDENTIFIER:
+            case DIAMOND_TOKEN_SELF:
+            case DIAMOND_TOKEN_DOT:
+            case DIAMOND_TOKEN_LEFT_BRACKET:
+            case DIAMOND_TOKEN_RIGHT_BRACKET:
+            case DIAMOND_TOKEN_DOUBLE_COLON:
+                continue;
+            default:
+                return false;
+        }
+    }
+    return false;
+}
+
+/* The gap between tokens[index] and tokens[index+1]: `*start`/`*end` byte
+ * offsets into `source`, true when it is a same-line, spaces-and-tabs-only
+ * gap. */
+static bool token_gap(const char *source,const DiamondToken *tokens,size_t index,
+        size_t *start,size_t *end) {
+    const DiamondToken left=tokens[index],right=tokens[index+1];
+    if(left.kind==DIAMOND_TOKEN_EOF||right.kind==DIAMOND_TOKEN_EOF)return false;
+    if(left.span.line!=right.span.line)return false;
+    *start=left.span.start+left.span.length;
+    *end=right.span.start;
+    if(*end<*start)return false;
+    for(size_t position=*start;position<*end;position++)
+        if(source[position]!=' '&&source[position]!='\t')return false;
+    return true;
+}
+
+/* Wanted gap kinds for one token pair. */
+typedef enum GapWant { GAP_ANY, GAP_NONE, GAP_AT_LEAST_ONE } GapWant;
+
+static GapWant wanted_gap(const DiamondToken *tokens,size_t index) {
+    const DiamondTokenKind left=tokens[index].kind,right=tokens[index+1].kind;
+    if(right==DIAMOND_TOKEN_COMMA)return GAP_NONE;
+    if(left==DIAMOND_TOKEN_COMMA)
+        return is_closing_bracket(right)?GAP_ANY:GAP_AT_LEAST_ONE;
+    if(is_spaced_operator(left)&&!operator_is_method_name(tokens,index))
+        return GAP_AT_LEAST_ONE;
+    if(is_spaced_operator(right)&&!operator_is_method_name(tokens,index+1))
+        return GAP_AT_LEAST_ONE;
+    return GAP_ANY;
+}
+
 /* True iff `content[0..leading)` is already exactly `target_spaces`
  * plain ASCII spaces -- the common "nothing to do" case this function
  * exists to detect cheaply, so an already-conventional document gets
@@ -509,7 +608,46 @@ static bool inside_string_token(const DiamondToken *tokens,size_t token_count,si
     return false;
 }
 
-JsonValue *formatting_compute(const char *text,size_t length) {
+static bool push_edit(JsonValue *result,size_t line,size_t start_col,size_t end_col,
+        const char *new_text,size_t new_text_length) {
+    JsonValue *edit=text_edit(line,start_col,end_col,new_text,new_text_length);
+    if(edit==nullptr)return false;
+    if(!json_array_push(result,edit)) {json_free(edit);return false;}
+    return true;
+}
+
+/* A `text_edit` that deletes whole lines [first,last] (1-based): from the
+ * start of `first` to the start of the line after `last`, or to the end of
+ * `last` when it is the final line. */
+static bool push_line_removal(JsonValue *result,size_t first,size_t last,
+        size_t line_count,size_t last_length) {
+    JsonValue *range=json_object();
+    JsonValue *start=json_object();
+    JsonValue *end=json_object();
+    JsonValue *edit=json_object();
+    if(range==nullptr||start==nullptr||end==nullptr||edit==nullptr) {
+        json_free(range);json_free(start);json_free(end);json_free(edit);
+        return false;
+    }
+    json_object_set(start,"line",json_number((double)(first-1)));
+    json_object_set(start,"character",json_number(0));
+    if(last<line_count) {
+        json_object_set(end,"line",json_number((double)last));
+        json_object_set(end,"character",json_number(0));
+    } else {
+        json_object_set(end,"line",json_number((double)(last-1)));
+        json_object_set(end,"character",json_number((double)last_length));
+    }
+    json_object_set(range,"start",start);
+    json_object_set(range,"end",end);
+    json_object_set(edit,"range",range);
+    json_object_set(edit,"newText",json_string("",0));
+    if(!json_array_push(result,edit)) {json_free(edit);return false;}
+    return true;
+}
+
+JsonValue *formatting_compute_range(const char *text,size_t length,size_t first_line,
+        size_t last_line) {
     char *source_copy=malloc(length+1);
     if(source_copy==nullptr)return nullptr;
     memcpy(source_copy,text,length);
@@ -529,18 +667,75 @@ JsonValue *formatting_compute(const char *text,size_t length) {
     }
 
     FormatLineDepth *depths=malloc((line_count==0?1:line_count)*sizeof *depths);
-    if(depths==nullptr) {free(lines);free(tokens);free(source_copy);return nullptr;}
+    bool *removed=calloc(line_count==0?1:line_count,sizeof *removed);
+    if(depths==nullptr||removed==nullptr) {
+        free(depths);free(removed);free(lines);free(tokens);free(source_copy);return nullptr;
+    }
     const bool balanced=line_count==0?true:
         compute_line_depths(tokens,token_count,line_count,depths);
     if(!balanced) {
-        free(tokens);free(depths);free(lines);free(source_copy);
+        free(tokens);free(depths);free(removed);free(lines);free(source_copy);
         return json_null();
     }
 
     JsonValue *result=json_array();
-    if(result==nullptr) {free(tokens);free(depths);free(lines);free(source_copy);return nullptr;}
+    if(result==nullptr) {
+        free(tokens);free(depths);free(removed);free(lines);free(source_copy);
+        return nullptr;
+    }
     bool build_ok=true;
+
+    /* Blank-line collapsing: of a run of two or more blank lines outside a
+     * string literal, keep the first. The removed lines get no other edit. */
+    /* A trailing newline leaves an empty pseudo-line after the last real
+     * one; it is not a blank line a run can include. */
+    const size_t run_limit=(length>0&&source_copy[length-1]=='\n'&&line_count>0)?
+        line_count-1:line_count;
+    for(size_t index=0;index<run_limit&&build_ok;) {
+        const FormatLine current=lines[index];
+        bool blank=true;
+        for(size_t column=0;column<current.length;column++)
+            if(source_copy[current.start+column]!=' '&&
+               source_copy[current.start+column]!='\t') {blank=false;break;}
+        if(!blank||inside_string_token(tokens,token_count,current.start)||
+           inside_string_token(tokens,token_count,current.start+current.length)) {
+            index++;
+            continue;
+        }
+        size_t run_end=index;
+        while(run_end+1<run_limit) {
+            const FormatLine next=lines[run_end+1];
+            bool next_blank=true;
+            for(size_t column=0;column<next.length;column++)
+                if(source_copy[next.start+column]!=' '&&
+                   source_copy[next.start+column]!='\t') {next_blank=false;break;}
+            if(!next_blank||inside_string_token(tokens,token_count,next.start)||
+               inside_string_token(tokens,token_count,next.start+next.length))break;
+            run_end++;
+        }
+        /* The final line of a document with a trailing newline is an empty
+         * pseudo-line; a run ending there would delete the newline's own
+         * blank, which is fine, but never remove the very last line. */
+        if(run_end>index) {
+            const size_t first_removed=index+2; /* 1-based second line of the run */
+            const size_t last_removed=run_end+1;
+            for(size_t line=first_removed;line<=last_removed;line++)removed[line-1]=true;
+            if(first_removed>=first_line&&first_removed<=last_line&&
+               !push_line_removal(result,first_removed,last_removed,line_count,
+                                  lines[last_removed-1].length))
+                build_ok=false;
+        }
+        index=run_end+1;
+    }
+
+    size_t token_cursor=0;
     for(size_t index=0;index<line_count&&build_ok;index++) {
+        const size_t line_number=index+1;
+        while(token_cursor<token_count&&tokens[token_cursor].kind!=DIAMOND_TOKEN_EOF&&
+              (size_t)tokens[token_cursor].span.line<line_number)
+            token_cursor++;
+        if(removed[index])continue;
+        if(line_number<first_line||line_number>last_line)continue;
         const FormatLine current=lines[index];
         const char *content=source_copy+current.start;
         size_t leading=0;
@@ -564,12 +759,7 @@ JsonValue *formatting_compute(const char *text,size_t length) {
             (size_t)(depths[index].depth<0?0:depths[index].depth)*2;
 
         if(blank_line) {
-            if(leading>0) {
-                JsonValue *edit=text_edit(index+1,0,leading,"",0);
-                if(edit==nullptr||!json_array_push(result,edit)) {
-                    json_free(edit);build_ok=false;break;
-                }
-            }
+            if(leading>0&&!push_edit(result,line_number,0,leading,"",0))build_ok=false;
             continue;
         }
 
@@ -577,21 +767,40 @@ JsonValue *formatting_compute(const char *text,size_t length) {
             char *spaces=target_spaces==0?nullptr:malloc(target_spaces);
             if(target_spaces>0&&spaces==nullptr) {build_ok=false;break;}
             if(target_spaces>0)memset(spaces,' ',target_spaces);
-            JsonValue *edit=text_edit(index+1,0,leading,spaces,target_spaces);
+            const bool pushed=push_edit(result,line_number,0,leading,spaces,target_spaces);
             free(spaces);
-            if(edit==nullptr||!json_array_push(result,edit)) {
-                json_free(edit);build_ok=false;break;
+            if(!pushed) {build_ok=false;break;}
+        }
+
+        /* Spacing inside the line, token pair by token pair. */
+        for(size_t k=token_cursor;k+1<token_count&&
+                (size_t)tokens[k].span.line==line_number;k++) {
+            size_t gap_start=0,gap_end=0;
+            if(!token_gap(source_copy,tokens,k,&gap_start,&gap_end))continue;
+            if(gap_start<current.start||gap_end>current.start+current.length)continue;
+            const GapWant want=wanted_gap(tokens,k);
+            const size_t gap_length=gap_end-gap_start;
+            const size_t column=gap_start-current.start;
+            if(want==GAP_NONE&&gap_length>0) {
+                if(!push_edit(result,line_number,column,column+gap_length,"",0)) {
+                    build_ok=false;break;
+                }
+            } else if(want==GAP_AT_LEAST_ONE&&gap_length==0) {
+                if(!push_edit(result,line_number,column,column," ",1)) {
+                    build_ok=false;break;
+                }
             }
         }
 
-        if(!ends_in_string&&trailing_start<current.length) {
-            JsonValue *edit=text_edit(index+1,trailing_start,current.length,"",0);
-            if(edit==nullptr||!json_array_push(result,edit)) {
-                json_free(edit);build_ok=false;break;
-            }
-        }
+        if(build_ok&&!ends_in_string&&trailing_start<current.length&&
+           !push_edit(result,line_number,trailing_start,current.length,"",0))
+            build_ok=false;
     }
-    free(tokens);free(depths);free(lines);free(source_copy);
+    free(tokens);free(depths);free(removed);free(lines);free(source_copy);
     if(!build_ok) {json_free(result);return nullptr;}
     return result;
+}
+
+JsonValue *formatting_compute(const char *text,size_t length) {
+    return formatting_compute_range(text,length,0,(size_t)-1);
 }

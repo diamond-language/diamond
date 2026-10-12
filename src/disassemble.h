@@ -26,6 +26,23 @@ bool diamond_disassemble_user(FILE *stream, const char *name,
  * guarantee the compiler's own register allocator normally provides. */
 bool diamond_verify_bytecode(const DiamondChunk *chunk);
 
+/* One call made by a statement: the callee's name when the bytecode
+ * names it (a method name for INVOKE, a function name for CALL), or a
+ * generic label for the forms that do not ("new", "call"). `line`/`column`
+ * are the instruction's own source position. */
+typedef struct DiamondCallSite {
+    char name[64];
+    uint32_t line;
+    uint32_t column;
+} DiamondCallSite;
+
+/* The calls made by the statement that starts at `start_offset` (a
+ * BREAKPOINT_CHECK, or the instruction after a debugger() call): every call
+ * instruction up to the next BREAKPOINT_CHECK, in execution order, at most
+ * `capacity`. Used by the debugger's stepInTargets. */
+size_t diamond_collect_call_sites(const DiamondChunk *chunk, size_t start_offset,
+    DiamondCallSite *out, size_t capacity);
+
 /* Writes a type set's display form (`Int`, `String | Nil`, a class/
  * interface name, or a generic/`Callable` shape with its own nested
  * type sets in brackets) to `stream` -- the exact formatting this

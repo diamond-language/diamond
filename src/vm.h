@@ -1864,6 +1864,9 @@ struct DiamondVm {
      * extra runtime state consulted by the same opcode. */
     DiamondStepMode debug_step_mode;
     size_t debug_step_target_depth;
+    /* stepIn into a specific call (DAP stepInTargets): the callee's name.
+     * Empty means any. Consumed by the next pause. */
+    char debug_step_in_target[64];
     /* Statements seen by DIAMOND_OP_BREAKPOINT_CHECK so far; the debug_fd
      * poll runs only when this is a multiple of
      * DIAMOND_DEBUG_POLL_STATEMENT_MASK + 1 (src/vm_internal.h), so the
@@ -1889,6 +1892,12 @@ struct DiamondVm {
     size_t max_instructions;
     int64_t max_wall_nanoseconds;
     size_t max_memory_bytes;
+    /* The grace allowance after a budget trips (docs/sandbox.md): zero means
+     * the built-in default for that budget (DIAMOND_INSTRUCTION_GRACE and
+     * friends in vm_internal.h); set from DIAMOND_GRACE_* at init. */
+    size_t grace_instructions;
+    int64_t grace_wall_nanoseconds;
+    size_t grace_memory_bytes;
     /* Runtime state for the two above -- instructions_executed increments
      * once per opcode dispatch in run_chunk's own loop (only when
      * resource_limits_active), start_time_ns is set once in diamond_vm_

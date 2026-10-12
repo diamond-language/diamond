@@ -13,13 +13,6 @@ a more valuable runtime, language, or tooling question.
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
 
-### Debugger follow-ups
-
-Current behavior: [debugging](debugging.md).
-
-- **`supportsStepInTargetsRequest`** -- choosing which call to step into on a line
-  with more than one (e.g. `f(g())`).
-
 ### `struct` declarations
 
 Current behavior: [classes and modules](classes-and-modules.md).
@@ -81,16 +74,8 @@ Current behavior: [deployment](deployment.md).
 
 Current behavior: [sandbox](sandbox.md).
 
-- **A configurable grace allowance** -- the cleanup allowance after a budget trips
-  (1,000,000 instructions, 1,000 ms, a quarter of the memory budget) is fixed. Needs a
-  program whose rescue clause legitimately outgrows it, or one that wants it tighter.
 - **Path and host allow-listing** -- capabilities are whole categories; finer
   matching needs a policy format, not more environment variables.
-- **Restricting `Thread.new`/`Supervisor.add_child`** -- bounding the OS threads a
-  sandboxed program can spawn (today the process-wide 64-thread cap). A
-  resource-exhaustion concern; needs a concrete abuse case.
-- **Restricting `Signal.trap`** -- a process-wide side effect, distinct from opening
-  resources.
 
 ### Improve receiver-aware tooling
 
@@ -104,16 +89,6 @@ documents and loses precision across some dependency and dynamic-flow boundaries
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.
 - Keep editor results conservative when a receiver cannot be proven.
-
-### LSP formatting
-
-Current behavior: [language server](lsp.md). The formatter normalizes indentation and
-trailing whitespace; the native compiler keeps no AST to reflow against.
-
-- **Operator and comma spacing** -- needs its own token-adjacency heuristic.
-- **Blank-line collapsing** -- a cosmetic judgment call with no single correct answer.
-- **`textDocument/rangeFormatting`** -- the depth tracking would need a starting depth
-  handed in from outside the selection.
 
 ### Harden the end-user runtime surface
 
