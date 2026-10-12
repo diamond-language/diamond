@@ -189,10 +189,12 @@ out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" small.di 2>&1)"
 [[ "$out" == *$'\n'"42"$'\n'"nil" ]]
 count=$((count + 1))
 
-# --- a program that needs JSON compiles against the live prelude rather than
-# the embedded one, so its cache keeps everything and must still round-trip ---
+# --- a program that uses JSON is compiled against the same embedded prelude
+# (which includes JSON), so its cache stays small too and still round-trips ---
 printf 'puts(JSON.stringify({"a": [1, 2]}))\n' > "$work/json.di"
 first="$(cd "$work" && "$diamond" json.di)"
+json_size="$(stat -c %s "$work/json.dic" 2>/dev/null || stat -f %z "$work/json.dic")"
+(( json_size < 200 * 1024 ))
 out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" json.di 2>&1)"
 [[ "$out" == *"cache: hit"* ]]
 [[ "$out" == *"$first" ]]
@@ -225,6 +227,16 @@ count=$((count + 1))
 # A script whose cache was cleared simply recompiles and rewrites it.
 out="$(cd "$work/clear" && DIAMOND_TRACE_CACHE=1 "$diamond" a.di 2>&1)"
 [[ "$out" == *"cache: miss"* && "$out" == *"cache: wrote"* ]]
+count=$((count + 1))
+
+# --- a program that declares names of its own that collide with JSON's still
+# compiles (it falls back to a live prelude compile) and caches correctly ---
+printf 'class JSONError < StandardError\nend\nclass JSONCodec\n  def tag()\n    "mine"\n  end\nend\nputs(JSONCodec.new().tag())\n' > "$work/own_json.di"
+first="$(cd "$work" && "$diamond" own_json.di)"
+[[ "$first" == "mine"$'\n'"nil" ]]
+out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" own_json.di 2>&1)"
+[[ "$out" == *"cache: hit"* ]]
+[[ "$out" == *"$first" ]]
 count=$((count + 1))
 
 echo "$count cache tests passed"
