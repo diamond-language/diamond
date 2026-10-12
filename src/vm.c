@@ -9794,7 +9794,8 @@ static bool debug_pipe_read_header_line(int fd,char *buffer,size_t capacity) {
  * convention elsewhere in this codebase) -- the caller only ever copies
  * min(*line_count,capacity) entries out. */
 static DiamondDebugCommandKind parse_debug_command(const char *body,
-        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets,
+        char *step_target) {
     if(strstr(body,"\"setBreakpoints\"")!=nullptr) {
         size_t count=0;
         const char *lines_key=strstr(body,"\"offsets\"");
@@ -9819,7 +9820,19 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
     }
     if(strstr(body,"\"continue\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_CONTINUE;
     if(strstr(body,"\"next\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_NEXT;
-    if(strstr(body,"\"stepIn\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    if(strstr(body,"\"stepIn\"")!=nullptr) {
+        /* An optional `"target":"name"` (stepInTargets): at most 63 bytes. */
+        step_target[0]='\0';
+        const char *key=strstr(body,"\"target\"");
+        const char *open=key!=nullptr?strchr(key+8,'"'):nullptr;
+        if(open!=nullptr) {
+            size_t length=0;
+            for(const char *cursor=open+1;*cursor!='\0'&&*cursor!='"'&&length<63;cursor++)
+                step_target[length++]=*cursor;
+            step_target[length]='\0';
+        }
+        return DIAMOND_DEBUG_COMMAND_STEP_IN;
+    }
     if(strstr(body,"\"stepOut\"")!=nullptr)return DIAMOND_DEBUG_COMMAND_STEP_OUT;
     return DIAMOND_DEBUG_COMMAND_NONE;
 }
@@ -9837,8 +9850,10 @@ static DiamondDebugCommandKind parse_debug_command(const char *body,
  * DIAMOND_DEBUG_COMMAND_NONE; the caller treats that the same as an
  * ordinary "continue" (see its own comment). */
 bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
-        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets) {
+        size_t *lines,size_t *line_count,size_t capacity,bool *are_offsets,
+        char *step_target) {
     *kind=DIAMOND_DEBUG_COMMAND_NONE;
+    step_target[0]='\0';
     *line_count=0;
     long content_length=-1;
     char line[256];
@@ -9868,7 +9883,7 @@ bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
         remaining-=next;
     }
     if(body_length==(size_t)content_length)
-        *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets);
+        *kind=parse_debug_command(body,lines,line_count,capacity,are_offsets,step_target);
     return true;
 }
 
@@ -9907,7 +9922,6 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         size_t source_line_offset,
         DiamondValue *registers,const uint16_t *name_indices,
         const uint16_t *local_registers,uint8_t local_count,const char *reason) {
-    (void)instruction_offset;
     GrowBuffer body={};
     bool ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"event\":\"paused\",\"reason\":");
     if(ok)ok=debug_json_append_escaped_string(&body,reason,strlen(reason));
@@ -9935,6 +9949,25 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
                 ",\"line\":%u,\"column\":%u}",frame_line,frame_column);
         if(ok&&written>0)ok=grow_buffer_append(&body,numbers,(size_t)written);
         else if(written<0)ok=false;
+    }
+    /* The calls the statement about to run makes, in order, for DAP's
+     * stepInTargets: `{"name","line","column"}` each. */
+    if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"targets\":[");
+    {
+        DiamondCallSite sites[DIAMOND_MAX_STEP_IN_TARGETS];
+        const size_t site_count=diamond_collect_call_sites(chunk,instruction_offset,sites,
+            DIAMOND_MAX_STEP_IN_TARGETS);
+        for(size_t index=0;ok&&index<site_count;index++) {
+            if(index>0&&!(ok=GROW_BUFFER_APPEND_LITERAL(&body,",")))break;
+            ok=GROW_BUFFER_APPEND_LITERAL(&body,"{\"name\":");
+            if(ok)ok=debug_json_append_escaped_string(&body,sites[index].name,
+                strlen(sites[index].name));
+            char position[64];
+            const int written=snprintf(position,sizeof position,
+                ",\"line\":%u,\"column\":%u}",sites[index].line,sites[index].column);
+            if(ok&&written>0)ok=grow_buffer_append(&body,position,(size_t)written);
+            else if(written<0)ok=false;
+        }
     }
     if(ok)ok=GROW_BUFFER_APPEND_LITERAL(&body,"],\"locals\":[");
     size_t locals_emitted=0;
@@ -9969,8 +10002,9 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
         size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
         bool are_offsets=false;
+        char step_target[64];
         if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets))
+                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets,step_target))
             break;
         if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
             memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
@@ -9985,8 +10019,12 @@ static DiamondVmStatus debugger_structured_helper(DiamondVm *vm,
          * the same way `continue` does. DIAMOND_OP_BREAKPOINT_CHECK's own
          * case (further down this file) is what actually consumes this
          * on the next qualifying checkpoint hit. */
+        vm->debug_step_in_target[0]='\0';
         if(kind==DIAMOND_DEBUG_COMMAND_NEXT)vm->debug_step_mode=DIAMOND_STEP_OVER;
-        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN)vm->debug_step_mode=DIAMOND_STEP_IN;
+        else if(kind==DIAMOND_DEBUG_COMMAND_STEP_IN) {
+            vm->debug_step_mode=DIAMOND_STEP_IN;
+            memcpy(vm->debug_step_in_target,step_target,sizeof vm->debug_step_in_target);
+        }
         else if(kind==DIAMOND_DEBUG_COMMAND_STEP_OUT)vm->debug_step_mode=DIAMOND_STEP_OUT;
         if(vm->debug_step_mode!=DIAMOND_STEP_NONE)vm->debug_step_target_depth=depth;
         break;

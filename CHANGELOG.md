@@ -18,6 +18,8 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- The debugger answers `stepInTargets`: on a line with several calls it lists them in execution
+  order and `stepIn` with a `targetId` enters the chosen one.
 - The language server formats more: a space after commas and around assignment, comparison and
   logical operators, runs of blank lines collapsed to one, and `textDocument/rangeFormatting`. Only
   whitespace between tokens changes, checked against every `.di` file in the tree.

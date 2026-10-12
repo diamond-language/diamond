@@ -1864,6 +1864,9 @@ struct DiamondVm {
      * extra runtime state consulted by the same opcode. */
     DiamondStepMode debug_step_mode;
     size_t debug_step_target_depth;
+    /* stepIn into a specific call (DAP stepInTargets): the callee's name.
+     * Empty means any. Consumed by the next pause. */
+    char debug_step_in_target[64];
     /* Statements seen by DIAMOND_OP_BREAKPOINT_CHECK so far; the debug_fd
      * poll runs only when this is a multiple of
      * DIAMOND_DEBUG_POLL_STATEMENT_MASK + 1 (src/vm_internal.h), so the

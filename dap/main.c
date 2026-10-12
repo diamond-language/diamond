@@ -110,6 +110,7 @@ typedef struct DapServer {
     JsonValue *stopped_message; /* owns stack/locals; freed on replace */
     const JsonValue *stopped_stack;
     const JsonValue *stopped_locals;
+    const JsonValue *stopped_targets; /* the calls the paused statement makes */
 } DapServer;
 
 static void dap_write(JsonValue *message) {
@@ -281,6 +282,7 @@ static void free_stopped_payload(DapServer *server) {
     json_free(server->stopped_message);
     server->stopped_message = nullptr;
     server->stopped_stack = nullptr;
+    server->stopped_targets = nullptr;
     server->stopped_locals = nullptr;
 }
 
@@ -309,7 +311,7 @@ static void handle_initialize(DapServer *server, const JsonValue *request) {
     JsonValue *capabilities = json_object();
     if(capabilities == nullptr) { send_response(server, request, false, nullptr); return; }
     json_object_set(capabilities, "supportsConfigurationDoneRequest", json_bool(true));
-    json_object_set(capabilities, "supportsStepInTargetsRequest", json_bool(false));
+    json_object_set(capabilities, "supportsStepInTargetsRequest", json_bool(true));
     json_object_set(capabilities, "supportsSetVariable", json_bool(false));
     json_object_set(capabilities, "supportsBreakpointLocationsRequest", json_bool(false));
     send_response(server, request, true, capabilities);
@@ -544,9 +546,79 @@ static void handle_next(DapServer *server, const JsonValue *request) {
     send_response(server, request, true, nullptr);
 }
 
-static void handle_step_in(DapServer *server, const JsonValue *request) {
+/* stepIn, optionally with a `targetId` from stepInTargets: the id indexes
+ * the `targets` the paused payload carried, and the callee's name travels to
+ * the VM as `"target"`. An unknown id steps in as plain stepIn. */
+static void handle_step_in(DapServer *server, const JsonValue *request,
+        const JsonValue *arguments) {
+    double target_id = -1;
+    const bool has_target = json_as_number(json_object_get(arguments, "targetId"), &target_id);
+    if(has_target && server->control_stream != nullptr && server->stopped_targets != nullptr &&
+       server->stopped_targets->kind == JSON_ARRAY && target_id >= 0 &&
+       (size_t)target_id < server->stopped_targets->as.array.count) {
+        const JsonValue *entry = server->stopped_targets->as.array.items[(size_t)target_id];
+        const char *name = nullptr;
+        size_t name_length = 0;
+        if(json_as_string(json_object_get(entry, "name"), &name, &name_length) &&
+           name_length > 0 && name_length < 64) {
+            JsonValue *command = json_object();
+            if(command != nullptr) {
+                json_object_set(command, "command", json_string_z("stepIn"));
+                json_object_set(command, "target", json_string(name, name_length));
+                rpc_write_message(server->control_stream, command);
+                json_free(command);
+                send_response(server, request, true, nullptr);
+                return;
+            }
+        }
+    }
     send_debug_command(server, "stepIn");
     send_response(server, request, true, nullptr);
+}
+
+/* The calls the paused statement makes (src/disassemble.c's
+ * diamond_collect_call_sites, carried in the paused payload), in execution
+ * order, so a client can pick which one stepIn enters. Only the innermost
+ * frame has any. */
+static void handle_step_in_targets(DapServer *server, const JsonValue *request,
+        const JsonValue *arguments) {
+    double frame_id = 0;
+    json_as_number(json_object_get(arguments, "frameId"), &frame_id);
+    JsonValue *targets = json_array();
+    if(targets != nullptr && frame_id == 0 && server->stopped_targets != nullptr &&
+       server->stopped_targets->kind == JSON_ARRAY) {
+        for(size_t index = 0; index < server->stopped_targets->as.array.count; index++) {
+            const JsonValue *entry = server->stopped_targets->as.array.items[index];
+            const char *name = nullptr;
+            size_t name_length = 0;
+            double line_value = 0, column_value = 0;
+            json_as_string(json_object_get(entry, "name"), &name, &name_length);
+            json_as_number(json_object_get(entry, "line"), &line_value);
+            json_as_number(json_object_get(entry, "column"), &column_value);
+            double resolved_line = line_value;
+            if(server->bundle_loaded) {
+                const size_t offset = combined_buffer_offset_for_line_column(
+                    server->combined, (size_t)line_value, (size_t)column_value);
+                DiamondDiagnostic synthetic = {.span = {.start = offset,
+                    .line = (size_t)line_value, .column = (size_t)column_value}};
+                const DiamondResolvedLocation resolved = diamond_resolve_diagnostic_location(
+                    server->program_path, server->combined, synthetic,
+                    &server->bundle, server->user_offset);
+                resolved_line = (double)resolved.line;
+            }
+            JsonValue *target = json_object();
+            if(target == nullptr) continue;
+            json_object_set(target, "id", json_number((double)index));
+            json_object_set(target, "label", json_string(name != nullptr ? name : "", name_length));
+            json_object_set(target, "line", json_number(resolved_line));
+            json_object_set(target, "column", json_number(column_value));
+            json_array_push(targets, target);
+        }
+    }
+    JsonValue *body = json_object();
+    if(body != nullptr) json_object_set(body, "targets", targets != nullptr ? targets : json_array());
+    else json_free(targets);
+    send_response(server, request, true, body);
 }
 
 static void handle_step_out(DapServer *server, const JsonValue *request) {
@@ -702,6 +774,7 @@ static void handle_stopped_payload(DapServer *server, JsonValue *message) {
     server->stopped_message = message;
     server->stopped_stack = json_object_get(message, "stack");
     server->stopped_locals = json_object_get(message, "locals");
+    server->stopped_targets = json_object_get(message, "targets");
     /* "breakpoint" or "step" (docs/debugging.md's own "Stepping"
      * section) -- src/vm.c's own debugger_structured_helper always
      * includes this now; the fallback is only for a message that
@@ -750,7 +823,8 @@ static void handle_request(DapServer *server, const JsonValue *request) {
     else if(strcmp(command, "configurationDone") == 0) handle_configuration_done(server, request);
     else if(strcmp(command, "continue") == 0) handle_continue(server, request);
     else if(strcmp(command, "next") == 0) handle_next(server, request);
-    else if(strcmp(command, "stepIn") == 0) handle_step_in(server, request);
+    else if(strcmp(command, "stepIn") == 0) handle_step_in(server, request, arguments);
+    else if(strcmp(command, "stepInTargets") == 0) handle_step_in_targets(server, request, arguments);
     else if(strcmp(command, "stepOut") == 0) handle_step_out(server, request);
     else if(strcmp(command, "threads") == 0) handle_threads(server, request);
     else if(strcmp(command, "stackTrace") == 0) handle_stack_trace(server, request);

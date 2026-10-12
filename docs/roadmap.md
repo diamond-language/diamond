@@ -13,13 +13,6 @@ a more valuable runtime, language, or tooling question.
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
 
-### Debugger follow-ups
-
-Current behavior: [debugging](debugging.md).
-
-- **`supportsStepInTargetsRequest`** -- choosing which call to step into on a line
-  with more than one (e.g. `f(g())`).
-
 ### `struct` declarations
 
 Current behavior: [classes and modules](classes-and-modules.md).
