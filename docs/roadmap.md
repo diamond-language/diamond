@@ -27,17 +27,11 @@ Current behavior: [classes and modules](classes-and-modules.md).
 - **A superclass, or being reopened** -- no obviously correct semantics for
   regenerating `==`/`to_s`/`initialize` against an inherited or changed field list.
   Revisit only with a concrete design.
-- **Exact-class `==`** -- the generated `==` accepts any subclass of the struct's
-  class, so a subclass with extra fields compares equal on the shared ones. Narrow
-  and known; fix only with a driving need.
-
-### freeze / frozen?
-
-Current behavior: [classes and modules](classes-and-modules.md).
-
-- **Frozen `Array`/`Hash` literals** -- freezing at the point a literal is written,
-  instead of a `.freeze()` at every construction site. `String` is already
-  immutable, so this only matters for collections. Needs a concrete use case.
+- **Exact-class `==`** -- the generated `==` compares only the struct's own fields and
+  accepts any subclass, so `Point.new(1, 2) == Point3D.new(1, 2, 3)` is true in both
+  directions and two `Point3D`s differing only in `z` compare equal. Requiring the same
+  class would fix the cross-class case but not the extra-field one; fix only with a
+  driving need.
 
 ### Tail-call optimization
 
@@ -57,9 +51,10 @@ Current behavior: [callables](callables.md).
 
 Current behavior: [threads](threads.md).
 
-- **Unbounded or rendezvous channels** -- `Channel.new(0)`-style handoff, or no
-  capacity limit. A bound keeps memory predictable and gives `send` backpressure, so
-  this needs a concrete use case.
+- **Rendezvous channels** -- `Channel.new(0)`-style handoff, where `send` returns only
+  once a receiver has taken the value. Needs a concrete use case. An unbounded
+  channel is deliberately not planned: the capacity bound is what keeps memory
+  predictable and gives `send` backpressure.
 
 ### `Supervisor`
 
