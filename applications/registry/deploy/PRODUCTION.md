@@ -7,8 +7,9 @@ certificates (see "Proxy and certificates" below); Caddy was retired.
 
 Runtime revision: `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
 2026-10-12 with `tools/deploy_registry.sh` after a verified backup; the bundled seed pins
-`arel` 0.34.5, which is not yet published to the catalog, so the script's public
-verification reports `locked archive differs from inventory: arel` until it is);
+`arel` 0.34.5, which was published the same day with a 30-minute credential (revoked,
+archive sha256 `323edea3234d63777acf49fd57eb93ffe159688cb051e64e3596c2b228c92acf`), after
+which `tools/verify_registry_launch.py` passed for all 18 cuts);
 previously `8d64ab965949defcec3c9a0e066a79b2849d90b5` (main, deployed
 2026-10-08 with `tools/deploy_registry.sh --no-verify` after a verified backup; it
 carries the cut-card README previews and `arel` 0.34.4 in the bundled seed; `arel` 0.34.4
