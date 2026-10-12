@@ -1,0 +1,27 @@
+quick
+  finishes inside the budget; nothing trips
+  exited normally
+  > sum 499500
+  within 3s: true
+blocked receive
+  Channel#receive with no sender is bounded by the budget
+  exited normally
+  > receive was cut short: resource limit exceeded
+  within 3s: true
+poll forever
+  IO.poll with no timeout is bounded by the budget
+  exited normally
+  > poll was cut short: resource limit exceeded
+  within 3s: true
+cleanup
+  rescue the error, ensure runs, exit status 0
+  exited normally
+  > ensure ran
+  > rescued, finishing normally
+  within 3s: true
+rescue then block
+  blocking again after the error hits the grace limit
+  stopped by the hard limit
+  > rescued once
+  ! wall-clock budget exhausted: the program kept running after its ResourceLimitError
+  within 3s: true
