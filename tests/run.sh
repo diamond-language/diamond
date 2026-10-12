@@ -496,6 +496,23 @@ actual="$(DIAMOND_TRACE_IC=1 "$diamond" tests/cases/inline_cache.di 2>"$error_fi
 grep -q 'inline caches: 4 hits, 1 misses' "$error_file"
 rm -f "$error_file"
 
+# A self-recursive tail call runs in place and is counted; ordinary recursion is not.
+error_file="$(mktemp)"
+actual="$(DIAMOND_TRACE_TAIL_CALLS=1 "$diamond" tests/cases/tail_call_deep_self_recursion.di \
+    2>"$error_file")"
+[[ "$actual" == $'5000050000\nnil' ]]
+grep -q '^tail calls: 100000 optimized in place$' "$error_file"
+rm -f "$error_file"
+
+error_file="$(mktemp)"
+DIAMOND_TRACE_TAIL_CALLS=1 "$diamond" -e 'def f(n)
+  return 0 if n == 0
+  return 1 + f(n - 1)
+end
+puts(f(5))' >/dev/null 2>"$error_file"
+grep -q '^tail calls: 0 optimized in place$' "$error_file"
+rm -f "$error_file"
+
 error_file="$(mktemp)"
 actual="$(DIAMOND_TRACE_IC_FAST=1 "$diamond" tests/cases/inline_cache.di 2>"$error_file")"
 [[ "$actual" == "42" ]]
@@ -3204,7 +3221,7 @@ if [[ "${DIAMOND_CASE_RUNNER:-batch}" == "subprocess" ]]; then
             DIAMOND_INVALIDATE_IC_EACH_RUN DIAMOND_TRACE_IC_EACH_RUN DIAMOND_TRACE_IC \
             DIAMOND_TRACE_IC_SITES DIAMOND_TRACE_IC_FAST DIAMOND_TRACE_IC_PROBES \
             DIAMOND_TRACE_IC_REWRITES DIAMOND_TRACE_IC_POLICY DIAMOND_TRACE_SHAPES \
-            DIAMOND_TRACE_FIELDS DIAMOND_TRACE_OPCODES DIAMOND_TRACE_QUICKEN \
+            DIAMOND_TRACE_FIELDS DIAMOND_TRACE_OPCODES DIAMOND_TRACE_TAIL_CALLS DIAMOND_TRACE_QUICKEN \
             DIAMOND_FORCE_REPL DIAMOND_SANDBOX DIAMOND_SANDBOX_ALLOW DIAMOND_NO_CACHE \
             DIAMOND_TRACE_CACHE DIAMOND_MAX_INSTRUCTIONS DIAMOND_MAX_WALL_MILLISECONDS \
             DIAMOND_MAX_MEMORY_BYTES DIAMOND_JIT DIAMOND_JIT_THRESHOLD DIAMOND_TRACE_JIT; do

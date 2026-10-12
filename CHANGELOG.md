@@ -46,6 +46,10 @@ authoritative fine-grained record.
   invalid value used to surface only when it was read or rendered. Code that passed `nil` for
   a Boolean flag or a `String` for a limit must now pass the declared type.
 
+### Tooling
+
+- `DIAMOND_TRACE_TAIL_CALLS=1` reports how many self-recursive tail calls ran in place.
+
 ### Performance
 
 - A debug session polls its control channel every 32nd statement instead of every statement, so a

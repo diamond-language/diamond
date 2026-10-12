@@ -64,6 +64,9 @@ bounded by the depth limit).
   arguments (beyond its declared fixed parameters) are tracked against
   the *original* call, not something an in-place tail call can update.
 
+`DIAMOND_TRACE_TAIL_CALLS=1` prints how many calls ran in place when the program
+exits, and `--dump-bytecode` shows which call sites were rewritten to `TAIL_CALL`.
+
 None of these need to be memorized to write correct code -- they only
 ever affect how deep a *specific* recursive shape can go before hitting
 the ordinary depth limit, never what any program returns. The one

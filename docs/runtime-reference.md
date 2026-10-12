@@ -265,6 +265,9 @@ and `DIAMOND_TRACE_JIT` ([deployment](deployment.md)); `DIAMOND_NO_CACHE` and
   that emits bytecode (see "No AST" above).
 - `DIAMOND_TRACE_GC` -- `GC: M major (Xs), m minor (Xs)`: collection counts and
   total pause time.
+- `DIAMOND_TRACE_TAIL_CALLS` -- `tail calls: N optimized in place`: how many self-recursive
+  tail calls ran as a jump rather than a nested call ([callables](callables.md)). `0` for a
+  program whose recursion did not qualify.
 - `DIAMOND_REPEAT=N` -- run the compiled program `N` times in one VM, stopping at the
   first failure. Later runs start with warm caches, which is what a steady-state
   measurement wants; the program's own output repeats every time.

@@ -212,6 +212,9 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
                 fprintf(stderr,"opcode[%zu]: %zu\n",opcode,
                         vm.opcode_counts[opcode]);
     }
+    if (getenv("DIAMOND_TRACE_TAIL_CALLS") != nullptr)
+        fprintf(stderr,"tail calls: %zu optimized in place\n",
+                vm.opcode_counts[DIAMOND_OP_TAIL_CALL]);
     if (getenv("DIAMOND_TRACE_QUICKEN") != nullptr)
         fprintf(stderr,"quickened sites: %zu, deoptimized sites: %zu\n",
                 vm.quickened_sites,vm.deoptimized_sites);
