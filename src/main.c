@@ -622,9 +622,32 @@ static void cache_clear_directory(const char *directory, CacheClearTotals *total
     closedir(handle);
 }
 
+/* `diamond cache warm SOURCE...`: compiles each script and writes its cache
+ * without running it. */
+static int handle_cache_warm(int argc, char **argv) {
+    if (argc < 4) {
+        fprintf(stderr, "usage: diamond cache warm SOURCE...\n");
+        return 64;
+    }
+    int worst = 0;
+    for (int index = 3; index < argc; index++) {
+        char *source = read_file(argv[index]);
+        if (source == nullptr) {
+            worst = worst > 74 ? worst : 74;
+            continue;
+        }
+        const int status = diamond_warm_cache(argv[index], source);
+        free(source);
+        if (status > worst) worst = status;
+    }
+    return worst;
+}
+
 static int handle_cache_command(int argc, char **argv) {
+    if (argc >= 3 && strcmp(argv[2], "warm") == 0) return handle_cache_warm(argc, argv);
     if (argc < 3 || strcmp(argv[2], "clear") != 0) {
-        fprintf(stderr, "usage: diamond cache clear [--dry-run] [PATH...]\n");
+        fprintf(stderr, "usage: diamond cache clear [--dry-run] [PATH...]\n"
+                        "       diamond cache warm SOURCE...\n");
         return 64;
     }
     CacheClearTotals totals = {0};
@@ -664,6 +687,7 @@ static void print_usage(FILE *stream) {
           "       diamond --dump-bytecode[=user|all] [-e CODE | FILE] [ARGS...]\n"
           "       diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]\n"
           "       diamond cache clear [--dry-run] [PATH...]\n"
+          "       diamond cache warm SOURCE...\n"
           "\n"
           "Run a Diamond program, evaluate source, or start the REPL when no\n"
           "arguments are given and standard input is a terminal.\n"
@@ -683,7 +707,9 @@ static void print_usage(FILE *stream) {
           "\n"
           "'diamond cache clear' removes the bytecode caches (.dic files) next to\n"
           "scripts: those of the given files, every one under the given\n"
-          "directories, or under the current directory -- see docs/caching.md.\n"
+          "directories, or under the current directory. 'diamond cache warm'\n"
+          "compiles scripts and writes their caches without running them, for\n"
+          "image builds -- see docs/caching.md.\n"
           "\n"
           "ARGS after FILE or CODE are available to the program through ARGV.\n",
           stream);

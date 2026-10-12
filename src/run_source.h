@@ -91,4 +91,12 @@ int diamond_run_source_with_template(const char *name, const char *source,
 bool diamond_compile_source(const char *name, const char *source,
     DiamondProgram *program);
 
+/* Compiles `source` (without running it) and writes its bytecode cache next
+ * to `name`, the file diamond_run_source would write on a first run -- for
+ * warming caches at image-build time so a read-only deployment can read them.
+ * Prints "cached PATH" or "up to date PATH". Returns an exit status: 0 on
+ * success, 65 if the program does not compile, 73 if the cache could not be
+ * written, 74 if the source cannot be loaded. */
+int diamond_warm_cache(const char *name, const char *source);
+
 #endif

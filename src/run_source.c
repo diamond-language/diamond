@@ -540,42 +540,107 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
  * diagnostic-formatting path at all. No debug-breakpoint support (see
  * diamond_compile_with_breakpoints): a standalone AOT binary has no
  * DAP client to pause for. */
+/* Compiles `bundle` the way diamond_run_source does: against the embedded
+ * prelude `template` when there is one, and only a program that mentions JSON
+ * and fails that falls back to a live prelude+source compile (the rare one
+ * declaring names that collide with JSON's). Prints the diagnostic of the
+ * attempt that decided the outcome; the caller still owns `bundle`. */
+static bool compile_bundle_for_run(const char *name, const DiamondSourceBundle *bundle,
+        DiamondProgram *program, const DiamondProgram *template) {
+    const bool mentions_json=diamond_prelude_needs_json(bundle->source);
+    DiamondDiagnostic diagnostic;
+    if(template!=nullptr) {
+        diamond_program_free(program);
+        if(diamond_compile_incremental(bundle->source,program,template,&diagnostic))
+            return true;
+        if(!mentions_json) {
+            print_diagnostic(name,bundle->source,diagnostic,bundle,0);
+            return false;
+        }
+    }
+    const size_t prelude_length=diamond_prelude_length(mentions_json);
+    const size_t source_length=strlen(bundle->source);
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    char *combined=malloc(prelude_length+reset_length+source_length+1);
+    if(combined==nullptr) {
+        fprintf(stderr,"diamond: out of memory building expanded source\n");
+        return false;
+    }
+    size_t offset=diamond_prelude_write(combined,mentions_json);
+    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+    memcpy(combined+offset,bundle->source,source_length+1);
+    diamond_program_free(program);
+    const bool ok=diamond_compile(combined,program,&diagnostic);
+    if(!ok)print_diagnostic(name,combined,diagnostic,bundle,prelude_length+reset_length);
+    free(combined);
+    return ok;
+}
+
 bool diamond_compile_source(const char *name, const char *source, DiamondProgram *program) {
     DiamondSourceBundle bundle;char load_error[768];
     if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
         fprintf(stderr,"diamond: %s\n",load_error);
         return false;
     }
-    DiamondProgram *template=nullptr;
-    if(!diamond_prelude_needs_json(bundle.source))
-        template=build_embedded_prelude_template();
-
-    bool ok;
-    diamond_program_free(program);
+    DiamondProgram *template=build_embedded_prelude_template();
+    const bool ok=compile_bundle_for_run(name,&bundle,program,template);
     if(template!=nullptr) {
-        DiamondDiagnostic diagnostic;
-        ok=diamond_compile_incremental(bundle.source,program,template,&diagnostic);
-        if(!ok)print_diagnostic(name,bundle.source,diagnostic,&bundle,0);
-        diamond_program_free(template);free(template);
-    } else {
-        const bool include_json=diamond_prelude_needs_json(bundle.source);
-        const size_t prelude_length=diamond_prelude_length(include_json);
-        const size_t source_length=strlen(bundle.source);
-        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-        char *combined=malloc(prelude_length+reset_length+source_length+1);
-        if(combined==nullptr) {
-            fprintf(stderr,"diamond: out of memory building expanded source\n");
-            diamond_source_bundle_free(&bundle);
-            return false;
-        }
-        size_t offset=diamond_prelude_write(combined,include_json);
-        memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
-        memcpy(combined+offset,bundle.source,source_length+1);
-        DiamondDiagnostic diagnostic;
-        ok=diamond_compile(combined,program,&diagnostic);
-        if(!ok)print_diagnostic(name,combined,diagnostic,&bundle,prelude_length+reset_length);
-        free(combined);
+        diamond_program_free(template);
+        free(template);
     }
     diamond_source_bundle_free(&bundle);
     return ok;
+}
+
+int diamond_warm_cache(const char *name, const char *source) {
+    char *cache_path=diamond_cache_path_for(name);
+    if(cache_path==nullptr) {
+        fprintf(stderr,"diamond: cannot cache '%s'\n",name);
+        return 64;
+    }
+    DiamondSourceBundle bundle;char load_error[768];
+    if(!diamond_load_program(name,source,&bundle,load_error,sizeof load_error)) {
+        fprintf(stderr,"diamond: %s\n",load_error);
+        free(cache_path);
+        return 74;
+    }
+    DiamondProgram *program=calloc(1,sizeof *program);
+    DiamondProgram *template=build_embedded_prelude_template();
+    if(program==nullptr||template==nullptr) {
+        fprintf(stderr,"diamond: out of memory\n");
+        free(program);
+        if(template!=nullptr) {diamond_program_free(template);free(template);}
+        diamond_source_bundle_free(&bundle);
+        free(cache_path);
+        return 74;
+    }
+    uint8_t source_hash[32];
+    diamond_hash_source(bundle.source,source_hash);
+    int status=0;
+    if(diamond_program_read_cache_file(cache_path,source_hash,program,template)) {
+        printf("up to date %s\n",cache_path);
+    } else if(!compile_bundle_for_run(name,&bundle,program,template)) {
+        status=65;
+    } else {
+        diamond_program_write_cache_file(cache_path,source_hash,program,template);
+        /* The write is best effort; confirm it landed instead of reporting
+         * success for a read-only directory. */
+        DiamondProgram *check=calloc(1,sizeof *check);
+        const bool written=check!=nullptr&&
+            diamond_program_read_cache_file(cache_path,source_hash,check,template);
+        if(check!=nullptr) {diamond_program_free(check);free(check);}
+        if(written) {
+            printf("cached %s\n",cache_path);
+        } else {
+            fprintf(stderr,"diamond: cannot write %s\n",cache_path);
+            status=73;
+        }
+    }
+    diamond_program_free(program);
+    free(program);
+    diamond_program_free(template);
+    free(template);
+    diamond_source_bundle_free(&bundle);
+    free(cache_path);
+    return status;
 }

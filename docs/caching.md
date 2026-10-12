@@ -87,6 +87,19 @@ that happens to end in `.dic` is left alone, and it never follows symbolic links
 run, so clearing is always safe.
 
 
+## Warming caches
+
+```sh
+diamond cache warm app.di lib/worker.di
+```
+
+compiles each script and writes its cache without running it, which is what an image or
+package build wants: run it once while the directory is still writable, and a read-only
+deployment (a container image, a system-wide install) then reads the cache on every start.
+It prints `cached PATH`, or `up to date PATH` when a valid cache is already there, and exits
+65 if a script does not compile or 73 if the cache could not be written. A cache is only valid
+for the `diamond` binary that wrote it, so warm with the binary the deployment runs.
+
 ## Disabling it
 
 `DIAMOND_NO_CACHE=1` (any value, matching `DIAMOND_STRESS_GC`'s own convention) turns
@@ -98,7 +111,8 @@ stderr, useful for confirming the feature is actually doing something.
 
 - **`-e`/the REPL.** Neither has a stable on-disk path a cache file could sit next to
   -- `-e`'s own display name is always the literal string `"-e"` regardless of what
-  code was actually passed. A different, adjacent feature, not attempted here.
+  code was actually passed. Not worth a content-addressed store either: a one-liner
+  compiles in milliseconds against the embedded prelude, so there is little to save.
 - **A step-debugger session (`DIAMOND_DEBUG_BREAKPOINTS` set).** Already forces a
   live, uncached compile unconditionally, so the DAP server's own assumptions about a
   freshly-compiled combined source buffer stay true.
@@ -113,6 +127,3 @@ stderr, useful for confirming the feature is actually doing something.
   catch. `DIAMOND_CASE_RUNNER=subprocess` runs every case through the real CLI instead,
   which does write caches next to the test sources (`diamond cache clear tests/cases`
   removes them).
-
-See [the roadmap](roadmap.md#bytecode-caching) for possible follow-ups,
-including read-only deployments.
