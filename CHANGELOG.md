@@ -62,6 +62,9 @@ authoritative fine-grained record.
 
 ### Performance
 
+- A program that mentions `JSON` now compiles against the embedded prelude like any other, so its
+  bytecode cache is 20 KB instead of 1.2 MB (and it skips compiling the prelude). The few programs
+  that declare names colliding with JSON's fall back to the live prelude as before.
 - A bytecode cache (`.dic`) no longer carries the prelude and stores each function by its used
   bytes: a three-line script's cache is 20 KB instead of 4 MB, and the embedded prelude blob in
   the binary is 0.8 MB instead of 4 MB. A cache hit takes the same time as before. Old cache

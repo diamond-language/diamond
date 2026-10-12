@@ -248,7 +248,8 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
         DiamondBytecodeDump dump_bytecode, DiamondProgram *program,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
-        const char *cache_path, const uint8_t *source_hash) {
+        const char *cache_path, const uint8_t *source_hash,
+        const DiamondProgram *cache_template) {
     const bool include_json=diamond_prelude_needs_json(bundle->source);
     const size_t prelude_length=diamond_prelude_length(include_json);
     const size_t source_length=strlen(bundle->source);
@@ -277,7 +278,10 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
     }
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
     if (cache_path != nullptr) {
-        diamond_program_write_cache_file(cache_path, source_hash, program, nullptr);
+        /* Compiled live, but its prelude prefix is the embedded template's
+         * own text, so the cache can leave those functions out too (it
+         * falls back to the whole program when they differ). */
+        diamond_program_write_cache_file(cache_path, source_hash, program, cache_template);
         if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
             fprintf(stderr, "cache: wrote %s\n", cache_path);
     }
@@ -300,8 +304,12 @@ int diamond_run_source_with_program(const char *name, const char *source,
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
         script_argc,script_argv,trace_startup,start_time,loaded_time,
-        nullptr,nullptr);
+        nullptr,nullptr,nullptr);
 }
+
+/* Returned by run_source_from_bundle_template (never a real exit status) when
+ * its compile failed and it was asked to leave the retry to the caller. */
+enum { DIAMOND_TEMPLATE_COMPILE_FAILED = -1 };
 
 /* See run_source_from_bundle_program's own comment -- the same split,
  * for diamond_run_source_with_template. */
@@ -309,11 +317,14 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
         DiamondBytecodeDump dump_bytecode, DiamondProgram *program, const DiamondProgram *template,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time,
-        const char *cache_path, const uint8_t *source_hash) {
+        const char *cache_path, const uint8_t *source_hash, bool fall_back_on_failure) {
     const size_t source_length=strlen(bundle->source);
     DiamondDiagnostic diagnostic;
     diamond_program_free(program);
     if (!diamond_compile_incremental(bundle->source, program, template, &diagnostic)) {
+        /* The caller will retry with a live prelude compile and report that
+         * attempt's diagnostic, leaving `bundle` untouched. */
+        if (fall_back_on_failure) return DIAMOND_TEMPLATE_COMPILE_FAILED;
         print_diagnostic(name,bundle->source,diagnostic,bundle,0);
         diamond_source_bundle_free(bundle);
         return 65;
@@ -342,7 +353,7 @@ int diamond_run_source_with_template(const char *name, const char *source,
     }
     const double loaded_time=trace_startup ? diamond_monotonic_seconds() : 0;
     return run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
-        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,nullptr);
+        script_argc,script_argv,trace_startup,start_time,loaded_time,nullptr,nullptr,false);
 }
 
 /* Builds a fresh, independently-owned DiamondProgram from the build-time
@@ -467,8 +478,13 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
      * functions out and rebuilds them from this, and a cache miss compiles
      * against it. */
     DiamondProgram *template=nullptr;
-    if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
+    if (!debug_mode)
         template=build_embedded_prelude_template();
+    /* A program that mentions JSON is compiled against the same embedded
+     * prelude (which already includes JSON) and only falls back to a live
+     * prelude+source compile if that fails -- the rare program that
+     * declares a name of its own that collides with JSON's. */
+    const bool mentions_json=diamond_prelude_needs_json(bundle.source);
     if (cache_path != nullptr) {
         diamond_hash_source(bundle.source, source_hash);
         used_cache = diamond_program_read_cache_file(cache_path, source_hash, program, template);
@@ -484,15 +500,15 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
             script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
             user_bytes, 0, user_bytes, nullptr, &bundle, 0);
     } else {
-        if (template != nullptr) {
+        status=DIAMOND_TEMPLATE_COMPILE_FAILED;
+        if (template != nullptr)
             status=run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
                 script_argc,script_argv,trace_startup,start_time,loaded_time,
-                cache_path,source_hash);
-        } else {
+                cache_path,source_hash,mentions_json);
+        if (status==DIAMOND_TEMPLATE_COMPILE_FAILED)
             status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
                 script_argc,script_argv,trace_startup,start_time,loaded_time,
-                cache_path,source_hash);
-        }
+                cache_path,source_hash,template);
     }
     if (template != nullptr) {
         diamond_program_free(template);

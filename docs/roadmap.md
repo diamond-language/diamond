@@ -96,9 +96,6 @@ Current behavior: [sandbox](sandbox.md).
 
 Current behavior: [caching](caching.md).
 
-- **Sharing the embedded prelude with programs that use `JSON`** -- such a program compiles
-  against the prelude with JSON included, which the embedded copy is built without, so its
-  cache still stores the whole prelude (about 4 MB for one that requires ActiveRecord).
 - **Moving the cache out from next to the source** -- a read-only deployment (a
   container image, a system-wide install) cannot write a sibling `.dic` and silently
   never caches. `XDG_CACHE_HOME`-style storage would fix it but needs a different cache

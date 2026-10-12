@@ -62,11 +62,15 @@ compiled copy, and a cache file leaves out the prelude's functions and rebuilds 
 that copy on load. A three-line script's cache is about 20 KB. Each function is stored as
 its used bytes, not its full in-memory record (about 11 KB).
 
-A program that needs `JSON` is compiled against the prelude with JSON included, which the
-embedded copy is not shared with, so its cache keeps the whole prelude too and is larger
-(about 4 MB for a program that requires ActiveRecord). Format version 2 stored string
-constants as length-prefixed bytes rather than fixed 4 KB records, and version 6 stored the
-prelude once in the binary instead of in every file; older files are ignored and rebuilt.
+A program that mentions `JSON` is compiled against the same embedded prelude (it already
+includes JSON), so its cache is just as small. Only a program that declares names of its own
+that collide with the prelude's JSON classes falls back to compiling a live prelude, and its
+cache then stores the whole prelude too. Large applications are large in their own code: a
+program that requires ActiveRecord or GraphSQL has a cache of a few megabytes.
+
+Format version 2 stored string constants as length-prefixed bytes rather than fixed 4 KB
+records, and version 6 stored the prelude once in the binary instead of in every file; older
+files are ignored and rebuilt.
 
 ## Removing caches
 
