@@ -41,7 +41,7 @@ static void diamond_hash_source(const char *source, uint8_t out[32]) {
  * (no real file to sit a cache file next to) or on allocation failure --
  * both are treated identically by every caller: no cache path means no
  * caching for this run, silently. */
-static char *diamond_cache_path_for(const char *name) {
+char *diamond_cache_path_for(const char *name) {
     if (strcmp(name, "-e") == 0) return nullptr;
     const size_t name_length = strlen(name);
     const bool has_di_extension = name_length >= 3 &&

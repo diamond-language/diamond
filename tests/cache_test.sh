@@ -198,4 +198,33 @@ out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" json.di 2>&1)"
 [[ "$out" == *"$first" ]]
 count=$((count + 1))
 
+# --- `diamond cache clear`: removes caches, only real ones, never follows links ---
+mkdir -p "$work/clear/sub"
+printf 'puts(1)\n' > "$work/clear/a.di"
+printf 'puts(2)\n' > "$work/clear/sub/b.di"
+(cd "$work/clear" && "$diamond" a.di >/dev/null && "$diamond" sub/b.di >/dev/null)
+printf 'not a cache' > "$work/clear/unrelated.dic"
+[[ -f "$work/clear/a.dic" && -f "$work/clear/sub/b.dic" ]]
+
+out="$("$diamond" cache clear --dry-run "$work/clear")"
+[[ "$out" == *"would remove 2 cache files"* ]]
+[[ -f "$work/clear/a.dic" && -f "$work/clear/sub/b.dic" ]]
+count=$((count + 1))
+
+out="$("$diamond" cache clear "$work/clear/a.di")"
+[[ "$out" == *"removed 1 cache file"* ]]
+[[ ! -f "$work/clear/a.dic" && -f "$work/clear/sub/b.dic" ]]
+count=$((count + 1))
+
+out="$(cd "$work/clear" && "$diamond" cache clear)"
+[[ "$out" == *"removed 1 cache file"* ]]
+[[ ! -f "$work/clear/sub/b.dic" ]]
+[[ "$(cat "$work/clear/unrelated.dic")" == "not a cache" ]]
+count=$((count + 1))
+
+# A script whose cache was cleared simply recompiles and rewrites it.
+out="$(cd "$work/clear" && DIAMOND_TRACE_CACHE=1 "$diamond" a.di 2>&1)"
+[[ "$out" == *"cache: miss"* && "$out" == *"cache: wrote"* ]]
+count=$((count + 1))
+
 echo "$count cache tests passed"

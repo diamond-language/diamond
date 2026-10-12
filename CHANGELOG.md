@@ -52,6 +52,8 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `diamond cache clear [--dry-run] [PATH...]` removes bytecode caches: one script's, every `.dic`
+  under a directory, or under the current directory. Only real cache files are removed.
 - `DIAMOND_TRACE_TAIL_CALLS=1` reports how many self-recursive tail calls ran in place.
 - `examples/budget`: a host that runs guests under `DIAMOND_MAX_WALL_MILLISECONDS`, showing blocked
   waits bounded, rescue-and-finish, and the hard stop after the grace allowance.
