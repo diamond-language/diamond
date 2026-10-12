@@ -148,6 +148,32 @@ def prerequisites():
     return True
 
 
+# A build plus the extra release copy and a second set of test binaries needs
+# about 2 GiB; leave headroom so a nearly full disk is reported up front rather
+# than as a dozen unrelated-looking compiler errors.
+MIN_FREE_BYTES = 4 * 1024 ** 3
+OUT_OF_SPACE = ("No space left on device", "Disk quota exceeded")
+
+
+def check_free_space():
+    """Returns False (after saying why) when the temp directory is too small."""
+    section("Disk space")
+    location = tempfile.gettempdir()
+    free = shutil.disk_usage(location).free
+    record(f"free space in {location}: {free / 1024 ** 3:.1f} GiB")
+    say(f"  {free / 1024 ** 3:.1f} GiB free in {location}")
+    if free >= MIN_FREE_BYTES:
+        return True
+    say(f"  That is less than the {MIN_FREE_BYTES // 1024 ** 3} GiB the build needs.")
+    say("  Free some space (or empty the Trash) and run this again.")
+    record("not enough free disk space (stopped)")
+    return False
+
+
+def mentions_out_of_space(text):
+    return any(phrase in text for phrase in OUT_OF_SPACE)
+
+
 def build_environment():
     """PATH and make arguments matching the macOS CI job."""
     env = dict(os.environ, DIAMOND_CASE_RUNNER="subprocess")
@@ -201,6 +227,10 @@ def build_and_test(work, env, make_args, jobs):
         last = output.strip().splitlines()[-1] if output.strip() else ""
         say(f"    {verdict} in {seconds:.0f}s  {last[:80]}")
         record(f"make {target}: {verdict} in {seconds:.0f}s -- {last}")
+        if status != 0 and mentions_out_of_space(output):
+            say("    (the disk filled up; this failure is not a Diamond problem)")
+            record("NOTE: the machine ran out of disk space during this step, so the "
+                   "failure is an environment problem, not a Diamond one.")
         if status != 0:
             record("```")
             record(tail(output))
@@ -366,6 +396,9 @@ def main():
     record("# Diamond platform report")
     machine_info()
     if not prerequisites():
+        write_report()
+        return 1
+    if not check_free_space():
         write_report()
         return 1
     env, make_args = build_environment()
