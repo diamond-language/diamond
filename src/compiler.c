@@ -11934,12 +11934,29 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
          * covered -- see CaseExhaustiveness's own comment. */
         covered_id_count=0;
     }
+    /* A `when` naming a class covers a required member that is that class
+     * or any descendant of it: the pattern matches subclass instances at
+     * runtime, so `when Shape` leaves nothing of `Circle < Shape` unmatched. */
     if(exhaustiveness->active)
         for(size_t covered_index=0;covered_index<covered_id_count;covered_index++)
-            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
-                if(exhaustiveness->required_ids[member]==
-                        covered_ids[covered_index])
+            for(uint8_t member=0;member<exhaustiveness->required_count;member++) {
+                size_t walk=exhaustiveness->required_ids[member];
+                if(walk==covered_ids[covered_index])
                     exhaustiveness->covered[member]=true;
+                for(size_t hops=0;hops<=DIAMOND_MAX_CLASSES&&
+                        !exhaustiveness->covered[member]&&
+                        walk>=DIAMOND_TYPE_CLASS_BASE&&
+                        walk<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES;hops++) {
+                    if(walk==covered_ids[covered_index]) {
+                        exhaustiveness->covered[member]=true;
+                        break;
+                    }
+                    const uint8_t parent=
+                        compiler->program->classes[walk-DIAMOND_TYPE_CLASS_BASE].superclass;
+                    if(parent==UINT8_MAX)break;
+                    walk=(size_t)DIAMOND_TYPE_CLASS_BASE+parent;
+                }
+            }
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
