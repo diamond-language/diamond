@@ -55,6 +55,18 @@ directory's `.di` files. Set `DIAMOND_NO_CACHE=1` where that isn't true. Validat
 guarantees memory safety, not that the bytecode matches the source. Cache format
 version 4 added the body checksum; older files are ignored and rebuilt.
 
+## How big a cache file is
+
+A `.dic` holds the program's own bytecode, not the prelude: the binary already embeds a
+compiled copy, and a cache file leaves out the prelude's functions and rebuilds them from
+that copy on load. A three-line script's cache is about 20 KB. Each function is stored as
+its used bytes, not its full in-memory record (about 11 KB).
+
+A program that needs `JSON` is compiled against the prelude with JSON included, which the
+embedded copy is not shared with, so its cache keeps the whole prelude too and is larger
+(about 4 MB for a program that requires ActiveRecord).
+
+
 ## Disabling it
 
 `DIAMOND_NO_CACHE=1` (any value, matching `DIAMOND_STRESS_GC`'s own convention) turns

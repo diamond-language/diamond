@@ -90,12 +90,17 @@ DiamondCacheFingerprint diamond_cache_fingerprint(void);
  * truncated/malformed in any way; `program` is left completely untouched
  * on any false return. Bounds-checked throughout, the same discipline
  * diamond_program_read_compiled already has -- never crashes on a
- * corrupted or hand-edited file. `source_hash` is the caller's own
+ * corrupted or hand-edited file. `prelude_template` is the embedded
+ * prelude (build_embedded_prelude_template, src/run_source.c) or nullptr:
+ * a file written from a program that carried the template's functions
+ * unchanged leaves them out (they are about 4 MB), so reading one needs
+ * that exact template and is a plain miss without it. `source_hash` is the caller's own
  * SHA-256 of the exact source this program would be compiled from (see
  * src/run_source.c) -- this function never hashes anything itself, only
  * compares the 32 bytes given against what the file itself claims. */
 bool diamond_program_read_cache_file(const char *path,
-    const uint8_t source_hash[32], DiamondProgram *program);
+    const uint8_t source_hash[32], DiamondProgram *program,
+    const DiamondProgram *prelude_template);
 
 /* Best-effort: writes `program` to a fresh cache file at `path`, tagged
  * with `source_hash` and this build's own diamond_cache_fingerprint(),
@@ -107,8 +112,11 @@ bool diamond_program_read_cache_file(const char *path,
  * replaces the path underneath it). Any failure (read-only directory,
  * disk full, a concurrent writer losing the rename race, ...) is
  * silent: caching is a pure optimization a caller's own already-
- * successful compile/run must never be affected by. */
+ * successful compile/run must never be affected by. When
+ * `prelude_template` is the template `program` was compiled against and
+ * its functions are still byte-identical, they are left out of the file. */
 void diamond_program_write_cache_file(const char *path,
-    const uint8_t source_hash[32], const DiamondProgram *program);
+    const uint8_t source_hash[32], const DiamondProgram *program,
+    const DiamondProgram *prelude_template);
 
 #endif

@@ -66,8 +66,56 @@ static bool write_all(FILE *file, const void *data, size_t size) {
     return size == 0 || fwrite(data, 1, size, file) == size;
 }
 
+/* A DiamondFunction is ~11 KB of fixed-size tables (scope facts, parameter
+ * names, per-register facts) of which a typical function uses a few hundred
+ * bytes. Its image is therefore written as records of (zero bytes, literal
+ * length, literal bytes) until the whole struct is covered, which stays
+ * correct for any field added later and makes a cache file roughly the size
+ * of the code it holds. Pointer and JIT fields are zeroed first: the reader
+ * rebuilds them and they mean nothing in another process. */
+static bool write_function_image(FILE *file, const DiamondFunction *function) {
+    DiamondFunction image;
+    memcpy(&image, function, sizeof image);
+    image.code = nullptr;
+    image.lines = nullptr;
+    image.columns = nullptr;
+    image.constants = nullptr;
+    image.strings = nullptr;
+    image.type_sets = nullptr;
+    image.jit_code = nullptr;
+    image.jit_code_size = 0;
+    image.jit_call_count = 0;
+    const uint8_t *bytes = (const uint8_t *)&image;
+    size_t position = 0;
+    while (position < sizeof image) {
+        size_t zeros = 0;
+        while (position + zeros < sizeof image && bytes[position + zeros] == 0) zeros++;
+        size_t literal = 0;
+        /* A literal ends at a run of 8 or more zeros, so isolated zero bytes
+         * inside live data do not each pay for a record header. */
+        size_t trailing_zeros = 0;
+        while (position + zeros + literal < sizeof image) {
+            if (bytes[position + zeros + literal] == 0) {
+                if (++trailing_zeros >= 8) break;
+            } else {
+                trailing_zeros = 0;
+            }
+            literal++;
+        }
+        literal -= trailing_zeros < 8 ? 0 : 7;
+        const uint32_t zero_count = (uint32_t)zeros;
+        const uint32_t literal_count = (uint32_t)literal;
+        if (!write_all(file, &zero_count, sizeof zero_count) ||
+            !write_all(file, &literal_count, sizeof literal_count) ||
+            !write_all(file, bytes + position + zeros, literal))
+            return false;
+        position += zeros + literal;
+    }
+    return true;
+}
+
 static bool write_function(FILE *file, const DiamondFunction *function) {
-    if (!write_all(file, function, sizeof *function)) return false;
+    if (!write_function_image(file, function)) return false;
     if (!write_all(file, function->code, function->code_count * sizeof *function->code)) return false;
     if (!write_all(file, function->lines, function->code_count * sizeof *function->lines)) return false;
     if (!write_all(file, function->columns, function->code_count * sizeof *function->columns)) return false;
@@ -178,12 +226,16 @@ static bool write_interface(FILE *file, const DiamondInterface *interface) {
     return true;
 }
 
-bool diamond_program_write_compiled(const DiamondProgram *program, FILE *file) {
+/* Writes `program`, leaving out its first `skip` functions. The embedded
+ * prelude blob skips none; a bytecode cache file skips the prelude's own
+ * functions when the reader can rebuild them from the binary's embedded
+ * copy (see diamond_program_write_cache_file). */
+static bool write_program_body(const DiamondProgram *program, size_t skip, FILE *file) {
     if (!write_function(file, &program->entry)) return false;
 
-    const uint64_t function_count = (uint64_t)program->function_count;
+    const uint64_t function_count = (uint64_t)(program->function_count - skip);
     if (!write_all(file, &function_count, sizeof function_count)) return false;
-    for (size_t index = 0; index < program->function_count; index++)
+    for (size_t index = skip; index < program->function_count; index++)
         if (!write_function(file, program->functions[index])) return false;
 
     for (size_t index = 0; index < program->class_count; index++) {
@@ -232,6 +284,10 @@ bool diamond_program_write_compiled(const DiamondProgram *program, FILE *file) {
     return true;
 }
 
+bool diamond_program_write_compiled(const DiamondProgram *program, FILE *file) {
+    return write_program_body(program, 0, file);
+}
+
 /* Advances *cursor past `size` bytes and returns a pointer to where they
  * started, or nullptr if `size` bytes aren't actually left in [*cursor,
  * end) -- every call site below treats that as a malformed-buffer
@@ -252,10 +308,26 @@ static const uint8_t *take(const uint8_t **cursor, const uint8_t *end, size_t si
  * (src/vm.c) already trusts for this. */
 static bool read_function(const uint8_t **cursor, const uint8_t *end,
         DiamondFunction *destination) {
-    const uint8_t *raw = take(cursor, end, sizeof(DiamondFunction));
-    if (raw == nullptr) return false;
     DiamondFunction view;
-    memcpy(&view, raw, sizeof view);
+    memset(&view, 0, sizeof view);
+    size_t position = 0;
+    while (position < sizeof view) {
+        const uint8_t *header = take(cursor, end, 2 * sizeof(uint32_t));
+        if (header == nullptr) return false;
+        uint32_t zero_count, literal_count;
+        memcpy(&zero_count, header, sizeof zero_count);
+        memcpy(&literal_count, header + sizeof zero_count, sizeof literal_count);
+        if (zero_count > sizeof view - position ||
+            literal_count > sizeof view - position - zero_count)
+            return false;
+        const uint8_t *literal = take(cursor, end, literal_count);
+        if (literal == nullptr && literal_count > 0) return false;
+        if (literal_count > 0)
+            memcpy((uint8_t *)&view + position + zero_count, literal, literal_count);
+        position += (size_t)zero_count + literal_count;
+        /* A record that covers nothing would loop forever on a hostile file. */
+        if (zero_count == 0 && literal_count == 0) return false;
+    }
     /* Every count below comes straight off disk: bound it by the bytes that
      * remain before multiplying, so a corrupted count can't wrap a size_t
      * product into a small, in-bounds-looking take(). */
@@ -437,11 +509,20 @@ static bool read_interface(const uint8_t **cursor, const uint8_t *end, DiamondIn
     return true;
 }
 
-bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProgram *out) {
+/* Reads a program whose first `skip` functions were left out, taking them
+ * from `template` (which must hold exactly `skip` functions) instead. */
+static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *out,
+        const DiamondProgram *template, size_t skip) {
     const uint8_t *cursor = data;
     const uint8_t *end = data + size;
 
     if (!read_function(&cursor, end, &out->entry)) return false;
+
+    for (size_t index = 0; index < skip; index++) {
+        DiamondFunction *slot = diamond_program_add_function(out);
+        if (slot == nullptr || !diamond_function_copy(slot, template->functions[index]))
+            return false;
+    }
 
     uint64_t function_count = 0;
     if (!read_u64(&cursor, end, &function_count)) return false;
@@ -503,6 +584,10 @@ bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProg
         out->interfaces[index].type_sets = out->entry.type_sets;
 
     return true;
+}
+
+bool diamond_program_read_compiled(const uint8_t *data, size_t size, DiamondProgram *out) {
+    return read_program_body(data, size, out, nullptr, 0);
 }
 
 /* Semantic checks over a program read back from disk, run before anything
@@ -579,8 +664,12 @@ static constexpr char DIAMOND_CACHE_MAGIC[] = "DIACACHE";
 enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
 /* 2: string constants are length-prefixed instead of fixed 4KB records.
  * 3: the fingerprint carries build_id.
- * 4: a body checksum follows the source hash. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 4 };
+ * 4: a body checksum follows the source hash.
+ * 5: the body starts with a count of leading functions left out because they
+ *    are the embedded prelude's own (0 when none were).
+ * 6: each function's struct image is stored as zero-run records instead of
+ *    its full ~11 KB. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 6 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.di and lib/core/), passed in by the
@@ -643,7 +732,8 @@ static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
 }
 
 bool diamond_program_read_cache_file(const char *path,
-        const uint8_t source_hash[32], DiamondProgram *program) {
+        const uint8_t source_hash[32], DiamondProgram *program,
+        const DiamondProgram *prelude_template) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return false;
     if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return false; }
@@ -689,7 +779,18 @@ bool diamond_program_read_cache_file(const char *path,
         free(buffer);
         return false;
     }
-    bool ok = diamond_program_read_compiled(cursor, (size_t)(end - cursor), program);
+    bool ok = false;
+    uint64_t skip = 0;
+    const uint8_t *skip_bytes = take(&cursor, end, sizeof skip);
+    if (skip_bytes != nullptr) {
+        memcpy(&skip, skip_bytes, sizeof skip);
+        /* Functions were left out only because they are the template's own,
+         * so the reader must hold exactly that template. */
+        if (skip == 0 || (prelude_template != nullptr &&
+                          skip == (uint64_t)prelude_template->function_count))
+            ok = read_program_body(cursor, (size_t)(end - cursor), program,
+                prelude_template, (size_t)skip);
+    }
     free(buffer);
     if (ok) ok = program_is_valid(program);
     if (!ok) {
@@ -701,8 +802,63 @@ bool diamond_program_read_cache_file(const char *path,
     return ok;
 }
 
+/* True when `program` carries `template`'s functions unchanged as its first
+ * template->function_count entries -- the precondition for leaving them out
+ * of a cache file and rebuilding them from the template on read. Anything
+ * that differs (a post-compile pass touching a prelude function, a program
+ * compiled without the template) just means the full program is written. */
+static bool functions_identical(const DiamondFunction *a, const DiamondFunction *b) {
+    if (a->code_count != b->code_count || a->constant_count != b->constant_count ||
+        a->string_count != b->string_count || a->type_set_count != b->type_set_count)
+        return false;
+    DiamondFunction left = *a, right = *b;
+    left.code = right.code = nullptr;
+    left.lines = right.lines = nullptr;
+    left.columns = right.columns = nullptr;
+    left.constants = right.constants = nullptr;
+    left.strings = right.strings = nullptr;
+    left.type_sets = right.type_sets = nullptr;
+    left.jit_code = right.jit_code = nullptr;
+    left.code_capacity = right.code_capacity = 0;
+    left.constant_capacity = right.constant_capacity = 0;
+    left.string_capacity = right.string_capacity = 0;
+    left.type_set_capacity = right.type_set_capacity = 0;
+    left.jit_code_size = right.jit_code_size = 0;
+    left.jit_call_count = right.jit_call_count = 0;
+    left.jit_ineligible = right.jit_ineligible = false;
+    if (memcmp(&left, &right, sizeof left) != 0) return false;
+    if (a->code_count > 0 &&
+        (memcmp(a->code, b->code, a->code_count * sizeof *a->code) != 0 ||
+         memcmp(a->lines, b->lines, a->code_count * sizeof *a->lines) != 0 ||
+         memcmp(a->columns, b->columns, a->code_count * sizeof *a->columns) != 0))
+        return false;
+    if (a->constant_count > 0 &&
+        memcmp(a->constants, b->constants, a->constant_count * sizeof *a->constants) != 0)
+        return false;
+    for (size_t index = 0; index < a->string_count; index++)
+        if (a->strings[index].length != b->strings[index].length ||
+            memcmp(a->strings[index].chars, b->strings[index].chars, a->strings[index].length) != 0)
+            return false;
+    if (a->type_set_count > 0 &&
+        memcmp(a->type_sets, b->type_sets, a->type_set_count * sizeof *a->type_sets) != 0)
+        return false;
+    return true;
+}
+
+static size_t shared_prelude_function_count(const DiamondProgram *program,
+        const DiamondProgram *template) {
+    if (template == nullptr || template->function_count == 0 ||
+        program->function_count < template->function_count)
+        return 0;
+    for (size_t index = 0; index < template->function_count; index++)
+        if (!functions_identical(program->functions[index], template->functions[index]))
+            return 0;
+    return template->function_count;
+}
+
 void diamond_program_write_cache_file(const char *path,
-        const uint8_t source_hash[32], const DiamondProgram *program) {
+        const uint8_t source_hash[32], const DiamondProgram *program,
+        const DiamondProgram *prelude_template) {
     const size_t path_length = strlen(path);
     /* mkstemp needs its own writable buffer ending in a literal
      * "XXXXXX" (it overwrites those six characters in place), in the
@@ -731,7 +887,9 @@ void diamond_program_write_cache_file(const char *path,
     char *body = nullptr;
     size_t body_size = 0;
     FILE *body_stream = open_memstream(&body, &body_size);
-    bool ok = body_stream != nullptr && diamond_program_write_compiled(program, body_stream);
+    const uint64_t skip = (uint64_t)shared_prelude_function_count(program, prelude_template);
+    bool ok = body_stream != nullptr && write_all(body_stream, &skip, sizeof skip) &&
+        write_program_body(program, (size_t)skip, body_stream);
     if (body_stream != nullptr && fclose(body_stream) != 0) ok = false;
     const uint64_t checksum = ok ? body_checksum((const uint8_t *)body, body_size) : 0;
     ok = ok && write_all(file, DIAMOND_CACHE_MAGIC, DIAMOND_CACHE_MAGIC_LENGTH) &&

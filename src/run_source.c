@@ -277,7 +277,7 @@ static int run_source_from_bundle_program(const char *name, DiamondSourceBundle 
     }
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
     if (cache_path != nullptr) {
-        diamond_program_write_cache_file(cache_path, source_hash, program);
+        diamond_program_write_cache_file(cache_path, source_hash, program, nullptr);
         if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
             fprintf(stderr, "cache: wrote %s\n", cache_path);
     }
@@ -320,7 +320,7 @@ static int run_source_from_bundle_template(const char *name, DiamondSourceBundle
     }
     const double compiled_time=trace_startup ? diamond_monotonic_seconds() : 0;
     if (cache_path != nullptr) {
-        diamond_program_write_cache_file(cache_path, source_hash, program);
+        diamond_program_write_cache_file(cache_path, source_hash, program, template);
         if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
             fprintf(stderr, "cache: wrote %s\n", cache_path);
     }
@@ -463,9 +463,15 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
         diamond_cache_path_for(name) : nullptr;
     uint8_t source_hash[32];
     bool used_cache = false;
+    /* The embedded prelude, built once: a cache file leaves the prelude's own
+     * functions out and rebuilds them from this, and a cache miss compiles
+     * against it. */
+    DiamondProgram *template=nullptr;
+    if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
+        template=build_embedded_prelude_template();
     if (cache_path != nullptr) {
         diamond_hash_source(bundle.source, source_hash);
-        used_cache = diamond_program_read_cache_file(cache_path, source_hash, program);
+        used_cache = diamond_program_read_cache_file(cache_path, source_hash, program, template);
         if (getenv("DIAMOND_TRACE_CACHE") != nullptr)
             fprintf(stderr, "cache: %s %s\n", used_cache ? "hit" : "miss", cache_path);
     }
@@ -478,21 +484,19 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
             script_argc, script_argv, trace_startup, start_time, loaded_time, compiled_time,
             user_bytes, 0, user_bytes, nullptr, &bundle, 0);
     } else {
-        DiamondProgram *template=nullptr;
-        if (!debug_mode&&!diamond_prelude_needs_json(bundle.source))
-            template=build_embedded_prelude_template();
-
         if (template != nullptr) {
             status=run_source_from_bundle_template(name,&bundle,dump_bytecode,program,template,
                 script_argc,script_argv,trace_startup,start_time,loaded_time,
                 cache_path,source_hash);
-            diamond_program_free(template);
-            free(template);
         } else {
             status=run_source_from_bundle_program(name,&bundle,dump_bytecode,program,
                 script_argc,script_argv,trace_startup,start_time,loaded_time,
                 cache_path,source_hash);
         }
+    }
+    if (template != nullptr) {
+        diamond_program_free(template);
+        free(template);
     }
     free(cache_path);
     diamond_program_free(program);
