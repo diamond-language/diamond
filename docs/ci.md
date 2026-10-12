@@ -1,10 +1,16 @@
 # CI operation
 
-The `test` workflow runs once per pull-request update and on pushes to `main`.
+The `test` workflow runs once per pull-request update, and by hand
+(`workflow_dispatch`) on any branch. It does not run on pushes to `main`: every
+change arrives through a PR that was rebased onto `main` and passed on that exact
+tree, so a run on the merge commit would repeat it. If `main` moved between a
+PR's last run and its merge, rebase and let the PR run again before merging; use a
+manual run to validate `main` itself after anything unusual.
+
 Its concurrency group combines the workflow name with the PR number or branch
-ref. Separate PRs run independently; a newer main push or manual main run
-cancels earlier main work. Keep `cancel-in-progress: true` and avoid `always()`
-on test jobs, which can keep cancelled work alive.
+ref. Separate PRs run independently; a newer manual run on the same ref cancels
+the earlier one. Keep `cancel-in-progress: true` and avoid `always()` on test
+jobs, which can keep cancelled work alive.
 
 Cancellation is asynchronous: most jobs stop within seconds of a newer push, but a
 job on a slow runner (FreeBSD has been the usual one) can take up to the five minutes

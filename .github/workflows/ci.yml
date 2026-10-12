@@ -1,13 +1,10 @@
 name: test
 
 on:
-  # PRs already test feature branches; running their pushes as well doubles
-  # the entire matrix. main still gets its own post-merge validation.
-  push:
-    branches:
-      - main
-    tags-ignore:
-      - '**'
+  # Every change reaches main through a pull request that was rebased onto it
+  # and passed this matrix on that exact tree, so a run on the merge commit
+  # would repeat work already done (and queue ahead of the next PR's runs).
+  # workflow_dispatch validates main by hand after anything unusual.
   pull_request:
   workflow_dispatch:
 
