@@ -25,6 +25,9 @@ authoritative fine-grained record.
   and `join` raise `SupervisorError`), and `backoff_ms`/`max_backoff_ms` grow the pause before
   a crashed child restarts. Without a policy nothing changes: a fixed 20 ms pause, no limit.
 
+- `Channel.select_send(channels, value, deadline = nil)` sends to the first channel with room and
+  returns its index (nil when the deadline passes or every channel is closed).
+
 ### Security
 
 - A blocking wait no longer outlives `DIAMOND_MAX_WALL_MILLISECONDS`. The budget is read between

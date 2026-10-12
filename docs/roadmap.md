@@ -68,7 +68,6 @@ Current behavior: [core syntax](core-syntax.md).
 
 Current behavior: [threads](threads.md).
 
-- **Send-side select** -- waiting to `send` on whichever of several channels has room.
 - **Unbounded or rendezvous channels** -- `Channel.new(0)`-style handoff, or no
   capacity limit. A bound keeps memory predictable and gives `send` backpressure, so
   this needs a concrete use case.

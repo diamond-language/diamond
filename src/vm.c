@@ -196,9 +196,10 @@ typedef struct ChannelWaitRegistration {
  * Receiver/argument registers keep all handles alive for this entire call.
  * fds has room for one extra descriptor after fd_count. target is NULL for
  * IO.poll, which waits on its supplied fds plus cancellation channels.
- * select_drained is non-NULL only for Channel.select: the Array's channels
- * are then candidates rather than cancellation sources, ready when they hold
- * a value or close, except entries the caller already saw closed and drained
+ * select_drained is non-NULL only for Channel.select and
+ * Channel.select_send: the Array's channels are then candidates rather than
+ * cancellation sources, ready when they hold a value (or, with `writable`,
+ * have room) or close, except entries the caller already saw closed and drained
  * (select_drained[i]) -- those can never become ready again and would
  * otherwise spin the wait. */
 DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
@@ -259,7 +260,8 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         registration->link.next=channel->waiters;
         channel->waiters=&registration->link;
         if(select_drained!=nullptr)
-            ready=ready||channel->count>0 ||
+            ready=ready||(writable?channel->count<channel->capacity&&!channel->closed:
+                    channel->count>0) ||
                 (channel->closed&&!select_drained[i-target_count]);
         else
             ready=ready||channel->closed ||

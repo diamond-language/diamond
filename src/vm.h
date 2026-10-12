@@ -572,6 +572,7 @@ typedef enum DiamondOpCode : uint8_t {
      * execution; any other receiver builds that String and runs INDEX_GET's own logic
      * (diamond_jit_index_get). selfhost/parser.di does not emit it. */
     DIAMOND_OP_INDEX_GET_STRING,
+    DIAMOND_OP_CHANNEL_SELECT_SEND, /* dest, Array of Channels, value, deadline */
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

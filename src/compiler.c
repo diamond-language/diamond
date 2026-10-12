@@ -5090,18 +5090,31 @@ static uint16_t parse_thread_new_call(Compiler *compiler) {
     return dest;
 }
 
-/* Channel.select(channels[, deadline]) -- see docs/threads.md's Channels
- * section. The deadline is optional (nil when omitted). */
-static uint16_t parse_channel_select_call(Compiler *compiler) {
-    advance_token(compiler); /* consume 'select' */
+/* Channel.select(channels[, deadline]) and Channel.select_send(channels, value[, deadline])
+ * -- see docs/threads.md's Channels section. The deadline is optional (nil when omitted). */
+static uint16_t parse_channel_select_call(Compiler *compiler,bool send) {
+    advance_token(compiler); /* consume 'select' / 'select_send' */
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler,compiler->current.span,"expected '(' after 'Channel.select'");
+        fail(compiler,compiler->current.span,send?
+            "expected '(' after 'Channel.select_send'":"expected '(' after 'Channel.select'");
         return 0;
     }
     advance_token(compiler);
     skip_newlines(compiler);
     const uint16_t channels_register=parse_expression(compiler);
     skip_newlines(compiler);
+    uint16_t value_register=0;
+    if(send) {
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "Channel.select_send takes a channels Array and a value");
+            return 0;
+        }
+        advance_token(compiler);
+        skip_newlines(compiler);
+        value_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    }
     uint16_t deadline_register;
     if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
         advance_token(compiler);
@@ -5114,14 +5127,17 @@ static uint16_t parse_channel_select_call(Compiler *compiler) {
         emit_register(compiler,deadline_register);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,"expected ')' after Channel.select arguments");
+        fail(compiler,compiler->current.span,send?
+            "expected ')' after Channel.select_send arguments":
+            "expected ')' after Channel.select arguments");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_CHANNEL_SELECT);
+    emit_opcode(compiler,send?DIAMOND_OP_CHANNEL_SELECT_SEND:DIAMOND_OP_CHANNEL_SELECT);
     emit_register(compiler,dest);
     emit_register(compiler,channels_register);
+    if(send)emit_register(compiler,value_register);
     emit_register(compiler,deadline_register);
     return dest;
 }
@@ -5138,10 +5154,14 @@ static uint16_t parse_channel_new_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
        name_equals(compiler,"select",compiler->current.span,false))
-        return parse_channel_select_call(compiler);
+        return parse_channel_select_call(compiler,false);
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+       name_equals(compiler,"select_send",compiler->current.span,false))
+        return parse_channel_select_call(compiler,true);
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"new",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'new' or 'select' after 'Channel'");
+        fail(compiler,compiler->current.span,
+            "expected 'new', 'select' or 'select_send' after 'Channel'");
         return 0;
     }
     advance_token(compiler); /* consume 'new' */

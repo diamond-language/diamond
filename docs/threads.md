@@ -166,6 +166,9 @@ nonblocking operation after each return. A VM with installed signal handlers
 returns periodically to dispatch them. Most callers should use the cancellation
 cut instead of managing these low-level readiness hints themselves.
 
+`close()` is idempotent -- closing an already-closed channel is a no-op, not
+an error. `closed?()` and `size()` report status without blocking.
+
 ### Waiting on several channels: `Channel.select`
 
 `Channel.select(channels, deadline = nil)` receives from whichever of several
@@ -201,11 +204,33 @@ end
   Float or `nil`; anything else raises `TypeError`. Like a plain `receive`, a
   blocking `select` does not service `Signal.trap` handlers while parked --
   pass a short deadline and loop if you need to.
-- Send-side select (waiting to `send` on whichever channel has room) is not
-  provided.
 
-`close()` is idempotent -- closing an already-closed channel is a no-op, not
-an error. `closed?()` and `size()` report status without blocking.
+### Sending to whichever channel has room: `Channel.select_send`
+
+`Channel.select_send(channels, value, deadline = nil)` is the send-side twin: it
+sends `value` to the first channel (in array order) with room and returns that
+channel's index, blocking until one has room.
+
+```ruby
+primary = Channel.new(4)
+overflow = Channel.new(64)
+
+where = Channel.select_send([primary, overflow], job)
+puts("queued on the overflow channel") if where == 1
+```
+
+- When several channels have room, the **first one in array order** wins, so
+  list the preferred destination first.
+- A closed channel is skipped, not an error (unlike `send` on a closed
+  channel). Closing a channel wakes a blocked `select_send`.
+- It returns `nil` when nothing can accept the value: the `deadline` passed, or
+  every channel is closed. `closed?` on the channels tells the two apart.
+- The value is copied only into the channel it was sent to, under that
+  channel's own lock, so a value that cannot cross a thread boundary raises
+  `TypeError` exactly as `send` does.
+- `channels` must be a non-empty Array of Channels and `deadline` a finite
+  Float or `nil`; anything else raises `TypeError`. As with `select`, a parked
+  call does not service `Signal.trap` handlers.
 
 A `Channel` itself can be sent through another channel, passed as a
 `Thread.new` argument, or stored in an array/hash/instance that crosses a
