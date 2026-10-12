@@ -53,15 +53,6 @@ Current behavior: [callables](callables.md).
   against the original call's `arguments`/`argument_count`, which an in-place next
   iteration cannot update without a new mechanism.
 
-### Case/when exhaustiveness checking
-
-Current behavior: [core syntax](core-syntax.md).
-
-- **A sealed base in `when` covering its subclasses as a group** -- `when Shape`
-  does not count as covering `Circle` and `Square`, even though `Shape` is the sealed
-  base both extend. Each direct subclass needs its own `when`. Making this work is a
-  third coverage rule, not a reuse of the exact-member match.
-
 ### Channel
 
 Current behavior: [threads](threads.md).

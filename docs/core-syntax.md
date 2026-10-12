@@ -282,15 +282,13 @@ own specific shape of subject:
   matches just some circles. (Alternatives must bind the same names, so
   use `_` for a reader the other alternatives don't have: `when
   Coin{cents: _}, Select{}`.) Applies identically to both forms.
-- **A superclass `when` does not cover a subclass member** — for
-  `shape: Circle | Square` (both `< Shape`), `when Shape` does not
-  count as covering either `Circle` or `Square`; each member needs its
-  own exact match. Conservative on purpose: this never *under*-reports
-  a real gap, only occasionally asks for a branch a human might
-  consider redundant. (The sealed-class form sidesteps this in its own
-  common case: `when Circle` already matches Circle-or-any-of-*its own*
-  subclasses at runtime the ordinary way, so a deeper hierarchy under a
-  sealed class's direct subclasses doesn't need separate coverage.)
+- **A superclass `when` covers its subclasses** — a `when` naming a class
+  covers every required member that is that class or descends from it,
+  since the pattern matches subclass instances at runtime. For
+  `shape: Circle | Square` (both `< Shape`), `when Shape` covers both; for a
+  sealed `shape: Shape`, `when Shape` covers every direct subclass at once.
+  Only the class hierarchy counts: a member that is not a descendant of the
+  named class (or `Nil`) still needs its own branch.
 - The compile error names every uncovered member, including `Nil` and direct
   subclasses of a sealed class.
 

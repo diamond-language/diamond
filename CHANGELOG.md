@@ -28,6 +28,10 @@ authoritative fine-grained record.
 - `Channel.select_send(channels, value, deadline = nil)` sends to the first channel with room and
   returns its index (nil when the deadline passes or every channel is closed).
 
+- A `case` `when` naming a base class now covers its subclasses for exhaustiveness checking:
+  `when Shape` satisfies a sealed `Shape` subject (and a `Circle | Square` union) without a branch
+  per subclass.
+
 ### Security
 
 - A blocking wait no longer outlives `DIAMOND_MAX_WALL_MILLISECONDS`. The budget is read between
