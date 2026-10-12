@@ -239,4 +239,45 @@ out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" own_json.di 2>&1)"
 [[ "$out" == *"$first" ]]
 count=$((count + 1))
 
+# --- `diamond cache warm`: compile and cache without running ---
+mkdir -p "$work/warm"
+printf 'puts("ran")\n' > "$work/warm/app.di"
+out="$("$diamond" cache warm "$work/warm/app.di")"
+[[ "$out" == "cached "*"app.dic" ]]
+[[ -f "$work/warm/app.dic" ]]
+# It did not run the program, and a later run reads the warmed cache.
+[[ "$out" != *"ran"* ]]
+out="$(cd "$work/warm" && DIAMOND_TRACE_CACHE=1 "$diamond" app.di 2>&1)"
+[[ "$out" == *"cache: hit"* && "$out" == *"ran"* ]]
+out="$("$diamond" cache warm "$work/warm/app.di")"
+[[ "$out" == "up to date "* ]]
+count=$((count + 1))
+
+# A program that does not compile is reported and leaves no cache behind.
+printf 'puts(\n' > "$work/warm/bad.di"
+status=0
+"$diamond" cache warm "$work/warm/bad.di" >/dev/null 2>&1 || status=$?
+[[ "$status" == 65 && ! -f "$work/warm/bad.dic" ]]
+count=$((count + 1))
+
+# A read-only directory holding a warmed cache still reads it (skipped when the
+# test runs as root, which can write anywhere).
+if [[ "$(id -u)" != 0 ]]; then
+    mkdir -p "$work/ro"
+    printf 'puts("from ro")\n' > "$work/ro/app.di"
+    "$diamond" cache warm "$work/ro/app.di" >/dev/null
+    chmod a-w "$work/ro"
+    out="$(cd "$work/ro" && DIAMOND_TRACE_CACHE=1 "$diamond" app.di 2>&1)"
+    [[ "$out" == *"cache: hit"* && "$out" == *"from ro"* ]]
+    # Warming where nothing can be written says so instead of claiming success.
+    chmod u+w "$work/ro"
+    printf 'puts(1)\n' > "$work/ro/other.di"
+    chmod a-w "$work/ro"
+    status=0
+    "$diamond" cache warm "$work/ro/other.di" >/dev/null 2>&1 || status=$?
+    chmod u+w "$work/ro"
+    [[ "$status" == 73 ]]
+    count=$((count + 1))
+fi
+
 echo "$count cache tests passed"

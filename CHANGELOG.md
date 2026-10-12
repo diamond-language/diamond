@@ -52,6 +52,8 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- `diamond cache warm SOURCE...` compiles scripts and writes their bytecode caches without running
+  them, so a read-only deployment can be warmed at image-build time.
 - `diamond cache clear [--dry-run] [PATH...]` removes bytecode caches: one script's, every `.dic`
   under a directory, or under the current directory. Only real cache files are removed.
 - `DIAMOND_TRACE_TAIL_CALLS=1` reports how many self-recursive tail calls ran in place.

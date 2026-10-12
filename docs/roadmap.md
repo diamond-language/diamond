@@ -92,18 +92,6 @@ Current behavior: [sandbox](sandbox.md).
 - **Restricting `Signal.trap`** -- a process-wide side effect, distinct from opening
   resources.
 
-### Bytecode caching
-
-Current behavior: [caching](caching.md).
-
-- **Moving the cache out from next to the source** -- a read-only deployment (a
-  container image, a system-wide install) cannot write a sibling `.dic` and silently
-  never caches. `XDG_CACHE_HOME`-style storage would fix it but needs a different cache
-  key, since two `app.di` files in different directories could no longer be told apart
-  by path.
-- **Caching `diamond -e`** -- excluded for lack of an on-disk identity; a
-  content-addressed cache in a dedicated directory could cover it, as the point above.
-
 ### Improve receiver-aware tooling
 
 Current behavior: [language server](lsp.md). The language server recompiles complete
