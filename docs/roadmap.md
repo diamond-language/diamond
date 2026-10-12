@@ -52,8 +52,6 @@ Current behavior: [callables](callables.md).
 - **A variadic function's own self-tail-call** -- overflow arguments are tracked
   against the original call's `arguments`/`argument_count`, which an in-place next
   iteration cannot update without a new mechanism.
-- **Reporting that a call was optimized** -- `--dump-bytecode` shows `TAIL_CALL`,
-  but no `DIAMOND_TRACE_*` variable reports it at run time.
 
 ### Case/when exhaustiveness checking
 
