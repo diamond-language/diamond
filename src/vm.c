@@ -2328,6 +2328,13 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             snprintf(child->last_error,sizeof child->last_error,
                 "stopped: the supervisor's restart intensity was exceeded");
             child->done=true;
+        } else {
+            /* Cleared here, under the same lock a giving-up sibling holds
+             * while it sets `failed` and raises every other child's flag. A
+             * reset after unlocking could erase that interrupt (the attempt's
+             * VM setup below takes long enough for a sibling to give up in
+             * between) and leave this child running forever. */
+            atomic_store(&child->interrupt,false);
         }
         pthread_mutex_unlock(&supervisor->lock);
         if(supervisor_failed)break;
@@ -2349,7 +2356,6 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         run_vm->root_chunk=&child_chunk;
         if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE||
            supervisor->max_restarts>=0) {
-            atomic_store(&child->interrupt,false);
             run_vm->interrupt_flag=&child->interrupt;
             run_vm->resource_limits_active=true;
         }
