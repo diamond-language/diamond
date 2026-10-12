@@ -96,6 +96,10 @@ Current behavior: [sandbox](sandbox.md).
 
 Current behavior: [caching](caching.md).
 
+- **Leaving the prelude out of each cache file** -- every `.dic` embeds the compiled prelude,
+  so a three-line script writes about 4 MB (14 MB for the ActiveRecord-heavy test cases) and
+  one `make test` leaves ~6 GiB of caches beside the test sources. The binary already carries
+  the compiled prelude, so a cache could hold only the program's own bytecode.
 - **A `diamond cache clear`-style command** -- today a stale `.dic` is discarded by
   deleting it or editing the source. Needs someone hitting that friction.
 - **Moving the cache out from next to the source** -- a read-only deployment (a
