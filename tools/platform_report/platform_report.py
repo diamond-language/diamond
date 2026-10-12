@@ -148,26 +148,41 @@ def prerequisites():
     return True
 
 
-# A build plus the extra release copy and a second set of test binaries needs
-# about 2 GiB; leave headroom so a nearly full disk is reported up front rather
-# than as a dozen unrelated-looking compiler errors.
-MIN_FREE_BYTES = 4 * 1024 ** 3
+# The test suite writes a bytecode cache (.dic, about 4 MB each because every
+# one embeds the prelude) next to each of its ~1,700 test programs: roughly
+# 6-7 GiB at the peak of `make test`, plus the build itself. Leave headroom so
+# a nearly full disk is reported up front rather than as a dozen unrelated-
+# looking compiler errors.
+MIN_FREE_BYTES = 14 * 1024 ** 3
 OUT_OF_SPACE = ("No space left on device", "Disk quota exceeded")
 
 
+def choose_work_directory():
+    """The directory to work in: the system temp directory when it has room,
+    else the home directory (a RAM-backed /tmp is common on Linux)."""
+    candidates = [Path(tempfile.gettempdir()), Path.home()]
+    for candidate in candidates:
+        if shutil.disk_usage(candidate).free >= MIN_FREE_BYTES:
+            return candidate
+    return None
+
+
 def check_free_space():
-    """Returns False (after saying why) when the temp directory is too small."""
+    """Returns the directory to work in, or None (after saying why)."""
     section("Disk space")
-    location = tempfile.gettempdir()
-    free = shutil.disk_usage(location).free
-    record(f"free space in {location}: {free / 1024 ** 3:.1f} GiB")
-    say(f"  {free / 1024 ** 3:.1f} GiB free in {location}")
-    if free >= MIN_FREE_BYTES:
-        return True
-    say(f"  That is less than the {MIN_FREE_BYTES // 1024 ** 3} GiB the build needs.")
+    for candidate in [Path(tempfile.gettempdir()), Path.home()]:
+        free = shutil.disk_usage(candidate).free
+        record(f"free space in {candidate}: {free / 1024 ** 3:.1f} GiB")
+        say(f"  {free / 1024 ** 3:.1f} GiB free in {candidate}")
+    chosen = choose_work_directory()
+    if chosen is not None:
+        say(f"  working in {chosen}")
+        record(f"working directory: {chosen}")
+        return chosen
+    say(f"  That is less than the {MIN_FREE_BYTES // 1024 ** 3} GiB the test suite needs.")
     say("  Free some space (or empty the Trash) and run this again.")
     record("not enough free disk space (stopped)")
-    return False
+    return None
 
 
 def mentions_out_of_space(text):
@@ -236,6 +251,10 @@ def build_and_test(work, env, make_args, jobs):
             record(tail(output))
             record("```")
         results.append(status == 0)
+        # Each test program leaves a multi-megabyte cache file behind; drop
+        # them before the next step so the disk does not stay full.
+        for cache in (work / "tests/cases").glob("*.dic"):
+            cache.unlink()
     return all(results)
 
 
@@ -398,12 +417,13 @@ def main():
     if not prerequisites():
         write_report()
         return 1
-    if not check_free_space():
+    base = check_free_space()
+    if base is None:
         write_report()
         return 1
     env, make_args = build_environment()
     jobs = os.cpu_count() or 4
-    with tempfile.TemporaryDirectory(prefix="diamond-report-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="diamond-report-", dir=base) as temporary:
         work = Path(temporary) / "diamond"
         # --no-hardlinks: the temporary directory may be on another filesystem.
         status, output, _ = run(["git", "clone", "--quiet", "--no-hardlinks", str(REPO), str(work)])

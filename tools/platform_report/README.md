@@ -7,6 +7,8 @@ unattended.
 ## Before you start
 
 - Plug your laptop in.
+- Have about 15 GB of free disk space. The test suite leaves a few GB of temporary
+  cache files behind while it runs; they're deleted afterwards.
 - You need **Homebrew**. If you don't have it, install it from
   [brew.sh](https://brew.sh) first (copy the one line from that page into
   Terminal and follow its prompts).
