@@ -5,7 +5,11 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `8d64ab965949defcec3c9a0e066a79b2849d90b5` (main, deployed
+Runtime revision: `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
+2026-10-12 with `tools/deploy_registry.sh` after a verified backup; the bundled seed pins
+`arel` 0.34.5, which is not yet published to the catalog, so the script's public
+verification reports `locked archive differs from inventory: arel` until it is);
+previously `8d64ab965949defcec3c9a0e066a79b2849d90b5` (main, deployed
 2026-10-08 with `tools/deploy_registry.sh --no-verify` after a verified backup; it
 carries the cut-card README previews and `arel` 0.34.4 in the bundled seed; `arel` 0.34.4
 and `mjolnir` 0.1.0 were published the same day with a 30-minute credential (revoked); `mjolnir` 0.2.0 followed the same day the same way (archive sha256 `26614367548c192da3ca5c133aa5f58c914cc374b48ce3ddd7ab01e404caf58b`);
