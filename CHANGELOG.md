@@ -45,6 +45,9 @@ authoritative fine-grained record.
 
 ### Performance
 
+- A debug session polls its control channel every 32nd statement instead of every statement, so a
+  debugged loop runs about 3x faster (4.0 s to 1.3 s over 6 million statements). A live
+  `setBreakpoints` takes effect up to 32 statements later.
 - The JIT compiles functions that build array literals or take a default `[]` argument, and
   inlines built-in type guards, which speeds up annotated parameters.
 

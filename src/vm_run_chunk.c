@@ -3551,8 +3551,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * here, at every statement, rather than via a background
                  * thread. Applies every currently-buffered command
                  * (there could be more than one queued up) before
-                 * deciding whether *this* statement's own line is armed. */
-                if(vm->debug_fd>=0) {
+                 * deciding whether *this* statement's own line is armed.
+                 * Throttled to every DIAMOND_DEBUG_POLL_STATEMENT_MASK+1'th
+                 * statement: an unthrottled poll() per statement tripled
+                 * run time under a debug session. A new `setBreakpoints`
+                 * lands at most that many statements late. */
+                if(vm->debug_fd>=0&&
+                   (vm->debug_poll_counter++&DIAMOND_DEBUG_POLL_STATEMENT_MASK)==0) {
                     struct pollfd poll_fd={.fd=vm->debug_fd,.events=POLLIN};
                     while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
                         DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;

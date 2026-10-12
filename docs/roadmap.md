@@ -17,10 +17,6 @@ a concrete application gap.
 
 Current behavior: [debugging](debugging.md).
 
-- **Throttling the live-breakpoint/step poll** -- `DIAMOND_OP_BREAKPOINT_CHECK`
-  does a non-blocking `poll()` on the control fd at every statement. Nothing has
-  shown a need to throttle it; if that changes, check only every Nth hit via a
-  counter mask, the shape `DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK` already uses.
 - **`supportsStepInTargetsRequest`** -- choosing which call to step into on a line
   with more than one (e.g. `f(g())`).
 

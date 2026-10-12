@@ -1863,6 +1863,13 @@ struct DiamondVm {
      * extra runtime state consulted by the same opcode. */
     DiamondStepMode debug_step_mode;
     size_t debug_step_target_depth;
+    /* Statements seen by DIAMOND_OP_BREAKPOINT_CHECK so far; the debug_fd
+     * poll runs only when this is a multiple of
+     * DIAMOND_DEBUG_POLL_STATEMENT_MASK + 1 (src/vm_internal.h), so the
+     * very first statement always polls. Arming and stepping are still
+     * decided at every statement -- only the check for a newly arrived
+     * `setBreakpoints` is throttled. */
+    uint32_t debug_poll_counter;
     /* Resource limits (docs/sandbox.md's own "Resource limits" section) --
      * DIAMOND_MAX_INSTRUCTIONS/DIAMOND_MAX_WALL_MILLISECONDS/DIAMOND_MAX_
      * MEMORY_BYTES, read once here by diamond_vm_init exactly like debug_fd
