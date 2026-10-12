@@ -146,10 +146,14 @@ editor (DAP client)  <--stdio, DAP-->  diamond-dap  <--control socket-->  diamon
   JSON library for this (`parse_debug_command` hand-scans the fixed set
   of shapes it needs to recognize instead), only `diamond-dap` (which
   needs to speak real DAP to its own client) does. A
-  `DIAMOND_OP_BREAKPOINT_CHECK` that *isn't* currently armed also does a
-  quick non-blocking check of the same control fd before falling
-  through -- see "Live breakpoints" above for
-  why that has to happen there rather than via some other mechanism.
+  `DIAMOND_OP_BREAKPOINT_CHECK` also does a quick non-blocking check of
+  the same control fd before deciding whether it is armed, on every 32nd
+  statement (`DIAMOND_DEBUG_POLL_STATEMENT_MASK`, `src/vm_internal.h`) --
+  a `poll()` per statement made a debugged loop about 3x slower. A live
+  `setBreakpoints` therefore takes effect up to 32 statements late; arming
+  and stepping are still decided at every statement. See "Live
+  breakpoints" above for why that has to happen there rather than via some
+  other mechanism.
 - `diamond-dap` translates that payload's `(name, line, column)` --
   expressed in the same expanded-buffer terms the compiler itself
   used -- back to `(original file, original line)` via

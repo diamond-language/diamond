@@ -368,6 +368,7 @@ enum { DIAMOND_INLINE_REGISTER_COUNT = 256 };
  * millisecond-scale budget someone would actually configure. Must be a
  * power of two minus one for the `&` mask below to work. */
 enum { DIAMOND_RESOURCE_LIMIT_CLOCK_CHECK_MASK = 4095 };
+enum { DIAMOND_DEBUG_POLL_STATEMENT_MASK = 31 };
 
 /* How much further a program may run after a budget trips and its catchable
  * ResourceLimitError is raised, before DIAMOND_VM_RESOURCE_EXHAUSTED ends it.
