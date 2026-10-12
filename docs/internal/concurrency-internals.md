@@ -204,7 +204,7 @@ anywhere inside `run_chunk`'s own `switch` inflated *every* recursive
 call depth far below `DIAMOND_MAX_CALL_DEPTH`'s own guard (95) and
 segfaulting instead of cleanly raising `SystemStackError`. `calloc`/
 `memset` write directly into already-allocated heap memory and need no
-such temporary -- the same reason `DiamondProgram` (a ~14MB struct) is
+such temporary -- the same reason `DiamondProgram` (a ~27MB struct) is
 always `calloc`'d and never zero-initialized via a compound literal
 anywhere in this codebase.
 
