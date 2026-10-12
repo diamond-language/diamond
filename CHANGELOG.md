@@ -53,6 +53,8 @@ authoritative fine-grained record.
 ### Tooling
 
 - `DIAMOND_TRACE_TAIL_CALLS=1` reports how many self-recursive tail calls ran in place.
+- `examples/budget`: a host that runs guests under `DIAMOND_MAX_WALL_MILLISECONDS`, showing blocked
+  waits bounded, rescue-and-finish, and the hard stop after the grace allowance.
 - `examples/dispatcher`: routing work with `Channel.select_send`, a priority `Channel.select` drain,
   a supervisor restart policy that gives up on a crash loop, and group coverage in `case`.
 
