@@ -60,6 +60,10 @@ authoritative fine-grained record.
 
 ### Performance
 
+- A bytecode cache (`.dic`) no longer carries the prelude and stores each function by its used
+  bytes: a three-line script's cache is 20 KB instead of 4 MB, and the embedded prelude blob in
+  the binary is 0.8 MB instead of 4 MB. A cache hit takes the same time as before. Old cache
+  files are ignored and rebuilt.
 - A debug session polls its control channel every 32nd statement instead of every statement, so a
   debugged loop runs about 3x faster (4.0 s to 1.3 s over 6 million statements). A live
   `setBreakpoints` takes effect up to 32 statements later.

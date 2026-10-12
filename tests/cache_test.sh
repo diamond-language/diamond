@@ -177,4 +177,25 @@ out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" modules.di 2>&1)"
 [[ "$out" == *$'\n'"[42, 42, 42, 42]" ]]
 count=$((count + 1))
 
+# --- a cache does not carry the prelude: the binary already embeds it, so a
+# trivial script's file stays small (it was about 4 MB with the prelude), and
+# the program still runs from the cache with identical output ---
+printf 'puts(6 * 7)\n' > "$work/small.di"
+(cd "$work" && "$diamond" small.di >/dev/null)
+small_size="$(stat -c %s "$work/small.dic" 2>/dev/null || stat -f %z "$work/small.dic")"
+(( small_size < 200 * 1024 ))
+out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" small.di 2>&1)"
+[[ "$out" == *"cache: hit"* ]]
+[[ "$out" == *$'\n'"42"$'\n'"nil" ]]
+count=$((count + 1))
+
+# --- a program that needs JSON compiles against the live prelude rather than
+# the embedded one, so its cache keeps everything and must still round-trip ---
+printf 'puts(JSON.stringify({"a": [1, 2]}))\n' > "$work/json.di"
+first="$(cd "$work" && "$diamond" json.di)"
+out="$(cd "$work" && DIAMOND_TRACE_CACHE=1 "$diamond" json.di 2>&1)"
+[[ "$out" == *"cache: hit"* ]]
+[[ "$out" == *"$first" ]]
+count=$((count + 1))
+
 echo "$count cache tests passed"
