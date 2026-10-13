@@ -309,6 +309,25 @@ restarts -- a child that keeps crashing and restarting forever blocks
 already does. With the cancellation cut, cancel a shared source first and have
 workers catch expected cancellation and return normally before calling `stop()`.
 
+`stop(timeout_ms)` bounds that wait. It stops restarts, gives the current
+attempts up to `timeout_ms` milliseconds (`0` to `2147483647`) to finish by
+themselves, then interrupts whatever is still running and joins. It returns
+`true` if every child finished within the timeout and `false` if it had to
+interrupt one. An interrupted child has `alive?` false, no restart counted and
+a `last_error` of `"stopped: Supervisor#stop timed out"`; `stop(0)` interrupts
+immediately.
+
+```ruby
+sup.stop(5000)  # => true if everything wound down within 5 seconds
+```
+
+The interruption is the one a sibling restart uses: the attempt's VM stops at
+its next instruction and cannot be rescued, so `ensure` blocks do not run. It
+ends an infinite loop or a crash loop, but a worker parked in a blocking native
+call (`Channel#receive`, a socket read, a SQL call) is only stopped once that
+call returns, and `stop(timeout_ms)` then still waits for it. Use
+[cancellation](cancellation.md) tokens for those waits.
+
 ### Restart policy
 
 `restart_policy(options)` bounds how hard a supervisor retries. It takes a

@@ -16,6 +16,12 @@ authoritative fine-grained record.
 - The grace allowance after a tripped budget is configurable: `DIAMOND_GRACE_INSTRUCTIONS`,
   `DIAMOND_GRACE_WALL_MILLISECONDS` and `DIAMOND_GRACE_MEMORY_BYTES`.
 
+### Language
+
+- `Supervisor#stop(timeout_ms)` stops restarts, waits up to the timeout for the current
+  attempts, then interrupts any still running and returns whether it had to. A worker in a
+  blocking native call is still only stopped when that call returns.
+
 ### Tooling
 
 - The debugger answers `stepInTargets`: on a line with several calls it lists them in execution

@@ -53,9 +53,11 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Cancel-on-timeout** -- `Supervisor.stop` still requires workers to cooperate.
-  Blocking TLS and SQL interruption and implicit cancellation checkpoints are open
-  (see [cancellation](cancellation.md)).
+- **Interrupting blocked workers** -- `Supervisor#stop(timeout_ms)` interrupts only
+  between instructions, so a worker in a blocking `Channel#receive`, socket, TLS or
+  SQL call (or JIT-compiled code) still holds the join. Blocking TLS and SQL
+  interruption and implicit cancellation checkpoints are open (see
+  [cancellation](cancellation.md)).
 - **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a
   `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
   by design. Needs a concrete use case.
