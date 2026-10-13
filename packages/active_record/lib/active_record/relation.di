@@ -99,7 +99,7 @@ module ActiveRecord
       if rows.length() == 0 then nil else rows[0] end
     end
 
-    def count(db) = @query.count(db, @visitor)
+    def count(db) -> Int = @query.count(db, @visitor)
   end
 
 end

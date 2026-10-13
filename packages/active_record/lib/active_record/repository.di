@@ -157,7 +157,7 @@ module ActiveRecord
     # (#to_a/#first/#count) on the Relation it returns.
     def relation() -> Relation = Relation.new(Arel.from(@table), @mapper, @visitor, self)
 
-    def create(db, attributes: Hash)
+    def create(db, attributes: Hash) -> Int
       self.validate!(attributes)
       final_attributes = attributes
       unless @before_save == nil
@@ -170,7 +170,7 @@ module ActiveRecord
       result
     end
 
-    def update(db, id, attributes: Hash, expected_lock_version = nil)
+    def update(db, id, attributes: Hash, expected_lock_version = nil) -> Int
       self.validate!(attributes, id)
       final_attributes = attributes
       unless @before_save == nil
@@ -198,7 +198,7 @@ module ActiveRecord
       result
     end
 
-    def delete(db, id)
+    def delete(db, id) -> Int
       attributes = {}
       attributes[@id_column] = id
       unless @before_save == nil

@@ -124,7 +124,7 @@ module ActiveRecord
     # expected_lock_version, so there is nothing further for a caller to
     # pass. Raises StaleObjectError exactly as Repository#update itself
     # does, on the same condition.
-    def save(db)
+    def save(db) -> Int
       if self.persisted?()
         lock_column = self.repository().lock_column()
         if lock_column == nil
@@ -143,7 +143,7 @@ module ActiveRecord
       end
     end
 
-    def destroy(db) = self.repository().delete(db, self.id())
+    def destroy(db) -> Int = self.repository().delete(db, self.id())
 
     # `!`-suffixed aliases for #save/#destroy, provided purely for
     # Rails-naming familiarity -- unlike real ActiveRecord, where plain
@@ -153,8 +153,8 @@ module ActiveRecord
     # above), so there is no quiet failure mode to distinguish from. Both
     # spellings behave identically; use whichever reads better at the call
     # site.
-    def save!(db) = self.save(db)
-    def destroy!(db) = self.destroy(db)
+    def save!(db) -> Int = self.save(db)
+    def destroy!(db) -> Int = self.destroy(db)
 
     # Class-level finders, shared here and inherited by every subclass --
     # made possible by Diamond's virtual self.foo(...) dispatch inside a

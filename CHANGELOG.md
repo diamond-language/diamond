@@ -28,6 +28,8 @@ authoritative fine-grained record.
 
 - `arel` 0.34.5: the parameter checks and return annotations added after 0.34.4 was published change
   the archive, so they ship as a new version; the registry's launch seed now pins 0.34.5.
+- `active_record` 0.19.4: `Relation#count`, `Repository#create`/`#update`/`#delete` and
+  `Model#save`/`#destroy` (and their `!` forms) declare `-> Int`.
 
 ## 0.13.0 — 2026-10-12
 
