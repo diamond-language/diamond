@@ -448,4 +448,10 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
         DiamondValue *registers, uint16_t dest, uint8_t class_index,
         uint16_t base, uint8_t argc, size_t depth);
 
+/* True when `function`'s bytecode contains a backward jump (a loop) and every
+ * opcode in it is one the compiler understands. jit_call_or_interpret uses it
+ * to compile such a function on its first call: a loop running in a function
+ * called once never reaches the call-count threshold. */
+bool diamond_jit_function_has_loop(const DiamondFunction *function);
+
 #endif

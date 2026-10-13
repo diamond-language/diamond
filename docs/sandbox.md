@@ -111,6 +111,10 @@ DIAMOND_MAX_MEMORY_BYTES=100000000 diamond untrusted.di
 - `DIAMOND_MAX_WALL_MILLISECONDS` -- wall-clock budget.
 - `DIAMOND_MAX_MEMORY_BYTES` -- live (post-collection) memory budget.
 
+The instruction and wall-clock budgets are enforced by the interpreter between
+instructions, so a VM that has either set (or is past a tripped one) never runs
+JIT-compiled code, even with `DIAMOND_JIT=1`.
+
 All three raise a rescuable `ResourceLimitError` once exceeded -- the same way as any
 other catchable error, including for the memory budget specifically: a genuine host
 allocator failure is deliberately *not* catchable in Diamond (nothing can safely

@@ -90,7 +90,9 @@ DIAMOND_JIT=1 ./app
 DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_TRACE_JIT=1 ./app
 ```
 
-The default compilation threshold is 50 calls per eligible function. The
+The default compilation threshold is 50 calls per eligible function; a function
+containing a loop is compiled by its first call, since a loop in a function called
+once would otherwise run interpreted to completion. The
 JIT runs only on glibc x86-64; on other platforms the executable stays on
 the interpreter path. `DIAMOND_TRACE_JIT=1` prints compiled-function and
 bailout counts when the program returns normally; a server terminated by a

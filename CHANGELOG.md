@@ -32,6 +32,15 @@ authoritative fine-grained record.
   within about 20 ms, and stops the threads it started; sibling restarts use the same wake-up.
   A MySQL call, a TLS handshake and JIT-compiled code are still not interrupted.
 
+### Performance
+
+- With `DIAMOND_JIT=1`, a function containing a loop is compiled on its first call instead of
+  after 50. A loop in a function called once (a script's main routine, a benchmark's `run()`)
+  used to run interpreted to completion: `bench/int_arithmetic.di` goes from 0.36 s to 0.07 s,
+  `dispatch_monomorphic` from 0.18 s to 0.11 s. A VM with an instruction or wall-clock budget
+  now stays on the interpreter, which is where those budgets are enforced; supervised workers
+  also keep waiting for the threshold, since native code is not interrupted.
+
 ### Tooling
 
 - The debugger answers `stepInTargets`: on a line with several calls it lists them in execution

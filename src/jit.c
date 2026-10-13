@@ -1399,102 +1399,116 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
     }
 }
 
+/* Decodes the operands of one whitelisted instruction, whose opcode byte
+ * `*pc` has just been read past, advancing `*pc` to the next opcode. Reuses
+ * compile_body's exact per-case decode calls (no generic width table
+ * exists). `*dest` is the register it writes, -1 for an instruction that
+ * writes none; `*jump_target` is its bytecode target, -1 for a non-jump.
+ * Returns false for an opcode outside the whitelist or a truncated stream,
+ * which every caller treats as "unknown, assume the worst". */
+static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
+        DiamondOpCode opcode, int32_t *dest, int32_t *jump_target) {
+    *dest = -1;
+    *jump_target = -1;
+    if (opcode_writes_no_register(opcode)) {
+        switch (opcode) {
+            case DIAMOND_OP_SET_IVAR: case DIAMOND_OP_INDEX_SET: {
+                uint16_t a = 0, b = 0, c = 0;
+                return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
+                    decode_u16(fn, pc, &c);
+            }
+            case DIAMOND_OP_CHECK_TYPE: {
+                uint16_t a = 0, b = 0;
+                return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
+            }
+            case DIAMOND_OP_JUMP: {
+                uint8_t high = 0, low = 0;
+                if (!decode_u8(fn, pc, &high) || !decode_u8(fn, pc, &low)) return false;
+                *jump_target = (int32_t)(((unsigned)high << 8) | low);
+                return true;
+            }
+            case DIAMOND_OP_JUMP_IF_TRUE: case DIAMOND_OP_JUMP_IF_FALSE: {
+                uint16_t condition = 0; uint8_t high = 0, low = 0;
+                if (!decode_u16(fn, pc, &condition) || !decode_u8(fn, pc, &high) ||
+                    !decode_u8(fn, pc, &low)) return false;
+                *jump_target = (int32_t)(((unsigned)high << 8) | low);
+                return true;
+            }
+            case DIAMOND_OP_RETURN: {
+                uint16_t a = 0;
+                return decode_u16(fn, pc, &a);
+            }
+            default: return false; /* unreachable given opcode_writes_no_register */
+        }
+    }
+    if (!opcode_dest_is_first_u16(opcode)) return false;
+    uint16_t destination = 0;
+    if (!decode_u16(fn, pc, &destination)) return false;
+    *dest = destination;
+    switch (opcode) {
+        case DIAMOND_OP_NIL: return true; /* dest only */
+        case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
+        case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
+            uint16_t a = 0;
+            return decode_u16(fn, pc, &a);
+        }
+        case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
+        case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
+        case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE:
+        case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
+        case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
+        case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
+        case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY:
+        case DIAMOND_OP_HASH: case DIAMOND_OP_INDEX_GET_STRING: case DIAMOND_OP_IS_TYPE: {
+            uint16_t a = 0, b = 0;
+            return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
+        }
+        case DIAMOND_OP_SUPER: {
+            uint16_t a = 0, b = 0; uint8_t c = 0, d = 0;
+            return decode_u8(fn, pc, &c) && decode_u16(fn, pc, &a) &&
+                decode_u16(fn, pc, &b) && decode_u8(fn, pc, &d);
+        }
+        case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
+            uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
+            return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b) &&
+                decode_u16(fn, pc, &c) && decode_u8(fn, pc, &d);
+        }
+        case DIAMOND_OP_NEW: {
+            uint16_t a = 0; uint8_t b = 0, c = 0;
+            return decode_u8(fn, pc, &b) && decode_u16(fn, pc, &a) &&
+                decode_u8(fn, pc, &c);
+        }
+        default: return false; /* unreachable given opcode_dest_is_first_u16 */
+    }
+}
+
+/* Whether `fn` contains a backward (or self) jump, i.e. a loop. Only the
+ * whitelisted opcodes are understood: any other, or a truncated stream,
+ * answers false -- such a function is not compilable anyway. Used to compile
+ * a loop-carrying function on its first call (see jit_call_or_interpret). */
+bool diamond_jit_function_has_loop(const DiamondFunction *fn) {
+    size_t pc = 0;
+    while (pc < fn->code_count) {
+        const size_t start = pc;
+        uint8_t raw_opcode = 0;
+        if (!decode_u8(fn, &pc, &raw_opcode)) return false;
+        int32_t dest = -1, jump_target = -1;
+        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
+                &dest, &jump_target)) return false;
+        if (jump_target >= 0 && (size_t)jump_target <= start) return true;
+    }
+    return false;
+}
+
 static bool parameter_never_reassigned(const DiamondFunction *fn, uint16_t target_register) {
     size_t pc = 0;
     while (pc < fn->code_count) {
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) return false;
-        DiamondOpCode opcode = (DiamondOpCode)raw_opcode;
-        if (opcode_writes_no_register(opcode)) {
-            /* Still has to consume this instruction's own operands to find
-             * the next opcode byte -- reuse compile_body's exact per-case
-             * decode calls rather than a generic width table (none
-             * exists). */
-            switch (opcode) {
-                case DIAMOND_OP_SET_IVAR: case DIAMOND_OP_INDEX_SET: {
-                    uint16_t a = 0, b = 0, c = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
-                        !decode_u16(fn, &pc, &c)) return false;
-                    break;
-                }
-                case DIAMOND_OP_CHECK_TYPE: {
-                    uint16_t a = 0, b = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return false;
-                    break;
-                }
-                case DIAMOND_OP_JUMP: {
-                    uint8_t a = 0, b = 0;
-                    if (!decode_u8(fn, &pc, &a) || !decode_u8(fn, &pc, &b)) return false;
-                    break;
-                }
-                case DIAMOND_OP_JUMP_IF_TRUE: case DIAMOND_OP_JUMP_IF_FALSE: {
-                    uint16_t a = 0; uint8_t b = 0, c = 0;
-                    if (!decode_u16(fn, &pc, &a) || !decode_u8(fn, &pc, &b) ||
-                        !decode_u8(fn, &pc, &c)) return false;
-                    break;
-                }
-                case DIAMOND_OP_RETURN: {
-                    uint16_t a = 0;
-                    if (!decode_u16(fn, &pc, &a)) return false;
-                    break;
-                }
-                default: return false; /* unreachable given opcode_writes_no_register */
-            }
-            continue;
-        }
-        if (!opcode_dest_is_first_u16(opcode)) {
-            /* Not in either whitelist -- compile_body would already have
-             * bailed the whole function before this scan is reached for
-             * any real bytecode stream, but fail safe anyway. */
-            return false;
-        }
-        uint16_t dest = 0;
-        if (!decode_u16(fn, &pc, &dest)) return false;
-        if (dest == target_register) return false;
-        /* Consume the rest of this instruction's operands to reach the
-         * next opcode byte -- every case in this whitelist has a fixed,
-         * known remaining-operand shape matching compile_body exactly. */
-        switch (opcode) {
-            case DIAMOND_OP_NIL: break; /* dest only */
-            case DIAMOND_OP_BOOL: case DIAMOND_OP_MOVE: case DIAMOND_OP_CONSTANT:
-            case DIAMOND_OP_ARGUMENT_PROVIDED: case DIAMOND_OP_STRING: {
-                uint16_t a = 0;
-                if (!decode_u16(fn, &pc, &a)) return false;
-                break;
-            }
-            case DIAMOND_OP_ADD_INT: case DIAMOND_OP_SUBTRACT_INT: case DIAMOND_OP_MULTIPLY_INT:
-            case DIAMOND_OP_DIVIDE_INT: case DIAMOND_OP_LESS_INT: case DIAMOND_OP_ADD:
-            case DIAMOND_OP_SUBTRACT: case DIAMOND_OP_MULTIPLY: case DIAMOND_OP_DIVIDE:
-            case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
-            case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
-            case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
-            case DIAMOND_OP_INDEX_GET_STRING:
-            case DIAMOND_OP_IS_TYPE: {
-                uint16_t a = 0, b = 0;
-                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return false;
-                break;
-            }
-            case DIAMOND_OP_SUPER: {
-                uint16_t a = 0, b = 0; uint8_t c = 0, d = 0;
-                if (!decode_u8(fn, &pc, &c) || !decode_u16(fn, &pc, &a) ||
-                    !decode_u16(fn, &pc, &b) || !decode_u8(fn, &pc, &d)) return false;
-                break;
-            }
-            case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
-                uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
-                if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b) ||
-                    !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return false;
-                break;
-            }
-            case DIAMOND_OP_NEW: {
-                uint16_t a = 0; uint8_t b = 0, c = 0;
-                if (!decode_u8(fn, &pc, &b) || !decode_u16(fn, &pc, &a) ||
-                    !decode_u8(fn, &pc, &c)) return false;
-                break;
-            }
-            default: return false; /* unreachable given opcode_dest_is_first_u16 */
-        }
+        int32_t dest = -1, jump_target = -1;
+        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
+                &dest, &jump_target)) return false;
+        if (dest == (int32_t)target_register) return false;
     }
     return true;
 }
