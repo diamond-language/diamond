@@ -2055,3 +2055,30 @@ structural type, native type, or type variable keeps the complete matcher.
 In particular, a generic member before a plain collection member may attach
 constraints; skipping that member would change later mutation behavior.
 The interpreter and bytecode format remain unchanged.
+
+### Compile on the first call for a function with a loop
+
+There is no on-stack replacement, so the call-count threshold (50) never fires for a
+loop inside a function called once: `bench/int_arithmetic.di`'s `run()` ran its five
+million iterations interpreted although every opcode in it is whitelisted. Measured
+with `DIAMOND_JIT_THRESHOLD=1` against the default (release build, one run each):
+`int_arithmetic` 0.36 s to 0.06 s, `dispatch_monomorphic` 0.18 s to 0.11 s.
+
+`jit_call_or_interpret` therefore compiles a function on its first call when
+`diamond_jit_function_has_loop` finds a backward or self jump. That scan shares
+`decode_instruction_operands` with `parameter_never_reassigned`, so both read the
+same operand shapes, and it answers false for any opcode outside the whitelist
+(such a function cannot compile anyway, so it is not charged a failed attempt).
+A function without a loop still waits for the threshold, so a program of many
+once-called straight-line functions does not mmap a code page for each.
+
+Two restrictions keep native loops from escaping a control the interpreter
+provides. A VM with `DIAMOND_MAX_INSTRUCTIONS` or `DIAMOND_MAX_WALL_MILLISECONDS`
+set, or one past a tripped budget, never enters native code at all, because compiled
+loops execute no per-instruction budget check (this also closes the pre-existing
+gap where a function that reached the threshold under `DIAMOND_JIT=1` was
+unbounded). A supervised attempt (`interrupt_flag` set) does not compile on its first
+call, since `Supervisor#stop(timeout_ms)` interrupts only between interpreted
+instructions. Thread VMs never run native code (only the main VM reads `DIAMOND_JIT`), so
+`tests/run.sh`'s serial-versus-parallel comparison unsets `DIAMOND_JIT`.
+Full suite passes with `DIAMOND_JIT=1`.

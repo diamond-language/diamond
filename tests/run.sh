@@ -68,6 +68,24 @@ jit_control_count="$(jit_compiled_count "Array | Nil" nil)"
 jit_array_count="$(jit_compiled_count Array '[]')"
 [[ -n "$jit_control_count" && "$jit_array_count" == "$jit_control_count" ]]
 
+# A function with a loop compiles on its first call (there is no on-stack
+# replacement, so a loop in a function called once would otherwise run
+# interpreted to completion); one without a loop waits for the threshold, and a
+# VM with an instruction budget never runs native code, which cannot count.
+jit_first_call_count() {
+    local program="$1"
+    shift
+    env "$@" DIAMOND_JIT=1 DIAMOND_TRACE_JIT=1 "$diamond" -e "$program" 2>&1 |
+        sed -n 's/^jit: \([0-9]*\) compiled function(s).*$/\1/p'
+}
+loop_program=$'def run()\n  i = 0\n  while i < 1000\n    i += 1\n  end\n  i\nend\nputs(run())'
+straight_program=$'def run(i)\n  i + 1\nend\nputs(run(1))'
+loop_reference="$(jit_first_call_count "$loop_program" DIAMOND_JIT_THRESHOLD=1)"
+[[ -n "$loop_reference" ]]
+[[ "$(jit_first_call_count "$loop_program")" == "$loop_reference" ]]
+[[ "$(jit_first_call_count "$straight_program")" == 0 ]]
+[[ "$(jit_first_call_count "$loop_program" DIAMOND_MAX_INSTRUCTIONS=100000000)" == 0 ]]
+
 # Once program input has started, option-looking values belong to the script.
 actual="$($diamond -e 'ARGV' -h --version)"
 [[ "$actual" == "[-h, --version]" ]]
@@ -3098,16 +3116,19 @@ spin_program='def spin()
   i
 end'
 measure_parallelism() {
+    # Thread VMs never run native code, so the JIT would speed up only the
+    # serial side (a loop called once now compiles on its first call) and make
+    # the interpreter-vs-interpreter comparison below meaningless.
     local start end
     start="$EPOCHREALTIME"
-    serial_out="$("$diamond" -e "$spin_program
+    serial_out="$(env -u DIAMOND_JIT "$diamond" -e "$spin_program
 puts(spin())
 puts(spin())")"
     end="$EPOCHREALTIME"
     serial_time="$(echo "$end - $start" | bc)"
 
     start="$EPOCHREALTIME"
-    parallel_out="$("$diamond" -e "$spin_program
+    parallel_out="$(env -u DIAMOND_JIT "$diamond" -e "$spin_program
 t1 = Thread.new(spin)
 t2 = Thread.new(spin)
 puts(t1.join())

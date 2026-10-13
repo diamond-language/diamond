@@ -9035,11 +9035,28 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
     if (depth + 1 >= DIAMOND_MAX_CALL_DEPTH) {
         return DIAMOND_VM_STACK_OVERFLOW;
     }
-    if (vm->jit && !function->jit_ineligible) {
+    /* Native code is never interrupted and executes none of the per-
+     * instruction checks, so a VM with an instruction or wall-clock budget
+     * (or one already past a tripped budget, in its grace allowance) stays
+     * on the interpreter, where the budget is enforced. */
+    if (vm->jit && !function->jit_ineligible && vm->max_instructions == 0 &&
+        vm->max_wall_nanoseconds == 0 && !vm->resource_grace_active) {
         DiamondFunction *mutable_function = (DiamondFunction *)function;
         if (mutable_function->jit_code == nullptr) {
             mutable_function->jit_call_count++;
-            if (mutable_function->jit_call_count >= vm->jit_threshold) {
+            /* A function with a loop gets compiled by its first call: a
+             * loop in a function called once (a script's main routine, a
+             * benchmark's run()) would otherwise never reach the threshold
+             * and run interpreted to completion, since there is no
+             * on-stack replacement. Not for a supervised attempt, whose
+             * interruption is only looked at between interpreted
+             * instructions. */
+            const bool loop_on_first_call =
+                mutable_function->jit_call_count == 1 &&
+                vm->interrupt_flag == nullptr &&
+                diamond_jit_function_has_loop(function);
+            if (loop_on_first_call ||
+                mutable_function->jit_call_count >= vm->jit_threshold) {
                 size_t jit_code_size = 0;
                 void *compiled = diamond_jit_try_compile(function, &jit_code_size);
                 if (compiled != nullptr) {
