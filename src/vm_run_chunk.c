@@ -113,6 +113,36 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
     return false;
 }
 
+/* The chunk a plain CALL builds for `function`, shared by the cross-function
+ * form of DIAMOND_OP_TAIL_CALL (its in-place switch and its CALL fallback). */
+static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
+        const DiamondChunk *caller) {
+    return (DiamondChunk){
+        .name = function->name,
+        .code = function->code,
+        .lines = function->lines,
+        .columns = function->columns,
+        .code_count = function->code_count,
+        .constants = function->constants,
+        .constant_count = function->constant_count,
+        .strings = function->strings,
+        .string_count = function->string_count,
+        .type_sets = function->type_sets,
+        .type_set_count = function->type_set_count,
+        .functions = caller->functions,
+        .function_count = caller->function_count,
+        .classes = caller->classes,
+        .class_count = caller->class_count,
+        .interfaces = caller->interfaces,
+        .interface_count = caller->interface_count,
+        .parameter_type_sets = function->parameter_type_sets,
+        .type_variable_count = function->type_variable_count,
+        .parameter_offset = function->owner_class == UINT8_MAX ? 0 : 1,
+        .register_count = function->register_count,
+        .has_variadic = function->has_variadic,
+    };
+}
+
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -169,7 +199,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * happens for hand-authored DiamondChunk literals (e.g. tests driving
      * the C API directly) that predate this field; fall back to the full
      * width rather than silently under-zeroing/under-scanning those. */
-    const size_t live_register_count =
+    size_t live_register_count =
         chunk->register_count == 0 ? DIAMOND_REGISTER_COUNT : chunk->register_count;
     /* A variadic callee is allowed to receive more arguments than it has
      * registers for -- the excess never lands in an individual register
@@ -199,6 +229,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         }
         registers = heap_registers;
     }
+    /* Slots `registers` can hold: a cross-function TAIL_CALL switches to a
+     * callee with a different register count and grows the heap array only
+     * when that count exceeds this. */
+    size_t register_capacity = live_register_count > DIAMOND_INLINE_REGISTER_COUNT
+        ? live_register_count : DIAMOND_INLINE_REGISTER_COUNT;
     memset(registers, 0, live_register_count * sizeof(DiamondValue));
     /* Bounded at live_register_count, not argument_count -- a variadic
      * call (see the has_variadic check above) can pass more arguments
@@ -1318,34 +1353,62 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_TAIL_CALL: {
-                /* Only ever produced by the compiler rewriting an
-                 * already-validated self-recursive CALL in tail position
-                 * (see maybe_rewrite_self_tail_call, src/compiler.c) --
-                 * `function_index`/`destination` are intentionally unread:
-                 * the target is always *this* function (chunk/registers/
-                 * frame/depth all stay exactly as they are, since a self-
-                 * call can never need a different one of any of them),
-                 * and a value that would have been returned here was
-                 * already checked byte-for-byte to be the immediately
-                 * preceding CALL's own destination, needing no separate
-                 * confirmation at run time. Bounds/arity were already
-                 * enforced when that CALL itself first compiled; the only
-                 * new check needed here is argument_base/count staying in
-                 * range, the same defensive validation CALL's own case
-                 * applies, in case this was ever hand-built directly
-                 * (ProgramBuilder exposes raw opcode numbers). */
+                /* Produced only by the compiler rewriting a plain CALL in
+                 * tail position (maybe_rewrite_self_tail_call and
+                 * rewrite_cyclic_tail_calls, src/compiler.c), whose result
+                 * was already checked to be the RETURN's value. Either the
+                 * function's own call to itself, which reuses the chunk and
+                 * registers as they are, or a call to a different function
+                 * on a cycle of such calls (mutual recursion), which swaps
+                 * in that function's chunk and register count below.
+                 * Bounds/arity were enforced when the CALL compiled; the
+                 * checks here are the same defensive ones CALL's case makes,
+                 * in case this was hand-built (ProgramBuilder exposes raw
+                 * opcode numbers). */
                 uint16_t destination = 0, function_index = 0, argument_base = 0;
                 uint8_t call_argument_count = 0;
-                READ_SHORT(destination); /* unused, see above */
-                READ_SHORT(function_index); /* unused, see above */
+                READ_SHORT(destination);
+                READ_SHORT(function_index);
                 READ_SHORT(argument_base);
                 READ_BYTE(call_argument_count);
-                (void)destination;
-                (void)function_index;
                 if ((size_t)argument_base + call_argument_count >
-                        DIAMOND_REGISTER_COUNT ||
-                    (call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS &&
-                     !chunk->has_variadic)) {
+                        DIAMOND_REGISTER_COUNT) {
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                }
+                const DiamondFunction *tail_target =
+                    (size_t)function_index < chunk->function_count
+                        ? chunk->functions[function_index] : nullptr;
+                const bool cross_function =
+                    tail_target != nullptr && tail_target->code != chunk->code;
+                size_t next_register_count = live_register_count;
+                DiamondChunk next_chunk;
+                if (cross_function) {
+                    if (call_argument_count < tail_target->required_arity ||
+                        (call_argument_count > tail_target->arity &&
+                         !tail_target->has_variadic)) {
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    }
+                    next_chunk = plain_call_chunk(tail_target, chunk);
+                    next_register_count = next_chunk.register_count == 0
+                        ? DIAMOND_REGISTER_COUNT : next_chunk.register_count;
+                    if (closure != nullptr || handler_count > 0 ||
+                        (call_argument_count > next_register_count &&
+                         !tail_target->has_variadic)) {
+                        /* A block's frame, a live handler, or an argument
+                         * list the callee's registers cannot hold: an
+                         * ordinary call, which the RETURN right after it
+                         * completes. */
+                        DiamondValue call_result = DIAMOND_NIL;
+                        const DiamondVmStatus status = jit_call_or_interpret(
+                            vm, tail_target, &next_chunk,
+                            &registers[argument_base], call_argument_count,
+                            depth, nullptr, &call_result);
+                        VM_PROPAGATE(status);
+                        registers[destination] = call_result;
+                        break;
+                    }
+                } else if (call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS &&
+                           !chunk->has_variadic) {
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 /* The next iteration's argument list replaces this one's:
@@ -1369,6 +1432,25 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 for (size_t index = 0; index < call_argument_count; index++)
                     tail_buffer[index] = registers[argument_base + index];
                 frame.extra_root_count = call_argument_count;
+                if (cross_function) {
+                    /* Last fallible step, before any state changes. */
+                    if (next_register_count > register_capacity) {
+                        DiamondValue *grown_registers =
+                            malloc(next_register_count * sizeof(DiamondValue));
+                        if (grown_registers == nullptr)
+                            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        free(heap_registers);
+                        heap_registers = grown_registers;
+                        registers = grown_registers;
+                        register_capacity = next_register_count;
+                        frame.registers = registers;
+                    }
+                    live_register_count = next_register_count;
+                    frame.register_count = live_register_count;
+                    execution = next_chunk;
+                    chunk = &execution;
+                    frame.chunk = chunk;
+                }
                 arguments = tail_buffer;
                 argument_count = call_argument_count;
                 memset(registers, 0, live_register_count * sizeof(DiamondValue));

@@ -18,6 +18,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- Mutual tail calls run in place: a call in tail position to a function that tail-calls back (a
+  cycle of any length, with different arities, generics or register counts) no longer grows the
+  stack. A tail call to a function that is not on such a cycle stays an ordinary call.
 - A generic or variadic function's own tail call now runs in place: type variables are inferred
   again from each iteration's arguments and overflow arguments are re-collected.
 - An in-place tail call that leaves out a default parameter now takes the default again; it used to

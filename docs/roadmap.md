@@ -26,15 +26,6 @@ Current behavior: [classes and modules](classes-and-modules.md).
   class would fix the cross-class case but not the extra-field one; fix only with a
   driving need.
 
-### Tail-call optimization
-
-Current behavior: [callables](callables.md).
-
-- **Mutual and cross-function tail calls** -- a tail call to a different known
-  function needs a different register count, chunk and constant pool, which turns
-  "reuse the running frame" into swapping most of `run_chunk`'s locals mid-loop, in
-  the most performance-audited code in the project. More risk, broader value.
-
 ### Channel
 
 Current behavior: [threads](threads.md).
