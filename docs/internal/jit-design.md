@@ -2082,3 +2082,44 @@ call, since `Supervisor#stop(timeout_ms)` interrupts only between interpreted
 instructions. Thread VMs never run native code (only the main VM reads `DIAMOND_JIT`), so
 `tests/run.sh`'s serial-versus-parallel comparison unsets `DIAMOND_JIT`.
 Full suite passes with `DIAMOND_JIT=1`.
+
+### Plain `CALL` from compiled code
+
+`DIAMOND_OP_CALL` (a call to a named function by its plain name) was the largest
+remaining rejection: any function containing one stayed interpreted, so a recursive
+function like `bench/fibonacci.di` never compiled (0 compiled functions). It now
+compiles through `diamond_jit_call_function` (src/vm.c), which validates exactly as the
+interpreter's case does and calls `jit_call_or_interpret`, so a callee that has itself
+compiled runs as native code. The callee chunk is built by `plain_call_chunk`
+(vm_internal.h), now shared by the interpreter's CALL, the cross-function TAIL_CALL and
+this trampoline, so those three cannot drift apart.
+
+`compile_call_function` sets `needs_frame` and `has_called` like SUPER: the callee can
+allocate and collect, and has side effects a retry from the start would repeat, so a
+failure after it propagates the exact status instead of re-running the function.
+`depth` passes through unchanged (`jit_call_or_interpret` adds the level). A CALL's
+result proves no class to the register-write scans, which treat it as an ordinary
+writer.
+
+Making calls compilable exposed a diagnostic loss that INVOKE/SUPER already had: a
+compiled function has no `run_chunk` to append its `at name:line:col` trace line as an
+error unwinds, so every compiled caller vanished from the trace. Two fixes close it for
+all four call-capable trampolines (CALL, INVOKE, SUPER, NEW):
+
+- each stores its bytecode offset into the published frame's `instruction_offset` slot
+  just before the call (`emit_record_instruction_offset`), so a backtrace taken at a
+  `raise` below it names the function and line;
+- the propagate exit calls `diamond_jit_frame_pop_propagating`, which appends the trace
+  line to `vm->error` as `RECORD_ERROR` does for an interpreted frame, then pops.
+
+A function that fails *before* any call (a guard, an arithmetic slow path) is still
+re-run by the interpreter, which records its own line, as before. Under a forced
+`DIAMOND_JIT_THRESHOLD=1` for the whole suite, `tests/cases/stack_trace.di` is missing
+the `divide` frame on `main` as well; that is not a supported configuration, and the
+default-threshold suite passes with `DIAMOND_JIT=1`.
+
+Measured against the interpreter (release, one run each): `fibonacci` 0.32 s to 0.13 s,
+`jit_native_collection_reads` 0.74 s to 0.12 s, `jit_native_string_reads` 0.75 s to
+0.27 s, `jit_invoke_result_ivar` 5.05 s to 2.13 s, `int_arithmetic_dynamic` 0.83 s to
+0.23 s. Nothing regressed. Not covered: `TAIL_CALL` (a self- or mutually tail-recursive
+function stays interpreted), `CALL_TYPED`, spread and keyword calls, closure calls.

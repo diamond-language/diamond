@@ -403,6 +403,22 @@ static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
 }
 
 /* ret */
+/* Stores the current bytecode offset into the published DiamondFrame's
+ * instruction_offset slot (the size_t right after the DiamondFrame, see
+ * diamond_jit_frame_push), so a backtrace taken while a callee runs names this
+ * function and the call's source line. Without it the frame is skipped and
+ * every compiled caller vanishes from error traces. Emitted just before a
+ * trampoline that can run user code, while RSP still addresses the frame. */
+static void emit_record_instruction_offset(JitCompiler *jc, size_t instruction_start) {
+    JitBuffer *buf = &jc->buf;
+    emit_u8(buf, 0x48);                       /* REX.W */
+    emit_u8(buf, 0xC7);                       /* MOV r/m64, imm32 */
+    emit_u8(buf, 0x84);                       /* ModRM: [rsp + disp32] */
+    emit_u8(buf, 0x24);                       /* SIB: rsp */
+    emit_u32_le(buf, (uint32_t)(diamond_jit_frame_size() - sizeof(size_t)));
+    emit_u32_le(buf, (uint32_t)instruction_start);
+}
+
 static void emit_ret(JitBuffer *buf) { emit_u8(buf, 0xC3); }
 
 /* mov al, imm8 -- the two bool/status return-value stencils */
@@ -477,7 +493,8 @@ static void emit_epilogue_propagate(JitCompiler *jc) {
     if (jc->needs_frame) {
         emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
         emit_mov_rr(buf, REG_RDI, JIT_VM);
-        emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
+        emit_mov_rr(buf, REG_RSI, JIT_RESULT_PTR);
+        emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop_propagating);
         emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
         emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     }
@@ -1119,11 +1136,12 @@ static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uin
  * own incoming depth (JIT_DEPTH), passed on unchanged, exactly mirroring
  * the interpreter's own `depth` (not `depth+1`) argument to invoke_
  * resolved_method_helper. */
-static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_index,
-                                uint16_t name, uint16_t base, uint8_t argc) {
+static void compile_super_call(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                uint8_t owner_index, uint16_t name, uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_super_call takes 9 arguments -- SysV passes the first 6
      * (vm, chunk, owner_index, name, registers, base) in RDI/RSI/RDX/RCX/
      * R8/R9, and the remaining 3 (argc, depth, out) on the stack, in that
@@ -1153,6 +1171,33 @@ static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_ind
     emit_mov_imm64(buf, REG_R9, base);
     emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_super_call);
     emit_add_rsp_imm32(buf, 32); /* reclaim the 4 pushed stack slots */
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* DIAMOND_OP_CALL -- calls diamond_jit_call_function, which performs the same
+ * checks as the interpreter's case and runs the callee as native code when it
+ * has been compiled. Sets needs_frame and has_called for the same reasons as
+ * compile_super_call: the callee can allocate and collect, and has real side
+ * effects that a retry from the start would repeat. 8 arguments: the first 6
+ * (vm, chunk, registers, function_index, base, argc) in registers, and
+ * (depth, out) on the stack, pushed in reverse so depth ends at [rsp+0]. */
+static void compile_call_function(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                                  uint16_t function_index, uint16_t base, uint8_t argc) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    JitBuffer *buf = &jc->buf;
+    emit_record_instruction_offset(jc, instruction_start);
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);                 /* out -> [rsp+8] after the next push */
+    emit_push(buf, JIT_DEPTH);               /* depth -> [rsp+0] */
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX, function_index);
+    emit_mov_imm64(buf, REG_R8, base);
+    emit_mov_imm64(buf, REG_R9, argc);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_call_function);
+    emit_add_rsp_imm32(buf, 16); /* reclaim the 2 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1190,6 +1235,7 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_invoke_instance takes 13 arguments -- SysV passes the
      * first 6 (vm, chunk, site, instruction, registers, recv) in RDI/RSI/
      * RDX/RCX/R8/R9, and the remaining 7 (name, base, argc, type_argument_
@@ -1255,11 +1301,12 @@ static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
  * instance's own maybe_collect can trigger GC) and jc->has_called (a
  * user-defined `initialize` can run arbitrary code), mirroring every
  * other call-capable trampoline here. */
-static void compile_new(JitCompiler *jc, uint16_t dest, uint8_t class_index,
-                         uint16_t base, uint8_t argc) {
+static void compile_new(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+                         uint8_t class_index, uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
+    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_new_instance takes 8 arguments -- SysV passes the first
      * 6 (vm, chunk, registers, dest, class_index, base) in RDI/RSI/RDX/
      * RCX/R8/R9, and the remaining 2 (argc, depth) on the stack, at
@@ -1392,6 +1439,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_INVOKE:
         case DIAMOND_OP_INVOKE_MONO:
         case DIAMOND_OP_NEW:
+        case DIAMOND_OP_CALL:
         case DIAMOND_OP_IS_TYPE:
             return true;
         default:
@@ -1477,6 +1525,11 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             uint16_t a = 0; uint8_t b = 0, c = 0;
             return decode_u8(fn, pc, &b) && decode_u16(fn, pc, &a) &&
                 decode_u8(fn, pc, &c);
+        }
+        case DIAMOND_OP_CALL: {
+            uint16_t function_index = 0, base = 0; uint8_t argc = 0;
+            return decode_u16(fn, pc, &function_index) &&
+                decode_u16(fn, pc, &base) && decode_u8(fn, pc, &argc);
         }
         default: return false; /* unreachable given opcode_dest_is_first_u16 */
     }
@@ -1662,6 +1715,14 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
                 if (!decode_u8(fn, &pc, &class_index) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) return -1;
                 if (writes_target) new_class = (int32_t)class_index;
+                break;
+            }
+            /* A call's result proves no class here (a plain function's
+             * declared return type is not trusted by this scan). */
+            case DIAMOND_OP_CALL: {
+                uint16_t function_index = 0, base = 0; uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &function_index) ||
+                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) return -1;
                 break;
             }
             default: return -1; /* unreachable given opcode_dest_is_first_u16 */
@@ -1891,7 +1952,17 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &owner_index) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                compile_super_call(jc, dest, owner_index, name, base, argc);
+                compile_super_call(jc, instruction_start, dest, owner_index, name, base, argc);
+                break;
+            }
+            case DIAMOND_OP_CALL: {
+                uint16_t dest = 0, function_index = 0, base = 0;
+                uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
+                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                    jc->bailed = true; return;
+                }
+                compile_call_function(jc, instruction_start, dest, function_index, base, argc);
                 break;
             }
             case DIAMOND_OP_NEW: {
@@ -1901,7 +1972,7 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
-                compile_new(jc, dest, class_index, base, argc);
+                compile_new(jc, instruction_start, dest, class_index, base, argc);
                 break;
             }
             case DIAMOND_OP_JUMP: {

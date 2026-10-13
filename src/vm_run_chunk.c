@@ -113,36 +113,6 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
     return false;
 }
 
-/* The chunk a plain CALL builds for `function`, shared by the cross-function
- * form of DIAMOND_OP_TAIL_CALL (its in-place switch and its CALL fallback). */
-static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
-        const DiamondChunk *caller) {
-    return (DiamondChunk){
-        .name = function->name,
-        .code = function->code,
-        .lines = function->lines,
-        .columns = function->columns,
-        .code_count = function->code_count,
-        .constants = function->constants,
-        .constant_count = function->constant_count,
-        .strings = function->strings,
-        .string_count = function->string_count,
-        .type_sets = function->type_sets,
-        .type_set_count = function->type_set_count,
-        .functions = caller->functions,
-        .function_count = caller->function_count,
-        .classes = caller->classes,
-        .class_count = caller->class_count,
-        .interfaces = caller->interfaces,
-        .interface_count = caller->interface_count,
-        .parameter_type_sets = function->parameter_type_sets,
-        .type_variable_count = function->type_variable_count,
-        .parameter_offset = function->owner_class == UINT8_MAX ? 0 : 1,
-        .register_count = function->register_count,
-        .has_variadic = function->has_variadic,
-    };
-}
-
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -1320,30 +1290,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      !function->has_variadic)) {
                     VM_RETURN(DIAMOND_VM_ARITY_ERROR);
                 }
-                const DiamondChunk called_chunk = {
-                    .name = function->name,
-                    .code = function->code,
-                    .lines = function->lines,
-                    .columns = function->columns,
-                    .code_count = function->code_count,
-                    .constants = function->constants,
-                    .constant_count = function->constant_count,
-                    .strings = function->strings,
-                    .string_count = function->string_count,
-                    .type_sets = function->type_sets,
-                    .type_set_count = function->type_set_count,
-                    .functions = chunk->functions,
-                    .function_count = chunk->function_count,
-                    .classes = chunk->classes,
-                    .class_count = chunk->class_count,
-                    .interfaces=chunk->interfaces,
-                    .interface_count=chunk->interface_count,
-                    .parameter_type_sets=function->parameter_type_sets,
-                    .type_variable_count=function->type_variable_count,
-                    .parameter_offset=function->owner_class==UINT8_MAX?0:1,
-                    .register_count=function->register_count,
-                    .has_variadic=function->has_variadic,
-                };
+                const DiamondChunk called_chunk =
+                    plain_call_chunk(function, chunk);
                 DiamondValue call_result = DIAMOND_NIL;
                 const DiamondVmStatus status = jit_call_or_interpret(vm, function,
                     &called_chunk, &registers[argument_base], call_argument_count,

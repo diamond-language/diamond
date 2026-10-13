@@ -172,6 +172,32 @@ void diamond_jit_frame_pop(DiamondVm *vm) {
     vm->frames = frame->previous;
 }
 
+/* The propagate exit of a compiled function: records "at name:line:col" for it
+ * exactly as run_chunk's RECORD_ERROR does for an interpreted frame (the
+ * offset slot was last set by the call that failed), then pops the frame.
+ * Without it a compiled function that makes a plain CALL disappears from the
+ * trace of an error raised below it. */
+void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status) {
+    DiamondFrame *frame = (DiamondFrame *)vm->frames;
+    if (status != DIAMOND_VM_OK && status != DIAMOND_VM_NONLOCAL_EXIT &&
+        frame->chunk != nullptr && frame->instruction_offset != nullptr) {
+        const DiamondChunk *chunk = frame->chunk;
+        const size_t offset = *frame->instruction_offset;
+        size_t used = strlen(vm->error);
+        if (used == 0)
+            used = (size_t)snprintf(vm->error, sizeof vm->error, "%s",
+                diamond_vm_status_name((DiamondVmStatus)status));
+        const char *name = chunk->name != nullptr ? chunk->name : "<chunk>";
+        const bool in_bounds = offset < chunk->code_count;
+        const uint32_t line = in_bounds && chunk->lines != nullptr ? chunk->lines[offset] : 0;
+        const uint32_t column = in_bounds && chunk->columns != nullptr ? chunk->columns[offset] : 0;
+        if (used < sizeof vm->error)
+            (void)snprintf(vm->error + used, sizeof vm->error - used,
+                "\n  at %s:%u:%u", name, line, column);
+    }
+    vm->frames = frame->previous;
+}
+
 /* Called with channel->lock held. Writes never block; a full pipe already
  * contains a wakeup. Waiters unlink under this same lock before closing their
  * descriptors, so no writer can retain a stale pointer or write to a closed
@@ -9176,6 +9202,26 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
+}
+
+/* JIT trampoline for a plain DIAMOND_OP_CALL: the same validation and the same
+ * callee chunk (plain_call_chunk) as the interpreter's case, dispatched through
+ * jit_call_or_interpret so a compiled callee runs as native code. A real call
+ * with real side effects, so jit.c treats it like SUPER: every bail from the
+ * moment it compiles onward propagates the exact status instead of retrying. */
+DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out) {
+    if ((size_t)function_index >= chunk->function_count ||
+        (size_t)base + argc > DIAMOND_REGISTER_COUNT)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFunction *function = chunk->functions[function_index];
+    if (argc < function->required_arity ||
+        (argc > function->arity && !function->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    const DiamondChunk called_chunk = plain_call_chunk(function, chunk);
+    return jit_call_or_interpret(vm, function, &called_chunk, &registers[base],
+        argc, depth, nullptr, out);
 }
 
 /* JIT trampoline for DIAMOND_OP_SUPER -- extracted from that case's own

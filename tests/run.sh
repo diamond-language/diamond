@@ -75,7 +75,8 @@ jit_array_count="$(jit_compiled_count Array '[]')"
 jit_first_call_count() {
     local program="$1"
     shift
-    env "$@" DIAMOND_JIT=1 DIAMOND_TRACE_JIT=1 "$diamond" -e "$program" 2>&1 |
+    env -u DIAMOND_JIT_THRESHOLD -u DIAMOND_MAX_INSTRUCTIONS "$@" DIAMOND_JIT=1 \
+        DIAMOND_TRACE_JIT=1 "$diamond" -e "$program" 2>&1 |
         sed -n 's/^jit: \([0-9]*\) compiled function(s).*$/\1/p'
 }
 loop_program=$'def run()\n  i = 0\n  while i < 1000\n    i += 1\n  end\n  i\nend\nputs(run())'

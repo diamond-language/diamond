@@ -1,0 +1,6 @@
+^-3$
+^4$
+uncaught exception: ArgumentError: boom
+  at inner:4:
+  at middle:9:
+  at outer:13:

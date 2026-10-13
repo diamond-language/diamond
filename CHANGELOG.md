@@ -41,6 +41,12 @@ authoritative fine-grained record.
   now stays on the interpreter, which is where those budgets are enforced; supervised workers
   also keep waiting for the threshold, since native code is not interrupted.
 
+- With `DIAMOND_JIT=1`, a function that calls another named function by a plain call is no longer
+  rejected by the JIT: the call goes through a trampoline and the callee runs as native code once it
+  has compiled. `bench/fibonacci.di` goes from 0.31 s to 0.13 s; the `jit_*` benchmarks that were
+  held back by such calls improve up to 7x (`jit_native_collection_reads` 0.82 s to 0.12 s). An
+  error raised below a compiled function still names it, with the call's line, in the trace.
+
 ### Tooling
 
 - The debugger answers `stepInTargets`: on a line with several calls it lists them in execution
