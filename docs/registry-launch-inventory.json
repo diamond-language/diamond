@@ -14,9 +14,9 @@
         "arel": "^0.34.0"
       },
       "name": "active_record",
-      "sha256": "06349a6a21a02c46c7c135d996663ff65dadfadcc620c45a436dd5c29acffeb2",
+      "sha256": "ef1f9ca3c81b4d1554f8effdf71d6a814a37ee5518ac6bb3cf917ec75e138e6b",
       "size": 105984,
-      "version": "0.19.3"
+      "version": "0.19.4"
     },
     {
       "archive": "cookies.tar",
