@@ -28,7 +28,7 @@ authoritative fine-grained record.
 - `Supervisor#stop(timeout_ms)` stops restarts, waits up to the timeout for the current
   attempts, then interrupts any still running and returns whether it had to. The interruption
   also wakes a worker parked in `Channel#receive`/`#send`, `IO.poll`, `Thread#join`, `accept`, a
-  socket/file/UDP/TLS read, `Process.run` (the child is killed) or a SQLite/PostgreSQL query,
+  socket/UDP/TLS read, `Process.run` (the child is killed) or a SQLite/PostgreSQL query,
   within about 20 ms, and stops the threads it started; sibling restarts use the same wake-up.
   A MySQL call, a TLS handshake and JIT-compiled code are still not interrupted.
 

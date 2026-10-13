@@ -325,17 +325,16 @@ The interruption is the one a sibling restart uses: the attempt's VM stops at
 its next instruction and cannot be rescued, so `ensure` blocks do not run. It
 ends an infinite loop or a crash loop, and it also wakes a worker parked in a
 blocking native call: `Channel#receive`/`#send`/`#wait_readable`, `IO.poll` (and
-so a sleep built on it), `Thread#join`, `TCPServer#accept`, a read from a socket,
-file or pipe, `UDPSocket#receive`, a TLS read, `Process.run` (the child is
+so a sleep built on it), `Thread#join`, `TCPServer#accept`, a read from a socket
+(`read`, `gets`), `UDPSocket#receive`, a TLS read, `Process.run` (the child is
 killed) and a SQLite or PostgreSQL query (cancelled with `sqlite3_interrupt` /
 `PQcancel`). Such a wait sleeps in slices of 20 ms, so the interruption lands
 within about that long. A thread the interrupted worker started is interrupted
 too, instead of being waited for.
 
 What is still not interrupted: a MySQL/MariaDB call, a TLS handshake or a
-connect that has begun, a blocking read already holding part of its bytes (a
-`read(n)` that has some but not all of `n`), a write to a full socket, and
-JIT-compiled code. Such a worker is stopped once the call returns, and
+connect that has begun, a read from a pipe, terminal or regular file, a write
+to a full socket, and JIT-compiled code. Such a worker is stopped once the call returns, and
 `stop(timeout_ms)` then still waits for it. Use [cancellation](cancellation.md)
 tokens for those waits.
 

@@ -8015,30 +8015,51 @@ bool format_time_iso8601(const DiamondTime *target,int precision,
     return length>=0&&builder_append(builder,zone,(size_t)length);
 }
 
-/* True when `stream` may hold input already read from its descriptor, in which
- * case a read need not wait on the descriptor (and polling it would block with
- * the data sitting in the buffer). Platforms whose FILE layout is not known
- * answer true, so they never pre-wait and keep an uninterruptible read. */
-static bool stdio_may_have_buffered_input(FILE *stream) {
-#if defined(__GLIBC__)
-    return stream->_IO_read_ptr<stream->_IO_read_end;
-#elif defined(__APPLE__)||defined(__FreeBSD__)
-    return stream->_r>0;
-#else
-    (void)stream;
-    return true;
-#endif
+/* A blocking stdio read on a socket cannot be woken by an interrupt flag, and
+ * polling the descriptor first is wrong while the stream's own buffer holds
+ * input (stdio's internals are not portable: musl exposes none). Instead an
+ * interruptible VM reads a socket stream with O_NONBLOCK set for the duration
+ * of the call: a read that would block fails with EAGAIN, and the caller waits
+ * for readiness in slices (wait_fd_interruptible) and retries. Only sockets,
+ * and only when the VM has an interrupt flag; the flag is restored on every
+ * path, and the descriptor is the call's own (an accepted connection), not a
+ * shared terminal or pipe. */
+typedef struct StreamNonblocking {
+    int descriptor;
+    int saved_flags;
+} StreamNonblocking;
+
+static StreamNonblocking stream_nonblocking_begin(const DiamondVm *vm,FILE *stream) {
+    StreamNonblocking state={.descriptor=-1};
+    if(vm->interrupt_flag==nullptr)return state;
+    const int descriptor=fileno(stream);
+    struct stat info;
+    if(descriptor<0||fstat(descriptor,&info)!=0||!S_ISSOCK(info.st_mode))return state;
+    const int flags=fcntl(descriptor,F_GETFL,0);
+    if(flags<0)return state;
+    if((flags&O_NONBLOCK)==0&&fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)!=0)
+        return state;
+    /* Already non-blocking: nothing to restore, but the retry loop still
+     * applies to a read that reports EAGAIN, which is the caller's
+     * documented WouldBlock behaviour -- leave those alone. */
+    if((flags&O_NONBLOCK)!=0)return state;
+    state.descriptor=descriptor;
+    state.saved_flags=flags;
+    return state;
 }
 
-/* Before a blocking stdio read on an interruptible VM: waits in slices for the
- * descriptor to become readable (sockets, pipes, a terminal) so an interrupt
- * flag is seen. DIAMOND_VM_OK for every other VM. */
-static DiamondVmStatus wait_stream_readable(DiamondVm *vm,FILE *stream) {
-    if(vm->interrupt_flag==nullptr||stdio_may_have_buffered_input(stream))
-        return DIAMOND_VM_OK;
-    const int descriptor=fileno(stream);
-    if(descriptor<0)return DIAMOND_VM_OK;
-    return wait_fd_interruptible(vm,descriptor,POLLIN);
+static void stream_nonblocking_end(StreamNonblocking state) {
+    if(state.descriptor>=0)(void)fcntl(state.descriptor,F_SETFL,state.saved_flags);
+}
+
+/* After a stdio read call returned short or NULL on a stream that is
+ * temporarily non-blocking: true when it only ran out of data (EAGAIN), the
+ * error indicator is cleared and the caller should wait and retry. */
+static bool stream_would_block(FILE *stream,StreamNonblocking state) {
+    if(state.descriptor<0||!ferror(stream)||
+       (errno!=EAGAIN&&errno!=EWOULDBLOCK))return false;
+    clearerr(stream);
+    return true;
 }
 
 /* Reads one line from stream into builder, growing across as many
@@ -8051,16 +8072,33 @@ DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
                                  bool *saw_any) {
     char chunk_buffer[256];
     *saw_any=false;
+    const StreamNonblocking nonblocking=stream_nonblocking_begin(vm,stream);
     errno=0;
     for(;;) {
-        const DiamondVmStatus wait_status=wait_stream_readable(vm,stream);
-        if(wait_status!=DIAMOND_VM_OK)return wait_status;
-        if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr)break;
+        if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr) {
+            if(stream_would_block(stream,nonblocking)) {
+                const DiamondVmStatus wait_status=
+                    wait_fd_interruptible(vm,nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
+        }
         *saw_any=true;
         const size_t piece_length=strlen(chunk_buffer);
-        if(!builder_append(builder,chunk_buffer,piece_length))return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!builder_append(builder,chunk_buffer,piece_length)) {
+            stream_nonblocking_end(nonblocking);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
         if(piece_length>0&&chunk_buffer[piece_length-1]=='\n')break;
     }
+    const int read_errno=errno;
+    stream_nonblocking_end(nonblocking);
+    errno=read_errno;
     if(ferror(stream)) {
         snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
         return DIAMOND_VM_IO_ERROR;
@@ -10907,23 +10945,37 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         StringBuilder builder={};
         char chunk_buffer[4096];
         size_t read_count=0;
+        const StreamNonblocking nonblocking=
+            stream_nonblocking_begin(vm,target_file->stream);
         errno=0;
         while(!bounded||builder.length<limit) {
             const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
             const size_t want=remaining<sizeof chunk_buffer?
                 remaining:sizeof chunk_buffer;
-            const DiamondVmStatus wait_status=
-                wait_stream_readable(vm,target_file->stream);
-            if(wait_status!=DIAMOND_VM_OK) {
-                free(builder.chars);
-                return wait_status;
-            }
             read_count=fread(chunk_buffer,1,want,target_file->stream);
-            if(read_count==0)break;
-            if(!builder_append(&builder,chunk_buffer,read_count)) {
+            if(read_count>0&&!builder_append(&builder,chunk_buffer,read_count)) {
+                stream_nonblocking_end(nonblocking);
                 free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
             }
+            if(read_count==want)continue;
+            /* Short: end of file, an error, or (temporarily non-blocking
+             * socket) no more data yet -- wait for it and keep going. */
+            if(stream_would_block(target_file->stream,nonblocking)) {
+                const DiamondVmStatus wait_status=wait_fd_interruptible(vm,
+                    nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    free(builder.chars);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
         }
+        const int read_errno=errno;
+        stream_nonblocking_end(nonblocking);
+        errno=read_errno;
         if(ferror(target_file->stream)) {
             free(builder.chars);
             snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));

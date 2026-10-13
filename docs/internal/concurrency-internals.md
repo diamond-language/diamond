@@ -248,10 +248,11 @@ sleeps in `DIAMOND_INTERRUPT_SLICE_MS` (20 ms) slices and looks at the flag
 between them instead of blocking in the kernel: `channel_wait_bounded` and
 `cancellable_wait_helper` (src/vm.c) clamp their timeout, `poll_interruptible`
 does the same for `IO.poll`, `wait_fd_interruptible` is a readiness pre-wait
-before a blocking `accept`, socket/UDP `read`, `tls_read_chunk` and stdio
-`fread`/`fgets` on a stream with no buffered input
-(`stdio_may_have_buffered_input`: glibc and BSD/macOS layouts, otherwise
-always "may have", which skips the pre-wait), `Thread#join` naps on
+before a blocking `accept`, socket/UDP `read` and `tls_read_chunk`; a
+stdio `fread`/`fgets` on a *socket* stream runs with `O_NONBLOCK` set for the
+call (`stream_nonblocking_begin`) and waits on `EAGAIN`, since stdio's own
+buffer cannot be inspected portably (musl exposes none) and a pre-poll would
+block with data buffered; `Thread#join` naps on
 `DiamondThread.finished` before `pthread_join`, and `process_run_helper` kills
 and reaps its child. Each reports `DIAMOND_VM_INTERRUPTED`, which is not an
 exception, so `ensure` does not run. Slicing rather than an active wakeup keeps
@@ -274,7 +275,7 @@ the child's own flag points at `DiamondThread.interrupt`; `diamond_vm_free`
 interrupted VM, which arms the child's `resource_limits_active`, sets the flag
 and interrupts its database call, then joins. Not covered: MySQL/MariaDB (no
 thread-safe cancel without a second connection), a TLS handshake or connect in
-progress, a `fread(n)` that already holds part of its bytes, writes to a full
+progress, reads from a pipe, terminal or regular file stream, writes to a full
 socket.
 
 ## Focused verification
