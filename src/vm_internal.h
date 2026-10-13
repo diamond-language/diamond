@@ -669,6 +669,38 @@ DIAMOND_INTERNAL DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *bu
 DIAMOND_INTERNAL int bound_wait_by_wall_budget(const DiamondVm *vm,int timeout_ms,bool *bounded);
 DIAMOND_INTERNAL DiamondVmStatus wall_budget_after_wait(DiamondVm *vm);
 
+/* The chunk a plain CALL builds for `function` when called from `caller`.
+ * Shared by the interpreter's DIAMOND_OP_CALL, the cross-function form of
+ * DIAMOND_OP_TAIL_CALL and the JIT's CALL trampoline, so the three cannot
+ * drift apart. */
+static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
+        const DiamondChunk *caller) {
+    return (DiamondChunk){
+        .name = function->name,
+        .code = function->code,
+        .lines = function->lines,
+        .columns = function->columns,
+        .code_count = function->code_count,
+        .constants = function->constants,
+        .constant_count = function->constant_count,
+        .strings = function->strings,
+        .string_count = function->string_count,
+        .type_sets = function->type_sets,
+        .type_set_count = function->type_set_count,
+        .functions = caller->functions,
+        .function_count = caller->function_count,
+        .classes = caller->classes,
+        .class_count = caller->class_count,
+        .interfaces = caller->interfaces,
+        .interface_count = caller->interface_count,
+        .parameter_type_sets = function->parameter_type_sets,
+        .type_variable_count = function->type_variable_count,
+        .parameter_offset = function->owner_class == UINT8_MAX ? 0 : 1,
+        .register_count = function->register_count,
+        .has_variadic = function->has_variadic,
+    };
+}
+
 /* A supervised attempt's VM carries DiamondVm.interrupt_flag, which another
  * thread sets to stop it (Supervisor#stop(timeout_ms), a sibling restart).
  * The per-instruction check cannot run while the VM sits in the kernel, so

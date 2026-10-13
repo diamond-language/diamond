@@ -251,6 +251,9 @@ size_t diamond_jit_frame_size(void);
 void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
         DiamondValue *registers, size_t register_count, const DiamondChunk *chunk);
 void diamond_jit_frame_pop(DiamondVm *vm);
+/* Propagate-exit variant: appends the frame's "at name:line:col" trace line for
+ * a failing `status` before popping. */
+void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status);
 
 /* JIT trampoline for DIAMOND_OP_STRING -- the first trampoline that CAN
  * allocate (allocate_string calls maybe_collect unconditionally), so any
@@ -447,6 +450,15 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
 DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t dest, uint8_t class_index,
         uint16_t base, uint8_t argc, size_t depth);
+
+/* DIAMOND_OP_CALL (a plain call to a named function): validates exactly as the
+ * interpreter's case does and calls the target through jit_call_or_interpret.
+ * `depth` is the compiled function's own depth, as for SUPER. The call can
+ * run arbitrary user code, so compile_call_function sets needs_frame and
+ * has_called. */
+DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out);
 
 /* True when `function`'s bytecode contains a backward jump (a loop) and every
  * opcode in it is one the compiler understands. jit_call_or_interpret uses it
