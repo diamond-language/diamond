@@ -297,8 +297,13 @@ static DiamondVmStatus sqlite3_run_to_completion_helper(DiamondVm *vm,sqlite3 *d
             sqlite3_column_count(stmt));
         return DIAMOND_VM_TYPE_ERROR;
     }
+    if(!vm_blocking_call_begin(vm,DIAMOND_BLOCKING_SQLITE,db))
+        return DIAMOND_VM_INTERRUPTED;
     int rc=sqlite3_step(stmt);
     while(rc==SQLITE_ROW)rc=sqlite3_step(stmt); /* discard any rows */
+    vm_blocking_call_end(vm);
+    if(rc==SQLITE_INTERRUPT&&vm_interrupt_requested(vm))
+        return DIAMOND_VM_INTERRUPTED;
     if(rc!=SQLITE_DONE) {
         snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(db));
         return DIAMOND_VM_SQLITE3_ERROR;
@@ -376,8 +381,13 @@ static DiamondVmStatus sqlite3_collect_rows_helper(DiamondVm *vm,sqlite3 *db,
     *result=DIAMOND_OBJECT(rows);
     const int column_count=sqlite3_column_count(stmt);
     for(;;) {
+        if(!vm_blocking_call_begin(vm,DIAMOND_BLOCKING_SQLITE,db))
+            return DIAMOND_VM_INTERRUPTED;
         const int rc=sqlite3_step(stmt);
+        vm_blocking_call_end(vm);
         if(rc==SQLITE_DONE)break;
+        if(rc==SQLITE_INTERRUPT&&vm_interrupt_requested(vm))
+            return DIAMOND_VM_INTERRUPTED;
         if(rc!=SQLITE_ROW) {
             snprintf(vm->error,sizeof vm->error,"%s",sqlite3_errmsg(db));
             return DIAMOND_VM_SQLITE3_ERROR;
@@ -850,10 +860,24 @@ static DiamondVmStatus postgres_exec_helper(DiamondVm *vm,DiamondPostgresHandle 
         free(translated);
         return bind_status;
     }
-    PGresult *res=PQexecParams(handle->conn,translated,(int)param_count,nullptr,
-        (const char *const *)bound_values,nullptr,nullptr,0);
+    /* A supervised VM registers a cancel object so Supervisor#stop(timeout_ms)
+     * can abort the query from the supervisor's thread. */
+    PGcancel *cancel=vm->interrupt_flag!=nullptr?PQgetCancel(handle->conn):nullptr;
+    const bool may_run=cancel==nullptr||
+        vm_blocking_call_begin(vm,DIAMOND_BLOCKING_POSTGRES,cancel);
+    PGresult *res=may_run?PQexecParams(handle->conn,translated,(int)param_count,
+        nullptr,(const char *const *)bound_values,nullptr,nullptr,0):nullptr;
+    if(cancel!=nullptr) {
+        vm_blocking_call_end(vm);
+        PQfreeCancel(cancel);
+    }
     free(translated);
     postgres_free_params_helper(bound_values,param_count);
+    if(!may_run||(vm_interrupt_requested(vm)&&
+       (res==nullptr||PQresultStatus(res)==PGRES_FATAL_ERROR))) {
+        if(res!=nullptr)PQclear(res);
+        return DIAMOND_VM_INTERRUPTED;
+    }
     if(res==nullptr) {
         snprintf(vm->error,sizeof vm->error,"%s",PQerrorMessage(handle->conn));
         return DIAMOND_VM_POSTGRES_ERROR;

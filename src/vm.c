@@ -291,6 +291,13 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         if(signal_aware&&(milliseconds<0||milliseconds>10))milliseconds=10;
         bool budget_bounded=false;
         milliseconds=bound_wait_by_wall_budget(vm,milliseconds,&budget_bounded);
+        /* A supervised attempt wakes every slice to look at its interrupt
+         * flag; the loop recomputes the deadline and waits again. */
+        if(vm->interrupt_flag!=nullptr) {
+            if(vm_interrupt_requested(vm)) {budget_status=DIAMOND_VM_INTERRUPTED;break;}
+            if(milliseconds<0||milliseconds>DIAMOND_INTERRUPT_SLICE_MS)
+                milliseconds=DIAMOND_INTERRUPT_SLICE_MS;
+        }
         const int result=poll(fds,fd_count+1,milliseconds);
         if(result==0&&budget_bounded) {
             budget_status=wall_budget_after_wait(vm);
@@ -1230,6 +1237,96 @@ DiamondVmStatus wall_budget_after_wait(DiamondVm *vm) {
     return resource_hard_stop(vm,"wall-clock");
 }
 
+DiamondVmStatus wait_fd_interruptible(DiamondVm *vm,int fd,short events) {
+    if(vm->interrupt_flag==nullptr)return DIAMOND_VM_OK;
+    for(;;) {
+        if(vm_interrupt_requested(vm))return DIAMOND_VM_INTERRUPTED;
+        struct pollfd interest={.fd=fd,.events=events};
+        if(poll(&interest,1,DIAMOND_INTERRUPT_SLICE_MS)!=0)return DIAMOND_VM_OK;
+    }
+}
+
+bool vm_blocking_call_begin(DiamondVm *vm,int kind,void *handle) {
+    if(vm->interrupt_flag==nullptr)return true;
+    pthread_mutex_lock(&vm->blocking_call_lock);
+    /* The interrupting thread sets the flag before it takes this lock, so
+     * either this sees the flag or that thread sees the registration. */
+    const bool interrupted=vm_interrupt_requested(vm);
+    if(!interrupted) {
+        vm->blocking_call_kind=kind;
+        vm->blocking_call_handle=handle;
+    }
+    pthread_mutex_unlock(&vm->blocking_call_lock);
+    return !interrupted;
+}
+
+void vm_blocking_call_end(DiamondVm *vm) {
+    if(vm->interrupt_flag==nullptr)return;
+    pthread_mutex_lock(&vm->blocking_call_lock);
+    vm->blocking_call_kind=0;
+    vm->blocking_call_handle=nullptr;
+    pthread_mutex_unlock(&vm->blocking_call_lock);
+}
+
+void vm_blocking_call_interrupt(DiamondVm *vm) {
+    pthread_mutex_lock(&vm->blocking_call_lock);
+    if(vm->blocking_call_handle!=nullptr) {
+        if(vm->blocking_call_kind==DIAMOND_BLOCKING_SQLITE)
+            sqlite3_interrupt((sqlite3 *)vm->blocking_call_handle);
+        else if(vm->blocking_call_kind==DIAMOND_BLOCKING_POSTGRES) {
+            char ignored[256];
+            (void)PQcancel((PGcancel *)vm->blocking_call_handle,ignored,sizeof ignored);
+        }
+    }
+    pthread_mutex_unlock(&vm->blocking_call_lock);
+}
+
+/* Stops a supervised child's running attempt: sets its interrupt flag, arms the
+ * per-instruction check and cancels a database call it is blocked in. Called
+ * with the supervisor lock held (it keeps running_vm valid). */
+static void supervisor_interrupt_child(DiamondSupervisorChild *child) {
+    if(child->running_vm!=nullptr)
+        atomic_store(&child->running_vm->resource_limits_active,true);
+    atomic_store(&child->interrupt,true);
+    if(child->running_vm!=nullptr)
+        vm_blocking_call_interrupt(child->running_vm);
+}
+
+/* Stops a thread started by an interrupted VM: arms its interrupt flag, the
+ * per-instruction check and any database call it is blocked in. Has an effect
+ * only on a thread whose child VM carries the flag (see THREAD_NEW). */
+void thread_interrupt(DiamondThread *thread) {
+    if(thread==nullptr||!thread->spawned||thread->joined)return;
+    if(thread->child_vm==nullptr||thread->child_vm->interrupt_flag!=&thread->interrupt)
+        return;
+    atomic_store(&thread->child_vm->resource_limits_active,true);
+    atomic_store(&thread->interrupt,true);
+    vm_blocking_call_interrupt(thread->child_vm);
+}
+
+int poll_interruptible(DiamondVm *vm,struct pollfd *fds,nfds_t count,
+        int timeout_ms,DiamondVmStatus *status) {
+    *status=DIAMOND_VM_OK;
+    if(vm->interrupt_flag==nullptr)return poll(fds,count,timeout_ms);
+    const int64_t deadline_ns=timeout_ms<0?0:
+        monotonic_nanoseconds()+(int64_t)timeout_ms*1000000;
+    for(;;) {
+        if(vm_interrupt_requested(vm)) {
+            *status=DIAMOND_VM_INTERRUPTED;
+            return 0;
+        }
+        int slice=DIAMOND_INTERRUPT_SLICE_MS;
+        if(timeout_ms>=0) {
+            const int64_t remaining_ns=deadline_ns-monotonic_nanoseconds();
+            if(remaining_ns<=0)return poll(fds,count,0);
+            const int64_t remaining_ms=(remaining_ns+999999)/1000000;
+            if(remaining_ms<slice)slice=(int)remaining_ms;
+        }
+        const int result=poll(fds,count,slice);
+        if(result!=0)return result;
+    }
+}
+
 /* pthread_cond_wait, bounded by the wall-clock budget (see
  * bound_wait_by_wall_budget). `lock` is held on entry and on return. Returns
  * DIAMOND_VM_OK when the caller should re-test its condition, or the budget's
@@ -1238,7 +1335,14 @@ DiamondVmStatus wall_budget_after_wait(DiamondVm *vm) {
 static DiamondVmStatus channel_wait_bounded(DiamondVm *vm,pthread_cond_t *condition,
         pthread_mutex_t *lock) {
     bool bounded=false;
-    const int milliseconds=bound_wait_by_wall_budget(vm,-1,&bounded);
+    int milliseconds=bound_wait_by_wall_budget(vm,-1,&bounded);
+    if(vm->interrupt_flag!=nullptr) {
+        /* Sleep in slices so a set interrupt flag is seen between them. */
+        if(vm_interrupt_requested(vm))return DIAMOND_VM_INTERRUPTED;
+        if(!bounded||milliseconds>DIAMOND_INTERRUPT_SLICE_MS)
+            milliseconds=DIAMOND_INTERRUPT_SLICE_MS;
+        bounded=true;
+    }
     if(!bounded) {
         pthread_cond_wait(condition,lock);
         return DIAMOND_VM_OK;
@@ -1251,8 +1355,10 @@ static DiamondVmStatus channel_wait_bounded(DiamondVm *vm,pthread_cond_t *condit
         deadline.tv_sec++;
         deadline.tv_nsec-=1000000000L;
     }
-    if(pthread_cond_timedwait(condition,lock,&deadline)==ETIMEDOUT)
+    if(pthread_cond_timedwait(condition,lock,&deadline)==ETIMEDOUT) {
+        if(vm_interrupt_requested(vm))return DIAMOND_VM_INTERRUPTED;
         return wall_budget_after_wait(vm);
+    }
     return DIAMOND_VM_OK;
 }
 
@@ -1337,7 +1443,8 @@ static inline void note_storage_growth(DiamondVm *vm) {
 
 void diamond_vm_init(DiamondVm *vm) {
     *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
-        .minor_gc_threshold_bytes = 1048576,.debug_fd=-1};
+        .minor_gc_threshold_bytes = 1048576,.debug_fd=-1,
+        .blocking_call_lock = PTHREAD_MUTEX_INITIALIZER};
     vm->quickening_threshold = 1;
     vm->monomorphic_threshold = 1;
     /* Much higher than quickening_threshold's 1: an opcode rewrite is a
@@ -1483,7 +1590,7 @@ void diamond_vm_bind_fiber_queue(DiamondVm *vm, const DiamondFiberQueue *queue) 
     vm->root_queue=queue;
 }
 
-static void free_object_list(DiamondObject *object) {
+static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
     while (object != nullptr) {
         DiamondObject *next = object->next;
         if(object->kind==DIAMOND_OBJECT_HASH) {
@@ -1533,6 +1640,10 @@ static void free_object_list(DiamondObject *object) {
             diamond_program_free(builder->program);
             free(builder->program);
         } else if(object->kind==DIAMOND_OBJECT_THREAD) {
+            /* An interrupted VM (a supervised attempt stopped from outside)
+             * stops the threads it started instead of waiting for them. */
+            if(vm_interrupt_requested(vm))
+                thread_interrupt(((DiamondThreadHandle *)object)->thread);
             free_thread(((DiamondThreadHandle *)object)->thread);
         } else if(object->kind==DIAMOND_OBJECT_CHANNEL) {
             free_channel_reference(((DiamondChannelHandle *)object)->channel);
@@ -1561,8 +1672,8 @@ static void free_object_list(DiamondObject *object) {
 
 void diamond_vm_free(DiamondVm *vm) {
     budget_unregister(vm);
-    free_object_list(vm->young_objects);
-    free_object_list(vm->old_objects);
+    free_object_list(vm,vm->young_objects);
+    free_object_list(vm,vm->old_objects);
     free_adopted_programs(vm->adopted_programs);
     free(vm->class_variables);
     free(vm->gc_protected);
@@ -2507,7 +2618,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
                     atomic_store(&supervisor->stop_requested,true);
                     for(size_t other=0;other<supervisor->child_count;other++)
                         if(other!=child->index&&!supervisor->children[other].done)
-                            atomic_store(&supervisor->children[other].interrupt,true);
+                            supervisor_interrupt_child(&supervisor->children[other]);
                 }
             }
         }
@@ -2522,7 +2633,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
                 child->index+1;
             for(size_t other=first;other<supervisor->child_count;other++) {
                 if(other==child->index||supervisor->children[other].done)continue;
-                atomic_store(&supervisor->children[other].interrupt,true);
+                supervisor_interrupt_child(&supervisor->children[other]);
             }
         }
         pthread_mutex_unlock(&supervisor->lock);
@@ -7904,6 +8015,53 @@ bool format_time_iso8601(const DiamondTime *target,int precision,
     return length>=0&&builder_append(builder,zone,(size_t)length);
 }
 
+/* A blocking stdio read on a socket cannot be woken by an interrupt flag, and
+ * polling the descriptor first is wrong while the stream's own buffer holds
+ * input (stdio's internals are not portable: musl exposes none). Instead an
+ * interruptible VM reads a socket stream with O_NONBLOCK set for the duration
+ * of the call: a read that would block fails with EAGAIN, and the caller waits
+ * for readiness in slices (wait_fd_interruptible) and retries. Only sockets,
+ * and only when the VM has an interrupt flag; the flag is restored on every
+ * path, and the descriptor is the call's own (an accepted connection), not a
+ * shared terminal or pipe. */
+typedef struct StreamNonblocking {
+    int descriptor;
+    int saved_flags;
+} StreamNonblocking;
+
+static StreamNonblocking stream_nonblocking_begin(const DiamondVm *vm,FILE *stream) {
+    StreamNonblocking state={.descriptor=-1};
+    if(vm->interrupt_flag==nullptr)return state;
+    const int descriptor=fileno(stream);
+    struct stat info;
+    if(descriptor<0||fstat(descriptor,&info)!=0||!S_ISSOCK(info.st_mode))return state;
+    const int flags=fcntl(descriptor,F_GETFL,0);
+    if(flags<0)return state;
+    if((flags&O_NONBLOCK)==0&&fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)!=0)
+        return state;
+    /* Already non-blocking: nothing to restore, but the retry loop still
+     * applies to a read that reports EAGAIN, which is the caller's
+     * documented WouldBlock behaviour -- leave those alone. */
+    if((flags&O_NONBLOCK)!=0)return state;
+    state.descriptor=descriptor;
+    state.saved_flags=flags;
+    return state;
+}
+
+static void stream_nonblocking_end(StreamNonblocking state) {
+    if(state.descriptor>=0)(void)fcntl(state.descriptor,F_SETFL,state.saved_flags);
+}
+
+/* After a stdio read call returned short or NULL on a stream that is
+ * temporarily non-blocking: true when it only ran out of data (EAGAIN), the
+ * error indicator is cleared and the caller should wait and retry. */
+static bool stream_would_block(FILE *stream,StreamNonblocking state) {
+    if(state.descriptor<0||!ferror(stream)||
+       (errno!=EAGAIN&&errno!=EWOULDBLOCK))return false;
+    clearerr(stream);
+    return true;
+}
+
 /* Reads one line from stream into builder, growing across as many
  * underlying fgets calls as the line needs, then strips a trailing \n
  * and, if present, \r -- stripping happens on the accumulated line so
@@ -7914,14 +8072,33 @@ DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
                                  bool *saw_any) {
     char chunk_buffer[256];
     *saw_any=false;
+    const StreamNonblocking nonblocking=stream_nonblocking_begin(vm,stream);
     errno=0;
     for(;;) {
-        if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr)break;
+        if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr) {
+            if(stream_would_block(stream,nonblocking)) {
+                const DiamondVmStatus wait_status=
+                    wait_fd_interruptible(vm,nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
+        }
         *saw_any=true;
         const size_t piece_length=strlen(chunk_buffer);
-        if(!builder_append(builder,chunk_buffer,piece_length))return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!builder_append(builder,chunk_buffer,piece_length)) {
+            stream_nonblocking_end(nonblocking);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
         if(piece_length>0&&chunk_buffer[piece_length-1]=='\n')break;
     }
+    const int read_errno=errno;
+    stream_nonblocking_end(nonblocking);
+    errno=read_errno;
     if(ferror(stream)) {
         snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
         return DIAMOND_VM_IO_ERROR;
@@ -10768,17 +10945,37 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         StringBuilder builder={};
         char chunk_buffer[4096];
         size_t read_count=0;
+        const StreamNonblocking nonblocking=
+            stream_nonblocking_begin(vm,target_file->stream);
         errno=0;
         while(!bounded||builder.length<limit) {
             const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
             const size_t want=remaining<sizeof chunk_buffer?
                 remaining:sizeof chunk_buffer;
             read_count=fread(chunk_buffer,1,want,target_file->stream);
-            if(read_count==0)break;
-            if(!builder_append(&builder,chunk_buffer,read_count)) {
+            if(read_count>0&&!builder_append(&builder,chunk_buffer,read_count)) {
+                stream_nonblocking_end(nonblocking);
                 free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
             }
+            if(read_count==want)continue;
+            /* Short: end of file, an error, or (temporarily non-blocking
+             * socket) no more data yet -- wait for it and keep going. */
+            if(stream_would_block(target_file->stream,nonblocking)) {
+                const DiamondVmStatus wait_status=wait_fd_interruptible(vm,
+                    nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    free(builder.chars);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
         }
+        const int read_errno=errno;
+        stream_nonblocking_end(nonblocking);
+        errno=read_errno;
         if(ferror(target_file->stream)) {
             free(builder.chars);
             snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
@@ -10872,6 +11069,9 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
             if(empty==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
             registers[dest]=DIAMOND_OBJECT(empty);return DIAMOND_VM_OK;
         }
+        const DiamondVmStatus wait_status=
+            wait_fd_interruptible(vm,socket_handle->fd,POLLIN);
+        if(wait_status!=DIAMOND_VM_OK)return wait_status;
         char *buffer=malloc(want);
         if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         errno=0;
@@ -11031,6 +11231,20 @@ DiamondVmStatus thread_invoke_helper(DiamondVm *vm,
      * exactly this reason). */
     pthread_mutex_lock(&target_thread->join_lock);
     if(!target_thread->joined) {
+        if(target_thread->spawned&&vm->interrupt_flag!=nullptr) {
+            /* pthread_join cannot be interrupted: wait for the thread to
+             * finish in short naps, then join a thread that has already
+             * returned. An interrupted join leaves the thread unjoined. */
+            while(!atomic_load(&target_thread->finished)) {
+                if(vm_interrupt_requested(vm)) {
+                    pthread_mutex_unlock(&target_thread->join_lock);
+                    return DIAMOND_VM_INTERRUPTED;
+                }
+                const struct timespec nap={.tv_sec=0,
+                    .tv_nsec=(DIAMOND_INTERRUPT_SLICE_MS/4)*1000000L};
+                nanosleep(&nap,nullptr);
+            }
+        }
         if(target_thread->spawned)
             pthread_join(target_thread->handle,nullptr);
         if(!target_thread->internal_failure) {
@@ -11499,10 +11713,7 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
                 if(target_supervisor->children[index].done)continue;
                 forced=true;
                 target_supervisor->stop_forced=true;
-                if(target_supervisor->children[index].running_vm!=nullptr)
-                    atomic_store(&target_supervisor->children[index]
-                        .running_vm->resource_limits_active,true);
-                atomic_store(&target_supervisor->children[index].interrupt,true);
+                supervisor_interrupt_child(&target_supervisor->children[index]);
             }
             pthread_mutex_unlock(&target_supervisor->lock);
         }
@@ -11706,6 +11917,11 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
     if(listener->fd<0) {
         snprintf(vm->error,sizeof vm->error,"listener is closed");
         return DIAMOND_VM_IO_ERROR;
+    }
+    if(!listener->nonblocking) {
+        const DiamondVmStatus wait_status=
+            wait_fd_interruptible(vm,listener->fd,POLLIN);
+        if(wait_status!=DIAMOND_VM_OK)return wait_status;
     }
     errno=0;
     int client_fd=accept(listener->fd,nullptr,nullptr);
@@ -11938,6 +12154,11 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
      * only obtains the source address FreeBSD would
      * otherwise skip. */
     const size_t recv_len=want==0?1:want;
+    {
+        const DiamondVmStatus wait_status=
+            wait_fd_interruptible(vm,udp_handle->fd,POLLIN);
+        if(wait_status!=DIAMOND_VM_OK)return wait_status;
+    }
     char *buffer=malloc(recv_len);
     if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     struct sockaddr_storage source_addr={0};

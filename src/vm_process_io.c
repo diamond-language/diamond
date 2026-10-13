@@ -551,7 +551,10 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
     StringBuilder stdout_builder={};
     StringBuilder stderr_builder={};
     bool stdout_open=true,stderr_open=true,out_of_memory=false;
-    while((stdout_open||stderr_open)&&!out_of_memory) {
+    /* Set when the supervisor interrupted this VM mid-wait: the child is
+     * killed and reaped rather than waited for. */
+    bool interrupted=false;
+    while((stdout_open||stderr_open)&&!out_of_memory&&!interrupted) {
         struct pollfd fds[2];
         nfds_t fd_count=0;
         int stdout_slot=-1,stderr_slot=-1;
@@ -564,7 +567,13 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
             fds[fd_count++]=(struct pollfd){.fd=stderr_pipe[0],.events=POLLIN};
         }
         errno=0;
-        const int poll_result=poll(fds,fd_count,-1);
+        DiamondVmStatus interrupt_status=DIAMOND_VM_OK;
+        const int poll_result=poll_interruptible(vm,fds,fd_count,-1,
+            &interrupt_status);
+        if(interrupt_status!=DIAMOND_VM_OK) {
+            interrupted=true;
+            break;
+        }
         if(poll_result<0) {
             if(errno==EINTR)continue;
             break;
@@ -594,8 +603,32 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
 
     int wait_status=0;
     pid_t wait_result=0;
-    do { wait_result=waitpid(pid,&wait_status,0); }
-    while(wait_result<0&&errno==EINTR);
+    if(!interrupted&&vm->interrupt_flag!=nullptr) {
+        /* The pipes closed but the child may still be running. */
+        do {
+            wait_result=waitpid(pid,&wait_status,WNOHANG);
+            if(wait_result==0) {
+                if(vm_interrupt_requested(vm)) {
+                    interrupted=true;
+                    break;
+                }
+                const struct timespec nap={.tv_sec=0,
+                    .tv_nsec=(DIAMOND_INTERRUPT_SLICE_MS/4)*1000000L};
+                nanosleep(&nap,nullptr);
+            }
+        } while(wait_result==0||(wait_result<0&&errno==EINTR));
+    }
+    if(interrupted) {
+        (void)kill(pid,SIGKILL);
+        do { wait_result=waitpid(pid,&wait_status,0); }
+        while(wait_result<0&&errno==EINTR);
+        free(stdout_builder.chars);free(stderr_builder.chars);
+        return DIAMOND_VM_INTERRUPTED;
+    }
+    if(wait_result!=pid) {
+        do { wait_result=waitpid(pid,&wait_status,0); }
+        while(wait_result<0&&errno==EINTR);
+    }
 
     if(out_of_memory) {
         free(stdout_builder.chars);free(stderr_builder.chars);

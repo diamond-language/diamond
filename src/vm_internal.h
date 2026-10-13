@@ -499,6 +499,10 @@ typedef struct DiamondThread {
     bool raised;
     bool internal_failure;
     atomic_bool finished;
+    /* Set to stop this thread when the VM that spawned it was itself
+     * interrupted (a supervised attempt): the child VM's interrupt_flag
+     * points here when the parent had one. See thread_interrupt. */
+    atomic_bool interrupt;
     bool joined;
     pthread_mutex_t join_lock;
 } DiamondThread;
@@ -664,6 +668,40 @@ DIAMOND_INTERNAL void budget_release_finished(DiamondVm *vm);
 DIAMOND_INTERNAL DiamondVmStatus resource_hard_stop(DiamondVm *vm,const char *budget);
 DIAMOND_INTERNAL int bound_wait_by_wall_budget(const DiamondVm *vm,int timeout_ms,bool *bounded);
 DIAMOND_INTERNAL DiamondVmStatus wall_budget_after_wait(DiamondVm *vm);
+
+/* A supervised attempt's VM carries DiamondVm.interrupt_flag, which another
+ * thread sets to stop it (Supervisor#stop(timeout_ms), a sibling restart).
+ * The per-instruction check cannot run while the VM sits in the kernel, so
+ * every blocking native wait on such a VM sleeps in slices of this many
+ * milliseconds and looks at the flag between them (see
+ * docs/cancellation.md). A VM with no flag waits exactly as before. */
+enum { DIAMOND_INTERRUPT_SLICE_MS = 20 };
+
+static inline bool vm_interrupt_requested(const DiamondVm *vm) {
+    return vm->interrupt_flag!=nullptr&&
+        atomic_load_explicit(vm->interrupt_flag,memory_order_relaxed);
+}
+
+/* DIAMOND_VM_INTERRUPTED once the flag is set, DIAMOND_VM_OK when `fd` is ready
+ * for `events` (or errored, or poll was interrupted: the caller's own blocking
+ * call then reports it), so that call will not block. No-op for a VM without
+ * an interrupt flag. */
+DIAMOND_INTERNAL DiamondVmStatus wait_fd_interruptible(DiamondVm *vm,int fd,short events);
+/* Registers the native call about to block (kind: DIAMOND_BLOCKING_SQLITE with
+ * a sqlite3 *, DIAMOND_BLOCKING_POSTGRES with a PGcancel *) so
+ * vm_blocking_call_interrupt can cancel it from another thread. Returns false,
+ * registering nothing, when the interrupt flag is already set: the caller
+ * returns DIAMOND_VM_INTERRUPTED without making the call. A VM with no
+ * interrupt flag always gets true and pays nothing. */
+enum { DIAMOND_BLOCKING_SQLITE = 1, DIAMOND_BLOCKING_POSTGRES = 2 };
+DIAMOND_INTERNAL bool vm_blocking_call_begin(DiamondVm *vm,int kind,void *handle);
+DIAMOND_INTERNAL void vm_blocking_call_end(DiamondVm *vm);
+DIAMOND_INTERNAL void vm_blocking_call_interrupt(DiamondVm *vm);
+DIAMOND_INTERNAL void thread_interrupt(DiamondThread *thread);
+/* poll(2) for IO.poll: same results as poll, but a VM with an interrupt flag
+ * sleeps in slices and returns DIAMOND_VM_INTERRUPTED through *status. */
+DIAMOND_INTERNAL int poll_interruptible(DiamondVm *vm,struct pollfd *fds,nfds_t count,
+    int timeout_ms,DiamondVmStatus *status);
 
 DIAMOND_INTERNAL void diamond_vm_init(DiamondVm *vm);
 

@@ -4779,6 +4779,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .child_program=child_program,
                     .function_index=callable->function_index,.arg_count=argc};
                 pthread_mutex_init(&new_thread->join_lock,nullptr);
+                /* A supervised attempt that gets interrupted must not wait
+                 * forever for the threads it started: see thread_interrupt. */
+                if(vm->interrupt_flag!=nullptr)
+                    child_vm->interrupt_flag=&new_thread->interrupt;
                 /* From here on, `new_thread` is a fully valid DiamondThread
                  * (free_thread works correctly on it regardless of whether
                  * the arg copy below actually finishes), so every
@@ -5688,8 +5692,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         (timeout_value>INT_MAX?INT_MAX:(int)timeout_value),
                         &budget_bounded);
                     int poll_result=0;
+                    DiamondVmStatus interrupt_status=DIAMOND_VM_OK;
                     errno=0;
-                    poll_result=poll(fds,fd_count,timeout_ms);
+                    poll_result=poll_interruptible(vm,fds,fd_count,timeout_ms,
+                        &interrupt_status);
+                    VM_PROPAGATE(interrupt_status);
                     /* Unlike the plain EINTR-retries-unconditionally loop
                      * this replaced, a signal actually gets handled here
                      * before retrying -- gremlin_serve's own event loop calls
@@ -5706,7 +5713,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
                         VM_PROPAGATE_SIGNAL(signal_status);
                         errno=0;
-                        poll_result=poll(fds,fd_count,timeout_ms);
+                        poll_result=poll_interruptible(vm,fds,fd_count,
+                            timeout_ms,&interrupt_status);
+                        VM_PROPAGATE(interrupt_status);
                     }
                     if(poll_result<0) {
                         snprintf(vm->error,sizeof vm->error,"poll failed: %s",strerror(errno));
