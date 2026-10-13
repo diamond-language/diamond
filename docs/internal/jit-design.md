@@ -2101,22 +2101,30 @@ failure after it propagates the exact status instead of re-running the function.
 result proves no class to the register-write scans, which treat it as an ordinary
 writer.
 
-Making calls compilable exposed a diagnostic loss that INVOKE/SUPER already had: a
-compiled function has no `run_chunk` to append its `at name:line:col` trace line as an
-error unwinds, so every compiled caller vanished from the trace. Two fixes close it for
-all four call-capable trampolines (CALL, INVOKE, SUPER, NEW):
+Making calls compilable exposed a diagnostic loss that every call-capable trampoline
+already had: a compiled function has no `run_chunk` to append its `at name:line:col`
+trace line as an error unwinds, so a compiled caller vanished from the trace (and so did
+a frameless function failing in an arithmetic slow path, since Phase 3 propagates that
+instead of re-running it). Fixed in one mechanism:
 
-- each stores its bytecode offset into the published frame's `instruction_offset` slot
-  just before the call (`emit_record_instruction_offset`), so a backtrace taken at a
-  `raise` below it names the function and line;
-- the propagate exit calls `diamond_jit_frame_pop_propagating`, which appends the trace
-  line to `vm->error` as `RECORD_ERROR` does for an interpreted frame, then pops.
+- the prologue's alignment pad, the 8-byte slot just above the `DiamondFrame`
+  reservation, doubles as an *offset slot*: a published frame's `instruction_offset`
+  points at it, and every body trampoline call goes through `emit_body_call`, which
+  stores the current bytecode offset there first. `JitBuffer.rsp_delta` tracks the
+  net pushes so the store addresses the slot while a call's arguments are staged;
+  inline exit stubs restore it, since code after a RETURN still runs at the body's RSP;
+- the propagate exit stub appends the trace line from that slot, to `vm->error` as
+  `RECORD_ERROR` does: `diamond_jit_frame_pop_propagating` for a function that pushed a
+  frame, `diamond_jit_record_propagating` (offset read straight from the pad) for one
+  that did not;
+- a backtrace taken at a `raise` below a compiled caller reads the same slot through the
+  live frame, so the caller is named with the line of its call.
 
-A function that fails *before* any call (a guard, an arithmetic slow path) is still
-re-run by the interpreter, which records its own line, as before. Under a forced
-`DIAMOND_JIT_THRESHOLD=1` for the whole suite, `tests/cases/stack_trace.di` is missing
-the `divide` frame on `main` as well; that is not a supported configuration, and the
-default-threshold suite passes with `DIAMOND_JIT=1`.
+A function that fails *before* any call (a guard) is still re-run by the interpreter,
+which records its own line, as before. This also fixed `tests/cases/stack_trace.di`
+losing its `divide` frame under `DIAMOND_JIT_THRESHOLD=1` on `main`; the whole suite now
+passes with `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1`, a stricter configuration than the
+default-threshold run.
 
 Measured against the interpreter (release, one run each): `fibonacci` 0.32 s to 0.13 s,
 `jit_native_collection_reads` 0.74 s to 0.12 s, `jit_native_string_reads` 0.75 s to
