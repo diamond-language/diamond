@@ -23,6 +23,7 @@
 #include "value.h"
 #include "object.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -1956,6 +1957,12 @@ struct DiamondVm {
      * like every other stop in Diamond -- a child parked in a blocking
      * native call notices only when that call returns. */
     atomic_bool *interrupt_flag;
+    /* The native database call this VM is blocked in, so the thread that sets
+     * interrupt_flag can cancel it (sqlite3_interrupt, PQcancel). Only
+     * touched when interrupt_flag is set; see vm_blocking_call_begin. */
+    pthread_mutex_t blocking_call_lock;
+    int blocking_call_kind;
+    void *blocking_call_handle;
     /* Set once, by maybe_collect (src/vm.c), the first time a configured
      * DIAMOND_MAX_MEMORY_BYTES budget is actually exceeded -- lets
      * exception_class_for_status tell "the OOM this program is seeing was

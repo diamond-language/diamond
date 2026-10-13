@@ -811,6 +811,14 @@ DiamondVmStatus tls_read_chunk(DiamondVm *vm,SSL *ssl,void *buffer,size_t want,
     *out_read=0;*out_eof=false;
     if(want==0)return DIAMOND_VM_OK;
     const int capped=want>(size_t)INT_MAX?INT_MAX:(int)want;
+    if(vm!=nullptr&&vm->interrupt_flag!=nullptr&&SSL_pending(ssl)==0) {
+        const int descriptor=SSL_get_fd(ssl);
+        if(descriptor>=0) {
+            const DiamondVmStatus wait_status=
+                wait_fd_interruptible(vm,descriptor,POLLIN);
+            if(wait_status!=DIAMOND_VM_OK)return wait_status;
+        }
+    }
     ERR_clear_error();
     const int got=SSL_read(ssl,buffer,capped);
     if(got>0) {*out_read=(size_t)got;return DIAMOND_VM_OK;}

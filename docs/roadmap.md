@@ -39,11 +39,11 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Interrupting blocked workers** -- `Supervisor#stop(timeout_ms)` interrupts only
-  between instructions, so a worker in a blocking `Channel#receive`, socket, TLS or
-  SQL call (or JIT-compiled code) still holds the join. Blocking TLS and SQL
-  interruption and implicit cancellation checkpoints are open (see
-  [cancellation](cancellation.md)).
+- **Interrupting the remaining blocked workers** -- a MySQL/MariaDB call, a TLS
+  handshake or connect in progress, a `read(n)` already holding part of its bytes, a
+  write to a full socket and JIT-compiled code are still only stopped between
+  instructions by `Supervisor#stop(timeout_ms)`. Implicit cancellation checkpoints are
+  open (see [cancellation](cancellation.md)).
 - **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a
   `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
   by design. Needs a concrete use case.

@@ -236,10 +236,46 @@ published and cleared under `lock` around each attempt so the arming never
 touches a freed VM; an attempt that starts after the force sees `stop_forced`
 and arms itself. The interrupted child reports `"stopped: Supervisor#stop timed
 out"` and, since `stop_requested` is set, is not restarted and does not count a
-restart. The flag is only looked at between instructions, so the interruption
-has the sibling-restart limits: a native call that blocks (`Channel#receive`,
-a socket read) is not woken, and JIT-compiled code is not interrupted
-mid-function.
+restart. The flag is looked at between instructions and by the blocking native
+waits themselves, so the interruption has the sibling-restart limits only for
+what is listed below it: JIT-compiled code is not interrupted mid-function.
+
+### Interrupting blocked workers
+
+An attempt VM carries `interrupt_flag` (`DiamondVm`); a VM without one waits
+exactly as before and pays a null check. With it, every blocking native wait
+sleeps in `DIAMOND_INTERRUPT_SLICE_MS` (20 ms) slices and looks at the flag
+between them instead of blocking in the kernel: `channel_wait_bounded` and
+`cancellable_wait_helper` (src/vm.c) clamp their timeout, `poll_interruptible`
+does the same for `IO.poll`, `wait_fd_interruptible` is a readiness pre-wait
+before a blocking `accept`, socket/UDP `read`, `tls_read_chunk` and stdio
+`fread`/`fgets` on a stream with no buffered input
+(`stdio_may_have_buffered_input`: glibc and BSD/macOS layouts, otherwise
+always "may have", which skips the pre-wait), `Thread#join` naps on
+`DiamondThread.finished` before `pthread_join`, and `process_run_helper` kills
+and reaps its child. Each reports `DIAMOND_VM_INTERRUPTED`, which is not an
+exception, so `ensure` does not run. Slicing rather than an active wakeup keeps
+the wait sites free of any registration, at the price of up to a slice of
+latency and a wakeup every 20 ms for an idle supervised worker.
+
+Database calls are woken, not polled: `vm_blocking_call_begin/end` register the
+`sqlite3 *` (or a `PGcancel *`, made only for an interruptible VM) under
+`DiamondVm.blocking_call_lock`, and `supervisor_interrupt_child` calls
+`vm_blocking_call_interrupt` after setting the flag. `begin` re-checks the flag
+under the lock, and the interrupter sets the flag before taking it, so a
+call that starts concurrently is either refused or interrupted. The statement's
+`SQLITE_INTERRUPT` / a failed `PQexecParams` with the flag set becomes
+`DIAMOND_VM_INTERRUPTED` rather than a `DatabaseError`.
+
+A `Thread` started by an interrupted VM would otherwise hold its parent's
+teardown in `pthread_join` forever. When the parent VM has an `interrupt_flag`,
+the child's own flag points at `DiamondThread.interrupt`; `diamond_vm_free`
+(not the GC sweep) calls `thread_interrupt` on each unjoined thread of an
+interrupted VM, which arms the child's `resource_limits_active`, sets the flag
+and interrupts its database call, then joins. Not covered: MySQL/MariaDB (no
+thread-safe cancel without a second connection), a TLS handshake or connect in
+progress, a `fread(n)` that already holds part of its bytes, writes to a full
+socket.
 
 ## Focused verification
 
