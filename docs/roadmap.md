@@ -34,11 +34,6 @@ Current behavior: [callables](callables.md).
   function needs a different register count, chunk and constant pool, which turns
   "reuse the running frame" into swapping most of `run_chunk`'s locals mid-loop, in
   the most performance-audited code in the project. More risk, broader value.
-- **A generic function's own self-tail-call** -- type-variable bindings are derived
-  at entry from the call's arguments; redoing that for an in-place loop is unsolved.
-- **A variadic function's own self-tail-call** -- overflow arguments are tracked
-  against the original call's `arguments`/`argument_count`, which an in-place next
-  iteration cannot update without a new mechanism.
 
 ### Channel
 

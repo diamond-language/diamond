@@ -522,9 +522,11 @@ typedef enum DiamondOpCode : uint8_t {
      * by emitting different operands, specifically so nothing about
      * jump-offset arithmetic elsewhere in the function has to change.
      * Only ever targets the function currently executing itself (self-
-     * recursion in tail position, no enclosing begin/rescue/ensure, no
-     * type variables -- see compile_return's own comment in src/
-     * compiler.c for the exact eligibility rule). run_chunk's own
+     * recursion in tail position, no enclosing begin/rescue/ensure --
+     * see maybe_rewrite_self_tail_call's own comment in src/compiler.c
+     * for the exact eligibility rule). run_chunk replaces its
+     * `arguments`/`argument_count` with the tail call's and re-infers
+     * type-variable bindings, so generic and variadic functions qualify. run_chunk's own
      * handling reuses the current call's registers/frame/depth in place
      * instead of recursing, giving qualifying tail recursion O(1) C-stack
      * usage regardless of how deep it goes -- see docs/callables.md's

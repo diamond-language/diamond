@@ -214,6 +214,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         if(arguments[index].kind!=DIAMOND_VALUE_UNDEFINED)
             registers[index] = arguments[index];
     }
+    /* Argument list staged by an in-place DIAMOND_OP_TAIL_CALL; freed on exit. */
+    DiamondValue *tail_buffer = nullptr;
+    size_t tail_buffer_capacity = 0;
     PendingUnwind pending={};
     UnwindHandler handlers[16];
     size_t handler_count=0;
@@ -275,6 +278,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             if(return_status_!=DIAMOND_VM_TYPE_ERROR) {               \
                 vm->frames = frame.previous;                         \
                 free(heap_registers);                                \
+                free(tail_buffer);                                   \
                 return return_status_;                               \
             }                                                        \
         }                                                            \
@@ -284,6 +288,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         RECORD_ERROR(return_status_);                                \
         vm->frames = frame.previous;                                 \
         free(heap_registers);                                        \
+        free(tail_buffer);                                           \
         return vm->has_exception?DIAMOND_VM_EXCEPTION:return_status_;\
     } while (false)
 
@@ -1339,23 +1344,61 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 (void)function_index;
                 if ((size_t)argument_base + call_argument_count >
                         DIAMOND_REGISTER_COUNT ||
-                    call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS) {
+                    (call_argument_count > DIAMOND_MAX_DECLARED_PARAMETERS &&
+                     !chunk->has_variadic)) {
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
-                /* Captured into a small local buffer *before* zeroing
-                 * registers[] below -- argument_base is ordinary bytecode
-                 * addressing the same register file being cleared, unlike
-                 * a real CALL's own `arguments` (always a genuinely
-                 * separate C array, the caller's own registers one C
-                 * stack frame up). */
-                DiamondValue tail_arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
+                /* The next iteration's argument list replaces this one's:
+                 * ARGUMENT_PROVIDED (a default parameter left out of the
+                 * tail call), COLLECT_VARIADIC (overflow arguments) and
+                 * generic inference all read `arguments`/`argument_count`.
+                 * Staged into a frame-owned heap buffer, not the register
+                 * file (cleared just below) and not the C stack (a
+                 * variadic call may pass up to 255); the frame lists it as
+                 * extra GC roots because overflow arguments live nowhere
+                 * else. Allocation failure happens before any state
+                 * changes. */
+                if ((size_t)call_argument_count > tail_buffer_capacity) {
+                    DiamondValue *grown = realloc(tail_buffer,
+                        (size_t)call_argument_count * sizeof(DiamondValue));
+                    if (grown == nullptr) VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    tail_buffer = grown;
+                    tail_buffer_capacity = call_argument_count;
+                    frame.extra_roots = tail_buffer;
+                }
                 for (size_t index = 0; index < call_argument_count; index++)
-                    tail_arguments[index] = registers[argument_base + index];
+                    tail_buffer[index] = registers[argument_base + index];
+                frame.extra_root_count = call_argument_count;
+                arguments = tail_buffer;
+                argument_count = call_argument_count;
                 memset(registers, 0, live_register_count * sizeof(DiamondValue));
+                /* The same copy a fresh call makes at entry. */
                 const size_t copied = (size_t)call_argument_count < live_register_count
                     ? (size_t)call_argument_count : live_register_count;
                 for (size_t index = 0; index < copied; index++)
-                    registers[index] = tail_arguments[index];
+                    if (tail_buffer[index].kind != DIAMOND_VALUE_UNDEFINED)
+                        registers[index] = tail_buffer[index];
+                if (chunk->type_variable_count > 0 && chunk->parameter_type_sets != nullptr) {
+                    /* Bindings are derived from the arguments of every call, as at
+                     * entry, so the next iteration may bind different types. */
+                    if (chunk != &execution) execution = *chunk;
+                    memset(bindings, 0, chunk->type_variable_count * sizeof(DiamondTypeBinding));
+                    for (size_t parameter = 0;
+                         parameter < DIAMOND_MAX_DECLARED_PARAMETERS &&
+                         parameter + chunk->parameter_offset < argument_count;
+                         parameter++) {
+                        if (arguments[parameter + chunk->parameter_offset].kind ==
+                            DIAMOND_VALUE_UNDEFINED) continue;
+                        const uint16_t set = chunk->parameter_type_sets[parameter];
+                        if (set != DIAMOND_NO_TYPE_SET && set < chunk->type_set_count)
+                            infer_from_value(chunk,
+                                arguments[parameter + chunk->parameter_offset],
+                                chunk->type_sets, set, bindings);
+                    }
+                    execution.type_variable_bindings = bindings;
+                    chunk = &execution;
+                    frame.chunk = chunk;
+                }
                 ip = 0;
                 break;
             }
@@ -5784,9 +5827,11 @@ dispatch_continue:
         *result=DIAMOND_NIL;
         vm->frames=frame.previous;
         free(heap_registers);
+        free(tail_buffer);
         return DIAMOND_VM_OK;
     }
     vm->frames = frame.previous;
     free(heap_registers);
+    free(tail_buffer);
     return DIAMOND_VM_INVALID_BYTECODE;
 }

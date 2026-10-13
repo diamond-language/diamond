@@ -449,6 +449,11 @@ typedef struct DiamondFrame {
      * do-block, whose method is the one its closure was created in). */
     uint64_t serial;
     uint64_t home;
+    /* Values kept alive for this frame outside its registers: the argument
+     * list an in-place tail call staged (overflow variadic arguments live
+     * nowhere else). nullptr/0 for almost every frame. */
+    const DiamondValue *extra_roots;
+    size_t extra_root_count;
 } DiamondFrame;
 
 /* Native backing struct for DiamondThreadHandle (object.h) -- see
