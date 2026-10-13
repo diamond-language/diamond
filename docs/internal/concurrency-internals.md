@@ -223,8 +223,23 @@ mirroring `DiamondThread.finished`'s own lock-free hot-path read for
 `alive?()`) and `stopped` (guarded by `lock`, blocking further
 `add_child`) before joining; `join()` touches neither, so it only unblocks
 once every child has finished on its own. Neither ever cancels a child
-mid-attempt -- there is no cancellation anywhere in Diamond's concurrency
-model, the same limitation `Thread` already has.
+mid-attempt unless `stop(timeout_ms)` is used.
+
+`stop(timeout_ms)` waits (polling each child's `done` flag every millisecond)
+until the deadline, then, under `lock`, sets `stop_forced`, arms each running
+attempt and raises its `interrupt` flag. Arming means storing true to the
+attempt VM's `resource_limits_active`, which is why that field is atomic and
+read relaxed in `run_chunk`: the interrupt check costs every dispatched
+instruction, so an attempt pays for it only when a sibling strategy, a restart
+policy or a forced stop asked for it. `DiamondSupervisorChild.running_vm` is
+published and cleared under `lock` around each attempt so the arming never
+touches a freed VM; an attempt that starts after the force sees `stop_forced`
+and arms itself. The interrupted child reports `"stopped: Supervisor#stop timed
+out"` and, since `stop_requested` is set, is not restarted and does not count a
+restart. The flag is only looked at between instructions, so the interruption
+has the sibling-restart limits: a native call that blocks (`Channel#receive`,
+a socket read) is not woken, and JIT-compiled code is not interrupted
+mid-function.
 
 ## Focused verification
 

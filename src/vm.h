@@ -1910,7 +1910,9 @@ struct DiamondVm {
      * (already called before every allocation) checks it directly. */
     size_t instructions_executed;
     int64_t start_time_ns;
-    bool resource_limits_active;
+    /* Atomic because Supervisor#stop(timeout_ms) arms it from another thread to
+     * make a running attempt interruptible; every read is relaxed. */
+    atomic_bool resource_limits_active;
     /* The grace allowance after a budget trips (see resource_limit_trip in
      * src/vm.c): the catchable ResourceLimitError fires once and disarms
      * max_instructions/max_wall_nanoseconds, so a rescue clause can run, but

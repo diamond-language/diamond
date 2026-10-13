@@ -2396,11 +2396,13 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         diamond_vm_init(run_vm);
         run_vm->range_class_index=child->program_template->range_class_index;
         run_vm->root_chunk=&child_chunk;
+        /* The interrupt check costs every dispatched instruction, so it is
+         * armed up front only where a sibling's crash may need it.
+         * Supervisor#stop(timeout_ms) arms it on demand through running_vm. */
+        run_vm->interrupt_flag=&child->interrupt;
         if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE||
-           supervisor->max_restarts>=0) {
-            run_vm->interrupt_flag=&child->interrupt;
+           supervisor->max_restarts>=0)
             run_vm->resource_limits_active=true;
-        }
         /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
          * NEW's own argument copy loop uses, for the identical reason: a
          * later argument's copy_value_into_vm call can itself trigger a
@@ -2423,11 +2425,17 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         }
         gc_unprotect(run_vm,args_mark);
         DiamondValue run_result=DIAMOND_NIL;
+        pthread_mutex_lock(&supervisor->lock);
+        child->running_vm=run_vm;
+        if(supervisor->stop_forced)
+            atomic_store(&run_vm->resource_limits_active,true);
+        pthread_mutex_unlock(&supervisor->lock);
         const int64_t attempt_started_ns=monotonic_nanoseconds();
         const DiamondVmStatus status=copy_failed?DIAMOND_VM_OUT_OF_MEMORY:
             run_chunk(&child_chunk,run_vm,run_args,child->arg_count,0,
                       nullptr,&run_result);
         pthread_mutex_lock(&supervisor->lock);
+        child->running_vm=nullptr;
         if(status==DIAMOND_VM_OK) {
             child->done=true;
             pthread_mutex_unlock(&supervisor->lock);
@@ -2439,6 +2447,10 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             /* The supervisor gave up: this is a shutdown, not a restart. */
             snprintf(child->last_error,sizeof child->last_error,
                 "stopped: the supervisor's restart intensity was exceeded");
+        } else if(interrupted_by_sibling&&supervisor->stop_forced) {
+            /* Supervisor#stop(timeout_ms) ran out of patience. */
+            snprintf(child->last_error,sizeof child->last_error,
+                "stopped: Supervisor#stop timed out");
         } else if(interrupted_by_sibling) {
             /* Not this child's own crash: a sibling's failure restarted
              * it, and last_error says so. No restart delay below, since
@@ -2529,6 +2541,13 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         struct timespec delay={.tv_sec=(time_t)(restart_delay_ms/1000),
             .tv_nsec=(long)(restart_delay_ms%1000)*1000000L};
         nanosleep(&delay,nullptr);
+        /* stop() may have arrived during the pause: no further attempt. */
+        if(atomic_load(&supervisor->stop_requested)) {
+            pthread_mutex_lock(&supervisor->lock);
+            child->done=true;
+            pthread_mutex_unlock(&supervisor->lock);
+            break;
+        }
     }
     atomic_fetch_sub(&diamond_active_thread_count,1);
     atomic_fetch_sub(&diamond_running_thread_count,1);
@@ -11434,20 +11453,62 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         registers[dest]=DIAMOND_OBJECT(message);return DIAMOND_VM_OK;
     }
     if(stop_method||join_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        int64_t stop_timeout_ms=-1;
+        if(join_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+        if(argc==1) {
+            const DiamondValue given=registers[base];
+            if(given.kind!=DIAMOND_VALUE_INT||given.as.integer<0||
+               given.as.integer>INT32_MAX) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Supervisor#stop timeout_ms must be an Int from 0 to %d",
+                    INT32_MAX);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            stop_timeout_ms=given.as.integer;
+        }
         if(stop_method) {
             pthread_mutex_lock(&target_supervisor->lock);
             target_supervisor->stopped=true;
             pthread_mutex_unlock(&target_supervisor->lock);
             atomic_store(&target_supervisor->stop_requested,true);
         }
-        /* No cancellation anywhere in Diamond's concurrency
-         * model (same as Thread) -- a child mid-crash-loop
-         * still finishes its *current* attempt before
-         * noticing stop_requested. join() blocks the same
-         * way but without ever setting stop_requested, so
-         * it only returns once every child finishes on its
-         * own (see docs/threads.md). */
+        bool forced=false;
+        if(stop_timeout_ms>=0) {
+            /* Wait for the current attempts to finish on their own for up to
+             * the timeout, then interrupt whatever is still running. The
+             * interruption is the sibling-restart one: it lands at the next
+             * instruction, so a worker parked in a blocking native call
+             * still holds the join below until that call returns. */
+            const int64_t deadline_ns=monotonic_nanoseconds()+
+                stop_timeout_ms*1000000;
+            for(;;) {
+                pthread_mutex_lock(&target_supervisor->lock);
+                bool all_done=true;
+                for(size_t index=0;index<target_supervisor->child_count;index++)
+                    if(!target_supervisor->children[index].done)all_done=false;
+                pthread_mutex_unlock(&target_supervisor->lock);
+                if(all_done||monotonic_nanoseconds()>=deadline_ns)break;
+                const struct timespec nap={.tv_sec=0,.tv_nsec=1000000L};
+                nanosleep(&nap,nullptr);
+            }
+            pthread_mutex_lock(&target_supervisor->lock);
+            for(size_t index=0;index<target_supervisor->child_count;index++) {
+                if(target_supervisor->children[index].done)continue;
+                forced=true;
+                target_supervisor->stop_forced=true;
+                if(target_supervisor->children[index].running_vm!=nullptr)
+                    atomic_store(&target_supervisor->children[index]
+                        .running_vm->resource_limits_active,true);
+                atomic_store(&target_supervisor->children[index].interrupt,true);
+            }
+            pthread_mutex_unlock(&target_supervisor->lock);
+        }
+        /* Without a timeout there is no cancellation: a child mid-crash-loop
+         * still finishes its *current* attempt before noticing
+         * stop_requested. join() blocks the same way but without ever
+         * setting stop_requested, so it only returns once every child
+         * finishes on its own (see docs/threads.md). */
         supervisor_join_all_children(target_supervisor);
         if(join_method) {
             /* A supervisor that gave up escalates here, to whoever waits on
@@ -11460,7 +11521,9 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
             pthread_mutex_unlock(&target_supervisor->lock);
             if(gave_up)return DIAMOND_VM_SUPERVISOR_ERROR;
         }
-        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+        /* stop(timeout_ms) answers whether it had to interrupt anything. */
+        registers[dest]=stop_method&&stop_timeout_ms>=0?DIAMOND_BOOL(!forced):DIAMOND_NIL;
+        return DIAMOND_VM_OK;
     }
     /* add_child_method, per the exhaustive unknown-method
      * check above. Mirrors DIAMOND_OP_THREAD_NEW's own body

@@ -51,9 +51,11 @@ a child error. Scope objects are owned by their creating thread.
 Existing `Channel.receive`, `Thread.join`, sockets, SQL calls, and arbitrary
 CPU loops do not gain cancellation implicitly. A scoped child must checkpoint
 and use bounded/nonblocking I/O; an uncooperative child can still hold up joining.
-Supervisor.stop still waits: cancel the shared source before calling it, and
+`Supervisor.stop()` still waits: cancel the shared source before calling it, and
 catch expected cancellation at the supervised child's boundary so it returns
-normally instead of restarting. Process crashes do not execute ensure.
+normally instead of restarting. `stop(timeout_ms)` additionally interrupts
+attempts that outlast the timeout, but only between instructions, so a child in
+a blocking native wait still holds it up (see [threads](threads.md#supervisors)). Process crashes do not execute ensure.
 
 ## Native wait protocol
 

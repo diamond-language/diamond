@@ -582,6 +582,10 @@ typedef struct DiamondSupervisorChild {
      * consumed by its retry loop. Cleared at the start of each attempt,
      * since a fresh attempt is already the restart being asked for. */
     atomic_bool interrupt;
+    /* The VM of this child's attempt in progress, or nullptr between attempts.
+     * Set and cleared under supervisor->lock so Supervisor#stop(timeout_ms)
+     * can arm its interrupt check without the VM being freed under it. */
+    DiamondVm *running_vm;
     /* Crashes in a row, for the restart backoff: reset once an attempt
      * stays up longer than the supervisor's max_backoff_ms (the longest
      * pause it could have been asked to sit out). Written only by this
@@ -621,6 +625,10 @@ typedef struct DiamondSupervisor {
     DiamondSupervisorChild children[DIAMOND_MAX_SUPERVISOR_CHILDREN];
     size_t child_count;
     bool stopped;
+    /* Set under `lock` by Supervisor#stop(timeout_ms) once the timeout
+     * passed and the remaining attempts were interrupted, so a child can tell
+     * that interruption from a sibling-restart one. */
+    bool stop_forced;
     DiamondSupervisorStrategy strategy;
     atomic_size_t refcount;
     /* Restart policy (Supervisor#restart_policy), fixed before the first

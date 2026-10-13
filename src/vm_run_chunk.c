@@ -422,7 +422,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
          * allowance: resource_hard_stop returns DIAMOND_VM_RESOURCE_EXHAUSTED,
          * which no rescue clause can match. Without the second step a program
          * that rescued the error would run unbounded. */
-        if (vm->resource_limits_active) {
+        if (atomic_load_explicit(&vm->resource_limits_active, memory_order_relaxed)) {
             vm->instructions_executed++;
             if (vm->interrupt_flag != nullptr &&
                 atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {
