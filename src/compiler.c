@@ -111,6 +111,16 @@ typedef struct Narrowing {
     size_t when_false_count;
 } Narrowing;
 
+/* A plain CALL to a different function that sits in tail position, recorded
+ * by maybe_rewrite_self_tail_call and rewritten to DIAMOND_OP_TAIL_CALL by
+ * rewrite_cyclic_tail_calls only when the caller and callee can reach each
+ * other through such calls. */
+typedef struct TailCallCandidate {
+    DiamondFunction *caller;
+    size_t offset;
+    uint16_t callee;
+} TailCallCandidate;
+
 typedef struct Compiler {
     const char *source;
     DiamondLexer lexer;
@@ -157,6 +167,9 @@ typedef struct Compiler {
     uint16_t last_plain_call_destination;
     uint16_t last_plain_call_function_index;
     DiamondFunction *last_plain_call_function;
+    TailCallCandidate *tail_call_candidates;
+    size_t tail_call_candidate_count;
+    size_t tail_call_candidate_capacity;
     DiamondDiagnostic *diagnostic;
     Local locals[DIAMOND_MAX_LOCALS];
     size_t local_count;
@@ -12902,10 +12915,11 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
  * offset into the *current* chunk's bytecode, which reusing the same
  * run_chunk invocation for "the next iteration" must never invalidate);
  * and, structurally, anything that isn't a plain positional CALL to
- * *this exact* function (a method/singleton call, a CALL_TYPED generic
- * call, or a call to any other function, self-recursive or not, all use
- * a different opcode, a different function_index, or never touch
- * last_plain_call_* at all). A generic or variadic function qualifies:
+ * a function by name (a method/singleton call or a CALL_TYPED generic call
+ * uses a different opcode, or never touches last_plain_call_* at all). A call
+ * to a different function is only recorded here; rewrite_cyclic_tail_calls
+ * decides, once every function exists, whether it lies on a cycle. A generic
+ * or variadic function qualifies:
  * run_chunk's TAIL_CALL replaces its `arguments`/`argument_count` and
  * re-infers type-variable bindings, as a fresh call would. */
 static void maybe_rewrite_self_tail_call(Compiler *compiler,
@@ -12919,9 +12933,145 @@ static void maybe_rewrite_self_tail_call(Compiler *compiler,
     if(compiler->last_plain_call_destination!=return_value_register)return;
     const uint16_t function_index=compiler->last_plain_call_function_index;
     if((size_t)function_index>=compiler->program->function_count)return;
-    if(compiler->program->functions[function_index]!=compiler->function)return;
+    if(compiler->program->functions[function_index]!=compiler->function) {
+        /* A different function: only a candidate, decided once every
+         * function exists (see rewrite_cyclic_tail_calls). A failed
+         * allocation just leaves the call an ordinary one. */
+        if(compiler->discovery_pass)return;
+        if(compiler->tail_call_candidate_count==
+           compiler->tail_call_candidate_capacity) {
+            const size_t capacity=compiler->tail_call_candidate_capacity==0?
+                16:compiler->tail_call_candidate_capacity*2;
+            TailCallCandidate *grown=realloc(compiler->tail_call_candidates,
+                capacity*sizeof *grown);
+            if(grown==nullptr)return;
+            compiler->tail_call_candidates=grown;
+            compiler->tail_call_candidate_capacity=capacity;
+        }
+        compiler->tail_call_candidates[compiler->tail_call_candidate_count++]=
+            (TailCallCandidate){.caller=compiler->function,
+                .offset=compiler->last_plain_call_offset,.callee=function_index};
+        return;
+    }
     compiler->function->code[compiler->last_plain_call_offset]=
         DIAMOND_OP_TAIL_CALL;
+}
+
+/* Rewrites a recorded cross-function tail call to DIAMOND_OP_TAIL_CALL when
+ * it lies on a cycle of recorded calls (mutual recursion: strongly connected
+ * components of more than one function, Tarjan's algorithm, iterative so a
+ * program with thousands of functions cannot overflow the C stack). A tail
+ * call that is not on a cycle cannot recurse without bound through tail
+ * calls alone, and leaving it an ordinary CALL keeps a plain delegating
+ * wrapper compilable by the JIT, which has no TAIL_CALL. */
+static void rewrite_cyclic_tail_calls(const DiamondProgram *program,
+        const TailCallCandidate *candidates,size_t candidate_count) {
+    if(candidate_count==0)return;
+    const size_t function_count=program->function_count;
+    /* Compact node numbering: only functions that are the caller or callee
+     * of a candidate. node_of[function index] is 1-based, 0 = unnumbered. */
+    uint32_t *node_of=calloc(function_count,sizeof *node_of);
+    uint32_t *edge_from=malloc(candidate_count*sizeof *edge_from);
+    uint32_t *edge_to=malloc(candidate_count*sizeof *edge_to);
+    bool ok=node_of!=nullptr&&edge_from!=nullptr&&edge_to!=nullptr;
+    size_t node_count=0;
+    size_t edge_count=0;
+    size_t *edge_candidate=ok?malloc(candidate_count*sizeof *edge_candidate):nullptr;
+    ok=ok&&edge_candidate!=nullptr;
+    for(size_t index=0;ok&&index<candidate_count;index++) {
+        if(candidates[index].caller->nonlocal_landing)continue;
+        size_t caller=function_count;
+        for(size_t probe=0;probe<function_count;probe++)
+            if(program->functions[probe]==candidates[index].caller) {
+                caller=probe;break;
+            }
+        const size_t callee=candidates[index].callee;
+        if(caller==function_count||callee>=function_count)continue;
+        if(node_of[caller]==0)node_of[caller]=(uint32_t)++node_count;
+        if(node_of[callee]==0)node_of[callee]=(uint32_t)++node_count;
+        edge_from[edge_count]=node_of[caller]-1;
+        edge_to[edge_count]=node_of[callee]-1;
+        edge_candidate[edge_count++]=index;
+    }
+    /* CSR adjacency over the numbered nodes. */
+    size_t *first=ok?calloc(node_count+1,sizeof *first):nullptr;
+    uint32_t *targets=ok?malloc((edge_count+1)*sizeof *targets):nullptr;
+    int64_t *discovery=ok?malloc((node_count+1)*sizeof *discovery):nullptr;
+    int64_t *lowlink=ok?malloc((node_count+1)*sizeof *lowlink):nullptr;
+    uint32_t *component=ok?malloc((node_count+1)*sizeof *component):nullptr;
+    uint32_t *component_size=ok?calloc(node_count+1,sizeof *component_size):nullptr;
+    uint32_t *tarjan_stack=ok?malloc((node_count+1)*sizeof *tarjan_stack):nullptr;
+    uint32_t *walk_node=ok?malloc((node_count+1)*sizeof *walk_node):nullptr;
+    size_t *walk_edge=ok?malloc((node_count+1)*sizeof *walk_edge):nullptr;
+    bool *on_stack=ok?calloc(node_count+1,sizeof *on_stack):nullptr;
+    ok=ok&&first!=nullptr&&targets!=nullptr&&discovery!=nullptr&&
+        lowlink!=nullptr&&component!=nullptr&&component_size!=nullptr&&
+        tarjan_stack!=nullptr&&walk_node!=nullptr&&walk_edge!=nullptr&&
+        on_stack!=nullptr;
+    if(ok) {
+        for(size_t edge=0;edge<edge_count;edge++)first[edge_from[edge]+1]++;
+        for(size_t node=0;node<node_count;node++)first[node+1]+=first[node];
+        size_t *fill=malloc((node_count+1)*sizeof *fill);
+        if(fill==nullptr)ok=false;
+        else {
+            memcpy(fill,first,(node_count+1)*sizeof *fill);
+            for(size_t edge=0;edge<edge_count;edge++)
+                targets[fill[edge_from[edge]]++]=edge_to[edge];
+            free(fill);
+        }
+    }
+    if(ok) {
+        for(size_t node=0;node<node_count;node++)discovery[node]=-1;
+        int64_t clock=0;
+        size_t stack_top=0;
+        uint32_t components=0;
+        for(size_t root=0;root<node_count;root++) {
+            if(discovery[root]>=0)continue;
+            size_t depth=0;
+            walk_node[0]=(uint32_t)root;walk_edge[0]=first[root];
+            discovery[root]=lowlink[root]=clock++;
+            tarjan_stack[stack_top++]=(uint32_t)root;on_stack[root]=true;
+            while(true) {
+                const uint32_t node=walk_node[depth];
+                if(walk_edge[depth]<first[node+1]) {
+                    const uint32_t next=targets[walk_edge[depth]++];
+                    if(discovery[next]<0) {
+                        discovery[next]=lowlink[next]=clock++;
+                        tarjan_stack[stack_top++]=next;on_stack[next]=true;
+                        depth++;
+                        walk_node[depth]=next;walk_edge[depth]=first[next];
+                    } else if(on_stack[next]&&discovery[next]<lowlink[node])
+                        lowlink[node]=discovery[next];
+                    continue;
+                }
+                if(lowlink[node]==discovery[node]) {
+                    uint32_t member;
+                    do {
+                        member=tarjan_stack[--stack_top];
+                        on_stack[member]=false;
+                        component[member]=components;
+                        component_size[components]++;
+                    } while(member!=node);
+                    components++;
+                }
+                if(depth==0)break;
+                depth--;
+                const uint32_t parent=walk_node[depth];
+                if(lowlink[node]<lowlink[parent])lowlink[parent]=lowlink[node];
+            }
+        }
+        for(size_t edge=0;edge<edge_count;edge++) {
+            if(component[edge_from[edge]]!=component[edge_to[edge]])continue;
+            if(component_size[component[edge_from[edge]]]<2)continue;
+            const TailCallCandidate *candidate=&candidates[edge_candidate[edge]];
+            if(candidate->caller->code[candidate->offset]==DIAMOND_OP_CALL)
+                candidate->caller->code[candidate->offset]=DIAMOND_OP_TAIL_CALL;
+        }
+    }
+    free(node_of);free(edge_from);free(edge_to);free(edge_candidate);
+    free(first);free(targets);free(discovery);free(lowlink);free(component);
+    free(component_size);free(tarjan_stack);free(walk_node);free(walk_edge);
+    free(on_stack);
 }
 
 /* Is the `if`/`unless` at the current token a one-line if-expression
@@ -19171,6 +19321,10 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
                 "internal error: unresolved forward reference to "
                 "singleton function");
     }
+    if(!compiler.failed)
+        rewrite_cyclic_tail_calls(program,compiler.tail_call_candidates,
+            compiler.tail_call_candidate_count);
+    free(compiler.tail_call_candidates);
     return !compiler.failed;
 }
 

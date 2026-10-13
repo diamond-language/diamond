@@ -86,7 +86,7 @@ always still wins/pauses first, regardless of any pending step:
   starting depth -- i.e. back in the caller, right after the current
   call returns.
 
-One known, accepted edge case: a self-recursive tail call
+One known, accepted edge case: a tail call that runs in place
 (`docs/callables.md`'s "Tail-call optimization") deliberately reuses
 the *same* `run_chunk` recursion depth rather than incrementing it (that
 feature's own whole point). Stepping over or out of a statement that

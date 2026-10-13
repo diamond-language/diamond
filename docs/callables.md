@@ -32,20 +32,22 @@ end
 sum(100000, 0)  # => 5000050000, not a stack overflow
 ```
 
-A **self-recursive tail call** -- a function's own call to itself, as the
-entire value of a `return`, or as a function body's own trailing
-expression, with nothing done to the result afterward -- runs in constant
-native stack space instead, however deep the recursion goes. This is a
-transparent optimization, not new syntax: it only ever changes whether a
-qualifying call blows the ordinary depth limit, never what a program
+A **tail call** -- a function's call to itself, or to another function that
+tail-calls back to it, as the entire value of a `return` or as a function
+body's own trailing expression, with nothing done to the result afterward --
+runs in constant native stack space instead, however deep the recursion goes.
+This is a transparent optimization, not new syntax: it only ever changes
+whether a qualifying call blows the ordinary depth limit, never what a program
 computes. A call that doesn't qualify falls back to ordinary recursion,
 bounded exactly as before -- never an error, just not optimized.
 
 **What qualifies**: `return foo(...)` or a trailing `foo(...)` with no
-further operation applied, where `foo` is the *same* function currently
-running (self-recursion only -- `A` tail-calling a *different* function
-`B`, even if `B` in turn tail-calls `A` back, is ordinary recursion, still
-bounded by the depth limit).
+further operation applied, where `foo` is either the function currently
+running, or a function on a cycle of such calls with it: `even?` returning
+`odd?(n - 1)` while `odd?` returns `even?(n - 1)`, or any longer ring. A tail
+call to a function that does not call back through tail calls (a plain
+delegating wrapper) is an ordinary call, so only the calls that can recurse
+without bound are rewritten.
 
 **What doesn't, and stays ordinary bounded recursion instead of erring**:
 
@@ -57,9 +59,9 @@ bounded by the depth limit).
   invalidate. Disqualified regardless of whether the block's own handler
   would ever actually fire.
 
-A generic or variadic function's own tail call does qualify. Each in-place
-iteration gets the argument list of its tail call, exactly as a fresh call
-would: a generic function's type variables are inferred again from the new
+Generic and variadic functions qualify, and so do functions with different
+arities or register counts on one cycle. Each in-place iteration gets the
+argument list of its tail call, exactly as a fresh call would: a generic function's type variables are inferred again from the new
 arguments (so `T` may be an `Int` in one iteration and a `String` in the
 next), a variadic function collects the new call's overflow arguments, and a
 default parameter the tail call leaves out takes its default again rather than
@@ -72,7 +74,7 @@ None of these need to be memorized to write correct code -- they only
 ever affect how deep a *specific* recursive shape can go before hitting
 the ordinary depth limit, never what any program returns. The one
 directly observable consequence: a function that recurses forever with
-no base case, written as a qualifying self-recursive tail call, now runs
+no base case, written as a qualifying tail call, now runs
 forever instead of eventually raising `SystemStackError` -- worth knowing
 if you were ever relying on "it'll eventually crash" as a substitute for
 an actual base case or loop-termination check.

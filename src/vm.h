@@ -521,17 +521,21 @@ typedef enum DiamondOpCode : uint8_t {
      * rewriting an already-emitted CALL's own opcode byte in place, never
      * by emitting different operands, specifically so nothing about
      * jump-offset arithmetic elsewhere in the function has to change.
-     * Only ever targets the function currently executing itself (self-
+     * Targets either the function currently executing itself (self-
      * recursion in tail position, no enclosing begin/rescue/ensure --
      * see maybe_rewrite_self_tail_call's own comment in src/compiler.c
-     * for the exact eligibility rule). run_chunk replaces its
-     * `arguments`/`argument_count` with the tail call's and re-infers
-     * type-variable bindings, so generic and variadic functions qualify. run_chunk's own
-     * handling reuses the current call's registers/frame/depth in place
-     * instead of recursing, giving qualifying tail recursion O(1) C-stack
-     * usage regardless of how deep it goes -- see docs/callables.md's
-     * "Tail-call optimization" section for the full, user-facing
-     * contract and why this is scoped to self-recursion only. Appended
+     * for the exact eligibility rule) or, when the compiler found the
+     * call on a cycle of tail calls between functions (mutual recursion,
+     * rewrite_cyclic_tail_calls), a different function. run_chunk replaces
+     * its `arguments`/`argument_count` with the tail call's and re-infers
+     * type-variable bindings, so generic and variadic functions qualify;
+     * a different function also swaps in its chunk and register count.
+     * It reuses the current call's frame/depth in place instead of
+     * recursing, giving qualifying tail recursion O(1) C-stack usage
+     * regardless of how deep it goes (a cross-function call from a block
+     * or inside a live handler is an ordinary call instead) -- see
+     * docs/callables.md's "Tail-call optimization" section for the full,
+     * user-facing contract.
      * here, not grouped next to DIAMOND_OP_CALL above, for the same
      * stable-numbering reason as DIAMOND_OP_CHANNEL_NEW/DIAMOND_OP_
      * SUPERVISOR_NEW just above -- anything encoding a raw opcode number
