@@ -57,7 +57,12 @@ exec 3<>"/dev/tcp/127.0.0.1/$signal_port"
 # signal's status instead. Validate the complete output on either platform.
 wait "$signal_pid" || true
 signal_pid=""
-actual="$(cat "$signal_out")"
+# timeout(1) forwards the INT to the child and, outside --foreground, to its own
+# process group as well, so the handler can legitimately run twice depending on
+# whether the second delivery lands before or after the first handler ran.
+# Collapse adjacent repeats: the contract is that blocked accept() is interrupted
+# and resumes, not how many copies of the signal arrived.
+actual="$(uniq "$signal_out")"
 if [[ "$actual" != $'ready\ncaught INT\naccepted\nnil' ]]; then
     echo "signal test: unexpected output" >&2
     cat "$signal_out" >&2
