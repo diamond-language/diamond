@@ -18,6 +18,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- A generic or variadic function's own tail call now runs in place: type variables are inferred
+  again from each iteration's arguments and overflow arguments are re-collected.
+- An in-place tail call that leaves out a default parameter now takes the default again; it used to
+  keep the first call's argument list, so `f(n - 1)` in `def f(n, acc = 100)` saw `nil`.
 - `Supervisor#stop(timeout_ms)` stops restarts, waits up to the timeout for the current
   attempts, then interrupts any still running and returns whether it had to. A worker in a
   blocking native call is still only stopped when that call returns.

@@ -56,13 +56,14 @@ bounded by the depth limit).
   bytecode, which reusing that same call for "the next iteration" would
   invalidate. Disqualified regardless of whether the block's own handler
   would ever actually fire.
-- **A generic function's own self-call** -- a generic function derives
-  its type bindings fresh from each call's own argument values; redoing
-  that correctly for an in-place "looped" call is a separate, unattempted
-  problem (see docs/roadmap.md).
-- **A variadic function's own self-call** -- a variadic call's overflow
-  arguments (beyond its declared fixed parameters) are tracked against
-  the *original* call, not something an in-place tail call can update.
+
+A generic or variadic function's own tail call does qualify. Each in-place
+iteration gets the argument list of its tail call, exactly as a fresh call
+would: a generic function's type variables are inferred again from the new
+arguments (so `T` may be an `Int` in one iteration and a `String` in the
+next), a variadic function collects the new call's overflow arguments, and a
+default parameter the tail call leaves out takes its default again rather than
+keeping the previous iteration's value.
 
 `DIAMOND_TRACE_TAIL_CALLS=1` prints how many calls ran in place when the program
 exits, and `--dump-bytecode` shows which call sites were rewritten to `TAIL_CALL`.

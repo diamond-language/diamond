@@ -496,6 +496,8 @@ static void mark_frame_chain(void *frames, bool minor) {
         for (size_t index = 0; index < frame->register_count; index++) {
             mark_value(frame->registers[index], minor);
         }
+        for (size_t index = 0; index < frame->extra_root_count; index++)
+            mark_value(frame->extra_roots[index], minor);
         if(frame->pending!=nullptr && frame->pending->kind!=PENDING_NONE)
             mark_value(frame->pending->value, minor);
         if(frame->handlers!=nullptr && frame->handler_count!=nullptr)

@@ -12901,33 +12901,18 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
  * (compiler->begin_depth>0 -- a live handler's own jump target is an
  * offset into the *current* chunk's bytecode, which reusing the same
  * run_chunk invocation for "the next iteration" must never invalidate);
- * a generic function's own self-call (compiler->function->type_variable_
- * count>0 -- re-deriving per-call type-variable bindings for a looped-
- * back call, the way run_chunk's own entry-time inference already does
- * once per real call, is real, separate complexity not attempted here);
  * and, structurally, anything that isn't a plain positional CALL to
  * *this exact* function (a method/singleton call, a CALL_TYPED generic
  * call, or a call to any other function, self-recursive or not, all use
  * a different opcode, a different function_index, or never touch
- * last_plain_call_* at all). */
+ * last_plain_call_* at all). A generic or variadic function qualifies:
+ * run_chunk's TAIL_CALL replaces its `arguments`/`argument_count` and
+ * re-infers type-variable bindings, as a fresh call would. */
 static void maybe_rewrite_self_tail_call(Compiler *compiler,
         uint16_t return_value_register) {
     if(compiler->begin_depth>0)return;
     /* A block's break lands in its call, which a tail call would replace. */
     if(compiler->function->nonlocal_landing)return;
-    if(compiler->function->type_variable_count>0)return;
-    /* A variadic function's own overflow arguments (beyond its fixed
-     * arity) live in run_chunk's own `arguments`/`argument_count`
-     * parameters, read directly by DIAMOND_OP_COLLECT_VARIADIC -- values
-     * fixed at this *original* call's own entry, not something a tail
-     * call reusing the same run_chunk invocation could actually update.
-     * Excluding has_variadic entirely sidesteps that hazard, and as a
-     * side effect keeps call_argument_count bounded by DIAMOND_MAX_
-     * DECLARED_PARAMETERS for every function this can still rewrite
-     * (a non-variadic function's own arity is already capped there) --
-     * exactly what run_chunk's own TAIL_CALL handling sizes its
-     * argument-staging buffer to. */
-    if(compiler->function->has_variadic)return;
     if(compiler->last_plain_call_function!=compiler->function)return;
     if(compiler->last_plain_call_code_count!=compiler->function->code_count)
         return;
