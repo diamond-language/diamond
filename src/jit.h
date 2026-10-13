@@ -229,7 +229,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
  * struct's real layout instead of duplicating a hardcoded constant) and
  * calls these two to manage it:
  *
- *   diamond_jit_frame_push(storage, vm, registers, register_count, chunk)
+ *   diamond_jit_frame_push(storage, vm, registers, register_count, chunk, offset_slot)
  *     placement-constructs a frame into `storage` and links it onto
  *     vm->frames, exactly like run_chunk's own entry setup -- called once,
  *     in a compiled function's own prologue, before anything that can
@@ -249,11 +249,15 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
  * these trampolines can itself raise. */
 size_t diamond_jit_frame_size(void);
 void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
-        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk);
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk, size_t *offset_slot);
 void diamond_jit_frame_pop(DiamondVm *vm);
 /* Propagate-exit variant: appends the frame's "at name:line:col" trace line for
  * a failing `status` before popping. */
 void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status);
+/* Same for a function that never pushed a frame: its failing call stored its
+ * offset in the pad slot, which the exit stub passes here with its chunk. */
+void diamond_jit_record_propagating(DiamondVm *vm, uint8_t status,
+        const DiamondChunk *chunk, size_t offset);
 
 /* JIT trampoline for DIAMOND_OP_STRING -- the first trampoline that CAN
  * allocate (allocate_string calls maybe_collect unconditionally), so any

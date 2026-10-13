@@ -148,21 +148,25 @@ enum { DIAMOND_GC_CARD_SIZE = 64 };
  * trampolines can itself raise, so no code path today ever reads it back
  * for a real backtrace, but a future one might). */
 size_t diamond_jit_frame_size(void) {
-    return sizeof(DiamondFrame) + sizeof(size_t);
+    return sizeof(DiamondFrame);
 }
 
+/* `offset_slot` is the prologue's pad slot, just above the frame: the frame's
+ * instruction_offset points at it, and every trampoline call from the body
+ * stores the current bytecode offset there (emit_body_call in jit.c), so a
+ * backtrace and an error trace line both read the call being made. */
 void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
-        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk) {
+        DiamondValue *registers, size_t register_count, const DiamondChunk *chunk,
+        size_t *offset_slot) {
     DiamondFrame *frame = (DiamondFrame *)frame_storage;
-    size_t *offset_storage = (size_t *)(frame + 1);
-    *offset_storage = 0;
+    *offset_slot = 0;
     *frame = (DiamondFrame){
         .previous = vm->frames,
         .registers = registers,
         .pending = nullptr,
         .register_count = register_count,
         .chunk = chunk,
-        .instruction_offset = offset_storage,
+        .instruction_offset = offset_slot,
     };
     vm->frames = frame;
 }
@@ -172,30 +176,39 @@ void diamond_jit_frame_pop(DiamondVm *vm) {
     vm->frames = frame->previous;
 }
 
-/* The propagate exit of a compiled function: records "at name:line:col" for it
- * exactly as run_chunk's RECORD_ERROR does for an interpreted frame (the
- * offset slot was last set by the call that failed), then pops the frame.
- * Without it a compiled function that makes a plain CALL disappears from the
- * trace of an error raised below it. */
+/* Appends "at name:line:col" for a compiled function that is propagating a
+ * failing `status`, exactly as run_chunk's RECORD_ERROR does for an interpreted
+ * frame. Without it a compiled function that failed below a call (or in an
+ * arithmetic slow path) would vanish from the trace of the error. */
+static void jit_record_error_line(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t offset, uint8_t status) {
+    if (status == DIAMOND_VM_OK || status == DIAMOND_VM_NONLOCAL_EXIT || chunk == nullptr)
+        return;
+    size_t used = strlen(vm->error);
+    if (used == 0)
+        used = (size_t)snprintf(vm->error, sizeof vm->error, "%s",
+            diamond_vm_status_name((DiamondVmStatus)status));
+    const char *name = chunk->name != nullptr ? chunk->name : "<chunk>";
+    const bool in_bounds = offset < chunk->code_count;
+    const uint32_t line = in_bounds && chunk->lines != nullptr ? chunk->lines[offset] : 0;
+    const uint32_t column = in_bounds && chunk->columns != nullptr ? chunk->columns[offset] : 0;
+    if (used < sizeof vm->error)
+        (void)snprintf(vm->error + used, sizeof vm->error - used,
+            "\n  at %s:%u:%u", name, line, column);
+}
+
+/* Propagate exit of a function that pushed a frame: record, then pop. */
 void diamond_jit_frame_pop_propagating(DiamondVm *vm, uint8_t status) {
     DiamondFrame *frame = (DiamondFrame *)vm->frames;
-    if (status != DIAMOND_VM_OK && status != DIAMOND_VM_NONLOCAL_EXIT &&
-        frame->chunk != nullptr && frame->instruction_offset != nullptr) {
-        const DiamondChunk *chunk = frame->chunk;
-        const size_t offset = *frame->instruction_offset;
-        size_t used = strlen(vm->error);
-        if (used == 0)
-            used = (size_t)snprintf(vm->error, sizeof vm->error, "%s",
-                diamond_vm_status_name((DiamondVmStatus)status));
-        const char *name = chunk->name != nullptr ? chunk->name : "<chunk>";
-        const bool in_bounds = offset < chunk->code_count;
-        const uint32_t line = in_bounds && chunk->lines != nullptr ? chunk->lines[offset] : 0;
-        const uint32_t column = in_bounds && chunk->columns != nullptr ? chunk->columns[offset] : 0;
-        if (used < sizeof vm->error)
-            (void)snprintf(vm->error + used, sizeof vm->error - used,
-                "\n  at %s:%u:%u", name, line, column);
-    }
+    if (frame->chunk != nullptr && frame->instruction_offset != nullptr)
+        jit_record_error_line(vm, frame->chunk, *frame->instruction_offset, status);
     vm->frames = frame->previous;
+}
+
+/* Propagate exit of a function with no frame (nothing to pop). */
+void diamond_jit_record_propagating(DiamondVm *vm, uint8_t status,
+        const DiamondChunk *chunk, size_t offset) {
+    jit_record_error_line(vm, chunk, offset, status);
 }
 
 /* Called with channel->lock held. Writes never block; a full pipe already

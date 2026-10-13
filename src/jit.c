@@ -82,6 +82,11 @@ typedef struct JitBuffer {
      * bytecode-width table that could drift out of sync with the real
      * one. */
     bool dry_run;
+    /* Net bytes pushed onto the stack since compile_body began (push/pop and
+     * RSP adds/subs adjust it), so emit_body_call can address the prologue's
+     * pad slot from wherever RSP has moved to while a call's arguments are
+     * staged. Meaningful only inside the body. */
+    int32_t rsp_delta;
 } JitBuffer;
 
 /* Deferred fixups for jumps to a *bytecode* target -- the native offset for
@@ -128,6 +133,9 @@ typedef struct JitCompiler {
      * DiamondVmStatus to propagate and genuinely need the interpreter's
      * own bignum/raise logic, not just a status to hand back. */
     bool has_called;
+    /* Bytecode offset of the instruction compile_body is emitting, so a
+     * trampoline call can record where it is (see emit_body_call). */
+    size_t current_instruction_start;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -363,10 +371,12 @@ static void emit_movzx_r64_al(JitBuffer *buf, int reg) {
 /* push/pop reg64 (no REX.W needed -- push/pop default to 64-bit in long
  * mode; REX.B is still needed for r8-r15). */
 static void emit_push(JitBuffer *buf, int reg) {
+    buf->rsp_delta += 8;
     if (reg >= 8) emit_u8(buf, 0x41);
     emit_u8(buf, (uint8_t)(0x50 + (reg & 7)));
 }
 static void emit_pop(JitBuffer *buf, int reg) {
+    buf->rsp_delta -= 8;
     if (reg >= 8) emit_u8(buf, 0x41);
     emit_u8(buf, (uint8_t)(0x58 + (reg & 7)));
 }
@@ -375,12 +385,14 @@ static void emit_pop(JitBuffer *buf, int reg) {
  * DiamondFrame (Phase 2c). /0 = ADD, /5 = SUB, per the Intel SDM's opcode
  * 81 extension table. */
 static void emit_add_rsp_imm32(JitBuffer *buf, uint32_t imm) {
+    buf->rsp_delta -= (int32_t)imm;
     emit_u8(buf, 0x48);
     emit_u8(buf, 0x81);
     emit_u8(buf, (uint8_t)(0xC0 | (0 << 3) | REG_RSP));
     emit_u32_le(buf, imm);
 }
 static void emit_sub_rsp_imm32(JitBuffer *buf, uint32_t imm) {
+    buf->rsp_delta += (int32_t)imm;
     emit_u8(buf, 0x48);
     emit_u8(buf, 0x81);
     emit_u8(buf, (uint8_t)(0xC0 | (5 << 3) | REG_RSP));
@@ -403,20 +415,25 @@ static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
 }
 
 /* ret */
-/* Stores the current bytecode offset into the published DiamondFrame's
- * instruction_offset slot (the size_t right after the DiamondFrame, see
- * diamond_jit_frame_push), so a backtrace taken while a callee runs names this
- * function and the call's source line. Without it the frame is skipped and
- * every compiled caller vanishes from error traces. Emitted just before a
- * trampoline that can run user code, while RSP still addresses the frame. */
-static void emit_record_instruction_offset(JitCompiler *jc, size_t instruction_start) {
+/* A trampoline call from the function body. Stores the current instruction's
+ * bytecode offset into the stack slot just above the DiamondFrame reservation
+ * (the prologue's alignment pad, which a published frame's instruction_offset
+ * points at), so that
+ *   - a backtrace taken while the callee runs names this function and the
+ *     call's source line, and
+ *   - a function that propagates a failure (no re-run, see has_called) can
+ *     append its own "at name:line:col" trace line from the exit stub, with or
+ *     without a frame (see emit_epilogue_propagate).
+ * Not used by the prologue/epilogue, where RSP is not yet/no longer the body's. */
+static void emit_body_call(JitCompiler *jc, void *function_address) {
     JitBuffer *buf = &jc->buf;
     emit_u8(buf, 0x48);                       /* REX.W */
     emit_u8(buf, 0xC7);                       /* MOV r/m64, imm32 */
     emit_u8(buf, 0x84);                       /* ModRM: [rsp + disp32] */
     emit_u8(buf, 0x24);                       /* SIB: rsp */
-    emit_u32_le(buf, (uint32_t)(diamond_jit_frame_size() - sizeof(size_t)));
-    emit_u32_le(buf, (uint32_t)instruction_start);
+    emit_u32_le(buf, (uint32_t)((int32_t)jc->frame_reserve_bytes + buf->rsp_delta));
+    emit_u32_le(buf, (uint32_t)jc->current_instruction_start);
+    emit_call_trampoline(buf, function_address);
 }
 
 static void emit_ret(JitBuffer *buf) { emit_u8(buf, 0xC3); }
@@ -452,12 +469,16 @@ static void emit_pop_persistent_registers(JitBuffer *buf) {
  * already been set. */
 static void emit_epilogue(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
+    /* An exit stub unwinds the stack on its own path only: code emitted after
+     * it (a RETURN inside the body) still runs with the body's RSP. */
+    const int32_t saved_rsp_delta = buf->rsp_delta;
     if (jc->needs_frame) {
         emit_mov_rr(buf, REG_RDI, JIT_VM);
         emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop);
         emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     }
     emit_pop_persistent_registers(buf);
+    buf->rsp_delta = saved_rsp_delta;
 }
 
 /* Phase 2d: shared tail for the "propagate" bailout stub -- like
@@ -490,15 +511,27 @@ static void emit_epilogue(JitCompiler *jc) {
  * without_frame.di, which reproduces this exact shape. */
 static void emit_epilogue_propagate(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
+    const int32_t saved_rsp_delta = buf->rsp_delta;
+    emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_RESULT_PTR);
     if (jc->needs_frame) {
-        emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
-        emit_mov_rr(buf, REG_RDI, JIT_VM);
-        emit_mov_rr(buf, REG_RSI, JIT_RESULT_PTR);
         emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_frame_pop_propagating);
-        emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
-        emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
+    } else {
+        /* No frame, but the failing call still stored its offset in the pad
+         * slot at [rsp]: record this function's trace line from there. */
+        emit_mov_rr(buf, REG_RDX, JIT_CHUNK);
+        emit_u8(buf, 0x48);                   /* mov rcx, [rsp] */
+        emit_u8(buf, 0x8B);
+        emit_u8(buf, 0x0C);
+        emit_u8(buf, 0x24);
+        emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_record_propagating);
     }
+    emit_mov_rr(buf, REG_RAX, JIT_RESULT_PTR);
+    if (jc->needs_frame)
+        emit_add_rsp_imm32(buf, (uint32_t)jc->frame_reserve_bytes);
     emit_pop_persistent_registers(buf);
+    buf->rsp_delta = saved_rsp_delta;
 }
 
 /* Near conditional jump to a not-yet-known local offset: emits `0F 8x
@@ -650,7 +683,7 @@ static void emit_arith_slow_call(JitCompiler *jc, size_t instruction_start, uint
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_arith_slow);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_arith_slow);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -671,7 +704,7 @@ static void emit_compare_slow_call(JitCompiler *jc, size_t instruction_start, ui
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_compare_slow);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_compare_slow);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -858,7 +891,7 @@ static void compile_equal_op(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(left, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(right, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_equal_general);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_equal_general);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
     size_t general_done = emit_jmp_placeholder(buf);
@@ -885,7 +918,7 @@ static void compile_set_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(recv, 0));
     emit_mov_imm64(buf, REG_RCX, field);
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(source, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_set_ivar);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_set_ivar);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -903,7 +936,7 @@ static void compile_get_ivar(JitCompiler *jc, size_t instruction_start, uint16_t
     emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(recv, 0));
     emit_mov_imm64(buf, REG_RCX, field);
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_get_ivar);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_get_ivar);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -931,7 +964,7 @@ static void compile_index_get(JitCompiler *jc, size_t instruction_start, uint16_
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(index, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_get);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_get);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -955,7 +988,7 @@ static void compile_index_get_string(JitCompiler *jc, size_t instruction_start, 
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
     emit_mov_imm64(buf, REG_R9, string_index);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_get_string);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_get_string);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -983,7 +1016,7 @@ static void compile_index_set(JitCompiler *jc, size_t instruction_start,
     emit_mov_imm64(buf, REG_RCX, (uint64_t)(uintptr_t)(jc->function->code + instruction_start));
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(recv, 0));
     emit_lea(buf, REG_R9, JIT_REGISTERS_BASE, reg_disp(index, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_index_set);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_index_set);
     emit_add_rsp_imm32(buf, 16);
     emit_bail_if_al_nonzero(jc);
 }
@@ -1050,7 +1083,7 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
     emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
     emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
     emit_mov_imm64(buf, REG_RDX, set_index);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_check_type);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_check_type);
     emit_bail_if_al_nonzero(jc);
     for (size_t i = 0; i < accepted_count; i++) patch_rel32_to_here(buf, accepted[i]);
 }
@@ -1065,7 +1098,7 @@ static void compile_is_type(JitCompiler *jc, uint16_t dest, uint16_t source, uin
     emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
     emit_mov_imm64(buf, REG_RDX, type);
     emit_lea(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_is_type);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_is_type);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1081,7 +1114,7 @@ static void compile_new_string(JitCompiler *jc, uint16_t dest, uint16_t string_i
     emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
     emit_mov_imm64(buf, REG_RDX, string_index);
     emit_lea(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_string);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_string);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1099,7 +1132,7 @@ static void compile_new_hash(JitCompiler *jc, uint16_t dest, uint16_t base, uint
     emit_mov_imm64(buf, REG_RDX, base);
     emit_mov_imm64(buf, REG_RCX, count);
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_hash);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_hash);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1118,7 +1151,7 @@ static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uin
     emit_mov_imm64(buf, REG_RDX, base);
     emit_mov_imm64(buf, REG_RCX, count);
     emit_lea(buf, REG_R8, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_array);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_array);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1136,12 +1169,11 @@ static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uin
  * own incoming depth (JIT_DEPTH), passed on unchanged, exactly mirroring
  * the interpreter's own `depth` (not `depth+1`) argument to invoke_
  * resolved_method_helper. */
-static void compile_super_call(JitCompiler *jc, size_t instruction_start, uint16_t dest,
-                                uint8_t owner_index, uint16_t name, uint16_t base, uint8_t argc) {
+static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_index,
+                                uint16_t name, uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
-    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_super_call takes 9 arguments -- SysV passes the first 6
      * (vm, chunk, owner_index, name, registers, base) in RDI/RSI/RDX/RCX/
      * R8/R9, and the remaining 3 (argc, depth, out) on the stack, in that
@@ -1169,7 +1201,7 @@ static void compile_super_call(JitCompiler *jc, size_t instruction_start, uint16
     emit_mov_imm64(buf, REG_RCX, name);
     emit_mov_rr(buf, REG_R8, JIT_REGISTERS_BASE);
     emit_mov_imm64(buf, REG_R9, base);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_super_call);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_super_call);
     emit_add_rsp_imm32(buf, 32); /* reclaim the 4 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
@@ -1181,12 +1213,11 @@ static void compile_super_call(JitCompiler *jc, size_t instruction_start, uint16
  * effects that a retry from the start would repeat. 8 arguments: the first 6
  * (vm, chunk, registers, function_index, base, argc) in registers, and
  * (depth, out) on the stack, pushed in reverse so depth ends at [rsp+0]. */
-static void compile_call_function(JitCompiler *jc, size_t instruction_start, uint16_t dest,
+static void compile_call_function(JitCompiler *jc, uint16_t dest,
                                   uint16_t function_index, uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
-    emit_record_instruction_offset(jc, instruction_start);
     emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
     emit_push(buf, REG_RAX);                 /* out -> [rsp+8] after the next push */
     emit_push(buf, JIT_DEPTH);               /* depth -> [rsp+0] */
@@ -1196,7 +1227,7 @@ static void compile_call_function(JitCompiler *jc, size_t instruction_start, uin
     emit_mov_imm64(buf, REG_RCX, function_index);
     emit_mov_imm64(buf, REG_R8, base);
     emit_mov_imm64(buf, REG_R9, argc);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_call_function);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_call_function);
     emit_add_rsp_imm32(buf, 16); /* reclaim the 2 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
@@ -1235,7 +1266,6 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
-    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_invoke_instance takes 13 arguments -- SysV passes the
      * first 6 (vm, chunk, site, instruction, registers, recv) in RDI/RSI/
      * RDX/RCX/R8/R9, and the remaining 7 (name, base, argc, type_argument_
@@ -1269,7 +1299,7 @@ static void compile_invoke_dispatch(JitCompiler *jc, size_t instruction_start,
         monomorphic ? DIAMOND_OP_INVOKE_MONO : DIAMOND_OP_INVOKE);
     emit_mov_rr(buf, REG_R8, JIT_REGISTERS_BASE);
     emit_mov_imm64(buf, REG_R9, recv);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_invoke_instance);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_invoke_instance);
     emit_add_rsp_imm32(buf, 64); /* reclaim the 8 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
@@ -1286,7 +1316,7 @@ static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
     emit_lea(buf,REG_RDX,JIT_REGISTERS_BASE,reg_disp(base,0));
     emit_mov_imm64(buf,REG_RCX,(uint64_t)operation);
     emit_lea(buf,REG_R8,JIT_REGISTERS_BASE,reg_disp(dest,0));
-    emit_call_trampoline(buf,(void *)(uintptr_t)diamond_jit_native_call);
+    emit_body_call(jc,(void *)(uintptr_t)diamond_jit_native_call);
     emit_bail_if_al_nonzero(jc);
 }
 
@@ -1301,12 +1331,11 @@ static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
  * instance's own maybe_collect can trigger GC) and jc->has_called (a
  * user-defined `initialize` can run arbitrary code), mirroring every
  * other call-capable trampoline here. */
-static void compile_new(JitCompiler *jc, size_t instruction_start, uint16_t dest,
-                         uint8_t class_index, uint16_t base, uint8_t argc) {
+static void compile_new(JitCompiler *jc, uint16_t dest, uint8_t class_index,
+                         uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
     JitBuffer *buf = &jc->buf;
-    emit_record_instruction_offset(jc, instruction_start);
     /* diamond_jit_new_instance takes 8 arguments -- SysV passes the first
      * 6 (vm, chunk, registers, dest, class_index, base) in RDI/RSI/RDX/
      * RCX/R8/R9, and the remaining 2 (argc, depth) on the stack, at
@@ -1326,7 +1355,7 @@ static void compile_new(JitCompiler *jc, size_t instruction_start, uint16_t dest
     emit_mov_imm64(buf, REG_RCX, dest);
     emit_mov_imm64(buf, REG_R8, class_index);
     emit_mov_imm64(buf, REG_R9, base);
-    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_new_instance);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_new_instance);
     emit_add_rsp_imm32(buf, 16); /* reclaim the 2 pushed stack slots */
     emit_bail_if_al_nonzero(jc);
 }
@@ -1770,8 +1799,10 @@ static int32_t register_new_class_if_sole_writer(const DiamondFunction *fn, uint
 static void compile_body(JitCompiler *jc) {
     const DiamondFunction *fn = jc->function;
     size_t pc = 0;
+    jc->buf.rsp_delta = 0; /* the body starts at the prologue's RSP */
     while (pc < fn->code_count && !jc->bailed) {
         size_t instruction_start = pc;
+        jc->current_instruction_start = instruction_start;
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) { jc->bailed = true; return; }
         DiamondOpCode opcode = (DiamondOpCode)raw_opcode;
@@ -1952,7 +1983,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &owner_index) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                compile_super_call(jc, instruction_start, dest, owner_index, name, base, argc);
+                compile_super_call(jc, dest, owner_index, name, base, argc);
                 break;
             }
             case DIAMOND_OP_CALL: {
@@ -1962,7 +1993,7 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
-                compile_call_function(jc, instruction_start, dest, function_index, base, argc);
+                compile_call_function(jc, dest, function_index, base, argc);
                 break;
             }
             case DIAMOND_OP_NEW: {
@@ -1972,7 +2003,7 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
-                compile_new(jc, instruction_start, dest, class_index, base, argc);
+                compile_new(jc, dest, class_index, base, argc);
                 break;
             }
             case DIAMOND_OP_JUMP: {
@@ -2235,7 +2266,7 @@ static void compile_body(JitCompiler *jc) {
                 emit_mov_rr(buf, REG_RDI, JIT_VM);
                 emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
                 emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-                emit_call_trampoline(buf, trampoline);
+                emit_body_call(jc, trampoline);
                 emit_bail_if_al_nonzero(jc);
                 break;
             }
@@ -2330,6 +2361,11 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
         emit_mov_rr(&jc.buf, REG_RDX, JIT_REGISTERS_BASE);
         emit_mov_imm64(&jc.buf, REG_RCX, live_register_count);
         emit_mov_rr(&jc.buf, REG_R8, JIT_CHUNK);
+        emit_mov_rr(&jc.buf, REG_R9, REG_RSP);   /* r9 = &pad slot = rsp + reserve */
+        emit_u8(&jc.buf, 0x49);                   /* add r9, imm32 */
+        emit_u8(&jc.buf, 0x81);
+        emit_u8(&jc.buf, 0xC1);
+        emit_u32_le(&jc.buf, (uint32_t)jc.frame_reserve_bytes);
         emit_call_trampoline(&jc.buf, (void *)(uintptr_t)diamond_jit_frame_push);
     }
 
