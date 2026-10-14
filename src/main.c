@@ -19,7 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static constexpr char DIAMOND_VERSION[] = "0.13.0";
+static constexpr char DIAMOND_VERSION[] = "0.14.0";
 
 /* Appended to --version output. The default `make` target is an unoptimized
  * debug build (so are `make sanitize`/`make tsan`), which runs Diamond code

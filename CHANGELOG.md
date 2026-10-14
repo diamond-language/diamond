@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.14.0 — 2026-10-14
+
 ### Security
 
 - `Signal.trap` is now a sandbox capability: `--sandbox` denies it (`SandboxError`) unless
@@ -46,6 +48,8 @@ authoritative fine-grained record.
   has compiled. `bench/fibonacci.di` goes from 0.31 s to 0.13 s; the `jit_*` benchmarks that were
   held back by such calls improve up to 7x (`jit_native_collection_reads` 0.82 s to 0.12 s). An
   error raised below a compiled function still names it, with the call's line, in the trace.
+  This also fixes a compiled function with no calls of its own losing its `at name:line` line from
+  the trace when an arithmetic slow path failed.
 
 ### Tooling
 
