@@ -671,10 +671,12 @@ declared member, and generates four methods for it automatically:
   work, the same as a hand-written `def initialize(x: Int, y: Int)`.
 - One reader per field (`x`, `y` above) -- exactly what `attr_reader`
   would generate, including the declared field type.
-- `==(other)` -- `true` only when `other` is the same class (checked
-  first; comparing against an unrelated type, or a different class
-  entirely, is `false`, never a raised error) *and* every field is
-  `==` to its counterpart.
+- `==(other)` -- `true` only when `other` is exactly the same class (checked
+  first; comparing against an unrelated type, a different class, or a
+  subclass instance is `false`, never a raised error) *and* every field is
+  `==` to its counterpart. A subclass that adds fields of its own should
+  define its own `==` (calling `super(other)` for the struct's fields), since
+  the generated one compares only the struct's declared fields.
 - `to_s()` -- `"Point(x: 1, y: 2)"`: the class name, then each field as
   `name: value.to_s()`, comma-separated.
 

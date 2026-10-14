@@ -20,11 +20,11 @@ Current behavior: [classes and modules](classes-and-modules.md).
 - **A superclass, or being reopened** -- no obviously correct semantics for
   regenerating `==`/`to_s`/`initialize` against an inherited or changed field list.
   Revisit only with a concrete design.
-- **Exact-class `==`** -- the generated `==` compares only the struct's own fields and
-  accepts any subclass, so `Point.new(1, 2) == Point3D.new(1, 2, 3)` is true in both
-  directions and two `Point3D`s differing only in `z` compare equal. Requiring the same
-  class would fix the cross-class case but not the extra-field one; fix only with a
-  driving need.
+- **Fields added by a subclass in the generated `==`** -- the generated `==` compares only
+  the struct's own declared fields, so two instances of a subclass that differ only in a
+  field the subclass added compare equal unless that subclass defines its own `==`.
+  Comparing every instance field would fix it but needs equality dispatch for nested
+  values; fix only with a driving need.
 
 ### Channel
 

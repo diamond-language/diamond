@@ -7099,6 +7099,23 @@ DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
     return DIAMOND_VM_OK;
 }
 
+/* True when both values are instances of exactly the same class. */
+bool diamond_values_same_class(DiamondValue left, DiamondValue right) {
+    if (left.kind != DIAMOND_VALUE_OBJECT || right.kind != DIAMOND_VALUE_OBJECT ||
+        left.as.object->kind != DIAMOND_OBJECT_INSTANCE ||
+        right.as.object->kind != DIAMOND_OBJECT_INSTANCE)
+        return false;
+    return ((const DiamondInstance *)left.as.object)->class ==
+        ((const DiamondInstance *)right.as.object)->class;
+}
+
+/* JIT trampoline for DIAMOND_OP_SAME_CLASS. */
+DiamondVmStatus diamond_jit_same_class(const DiamondValue *left,
+        const DiamondValue *right, DiamondValue *out) {
+    *out = DIAMOND_BOOL(diamond_values_same_class(*left, *right));
+    return DIAMOND_VM_OK;
+}
+
 bool array_value_satisfies_constraints(DiamondArray *array,
                                                DiamondValue value) {
     for(size_t index=0;index<array->constraint_count;index++) {

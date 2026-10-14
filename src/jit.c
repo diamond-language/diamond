@@ -1558,6 +1558,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_CALL:
         case DIAMOND_OP_TAIL_CALL:
         case DIAMOND_OP_IS_TYPE:
+        case DIAMOND_OP_SAME_CLASS:
             return true;
         default:
             return false;
@@ -1625,7 +1626,8 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
         case DIAMOND_OP_EQUAL_INT: case DIAMOND_OP_NOT_EQUAL_INT:
         case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY:
-        case DIAMOND_OP_HASH: case DIAMOND_OP_INDEX_GET_STRING: case DIAMOND_OP_IS_TYPE: {
+        case DIAMOND_OP_HASH: case DIAMOND_OP_INDEX_GET_STRING: case DIAMOND_OP_IS_TYPE:
+        case DIAMOND_OP_SAME_CLASS: {
             uint16_t a = 0, b = 0;
             return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
         }
@@ -1784,7 +1786,8 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_EQUAL_INT: case DIAMOND_OP_NOT_EQUAL_INT:
             case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
-            case DIAMOND_OP_IS_TYPE: {
+            case DIAMOND_OP_IS_TYPE:
+            case DIAMOND_OP_SAME_CLASS: {
                 uint16_t a = 0, b = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &b)) return -1;
                 break;
@@ -2035,6 +2038,18 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &type)) { jc->bailed = true; return; }
                 if (type > UINT8_MAX) { jc->bailed = true; return; }
                 compile_is_type(jc, dest, source, (uint8_t)type);
+                break;
+            }
+            case DIAMOND_OP_SAME_CLASS: {
+                uint16_t dest = 0, left = 0, right = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                    !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
+                JitBuffer *buf = &jc->buf;
+                emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(left, 0));
+                emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(right, 0));
+                emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+                emit_body_call(jc, (void *)(uintptr_t)diamond_jit_same_class);
+                emit_bail_if_al_nonzero(jc);
                 break;
             }
             case DIAMOND_OP_STRING: {

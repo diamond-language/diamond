@@ -3703,6 +3703,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     value_matches_type(chunk,registers[source],(uint8_t)type));
                 break;
             }
+            case DIAMOND_OP_SAME_CLASS: {
+                uint16_t destination=0,left=0,right=0;
+                READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
+                registers[destination]=DIAMOND_BOOL(
+                    diamond_values_same_class(registers[left],registers[right]));
+                break;
+            }
             case DIAMOND_OP_ARRAY: {
                 uint16_t destination=0,base=0,count=0;
                 READ_SHORT(destination);READ_SHORT(base);READ_SHORT(count);

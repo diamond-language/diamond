@@ -17029,7 +17029,7 @@ static uint16_t compile_struct(Compiler *compiler) {
                 (uint16_t)init_function_index,(uint8_t)field_count);
         }
     }
-    /* ==(other): same-class check via IS_TYPE, then a short-circuit AND
+    /* ==(other): IS_TYPE, then an exact-class check (SAME_CLASS), then a short-circuit AND
      * of one GET_IVAR+GET_IVAR+EQUAL+JUMP_IF_FALSE per field -- the same
      * shape compile_begin's own rescue-type matching already uses. */
     if(!compiler->failed) {
@@ -17059,6 +17059,12 @@ static uint16_t compile_struct(Compiler *compiler) {
                 size_t mismatch_count=0;
                 mismatch_jumps[mismatch_count++]=
                     emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
+                /* A subclass instance has the struct's fields too, but is
+                 * not equal to an instance of another class. */
+                const uint16_t same_class=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_SAME_CLASS,same_class,0,other,3);
+                mismatch_jumps[mismatch_count++]=
+                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,same_class);
                 for(size_t field=0;field<field_count;field++) {
                     const uint16_t left=allocate_register(compiler);
                     emit_instruction(compiler,DIAMOND_OP_GET_IVAR,left,0,
