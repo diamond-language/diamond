@@ -34,8 +34,8 @@ authoritative fine-grained record.
   call: `bench/tail_call_optimization.di` goes from 0.28 s to 0.065 s, and a 10-million-iteration
   accumulator from 0.87 s to 0.18 s. Typed parameters are still re-checked on each iteration.
   `==` and `!=` between two `Int`s now compile, so functions that compare a typed `Int`
-  parameter are no longer left to the interpreter. A function with default parameters still
-  runs interpreted.
+  parameter are no longer left to the interpreter. A tail call that leaves a default parameter
+  out is a native loop too, and takes the default again.
 - With `DIAMOND_JIT=1`, a tail call to a different function (a mutual cycle) no longer keeps
   both functions interpreted: the compiled caller hands the callee back to the dispatcher,
   which runs the cycle in constant native stack. An even/odd cycle of 50 million calls goes
