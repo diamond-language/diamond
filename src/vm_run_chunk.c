@@ -4708,6 +4708,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 }
                 diamond_vm_init(child_vm);
+                diamond_vm_configure_jit_from_env(child_vm);
                 DiamondThread *new_thread=malloc(sizeof *new_thread);
                 if(new_thread==nullptr) {
                     diamond_vm_free(child_vm);free(child_vm);

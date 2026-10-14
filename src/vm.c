@@ -2559,6 +2559,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             break;
         }
         diamond_vm_init(run_vm);
+        diamond_vm_configure_jit_from_env(run_vm);
         run_vm->range_class_index=child->program_template->range_class_index;
         run_vm->root_chunk=&child_chunk;
         /* The interrupt check costs every dispatched instruction, so it is
@@ -9100,12 +9101,10 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
              * loop in a function called once (a script's main routine, a
              * benchmark's run()) would otherwise never reach the threshold
              * and run interpreted to completion, since there is no
-             * on-stack replacement. Not for a supervised attempt, whose
-             * interruption is only looked at between interpreted
-             * instructions. */
+             * on-stack replacement. Native loops poll the interrupt flag
+             * of a supervised attempt (emit_interrupt_poll in src/jit.c). */
             const bool loop_on_first_call =
                 mutable_function->jit_call_count == 1 &&
-                vm->interrupt_flag == nullptr &&
                 diamond_jit_function_has_loop(function);
             if (loop_on_first_call ||
                 mutable_function->jit_call_count >= vm->jit_threshold) {
