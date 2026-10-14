@@ -1807,6 +1807,11 @@ static void compile_body(JitCompiler *jc) {
     jc->buf.rsp_delta = 0; /* the body starts at the prologue's RSP */
     while (pc < fn->code_count && !jc->bailed) {
         size_t instruction_start = pc;
+        /* emit_body_call addresses the offset cell relative to RSP using the
+         * tracked delta; every bytecode boundary must be back at the
+         * prologue's RSP, or the cell would be written to the wrong slot.
+         * Refuse to compile rather than risk corrupting a saved register. */
+        if (jc->buf.rsp_delta != 0) { jc->bailed = true; return; }
         jc->current_instruction_start = instruction_start;
         uint8_t raw_opcode = 0;
         if (!decode_u8(fn, &pc, &raw_opcode)) { jc->bailed = true; return; }
@@ -2349,7 +2354,12 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
     emit_push(&jc.buf, JIT_ARGUMENT_COUNT);
     emit_push(&jc.buf, JIT_CHUNK);
     emit_push(&jc.buf, JIT_DEPTH);
-    emit_sub_rsp_imm32(&jc.buf, 8);
+    /* The pad slot doubles as the body's "current instruction offset" cell
+     * (see emit_body_call), so it is pushed as a zero rather than just
+     * reserved: a propagate exit can never read stale stack from it. It must
+     * stay the single 8-byte slot directly above the frame reservation. */
+    emit_u8(&jc.buf, 0x6A);                   /* push imm8 0 */
+    emit_u8(&jc.buf, 0x00);
     emit_mov_rr(&jc.buf, JIT_VM, REG_RDI);
     emit_mov_rr(&jc.buf, JIT_REGISTERS_BASE, REG_RSI);
     emit_mov_rr(&jc.buf, JIT_RESULT_PTR, REG_RDX);
