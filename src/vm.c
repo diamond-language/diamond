@@ -176,10 +176,23 @@ void diamond_jit_frame_pop(DiamondVm *vm) {
     vm->frames = frame->previous;
 }
 
-/* Appends "at name:line:col" for a compiled function that is propagating a
- * failing `status`, exactly as run_chunk's RECORD_ERROR does for an interpreted
- * frame. Without it a compiled function that failed below a call (or in an
- * arithmetic slow path) would vanish from the trace of the error. */
+/* Appends "\n  at name:line:col" for the instruction at `offset` of `chunk`
+ * to vm->error. Shared by run_chunk's RECORD_ERROR and the JIT's propagate
+ * exits so interpreted and compiled traces cannot drift apart. `used` is the
+ * current strlen(vm->error), already non-zero. */
+DIAMOND_INTERNAL void diamond_record_error_line(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t used, size_t offset) {
+    const char *name = chunk->name != nullptr ? chunk->name : "<chunk>";
+    const bool in_bounds = offset < chunk->code_count;
+    const uint32_t line = in_bounds && chunk->lines != nullptr ? chunk->lines[offset] : 0;
+    const uint32_t column = in_bounds && chunk->columns != nullptr ? chunk->columns[offset] : 0;
+    if (used < sizeof vm->error)
+        (void)snprintf(vm->error + used, sizeof vm->error - used,
+            "\n  at %s:%u:%u", name, line, column);
+}
+
+/* A compiled function propagating a failing `status`: records its trace line
+ * as run_chunk's RECORD_ERROR does for an interpreted frame. */
 static void jit_record_error_line(DiamondVm *vm, const DiamondChunk *chunk,
         size_t offset, uint8_t status) {
     if (status == DIAMOND_VM_OK || status == DIAMOND_VM_NONLOCAL_EXIT || chunk == nullptr)
@@ -188,13 +201,7 @@ static void jit_record_error_line(DiamondVm *vm, const DiamondChunk *chunk,
     if (used == 0)
         used = (size_t)snprintf(vm->error, sizeof vm->error, "%s",
             diamond_vm_status_name((DiamondVmStatus)status));
-    const char *name = chunk->name != nullptr ? chunk->name : "<chunk>";
-    const bool in_bounds = offset < chunk->code_count;
-    const uint32_t line = in_bounds && chunk->lines != nullptr ? chunk->lines[offset] : 0;
-    const uint32_t column = in_bounds && chunk->columns != nullptr ? chunk->columns[offset] : 0;
-    if (used < sizeof vm->error)
-        (void)snprintf(vm->error + used, sizeof vm->error - used,
-            "\n  at %s:%u:%u", name, line, column);
+    diamond_record_error_line(vm, chunk, used, offset);
 }
 
 /* Propagate exit of a function that pushed a frame: record, then pop. */
