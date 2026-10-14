@@ -1654,21 +1654,6 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
     }
 }
 
-/* Whether `fn` contains `wanted`. Fails safe: an opcode the decoder does
- * not understand (a function this JIT cannot compile anyway) answers true. */
-static bool function_has_opcode(const DiamondFunction *fn, DiamondOpCode wanted) {
-    size_t pc = 0;
-    while (pc < fn->code_count) {
-        uint8_t raw_opcode = 0;
-        if (!decode_u8(fn, &pc, &raw_opcode)) return true;
-        int32_t dest = -1, jump_target = -1;
-        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
-                &dest, &jump_target)) return true;
-        if ((DiamondOpCode)raw_opcode == wanted) return true;
-    }
-    return false;
-}
-
 /* Whether `fn` contains a backward (or self) jump, i.e. a loop. Only the
  * whitelisted opcodes are understood: any other, or a truncated stream,
  * answers false -- such a function is not compilable anyway. Used to compile
@@ -2112,19 +2097,17 @@ static void compile_body(JitCompiler *jc) {
                 /* A function's own tail call becomes a loop: the new
                  * arguments replace the registers and control returns to
                  * the first instruction (whose CHECK_TYPEs re-run, as in
-                 * the interpreter). Defaults (ARGUMENT_PROVIDED reads the
-                 * entry argument count) and anything else that would need
-                 * the interpreter's argument bookkeeping are left to it;
-                 * try_compile already refused variadic and generic
-                 * functions. A retry after an iteration re-runs from the
+                 * the interpreter). The argument count register is reset
+                 * to the call's own, so a default left out of the tail call
+                 * is taken again; try_compile already refused variadic and
+                 * generic functions. A retry after an iteration re-runs from the
                  * call's original arguments, which is safe for the same
                  * reason every other retry is: effects set has_called. */
                 if ((size_t)function_index != jc->self_function_index) {
                     compile_tail_call_other(jc, dest, function_index, base, argc);
                     break;
                 }
-                if (argc != fn->arity || fn->required_arity != fn->arity ||
-                    base < argc || function_has_opcode(fn, DIAMOND_OP_ARGUMENT_PROVIDED)) {
+                if (argc < fn->required_arity || argc > fn->arity || base < argc) {
                     jc->bailed = true; return;
                 }
                 emit_interrupt_poll(jc);
@@ -2135,6 +2118,10 @@ static void compile_body(JitCompiler *jc) {
                 emit_mov_imm64(buf, REG_RCX, fn->register_count == 0
                     ? DIAMOND_JIT_MAX_REGISTERS : fn->register_count);
                 emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_tail_reset);
+                /* The iteration's own argument count: ARGUMENT_PROVIDED
+                 * reads it to tell a defaulted parameter from a supplied
+                 * one, and a tail call may leave defaults out. */
+                emit_mov_imm64(buf, JIT_ARGUMENT_COUNT, argc);
                 size_t field = emit_jmp_placeholder(buf);
                 record_global_patch(jc, field, 0);
                 break;

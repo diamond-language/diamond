@@ -2145,9 +2145,10 @@ re-checked on every iteration exactly as in the interpreter.
 
 Left to the interpreter, by refusing to compile the function:
 
-- a function with a default parameter, because `ARGUMENT_PROVIDED` reads the entry argument
-  count and a retry would see the original call's, not the iteration's;
-- an argument count other than the full arity.
+- an argument count outside `required_arity..arity`.
+
+A tail call may leave default parameters out: the loop sets the argument-count register to the
+iteration's own count, so `ARGUMENT_PROVIDED` sees what the interpreter would.
 
 A tail call to a *different* function (a mutual cycle) compiles to
 `diamond_jit_tail_call_function`. When the callee is a plain, non-variadic function whose

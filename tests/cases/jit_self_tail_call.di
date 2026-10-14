@@ -1,7 +1,7 @@
 # A compiled function's own tail call is a loop: the same results as the
-# interpreter, with typed parameters re-checked, defaults left to the
-# interpreter, a mutual cycle still correct, and deep iteration in constant
-# stack.
+# interpreter, with typed parameters re-checked, defaults retaken when a
+# tail call leaves them out, a mutual cycle still correct, and deep iteration
+# in constant stack.
 def sum(n, acc)
   return acc if n == 0
   return sum(n - 1, acc + n)
@@ -15,6 +15,12 @@ end
 def with_default(n, acc = 100)
   return acc if n == 0
   return with_default(n - 1, acc + 1)
+end
+
+def mark(n, tag = "d")
+  return tag if n == 0
+  return mark(n - 1) if n > 5
+  return mark(n - 1, tag + "x")
 end
 
 def ev(n)
@@ -44,6 +50,8 @@ end
 puts(sum(2000000, 0))
 puts(typed(500000, 0))
 puts(with_default(1000))
+puts(mark(8))
+puts(mark(3, "q"))
 puts(ev(100001))
 puts(collatz(27, 0))
 puts(pick(true, 1000001, 0))
