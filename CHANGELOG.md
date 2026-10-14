@@ -24,7 +24,8 @@ authoritative fine-grained record.
   blocking call still runs to its end.
 - `Supervisor#stop(timeout_ms)` and sibling restarts now also end a worker stuck in a TCP or TLS
   connect, a TLS handshake (client or server `accept`) or a TLS write to a peer that stopped
-  reading. They previously ran until the peer answered.
+  reading, and the host-name lookup of a `connect` now runs on the DNS resolver thread there so it
+  can be abandoned. They previously ran until the peer answered.
 
 ### Performance
 

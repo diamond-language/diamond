@@ -263,6 +263,9 @@ DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
     return DIAMOND_VM_OK;
 }
 
+static DiamondVmStatus resolve_interruptible(DiamondVm *vm,const char *host,
+    const char *service,int64_t port,struct addrinfo **results,int *gai_error);
+
 /* Shared getaddrinfo/socket/connect dance behind TCPSocket.connect and
  * TLSSocket.connect -- both need a connected fd before doing anything
  * TLS-specific, so this is exactly the code TCP_CONNECT's own handler
@@ -285,7 +288,13 @@ DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
     (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
     struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
     struct addrinfo *results=nullptr;
-    const int resolve_status=getaddrinfo(host->chars,port_text,&hints,&results);
+    int resolve_status=0;
+    if(vm->interrupt_flag!=nullptr) {
+        const DiamondVmStatus resolve_wait=resolve_interruptible(vm,host->chars,
+            port_text,port,&results,&resolve_status);
+        if(resolve_wait!=DIAMOND_VM_OK)return resolve_wait;
+    } else
+        resolve_status=getaddrinfo(host->chars,port_text,&hints,&results);
     if(resolve_status!=0) {
         snprintf(vm->error,sizeof vm->error,"cannot connect to '%.*s:%s': %s",
                  (int)host->length,host->chars,port_text,gai_strerror(resolve_status));
@@ -403,6 +412,77 @@ static DiamondVmStatus resolver_cancelled(DiamondVm *vm,DiamondValue channels,
         *cancelled=*cancelled||((double)now.tv_sec+(double)now.tv_nsec/1e9>=deadline.as.real);
     }
     return DIAMOND_VM_OK;
+}
+
+/* getaddrinfo for an interruptible VM: the lookup runs on a detached resolver
+ * thread (the one DNS.resolve uses) and the caller waits in slices, so a stop
+ * request abandons it instead of waiting out the resolver. On success
+ * *results is a getaddrinfo list with `port` filled in, owned by the caller.
+ * Numeric hosts, and a full resolver pool, resolve inline as before. */
+static DiamondVmStatus resolve_interruptible(DiamondVm *vm,const char *host,
+        const char *service,int64_t port,struct addrinfo **results,int *gai_error) {
+    const struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
+    struct in6_addr numeric;
+    unsigned active=atomic_load(&diamond_active_resolvers);
+    bool slot=false;
+    if(inet_pton(AF_INET,host,&numeric)!=1&&inet_pton(AF_INET6,host,&numeric)!=1) {
+        while(active<DIAMOND_RESOLVER_LIMIT&&!slot)
+            slot=atomic_compare_exchange_weak(&diamond_active_resolvers,&active,active+1);
+    }
+    DiamondResolverJob *job=nullptr;
+    if(slot) {
+        job=calloc(1,sizeof *job);
+        if(job!=nullptr) {
+            job->host=strdup(host);
+            if(job->host==nullptr||pipe(job->pipe_fds)!=0) {
+                free(job->host);free(job);job=nullptr;
+            }
+        }
+        if(job==nullptr)atomic_fetch_sub(&diamond_active_resolvers,1);
+    }
+    if(job==nullptr) {
+        *gai_error=getaddrinfo(host,service,&hints,results);
+        return DIAMOND_VM_OK;
+    }
+    atomic_init(&job->references,2);
+    atomic_init(&job->done,false);
+    for(size_t i=0;i<2;i++)
+        (void)fcntl(job->pipe_fds[i],F_SETFD,FD_CLOEXEC);
+    pthread_attr_t attributes;
+    int error=pthread_attr_init(&attributes);
+    pthread_t thread;
+    if(error==0) {
+        pthread_attr_setdetachstate(&attributes,PTHREAD_CREATE_DETACHED);
+        error=pthread_create(&thread,&attributes,resolver_worker,job);
+        pthread_attr_destroy(&attributes);
+    }
+    if(error!=0) {
+        /* The worker never ran: drop its reference and the slot, resolve inline. */
+        atomic_fetch_sub(&job->references,1);
+        resolver_release(job);atomic_fetch_sub(&diamond_active_resolvers,1);
+        *gai_error=getaddrinfo(host,service,&hints,results);
+        return DIAMOND_VM_OK;
+    }
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    while(!atomic_load_explicit(&job->done,memory_order_acquire)) {
+        struct pollfd interest={.fd=job->pipe_fds[0],.events=POLLIN};
+        (void)poll_interruptible(vm,&interest,1,-1,&status);
+        if(status!=DIAMOND_VM_OK)break;
+    }
+    if(status==DIAMOND_VM_OK) {
+        *gai_error=job->error;
+        if(job->error==0) {
+            *results=job->addresses;job->addresses=nullptr;
+            for(struct addrinfo *entry=*results;entry!=nullptr;entry=entry->ai_next) {
+                if(entry->ai_family==AF_INET)
+                    ((struct sockaddr_in *)entry->ai_addr)->sin_port=htons((uint16_t)port);
+                else if(entry->ai_family==AF_INET6)
+                    ((struct sockaddr_in6 *)entry->ai_addr)->sin6_port=htons((uint16_t)port);
+            }
+        }
+    }
+    resolver_release(job);
+    return status;
 }
 
 /* out points to a VM register so the result remains rooted as strings grow. */
