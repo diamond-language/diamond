@@ -721,12 +721,14 @@ static inline bool vm_interrupt_requested(const DiamondVm *vm) {
  * an interrupt flag. */
 DIAMOND_INTERNAL DiamondVmStatus wait_fd_interruptible(DiamondVm *vm,int fd,short events);
 /* Registers the native call about to block (kind: DIAMOND_BLOCKING_SQLITE with
- * a sqlite3 *, DIAMOND_BLOCKING_POSTGRES with a PGcancel *) so
+ * a sqlite3 *, DIAMOND_BLOCKING_POSTGRES with a PGcancel *, DIAMOND_BLOCKING_MYSQL
+ * with the connection socket plus one) so
  * vm_blocking_call_interrupt can cancel it from another thread. Returns false,
  * registering nothing, when the interrupt flag is already set: the caller
  * returns DIAMOND_VM_INTERRUPTED without making the call. A VM with no
  * interrupt flag always gets true and pays nothing. */
-enum { DIAMOND_BLOCKING_SQLITE = 1, DIAMOND_BLOCKING_POSTGRES = 2 };
+enum { DIAMOND_BLOCKING_SQLITE = 1, DIAMOND_BLOCKING_POSTGRES = 2,
+       DIAMOND_BLOCKING_MYSQL = 3 };
 DIAMOND_INTERNAL bool vm_blocking_call_begin(DiamondVm *vm,int kind,void *handle);
 DIAMOND_INTERNAL void vm_blocking_call_end(DiamondVm *vm);
 DIAMOND_INTERNAL void vm_blocking_call_interrupt(DiamondVm *vm);

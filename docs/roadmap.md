@@ -39,7 +39,7 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Interrupting the remaining blocked workers** -- a MySQL/MariaDB call and a read from a
+- **Interrupting the remaining blocked workers** -- `MySQL.open`'s connect and a read from a
   pipe or terminal are still only stopped between
   instructions by `Supervisor#stop(timeout_ms)`. Implicit cancellation checkpoints are
   open (see [cancellation](cancellation.md)).

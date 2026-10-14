@@ -25,7 +25,8 @@ authoritative fine-grained record.
 - `Supervisor#stop(timeout_ms)` and sibling restarts now also end a worker stuck in a TCP or TLS
   connect, a TLS handshake (client or server `accept`) or a TLS write to a peer that stopped
   reading, and the host-name lookup of a `connect` now runs on the DNS resolver thread there so it
-  can be abandoned. They previously ran until the peer answered.
+  can be abandoned. A MySQL/MariaDB query is interrupted too: the connection's socket is shut
+  down, so that connection is unusable afterwards. They previously ran until the peer answered.
 
 ### Performance
 
