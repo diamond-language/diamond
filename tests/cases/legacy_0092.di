@@ -6,7 +6,7 @@ def depth(n)
  end
 end
 begin
- depth(5000)
+ depth(1000000)
 rescue error: SystemStackError
  42
 end
