@@ -119,7 +119,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  size_t argument_count, size_t depth,
                                  const DiamondClosure *closure,
                                  DiamondValue *result) {
-    if (depth >= DIAMOND_MAX_CALL_DEPTH) {
+    if (depth >= diamond_call_depth_limit(vm)) {
         return DIAMOND_VM_STACK_OVERFLOW;
     }
     DiamondChunk execution;

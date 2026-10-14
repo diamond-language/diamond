@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Language
 
+- Ordinary (non-tail) recursion goes about 64 times deeper: the program now runs on a 512 MiB
+  stack, so the call-depth limit is about 5,900 levels instead of 92 (`DIAMOND_MAIN_STACK_MB`
+  sets the size in MiB; 0 keeps the process's own stack). Fibers and threads keep 8 MiB stacks
+  and the old limit; the limit is a clean `call stack overflow` error in every case.
 - A call that ends a branch of a trailing `if`/`else` or `case` is a tail call without `return`:
   `def even?(n); if n == 0 then true else odd?(n - 1) end; end` no longer grows the stack.
   Before, only `return odd?(n - 1)` and a bare trailing call were optimized.

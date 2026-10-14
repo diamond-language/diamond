@@ -2280,6 +2280,15 @@ void diamond_vm_exit_if_threads_running(int status) {
  * platform defaults. */
 enum { DIAMOND_VM_THREAD_STACK_SIZE = 8 * 1024 * 1024 };
 
+thread_local size_t diamond_thread_call_depth_limit = DIAMOND_MAX_CALL_DEPTH;
+
+void diamond_set_thread_stack_size(size_t stack_bytes) {
+    if (stack_bytes < DIAMOND_VM_THREAD_STACK_SIZE)
+        stack_bytes = DIAMOND_VM_THREAD_STACK_SIZE;
+    diamond_thread_call_depth_limit = (size_t)DIAMOND_MAX_CALL_DEPTH *
+        (stack_bytes / DIAMOND_VM_THREAD_STACK_SIZE);
+}
+
 int create_vm_thread(pthread_t *handle,
         void *(*entry)(void *), void *argument) {
     pthread_attr_t attributes;
@@ -9086,7 +9095,7 @@ static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
      * otherwise never touch run_chunk's own check at all -- a real latent
      * gap, not a theoretical one, that this closes for every call site
      * uniformly (not just the ones this phase adds). */
-    if (depth + 1 >= DIAMOND_MAX_CALL_DEPTH) {
+    if (depth + 1 >= diamond_call_depth_limit(vm)) {
         return DIAMOND_VM_STACK_OVERFLOW;
     }
     /* Native code is never interrupted and executes none of the per-

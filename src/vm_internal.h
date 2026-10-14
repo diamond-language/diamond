@@ -173,6 +173,17 @@ typedef struct GrowBuffer {
  * intermediate restored the original margin. */
 enum { DIAMOND_MAX_CALL_DEPTH = 92 };
 
+/* The depth limit for code running on this OS thread's own stack: the
+ * calibrated DIAMOND_MAX_CALL_DEPTH scaled by how much larger than the 8 MiB
+ * it was calibrated against the thread's stack is (diamond_set_thread_stack_
+ * size). A fiber runs on its own 8 MiB stack, so inside one it is the
+ * unscaled value. */
+extern thread_local size_t diamond_thread_call_depth_limit;
+static inline size_t diamond_call_depth_limit(const DiamondVm *vm) {
+    return vm->running_fiber != nullptr ? (size_t)DIAMOND_MAX_CALL_DEPTH
+                                        : diamond_thread_call_depth_limit;
+}
+
 /* Types shared by the files split out of vm.c. */
 /* A growable byte buffer for regexp_replace_helper's own output, the only
  * place in this file that needs to build a string of unknown final length
