@@ -298,13 +298,32 @@ DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
         const int fd=socket(candidate->ai_family,candidate->ai_socktype,
                              candidate->ai_protocol);
         if(fd<0) {last_errno=errno;continue;}
-        if(connect_timeout_ms>=0) {
+        if(connect_timeout_ms>=0||vm->interrupt_flag!=nullptr) {
             const int flags=fcntl(fd,F_GETFL,0);
             if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0) {
                 last_errno=errno;close(fd);continue;
             }
-            if(connect_with_timeout(fd,candidate,connect_timeout_ms)!=0) {
-                last_errno=errno;close(fd);continue;
+            /* An interruptible VM connects non-blocking and waits in slices
+             * even without a timeout, so a stop request ends a connect to an
+             * unresponsive host. */
+            if(connect(fd,candidate->ai_addr,candidate->ai_addrlen)!=0) {
+                if(errno!=EINPROGRESS) {last_errno=errno;close(fd);continue;}
+                struct pollfd interest={.fd=fd,.events=POLLOUT};
+                DiamondVmStatus wait_status=DIAMOND_VM_OK;
+                const int ready=poll_interruptible(vm,&interest,1,
+                    connect_timeout_ms<0?-1:
+                    (connect_timeout_ms>INT_MAX?INT_MAX:(int)connect_timeout_ms),
+                    &wait_status);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    close(fd);freeaddrinfo(results);return wait_status;
+                }
+                int socket_error=0;socklen_t error_length=sizeof socket_error;
+                if(ready==0) {last_errno=ETIMEDOUT;close(fd);continue;}
+                if(ready<0||getsockopt(fd,SOL_SOCKET,SO_ERROR,&socket_error,
+                       &error_length)!=0) {
+                    last_errno=errno;close(fd);continue;
+                }
+                if(socket_error!=0) {last_errno=socket_error;close(fd);continue;}
             }
             if(fcntl(fd,F_SETFL,flags)<0) {last_errno=errno;close(fd);continue;}
             connected_fd=fd;break;
@@ -846,12 +865,54 @@ DiamondVmStatus tls_read_chunk(DiamondVm *vm,SSL *ssl,void *buffer,size_t want,
     return DIAMOND_VM_IO_ERROR;
 }
 
+/* Runs one blocking-mode handshake step (SSL_connect or SSL_accept) so an
+ * interruptible VM can leave it. The descriptor is this connection's own, so
+ * for the call it is switched to O_NONBLOCK and a WANT_READ/WANT_WRITE result
+ * waits for readiness in slices (wait_fd_interruptible) and retries. A VM
+ * without an interrupt flag calls straight through. *result is the OpenSSL
+ * return value; the status is DIAMOND_VM_INTERRUPTED if the wait was cut. */
+DiamondVmStatus tls_handshake_interruptible(DiamondVm *vm,SSL *ssl,bool accept,
+        int *result) {
+    const int descriptor=SSL_get_fd(ssl);
+    int saved_flags=-1;
+    if(vm!=nullptr&&vm->interrupt_flag!=nullptr&&descriptor>=0) {
+        const int flags=fcntl(descriptor,F_GETFL,0);
+        if(flags>=0&&(flags&O_NONBLOCK)==0&&
+           fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)==0)
+            saved_flags=flags;
+    }
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    for(;;) {
+        ERR_clear_error();
+        *result=accept?SSL_accept(ssl):SSL_connect(ssl);
+        if(*result==1||saved_flags<0)break;
+        const int error=SSL_get_error(ssl,*result);
+        if(error!=SSL_ERROR_WANT_READ&&error!=SSL_ERROR_WANT_WRITE)break;
+        status=wait_fd_interruptible(vm,descriptor,
+            error==SSL_ERROR_WANT_READ?POLLIN:POLLOUT);
+        if(status!=DIAMOND_VM_OK)break;
+    }
+    if(saved_flags>=0)(void)fcntl(descriptor,F_SETFL,saved_flags);
+    return status;
+}
+
 /* Writes all of `length` bytes, looping over SSL_write as needed --
  * unlike DIAMOND_OBJECT_SOCKET#write (a non-blocking fd, where a partial
  * write is a normal outcome the caller retries), this fd is always
  * blocking, so a short SSL_write is only possible via a genuine error,
- * never "the buffer's full, try again later". */
+ * never "the buffer's full, try again later". In an interruptible VM the
+ * connection's own descriptor is non-blocking for the call and a full send
+ * buffer waits in slices, so an interrupt can end a write to a stalled peer. */
 DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t length) {
+    const int descriptor=SSL_get_fd(ssl);
+    int saved_flags=-1;
+    if(vm!=nullptr&&vm->interrupt_flag!=nullptr&&descriptor>=0) {
+        const int flags=fcntl(descriptor,F_GETFL,0);
+        if(flags>=0&&(flags&O_NONBLOCK)==0&&
+           fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)==0)
+            saved_flags=flags;
+    }
+    DiamondVmStatus status=DIAMOND_VM_OK;
     size_t written=0;
     while(written<length) {
         const size_t remaining=length-written;
@@ -861,6 +922,13 @@ DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t len
         if(got<=0) {
             const int saved_errno=errno;
             const int ssl_error=SSL_get_error(ssl,got);
+            if(saved_flags>=0&&(ssl_error==SSL_ERROR_WANT_WRITE||
+               ssl_error==SSL_ERROR_WANT_READ)) {
+                status=wait_fd_interruptible(vm,descriptor,
+                    ssl_error==SSL_ERROR_WANT_WRITE?POLLOUT:POLLIN);
+                if(status!=DIAMOND_VM_OK)break;
+                continue;
+            }
             char detail[256];
             const bool would_block=saved_errno==EAGAIN||saved_errno==EWOULDBLOCK;
             if((ssl_error==SSL_ERROR_SYSCALL||ssl_error==SSL_ERROR_WANT_READ||
@@ -869,11 +937,13 @@ DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t len
             else
                 tls_format_error(detail,sizeof detail);
             snprintf(vm->error,sizeof vm->error,"TLS write error: %s",detail);
-            return DIAMOND_VM_IO_ERROR;
+            status=DIAMOND_VM_IO_ERROR;
+            break;
         }
         written+=(size_t)got;
     }
-    return DIAMOND_VM_OK;
+    if(saved_flags>=0)(void)fcntl(descriptor,F_SETFL,saved_flags);
+    return status;
 }
 
 /* TLS analogue of read_line -- byte-at-a-time via tls_read_chunk rather

@@ -326,15 +326,15 @@ its next instruction and cannot be rescued, so `ensure` blocks do not run. It
 ends an infinite loop or a crash loop, and it also wakes a worker parked in a
 blocking native call: `Channel#receive`/`#send`/`#wait_readable`, `IO.poll` (and
 so a sleep built on it), `Thread#join`, `TCPServer#accept`, a read from a socket
-(`read`, `gets`), `UDPSocket#receive`, a TLS read, `Process.run` (the child is
+(`read`, `gets`), `UDPSocket#receive`, a TCP or TLS connect, a TLS handshake (client or
+`accept`), a TLS read or write, `Process.run` (the child is
 killed) and a SQLite or PostgreSQL query (cancelled with `sqlite3_interrupt` /
 `PQcancel`). Such a wait sleeps in slices of 20 ms, so the interruption lands
 within about that long. A thread the interrupted worker started is interrupted
 too, instead of being waited for.
 
-What is still not interrupted: a MySQL/MariaDB call, a TLS handshake or a
-connect that has begun, a read from a pipe, terminal or regular file, a write
-to a full socket. Such a worker is stopped once the call returns, and
+What is still not interrupted: a MySQL/MariaDB call, host-name resolution in a
+`connect` (`getaddrinfo`), a read from a pipe, terminal or regular file. Such a worker is stopped once the call returns, and
 `stop(timeout_ms)` then still waits for it. Code running in the opt-in JIT is
 interrupted at the next loop iteration (a backward jump or a function's own tail call), so a
 compiled function with no loop and no blocking call runs to its end. Use [cancellation](cancellation.md)

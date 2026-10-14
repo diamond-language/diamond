@@ -5496,8 +5496,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     }
                 }
                 if(start_handshake)break;
-                ERR_clear_error();
-                if(SSL_connect(ssl)!=1) {
+                int connect_result=0;
+                const DiamondVmStatus connect_status=
+                    tls_handshake_interruptible(vm,ssl,false,&connect_result);
+                if(connect_status!=DIAMOND_VM_OK)VM_RETURN(connect_status);
+                if(connect_result!=1) {
                     char detail[256];tls_format_error(detail,sizeof detail);
                     snprintf(vm->error,sizeof vm->error,
                         "cannot connect to '%.*s' over TLS: %s",
