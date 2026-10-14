@@ -17,9 +17,8 @@ a concrete application gap.
 
 Current behavior: [classes and modules](classes-and-modules.md).
 
-- **A superclass, or being reopened** -- no obviously correct semantics for
-  regenerating `==`/`to_s`/`initialize` against an inherited or changed field list.
-  Revisit only with a concrete design.
+- **Being reopened** -- no obviously correct semantics for regenerating
+  `==`/`to_s`/`initialize` against a changed field list. Revisit only with a concrete design.
 - **Fields added by a subclass in the generated `==`** -- the generated `==` compares only
   the struct's own declared fields, so two instances of a subclass that differ only in a
   field the subclass added compare equal unless that subclass defines its own `==`.

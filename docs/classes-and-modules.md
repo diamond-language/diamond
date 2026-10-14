@@ -732,11 +732,13 @@ field list the rest of the struct relies on.
 
 **Deliberately narrow for this first pass:**
 
-- **No superclass.** `struct Point(x: Int) < Base` is a compile error --
-  keeps the generated `==` and field list from needing to reason about
-  inherited fields at all. (Nothing stops an ordinary `class` from
-  subclassing a struct's class the normal way; a struct simply can't
-  declare one of its own.)
+- **A superclass must be another struct** declared earlier:
+  `struct Point3D(z: Int) < Point`. The parent's fields come first, then
+  the struct's own, and the generated `initialize` (`Point3D.new(1, 2, 3)`),
+  `==` and `to_s` cover all of them; the parent's readers and methods carry
+  over. A field repeating one of the parent's is a compile error, and a
+  plain class is not accepted as a parent. (An ordinary `class` can still
+  subclass a struct's class the normal way.)
 - **No reopening.** A second `struct Point(...)` for an already-declared
   name is a compile error, unlike a plain `class`. Regenerating
   `initialize`/`==`/`to_s` for a redeclared field list has no obviously

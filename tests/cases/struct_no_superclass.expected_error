@@ -1,1 +1,1 @@
-struct declarations cannot have a superclass
+a struct's superclass must be a struct declared earlier
