@@ -714,13 +714,18 @@ grep -q 'at tests/cases/raise_stack.di:9:' "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
-if "$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(5000)' \
+if "$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\ndepth(1000000)' \
     >/dev/null 2>"$error_file"; then
     echo "deep recursion unexpectedly completed" >&2
     exit 1
 fi
 grep -q 'runtime error: call stack overflow' "$error_file"
 rm -f "$error_file"
+
+# Ordinary (non-tail) recursion runs on a large stack: a few thousand levels
+# complete.
+actual="$("$diamond" -e $'def depth(n)\n if n <= 0\n  0\n else\n  depth(n - 1) + 1\n end\nend\nputs(depth(5000))')"
+[ "$actual" = $'5000\nnil' ]
 
 actual="$($diamond --dump-bytecode -e 'yield' 2>/dev/null || true)"
 grep -Eq 'YIELD +r[0-9]+, r[0-9]+' <<<"$actual"

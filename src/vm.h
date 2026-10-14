@@ -2008,6 +2008,13 @@ struct DiamondVm {
     DiamondFieldCache field_caches[DIAMOND_INLINE_CACHE_COUNT];
 };
 
+/* Tells the VM that the calling OS thread's native stack is `stack_bytes`
+ * long, so the interpreter running on it may recurse proportionally deeper
+ * than the 8 MiB default the call-depth limit is calibrated against (see
+ * DIAMOND_MAX_CALL_DEPTH). Affects only the calling thread; fibers and
+ * threads the VM creates keep their own 8 MiB stacks and the default limit. */
+void diamond_set_thread_stack_size(size_t stack_bytes);
+
 void diamond_vm_init(DiamondVm *vm);
 /* Apply the same opt-in JIT environment settings to interpreted and
  * standalone programs after diamond_vm_init. */
