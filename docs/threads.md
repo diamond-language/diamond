@@ -334,8 +334,10 @@ too, instead of being waited for.
 
 What is still not interrupted: a MySQL/MariaDB call, a TLS handshake or a
 connect that has begun, a read from a pipe, terminal or regular file, a write
-to a full socket, and JIT-compiled code. Such a worker is stopped once the call returns, and
-`stop(timeout_ms)` then still waits for it. Use [cancellation](cancellation.md)
+to a full socket. Such a worker is stopped once the call returns, and
+`stop(timeout_ms)` then still waits for it. Code running in the opt-in JIT is
+interrupted at the next loop iteration (a backward jump or a function's own tail call), so a
+compiled function with no loop and no blocking call runs to its end. Use [cancellation](cancellation.md)
 tokens for those waits.
 
 ### Restart policy
@@ -393,7 +395,7 @@ an exception, so a `rescue` cannot swallow it). Like `stop()`, this is
 cooperative -- a sibling parked in one of the native waits listed under
 `stop(timeout_ms)` is woken within about 20 ms, one parked in a call that list
 leaves out is restarted only once that call returns, and code running in the
-opt-in JIT is not interrupted mid-function. A restarted sibling's
+opt-in JIT is interrupted at its next loop iteration. A restarted sibling's
 `restart_count` goes up and its `last_error` becomes `"restarted: a sibling
 crashed"`; it restarts without the 20ms crash delay, since the attempt was
 not failing on its own.

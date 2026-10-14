@@ -12,6 +12,17 @@ authoritative fine-grained record.
   `def even?(n); if n == 0 then true else odd?(n - 1) end; end` no longer grows the stack.
   Before, only `return odd?(n - 1)` and a bare trailing call were optimized.
 
+### Concurrency
+
+- With `DIAMOND_JIT=1`, `Thread.new` threads and supervised workers now run native code too (each
+  works on its own copy of the functions, so nothing is shared). A worker's own entry function is
+  interpreted; the functions it calls compile as in the main program: a 30-million-iteration
+  loop in a supervised child goes from 0.95 s to 0.12 s.
+- Compiled code is interrupted: every backward jump and a function's own tail call checks the
+  worker's interrupt flag, so `Supervisor#stop(timeout_ms)` and a sibling restart end a worker
+  spinning in a native loop at its next iteration. A compiled function with no loop and no
+  blocking call still runs to its end.
+
 ### Performance
 
 - With `DIAMOND_JIT=1`, a function's own tail call is a native loop instead of an interpreted

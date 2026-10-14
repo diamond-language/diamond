@@ -2163,3 +2163,24 @@ that count compiled functions went up by one for the same reason.
 
 Measured (release, one run each): a 10,000,000-iteration `sum(n, acc)` 0.87 s to 0.18 s;
 `bench/tail_call_optimization.di` 0.28 s to 0.065 s.
+
+## Threads and interruption
+
+`Thread.new` threads and supervised attempts call `diamond_vm_configure_jit_from_env` on their
+VM, so `DIAMOND_JIT=1` applies to them. Their functions are deep copies (`jit_code` is never
+copied), so each thread compiles and owns its own native code and nothing is shared. The entry
+function of a worker is run by `run_chunk` directly and is interpreted; functions it calls go
+through `jit_call_or_interpret` like anywhere else.
+
+Native code has no per-instruction check, so `emit_interrupt_poll` emits one on every backward
+`JUMP`/`JUMP_IF_*` and in the self tail-call loop: store the instruction offset (for the trace
+line), load `vm->interrupt_flag`, and if it is non-null and set, return
+`DIAMOND_VM_INTERRUPTED` through the propagate stub (never a retry). The flag lives on the VM
+while compiled code is per function, so the check is unconditional: one load, one test and a
+not-taken branch per iteration for a VM with no flag. The loop-on-first-call rule no longer
+excludes supervised attempts. A budget-limited VM (instruction or wall-clock) still stays on
+the interpreter, where those budgets are counted.
+
+`JIT_VM` is `r12`, whose ModRM base encoding needs a SIB byte; `emit_load_r64` does not emit
+one, so the poll copies it to `rax` first (the same trap as RSP in `emit_lea`).
+

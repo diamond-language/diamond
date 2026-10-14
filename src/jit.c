@@ -429,7 +429,7 @@ static void emit_call_trampoline(JitBuffer *buf, void *function_address) {
  *     append its own "at name:line:col" trace line from the exit stub, with or
  *     without a frame (see emit_epilogue_propagate).
  * Not used by the prologue/epilogue, where RSP is not yet/no longer the body's. */
-static void emit_body_call(JitCompiler *jc, void *function_address) {
+static void emit_store_instruction_offset(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     emit_u8(buf, 0x48);                       /* REX.W */
     emit_u8(buf, 0xC7);                       /* MOV r/m64, imm32 */
@@ -437,7 +437,11 @@ static void emit_body_call(JitCompiler *jc, void *function_address) {
     emit_u8(buf, 0x24);                       /* SIB: rsp */
     emit_u32_le(buf, (uint32_t)((int32_t)jc->frame_reserve_bytes + buf->rsp_delta));
     emit_u32_le(buf, (uint32_t)jc->current_instruction_start);
-    emit_call_trampoline(buf, function_address);
+}
+
+static void emit_body_call(JitCompiler *jc, void *function_address) {
+    emit_store_instruction_offset(jc);
+    emit_call_trampoline(&jc->buf, function_address);
 }
 
 static void emit_ret(JitBuffer *buf) { emit_u8(buf, 0xC3); }
@@ -640,6 +644,34 @@ static size_t emit_check_kind_int_or_jump(JitCompiler *jc, uint16_t reg_index, i
     emit_load_byte_zx(&jc->buf, scratch, JIT_REGISTERS_BASE, reg_disp(reg_index, KIND_OFF));
     emit_cmp_imm32_32(&jc->buf, scratch, DIAMOND_VALUE_INT);
     return emit_jcc_placeholder(&jc->buf, JCC_NE);
+}
+
+/* A supervised attempt's VM carries an interrupt flag another thread sets to
+ * stop it (Supervisor#stop(timeout_ms), a sibling restart). The interpreter
+ * looks at it between instructions; native code has no such point, so a
+ * loop would never notice. Emitted on every backward jump and tail-call
+ * loop: load vm->interrupt_flag, and if it is set and true, leave through
+ * the propagate stub with DIAMOND_VM_INTERRUPTED (never a retry: the
+ * interruption must not be re-run). The flag lives on the VM and compiled
+ * code is shared between VMs, so the check is unconditional; a VM with no
+ * flag costs one load, one test and one not-taken branch per iteration. */
+static void emit_interrupt_poll(JitCompiler *jc) {
+    JitBuffer *buf = &jc->buf;
+    emit_store_instruction_offset(jc);
+    /* JIT_VM is r12, whose ModRM base encoding needs a SIB byte the load
+     * helpers do not emit: go through RAX. */
+    emit_mov_rr(buf, REG_RAX, JIT_VM);
+    emit_load_r64(buf, REG_RAX, REG_RAX, (int32_t)offsetof(DiamondVm, interrupt_flag));
+    emit_test_r64(buf, REG_RAX, REG_RAX);
+    const size_t no_flag = emit_jcc_placeholder(buf, JCC_E);
+    emit_load_byte_zx(buf, REG_RAX, REG_RAX, 0);
+    emit_test_r8(buf, REG_RAX);
+    const size_t not_set = emit_jcc_placeholder(buf, JCC_E);
+    emit_mov_al_imm8(buf, (uint8_t)DIAMOND_VM_INTERRUPTED);
+    const size_t field = emit_jmp_placeholder(buf);
+    record_global_patch(jc, field, BAILOUT_PROPAGATE_SENTINEL);
+    patch_rel32_to_here(buf, no_flag);
+    patch_rel32_to_here(buf, not_set);
 }
 
 /* Jumps to the appropriate shared bailout stub (see bailout_target) the
@@ -2049,6 +2081,7 @@ static void compile_body(JitCompiler *jc) {
                     base < argc || function_has_opcode(fn, DIAMOND_OP_ARGUMENT_PROVIDED)) {
                     jc->bailed = true; return;
                 }
+                emit_interrupt_poll(jc);
                 JitBuffer *buf = &jc->buf;
                 emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
                 emit_mov_imm64(buf, REG_RSI, base);
@@ -2084,6 +2117,7 @@ static void compile_body(JitCompiler *jc) {
                 uint8_t high = 0, low = 0;
                 if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
+                if (target <= instruction_start) emit_interrupt_poll(jc);
                 size_t field = emit_jmp_placeholder(&jc->buf);
                 record_global_patch(jc, field, target);
                 break;
@@ -2094,6 +2128,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
                     !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
+                if (target <= instruction_start) emit_interrupt_poll(jc);
                 JitBuffer *buf = &jc->buf;
                 emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
                 emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
@@ -2119,6 +2154,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
                     !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
+                if (target <= instruction_start) emit_interrupt_poll(jc);
                 JitBuffer *buf = &jc->buf;
                 emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
                 emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
