@@ -203,6 +203,12 @@ DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
 DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
         const DiamondValue *value, uint8_t type, DiamondValue *out);
 
+/* SAME_CLASS: whether both values are instances of exactly one class. Pure
+ * inspection like IS_TYPE, so it needs neither a frame nor has_called. */
+DiamondVmStatus diamond_jit_same_class(const DiamondValue *left,
+        const DiamondValue *right, DiamondValue *out);
+bool diamond_values_same_class(DiamondValue left, DiamondValue right);
+
 /* Phase 2e. JIT trampolines for DIAMOND_OP_INDEX_GET/INDEX_SET -- full
  * extractions of those opcodes' own real case bodies (src/vm.c), replacing
  * Phase 2b's Hash-only diamond_jit_hash_get. That narrower trampoline

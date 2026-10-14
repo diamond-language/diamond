@@ -580,6 +580,10 @@ typedef enum DiamondOpCode : uint8_t {
      * (diamond_jit_index_get). selfhost/parser.di does not emit it. */
     DIAMOND_OP_INDEX_GET_STRING,
     DIAMOND_OP_CHANNEL_SELECT_SEND, /* dest, Array of Channels, value, deadline */
+    /* dest, left, right: true when both are instances of exactly the same
+     * class (a subclass is a different class). A struct's generated `==`
+     * uses it so `Point.new(1, 2) == Point3D.new(1, 2, 3)` is false. */
+    DIAMOND_OP_SAME_CLASS,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

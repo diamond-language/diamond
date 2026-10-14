@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- A struct's generated `==` requires exactly the same class: `Point.new(1, 2) ==
+  Point3D.new(1, 2, 3)` (a subclass of the struct's class) is now `false` in both directions.
+  A subclass that adds fields still defines its own `==`. New opcode `SAME_CLASS`.
 - Ordinary (non-tail) recursion goes about 64 times deeper: the program now runs on a 512 MiB
   stack, so the call-depth limit is about 5,900 levels instead of 92 (`DIAMOND_MAIN_STACK_MB`
   sets the size in MiB; 0 keeps the process's own stack). Fibers and threads keep 8 MiB stacks

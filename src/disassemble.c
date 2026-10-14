@@ -1504,6 +1504,8 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 else {fputs("<invalid type>",stream);valid=false;}
                 fputc('\n',stream);offset+=7;break;
             }
+            case DIAMOND_OP_SAME_CLASS:
+                offset=three_registers(stream,chunk,"SAME_CLASS",offset,&valid);break;
             case DIAMOND_OP_CLASS_NAME:
                 offset=two_registers(stream,chunk,"CLASS_NAME",offset,&valid);break;
             case DIAMOND_OP_ARRAY: {
