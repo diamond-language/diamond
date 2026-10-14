@@ -28,7 +28,8 @@ authoritative fine-grained record.
 - An in-place tail call that leaves out a default parameter now takes the default again; it used to
   keep the first call's argument list, so `f(n - 1)` in `def f(n, acc = 100)` saw `nil`.
 - `Supervisor#stop(timeout_ms)` stops restarts, waits up to the timeout for the current
-  attempts, then interrupts any still running and returns whether it had to. The interruption
+  attempts, then interrupts any still running. It returns `true` if every child finished within the
+  timeout and `false` if it had to interrupt one. The interruption
   also wakes a worker parked in `Channel#receive`/`#send`, `IO.poll`, `Thread#join`, `accept`, a
   socket/UDP/TLS read, `Process.run` (the child is killed) or a SQLite/PostgreSQL query,
   within about 20 ms, and stops the threads it started; sibling restarts use the same wake-up.
