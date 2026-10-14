@@ -905,6 +905,9 @@ struct DiamondClass {
      * promise plus the one restriction (no direct instantiation) needed
      * to make exhaustiveness over just the direct subclasses sound. */
     bool sealed;
+    /* Declared with `struct`; a struct may name only another struct as its
+     * superclass. Compile-time only: not serialized. */
+    bool generated_struct;
     /* Modules this class `include`s directly (indices into modules[]),
      * deduplicated. Compile-time only: constant lookup walks them after
      * the superclass chain (find_ancestor_constant). Not reset when the

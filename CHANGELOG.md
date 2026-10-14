@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Language
 
+- A struct can extend another struct: `struct Point3D(z: Int) < Point`. The parent's fields come
+  first, and the generated `initialize`, `==` and `to_s` cover every field. The parent must be a
+  struct declared earlier.
 - A struct's generated `==` requires exactly the same class: `Point.new(1, 2) ==
   Point3D.new(1, 2, 3)` (a subclass of the struct's class) is now `false` in both directions.
   A subclass that adds fields still defines its own `==`. New opcode `SAME_CLASS`.
