@@ -1337,6 +1337,7 @@ DIAMOND_INTERNAL DiamondVmStatus diamond_deep_freeze(DiamondVm *vm, const Diamon
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
         DiamondValue *out);
 
+DIAMOND_INTERNAL void diamond_record_error_line(DiamondVm *vm,const DiamondChunk *chunk,size_t used,size_t offset);
 DIAMOND_INTERNAL size_t describe_invoke_arity_error(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondValue *registers,size_t offset);
 

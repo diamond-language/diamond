@@ -253,16 +253,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 used = (size_t)snprintf(vm->error, sizeof(vm->error), "%s", \
                                         diamond_vm_status_name(status_));    \
             }                                                               \
-            const char *frame_name = chunk->name != nullptr ? chunk->name    \
-                                                              : "<chunk>"; \
-            const uint32_t line = chunk->lines != nullptr                    \
-                ? chunk->lines[instruction_offset] : 0;                      \
-            const uint32_t column = chunk->columns != nullptr                \
-                ? chunk->columns[instruction_offset] : 0;                    \
-            if (used < sizeof(vm->error)) {                                  \
-                (void)snprintf(vm->error + used, sizeof(vm->error) - used,   \
-                               "\n  at %s:%u:%u", frame_name, line, column);  \
-            }                                                               \
+            diamond_record_error_line(vm, chunk, used, instruction_offset);  \
         }                                                                   \
     } while (false)
 

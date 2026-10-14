@@ -512,6 +512,11 @@ static void emit_epilogue(JitCompiler *jc) {
 static void emit_epilogue_propagate(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     const int32_t saved_rsp_delta = buf->rsp_delta;
+    /* The trampoline's status is a uint8_t: only AL is defined, so zero-extend
+     * (movzx eax, al) before handing it on as an argument. */
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0xB6);
+    emit_u8(buf, 0xC0);
     emit_mov_rr(buf, JIT_RESULT_PTR, REG_RAX);
     emit_mov_rr(buf, REG_RDI, JIT_VM);
     emit_mov_rr(buf, REG_RSI, JIT_RESULT_PTR);
