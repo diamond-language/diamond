@@ -9071,7 +9071,7 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
 #if defined(__clang__)
 __attribute__((no_sanitize("function")))
 #endif
-DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+static uint8_t jit_call_core(DiamondVm *vm, const DiamondFunction *function,
         const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
         size_t argument_count, size_t depth, const DiamondClosure *closure,
         DiamondValue *result) {
@@ -9166,6 +9166,7 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
                 *result = jit_result;
                 return DIAMOND_VM_OK;
             }
+            if (jit_status == DIAMOND_JIT_TAIL) return DIAMOND_JIT_TAIL;
             if (jit_status != DIAMOND_JIT_RETRY) {
                 vm->jit_hard_propagations++;
                 return (DiamondVmStatus)jit_status;
@@ -9176,7 +9177,41 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
              * attempt bailed. */
         }
     }
-    return run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
+    return (uint8_t)run_chunk(chunk_to_interpret, vm, arguments, argument_count, depth + 1, closure, result);
+}
+
+/* Runs the cross-function tail calls a compiled function staged, one callee
+ * after another at the same depth: each hop returns to this loop instead of
+ * nesting, so a cycle of tail calls uses constant native stack. Kept out of
+ * jit_call_or_interpret so that function's frame stays small. */
+__attribute__((noinline))
+static DiamondVmStatus jit_tail_loop(DiamondVm *vm, const DiamondChunk *chunk,
+        size_t depth, DiamondValue *result) {
+    uint8_t status = DIAMOND_JIT_TAIL;
+    DiamondValue arguments[DIAMOND_MAX_DECLARED_PARAMETERS];
+    DiamondChunk next;
+    while (status == DIAMOND_JIT_TAIL) {
+        const DiamondFunction *function = vm->jit_tail_function;
+        const size_t count = vm->jit_tail_count;
+        for (size_t index = 0; index < count; index++)
+            arguments[index] = vm->jit_tail_args[index];
+        next = plain_call_chunk(function, chunk);
+        status = jit_call_core(vm, function, &next, arguments, count, depth,
+            nullptr, result);
+        chunk = &next;
+    }
+    return (DiamondVmStatus)status;
+}
+
+DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *function,
+        const DiamondChunk *chunk_to_interpret, const DiamondValue *arguments,
+        size_t argument_count, size_t depth, const DiamondClosure *closure,
+        DiamondValue *result) {
+    const uint8_t status = jit_call_core(vm, function, chunk_to_interpret,
+        arguments, argument_count, depth, closure, result);
+    if (status == DIAMOND_JIT_TAIL)
+        return jit_tail_loop(vm, chunk_to_interpret, depth, result);
+    return (DiamondVmStatus)status;
 }
 
 DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
@@ -9255,6 +9290,37 @@ DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chu
     const DiamondChunk called_chunk = plain_call_chunk(function, chunk);
     return jit_call_or_interpret(vm, function, &called_chunk, &registers[base],
         argc, depth, nullptr, out);
+}
+
+/* JIT trampoline for DIAMOND_OP_TAIL_CALL to a function other than the
+ * caller. Returns DIAMOND_JIT_TAIL after staging the callee and its
+ * arguments when the interpreter's own in-place switch would apply (a plain,
+ * non-variadic target whose registers hold the arguments); otherwise it is
+ * an ordinary call whose result lands in `out` (the compiled code then
+ * returns it) -- the same fallback the interpreter makes. */
+uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out) {
+    if ((size_t)function_index >= chunk->function_count ||
+        (size_t)base + argc > DIAMOND_REGISTER_COUNT)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFunction *function = chunk->functions[function_index];
+    if (argc < function->required_arity ||
+        (argc > function->arity && !function->has_variadic))
+        return DIAMOND_VM_ARITY_ERROR;
+    const size_t callee_registers = function->register_count == 0
+        ? DIAMOND_REGISTER_COUNT : function->register_count;
+    if (function->code != chunk->code && !function->has_variadic &&
+        argc <= DIAMOND_MAX_DECLARED_PARAMETERS && argc <= callee_registers) {
+        vm->jit_tail_function = function;
+        vm->jit_tail_count = argc;
+        for (size_t index = 0; index < argc; index++)
+            vm->jit_tail_args[index] = registers[(size_t)base + index];
+        return DIAMOND_JIT_TAIL;
+    }
+    const DiamondChunk called_chunk = plain_call_chunk(function, chunk);
+    return (uint8_t)jit_call_or_interpret(vm, function, &called_chunk,
+        &registers[base], argc, depth, nullptr, out);
 }
 
 /* JIT trampoline for DIAMOND_OP_SUPER -- extracted from that case's own

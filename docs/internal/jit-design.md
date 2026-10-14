@@ -2145,11 +2145,20 @@ re-checked on every iteration exactly as in the interpreter.
 
 Left to the interpreter, by refusing to compile the function:
 
-- a tail call to a different function (a mutual cycle; the interpreter swaps chunks in place,
-  and a compiled version would need the same);
 - a function with a default parameter, because `ARGUMENT_PROVIDED` reads the entry argument
   count and a retry would see the original call's, not the iteration's;
 - an argument count other than the full arity.
+
+A tail call to a *different* function (a mutual cycle) compiles to
+`diamond_jit_tail_call_function`. When the callee is a plain, non-variadic function whose
+registers hold the arguments (the cases where the interpreter switches chunks in place), the
+helper copies the arguments into `vm->jit_tail_args`, sets `vm->jit_tail_function` and returns
+`DIAMOND_JIT_TAIL`; the compiled function pops its frame and returns that status. `jit_call_or_
+interpret` is `jit_call_core` plus a loop (`jit_tail_loop`) that runs each staged callee at the
+same depth, so a cycle uses constant native stack and each hop is compiled or interpreted on
+its own merits. Any other target (variadic, too many arguments) is an ordinary call and the
+compiled function returns its result. Each such call also polls the interrupt flag, since a
+cycle has no backward jump of its own.
 
 A retry after some iterations re-runs from the call's original arguments. That is safe for the
 same reason every other retry is: anything with an effect sets `has_called`, and from then on a
