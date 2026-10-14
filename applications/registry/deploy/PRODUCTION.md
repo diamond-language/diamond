@@ -5,7 +5,10 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
+Runtime revision: `7f76de9d6e9c8397a0796e377e2da3610a2fc17d` (v0.14.0, deployed
+2026-10-14 with `tools/deploy_registry.sh` after a verified backup; no cut was published, and
+`tools/verify_registry_launch.py` passed for all 18 cuts);
+previously `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
 2026-10-12 with `tools/deploy_registry.sh` after a verified backup; the bundled seed pins
 `arel` 0.34.5, which was published the same day with a 30-minute credential (revoked,
 archive sha256 `323edea3234d63777acf49fd57eb93ffe159688cb051e64e3596c2b228c92acf`), after
