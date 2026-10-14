@@ -1695,6 +1695,12 @@ struct DiamondVm {
      * full, safe-to-repeat re-run via run_chunk follows; a hard
      * propagation never falls back to run_chunk at all. */
     size_t jit_hard_propagations;
+    /* A compiled function's staged cross-function tail call (see
+     * DIAMOND_JIT_TAIL in jit.h); live only between the compiled return and
+     * jit_call_or_interpret's very next step, so never a GC root. */
+    const DiamondFunction *jit_tail_function;
+    size_t jit_tail_count;
+    DiamondValue jit_tail_args[DIAMOND_MAX_DECLARED_PARAMETERS];
     /* Copied from the top-level DiamondChunk's own field once, at
      * diamond_vm_run's own entry -- NOT re-read from whatever
      * DiamondChunk happens to be ambient at a given opcode, since a

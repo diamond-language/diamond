@@ -70,6 +70,13 @@
  * member so it can never collide with a genuine status as the enum
  * grows. */
 enum { DIAMOND_JIT_RETRY = 0xFF };
+/* A compiled function's tail call to a different function: the callee and
+ * its arguments are staged in the VM (jit_tail_*) and the compiled frame is
+ * gone. jit_call_or_interpret runs the callee in a loop at the same depth,
+ * so a cycle of such calls costs no native stack, as in the interpreter. */
+enum { DIAMOND_JIT_TAIL = 0xFE };
+static_assert((unsigned)DIAMOND_VM_SANDBOX_ERROR < (unsigned)DIAMOND_JIT_TAIL,
+        "DiamondVmStatus has grown into DIAMOND_JIT_TAIL's reserved sentinel value");
 static_assert((unsigned)DIAMOND_VM_SANDBOX_ERROR < (unsigned)DIAMOND_JIT_RETRY,
         "DiamondVmStatus has grown into DIAMOND_JIT_RETRY's reserved sentinel value");
 
@@ -470,6 +477,11 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
  * run arbitrary user code, so compile_call_function sets needs_frame and
  * has_called. */
 DiamondVmStatus diamond_jit_call_function(DiamondVm *vm, const DiamondChunk *chunk,
+        DiamondValue *registers, uint16_t function_index, uint16_t base,
+        uint8_t argc, size_t depth, DiamondValue *out);
+/* DIAMOND_OP_TAIL_CALL to another function: DIAMOND_JIT_TAIL (callee and
+ * arguments staged in vm->jit_tail_*) or the status of an ordinary call. */
+uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
         DiamondValue *registers, uint16_t function_index, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out);
 

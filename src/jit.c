@@ -1273,6 +1273,50 @@ static void compile_call_function(JitCompiler *jc, uint16_t dest,
     emit_bail_if_al_nonzero(jc);
 }
 
+/* A tail call to a function other than this one: the trampoline stages the
+ * callee and arguments and this function exits with DIAMOND_JIT_TAIL, so
+ * jit_call_or_interpret continues with the callee at the same depth and a
+ * cycle of such calls costs no native stack. Where the interpreter would
+ * make an ordinary call instead (variadic callee, arguments its registers
+ * cannot hold) the trampoline performs it, and the result is returned here
+ * exactly as a CALL followed by RETURN would. */
+static void compile_tail_call_other(JitCompiler *jc, uint16_t dest,
+        uint16_t function_index, uint16_t base, uint8_t argc) {
+    jc->needs_frame = true;
+    jc->has_called = true;
+    emit_interrupt_poll(jc);
+    JitBuffer *buf = &jc->buf;
+    emit_lea(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_push(buf, REG_RAX);
+    emit_push(buf, JIT_DEPTH);
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_mov_rr(buf, REG_RSI, JIT_CHUNK);
+    emit_mov_rr(buf, REG_RDX, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RCX, function_index);
+    emit_mov_imm64(buf, REG_R8, base);
+    emit_mov_imm64(buf, REG_R9, argc);
+    emit_body_call(jc, (void *)(uintptr_t)diamond_jit_tail_call_function);
+    emit_add_rsp_imm32(buf, 16);
+    /* movzx eax, al; cmp eax, DIAMOND_JIT_TAIL; jne -> ordinary status */
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, 0xB6);
+    emit_u8(buf, 0xC0);
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_JIT_TAIL);
+    size_t not_staged = emit_jcc_placeholder(buf, JCC_NE);
+    emit_epilogue(jc);
+    emit_mov_al_imm8(buf, DIAMOND_JIT_TAIL);
+    emit_ret(buf);
+    patch_rel32_to_here(buf, not_staged);
+    emit_bail_if_al_nonzero(jc);
+    emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(dest, 8));
+    emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
+    emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
+    emit_epilogue(jc);
+    emit_mov_al_imm8(buf, DIAMOND_VM_OK);
+    emit_ret(buf);
+}
+
 /* self.method()/typed-param.method()-shaped DIAMOND_OP_INVOKE/INVOKE_MONO --
  * calls diamond_jit_invoke_instance with type_argument_count/type_arguments
  * always 0/nullptr and a compile-time-known `recv` register index (the
@@ -2065,8 +2109,7 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
-                (void)dest;
-                /* Only a function's own tail call becomes a loop: the new
+                /* A function's own tail call becomes a loop: the new
                  * arguments replace the registers and control returns to
                  * the first instruction (whose CHECK_TYPEs re-run, as in
                  * the interpreter). Defaults (ARGUMENT_PROVIDED reads the
@@ -2076,8 +2119,11 @@ static void compile_body(JitCompiler *jc) {
                  * functions. A retry after an iteration re-runs from the
                  * call's original arguments, which is safe for the same
                  * reason every other retry is: effects set has_called. */
-                if ((size_t)function_index != jc->self_function_index ||
-                    argc != fn->arity || fn->required_arity != fn->arity ||
+                if ((size_t)function_index != jc->self_function_index) {
+                    compile_tail_call_other(jc, dest, function_index, base, argc);
+                    break;
+                }
+                if (argc != fn->arity || fn->required_arity != fn->arity ||
                     base < argc || function_has_opcode(fn, DIAMOND_OP_ARGUMENT_PROVIDED)) {
                     jc->bailed = true; return;
                 }
