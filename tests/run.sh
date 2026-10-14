@@ -517,7 +517,7 @@ rm -f "$error_file"
 
 # A self-recursive tail call runs in place and is counted; ordinary recursion is not.
 error_file="$(mktemp)"
-actual="$(DIAMOND_TRACE_TAIL_CALLS=1 "$diamond" tests/cases/tail_call_deep_self_recursion.di \
+actual="$(env -u DIAMOND_JIT DIAMOND_TRACE_TAIL_CALLS=1 "$diamond" tests/cases/tail_call_deep_self_recursion.di \
     2>"$error_file")"
 [[ "$actual" == $'5000050000\nnil' ]]
 grep -q '^tail calls: 100000 optimized in place$' "$error_file"

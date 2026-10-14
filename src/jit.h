@@ -135,7 +135,16 @@ typedef uint8_t (*DiamondJitFn)(DiamondVm *vm, DiamondValue *registers,
  * caller should record that outcome, e.g. via DiamondFunction's own
  * jit_ineligible field, and never retry). The returned pointer is
  * executable memory owned by this module -- see diamond_jit_free. */
-void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size);
+/* `self_function_index` is the function's own index in its program's table
+ * (SIZE_MAX if unknown): only a TAIL_CALL to it is compiled. */
+void *diamond_jit_try_compile(const DiamondFunction *function,
+        size_t self_function_index, size_t *out_size);
+
+/* A compiled function's own tail call: moves the `argc` arguments at
+ * registers[base..] to registers[0..] and zeroes the rest of the `live`
+ * registers, exactly the state a fresh call would start from. */
+void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,
+        size_t live);
 
 /* Releases the executable memory returned by a prior diamond_jit_try_compile
  * call. Safe to call with nullptr (no-op). */

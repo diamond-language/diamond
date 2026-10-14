@@ -12,6 +12,15 @@ authoritative fine-grained record.
   `def even?(n); if n == 0 then true else odd?(n - 1) end; end` no longer grows the stack.
   Before, only `return odd?(n - 1)` and a bare trailing call were optimized.
 
+### Performance
+
+- With `DIAMOND_JIT=1`, a function's own tail call is a native loop instead of an interpreted
+  call: `bench/tail_call_optimization.di` goes from 0.28 s to 0.065 s, and a 10-million-iteration
+  accumulator from 0.87 s to 0.18 s. Typed parameters are still re-checked on each iteration.
+  `==` and `!=` between two `Int`s now compile, so functions that compare a typed `Int`
+  parameter are no longer left to the interpreter. A mutual cycle, or a function with default
+  parameters, still runs interpreted.
+
 ## 0.14.0 — 2026-10-14
 
 ### Security
