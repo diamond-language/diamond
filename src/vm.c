@@ -1328,7 +1328,8 @@ void vm_blocking_call_interrupt(DiamondVm *vm) {
         else if(vm->blocking_call_kind==DIAMOND_BLOCKING_POSTGRES) {
             char ignored[256];
             (void)PQcancel((PGcancel *)vm->blocking_call_handle,ignored,sizeof ignored);
-        }
+        } else if(vm->blocking_call_kind==DIAMOND_BLOCKING_MYSQL)
+            (void)shutdown((int)((intptr_t)vm->blocking_call_handle-1),SHUT_RDWR);
     }
     pthread_mutex_unlock(&vm->blocking_call_lock);
 }

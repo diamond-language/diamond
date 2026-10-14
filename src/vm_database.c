@@ -1171,7 +1171,7 @@ static bool mysql_decode_value_helper(DiamondVm *vm,const MYSQL_FIELD *field,
  * connection is never opened with CLIENT_MULTI_STATEMENTS (see
  * DIAMOND_OP_MYSQL_OPEN), so a semicolon-separated second statement is
  * simply a syntax error from mysql_stmt_prepare itself. */
-static DiamondVmStatus mysql_exec_helper(DiamondVm *vm,DiamondMysqlHandle *handle,
+static DiamondVmStatus mysql_exec_impl(DiamondVm *vm,DiamondMysqlHandle *handle,
         const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
         size_t param_count,MYSQL_STMT **out_stmt) {
     MYSQL_STMT *stmt=mysql_stmt_init(handle->conn);
@@ -1221,6 +1221,43 @@ static DiamondVmStatus mysql_exec_helper(DiamondVm *vm,DiamondMysqlHandle *handl
     }
     *out_stmt=stmt;
     return DIAMOND_VM_OK;
+}
+
+/* A supervised VM registers the connection's socket for the duration of a
+ * MySQL/MariaDB call; Supervisor#stop(timeout_ms) then shuts the socket down
+ * from its own thread, which fails the blocked read. The connection is unusable
+ * afterwards, which is fine for a worker that is being stopped. */
+static bool mysql_blocking_begin(DiamondVm *vm,DiamondMysqlHandle *handle) {
+    if(vm->interrupt_flag==nullptr)return true;
+    const my_socket fd=mysql_get_socket(handle->conn);
+    return vm_blocking_call_begin(vm,DIAMOND_BLOCKING_MYSQL,(void *)((intptr_t)fd+1));
+}
+
+static void mysql_blocking_end(DiamondVm *vm) {
+    vm_blocking_call_end(vm);
+}
+
+static DiamondVmStatus mysql_exec_helper(DiamondVm *vm,DiamondMysqlHandle *handle,
+        const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
+        size_t param_count,MYSQL_STMT **out_stmt) {
+    if(!mysql_blocking_begin(vm,handle))return DIAMOND_VM_INTERRUPTED;
+    const DiamondVmStatus status=mysql_exec_impl(vm,handle,sql_chars,sql_length,
+        param_values,param_count,out_stmt);
+    mysql_blocking_end(vm);
+    if(status==DIAMOND_VM_MYSQL_ERROR&&vm_interrupt_requested(vm))
+        return DIAMOND_VM_INTERRUPTED;
+    return status;
+}
+
+/* mysql_stmt_store_result under the same registration. */
+static int mysql_store_interruptible(DiamondVm *vm,DiamondMysqlHandle *handle,
+        MYSQL_STMT *stmt,bool *interrupted) {
+    *interrupted=!mysql_blocking_begin(vm,handle);
+    if(*interrupted)return 1;
+    const int result=mysql_stmt_store_result(stmt);
+    mysql_blocking_end(vm);
+    *interrupted=result!=0&&vm_interrupt_requested(vm);
+    return result;
 }
 
 static DiamondVmStatus mysql_execute_helper(DiamondVm *vm,DiamondMysqlHandle *handle,
@@ -1311,11 +1348,13 @@ static DiamondVmStatus mysql_query_helper(DiamondVm *vm,DiamondMysqlHandle *hand
         mysql_free_result(meta);mysql_stmt_close(stmt);
         return DIAMOND_VM_MYSQL_ERROR;
     }
-    if(mysql_stmt_store_result(stmt)!=0) {
-        snprintf(vm->error,sizeof vm->error,"%s",mysql_stmt_error(stmt));
+    bool store_interrupted=false;
+    if(mysql_store_interruptible(vm,handle,stmt,&store_interrupted)!=0) {
+        if(!store_interrupted)
+            snprintf(vm->error,sizeof vm->error,"%s",mysql_stmt_error(stmt));
         free(out_binds);free(lengths);free(nulls);free(fixed_buffers);
         mysql_free_result(meta);mysql_stmt_close(stmt);
-        return DIAMOND_VM_MYSQL_ERROR;
+        return store_interrupted?DIAMOND_VM_INTERRUPTED:DIAMOND_VM_MYSQL_ERROR;
     }
     DiamondArray *rows=allocate_array(vm,nullptr,0);
     if(rows==nullptr) {
