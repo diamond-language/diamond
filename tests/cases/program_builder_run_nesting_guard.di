@@ -4,7 +4,7 @@ def deep(n)
     b.run()
     0
   else
-    deep(n - 1)
+    deep(n - 1) + 0
   end
 end
 begin

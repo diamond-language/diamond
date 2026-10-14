@@ -164,6 +164,9 @@ typedef struct Compiler {
      * construction rather than by inference. */
     size_t last_plain_call_code_count;
     size_t last_plain_call_offset;
+    /* A jump was patched to the byte right after that call: its result is not
+     * the only value that can reach what follows. */
+    bool last_plain_call_label_after;
     uint16_t last_plain_call_destination;
     uint16_t last_plain_call_function_index;
     DiamondFunction *last_plain_call_function;
@@ -1647,6 +1650,9 @@ static void patch_jump(Compiler *compiler, size_t operand, size_t target) {
     }
     compiler->function->code[operand] = (uint8_t)(target >> 8);
     compiler->function->code[operand + 1] = (uint8_t)(target & UINT8_MAX);
+    if (compiler->last_plain_call_function == compiler->function &&
+        target == compiler->last_plain_call_code_count)
+        compiler->last_plain_call_label_after = true;
 }
 
 /* Same two-byte placeholder as emit_jump's own, but for a forward-
@@ -4256,6 +4262,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         compiler->last_plain_call_function=compiler->function;
         compiler->last_plain_call_code_count=compiler->function->code_count;
         compiler->last_plain_call_offset=call_opcode_offset;
+        compiler->last_plain_call_label_after=false;
         compiler->last_plain_call_destination=destination;
         compiler->last_plain_call_function_index=(uint16_t)function_index;
     }
@@ -12928,9 +12935,25 @@ static void maybe_rewrite_self_tail_call(Compiler *compiler,
     /* A block's break lands in its call, which a tail call would replace. */
     if(compiler->function->nonlocal_landing)return;
     if(compiler->last_plain_call_function!=compiler->function)return;
-    if(compiler->last_plain_call_code_count!=compiler->function->code_count)
-        return;
-    if(compiler->last_plain_call_destination!=return_value_register)return;
+    /* Either the call is the last instruction and writes the return register,
+     * or only a `MOVE return_register, call_destination` follows it with no
+     * jump landing between them: the join of an `if`/`else` or `case` whose
+     * branch ends in the call. The MOVE is then dead code after the rewrite. */
+    constexpr size_t move_size=5;
+    const DiamondFunction *current=compiler->function;
+    if(compiler->last_plain_call_code_count==current->code_count) {
+        if(compiler->last_plain_call_destination!=return_value_register)return;
+    } else {
+        const size_t move_at=current->code_count-move_size;
+        if(current->code_count<move_size||
+           compiler->last_plain_call_code_count!=move_at||
+           compiler->last_plain_call_label_after||
+           current->code[move_at]!=DIAMOND_OP_MOVE||
+           (uint16_t)((current->code[move_at+1]<<8)|current->code[move_at+2])!=
+               return_value_register||
+           (uint16_t)((current->code[move_at+3]<<8)|current->code[move_at+4])!=
+               compiler->last_plain_call_destination)return;
+    }
     const uint16_t function_index=compiler->last_plain_call_function_index;
     if((size_t)function_index>=compiler->program->function_count)return;
     if(compiler->program->functions[function_index]!=compiler->function) {

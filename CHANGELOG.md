@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Language
+
+- A call that ends a branch of a trailing `if`/`else` or `case` is a tail call without `return`:
+  `def even?(n); if n == 0 then true else odd?(n - 1) end; end` no longer grows the stack.
+  Before, only `return odd?(n - 1)` and a bare trailing call were optimized.
+
 ## 0.14.0 — 2026-10-14
 
 ### Security
