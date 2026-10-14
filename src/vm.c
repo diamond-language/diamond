@@ -12078,7 +12078,9 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
          * network round trips), the same category
          * TCPSocket.connect's own connect() call is in, and
          * gets the same documented scope cut (see
-         * tcp_connect_helper). */
+         * tcp_connect_helper). An interruptible VM still waits
+         * for the handshake in slices (tls_handshake_interruptible)
+         * so a stalled peer cannot pin a supervised worker. */
         SSL *ssl=SSL_new(listener->tls_context);
         if(ssl==nullptr) {
             close(client_fd);
@@ -12088,8 +12090,14 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_IO_ERROR;
         }
         SSL_set_fd(ssl,client_fd);
-        ERR_clear_error();
-        if(SSL_accept(ssl)!=1) {
+        int accept_result=0;
+        const DiamondVmStatus accept_status=
+            tls_handshake_interruptible(vm,ssl,true,&accept_result);
+        if(accept_status!=DIAMOND_VM_OK) {
+            SSL_free(ssl);close(client_fd);
+            return accept_status;
+        }
+        if(accept_result!=1) {
             char detail[256];tls_format_error(detail,sizeof detail);
             snprintf(vm->error,sizeof vm->error,
                 "TLS handshake failed: %s",detail);

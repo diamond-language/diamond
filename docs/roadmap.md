@@ -39,9 +39,8 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Interrupting the remaining blocked workers** -- a MySQL/MariaDB call, a TLS
-  handshake or connect in progress, a read from a pipe or terminal and a write to a full
-  socket are still only stopped between
+- **Interrupting the remaining blocked workers** -- a MySQL/MariaDB call, host-name
+  resolution in `connect` and a read from a pipe or terminal are still only stopped between
   instructions by `Supervisor#stop(timeout_ms)`. Implicit cancellation checkpoints are
   open (see [cancellation](cancellation.md)).
 - **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a

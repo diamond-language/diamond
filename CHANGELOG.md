@@ -22,6 +22,9 @@ authoritative fine-grained record.
   worker's interrupt flag, so `Supervisor#stop(timeout_ms)` and a sibling restart end a worker
   spinning in a native loop at its next iteration. A compiled function with no loop and no
   blocking call still runs to its end.
+- `Supervisor#stop(timeout_ms)` and sibling restarts now also end a worker stuck in a TCP or TLS
+  connect, a TLS handshake (client or server `accept`) or a TLS write to a peer that stopped
+  reading. They previously ran until the peer answered.
 
 ### Performance
 
