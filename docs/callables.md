@@ -42,7 +42,9 @@ computes. A call that doesn't qualify falls back to ordinary recursion,
 bounded exactly as before -- never an error, just not optimized.
 
 **What qualifies**: `return foo(...)` or a trailing `foo(...)` with no
-further operation applied, where `foo` is either the function currently
+further operation applied, including one that ends the branch of a trailing
+`if`/`else` or `case` (`if n == 0 then true else odd?(n - 1) end` as the
+function's last expression), where `foo` is either the function currently
 running, or a function on a cycle of such calls with it: `even?` returning
 `odd?(n - 1)` while `odd?` returns `even?(n - 1)`, or any longer ring. A tail
 call to a function that does not call back through tail calls (a plain
