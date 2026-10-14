@@ -171,6 +171,12 @@ void diamond_jit_frame_push(void *frame_storage, DiamondVm *vm,
     vm->frames = frame;
 }
 
+void diamond_jit_tail_reset(DiamondValue *registers, size_t base, size_t argc,
+        size_t live) {
+    memmove(registers, registers + base, argc * sizeof *registers);
+    memset(registers + argc, 0, (live - argc) * sizeof *registers);
+}
+
 void diamond_jit_frame_pop(DiamondVm *vm) {
     DiamondFrame *frame = (DiamondFrame *)vm->frames;
     vm->frames = frame->previous;
@@ -9104,7 +9110,14 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
             if (loop_on_first_call ||
                 mutable_function->jit_call_count >= vm->jit_threshold) {
                 size_t jit_code_size = 0;
-                void *compiled = diamond_jit_try_compile(function, &jit_code_size);
+                size_t self_index = SIZE_MAX;
+                for (size_t index = 0; index < chunk_to_interpret->function_count; index++)
+                    if (chunk_to_interpret->functions[index] == function) {
+                        self_index = index;
+                        break;
+                    }
+                void *compiled = diamond_jit_try_compile(function, self_index,
+                    &jit_code_size);
                 if (compiled != nullptr) {
                     mutable_function->jit_code = compiled;
                     mutable_function->jit_code_size = jit_code_size;

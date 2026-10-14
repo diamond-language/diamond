@@ -136,6 +136,10 @@ typedef struct JitCompiler {
     /* Bytecode offset of the instruction compile_body is emitting, so a
      * trampoline call can record where it is (see emit_body_call). */
     size_t current_instruction_start;
+    /* Index of the function being compiled in its program's function table
+     * (SIZE_MAX if unknown): a TAIL_CALL to it is a loop, to anything else
+     * is left to the interpreter. */
+    size_t self_function_index;
 } JitCompiler;
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
@@ -1462,6 +1466,8 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_GREATER_EQUAL_INT:
         case DIAMOND_OP_EQUAL:
         case DIAMOND_OP_NOT_EQUAL:
+        case DIAMOND_OP_EQUAL_INT:
+        case DIAMOND_OP_NOT_EQUAL_INT:
         case DIAMOND_OP_GET_IVAR:
         case DIAMOND_OP_ARGUMENT_PROVIDED:
         case DIAMOND_OP_STRING:
@@ -1474,6 +1480,7 @@ static bool opcode_dest_is_first_u16(DiamondOpCode opcode) {
         case DIAMOND_OP_INVOKE_MONO:
         case DIAMOND_OP_NEW:
         case DIAMOND_OP_CALL:
+        case DIAMOND_OP_TAIL_CALL:
         case DIAMOND_OP_IS_TYPE:
             return true;
         default:
@@ -1540,6 +1547,7 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
         case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
         case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
         case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
+        case DIAMOND_OP_EQUAL_INT: case DIAMOND_OP_NOT_EQUAL_INT:
         case DIAMOND_OP_GET_IVAR: case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY:
         case DIAMOND_OP_HASH: case DIAMOND_OP_INDEX_GET_STRING: case DIAMOND_OP_IS_TYPE: {
             uint16_t a = 0, b = 0;
@@ -1560,13 +1568,29 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             return decode_u8(fn, pc, &b) && decode_u16(fn, pc, &a) &&
                 decode_u8(fn, pc, &c);
         }
-        case DIAMOND_OP_CALL: {
+        case DIAMOND_OP_CALL:
+        case DIAMOND_OP_TAIL_CALL: {
             uint16_t function_index = 0, base = 0; uint8_t argc = 0;
             return decode_u16(fn, pc, &function_index) &&
                 decode_u16(fn, pc, &base) && decode_u8(fn, pc, &argc);
         }
         default: return false; /* unreachable given opcode_dest_is_first_u16 */
     }
+}
+
+/* Whether `fn` contains `wanted`. Fails safe: an opcode the decoder does
+ * not understand (a function this JIT cannot compile anyway) answers true. */
+static bool function_has_opcode(const DiamondFunction *fn, DiamondOpCode wanted) {
+    size_t pc = 0;
+    while (pc < fn->code_count) {
+        uint8_t raw_opcode = 0;
+        if (!decode_u8(fn, &pc, &raw_opcode)) return true;
+        int32_t dest = -1, jump_target = -1;
+        if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
+                &dest, &jump_target)) return true;
+        if ((DiamondOpCode)raw_opcode == wanted) return true;
+    }
+    return false;
 }
 
 /* Whether `fn` contains a backward (or self) jump, i.e. a loop. Only the
@@ -1582,6 +1606,7 @@ bool diamond_jit_function_has_loop(const DiamondFunction *fn) {
         int32_t dest = -1, jump_target = -1;
         if (!decode_instruction_operands(fn, &pc, (DiamondOpCode)raw_opcode,
                 &dest, &jump_target)) return false;
+        if (raw_opcode == DIAMOND_OP_TAIL_CALL) return true; /* a loop when self */
         if (jump_target >= 0 && (size_t)jump_target <= start) return true;
     }
     return false;
@@ -1695,6 +1720,7 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             case DIAMOND_OP_LESS: case DIAMOND_OP_LESS_EQUAL: case DIAMOND_OP_LESS_EQUAL_INT:
             case DIAMOND_OP_GREATER: case DIAMOND_OP_GREATER_INT: case DIAMOND_OP_GREATER_EQUAL:
             case DIAMOND_OP_GREATER_EQUAL_INT: case DIAMOND_OP_EQUAL: case DIAMOND_OP_NOT_EQUAL:
+            case DIAMOND_OP_EQUAL_INT: case DIAMOND_OP_NOT_EQUAL_INT:
             case DIAMOND_OP_INDEX_GET: case DIAMOND_OP_ARRAY: case DIAMOND_OP_HASH:
             case DIAMOND_OP_INDEX_GET_STRING:
             case DIAMOND_OP_IS_TYPE: {
@@ -1753,7 +1779,8 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
             }
             /* A call's result proves no class here (a plain function's
              * declared return type is not trusted by this scan). */
-            case DIAMOND_OP_CALL: {
+            case DIAMOND_OP_CALL:
+            case DIAMOND_OP_TAIL_CALL: {
                 uint16_t function_index = 0, base = 0; uint8_t argc = 0;
                 if (!decode_u16(fn, &pc, &function_index) ||
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) return -1;
@@ -1894,11 +1921,14 @@ static void compile_body(JitCompiler *jc) {
                 break;
             }
             case DIAMOND_OP_EQUAL:
-            case DIAMOND_OP_NOT_EQUAL: {
+            case DIAMOND_OP_EQUAL_INT:
+            case DIAMOND_OP_NOT_EQUAL:
+            case DIAMOND_OP_NOT_EQUAL_INT: {
                 uint16_t dest = 0, left = 0, right = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
                     !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                compile_equal_op(jc, instruction_start, dest, left, right, opcode == DIAMOND_OP_NOT_EQUAL);
+                compile_equal_op(jc, instruction_start, dest, left, right,
+                    opcode == DIAMOND_OP_NOT_EQUAL || opcode == DIAMOND_OP_NOT_EQUAL_INT);
                 break;
             }
             case DIAMOND_OP_SET_IVAR: {
@@ -1994,6 +2024,40 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
                 compile_super_call(jc, dest, owner_index, name, base, argc);
+                break;
+            }
+            case DIAMOND_OP_TAIL_CALL: {
+                uint16_t dest = 0, function_index = 0, base = 0;
+                uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
+                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                    jc->bailed = true; return;
+                }
+                (void)dest;
+                /* Only a function's own tail call becomes a loop: the new
+                 * arguments replace the registers and control returns to
+                 * the first instruction (whose CHECK_TYPEs re-run, as in
+                 * the interpreter). Defaults (ARGUMENT_PROVIDED reads the
+                 * entry argument count) and anything else that would need
+                 * the interpreter's argument bookkeeping are left to it;
+                 * try_compile already refused variadic and generic
+                 * functions. A retry after an iteration re-runs from the
+                 * call's original arguments, which is safe for the same
+                 * reason every other retry is: effects set has_called. */
+                if ((size_t)function_index != jc->self_function_index ||
+                    argc != fn->arity || fn->required_arity != fn->arity ||
+                    base < argc || function_has_opcode(fn, DIAMOND_OP_ARGUMENT_PROVIDED)) {
+                    jc->bailed = true; return;
+                }
+                JitBuffer *buf = &jc->buf;
+                emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+                emit_mov_imm64(buf, REG_RSI, base);
+                emit_mov_imm64(buf, REG_RDX, argc);
+                emit_mov_imm64(buf, REG_RCX, fn->register_count == 0
+                    ? DIAMOND_JIT_MAX_REGISTERS : fn->register_count);
+                emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_tail_reset);
+                size_t field = emit_jmp_placeholder(buf);
+                record_global_patch(jc, field, 0);
                 break;
             }
             case DIAMOND_OP_CALL: {
@@ -2287,7 +2351,8 @@ static void compile_body(JitCompiler *jc) {
     }
 }
 
-void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size) {
+void *diamond_jit_try_compile(const DiamondFunction *function,
+        size_t self_function_index, size_t *out_size) {
     *out_size = 0;
     if (function->has_variadic || function->type_variable_count != 0 ||
         function->nonlocal_landing ||
@@ -2298,6 +2363,7 @@ void *diamond_jit_try_compile(const DiamondFunction *function, size_t *out_size)
     }
 
     JitCompiler jc = {0};
+    jc.self_function_index = self_function_index;
     jc.function = function;
     jc.bytecode_to_native = malloc(function->code_count * sizeof(size_t));
     if (jc.bytecode_to_native == nullptr) return nullptr;

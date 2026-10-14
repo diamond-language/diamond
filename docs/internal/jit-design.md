@@ -2129,5 +2129,37 @@ default-threshold run.
 Measured against the interpreter (release, one run each): `fibonacci` 0.32 s to 0.13 s,
 `jit_native_collection_reads` 0.74 s to 0.12 s, `jit_native_string_reads` 0.75 s to
 0.27 s, `jit_invoke_result_ivar` 5.05 s to 2.13 s, `int_arithmetic_dynamic` 0.83 s to
-0.23 s. Nothing regressed. Not covered: `TAIL_CALL` (a self- or mutually tail-recursive
-function stays interpreted), `CALL_TYPED`, spread and keyword calls, closure calls.
+0.23 s. Nothing regressed. Not covered: a mutually tail-recursive cycle (stays
+interpreted; see the next section for self tail calls), `CALL_TYPED`, spread and keyword calls, closure calls.
+
+## Self tail calls
+
+A `TAIL_CALL` to the function being compiled is a loop. `diamond_jit_try_compile` takes the
+function's own index in the program table (found in `jit_call_or_interpret` by pointer
+comparison against the caller chunk's `functions`), and `compile_body` compiles the opcode only
+when the target is that index. It then calls `diamond_jit_tail_reset(registers, base, argc,
+live)`, which moves the arguments to `registers[0..argc)` and zeroes the rest of the live
+registers (the state a fresh call starts from), and jumps to the native offset of bytecode 0.
+The function's `CHECK_TYPE`s sit at the start of its bytecode, so typed parameters are
+re-checked on every iteration exactly as in the interpreter.
+
+Left to the interpreter, by refusing to compile the function:
+
+- a tail call to a different function (a mutual cycle; the interpreter swaps chunks in place,
+  and a compiled version would need the same);
+- a function with a default parameter, because `ARGUMENT_PROVIDED` reads the entry argument
+  count and a retry would see the original call's, not the iteration's;
+- an argument count other than the full arity.
+
+A retry after some iterations re-runs from the call's original arguments. That is safe for the
+same reason every other retry is: anything with an effect sets `has_called`, and from then on a
+failure propagates instead. `diamond_jit_function_has_loop` counts any `TAIL_CALL` as a loop so
+a tail-recursive function compiles on its first call.
+
+`EQUAL_INT`/`NOT_EQUAL_INT` (an `==` between two statically known `Int`s) now compile through
+the generic equality path. Without them every function that compared a typed `Int` parameter
+was ineligible, which kept typed tail recursion interpreted. Four `jit_*_reassigned` tests
+that count compiled functions went up by one for the same reason.
+
+Measured (release, one run each): a 10,000,000-iteration `sum(n, acc)` 0.87 s to 0.18 s;
+`bench/tail_call_optimization.di` 0.28 s to 0.065 s.
