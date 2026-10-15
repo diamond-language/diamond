@@ -115,6 +115,42 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
     return false;
 }
 
+#ifndef DIAMOND_NO_MYSQL
+/* MySQL.open on a supervised attempt connects on a helper thread so the attempt
+ * can be interrupted while the connector blocks in its connect or handshake
+ * (docs/threads.md). `done` is 0 while the thread runs, 1 once it has finished
+ * and the attempt will collect the result, 2 once the attempt gave up: the
+ * thread then closes the connection and frees the job itself. The connector's
+ * own non-blocking API was tried first and failed on aarch64 without setting
+ * an error, so this does not depend on it. */
+typedef struct MysqlConnectJob {
+    pthread_t thread;
+    MYSQL *conn;
+    char *host,*user,*password,*database;
+    unsigned int port;
+    MYSQL *result;
+    atomic_int done;
+} MysqlConnectJob;
+
+static void mysql_connect_job_free(MysqlConnectJob *job) {
+    free(job->host);free(job->user);free(job->password);free(job->database);
+    free(job);
+}
+
+static void *mysql_connect_thread(void *argument) {
+    MysqlConnectJob *job=argument;
+    job->result=mysql_real_connect(job->conn,job->host,job->user,job->password,
+        job->database,job->port,nullptr,0);
+    int running=0;
+    if(!atomic_compare_exchange_strong(&job->done,&running,1)) {
+        /* Abandoned: nobody will collect this. */
+        mysql_close(job->result!=nullptr?job->result:job->conn);
+        mysql_connect_job_free(job);
+    }
+    return nullptr;
+}
+#endif
+
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -4654,8 +4690,50 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * the caller -- mysql_close(conn), not mysql_close(connected)
                  * (nullptr), is what actually frees it and must run on
                  * this path too. */
-                MYSQL *connected=mysql_real_connect(conn,host_copy,user_copy,password_copy,
-                    database_copy,(unsigned int)port,nullptr,0);
+                MYSQL *connected=nullptr;
+                if(vm->interrupt_flag==nullptr) {
+                    connected=mysql_real_connect(conn,host_copy,user_copy,password_copy,
+                        database_copy,(unsigned int)port,nullptr,0);
+                } else {
+                    /* A supervised attempt can be stopped: connect on a helper thread
+                     * and wait for it in slices that look at the interrupt flag. An
+                     * abandoned connect finishes on its own and then cleans up after
+                     * itself (see MysqlConnectJob). */
+                    MysqlConnectJob *job=calloc(1,sizeof *job);
+                    if(job==nullptr) {
+                        free(host_copy);free(user_copy);free(password_copy);
+                        free(database_copy);mysql_close(conn);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    *job=(MysqlConnectJob){.conn=conn,.host=host_copy,.user=user_copy,
+                        .password=password_copy,.database=database_copy,
+                        .port=(unsigned int)port};
+                    host_copy=user_copy=password_copy=database_copy=nullptr;
+                    if(pthread_create(&job->thread,nullptr,mysql_connect_thread,job)!=0) {
+                        mysql_connect_job_free(job);
+                        mysql_close(conn);
+                        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    }
+                    /* Once `done` is 2 the helper thread may free the job at any
+                     * moment, so nothing below reads it after that exchange. */
+                    const pthread_t connect_thread=job->thread;
+                    for(;;) {
+                        if(atomic_load(&job->done))break;
+                        if(vm_interrupt_requested(vm)) {
+                            int running=0;
+                            if(atomic_compare_exchange_strong(&job->done,&running,2)) {
+                                pthread_detach(connect_thread);
+                                VM_RETURN(DIAMOND_VM_INTERRUPTED);
+                            }
+                            break;
+                        }
+                        struct timespec slice={0,5L*1000000L};
+                        nanosleep(&slice,nullptr);
+                    }
+                    pthread_join(job->thread,nullptr);
+                    connected=job->result;
+                    mysql_connect_job_free(job);
+                }
                 free(host_copy);free(user_copy);free(password_copy);free(database_copy);
                 if(connected==nullptr) {
                     snprintf(vm->error,sizeof vm->error,"%s",mysql_error(conn));
