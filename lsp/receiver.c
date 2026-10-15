@@ -317,6 +317,33 @@ static bool parse_receiver_call_syntax(const DiamondChunk *chunk,
     return tokens[call->callee_index].kind==DIAMOND_TOKEN_IDENTIFIER;
 }
 
+/* `Outer::Inner` (or a single constant): joins a run of constant tokens
+ * separated by `::` into one qualified name. False for anything else, so a
+ * call or an expression ending in `)` never matches. */
+static bool qualified_constant_name(const char *source,const DiamondToken *tokens,
+        size_t start,size_t end,char *name,size_t capacity) {
+    size_t used=0;
+    for(size_t index=start;index<=end;index++) {
+        const bool name_position=((index-start)%2)==0;
+        if(name_position) {
+            const DiamondToken token=tokens[index];
+            if(token.kind!=DIAMOND_TOKEN_IDENTIFIER||token.span.length==0)return false;
+            const char first=source[token.span.start];
+            if(first<'A'||first>'Z')return false;
+            if(used+token.span.length+1>=capacity)return false;
+            memcpy(name+used,source+token.span.start,token.span.length);
+            used+=token.span.length;
+        } else {
+            if(tokens[index].kind!=DIAMOND_TOKEN_DOUBLE_COLON)return false;
+            if(used+2+1>=capacity)return false;
+            name[used++]=':';name[used++]=':';
+        }
+    }
+    if(((end-start)%2)!=0)return false;
+    name[used]='\0';
+    return used>0;
+}
+
 static size_t resolve_expression(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
         size_t *classes,size_t capacity,bool *is_singleton,unsigned depth);
@@ -355,7 +382,28 @@ static bool resolve_call_targets(const DiamondProgram *program,
     targets->receiver_count=resolve_expression(program,chunk,source,tokens,
         start,call->callee_index-2,targets->receiver_classes,
         DIAMOND_MAX_UNION_TYPES,&targets->receiver_singleton,depth+1);
-    if(targets->receiver_count==0)return false;
+    if(targets->receiver_count==0) {
+        /* `Module.function(...)`: modules are not classes, so look the
+         * singleton method up on the module itself. */
+        char module_name[DIAMOND_MAX_FUNCTION_NAME*2];
+        if(!qualified_constant_name(source,tokens,start,call->callee_index-2,
+               module_name,sizeof module_name))return false;
+        for(size_t module_index=0;module_index<chunk->module_count;module_index++) {
+            const DiamondModule *module=&chunk->modules[module_index];
+            if(strcmp(module->name,module_name)!=0)continue;
+            for(size_t method_index=0;method_index<module->singleton_method_count;
+                method_index++) {
+                const DiamondMethod *method=&module->singleton_methods[method_index];
+                if(strlen(method->name)!=name_length||
+                   memcmp(method->name,name,name_length)!=0||
+                   method->function_index>=chunk->function_count)continue;
+                targets->functions[0]=chunk->functions[method->function_index];
+                targets->function_count=1;
+                return true;
+            }
+        }
+        return false;
+    }
     if(name_length==3&&memcmp(name,"new",3)==0&&
        targets->receiver_singleton) {
         targets->constructor=true;return true;
@@ -851,6 +899,16 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         }
         return 0;
     }
+    {
+        char qualified[DIAMOND_MAX_FUNCTION_NAME*2];
+        if(qualified_constant_name(source,tokens,start,end,qualified,sizeof qualified)) {
+            for(size_t index=0;index<chunk->class_count;index++)
+                if(strcmp(chunk->classes[index].name,qualified)==0) {
+                    classes[0]=index;*is_singleton=true;return 1;
+                }
+            return 0;
+        }
+    }
     if(tokens[end].kind==DIAMOND_TOKEN_RIGHT_BRACKET)
         return resolve_indexed_expression(program,chunk,source,tokens,start,end,
             classes,capacity,is_singleton,depth);
@@ -931,6 +989,8 @@ static bool locate_receiver(const char *source,size_t stop_offset,
         start=index-1;
         if(nesting==0&&bracket_nesting==0&&brace_nesting==0&&index>1&&
            tokens[index-2].kind!=DIAMOND_TOKEN_DOT&&
+           tokens[index-2].kind!=DIAMOND_TOKEN_DOUBLE_COLON&&
+           kind!=DIAMOND_TOKEN_DOUBLE_COLON&&
            kind!=DIAMOND_TOKEN_RIGHT_PAREN&&kind!=DIAMOND_TOKEN_LEFT_PAREN&&
            kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&kind!=DIAMOND_TOKEN_LEFT_BRACKET&&
            kind!=DIAMOND_TOKEN_DOT)break;
