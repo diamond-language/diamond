@@ -121,6 +121,21 @@ collection leaves the thread-local mark stack mid-drain and the next input's
 collection marks stale pointers. (An earlier watchdog did that, and the fuzzer
 reported the resulting use-after-free as a runtime bug until it was traced.)
 
+## Differential execution
+
+`fuzz/differential_fuzzer.c` (`make build/differential_fuzzer`) compiles and runs each
+source input twice in one process, once plain and once with `DIAMOND_JIT=1`,
+`DIAMOND_JIT_THRESHOLD=1` and `DIAMOND_STRESS_MINOR_GC=1`, and aborts when exit status,
+stdout or stderr differ. It runs sandboxed with instruction and wall-clock budgets, skips
+inputs that name nondeterministic or I/O features, and skips an input that hits a budget in
+either run. Seed it from small deterministic files in `tests/cases`.
+
+It is not part of `make test-fuzz`. Each input costs two ASan-instrumented runs, so run it
+with few workers at low priority (`nice -n 19 build/differential_fuzzer -jobs=2 -workers=2
+...`); six workers plus a desktop session made a development machine unresponsive. Avoid
+`-fork=N`: libFuzzer's fork driver crashed inside its own bookkeeping after a few thousand
+runs while the harness itself was healthy.
+
 ## What's deliberately out of scope so far
 
 - **Executing an arbitrary compiled *program*** (real program logic, real
