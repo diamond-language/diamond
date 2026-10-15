@@ -1478,7 +1478,9 @@ static bool parameter_is_single_class(const DiamondFunction *fn, uint16_t recv_r
     const DiamondTypeSet *set = &fn->type_sets[set_index];
     if (set->count != 1) return false;
     const uint8_t id = set->members[0].id;
-    return id >= DIAMOND_TYPE_CLASS_BASE && id < DIAMOND_TYPE_VARIABLE_BASE;
+    /* Below DIAMOND_TYPE_NATIVE: a native object type (Time, Channel, ...)
+     * shares the byte space above the class range but is not an Instance. */
+    return id >= DIAMOND_TYPE_CLASS_BASE && id < DIAMOND_TYPE_NATIVE;
 }
 
 /* Phase 9: true iff `target_register` is never written by any instruction
@@ -2396,7 +2398,7 @@ static void compile_body(JitCompiler *jc) {
                  * for the redefine_method_used_anywhere gate's reasoning. */
                 if (!fn->redefine_method_used_anywhere) {
                     if(site_type>=DIAMOND_TYPE_CLASS_BASE&&
-                       site_type<DIAMOND_TYPE_INTERFACE_BASE) {
+                       site_type<DIAMOND_TYPE_NATIVE) {
                         compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
                                              opcode == DIAMOND_OP_INVOKE_MONO);
                         break;
