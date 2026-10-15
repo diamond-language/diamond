@@ -4714,12 +4714,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         mysql_close(conn);
                         VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                     }
+                    /* Once `done` is 2 the helper thread may free the job at any
+                     * moment, so nothing below reads it after that exchange. */
+                    const pthread_t connect_thread=job->thread;
                     for(;;) {
                         if(atomic_load(&job->done))break;
                         if(vm_interrupt_requested(vm)) {
                             int running=0;
                             if(atomic_compare_exchange_strong(&job->done,&running,2)) {
-                                pthread_detach(job->thread);
+                                pthread_detach(connect_thread);
                                 VM_RETURN(DIAMOND_VM_INTERRUPTED);
                             }
                             break;
