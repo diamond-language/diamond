@@ -88,7 +88,16 @@ export class DiamondRepl {
     const repl = new DiamondRepl();
     if (source instanceof WebAssembly.Module) repl.#module = source;
     else if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) repl.#module = await WebAssembly.compile(source);
-    else repl.#module = await WebAssembly.compileStreaming(fetch(source));
+    else {
+      // A server that does not send application/wasm makes compileStreaming throw; fetch the
+      // bytes and compile them instead.
+      const response = await fetch(source);
+      try {
+        repl.#module = await WebAssembly.compileStreaming(response.clone());
+      } catch {
+        repl.#module = await WebAssembly.compile(await response.arrayBuffer());
+      }
+    }
     repl.#instantiate();
     return repl;
   }
@@ -137,7 +146,7 @@ export class DiamondRepl {
   }
 
   static #isDeclaration(text) {
-    return /^\s*(def|class|module|interface)\s/.test(text);
+    return /^\s*(def|class|module|interface|struct)\s/.test(text);
   }
 
   // The expression/assignment wrapping src/repl.c applies to a pending entry.
@@ -185,9 +194,11 @@ export class DiamondRepl {
     }
     const fresh = attempt.output.startsWith(this.#previousOutput)
       ? attempt.output.slice(this.#previousOutput.length) : attempt.output;
+    // A declaration's value is always nil: say nothing rather than print it.
+    const declaration = DiamondRepl.#isDeclaration(this.#pending);
     this.#session = candidate;
     this.#previousOutput = attempt.output;
     this.#pending = '';
-    return { kind: 'ok', text: fresh + attempt.value };
+    return { kind: 'ok', text: declaration ? fresh : fresh + attempt.value };
   }
 }
