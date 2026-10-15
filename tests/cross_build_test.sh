@@ -3,8 +3,9 @@
 # and validation always run; building and running a real cross binary needs a
 # toolchain and sysroot, so it only runs when DIAMOND_CROSS_SYSROOT and
 # DIAMOND_CROSS_TARGET are set (DIAMOND_CROSS_FLAGS_EXTRA passes
-# CROSS_FLAGS_EXTRA, DIAMOND_CROSS_RUN names an emulator such as
-# "qemu-aarch64-static -L /path/to/sysroot").
+# CROSS_FLAGS_EXTRA, DIAMOND_CROSS_MAKE_ARGS adds make variables such as
+# "NO_MYSQL=1 STATIC=1" for a static musl kit, and DIAMOND_CROSS_RUN names an
+# emulator such as "qemu-aarch64-static -L /path/to/sysroot").
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
@@ -54,13 +55,22 @@ test ! -e wrong
 if [ -n "${DIAMOND_CROSS_SYSROOT:-}" ] && [ -n "${DIAMOND_CROSS_TARGET:-}" ]; then
     make -C "$repo_dir" --no-print-directory aot-kit-cross \
         TARGET_TRIPLE="$DIAMOND_CROSS_TARGET" SYSROOT="$DIAMOND_CROSS_SYSROOT" \
-        CROSS_FLAGS_EXTRA="${DIAMOND_CROSS_FLAGS_EXTRA:-}" > "$test_dir/kit.log"
+        CROSS_FLAGS_EXTRA="${DIAMOND_CROSS_FLAGS_EXTRA:-}" \
+        ${DIAMOND_CROSS_MAKE_ARGS:-} > "$test_dir/kit.log"
     DIAMOND_AOT_KIT= "$repo_dir/build/diamond" build app.di -o cross \
         --target="$DIAMOND_CROSS_TARGET" > cross.log
     grep -q "built 'cross' for $DIAMOND_CROSS_TARGET" cross.log
     case "$(file cross)" in
         *ELF*) ;;
         *) echo "cross build did not produce an ELF executable" >&2; exit 1 ;;
+    esac
+    case " ${DIAMOND_CROSS_MAKE_ARGS:-} " in
+        *" STATIC=1 "*)
+            case "$(file cross)" in
+                *"statically linked"*) ;;
+                *) echo "STATIC=1 build is not statically linked" >&2; exit 1 ;;
+            esac
+            ;;
     esac
     if [ -n "${DIAMOND_CROSS_RUN:-}" ]; then
         # shellcheck disable=SC2086

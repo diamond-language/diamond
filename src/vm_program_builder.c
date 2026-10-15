@@ -55,7 +55,9 @@
 #include <spawn.h>
 #include <sqlite3.h>
 #include <libpq-fe.h>
+#ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
+#endif
 #include <zlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>

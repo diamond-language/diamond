@@ -56,7 +56,9 @@
 #include <spawn.h>
 #include <sqlite3.h>
 #include <libpq-fe.h>
+#ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
+#endif
 #include <zlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -866,7 +868,7 @@ void tls_abort_handshake(DiamondTlsSocketHandle *handle) {
 
 /* Returns the readiness direction, or nullptr on completion. Application I/O
  * retains its existing blocking contract after the handshake succeeds. */
-DiamondVmStatus tls_finish_handshake(DiamondVm *vm,
+DiamondVmStatus diamond_tls_finish_handshake(DiamondVm *vm,
         DiamondTlsSocketHandle *handle,const char **direction) {
     *direction=nullptr;
     if(!handle->handshake_pending)return DIAMOND_VM_OK;

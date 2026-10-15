@@ -111,7 +111,8 @@ needed).
 
 ## What this is not
 
-- **Not a fully static/hermetic binary.** The produced executable still
+- **Not a fully static/hermetic binary by default.** (A static musl kit
+  produces one; see "Static musl binaries" below.) The produced executable still
   dynamically links whatever `diamond` itself links against on this
   platform -- OpenSSL, SQLite3, `libpq`, the MariaDB client library, zlib,
   `libcrypt`, and their own transitive dependencies (confirmed with `ldd`
@@ -162,8 +163,35 @@ make aot-kit-cross TARGET_TRIPLE=aarch64-linux-gnu SYSROOT=/opt/sysroots/aarch64
   optionally `DIAMOND_CROSS_RUN` (an emulator such as `qemu-aarch64-static -L SYSROOT`)
   to build and run a real cross binary.
 
-The built binary still links the target's shared libraries dynamically, so it is as
-portable across machines as that sysroot's libraries are.
+Unless the kit is static (below), the built binary links the target's shared libraries
+dynamically, so it is as portable across machines as that sysroot's libraries are.
+
+### Static musl binaries
+
+A musl target plus `STATIC=1` produces a fully static executable with no dependency on
+the target machine's libc, OpenSSL, SQLite, `libpq` or zlib. It runs on any Linux of that
+architecture, including a `FROM scratch` container:
+
+```sh
+make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/alpine \
+     NO_MYSQL=1 STATIC=1 \
+     CROSS_FLAGS_EXTRA='--gcc-install-dir=/opt/sysroots/alpine/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0 -rtlib=libgcc --unwindlib=libgcc'
+./build/diamond build app.di --target=x86_64-alpine-linux-musl
+```
+
+- The sysroot needs static libraries: `libc.a`, `libssl.a`/`libcrypto.a`, `libsqlite3.a`,
+  `libz.a`, `libpq.a` with `libpgcommon_shlib.a`/`libpgport_shlib.a`, `libucontext.a`
+  (musl has no `ucontext`), and `libgcc.a`. An Alpine root with `musl-dev`,
+  `openssl-libs-static`, `sqlite-static`, `zlib-static`, `libpq-dev`, `libucontext-dev`,
+  `libgcc-static`, `linux-headers` and `gcc` provides all of them. `STATIC_LDLIBS`
+  overrides the extra archives for a sysroot that names them differently.
+- **MySQL is left out** (`NO_MYSQL=1`): MariaDB Connector/C has no static build in Alpine.
+  `MySQL.open` raises a `MySQLError` ("MySQL support is not compiled into this build")
+  and `-lmariadb` is not linked. The same switch works for ordinary builds.
+- The binary reads the host's CA certificates for TLS (`/etc/ssl`), so a minimal image
+  still needs a certificate bundle for outbound HTTPS.
+- Static glibc is not offered: its name-service lookups load shared libraries at run
+  time. Use musl for static output.
 
 ## Building for a different target distro
 
