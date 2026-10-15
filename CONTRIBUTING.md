@@ -92,6 +92,7 @@ make test-integration  # API, fibers, packages, tooling, cache, self-host bootst
 make test-fuzz         # instrumented fuzz builds and bounded smoke tests
 make test-stress-threads  # every Thread/Channel/Supervisor case, 60 runs each pinned to 2 CPUs
 make test-stress-threads-tsan  # the same loop under ThreadSanitizer, 10 runs each
+make release && bash tests/sweep_cases.sh   # every case again under full stress GC + the JIT, diffed against the plain run
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push
 ```
 
