@@ -299,8 +299,9 @@ not just a build-level check.
   macOS expecting a clean failure signal instead of a wrong-algorithm
   result.
 - **The test harness (mostly `tests/run.sh`) leans on GNU-coreutils
-  behavior far more than the build does** -- not yet addressed, still
-  what's blocking a real `test-macos` job:
+  behavior far more than the build does.** The `test-macos` job handles this
+  by installing GNU coreutils, sed and bash through Homebrew and shadowing
+  them onto `PATH`; these are the findings that led to it:
   - `timeout` -- 28 call sites across process/signal/socket tests, several
     relying specifically on GNU/uutils relay-then-child-status semantics
     (see the comment above the `signal_pid` wait in the Signal.trap test).
