@@ -46,19 +46,26 @@ CPPFLAGS_EXTRA :=
 # Optional native dependencies. Each NO_<FEATURE>=1 builds without that library: the
 # feature's entry point raises an error naming it, its -l flag is dropped, and its header
 # is not needed. MINIMAL=1 turns all of them on (the WebAssembly build, a static musl build
-# whose sysroot lacks a client library). OpenSSL (TLS, digests, ciphers) is not optional
-# yet. See docs/internal/wasm.md and CONTRIBUTING.md.
+# whose sysroot lacks a client library). See docs/internal/wasm.md and CONTRIBUTING.md.
 #   NO_MYSQL     MariaDB/MySQL client     NO_POSTGRES  libpq
 #   NO_SQLITE    SQLite                   NO_ZLIB      Gzip.compress / Gzip.decompress
+#   NO_TLS       OpenSSL's TLS: TLSSocket and TLSServer raise
+#   NO_CRYPTO    OpenSSL's libcrypto: Digest, HMAC, SecureRandom and Base64 use portable
+#                code (src/portable_crypto.c); Cipher (AES-GCM) is unavailable
 MINIMAL ?=
 NO_MYSQL ?= $(MINIMAL)
 NO_POSTGRES ?= $(MINIMAL)
 NO_SQLITE ?= $(MINIMAL)
 NO_ZLIB ?= $(MINIMAL)
+NO_TLS ?= $(MINIMAL)
+NO_CRYPTO ?= $(MINIMAL)
 OPTIONAL_DEFINES := $(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL) $(if $(NO_POSTGRES),-DDIAMOND_NO_POSTGRES) \
-	$(if $(NO_SQLITE),-DDIAMOND_NO_SQLITE) $(if $(NO_ZLIB),-DDIAMOND_NO_ZLIB)
+	$(if $(NO_SQLITE),-DDIAMOND_NO_SQLITE) $(if $(NO_ZLIB),-DDIAMOND_NO_ZLIB) \
+	$(if $(NO_TLS),-DDIAMOND_NO_TLS) $(if $(NO_CRYPTO),-DDIAMOND_NO_CRYPTO)
+# libssl needs libcrypto, and libcrypto alone serves the digest/cipher calls.
 OPTIONAL_LIBS := $(if $(NO_SQLITE),,-lsqlite3) $(if $(NO_POSTGRES),,-lpq) \
 	$(if $(NO_MYSQL),,-lmariadb)
+OPENSSL_LIBS := $(if $(NO_TLS),,-lssl) $(if $(and $(NO_TLS),$(NO_CRYPTO)),,-lcrypto)
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
 	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA) \
 	$(OPTIONAL_DEFINES)
@@ -205,7 +212,7 @@ LDLIBS_CRYPT := -lcrypt
 # requires; where they physically appear in $(LDLIBS) doesn't matter.
 LDFLAGS_EXTRA :=
 LDFLAGS := $(LDFLAGS_EXTRA)
-LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a $(OPTIONAL_LIBS) $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
+LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a $(OPTIONAL_LIBS) $(LDLIBS_DL) -lpthread $(OPENSSL_LIBS) $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -745,7 +752,7 @@ aot-build: $(AOT_RUNTIME_LIB)
 # aot-build target above when none exists.
 AOT_KIT_DIR := $(BUILD_DIR)/aot-kit
 AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm $(OPTIONAL_LIBS) $(LDLIBS_DL) \
-	-lpthread -lssl -lcrypto $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
+	-lpthread $(OPENSSL_LIBS) $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
 DIAMOND_VERSION := $(shell sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)
 
 .PHONY: aot-kit
@@ -792,7 +799,7 @@ aot-kit-cross:
 	@test -n '$(TARGET_TRIPLE)' || { echo 'aot-kit-cross needs TARGET_TRIPLE=<triple> SYSROOT=<dir>' >&2; exit 1; }
 	@test -d '$(SYSROOT)' || { echo 'aot-kit-cross needs SYSROOT=<dir> to be a directory' >&2; exit 1; }
 	@case '$(TARGET_TRIPLE)' in *[!A-Za-z0-9_.-]*) echo 'invalid TARGET_TRIPLE' >&2; exit 1;; esac
-	$(MAKE) MINIMAL= NO_MYSQL= NO_POSTGRES= NO_SQLITE= NO_ZLIB= $(PRELUDE_BIN)
+	$(MAKE) MINIMAL= NO_MYSQL= NO_POSTGRES= NO_SQLITE= NO_ZLIB= NO_TLS= NO_CRYPTO= $(PRELUDE_BIN)
 	rm -rf $(CROSS_WORK)
 	mkdir -p $(CROSS_WORK)
 	cp -R $(REGINOLD_DIR) $(CROSS_WORK)/reginold
@@ -800,7 +807,7 @@ aot-kit-cross:
 	$(MAKE) -C $(CROSS_WORK)/reginold CC='$(CROSS_CC) $(CROSS_FLAGS)' libreginold.a
 	$(MAKE) -o $(PRELUDE_BIN) aot-kit CC='$(CROSS_CC)' TARGET_TRIPLE='$(TARGET_TRIPLE)' \
 	    NO_MYSQL='$(NO_MYSQL)' NO_POSTGRES='$(NO_POSTGRES)' NO_SQLITE='$(NO_SQLITE)' \
-	    NO_ZLIB='$(NO_ZLIB)' CPPFLAGS='$(CROSS_CPPFLAGS)' \
+	    NO_ZLIB='$(NO_ZLIB)' NO_TLS='$(NO_TLS)' NO_CRYPTO='$(NO_CRYPTO)' CPPFLAGS='$(CROSS_CPPFLAGS)' \
 	    $(if $(STATIC),LDFLAGS_EXTRA='-static' LDLIBS_EXTRA='$(STATIC_LDLIBS)') \
 	    AOT_CFLAGS='$(CFLAGS_COMMON) -O2 -g0 $(CROSS_FLAGS)' \
 	    AOT_CACHE_ROOT='$(CROSS_WORK)/aot' \

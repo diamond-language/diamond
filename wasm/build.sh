@@ -4,41 +4,22 @@
 #   WASI_SDK=/opt/wasi-sdk wasm/build.sh
 #
 # Needs a WASI SDK (clang 19+ with the wasm32-wasip1 sysroot; https://github.com/WebAssembly/wasi-sdk)
-# and OpenSSL's development headers: TLS and the digest/cipher calls are not yet optional, so the
-# source still names them. The headers are only read, never linked; those calls are imports the
-# page replaces with errors (wasm/web/diamond-wasm.js). SQLite, PostgreSQL, MySQL and zlib are
-# compiled out (MINIMAL=1's switches), so their headers are not needed and their features raise
-# an ordinary error. See docs/internal/wasm.md.
+# and nothing else: the build is MINIMAL=1's configuration, so SQLite, PostgreSQL, MySQL, zlib,
+# TLS and OpenSSL are compiled out (their features raise an ordinary error; Digest, HMAC,
+# SecureRandom and Base64 use src/portable_crypto.c) and no host library headers are read.
+# See docs/internal/wasm.md.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 sdk="${WASI_SDK:?set WASI_SDK to the wasi-sdk directory}"
 out="$root/build/wasm"
 jobs="${JOBS:-2}"
-mkdir -p "$out/include/openssl" "$out/obj"
-
-# OpenSSL headers the wasi sysroot lacks. Host copies are linked in; OpenSSL's per-architecture
-# configuration.h is replaced by a concrete one (the wasm build only reads declarations).
-openssl_dir=""
-for dir in /usr/include/openssl /usr/include/x86_64-linux-gnu/openssl /usr/local/include/openssl; do
-    [ -f "$dir/ssl.h" ] && { openssl_dir="$dir"; break; }
-done
-[ -n "$openssl_dir" ] || { echo "wasm/build.sh: OpenSSL development headers not found" >&2; exit 1; }
-for header in "$openssl_dir"/*.h; do ln -sf "$header" "$out/include/openssl/$(basename "$header")"; done
-python3 - "$openssl_dir" "$out/include/openssl/configuration.h" <<'PY'
-import glob, os, sys
-directory, target = sys.argv[1], sys.argv[2]
-candidates = sorted(glob.glob(os.path.join(directory, "configuration-*.h")))
-source = candidates[0] if candidates else os.path.join(directory, "configuration.h")
-text = open(source).read()
-marker = text.find("/*\n * WARNING: do not edit!")
-if os.path.lexists(target): os.unlink(target)
-open(target, "w").write(text[marker:] if marker >= 0 else text)
-PY
+mkdir -p "$out/obj"
 
 flags=(--target=wasm32-wasip1 --sysroot="$sdk/share/wasi-sysroot"
     -DDIAMOND_NO_MYSQL -DDIAMOND_NO_POSTGRES -DDIAMOND_NO_SQLITE -DDIAMOND_NO_ZLIB
-    -I"$root/wasm/include" -I"$out/include"
+    -DDIAMOND_NO_TLS -DDIAMOND_NO_CRYPTO
+    -I"$root/wasm/include"
     -include "$root/wasm/include/diamond_wasm_shim.h"
     -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS
     -std=c23 -O2 -I"$root/src" -I"$root/reginold" -w)

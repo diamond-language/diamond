@@ -8,11 +8,12 @@ authoritative fine-grained record.
 
 ### Tooling
 
-- Optional native libraries: `make NO_SQLITE=1`, `NO_POSTGRES=1`, `NO_MYSQL=1` and `NO_ZLIB=1`
-  build without that library and its header; the feature raises an error naming it. `MINIMAL=1`
-  sets all four. A new CI job builds the minimal configuration on a machine without those
-  packages. The WebAssembly build uses it, so `SQLite3.open`, `PostgreSQL.open` and
-  `Gzip.compress` are ordinary errors in the browser.
+- Optional native libraries: `make NO_SQLITE=1`, `NO_POSTGRES=1`, `NO_MYSQL=1`, `NO_ZLIB=1`,
+  `NO_TLS=1` and `NO_CRYPTO=1` build without that library and its header; the feature raises an
+  error naming it. `NO_CRYPTO` keeps `Digest`, `HMAC`, `SecureRandom` and `Base64` working through
+  portable code and drops `Cipher`. `MINIMAL=1` sets all six. A CI job builds the minimal
+  configuration on a machine with none of those packages. The WebAssembly build uses it, so it
+  needs no host library headers and `Digest`/`HMAC`/`Base64` work in the browser.
 
 ## 0.15.1 — 2026-10-15
 

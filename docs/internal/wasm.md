@@ -10,7 +10,8 @@ cd build/wasm && cp ../../wasm/web/* . && python3 -m http.server 8000   # open h
 
 ## What is in the module
 
-The runtime sources, minus `src/main.c` and `src/repl.c`, plus `wasm/repl_driver.c`, which exports
+The runtime sources (built as `MINIMAL=1`), minus `src/main.c` and `src/repl.c`, plus
+`wasm/repl_driver.c`, which exports
 `diamond_wasm_eval(source)`: compile the candidate against a prelude template built once, run it in
 a fresh VM, print the output, then a `0x1E` separator and the result value, or print a
 `line:column: error: message` to stderr. `wasm/web/diamond-wasm.js` keeps the REPL session as text
@@ -22,14 +23,14 @@ newline-terminated line of the candidate.
 
 - **Fibers** need stack switching. `getcontext` is a stub that fails, so `Fiber.new` raises.
 - **Threads, Supervisor, Channel** need pthreads; wasi-libc without threads has none.
-- **SQLite, PostgreSQL, MySQL and zlib** are compiled out (the `MINIMAL=1` switches): `SQLite3.open`,
-  `PostgreSQL.open`, `MySQL.open` and `Gzip.compress` raise an ordinary error ("... support is not
-  compiled into this build"), and their headers are not needed to build.
-- **Sockets, TLS, subprocesses and OpenSSL's digests and ciphers** are not linked. The calls are
-  `env` imports the page fills with functions that throw; `DiamondRepl.run` catches that, reports
-  "X is not available in the browser" and re-instantiates the module. `Digest` and `HMAC` are in
-  this group; the source hash used for bytecode caching has a portable SHA-256 under
-  `#ifdef __wasm__`.
+- **SQLite, PostgreSQL, MySQL, zlib, TLS and OpenSSL** are compiled out (the `MINIMAL=1`
+  switches): `SQLite3.open`, `PostgreSQL.open`, `MySQL.open`, `Gzip.compress`, `TLSServer.listen` and
+  `Cipher.encrypt` raise an ordinary error ("... is not compiled into this build"), and none of
+  their headers is needed to build. `Digest`, `HMAC`, `SecureRandom` and `Base64` still work, through
+  `src/portable_crypto.c` (SHA-256, SHA-1, HMAC, Base64, and `getentropy` for random bytes).
+- **Sockets, name lookup, subprocesses and signal handlers** are not linked. The calls are `env`
+  imports the page fills with functions that throw; `DiamondRepl.run` catches that, reports
+  "X is not available in the browser" and re-instantiates the module.
 - **Files**: the WASI shim exposes stdout and stderr only.
 - **JIT**: x86-64 only, so the interpreter runs.
 - **Deep recursion**: there is no 512 MiB main thread; the 16 MiB link-time stack bounds the call
@@ -45,7 +46,8 @@ is compiled from source once per page load (about 100 ms).
 
 ## Not done
 
-- `NO_TLS` and `NO_CRYPTO` switches, so the network and OpenSSL calls fail as ordinary errors
-  instead of traps and the build needs no OpenSSL headers.
+- Stubs for the remaining POSIX calls (sockets, `getaddrinfo`, `posix_spawn`, signals), so those fail
+  as ordinary errors instead of traps.
 - SQLite from the amalgamation, as an opt-in for the browser.
+- AES-GCM (`Cipher`) in portable code.
 - A CI job for the wasm build (needs a cached wasi-sdk).

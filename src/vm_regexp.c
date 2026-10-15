@@ -41,14 +41,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <openssl/bio.h>
-#include <openssl/crypto.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-#include <openssl/ssl.h>
-#include <openssl/x509.h>
+#include "tls_crypto.h"
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
