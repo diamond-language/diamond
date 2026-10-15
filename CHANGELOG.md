@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Concurrency
+
+- `Supervisor#stop(timeout_ms)` and sibling restarts now also end a worker stuck in `MySQL.open`
+  (connect and handshake) or in a read from a pipe or device the worker opened itself, such as a
+  named pipe. The host-name lookup inside `MySQL.open` and reads from standard input are still
+  not interrupted.
+
 ## 0.15.0 — 2026-10-14
 
 ### Tooling

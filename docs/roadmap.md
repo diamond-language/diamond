@@ -38,10 +38,11 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Interrupting the remaining blocked workers** -- `MySQL.open`'s connect and a read from a
-  pipe or terminal are still only stopped between
-  instructions by `Supervisor#stop(timeout_ms)`. Implicit cancellation checkpoints are
-  open (see [cancellation](cancellation.md)).
+- **Interrupting the last blocked workers** -- the host-name lookup inside `MySQL.open` and a
+  read from the process's own standard input are still only stopped between instructions by
+  `Supervisor#stop(timeout_ms)`. Standard input may be shared with the parent, so making it
+  non-blocking needs a different technique than the owned-descriptor one. Implicit
+  cancellation checkpoints are open (see [cancellation](cancellation.md)).
 - **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a
   `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
   by design. Needs a concrete use case.

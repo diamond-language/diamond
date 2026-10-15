@@ -4654,8 +4654,64 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * the caller -- mysql_close(conn), not mysql_close(connected)
                  * (nullptr), is what actually frees it and must run on
                  * this path too. */
-                MYSQL *connected=mysql_real_connect(conn,host_copy,user_copy,password_copy,
-                    database_copy,(unsigned int)port,nullptr,0);
+                MYSQL *connected=nullptr;
+                if(vm->interrupt_flag==nullptr) {
+                    connected=mysql_real_connect(conn,host_copy,user_copy,password_copy,
+                        database_copy,(unsigned int)port,nullptr,0);
+                } else {
+                    /* A supervised attempt can be stopped, so connect through the
+                     * connector's non-blocking API and wait for its socket in slices
+                     * that look at the interrupt flag, like every other native wait.
+                     * Name resolution happens inside mysql_real_connect_start and
+                     * is not interruptible. The option stays set for the
+                     * connection's life; the ordinary calls on it keep working. */
+                    mysql_options(conn,MYSQL_OPT_NONBLOCK,nullptr);
+                    int wanted=mysql_real_connect_start(&connected,conn,host_copy,
+                        user_copy,password_copy,database_copy,(unsigned int)port,
+                        nullptr,0);
+                    struct timespec started;
+                    clock_gettime(CLOCK_MONOTONIC,&started);
+                    while(wanted!=0) {
+                        if(vm_interrupt_requested(vm)) {
+                            free(host_copy);free(user_copy);free(password_copy);
+                            free(database_copy);
+                            mysql_close(conn);
+                            VM_RETURN(DIAMOND_VM_INTERRUPTED);
+                        }
+                        struct pollfd wait_fd={.fd=(int)mysql_get_socket(conn),.events=0};
+                        if(wanted&MYSQL_WAIT_READ)wait_fd.events|=POLLIN;
+                        if(wanted&MYSQL_WAIT_WRITE)wait_fd.events|=POLLOUT;
+                        if(wanted&MYSQL_WAIT_EXCEPT)wait_fd.events|=POLLPRI;
+                        int ready=0;
+                        if(wait_fd.fd>=0)
+                            ready=poll(&wait_fd,1,(int)DIAMOND_INTERRUPT_SLICE_MS);
+                        else {
+                            struct timespec slice={0,
+                                (long)DIAMOND_INTERRUPT_SLICE_MS*1000000L};
+                            nanosleep(&slice,nullptr);
+                        }
+                        int status=0;
+                        if(ready>0) {
+                            if(wait_fd.revents&(POLLIN|POLLHUP|POLLERR))
+                                status|=MYSQL_WAIT_READ;
+                            if(wait_fd.revents&(POLLOUT|POLLERR))
+                                status|=MYSQL_WAIT_WRITE;
+                            if(wait_fd.revents&POLLPRI)status|=MYSQL_WAIT_EXCEPT;
+                        }
+                        if(wanted&MYSQL_WAIT_TIMEOUT) {
+                            struct timespec now;
+                            clock_gettime(CLOCK_MONOTONIC,&now);
+                            const long elapsed_ms=(long)(now.tv_sec-started.tv_sec)*1000L+
+                                (now.tv_nsec-started.tv_nsec)/1000000L;
+                            if(elapsed_ms>=(long)mysql_get_timeout_value_ms(conn))
+                                status|=MYSQL_WAIT_TIMEOUT;
+                        }
+                        if(status==0&&ready>0)status=wanted&~MYSQL_WAIT_TIMEOUT;
+                        if(status==0)continue;
+                        wanted=mysql_real_connect_cont(&connected,conn,status);
+                        clock_gettime(CLOCK_MONOTONIC,&started);
+                    }
+                }
                 free(host_copy);free(user_copy);free(password_copy);free(database_copy);
                 if(connected==nullptr) {
                     snprintf(vm->error,sizeof vm->error,"%s",mysql_error(conn));

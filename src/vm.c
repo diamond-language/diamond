@@ -8106,10 +8106,11 @@ bool format_time_iso8601(const DiamondTime *target,int precision,
  * input (stdio's internals are not portable: musl exposes none). Instead an
  * interruptible VM reads a socket stream with O_NONBLOCK set for the duration
  * of the call: a read that would block fails with EAGAIN, and the caller waits
- * for readiness in slices (wait_fd_interruptible) and retries. Only sockets,
- * and only when the VM has an interrupt flag; the flag is restored on every
- * path, and the descriptor is the call's own (an accepted connection), not a
- * shared terminal or pipe. */
+ * for readiness in slices (wait_fd_interruptible) and retries. Only sockets
+ * and pipes or character devices opened above descriptor 2, and only when the
+ * VM has an interrupt flag; the flag is restored on every path. The standard
+ * streams are excluded: they may be shared with the parent, which a temporary
+ * O_NONBLOCK would affect. */
 typedef struct StreamNonblocking {
     int descriptor;
     int saved_flags;
@@ -8120,7 +8121,12 @@ static StreamNonblocking stream_nonblocking_begin(const DiamondVm *vm,FILE *stre
     if(vm->interrupt_flag==nullptr)return state;
     const int descriptor=fileno(stream);
     struct stat info;
-    if(descriptor<0||fstat(descriptor,&info)!=0||!S_ISSOCK(info.st_mode))return state;
+    if(descriptor<0||fstat(descriptor,&info)!=0)return state;
+    /* A socket, or a pipe or character device this process opened itself
+     * (descriptors 0-2 are inherited and may be shared with the parent). */
+    const bool owned_stream=descriptor>STDERR_FILENO&&
+        (S_ISFIFO(info.st_mode)||S_ISCHR(info.st_mode));
+    if(!S_ISSOCK(info.st_mode)&&!owned_stream)return state;
     const int flags=fcntl(descriptor,F_GETFL,0);
     if(flags<0)return state;
     if((flags&O_NONBLOCK)==0&&fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)!=0)
