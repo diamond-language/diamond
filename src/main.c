@@ -374,6 +374,66 @@ static char *kit_path(const char *kit, const char *name) {
     return path;
 }
 
+/* A target name becomes a directory name, so only the characters a target
+ * triple uses are accepted. */
+static bool target_name_is_valid(const char *target) {
+    if (target[0] == '\0') return false;
+    for (const char *c = target; *c != '\0'; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+              (*c >= '0' && *c <= '9') || *c == '-' || *c == '_' || *c == '.'))
+            return false;
+    return target[0] != '.';
+}
+
+static bool kit_has_runtime(const char *directory) {
+    const size_t length = strlen(directory) + sizeof "/libdiamond-aot.a";
+    char *path = malloc(length);
+    if (path == nullptr) return false;
+    snprintf(path, length, "%s/libdiamond-aot.a", directory);
+    const bool exists = access(path, R_OK) == 0;
+    free(path);
+    return exists;
+}
+
+/* The cross kit for `diamond build --target=TARGET` (`make aot-kit-cross`):
+ * <kit>/targets/TARGET under the installed or $DIAMOND_AOT_KIT kit, or
+ * build/aot-targets/TARGET in a source checkout. $DIAMOND_AOT_KIT may also
+ * name a cross kit directly. Returns nullptr when none exists. */
+static char *find_target_kit(const char *argv0, const char *target) {
+    char *host_kit = find_aot_kit(argv0);
+    char *found = nullptr;
+    if (host_kit != nullptr) {
+        const size_t length = strlen(host_kit) + sizeof "/targets/" + strlen(target);
+        char *candidate = malloc(length);
+        if (candidate != nullptr) {
+            snprintf(candidate, length, "%s/targets/%s", host_kit, target);
+            if (kit_has_runtime(candidate)) found = candidate; else free(candidate);
+        }
+        if (found == nullptr) {
+            char *recorded_path = kit_path(host_kit, "target");
+            char *recorded = recorded_path != nullptr ? read_file(recorded_path) : nullptr;
+            free(recorded_path);
+            if (recorded != nullptr) {
+                recorded[strcspn(recorded, "\n")] = '\0';
+                if (strcmp(recorded, target) == 0) found = strdup(host_kit);
+                free(recorded);
+            }
+        }
+        free(host_kit);
+        if (found != nullptr) return found;
+    }
+    char *repo_root = diamond_repo_root(argv0);
+    if (repo_root == nullptr) return nullptr;
+    const size_t length = strlen(repo_root) + sizeof "/build/aot-targets/" + strlen(target);
+    char *candidate = malloc(length);
+    if (candidate != nullptr) {
+        snprintf(candidate, length, "%s/build/aot-targets/%s", repo_root, target);
+        if (kit_has_runtime(candidate)) found = candidate; else free(candidate);
+    }
+    free(repo_root);
+    return found;
+}
+
 /* Kit metadata files hold one argument per line; blank lines are ignored.
  * Appends each line to `args` (capacity `capacity`), returning false if the
  * file is unreadable or there is no room. The strings live in `*storage`. */
@@ -408,7 +468,7 @@ static int wait_for_child(pid_t child, const char *tool) {
 /* Links the generated embed-data file against a prebuilt kit with a single
  * compiler invocation: no make, runtime sources, or headers are needed. */
 static int run_kit_aot_build(const char *kit, const char *embed_path,
-        const char *output_path, const char *cc_override) {
+        const char *output_path, const char *cc_override, const char *target) {
     char *version_path = kit_path(kit, "version");
     char *version = version_path != nullptr ? read_file(version_path) : nullptr;
     free(version_path);
@@ -424,6 +484,20 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
         return 74;
     }
     free(version);
+    if (target != nullptr) {
+        char *target_path = kit_path(kit, "target");
+        char *recorded = target_path != nullptr ? read_file(target_path) : nullptr;
+        free(target_path);
+        if (recorded != nullptr) recorded[strcspn(recorded, "\n")] = '\0';
+        const bool matches = recorded != nullptr && strcmp(recorded, target) == 0;
+        if (!matches) {
+            fprintf(stderr, "diamond: AOT kit '%s' is for target '%s', not '%s'\n",
+                    kit, recorded != nullptr ? recorded : "this machine", target);
+            free(recorded);
+            return 74;
+        }
+        free(recorded);
+    }
 
     enum { MAX_ARGS = 256 };
     char *args[MAX_ARGS];
@@ -484,17 +558,24 @@ done:
  * (still dynamically links whatever `diamond` itself does). */
 static int handle_build_command(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER]\n");
+        fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE]\n");
         return 64;
     }
     const char *source_path = argv[2];
     const char *output_path = nullptr;
     const char *cc = nullptr;
+    const char *target = nullptr;
     for (int index = 3; index < argc; index++) {
         if (strcmp(argv[index], "-o") == 0 && index + 1 < argc) {
             output_path = argv[++index];
         } else if (strncmp(argv[index], "--cc=", 5) == 0) {
             cc = argv[index] + 5;
+        } else if (strncmp(argv[index], "--target=", 9) == 0) {
+            target = argv[index] + 9;
+            if (!target_name_is_valid(target)) {
+                fprintf(stderr, "diamond: invalid build target '%s'\n", target);
+                return 64;
+            }
         } else {
             fprintf(stderr, "diamond: unrecognized build option '%s'\n", argv[index]);
             return 64;
@@ -554,14 +635,26 @@ static int handle_build_command(int argc, char **argv) {
         return 74;
     }
 
-    char *kit = find_aot_kit(argv[0]);
-    const int status = kit != nullptr
-        ? run_kit_aot_build(kit, embed_path, output_path, cc)
-        : run_make_aot_build(embed_path, output_path, cc, argv[0]);
+    char *kit = target != nullptr ? find_target_kit(argv[0], target)
+                                  : find_aot_kit(argv[0]);
+    int status;
+    if (target != nullptr && kit == nullptr) {
+        fprintf(stderr,
+            "diamond: no AOT kit for target '%s' (build one with `make aot-kit-cross "
+            "TARGET_TRIPLE=%s SYSROOT=...`, see docs/deployment.md)\n", target, target);
+        status = 74;
+    } else {
+        status = kit != nullptr
+            ? run_kit_aot_build(kit, embed_path, output_path, cc, target)
+            : run_make_aot_build(embed_path, output_path, cc, argv[0]);
+    }
     free(kit);
     unlink(bin_path);
     unlink(embed_path);
-    if (status == 0) printf("diamond: built '%s'\n", output_path);
+    if (status == 0) {
+        if (target != nullptr) printf("diamond: built '%s' for %s\n", output_path, target);
+        else printf("diamond: built '%s'\n", output_path);
+    }
     free(derived_output);
     return status;
 }

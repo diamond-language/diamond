@@ -67,6 +67,9 @@ typedef struct DiamondCacheFingerprint {
     uint32_t max_classes;
     uint32_t max_methods;
     uint32_t build_id;
+    /* 0x01020304 as written by this build: a reader on the opposite byte
+     * order sees a different value and rejects the image. */
+    uint32_t byte_order;
 } DiamondCacheFingerprint;
 
 /* Computes this build's own fingerprint fresh, from sizeof()/enum-count

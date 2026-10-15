@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- `diamond build --target=TRIPLE` cross-compiles a standalone program from a per-target
+  kit built with `make aot-kit-cross TARGET_TRIPLE=... SYSROOT=...` (clang plus a target
+  sysroot; validated for aarch64-linux-gnu under qemu). Kits install under
+  `lib/diamond/aot/targets/`. The compiled program image now records byte order, so an
+  image for an opposite-endian target is refused; this bumps the bytecode-cache format
+  and existing `.dic` caches are rebuilt once.
+
 ### Language
 
 - A struct can extend another struct: `struct Point3D(z: Int) < Point`. The parent's fields come
