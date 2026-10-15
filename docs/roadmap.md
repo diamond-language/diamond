@@ -120,6 +120,17 @@ Collections are stop-the-world within each isolated VM.
 - Investigate incremental marking only if pause measurements justify the added barrier
   and state-machine complexity.
 
+### WebAssembly
+
+Current state: [WebAssembly build](internal/wasm.md).
+
+- **Browser REPL on the site** -- the module and driver exist; the page, embedding and a CI job do not.
+- **Native calls that fail as errors** -- unavailable features currently trap through `env`
+  imports; C-level stubs or `NO_TLS`/`NO_POSTGRES`/`NO_SQLITE` switches would make them ordinary
+  Diamond errors.
+- **SQLite in the module** -- from the amalgamation.
+- **Fibers** -- need stack switching (Asyncify or the stack-switching proposal).
+
 ### Native-code execution
 
 Current behavior and phase history: [JIT design](internal/jit-design.md).

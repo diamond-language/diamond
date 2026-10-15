@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diamond REPL</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fff; --fg: #1b1f24; --muted: #6b7280; --accent: #6d28d9; --panel: #f5f5f7; --err: #b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0e1116; --fg: #e6e8eb; --muted: #8b949e; --accent: #a78bfa; --panel: #161b22; --err: #f97066; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+  p.hint { color: var(--muted); margin: 0 0 1rem; }
+  #terminal { background: var(--panel); border-radius: .5rem; padding: .75rem 1rem; min-height: 16rem; max-height: 60vh;
+              overflow: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; cursor: text; }
+  .line { white-space: pre-wrap; word-break: break-word; }
+  .err { color: var(--err); }
+  .echo .prompt { color: var(--accent); }
+  form { display: flex; gap: .5rem; align-items: baseline; }
+  #prompt { color: var(--accent); white-space: pre; }
+  #input { flex: 1; background: transparent; color: inherit; border: 0; outline: 0; font: inherit; padding: 0; }
+  #status { color: var(--muted); font-size: .85rem; margin-top: .5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Diamond</h1>
+  <p class="hint">A REPL running in your browser: the real interpreter, compiled to WebAssembly. No network, files or threads here.</p>
+  <div id="terminal" role="log" aria-live="polite">
+    <div id="scrollback"></div>
+    <form id="form" autocomplete="off">
+      <span id="prompt">{&gt; </span><input id="input" aria-label="Diamond input" spellcheck="false" autocapitalize="off" autofocus>
+    </form>
+  </div>
+  <div id="status">Loading…</div>
+</main>
+<script type="module">
+import { DiamondRepl } from './diamond-wasm.js';
+
+const scrollback = document.getElementById('scrollback');
+const input = document.getElementById('input');
+const promptEl = document.getElementById('prompt');
+const status = document.getElementById('status');
+const history = []; let cursor = 0;
+
+function print(text, className = '') {
+  const line = document.createElement('div');
+  line.className = 'line ' + className;
+  line.textContent = text;
+  scrollback.append(line);
+  document.getElementById('terminal').scrollTop = 1e9;
+}
+
+let repl;
+try {
+  repl = await DiamondRepl.load(new URL('./diamond.wasm', import.meta.url));
+  status.textContent = 'Ready. Try: 1 + 2   or   [3, 1, 2].sort()';
+} catch (error) {
+  status.textContent = 'Could not load diamond.wasm: ' + error.message;
+  input.disabled = true;
+}
+
+document.getElementById('terminal').addEventListener('click', () => input.focus());
+document.getElementById('form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!repl) return;
+  const line = input.value;
+  input.value = '';
+  const echo = document.createElement('div');
+  echo.className = 'line echo';
+  echo.innerHTML = '<span class="prompt"></span>';
+  echo.firstChild.textContent = promptEl.textContent;
+  echo.append(document.createTextNode(line));
+  scrollback.append(echo);
+  if (line.trim()) { history.push(line); cursor = history.length; }
+  try {
+    const result = repl.submit(line);
+    if (result.kind === 'ok' && result.text) print(result.text);
+    else if (result.kind === 'error') print(result.text, 'err');
+  } catch (error) {
+    print(String(error.message || error), 'err');
+  }
+  promptEl.textContent = repl.prompt;
+});
+input.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowUp' && cursor > 0) { cursor--; input.value = history[cursor]; event.preventDefault(); }
+  else if (event.key === 'ArrowDown' && cursor < history.length) { cursor++; input.value = history[cursor] ?? ''; event.preventDefault(); }
+});
+</script>
+</body>
+</html>
