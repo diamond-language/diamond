@@ -194,6 +194,9 @@ jobs:
           curl -sSL -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
           sudo mkdir -p /opt/wasi-sdk
           sudo tar xzf wasi-sdk.tar.gz -C /opt/wasi-sdk --strip-components=1
+      # The module embeds the compiled prelude, which the host build generates.
+      - name: Generate the compiled prelude
+        run: make -j4 MINIMAL=1 build/compiled_prelude.bin
       - name: Build the module
         run: WASI_SDK=/opt/wasi-sdk JOBS=4 bash wasm/build.sh
       - name: Test the module
