@@ -124,7 +124,6 @@ Collections are stop-the-world within each isolated VM.
 
 Current state: [WebAssembly build](internal/wasm.md).
 
-- **SQLite in the module** -- from the amalgamation.
 - **Fibers** -- need stack switching (Asyncify or the stack-switching proposal).
 
 ### Native-code execution

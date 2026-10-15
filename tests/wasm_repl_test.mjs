@@ -47,7 +47,6 @@ expect('base64 decode', 'Base64.decode("aGVsbG8=")', equals('hello'));
 expect('secure random', 'SecureRandom.hex(8).length()', equals('16'));
 
 for (const [name, snippet, fragment] of [
-  ['sqlite', 'SQLite3.open(":memory:")', 'not compiled into this build'],
   ['postgres', 'PostgreSQL.open("host=x")', 'not compiled into this build'],
   ['mysql', 'MySQL.open("h", "u", "p", "d", 3306)', 'not compiled into this build'],
   ['gzip', 'Gzip.compress("x")', 'not compiled into this build'],
@@ -57,6 +56,23 @@ for (const [name, snippet, fragment] of [
   ['process', 'Process.run(["ls"])', 'Not supported'],
 ]) expect(`${name} fails as an ordinary error`, snippet, (r) =>
   r.kind === 'error' && r.text.includes(fragment));
+
+// SQLite runs in the module: in-memory databases only.
+expect('sqlite in memory', [
+  'db = SQLite3.open(":memory:")',
+  'db.execute("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")',
+  'db.execute("INSERT INTO people (name, age) VALUES (?, ?)", ["Ada", 36])',
+  'db.execute("INSERT INTO people (name, age) VALUES (?, ?)", ["Grace", 45])',
+  'db.query("SELECT name FROM people ORDER BY age DESC")',
+], equals('[{name: Grace}, {name: Ada}]'));
+expect('sqlite aggregate', [
+  'db = SQLite3.open(":memory:")',
+  'db.execute("CREATE TABLE n (v INTEGER)")',
+  'db.execute("INSERT INTO n VALUES (1), (2), (3)")',
+  'db.query("SELECT sum(v) AS total FROM n")',
+], equals('[{total: 6}]'));
+expect('sqlite file is refused cleanly', 'SQLite3.open("/tmp/diamond-test.db")',
+  errorContaining('cannot open'));
 
 // The session survives every failure above.
 expect('still alive', ['TCPSocket.connect("example.com", 80)', '1 + 1'], equals('2'));
