@@ -315,7 +315,7 @@ jobs:
         run: |
           dnf install -y --installroot=/sysroot --forcearch=aarch64 \
             --use-host-config --releasever="$(rpm -E %fedora)" \
-            --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
+            --setopt=install_weak_deps=False --setopt=tsflags=nodocs,noscripts \
             glibc-devel gcc libgcc openssl-devel sqlite-devel libpq-devel \
             mariadb-connector-c-devel zlib-devel libxcrypt-devel
       - name: Build the host runtime
