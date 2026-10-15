@@ -54,9 +54,10 @@ Current behavior: [deployment](deployment.md).
   under qemu; a CI job would need a cached sysroot and an emulator.
 - **Targets beyond 64-bit little-endian** -- a 32-bit or big-endian target needs a
   portable program image rather than the current struct dump.
-- **Static linking** -- a hermetic binary with no dynamic dependency on those
-  libraries or zlib/`libcrypt`. `diamond` itself does not link statically, so doing
-  it for `diamond build` alone would be new, unproven build-system work.
+- **MySQL in static builds** -- a static musl kit leaves the MariaDB client out; including
+  it needs Connector/C built from source as a static archive.
+- **Static output for glibc and non-Linux targets** -- only musl/Linux is supported;
+  `diamond` itself does not link statically.
 
 ### Sandbox mode
 

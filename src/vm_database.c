@@ -56,7 +56,9 @@
 #include <spawn.h>
 #include <sqlite3.h>
 #include <libpq-fe.h>
+#ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
+#endif
 #include <zlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -68,7 +70,11 @@
 
 #include "vm_internal.h"
 
+#ifndef DIAMOND_NO_MYSQL
 void mysql_library_init_once_fn(void) { mysql_library_init(0,nullptr,nullptr); }
+#else
+void mysql_library_init_once_fn(void) {}
+#endif
 
 /* Binds one Diamond value at a 1-indexed sqlite3 parameter position.
  * Factored out of the positional/named bind helpers below (identical
@@ -1047,6 +1053,7 @@ DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *ta
         param_count,&registers[dest]);
 }
 
+#ifndef DIAMOND_NO_MYSQL
 /* Fixed-width storage for a bound parameter's native value -- unlike
  * postgres_bind_params_helper (which must copy into freshly malloc'd,
  * NUL-terminated C strings for PQexecParams's text-format protocol),
@@ -1522,3 +1529,16 @@ DiamondVmStatus mysql_dispatch_helper(DiamondVm *vm,DiamondMysqlHandle *target_d
     return mysql_query_helper(vm,target_db,sql->chars,sql->length,param_values,
         param_count,&registers[dest]);
 }
+#else
+/* A build without the MariaDB client (a static musl build, for instance)
+ * cannot open a MySQL connection, so no handle ever reaches this dispatcher;
+ * it exists to keep the call site linked. */
+DiamondVmStatus mysql_dispatch_helper(DiamondVm *vm,DiamondMysqlHandle *target_db,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    (void)target_db;(void)method_name;(void)registers;(void)base;(void)argc;(void)dest;
+    snprintf(vm->error,sizeof vm->error,
+        "MySQL support is not compiled into this build");
+    return DIAMOND_VM_MYSQL_ERROR;
+}
+#endif

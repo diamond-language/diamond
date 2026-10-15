@@ -56,7 +56,9 @@
 #include <spawn.h>
 #include <sqlite3.h>
 #include <libpq-fe.h>
+#ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
+#endif
 #include <zlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -844,8 +846,10 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
             if(conn!=nullptr)PQfinish(conn);
         } else if(unreached->kind==DIAMOND_OBJECT_MYSQL) {
             size=sizeof(DiamondMysqlHandle);
+#ifndef DIAMOND_NO_MYSQL
             MYSQL *conn=((DiamondMysqlHandle *)unreached)->conn;
             if(conn!=nullptr)mysql_close(conn);
+#endif
         } else if(unreached->kind==DIAMOND_OBJECT_TIME) {
             /* No owned resource, no separate allocation -- free(unreached)
              * below is all that's needed; this branch exists only for
@@ -1715,8 +1719,10 @@ static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
             PGconn *conn=((DiamondPostgresHandle *)object)->conn;
             if(conn!=nullptr)PQfinish(conn);
         } else if(object->kind==DIAMOND_OBJECT_MYSQL) {
+#ifndef DIAMOND_NO_MYSQL
             MYSQL *conn=((DiamondMysqlHandle *)object)->conn;
             if(conn!=nullptr)mysql_close(conn);
+#endif
         }
         free(object);
         object = next;
@@ -12513,7 +12519,7 @@ DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
     if(finish_handshake_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         const char *direction=nullptr;
-        const DiamondVmStatus handshake_status=tls_finish_handshake(vm,tls_handle,&direction);
+        const DiamondVmStatus handshake_status=diamond_tls_finish_handshake(vm,tls_handle,&direction);
         if(handshake_status!=DIAMOND_VM_OK)return handshake_status;
         registers[dest]=DIAMOND_NIL;
         if(direction!=nullptr) {

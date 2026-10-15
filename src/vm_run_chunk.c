@@ -56,7 +56,9 @@
 #include <spawn.h>
 #include <sqlite3.h>
 #include <libpq-fe.h>
+#ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
+#endif
 #include <zlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -4573,6 +4575,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(dest);READ_SHORT(host_reg);READ_SHORT(user_reg);
                 READ_SHORT(password_reg);READ_SHORT(database_reg);READ_SHORT(port_reg);
                 VM_SANDBOX_GUARD("MySQL.open", "database");
+#ifdef DIAMOND_NO_MYSQL
+                (void)dest;(void)host_reg;(void)user_reg;(void)password_reg;
+                (void)database_reg;(void)port_reg;
+                snprintf(vm->error,sizeof vm->error,
+                    "MySQL support is not compiled into this build");
+                VM_RETURN(DIAMOND_VM_MYSQL_ERROR);
+#else
                 if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -4660,6 +4669,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+#endif
                 break;
             }
             case DIAMOND_OP_PROGRAM_BUILDER_NEW: {

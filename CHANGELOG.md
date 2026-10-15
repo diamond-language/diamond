@@ -15,6 +15,12 @@ authoritative fine-grained record.
   image for an opposite-endian target is refused; this bumps the bytecode-cache format
   and existing `.dic` caches are rebuilt once.
 
+- Static musl binaries: `make aot-kit-cross ... STATIC=1 NO_MYSQL=1` with a musl sysroot, then
+  `diamond build --target=...-musl`, produces a fully static executable (validated on
+  x86_64 Alpine). `NO_MYSQL=1` builds without the MariaDB client; `MySQL.open` then raises
+  a `MySQLError`. An internal TLS helper was renamed so it no longer collides with
+  libssl's static symbols.
+
 ### Language
 
 - A struct can extend another struct: `struct Point3D(z: Int) < Point`. The parent's fields come

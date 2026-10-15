@@ -43,8 +43,13 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # below -- Homebrew's own prefix differs by CPU architecture (/opt/homebrew
 # on Apple Silicon, /usr/local on Intel), so it can't be a fixed path either.
 CPPFLAGS_EXTRA :=
+# NO_MYSQL=1 builds without the MariaDB client library: MySQL.open raises a
+# MySQLError and nothing links against libmariadb. Needed where that library
+# has no static build (see docs/deployment.md, "Static linking").
+NO_MYSQL ?=
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
-	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA)
+	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA) \
+	$(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL)
 # -fPIE: explicit, not left to the compiler's own default. Fedora/Ubuntu's
 # gcc default to a consistent compile/link PIE pairing either way, so this
 # was invisible there, but Alpine's musl-targeting gcc defaults to `-pie`
@@ -188,7 +193,7 @@ LDLIBS_CRYPT := -lcrypt
 # requires; where they physically appear in $(LDLIBS) doesn't matter.
 LDFLAGS_EXTRA :=
 LDFLAGS := $(LDFLAGS_EXTRA)
-LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
+LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq $(if $(NO_MYSQL),,-lmariadb) $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -727,7 +732,7 @@ aot-build: $(AOT_RUNTIME_LIB)
 # <bin>/../lib/diamond/aot (or $DIAMOND_AOT_KIT) and falls back to the
 # aot-build target above when none exists.
 AOT_KIT_DIR := $(BUILD_DIR)/aot-kit
-AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm -lsqlite3 -lpq -lmariadb $(LDLIBS_DL) \
+AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm -lsqlite3 -lpq $(if $(NO_MYSQL),,-lmariadb) $(LDLIBS_DL) \
 	-lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
 DIAMOND_VERSION := $(shell sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)
 
@@ -762,21 +767,28 @@ CROSS_FLAGS_EXTRA ?=
 CROSS_FLAGS := --target=$(TARGET_TRIPLE) --sysroot=$(SYSROOT) $(CROSS_FLAGS_EXTRA)
 CROSS_WORK := $(BUILD_DIR)/cross-$(TARGET_TRIPLE)
 CROSS_CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -isystem $(SYSROOT)/usr/include/mysql \
-	-isystem $(SYSROOT)/usr/include/mariadb -isystem $(SYSROOT)/usr/include/postgresql
+	-isystem $(SYSROOT)/usr/include/mariadb -isystem $(SYSROOT)/usr/include/postgresql \
+	$(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL)
+# STATIC=1 makes the kit link fully statically (use with a musl target):
+# -static first, then the archives libpq itself needs and libucontext, which
+# musl lacks (STATIC_LDLIBS names them for sysroots that call them differently).
+STATIC ?=
+STATIC_LDLIBS ?= -lpgcommon_shlib -lpgport_shlib -lucontext
 
 .PHONY: aot-kit-cross
 aot-kit-cross:
 	@test -n '$(TARGET_TRIPLE)' || { echo 'aot-kit-cross needs TARGET_TRIPLE=<triple> SYSROOT=<dir>' >&2; exit 1; }
 	@test -d '$(SYSROOT)' || { echo 'aot-kit-cross needs SYSROOT=<dir> to be a directory' >&2; exit 1; }
 	@case '$(TARGET_TRIPLE)' in *[!A-Za-z0-9_.-]*) echo 'invalid TARGET_TRIPLE' >&2; exit 1;; esac
-	$(MAKE) $(PRELUDE_BIN)
+	$(MAKE) NO_MYSQL= $(PRELUDE_BIN)
 	rm -rf $(CROSS_WORK)
 	mkdir -p $(CROSS_WORK)
 	cp -R $(REGINOLD_DIR) $(CROSS_WORK)/reginold
 	find $(CROSS_WORK)/reginold \( -name '*.o' -o -name '*.a' \) -delete
 	$(MAKE) -C $(CROSS_WORK)/reginold CC='$(CROSS_CC) $(CROSS_FLAGS)' libreginold.a
-	$(MAKE) aot-kit CC='$(CROSS_CC)' TARGET_TRIPLE='$(TARGET_TRIPLE)' \
-	    CPPFLAGS='$(CROSS_CPPFLAGS)' \
+	$(MAKE) -o $(PRELUDE_BIN) aot-kit CC='$(CROSS_CC)' TARGET_TRIPLE='$(TARGET_TRIPLE)' \
+	    NO_MYSQL='$(NO_MYSQL)' CPPFLAGS='$(CROSS_CPPFLAGS)' \
+	    $(if $(STATIC),LDFLAGS_EXTRA='-static' LDLIBS_EXTRA='$(STATIC_LDLIBS)') \
 	    AOT_CFLAGS='$(CFLAGS_COMMON) -O2 -g0 $(CROSS_FLAGS)' \
 	    AOT_CACHE_ROOT='$(CROSS_WORK)/aot' \
 	    AOT_KIT_DIR='$(CROSS_WORK)/kit' \

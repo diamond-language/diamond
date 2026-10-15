@@ -346,7 +346,7 @@ DIAMOND_INTERNAL DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm, c
 DIAMOND_INTERNAL DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port, bool nonblocking,bool reuse_port,DiamondListenerHandle **out_handle);
 DIAMOND_INTERNAL void tls_abort_handshake(DiamondTlsSocketHandle *handle);
 DIAMOND_INTERNAL DiamondVmStatus tls_encode_alpn_protocols(DiamondVm *vm,const char *owner, const DiamondArray *protocols,unsigned char **out_buffer,unsigned int *out_length);
-DIAMOND_INTERNAL DiamondVmStatus tls_finish_handshake(DiamondVm *vm, DiamondTlsSocketHandle *handle,const char **direction);
+DIAMOND_INTERNAL DiamondVmStatus diamond_tls_finish_handshake(DiamondVm *vm, DiamondTlsSocketHandle *handle,const char **direction);
 DIAMOND_INTERNAL void tls_format_error(char *buffer,size_t buffer_size);
 DIAMOND_INTERNAL DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port, const char *cert_path,const char *key_path,const DiamondArray *alpn_protocols, const char *client_ca_path,DiamondListenerHandle **out_handle);
 DIAMOND_INTERNAL int tls_new_session_callback(SSL *ssl,SSL_SESSION *session);
