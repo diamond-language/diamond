@@ -181,7 +181,8 @@ jobs:
   # case 60 times, each pinned to two CPUs under a timeout, which reproduced that
   # race on its 46th run before it was fixed (tests/stress_threads.sh).
   # A build with every optional native library compiled out, on a machine that does not have
-  # their headers: proves MINIMAL=1 really drops them (SQLite, PostgreSQL, MySQL/MariaDB, zlib).
+  # their headers: proves MINIMAL=1 really drops them (SQLite, PostgreSQL, MySQL/MariaDB, zlib,
+  # OpenSSL).
   test-minimal:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -192,10 +193,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-      - name: Install dependencies (Ubuntu, no database or zlib development packages)
+      - name: Install dependencies (Ubuntu, no database, zlib or OpenSSL development packages)
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libssl-dev libcrypt-dev bc openssl curl util-linux
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux
       - name: Build and check the minimal configuration
         run: make MINIMAL=1 test-minimal
 

@@ -187,8 +187,8 @@ make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/
   overrides the extra archives for a sysroot that names them differently.
 - **MySQL is left out** (`NO_MYSQL=1`): MariaDB Connector/C has no static build in Alpine.
   `MySQL.open` raises a `MySQLError` ("MySQL support is not compiled into this build")
-  and `-lmariadb` is not linked. `NO_POSTGRES`, `NO_SQLITE` and `NO_ZLIB` do the same for
-  those libraries, and `MINIMAL=1` sets all four; they work for ordinary builds too.
+  and `-lmariadb` is not linked. `NO_POSTGRES`, `NO_SQLITE`, `NO_ZLIB`, `NO_TLS` and `NO_CRYPTO` do
+  the same for those libraries, and `MINIMAL=1` sets all six; they work for ordinary builds too.
 - The binary reads the host's CA certificates for TLS (`/etc/ssl`), so a minimal image
   still needs a certificate bundle for outbound HTTPS.
 - Static glibc is not offered: its name-service lookups load shared libraries at run

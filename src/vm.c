@@ -41,14 +41,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <openssl/bio.h>
-#include <openssl/crypto.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-#include <openssl/ssl.h>
-#include <openssl/x509.h>
+#include "tls_crypto.h"
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -5796,6 +5789,11 @@ enum { DIAMOND_CIPHER_KEY_LENGTH = 32, DIAMOND_CIPHER_NONCE_LENGTH = 12,
  * one blob, no separate nonce/tag bookkeeping at the call site. */
 DiamondVmStatus aes_gcm_encrypt_helper(DiamondVm *vm,DiamondValue key_value,
         DiamondValue plaintext_value,DiamondValue *out_result) {
+#ifdef DIAMOND_NO_CRYPTO
+    snprintf(vm->error,sizeof vm->error,"Cipher is not compiled into this build");
+    (void)key_value;(void)out_result;
+    return DIAMOND_VM_PROGRAM_ERROR;
+#endif
     if(key_value.kind!=DIAMOND_VALUE_OBJECT||
        key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
        plaintext_value.kind!=DIAMOND_VALUE_OBJECT||
@@ -5865,6 +5863,11 @@ DiamondVmStatus aes_gcm_encrypt_helper(DiamondVm *vm,DiamondValue key_value,
  * operation, not something calling code should have to rescue. */
 DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_value,
         DiamondValue blob_value,DiamondValue *out_result) {
+#ifdef DIAMOND_NO_CRYPTO
+    snprintf(vm->error,sizeof vm->error,"Cipher is not compiled into this build");
+    (void)key_value;(void)out_result;
+    return DIAMOND_VM_PROGRAM_ERROR;
+#endif
     if(key_value.kind!=DIAMOND_VALUE_OBJECT||
        key_value.as.object->kind!=DIAMOND_OBJECT_STRING||
        blob_value.kind!=DIAMOND_VALUE_OBJECT||
