@@ -27,7 +27,24 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#if defined(__wasm__)
+/* WebAssembly has no stack switching: a Fiber cannot be created there. The
+ * stubs let the fiber code compile; getcontext fails, so Fiber.new raises
+ * a runtime error. */
+typedef struct ucontext_stub {
+    struct { void *ss_sp; size_t ss_size; } uc_stack;
+    struct ucontext_stub *uc_link;
+} ucontext_t;
+static inline int getcontext(ucontext_t *context) { (void)context; return -1; }
+static inline void makecontext(ucontext_t *context, void (*function)(void), int count, ...) {
+    (void)context; (void)function; (void)count;
+}
+static inline int swapcontext(ucontext_t *save, const ucontext_t *target) {
+    (void)save; (void)target; return -1;
+}
+#else
 #include <ucontext.h>
+#endif
 
 enum {
     /* Absolute 16-bit jump-target boundary. Function bytecode/source maps
