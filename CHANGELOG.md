@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.15.0 — 2026-10-14
+
 ### Tooling
 
 - `diamond build --target=TRIPLE` cross-compiles a standalone program from a per-target
@@ -14,7 +16,6 @@ authoritative fine-grained record.
   `lib/diamond/aot/targets/`. The compiled program image now records byte order, so an
   image for an opposite-endian target is refused; this bumps the bytecode-cache format
   and existing `.dic` caches are rebuilt once.
-
 - Static musl binaries: `make aot-kit-cross ... STATIC=1 NO_MYSQL=1` with a musl sysroot, then
   `diamond build --target=...-musl`, produces a fully static executable (validated on
   x86_64 Alpine). `NO_MYSQL=1` builds without the MariaDB client; `MySQL.open` then raises
