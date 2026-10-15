@@ -252,7 +252,11 @@ search over a real (if scoped) lexical symbol table:
     their own source maps. A failed compile never returns a stale cached result.
     Capturing/boxing a local preserves the separate tooling fact through the
     capture cell, including when the loaded value is assigned to another local.
-    Any other receiver this
+    Module-qualified class names work as receivers (`Shapes::Table.new().describe()`,
+    `Outer::Inner::Deep.new().dive()`), and a module's singleton method
+    (`Shapes.build().describe()`, `def self.build` or `module_function`) publishes its
+    result class like a top-level function. A call on a module with no resolvable
+    return stays unresolved. Any other receiver this
     can't resolve falls back to the ordinary "not found" result instead of
     a guess. All three
     require the *document* to currently compile cleanly — otherwise they return `null`/empty

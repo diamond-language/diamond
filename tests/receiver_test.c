@@ -462,6 +462,50 @@ int main(void) {
         "  identity(value).bark()\n"
         "  array_identity(values)[0].bark()\n"
         "  hash_value(map).bark()\n"
+        "end\n"
+        "module Qualified\n"
+        "  class Widget\n"
+        "    def spin()\n"
+        "      1\n"
+        "    end\n"
+        "    def part()\n"
+        "      Gear.new()\n"
+        "    end\n"
+        "    def self.build()\n"
+        "      Widget.new()\n"
+        "    end\n"
+        "  end\n"
+        "  class Gear\n"
+        "    def turn()\n"
+        "      1\n"
+        "    end\n"
+        "  end\n"
+        "  module Inner\n"
+        "    class Deep\n"
+        "      def dive()\n"
+        "        1\n"
+        "      end\n"
+        "    end\n"
+        "  end\n"
+        "  def self.make()\n"
+        "    Widget.new()\n"
+        "  end\n"
+        "  def self.make_inner()\n"
+        "    Qualified::Inner::Deep.new()\n"
+        "  end\n"
+        "  def self.unknown(value)\n"
+        "    value\n"
+        "  end\n"
+        "end\n"
+        "def qualified_probes()\n"
+        "  Qualified::Widget.new().spin()\n"
+        "  Qualified::Widget.new().part().turn()\n"
+        "  Qualified::Widget.build().spin()\n"
+        "  Qualified.make().spin()\n"
+        "  Qualified.make().part().turn()\n"
+        "  Qualified::Inner::Deep.new().dive()\n"
+        "  Qualified.make_inner().dive()\n"
+        "  Qualified.unknown(1).spin()\n"
         "end\n";
 
     char *combined=diamond_lsp_build_compile_buffer(nullptr,source,sizeof source-1,
@@ -538,6 +582,15 @@ int main(void) {
         "spread_factory().reverse().take(1)[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,
         "TransformOwner.new().reverse()[0].","Leaf",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified::Widget.","Qualified::Widget",true);
+    failed|=check_receiver(program,&chunk,combined,"Qualified::Widget.new().","Qualified::Widget",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified::Widget.new().part().","Qualified::Gear",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified::Widget.build().","Qualified::Widget",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified.make().","Qualified::Widget",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified.make().part().","Qualified::Gear",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified::Inner::Deep.new().","Qualified::Inner::Deep",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified.make_inner().","Qualified::Inner::Deep",false);
+    failed|=check_receiver(program,&chunk,combined,"Qualified.unknown(1).",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"reversed_pet.","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"unique_pets[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"compact_pets[0].","Pet",false);

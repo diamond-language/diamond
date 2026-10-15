@@ -6,6 +6,13 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Language server: a module-qualified class name now resolves as a receiver, so completion, hover
+  and definition work on `Shapes::Table.new().describe()` and `Outer::Inner::Deep.new().dive()`,
+  and a module's singleton method (`Shapes.build().describe()`) publishes its result class.
+  Before, these resolved only when the value was first assigned to a local.
+
 ### Concurrency
 
 - `Supervisor#stop(timeout_ms)` and sibling restarts now also end a worker stuck in `MySQL.open`
