@@ -50,8 +50,10 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [deployment](deployment.md).
 
-- **Cross-compilation** -- needs a real story for cross-linking OpenSSL, SQLite3,
-  `libpq` and MariaDB for the target, not just a compiler flag.
+- **Cross-compile CI** -- the cross kit is validated by hand against an aarch64 sysroot
+  under qemu; a CI job would need a cached sysroot and an emulator.
+- **Targets beyond 64-bit little-endian** -- a 32-bit or big-endian target needs a
+  portable program image rather than the current struct dump.
 - **Static linking** -- a hermetic binary with no dynamic dependency on those
   libraries or zlib/`libcrypt`. `diamond` itself does not link statically, so doing
   it for `diamond build` alone would be new, unproven build-system work.

@@ -668,8 +668,10 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 5: the body starts with a count of leading functions left out because they
  *    are the embedded prelude's own (0 when none were).
  * 6: each function's struct image is stored as zero-run records instead of
- *    its full ~11 KB. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 6 };
+ *    its full ~11 KB.
+ * 7: the fingerprint carries the writer's byte order, so an image built for
+ *    an opposite-endian target is rejected instead of misread. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 7 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.di and lib/core/), passed in by the
@@ -695,6 +697,7 @@ DiamondCacheFingerprint diamond_cache_fingerprint(void) {
         .max_classes=(uint32_t)DIAMOND_MAX_CLASSES,
         .max_methods=(uint32_t)DIAMOND_MAX_METHODS,
         .build_id=(uint32_t)DIAMOND_BUILD_ID,
+        .byte_order=0x01020304u,
     };
 }
 
@@ -713,6 +716,7 @@ static bool write_cache_fingerprint(FILE *file, const DiamondCacheFingerprint *f
     if (!write_all(file, &fingerprint->max_classes, sizeof fingerprint->max_classes)) return false;
     if (!write_all(file, &fingerprint->max_methods, sizeof fingerprint->max_methods)) return false;
     if (!write_all(file, &fingerprint->build_id, sizeof fingerprint->build_id)) return false;
+    if (!write_all(file, &fingerprint->byte_order, sizeof fingerprint->byte_order)) return false;
     return true;
 }
 
@@ -728,6 +732,7 @@ static bool read_cache_fingerprint(const uint8_t **cursor, const uint8_t *end,
     if (!read_bytes(cursor, end, &out->max_classes, sizeof out->max_classes)) return false;
     if (!read_bytes(cursor, end, &out->max_methods, sizeof out->max_methods)) return false;
     if (!read_bytes(cursor, end, &out->build_id, sizeof out->build_id)) return false;
+    if (!read_bytes(cursor, end, &out->byte_order, sizeof out->byte_order)) return false;
     return true;
 }
 
