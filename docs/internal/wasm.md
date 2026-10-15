@@ -19,6 +19,13 @@ and replays it for every line, as the terminal REPL does (`src/repl.c`): only ou
 previous run printed is shown. An entry is unfinished when the parser's error lies past the last
 newline-terminated line of the candidate.
 
+## Building and testing
+
+`make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
+builds the module and drives it through `wasm/web/diamond-wasm.js`: results, session state,
+continuation lines, the portable crypto's known answers, and an ordinary error for every
+unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
+
 ## What does not work, and how it fails
 
 - **Fibers** need stack switching. `getcontext` is a stub that fails, so `Fiber.new` raises.
@@ -28,9 +35,11 @@ newline-terminated line of the candidate.
   `Cipher.encrypt` raise an ordinary error ("... is not compiled into this build"), and none of
   their headers is needed to build. `Digest`, `HMAC`, `SecureRandom` and `Base64` still work, through
   `src/portable_crypto.c` (SHA-256, SHA-1, HMAC, Base64, and `getentropy` for random bytes).
-- **Sockets, name lookup, subprocesses and signal handlers** are not linked. The calls are `env`
-  imports the page fills with functions that throw; `DiamondRepl.run` catches that, reports
-  "X is not available in the browser" and re-instantiates the module.
+- **Sockets, name lookup, subprocesses, signal handlers and temporary files** are not available.
+  `wasm/posix_stubs.c` defines those calls to fail with `ENOSYS`, so a program gets an ordinary
+  error ("cannot connect to 'example.com:80': name lookup is not available in the browser",
+  `Process.run: pipe: Not supported`). The module has no imports besides WASI's, and links
+  without `--allow-undefined`, so an unexpected new dependency is a build error.
 - **Files**: the WASI shim exposes stdout and stderr only.
 - **JIT**: x86-64 only, so the interpreter runs.
 - **Deep recursion**: there is no 512 MiB main thread; the 16 MiB link-time stack bounds the call
@@ -46,8 +55,5 @@ is compiled from source once per page load (about 100 ms).
 
 ## Not done
 
-- Stubs for the remaining POSIX calls (sockets, `getaddrinfo`, `posix_spawn`, signals), so those fail
-  as ordinary errors instead of traps.
 - SQLite from the amalgamation, as an opt-in for the browser.
 - AES-GCM (`Cipher`) in portable code.
-- A CI job for the wasm build (needs a cached wasi-sdk).

@@ -8,6 +8,10 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- The interpreter builds for WebAssembly (`wasm/build.sh`, needs only a wasi-sdk) and runs a REPL in
+  the browser at dilang.tech. Fibers, threads, sockets, subprocesses, databases and TLS are not
+  available there and fail with ordinary errors; `Digest`, `HMAC`, `Base64` and `SecureRandom`
+  work. A `test-wasm` CI job builds the module and drives it through the site's JavaScript.
 - Optional native libraries: `make NO_SQLITE=1`, `NO_POSTGRES=1`, `NO_MYSQL=1`, `NO_ZLIB=1`,
   `NO_TLS=1` and `NO_CRYPTO=1` build without that library and its header; the feature raises an
   error naming it. `NO_CRYPTO` keeps `Digest`, `HMAC`, `SecureRandom` and `Base64` working through

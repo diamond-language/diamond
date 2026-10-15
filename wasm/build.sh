@@ -28,7 +28,7 @@ cc="$sdk/bin/clang"
 # main.c is the CLI and repl.c the terminal REPL; the page drives wasm/repl_driver.c instead.
 sources=$(cd "$root" && ls src/*.c | grep -v -e src/main.c -e src/repl.c)
 running=0
-for source in $sources wasm/repl_driver.c; do
+for source in $sources wasm/repl_driver.c wasm/posix_stubs.c; do
     object="$out/obj/$(basename "${source%.c}").o"
     if [ -f "$object" ] && [ ! "$root/$source" -nt "$object" ]; then continue; fi
     nice -n 19 "$cc" "${flags[@]}" -c "$root/$source" -o "$object" &
@@ -48,7 +48,7 @@ if [ ! -f "$out/reginold/libreginold.a" ]; then
 fi
 
 "$cc" --target=wasm32-wasip1 --sysroot="$sdk/share/wasi-sysroot" -mexec-model=reactor \
-    -Wl,--allow-undefined -Wl,-z,stack-size=16777216 \
+    -Wl,-z,stack-size=16777216 \
     -Wl,--initial-memory=134217728 -Wl,--max-memory=1073741824 \
     -o "$out/diamond.wasm" "$out"/obj/*.o "$out/reginold/libreginold.a" \
     -lm -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks
