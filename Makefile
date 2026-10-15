@@ -879,6 +879,12 @@ $(BUILD_DIR)/compile_fuzzer: $(FUZZ_OBJ_DIR)/compile_fuzzer.o $(FUZZ_OBJECTS) $(
 $(BUILD_DIR)/execute_fuzzer: $(FUZZ_OBJ_DIR)/execute_fuzzer.o $(FUZZ_OBJECTS) $(REGINOLD_LIB)
 	$(CC_FUZZ) $(CFLAGS_FUZZ) $(FUZZ_OBJECTS) $< $(FUZZ_LIBS) -o $@
 
+# Runs each input under the interpreter and under the JIT plus stress GC and
+# aborts when they disagree; see fuzz/differential_fuzzer.c. Not part of the
+# bounded smoke test: seed it with tests/cases and run it for as long as you like.
+$(BUILD_DIR)/differential_fuzzer: $(FUZZ_OBJ_DIR)/differential_fuzzer.o $(FUZZ_OBJECTS) $(REGINOLD_LIB)
+	$(CC_FUZZ) $(CFLAGS_FUZZ) $(FUZZ_OBJECTS) $< $(FUZZ_LIBS) -o $@
+
 fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
 
 test-fuzz: $(BUILD_DIR)/compile_fuzzer $(BUILD_DIR)/execute_fuzzer
@@ -996,4 +1002,4 @@ test-integration:
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(DEPS) $(AOT_RUNTIME_OBJECTS:.o=.d) $(API_DBG_OBJECTS:.o=.d) $(FUZZ_OBJECTS:.o=.d) $(FUZZ_OBJ_DIR)/compile_fuzzer.d $(FUZZ_OBJ_DIR)/execute_fuzzer.d
+-include $(DEPS) $(AOT_RUNTIME_OBJECTS:.o=.d) $(API_DBG_OBJECTS:.o=.d) $(FUZZ_OBJECTS:.o=.d) $(FUZZ_OBJ_DIR)/compile_fuzzer.d $(FUZZ_OBJ_DIR)/execute_fuzzer.d $(FUZZ_OBJ_DIR)/differential_fuzzer.d
