@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- Optional native libraries: `make NO_SQLITE=1`, `NO_POSTGRES=1`, `NO_MYSQL=1` and `NO_ZLIB=1`
+  build without that library and its header; the feature raises an error naming it. `MINIMAL=1`
+  sets all four. A new CI job builds the minimal configuration on a machine without those
+  packages. The WebAssembly build uses it, so `SQLite3.open`, `PostgreSQL.open` and
+  `Gzip.compress` are ordinary errors in the browser.
+
 ## 0.15.1 — 2026-10-15
 
 ### Fixed

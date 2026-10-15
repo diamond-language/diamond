@@ -56,12 +56,18 @@ enum { DIAMOND_PROCESS_MAX_ARGV = 65536 };
 #include <signal.h>
 #include <stdatomic.h>
 #include <spawn.h>
+#ifndef DIAMOND_NO_SQLITE
 #include <sqlite3.h>
+#endif
+#ifndef DIAMOND_NO_POSTGRES
 #include <libpq-fe.h>
+#endif
 #ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
 #endif
+#ifndef DIAMOND_NO_ZLIB
 #include <zlib.h>
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>

@@ -43,13 +43,25 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # below -- Homebrew's own prefix differs by CPU architecture (/opt/homebrew
 # on Apple Silicon, /usr/local on Intel), so it can't be a fixed path either.
 CPPFLAGS_EXTRA :=
-# NO_MYSQL=1 builds without the MariaDB client library: MySQL.open raises a
-# MySQLError and nothing links against libmariadb. Needed where that library
-# has no static build (see docs/deployment.md, "Static linking").
-NO_MYSQL ?=
+# Optional native dependencies. Each NO_<FEATURE>=1 builds without that library: the
+# feature's entry point raises an error naming it, its -l flag is dropped, and its header
+# is not needed. MINIMAL=1 turns all of them on (the WebAssembly build, a static musl build
+# whose sysroot lacks a client library). OpenSSL (TLS, digests, ciphers) is not optional
+# yet. See docs/internal/wasm.md and CONTRIBUTING.md.
+#   NO_MYSQL     MariaDB/MySQL client     NO_POSTGRES  libpq
+#   NO_SQLITE    SQLite                   NO_ZLIB      Gzip.compress / Gzip.decompress
+MINIMAL ?=
+NO_MYSQL ?= $(MINIMAL)
+NO_POSTGRES ?= $(MINIMAL)
+NO_SQLITE ?= $(MINIMAL)
+NO_ZLIB ?= $(MINIMAL)
+OPTIONAL_DEFINES := $(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL) $(if $(NO_POSTGRES),-DDIAMOND_NO_POSTGRES) \
+	$(if $(NO_SQLITE),-DDIAMOND_NO_SQLITE) $(if $(NO_ZLIB),-DDIAMOND_NO_ZLIB)
+OPTIONAL_LIBS := $(if $(NO_SQLITE),,-lsqlite3) $(if $(NO_POSTGRES),,-lpq) \
+	$(if $(NO_MYSQL),,-lmariadb)
 CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -I/usr/include/mysql -I/usr/include/mysql/mysql \
 	-I/usr/include/mariadb -I/usr/include/postgresql $(CPPFLAGS_EXTRA) \
-	$(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL)
+	$(OPTIONAL_DEFINES)
 # -fPIE: explicit, not left to the compiler's own default. Fedora/Ubuntu's
 # gcc default to a consistent compile/link PIE pairing either way, so this
 # was invisible there, but Alpine's musl-targeting gcc defaults to `-pie`
@@ -193,7 +205,7 @@ LDLIBS_CRYPT := -lcrypt
 # requires; where they physically appear in $(LDLIBS) doesn't matter.
 LDFLAGS_EXTRA :=
 LDFLAGS := $(LDFLAGS_EXTRA)
-LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a -lsqlite3 -lpq $(if $(NO_MYSQL),,-lmariadb) $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
+LDLIBS := $(LDFLAGS_EXTRA) -lm $(REGINOLD_DIR)/libreginold.a $(OPTIONAL_LIBS) $(LDLIBS_DL) -lpthread -lssl -lcrypto $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
 
 # libFuzzer is a Clang/LLVM feature (-fsanitize=fuzzer isn't recognized by
 # GCC at all) -- the fuzz binary is the one build variant in this Makefile
@@ -229,7 +241,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -732,8 +744,8 @@ aot-build: $(AOT_RUNTIME_LIB)
 # <bin>/../lib/diamond/aot (or $DIAMOND_AOT_KIT) and falls back to the
 # aot-build target above when none exists.
 AOT_KIT_DIR := $(BUILD_DIR)/aot-kit
-AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm -lsqlite3 -lpq $(if $(NO_MYSQL),,-lmariadb) $(LDLIBS_DL) \
-	-lpthread -lssl -lcrypto $(LDLIBS_CRYPT) -lz $(LDLIBS_EXTRA)
+AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm $(OPTIONAL_LIBS) $(LDLIBS_DL) \
+	-lpthread -lssl -lcrypto $(LDLIBS_CRYPT) $(if $(NO_ZLIB),,-lz) $(LDLIBS_EXTRA)
 DIAMOND_VERSION := $(shell sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)
 
 .PHONY: aot-kit
@@ -768,7 +780,7 @@ CROSS_FLAGS := --target=$(TARGET_TRIPLE) --sysroot=$(SYSROOT) $(CROSS_FLAGS_EXTR
 CROSS_WORK := $(BUILD_DIR)/cross-$(TARGET_TRIPLE)
 CROSS_CPPFLAGS := -Isrc -Ilsp -I$(REGINOLD_DIR) -isystem $(SYSROOT)/usr/include/mysql \
 	-isystem $(SYSROOT)/usr/include/mariadb -isystem $(SYSROOT)/usr/include/postgresql \
-	$(if $(NO_MYSQL),-DDIAMOND_NO_MYSQL)
+	$(OPTIONAL_DEFINES)
 # STATIC=1 makes the kit link fully statically (use with a musl target):
 # -static first, then the archives libpq itself needs and libucontext, which
 # musl lacks (STATIC_LDLIBS names them for sysroots that call them differently).
@@ -780,14 +792,15 @@ aot-kit-cross:
 	@test -n '$(TARGET_TRIPLE)' || { echo 'aot-kit-cross needs TARGET_TRIPLE=<triple> SYSROOT=<dir>' >&2; exit 1; }
 	@test -d '$(SYSROOT)' || { echo 'aot-kit-cross needs SYSROOT=<dir> to be a directory' >&2; exit 1; }
 	@case '$(TARGET_TRIPLE)' in *[!A-Za-z0-9_.-]*) echo 'invalid TARGET_TRIPLE' >&2; exit 1;; esac
-	$(MAKE) NO_MYSQL= $(PRELUDE_BIN)
+	$(MAKE) MINIMAL= NO_MYSQL= NO_POSTGRES= NO_SQLITE= NO_ZLIB= $(PRELUDE_BIN)
 	rm -rf $(CROSS_WORK)
 	mkdir -p $(CROSS_WORK)
 	cp -R $(REGINOLD_DIR) $(CROSS_WORK)/reginold
 	find $(CROSS_WORK)/reginold \( -name '*.o' -o -name '*.a' \) -delete
 	$(MAKE) -C $(CROSS_WORK)/reginold CC='$(CROSS_CC) $(CROSS_FLAGS)' libreginold.a
 	$(MAKE) -o $(PRELUDE_BIN) aot-kit CC='$(CROSS_CC)' TARGET_TRIPLE='$(TARGET_TRIPLE)' \
-	    NO_MYSQL='$(NO_MYSQL)' CPPFLAGS='$(CROSS_CPPFLAGS)' \
+	    NO_MYSQL='$(NO_MYSQL)' NO_POSTGRES='$(NO_POSTGRES)' NO_SQLITE='$(NO_SQLITE)' \
+	    NO_ZLIB='$(NO_ZLIB)' CPPFLAGS='$(CROSS_CPPFLAGS)' \
 	    $(if $(STATIC),LDFLAGS_EXTRA='-static' LDLIBS_EXTRA='$(STATIC_LDLIBS)') \
 	    AOT_CFLAGS='$(CFLAGS_COMMON) -O2 -g0 $(CROSS_FLAGS)' \
 	    AOT_CACHE_ROOT='$(CROSS_WORK)/aot' \
@@ -824,6 +837,12 @@ test-aot-kit: debug
 
 test-cross-build: debug
 	bash tests/cross_build_test.sh
+
+# Run as `make clean && make MINIMAL=1 test-minimal`: builds without SQLite, PostgreSQL,
+# MySQL/MariaDB and zlib and checks that nothing else changed. A plain `make test-minimal`
+# runs the same script against a full build, where the error checks are expected to fail.
+test-minimal: debug
+	bash tests/minimal_cases.sh
 
 test-repl: debug
 	bash tests/repl_test.sh

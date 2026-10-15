@@ -22,11 +22,14 @@ newline-terminated line of the candidate.
 
 - **Fibers** need stack switching. `getcontext` is a stub that fails, so `Fiber.new` raises.
 - **Threads, Supervisor, Channel** need pthreads; wasi-libc without threads has none.
-- **Sockets, TLS, subprocesses, PostgreSQL, SQLite, MySQL, zlib, OpenSSL** are not linked.
-  The calls are `env` imports the page fills with functions that throw; `DiamondRepl.run`
-  catches that, reports "X is not available in the browser" and re-instantiates the module.
-  Anything that would hash with OpenSSL (`Digest`, `HMAC`) is in this group; the source hash used
-  for bytecode caching has a portable SHA-256 under `#ifdef __wasm__`.
+- **SQLite, PostgreSQL, MySQL and zlib** are compiled out (the `MINIMAL=1` switches): `SQLite3.open`,
+  `PostgreSQL.open`, `MySQL.open` and `Gzip.compress` raise an ordinary error ("... support is not
+  compiled into this build"), and their headers are not needed to build.
+- **Sockets, TLS, subprocesses and OpenSSL's digests and ciphers** are not linked. The calls are
+  `env` imports the page fills with functions that throw; `DiamondRepl.run` catches that, reports
+  "X is not available in the browser" and re-instantiates the module. `Digest` and `HMAC` are in
+  this group; the source hash used for bytecode caching has a portable SHA-256 under
+  `#ifdef __wasm__`.
 - **Files**: the WASI shim exposes stdout and stderr only.
 - **JIT**: x86-64 only, so the interpreter runs.
 - **Deep recursion**: there is no 512 MiB main thread; the 16 MiB link-time stack bounds the call
@@ -42,8 +45,7 @@ is compiled from source once per page load (about 100 ms).
 
 ## Not done
 
-- A page that embeds the module on dilang.tech (the site makeover).
-- C-level stubs for the unavailable native calls, so they fail as Diamond errors instead of
-  traps; a `NO_TLS`/`NO_POSTGRES`/`NO_SQLITE` family of switches like `NO_MYSQL`.
-- SQLite from the amalgamation.
-- A CI job (needs a cached wasi-sdk).
+- `NO_TLS` and `NO_CRYPTO` switches, so the network and OpenSSL calls fail as ordinary errors
+  instead of traps and the build needs no OpenSSL headers.
+- SQLite from the amalgamation, as an opt-in for the browser.
+- A CI job for the wasm build (needs a cached wasi-sdk).

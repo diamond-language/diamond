@@ -22,8 +22,8 @@ Required system dependencies:
 - GCC 15+ or Clang 19+ with C23 support;
 - OpenSSL development headers and libraries;
 - SQLite3, PostgreSQL (`libpq`), and MariaDB/MySQL client development
-  headers and libraries;
-- zlib and libcrypt (`crypt(3)`) development headers and libraries;
+  headers and libraries, each optional (below);
+- zlib (optional) and libcrypt (`crypt(3)`) development headers and libraries;
 - POSIX threads and `ucontext`, provided by the target Linux environment;
 - On x86_64: a CPU supporting the `x86-64-v3` microarchitecture level
   (AVX2, BMI2, FMA -- roughly Intel Haswell/2013 or AMD Excavator/2015
@@ -53,6 +53,14 @@ pkg install gmake sqlite3 openssl postgresql16-client mariadb-connector-c
 # macOS (Clang only -- there is no system GCC)
 brew install openssl@3 sqlite postgresql@16 mariadb-connector-c
 ```
+
+SQLite, PostgreSQL, MySQL/MariaDB and zlib are optional: `make NO_SQLITE=1`, `NO_POSTGRES=1`,
+`NO_MYSQL=1` and `NO_ZLIB=1` build without that library and its header, and the feature raises
+an error naming it (`PostgreSQL support is not compiled into this build`). `make MINIMAL=1` sets
+all four. Switching configuration needs `make clean` first, since object files do not track the
+flags. `make MINIMAL=1 test-minimal` checks that a minimal build still passes every case that
+does not use a dropped feature (CI's `test-minimal` job does this with no database packages
+installed). OpenSSL is not optional yet.
 
 Clang works as a drop-in `$(CC)` substitute on Fedora and Ubuntu
 (`make CC=clang debug`) and is required separately for the fuzz targets
