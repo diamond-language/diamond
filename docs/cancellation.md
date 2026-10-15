@@ -101,9 +101,10 @@ owning VM; pass a cancellation source across threads instead of the socket.
 resolves hostnames and tries IPv4/IPv6 addresses under one inherited deadline,
 closing failed or cancelled attempts. Successful sockets belong to the caller.
 Abandoned DNS lookups retain only native resources in a bounded worker pool;
-they do not prevent VM cleanup or process exit. TLS connection setup, SQL
-interruption, and implicit VM
-checkpoints still require separate contracts. HTTP servers must opt into token-aware waits. Gremlin's optional
+they do not prevent VM cleanup or process exit. TLS connection setup has its own
+cancellable call (`connect_tls`, below). A token does not interrupt a SQL call or a TLS
+read or write, and there are no implicit VM checkpoints; only
+`Supervisor#stop(timeout_ms)` ends those (see Boundaries). HTTP servers must opt into token-aware waits. Gremlin's optional
 `shutdown_token` mode integrates these waits, a shared drain deadline across
 workers, and joins before returning;
 installing the cancellation package alone does not alter an existing I/O loop.

@@ -4,6 +4,10 @@ This document covers the interactive REPL (`build/diamond` with no file
 argument, when stdin is a terminal) — line editing, history, and how it
 falls back to plain-pipe behavior for scripted use.
 
+A browser version of the same session model runs on [dilang.tech](https://dilang.tech)
+from the WebAssembly build ([internal notes](internal/wasm.md)); it has no line editing
+beyond the page's own, and fibers, threads, sockets and databases are unavailable there.
+
 ## Multi-line, session-accumulating evaluation
 
 Each round reads one or more physical lines and compiles the whole session

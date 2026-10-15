@@ -4,7 +4,8 @@ Fibers provide cooperative concurrency within one OS thread. A fiber runs
 until it finishes or explicitly yields; it is never preempted between those
 points. Use fibers for generators, coroutines, and event loops. Use
 [`Thread`](threads.md) when work should execute in parallel on multiple CPU
-cores.
+cores. Fibers need stack switching, so they are unavailable in the WebAssembly build
+(`Fiber.new` raises there).
 
 ## Creating and resuming a fiber
 
