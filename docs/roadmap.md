@@ -125,9 +125,9 @@ Collections are stop-the-world within each isolated VM.
 Current state: [WebAssembly build](internal/wasm.md).
 
 - **Browser REPL on the site** -- the module and driver exist; the page, embedding and a CI job do not.
-- **Native calls that fail as errors** -- unavailable features currently trap through `env`
-  imports; C-level stubs or `NO_TLS`/`NO_POSTGRES`/`NO_SQLITE` switches would make them ordinary
-  Diamond errors.
+- **`NO_TLS` and `NO_CRYPTO` switches** -- the network and OpenSSL calls are still `env` imports
+  that trap; compiling them out (like `NO_SQLITE`/`NO_POSTGRES`/`NO_MYSQL`/`NO_ZLIB`) would make
+  them ordinary errors and drop the OpenSSL header requirement.
 - **SQLite in the module** -- from the amalgamation.
 - **Fibers** -- need stack switching (Asyncify or the stack-switching proposal).
 

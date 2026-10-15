@@ -54,12 +54,18 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <spawn.h>
+#ifndef DIAMOND_NO_SQLITE
 #include <sqlite3.h>
+#endif
+#ifndef DIAMOND_NO_POSTGRES
 #include <libpq-fe.h>
+#endif
 #ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
 #endif
+#ifndef DIAMOND_NO_ZLIB
 #include <zlib.h>
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>
@@ -4550,6 +4556,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,path_reg=0,mode_reg=0;
                 READ_SHORT(dest);READ_SHORT(path_reg);READ_SHORT(mode_reg);
                 VM_SANDBOX_GUARD("SQLite3.open", "database");
+#ifdef DIAMOND_NO_SQLITE
+                (void)dest;(void)path_reg;(void)mode_reg;
+                snprintf(vm->error,sizeof vm->error,
+                    "SQLite3 support is not compiled into this build");
+                VM_RETURN(DIAMOND_VM_SQLITE3_ERROR);
+#else
                 if(registers[path_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[path_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -4568,12 +4580,19 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+#endif
                 break;
             }
             case DIAMOND_OP_POSTGRES_OPEN: {
                 uint16_t dest=0,conninfo_reg=0;
                 READ_SHORT(dest);READ_SHORT(conninfo_reg);
                 VM_SANDBOX_GUARD("PostgreSQL.open", "database");
+#ifdef DIAMOND_NO_POSTGRES
+                (void)dest;(void)conninfo_reg;
+                snprintf(vm->error,sizeof vm->error,
+                    "PostgreSQL support is not compiled into this build");
+                VM_RETURN(DIAMOND_VM_POSTGRES_ERROR);
+#else
                 if(registers[conninfo_reg].kind!=DIAMOND_VALUE_OBJECT||
                    registers[conninfo_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
                     snprintf(vm->error,sizeof vm->error,
@@ -4603,6 +4622,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)handle};
+#endif
                 break;
             }
             case DIAMOND_OP_MYSQL_OPEN: {

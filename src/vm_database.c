@@ -54,12 +54,18 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <spawn.h>
+#ifndef DIAMOND_NO_SQLITE
 #include <sqlite3.h>
+#endif
+#ifndef DIAMOND_NO_POSTGRES
 #include <libpq-fe.h>
+#endif
 #ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
 #endif
+#ifndef DIAMOND_NO_ZLIB
 #include <zlib.h>
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>
@@ -76,6 +82,7 @@ void mysql_library_init_once_fn(void) { mysql_library_init(0,nullptr,nullptr); }
 void mysql_library_init_once_fn(void) {}
 #endif
 
+#ifndef DIAMOND_NO_SQLITE
 /* Binds one Diamond value at a 1-indexed sqlite3 parameter position.
  * Factored out of the positional/named bind helpers below (identical
  * type-to-bind-call mapping either way, just a different way of
@@ -668,6 +675,34 @@ DiamondVmStatus sqlite3_open_helper(DiamondVm *vm,const DiamondString *path,
     return DIAMOND_VM_OK;
 }
 
+#else
+/* No SQLite client library in this build (docs/internal/wasm.md): nothing can open
+ * a connection, so these only keep the call sites linked. */
+DiamondVmStatus sqlite3_dispatch_helper(DiamondVm *vm,DiamondSqlite3Handle *target_db,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    (void)target_db;(void)method_name;(void)registers;(void)base;(void)argc;(void)dest;
+    snprintf(vm->error,sizeof vm->error,"SQLite3 support is not compiled into this build");
+    return DIAMOND_VM_SQLITE3_ERROR;
+}
+
+DiamondVmStatus sqlite3_statement_dispatch_helper(DiamondVm *vm,
+        DiamondSqlite3StatementHandle *target_stmt,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    (void)target_stmt;(void)method_name;(void)registers;(void)base;(void)argc;(void)dest;
+    snprintf(vm->error,sizeof vm->error,"SQLite3 support is not compiled into this build");
+    return DIAMOND_VM_SQLITE3_ERROR;
+}
+
+DiamondVmStatus sqlite3_open_helper(DiamondVm *vm,const DiamondString *path,
+        DiamondValue mode,sqlite3 **out_db) {
+    (void)path;(void)mode;(void)out_db;
+    snprintf(vm->error,sizeof vm->error,"SQLite3 support is not compiled into this build");
+    return DIAMOND_VM_SQLITE3_ERROR;
+}
+#endif
+
+#ifndef DIAMOND_NO_POSTGRES
 /* Postgres OIDs for the column types this driver decodes into a native
  * Diamond type below. libpq-devel doesn't ship pg_type.h (that lives in
  * postgresql-server-devel, a separate package this driver doesn't
@@ -1052,6 +1087,16 @@ DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *ta
     return postgres_query_helper(vm,target_db,sql->chars,sql->length,param_values,
         param_count,&registers[dest]);
 }
+
+#else
+DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *target_db,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    (void)target_db;(void)method_name;(void)registers;(void)base;(void)argc;(void)dest;
+    snprintf(vm->error,sizeof vm->error,"PostgreSQL support is not compiled into this build");
+    return DIAMOND_VM_POSTGRES_ERROR;
+}
+#endif
 
 #ifndef DIAMOND_NO_MYSQL
 /* Fixed-width storage for a bound parameter's native value -- unlike

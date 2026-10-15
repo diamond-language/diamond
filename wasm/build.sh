@@ -4,11 +4,11 @@
 #   WASI_SDK=/opt/wasi-sdk wasm/build.sh
 #
 # Needs a WASI SDK (clang 19+ with the wasm32-wasip1 sysroot; https://github.com/WebAssembly/wasi-sdk)
-# and the same development headers Diamond itself builds against (OpenSSL, SQLite, libpq, zlib):
-# the runtime source still names them, and the headers are only read, never linked. The native
-# calls they declare are imports the page replaces with errors (wasm/web/diamond-wasm.js), so a
-# program that reaches TLS, a database server or a subprocess fails instead of linking.
-# See docs/internal/wasm.md.
+# and OpenSSL's development headers: TLS and the digest/cipher calls are not yet optional, so the
+# source still names them. The headers are only read, never linked; those calls are imports the
+# page replaces with errors (wasm/web/diamond-wasm.js). SQLite, PostgreSQL, MySQL and zlib are
+# compiled out (MINIMAL=1's switches), so their headers are not needed and their features raise
+# an ordinary error. See docs/internal/wasm.md.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,13 +17,8 @@ out="$root/build/wasm"
 jobs="${JOBS:-2}"
 mkdir -p "$out/include/openssl" "$out/obj"
 
-# Headers the wasi sysroot lacks. Host copies are linked in; OpenSSL's per-architecture
+# OpenSSL headers the wasi sysroot lacks. Host copies are linked in; OpenSSL's per-architecture
 # configuration.h is replaced by a concrete one (the wasm build only reads declarations).
-for header in zlib.h zconf.h zlib_name_mangling.h sqlite3.h libpq-fe.h postgres_ext.h pg_config_ext.h; do
-    for dir in /usr/include /usr/include/postgresql /usr/local/include; do
-        [ -f "$dir/$header" ] && { ln -sf "$dir/$header" "$out/include/$header"; break; }
-    done
-done
 openssl_dir=""
 for dir in /usr/include/openssl /usr/include/x86_64-linux-gnu/openssl /usr/local/include/openssl; do
     [ -f "$dir/ssl.h" ] && { openssl_dir="$dir"; break; }
@@ -42,7 +37,8 @@ open(target, "w").write(text[marker:] if marker >= 0 else text)
 PY
 
 flags=(--target=wasm32-wasip1 --sysroot="$sdk/share/wasi-sysroot"
-    -DDIAMOND_NO_MYSQL -I"$root/wasm/include" -I"$out/include"
+    -DDIAMOND_NO_MYSQL -DDIAMOND_NO_POSTGRES -DDIAMOND_NO_SQLITE -DDIAMOND_NO_ZLIB
+    -I"$root/wasm/include" -I"$out/include"
     -include "$root/wasm/include/diamond_wasm_shim.h"
     -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS
     -std=c23 -O2 -I"$root/src" -I"$root/reginold" -w)

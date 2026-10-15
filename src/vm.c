@@ -54,12 +54,18 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <spawn.h>
+#ifndef DIAMOND_NO_SQLITE
 #include <sqlite3.h>
+#endif
+#ifndef DIAMOND_NO_POSTGRES
 #include <libpq-fe.h>
+#endif
 #ifndef DIAMOND_NO_MYSQL
 #include <mysql.h>
 #endif
+#ifndef DIAMOND_NO_ZLIB
 #include <zlib.h>
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/mman.h>
@@ -835,15 +841,27 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
              * (already guaranteed by the SQLITE3_STATEMENT branch just
              * below, and by Statement#close) -- sqlite3's own documented
              * idiom for exactly this ownership shape. */
+#ifndef DIAMOND_NO_SQLITE
             if(db!=nullptr)sqlite3_close_v2(db);
+#else
+            (void)db;
+#endif
         } else if(unreached->kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
             size=sizeof(DiamondSqlite3StatementHandle);
             sqlite3_stmt *stmt=((DiamondSqlite3StatementHandle *)unreached)->stmt;
+#ifndef DIAMOND_NO_SQLITE
             if(stmt!=nullptr)sqlite3_finalize(stmt);
+#else
+            (void)stmt;
+#endif
         } else if(unreached->kind==DIAMOND_OBJECT_POSTGRES) {
             size=sizeof(DiamondPostgresHandle);
             PGconn *conn=((DiamondPostgresHandle *)unreached)->conn;
+#ifndef DIAMOND_NO_POSTGRES
             if(conn!=nullptr)PQfinish(conn);
+#else
+            (void)conn;
+#endif
         } else if(unreached->kind==DIAMOND_OBJECT_MYSQL) {
             size=sizeof(DiamondMysqlHandle);
 #ifndef DIAMOND_NO_MYSQL
@@ -1327,11 +1345,15 @@ void vm_blocking_call_end(DiamondVm *vm) {
 void vm_blocking_call_interrupt(DiamondVm *vm) {
     pthread_mutex_lock(&vm->blocking_call_lock);
     if(vm->blocking_call_handle!=nullptr) {
-        if(vm->blocking_call_kind==DIAMOND_BLOCKING_SQLITE)
+        if(vm->blocking_call_kind==DIAMOND_BLOCKING_SQLITE) {
+#ifndef DIAMOND_NO_SQLITE
             sqlite3_interrupt((sqlite3 *)vm->blocking_call_handle);
-        else if(vm->blocking_call_kind==DIAMOND_BLOCKING_POSTGRES) {
+#endif
+        } else if(vm->blocking_call_kind==DIAMOND_BLOCKING_POSTGRES) {
+#ifndef DIAMOND_NO_POSTGRES
             char ignored[256];
             (void)PQcancel((PGcancel *)vm->blocking_call_handle,ignored,sizeof ignored);
+#endif
         } else if(vm->blocking_call_kind==DIAMOND_BLOCKING_MYSQL)
             (void)shutdown((int)((intptr_t)vm->blocking_call_handle-1),SHUT_RDWR);
     }
@@ -1711,13 +1733,25 @@ static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
             sqlite3 *db=((DiamondSqlite3Handle *)object)->db;
             /* _v2 -- see the matching branch in diamond_vm_collect_impl
              * above for why. */
+#ifndef DIAMOND_NO_SQLITE
             if(db!=nullptr)sqlite3_close_v2(db);
+#else
+            (void)db;
+#endif
         } else if(object->kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
             sqlite3_stmt *stmt=((DiamondSqlite3StatementHandle *)object)->stmt;
+#ifndef DIAMOND_NO_SQLITE
             if(stmt!=nullptr)sqlite3_finalize(stmt);
+#else
+            (void)stmt;
+#endif
         } else if(object->kind==DIAMOND_OBJECT_POSTGRES) {
             PGconn *conn=((DiamondPostgresHandle *)object)->conn;
+#ifndef DIAMOND_NO_POSTGRES
             if(conn!=nullptr)PQfinish(conn);
+#else
+            (void)conn;
+#endif
         } else if(object->kind==DIAMOND_OBJECT_MYSQL) {
 #ifndef DIAMOND_NO_MYSQL
             MYSQL *conn=((DiamondMysqlHandle *)object)->conn;
@@ -5890,6 +5924,7 @@ DiamondVmStatus aes_gcm_decrypt_helper(DiamondVm *vm,DiamondValue key_value,
     return DIAMOND_VM_OK;
 }
 
+#ifndef DIAMOND_NO_ZLIB
 /* Gzip.compress(data) -- gzip-wrapped deflate via zlib (already linked
  * for the outbound HTTP client's Accept-Encoding support), growing an
  * output buffer geometrically since a compressed size can't be predicted
@@ -6041,6 +6076,21 @@ DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_value,
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
 }
+#else
+DiamondVmStatus gzip_compress_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue *out) {
+    (void)data_value;(void)out;
+    snprintf(vm->error,sizeof vm->error,"Gzip is not compiled into this build");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+DiamondVmStatus gzip_decompress_helper(DiamondVm *vm,DiamondValue data_value,
+        DiamondValue max_size_value,DiamondValue *out) {
+    (void)data_value;(void)max_size_value;(void)out;
+    snprintf(vm->error,sizeof vm->error,"Gzip is not compiled into this build");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+#endif
 
 /* Base64.encode(data) -- RFC 4648 standard alphabet with padding, via
  * OpenSSL's EVP_EncodeBlock (already linked). Output length for `n`
