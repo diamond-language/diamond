@@ -6,6 +6,14 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.15.1 — 2026-10-15
+
+### Fixed
+
+- With `DIAMOND_JIT=1`, a method call on a parameter annotated with a native type (`t: Time`,
+  `channel: Channel`) failed with `undefined method` because the JIT treated it as a user-class
+  instance. Found by a new differential stress sweep (`tests/sweep_cases.sh`).
+
 ### Tooling
 
 - Language server: a module-qualified class name now resolves as a receiver, so completion, hover
