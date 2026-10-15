@@ -75,8 +75,8 @@ non_matching]`, `.group_by` a `Hash` keyed on the block's own result,
 `.tally` a `Hash` of element to occurrence count, and `.zip` pads the
 shorter array with `Nil` out to the *receiver's* own length (`[1, 2,
 3].zip([4, 5])` => `[[1, 4], [2, 5], [3, nil]]`), matching Ruby. The
-Hash versions are listed under [Ruby-compatible
-methods](#ruby-compatible-methods) below.
+Hash versions are listed under [Prelude
+methods](#prelude-methods) below.
 Strings support `.length()`, `.index_of(needle)` (position or `nil`),
 `.slice(start, length)`, `.to_i()`/`.to_f()` (lenient decimal parsing —
 `.to_f()` additionally accepts exponent notation like `"1e3"` even
@@ -520,10 +520,10 @@ It's a plain Diamond class, not a native object — `#append` pushes
 building a string this way is O(n), the same complexity `Array#join`
 already has for a pre-collected array of pieces.
 
-## Ruby-compatible methods
+## Prelude methods
 
-Beyond the methods above, built-in values answer most of the methods a Ruby
-programmer reaches for. They're ordinary Diamond functions in the prelude
+Beyond the methods above, built-in values answer most of the everyday
+Enumerable-style methods. They're ordinary Diamond functions in the prelude
 (`lib/core.di`, named `diamond_array_…`, `diamond_hash_…`, and so on) that
 the VM finds when a value has no native method of that name. A program can
 define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,

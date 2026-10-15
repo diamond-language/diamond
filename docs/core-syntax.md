@@ -2,17 +2,14 @@
 
 [Language reference](syntax.md) · Next: [Functions, closures, and calls](callables.md)
 
-Ruby-like surface syntax, but expression-oriented and gradually typed — no
+An object-oriented, `end`-delimited surface syntax that is expression-oriented and gradually typed — no
 separate "typed" object model, just optional annotations on top of dynamic
 dispatch. This document is a tour of the surface syntax; see
 [Design and VM architecture](internal/design.md) for how it compiles and executes,
 [Object model](object-model.md), [Fibers](fibers.md), and
 [I/O and native services](io.md) for focused guides.
-Diamond's runtime intentionally has no HTTP support built in — see
-[Cuts](packages.md) for `facet`, the package manager, and `packages/http`
-(a real package, structured to be `facet`-installable rather than
-bundled into every program) for a minimal HTTP server and client built
-entirely on top of the I/O primitives below.
+HTTP is the `packages/http` package, installed with `facet`
+([Cuts](packages.md)): a server and client built on the I/O primitives below.
 
 ## Basics
 

@@ -327,6 +327,40 @@ considers `cuts/greeter/`. There is no precedence question to resolve
 between them, because there is no path along which they could compete in
 the first place.
 
+## Packages in this repository
+
+Each lives in `packages/NAME` with its own `diamond.cut`, README and tests, and installs
+with `facet` like any other cut.
+
+| Package | What it is |
+| --- | --- |
+| `active_auth` | Account, session, password reset, and recovery-code models |
+| `active_discussion` | Threaded comments, karma votes, and moderation signals |
+| `active_karma` | Project trust signals into persona state |
+| `active_record` | SQL repositories, models, validation, and migrations |
+| `active_social` | Follower relationships backed by ActiveRecord |
+| `active_tagging` | Normalized tags and tagging relationships |
+| `arel` | Immutable SQL query builder with dialect visitors |
+| `cancellation` | Cooperative cancellation tokens, deadlines, and task scopes |
+| `cookies` | Cookie parsing, signing, encryption, and session helpers |
+| `database_config` | Load JSON database configuration and open a connection |
+| `dials` | HTTP routing and controller responses |
+| `div` | Compile view templates into Diamond source |
+| `graphql` | GraphQL schema and query execution |
+| `graphsql` | GraphQL-aware SQL selection and association preloading |
+| `gremlin` | Concurrent fiber-based HTTP server |
+| `http` | HTTP server and client for Diamond |
+| `jobs` | Durable database-backed background jobs |
+| `log_viewer` | Format structured JSON log streams |
+| `logger` | Leveled text and structured JSON logging |
+| `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
+| `multipart` | Parse multipart form data and file uploads |
+| `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |
+| `rack` | Compose HTTP request middleware |
+| `redis` | Redis client using RESP2 and RESP3 |
+| `registry` | Cut registry storage primitives |
+| `websocket` | WebSocket handshake and frame handling |
+
 ## What's deliberately out of scope so far
 
 - **A manifest's own top-level `version` key** (`{"name": "greeter",

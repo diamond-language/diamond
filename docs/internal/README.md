@@ -18,7 +18,10 @@ start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
   and its deoptimization and GC-root contracts.
 - [gremlin scaling investigation](gremlin-scaling-investigation.md) -- plan for
   explaining why `gremlin_serve` throughput plateaus around 8 threads.
-- [Fuzzing](fuzzing.md) -- building and running the fuzzing harness.
+- [Fuzzing](fuzzing.md) -- building and running the fuzzing harness, including the
+  differential (interpreter vs JIT) execution fuzzer.
+- [WebAssembly build](wasm.md) -- the wasm32-wasip1 module, its REPL driver, what is
+  unavailable there and how that fails.
 - [Diamond-modernization audit](di-modernization-audit.md) -- a one-time
   historical audit of a past refactor; kept for context, not maintained
   as ongoing reference.

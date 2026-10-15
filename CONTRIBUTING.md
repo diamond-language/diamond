@@ -94,15 +94,24 @@ make test-stress-threads  # every Thread/Channel/Supervisor case, 60 runs each p
 make test-stress-threads-tsan  # the same loop under ThreadSanitizer, 10 runs each
 make release && bash tests/sweep_cases.sh   # every case again under full stress GC + the JIT, diffed against the plain run
 make test-self-host    # ~1400-case lexer/parser differential corpus -- periodic, not per-push
+make test-cross-build  # `diamond build --target` kit lookup/validation; a real cross build
+                        # when DIAMOND_CROSS_SYSROOT and DIAMOND_CROSS_TARGET are set
 ```
+
+Two heavier tools are not in `make test-all`: `make build/differential_fuzzer` (runs each input
+under the interpreter and under the JIT plus GC stress; see `docs/internal/fuzzing.md`) and
+`wasm/build.sh` (the WebAssembly module and browser REPL; needs a wasi-sdk, see
+`docs/internal/wasm.md`). Both can saturate a desktop: run them under `nice -n 19` with a
+couple of workers, not one per core.
 
 CI also runs the stress loop in its own jobs (plain, under TSan, and on arm64).
 CI runs `test-builds`, `test-integration`, and `test-fuzz` in separate jobs
 for each Fedora/Ubuntu and GCC/Clang combination. Together they retain the
 coverage of `test-all`, while giving expensive sanitizer and fuzz builds
 independent time budgets. Run these groups sequentially in a shared checkout;
-CI isolates them in separate jobs. Automatic runs cover pull requests and
-pushes to `main`; use the workflow's manual dispatch for other branches.
+CI isolates them in separate jobs. Automatic runs cover every pull-request update
+(`main` is not re-run after a merge: see [CI operation](docs/ci.md)); use the
+workflow's manual dispatch for other branches.
 New commits cancel superseded runs for the same PR or branch.
 
 At minimum, `make test` must pass before a commit. If the change touches

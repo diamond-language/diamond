@@ -3,10 +3,10 @@
 [![Version](https://img.shields.io/github/v/tag/diamond-language/diamond?label=version&color=blue)](https://github.com/diamond-language/diamond/tags)
 [![Build status](https://github.com/diamond-language/diamond/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/diamond-language/diamond/actions/workflows/ci.yml)
 
-Diamond is a Ruby-inspired language with gradual, checked static typing,
-compiled to a custom register-bytecode VM written in C23.
-
-Learn more at [dilang.tech](https://dilang.tech).
+Diamond is an object-oriented language with gradual, checked static typing,
+compiled to a register-bytecode VM written in C23 (with an optional x86-64
+JIT). It builds to one standalone executable, and runs in your browser at
+[dilang.tech](https://dilang.tech).
 
 ```ruby
 class Counter
@@ -29,13 +29,13 @@ end
 # => [1, 2, 3]
 ```
 
-## Familiar if you know Ruby
+## Familiar syntax
 
-Syntax, blocks, `end`-delimited bodies, classes/modules/mixins,
-`rescue`/`ensure`, Enumerable-style methods, string interpolation, symbols,
-and the REPL will all feel immediately at home. Diamond borrows Ruby's
-object-model ideas but is not a compatibility project -- matching Ruby's edge
-cases, standard library, or gem ecosystem is explicitly not a goal.
+Blocks, `end`-delimited bodies, classes/modules/mixins, `rescue`/`ensure`,
+Enumerable-style methods, string interpolation, and symbols will look
+familiar if you have written scripting languages. The language is its own: it
+is not a compatibility project for any other, and its standard library and
+package ecosystem are its own.
 
 ## Where it actually differs
 
@@ -47,9 +47,10 @@ cases, standard library, or gem ecosystem is explicitly not a goal.
   time, not just documentation.
 - **Compiled, not just interpreted.** Source goes through a real Pratt
   compiler to register bytecode, run on a VM with inline caches, object
-  shapes, and opt-in quickening -- closer to Crystal or a JIT'd language than
-  a tree-walker. `diamond build` also produces a standalone native
-  executable, no separate interpreter or `.di` file needed at run time.
+  shapes, quickening, and an opt-in x86-64 JIT. `diamond build` produces a
+  standalone executable, no separate interpreter or `.di` file needed at run
+  time; with a target kit it cross-compiles, and with a musl kit it links fully
+  statically.
 - **Concurrency doesn't share mutable state.** Threads use isolated heaps;
   values are copied across boundaries instead of shared. A `Channel` gives
   threads an ongoing mailbox, and a `Supervisor` restarts a crashed worker
@@ -71,12 +72,17 @@ make
 ```
 
 Build a standalone binary (from the repo root; see
-[docs/deployment.md](docs/deployment.md) for what it does and doesn't do):
+[docs/deployment.md](docs/deployment.md) for cross-compiling and static
+builds):
 
 ```sh
 ./build/diamond build app.di -o app
 ./app
 ```
+
+Try it without installing anything: the REPL at [dilang.tech](https://dilang.tech)
+runs the interpreter as WebAssembly (`wasm/build.sh`, see
+[docs/internal/wasm.md](docs/internal/wasm.md)).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for required system dependencies
 (per-platform install commands), build/test targets, and the loopback-network
@@ -102,7 +108,9 @@ sandbox.
   (metaprogramming), `parallel`
   (threads, channels, supervisors), `taskrun` (processes), and `vault`
   (crypto and encoding); `make test-examples` runs their tests
-- `fuzz/`: compiler and bytecode-execution fuzz targets
+- `fuzz/`: compiler, bytecode-execution and differential (interpreter vs JIT)
+  fuzz targets
+- `wasm/`: WebAssembly build script, REPL driver and browser module
 - `bench/`: performance and GC evidence
 
 ## Learn more
@@ -116,12 +124,15 @@ sandbox.
   [types and errors](docs/types-and-errors.md),
   [collections](docs/collections.md)
 - [Object model](docs/object-model.md), [Fibers](docs/fibers.md),
-  [Threads](docs/threads.md), [Time and calendar](docs/time.md)
+  [Threads](docs/threads.md), [Cancellation](docs/cancellation.md),
+  [Time and calendar](docs/time.md)
 - [I/O and native services](docs/io.md) -- [local I/O](docs/local-io.md),
   [networking](docs/networking.md), [databases](docs/databases.md),
   [processes](docs/processes.md)
 - [Packages](docs/packages.md), [Language Server](docs/lsp.md),
-  [Debugging](docs/debugging.md), [Portability](docs/portability.md)
+  [Debugging](docs/debugging.md), [REPL](docs/repl.md)
+- [Deployment](docs/deployment.md), [Sandbox](docs/sandbox.md),
+  [Bytecode caching](docs/caching.md), [Portability](docs/portability.md)
 
 Implementation notes and maintainer tooling (VM/GC internals, fuzzing) live
 under [`docs/internal/`](docs/internal/README.md) -- not needed to write or

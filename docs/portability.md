@@ -16,8 +16,8 @@ enough POSIX-adjacent surface area to matter here.
   full test suite (`make test-all`) across this 2x2 matrix, split into
   `test-builds`, `test-integration`, and `test-fuzz` jobs with independent
   time budgets (`.github/workflows/ci.yml`, `test-all` matrix). The workflow
-  runs on pull requests and pushes to `main`, with manual dispatch available
-  for other branches.
+  runs on every pull-request update, with manual dispatch available for any
+  branch (see [CI operation](ci.md)).
 - **Ubuntu 26.04, GCC, arm64 (glibc)** -- CI runs `make test` on native
   GitHub-hosted arm64 hardware plus focused API, incremental-compile,
   compiled-prelude, fiber, LSP, and REPL targets (`test-arm64` job, same
@@ -70,7 +70,25 @@ Language-level pthreads explicitly request an 8 MiB stack on every platform.
 That matches the stack against which the interpreter recursion guard is
 calibrated instead of inheriting libc-dependent defaults (roughly 128 KiB on
 musl and 512 KiB on Darwin), which are too small for `run_chunk`'s fixed native
-frame and can fault before Diamond can report `SystemStackError`.
+frame and can fault before Diamond can report `SystemStackError`. The program's
+own main thread runs on a 512 MiB pthread stack (`DIAMOND_MAIN_STACK_MB`), with
+the call-depth limit scaled to match; if that allocation fails it halves the
+request and finally falls back to the process's own stack.
+
+### Builds for another target (checked by hand, not in CI)
+
+- **aarch64-linux-gnu cross build** -- `make aot-kit-cross` with clang and a
+  Fedora aarch64 sysroot, then `diamond build --target=...`; the resulting binaries
+  ran under `qemu-aarch64` (classes, SQLite3, threads, Regexp, JSON, fibers, deep
+  recursion, supervised workers). It reproduced an aarch64-only failure that CI
+  later reported. See [deployment](deployment.md#cross-compilation).
+- **x86_64 Linux musl, fully static** -- the same kit with `STATIC=1 NO_MYSQL=1`
+  against an Alpine sysroot; the binary is statically linked and ran TLS, SQLite3,
+  threads, Regexp, JSON and fibers on a glibc host. `MySQL.open` raises there.
+- **wasm32-wasip1** -- `wasm/build.sh` with wasi-sdk; the module runs the
+  interpreter and the REPL under Node's WASI and in Firefox. Fibers, threads, sockets, TLS,
+  subprocesses and every database driver are unavailable. See
+  [WebAssembly build](internal/wasm.md).
 
 OpenBSD remains unvalidated (blocked on a real gap, not just an unwritten CI
 job -- see below). Portability claims
@@ -550,13 +568,16 @@ non-`ucontext` Fiber implementation, not as a CI task on its own.
 - **Fiber support requires a working POSIX `ucontext.h`** implementation,
   native or via a compatibility library (`libucontext` on musl). No
   fallback fiber implementation (e.g. a hand-rolled `setjmp`/`longjmp` +
-  manual stack switch) exists or is currently planned.
+  manual stack switch) exists or is currently planned. On WebAssembly
+  there is no stack switching at all, so `Fiber.new` raises.
 
 ## What hasn't been found (checked, not just assumed)
 
 - No `#ifdef __linux__`/`__APPLE__`/`__FreeBSD__`/`_WIN32`-style OS
   branching exists anywhere in Diamond's own source (`src/`, `lsp/`,
-  `tools/`, `tests/`, `fuzz/`) -- the vendored `reginold/vendor/onigmo/`
+  `tools/`, `tests/`, `fuzz/`); the only platform conditionals are the JIT's
+  x86-64/glibc gate and `__wasm__` in `src/vm.h` (fiber stubs) and
+  `src/run_source.c` (a portable SHA-256). The vendored `reginold/vendor/onigmo/`
   regex engine has its own, unrelated to this.
 - No Linux-only APIs (`epoll`, `eventfd`, `inotify`, `sendfile`, `prctl`,
   anything under `<linux/...>`) -- socket/pipe multiplexing uses plain

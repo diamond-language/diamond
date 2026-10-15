@@ -7,13 +7,9 @@ LSP's standard `Content-Length`-framed JSON-RPC over stdio, the transport
 every mainstream editor already knows how to launch a custom language
 server with.
 
-This is not derived from, or dependent on, any other language's LSP
-implementation. Ruby's own language servers came up once in conversation
-as a reference point (Diamond's syntax is Ruby-like enough that a future
-syntax-highlighting grammar could plausibly start from Ruby's), but
-`lsp/` itself — the JSON parser, the RPC framing, the protocol handling —
-is written from scratch in C, with zero external dependencies beyond what
-the rest of this repository already uses.
+`lsp/` — the JSON parser, the RPC framing, the protocol handling — is written
+from scratch in C, with zero external dependencies beyond what the rest of this
+repository already uses.
 
 ## What it does today
 

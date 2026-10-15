@@ -37,8 +37,9 @@ to a clean recompile and, on success, overwrites the stale file. This never cras
 never affects a script's own observable behavior -- caching is a pure optimization.
 Every read checks, in order:
 
-1. the magic bytes and a build fingerprint (the exact struct layouts and opcode count
-   the format depends on, plus a checksum of the compiler's own sources and prelude);
+1. the magic bytes and a build fingerprint (the exact struct layouts, opcode count and
+   byte order the format depends on, plus a checksum of the compiler's own sources and
+   prelude);
 2. the SHA-256 of the expanded source, so the file belongs to this program;
 3. a checksum of the whole body, which catches truncation, bit rot and partial
    overwrites that leave the header intact;
@@ -69,8 +70,9 @@ cache then stores the whole prelude too. Large applications are large in their o
 program that requires ActiveRecord or GraphSQL has a cache of a few megabytes.
 
 Format version 2 stored string constants as length-prefixed bytes rather than fixed 4 KB
-records, and version 6 stored the prelude once in the binary instead of in every file; older
-files are ignored and rebuilt.
+records, version 6 stored the prelude once in the binary instead of in every file, and
+version 7 added the byte order to the fingerprint (an image built for an opposite-endian
+target is refused); older files are ignored and rebuilt.
 
 ## Removing caches
 
