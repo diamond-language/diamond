@@ -1988,6 +1988,16 @@ successful, clamped, bounds-error, and type-error paths.
 
 Two measurements that used to sit in the roadmap and should survive its cleanup:
 
+- **Native Array/Hash/String method calls are not the limit.** Compiling every native
+  collection method at a site with a compiler-proven receiver (a trampoline into the
+  interpreter's own collection dispatch, so `push`, `upcase`, `keys`, `include?` and the
+  rest stop bailing the function) passed the full suite and matched the interpreter
+  under JIT and GC stress, but measured no change: 1.61 s vs 1.63 s on a 1.5M-call
+  function mixing `push`/`pop`/`include?`/`upcase`/`keys`, and 0.55 s vs 0.55 s on a
+  `push`/`pop` loop with integer arithmetic. The native method's own work dominates,
+  so the change was not landed. Revisit only with a workload where the surrounding
+  code, not the call, is the cost.
+
 - **Neither receiver kind nor missing return annotations is the main limit on
   Skindicate's ORM path.** Phase 13's re-benchmark of the `_for` batch loaders, which
   are `self`-receiver-shaped, showed no improvement, and the suspected cause was that
