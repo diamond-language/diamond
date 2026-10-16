@@ -668,6 +668,8 @@ typedef enum {
     DIAMOND_FILE_PATH_DIRSYNC,
     /* File.mode(path): the permission bits (st_mode & 07777) as an Int. */
     DIAMOND_FILE_PATH_MODE,
+    /* File.sha256(path): lowercase hex SHA-256 of the file, streamed in chunks. */
+    DIAMOND_FILE_PATH_SHA256,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

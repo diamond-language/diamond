@@ -1325,3 +1325,61 @@ DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm,
         (int)method_name->length,method_name->chars);
     return DIAMOND_VM_TYPE_ERROR;
 }
+
+/* File.sha256(path): lowercase hex SHA-256 of the file, read in 64 KiB chunks so a large file
+ * never has to fit in memory. */
+DiamondVmStatus file_sha256_helper(DiamondVm *vm,const DiamondString *path,
+                                   DiamondValue *out_result) {
+    if(memchr(path->chars,'\0',path->length)!=nullptr||path->length==0) {
+        snprintf(vm->error,sizeof vm->error,"File.sha256 path must be nonempty and contain no NUL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int source=open(path->chars,O_RDONLY);
+    if(source<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+                 (int)path->length,path->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    EVP_MD_CTX *context=EVP_MD_CTX_new();
+    if(context==nullptr||EVP_DigestInit_ex(context,EVP_sha256(),nullptr)!=1) {
+        EVP_MD_CTX_free(context);
+        close(source);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    char buffer[65536];
+    int saved=0;
+    for(;;) {
+        const ssize_t got=read(source,buffer,sizeof buffer);
+        if(got<0) {
+            if(errno==EINTR)continue;
+            saved=errno;
+            break;
+        }
+        if(got==0)break;
+        EVP_DigestUpdate(context,buffer,(size_t)got);
+    }
+    close(source);
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_length=0;
+    const int finished=EVP_DigestFinal_ex(context,digest,&digest_length);
+    EVP_MD_CTX_free(context);
+    if(saved!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot read '%.*s': %s",
+                 (int)path->length,path->chars,strerror(saved));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(finished!=1) {
+        snprintf(vm->error,sizeof vm->error,"File.sha256 failed");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
+    char hex[EVP_MAX_MD_SIZE*2];
+    static const char digits[]="0123456789abcdef";
+    for(size_t index=0;index<digest_length;index++) {
+        hex[index*2]=digits[digest[index]>>4];
+        hex[index*2+1]=digits[digest[index]&0x0f];
+    }
+    DiamondString *result=allocate_string(vm,hex,(size_t)digest_length*2);
+    if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *out_result=DIAMOND_OBJECT(result);
+    return DIAMOND_VM_OK;
+}

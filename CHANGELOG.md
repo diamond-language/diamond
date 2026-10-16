@@ -16,7 +16,7 @@ authoritative fine-grained record.
   `last`, `step` and `reverse_each` on one raise `RangeError`; `endless?` tells them apart.
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
 - Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.mode`, `File.file?` and
-  `File.symlink?`.
+  `File.symlink?`. `File.sha256(path)` hashes a file in chunks.
 - `Process.spawn` options `"stdout"`, `"stderr"` (append the child's output to a file) and
   `"stderr_to_stdout"` (merge the two).
 - `Process.run` and `Process.spawn` take an options Hash: `"env"` (merged over the inherited
