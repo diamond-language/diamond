@@ -26,6 +26,11 @@ authoritative fine-grained record.
   or more no longer raises: `1 << 70` is `1180591620717411303424`, `1 >> 64` is `0`, `-1 >> 64`
   is `-1`. A negative shift amount, or a left shift past 1048576 bits, still raises `RangeError`.
 
+### Fixed
+
+- A read on a socket or file that timed out left the stream in an error state, so every later read on
+  it failed too ("read error: Success") even after data arrived; the error is now cleared once reported.
+
 ### Tooling
 
 - The interpreter builds for WebAssembly (`wasm/build.sh`, needs only a wasi-sdk) and runs a REPL in
