@@ -13,7 +13,8 @@ module Harness
       @handle = Process.spawn(argv, {"env": env, "stdin": true})
       @out = ""
       @err = ""
-      @open = true
+      @all_out = ""
+      @all_err = ""
     end
 
     def pid() = @handle.pid()
@@ -35,7 +36,13 @@ module Harness
           break
         end
         break if chunk == nil
-        if is_out then @out = @out + chunk else @err = @err + chunk end
+        if is_out
+          @out = @out + chunk
+          @all_out = @all_out + chunk
+        else
+          @err = @err + chunk
+          @all_err = @all_err + chunk
+        end
       end
     end
 
@@ -75,7 +82,40 @@ module Harness
     def kill() = @handle.kill()
     def running?() = @handle.running?()
     def wait() = @handle.wait()
-    def errors() = @err
+    def errors() = @all_err
+
+    # Everything the program has printed so far, on each stream (not consumed by next_line).
+    def stdout_text()
+      self.pump(0)
+      @all_out
+    end
+
+    def stderr_text()
+      self.pump(0)
+      @all_err
+    end
+
+    # Waits until `text` appears on stdout or stderr.
+    def wait_for_text(text: String, timeout_ms: Int)
+      deadline = Time.monotonic() + timeout_ms / 1000.0
+      loop do
+        self.pump(20)
+        return true if @all_out.include?(text) || @all_err.include?(text)
+        raise "the program under test exited before printing #{text.inspect()}" unless @handle.running?()
+        raise "timed out waiting for #{text.inspect()}" if Time.monotonic() > deadline
+      end
+    end
+
+    # The exit code, waiting at most `timeout_ms`; nil when it is still running.
+    def wait_exit(timeout_ms: Int)
+      deadline = Time.monotonic() + timeout_ms / 1000.0
+      loop do
+        self.pump(0)
+        return @handle.wait() unless @handle.running?()
+        return nil if Time.monotonic() > deadline
+        Harness.sleep_ms(10)
+      end
+    end
 
     # Releases the child whatever state it is in.
     def finish()
@@ -109,6 +149,32 @@ module Harness
       rescue error: PortTaken
         raise error if attempt >= attempts
       end
+    end
+  end
+
+  # One GET over a fresh connection; [status, body]. Raises IOError when the server is not
+  # accepting connections.
+  def self.http_get(port: Int, path: String)
+    socket = TCPSocket.connect("127.0.0.1", port,
+      {"connect_timeout_ms": 2000, "read_timeout_ms": 2000, "write_timeout_ms": 2000})
+    begin
+      socket.write("GET #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+      socket.flush()
+      status_line = socket.gets()
+      raise IOError.new("no response") if status_line == nil
+      status = status_line.split(" ")[1].to_i()
+      length = 0
+      loop do
+        header = socket.gets()
+        break if header == nil || header.strip() == ""
+        if header.downcase().start_with?("content-length:")
+          length = header.split(":")[1].strip().to_i()
+        end
+      end
+      body = length > 0 ? socket.read(length) : ""
+      [status, body == nil ? "" : body]
+    ensure
+      socket.close()
     end
   end
 
