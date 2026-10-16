@@ -33,11 +33,11 @@ credentials in URLs, and do not enable debug logging on live traffic.
 
 ## Monitoring
 
-Run the standard-library probe from outside the service host:
+Run the probe from outside the service host:
 
 ```sh
-python3 applications/registry/monitor.py https://cuts.example.com
-python3 applications/registry/monitor.py https://cuts.example.com --archive-sha256 DIGEST
+diamond applications/registry/monitor.di https://cuts.example.com
+diamond applications/registry/monitor.di https://cuts.example.com --archive-sha256 DIGEST
 ```
 
 For a private CA, use `--ca-file /path/to/ca.pem`. Certificate and hostname
@@ -45,7 +45,7 @@ verification stay enabled. Redirects are rejected. Exit 0 means success; exit 1
 and a JSON `ok: false` record indicate failure. The output contains elapsed time
 and an error class without endpoint or response contents. `--timeout` sets socket
 inactivity timeout (default 10 seconds); use a scheduler process deadline, such as
-`timeout 30s python3 ...`, to bound the whole job. A pinned archive check streams
+`timeout 30s diamond ...`, to bound the whole job. A pinned archive check reads
 and hashes up to the registry's 56 MiB maximum; choose a small retained canary cut.
 
 Health checks run `SELECT 1`; they do not prove disk writability, blob integrity,
@@ -91,7 +91,7 @@ thresholds, log rotation, retention, and an alert receiver in the host environme
 
 The registry is one bundle built from a single repository revision, but most
 releases change nothing it runs, so it is **not upgraded on every release**.
-`tools/registry_needs_upgrade.py` compares the revision live on the server with a
+`tools/registry_needs_upgrade.di` compares the revision live on the server with a
 target (default `HEAD`) and answers:
 
 - **REQUIRED** (exit 20): the registry app files, a cut it loads (the dependency
@@ -103,11 +103,11 @@ target (default `HEAD`) and answers:
 
 `tools/deploy_registry.sh` runs the whole routine: the check above, swap in the build
 VM, a verified backup, the bundle build, upload and `upgrade.sh`, public verification
-(`verify_registry_launch.py`), and pruning. It stops unless the verdict is REQUIRED;
+(`verify_registry_launch.di`), and pruning. It stops unless the verdict is REQUIRED;
 `--force` upgrades anyway, `--dry-run` prints every mutating command instead of
 running it, and `--no-verify` skips the public verification when the bundled seed names
 versions you have not published yet (an upgrade never publishes; run
-`verify_registry_launch.py` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
+`verify_registry_launch.di` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
 checkout) and only the newest of each is kept. Afterwards update the "Runtime
 revision" line in `PRODUCTION.md`.
 
@@ -124,7 +124,7 @@ Staging means an isolated test deployment; this project prefers a local QEMU VM.
 The existing Ubuntu 26.04 build guest can be reused without changing its normal
 build checkout. Use QEMU user networking (NAT), forward SSH only on host loopback,
 and do not forward the guest's registry ports. Install nginx and the repository's
-Ubuntu build dependencies, Python 3, curl, and OpenSSL in the guest first.
+Ubuntu build dependencies, curl, and OpenSSL in the guest first.
 
 From the host checkout:
 

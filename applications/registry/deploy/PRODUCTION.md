@@ -7,12 +7,12 @@ certificates (see "Proxy and certificates" below); Caddy was retired.
 
 Runtime revision: `7f76de9d6e9c8397a0796e377e2da3610a2fc17d` (v0.14.0, deployed
 2026-10-14 with `tools/deploy_registry.sh` after a verified backup; no cut was published, and
-`tools/verify_registry_launch.py` passed for all 18 cuts);
+`tools/verify_registry_launch.di` passed for all 18 cuts);
 previously `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
 2026-10-12 with `tools/deploy_registry.sh` after a verified backup; the bundled seed pins
 `arel` 0.34.5, which was published the same day with a 30-minute credential (revoked,
 archive sha256 `323edea3234d63777acf49fd57eb93ffe159688cb051e64e3596c2b228c92acf`), after
-which `tools/verify_registry_launch.py` passed for all 18 cuts);
+which `tools/verify_registry_launch.di` passed for all 18 cuts);
 previously `8d64ab965949defcec3c9a0e066a79b2849d90b5` (main, deployed
 2026-10-08 with `tools/deploy_registry.sh --no-verify` after a verified backup; it
 carries the cut-card README previews and `arel` 0.34.4 in the bundled seed; `arel` 0.34.4
@@ -44,7 +44,7 @@ never target a Skindicate hostname.
 05:40:15Z and booted at 05:40:24Z. Caddy (since retired), nginx, `diamond-registry`, and
 `skindicate` started unattended with no failed units; the registry passed its
 loopback health check; all four sites returned their usual statuses externally;
-and `verify_registry_launch.py` reinstalled all 18 cuts. Outage was about 30 s.
+and `verify_registry_launch.di` reinstalled all 18 cuts. Outage was about 30 s.
 
 **Certificate renewal:** certbot's `certbot.timer` renews each certificate about
 30 days before expiry through the `/var/www/letsencrypt` webroot, and
@@ -64,7 +64,7 @@ which predate `maintainers`, were then taken down ("Superseded by maintained
 release") with a ten-minute admin credential, also revoked; each cut now serves
 only its maintained x.y.1 release, and the catalog shows one row per cut.
 facet 0.7.0 rejects archives that declare `maintainers`, so it cannot install
-the current releases; use a newer facet. `verify_registry_launch.py` passed. No retained cut depends
+the current releases; use a newer facet. `verify_registry_launch.di` passed. No retained cut depends
 on the removed cuts. Takedowns hide metadata and archive downloads while retaining
 internal audit records and immutable version tombstones; those exact versions
 cannot be republished. The source packages remain in the repository.
@@ -80,7 +80,7 @@ seed also passed local reproducibility and dependency-closure checks.
 
 Seed-time inventory lives in `docs/registry-launch-inventory.json`; a cut that
 changes after launch is published on its own. Take and verify a laptop snapshot
-first (`tools/fetch_registry_backup.py`, below). Then:
+first (`tools/fetch_registry_backup.sh`, below). Then:
 
 1. On the host, issue a short-lived credential. **The subject must be a current
    owner of the cut** (`diamond-language` for every launch cut); a credential
@@ -96,10 +96,10 @@ first (`tools/fetch_registry_backup.py`, below). Then:
    ```
 
 2. Extract `seed/` from the deployment bundle and keep only the target cut in
-   `inventory.json` plus its archive; `tools/publish_registry_seed.py` verifies
+   `inventory.json` plus its archive; `tools/publish_registry_seed.di` verifies
    the archive against that entry and publishes only it. Never publish the whole
    seed again: versions are immutable.
-3. Verify with `tools/verify_registry_launch.py https://cuts.dilang.tech`, delete
+3. Verify with `tools/verify_registry_launch.di https://cuts.dilang.tech`, delete
    `credential.json`, and revoke the credential
    (`credentials.di revoke <id> "<reason>"`) or let it expire.
 
@@ -174,20 +174,20 @@ Keep backups **outside every source checkout** (the convention is
 they can never be committed or shipped by accident, and keep only the latest
 verified snapshot once a newer one has passed restore verification.
 
-With Python 3.12+ on the laptop, select a new private destination yourself and use:
+On the laptop, select a new private destination yourself and use:
 
 ```sh
-python3 tools/fetch_registry_backup.py /your/chosen/new-backup-directory \
+tools/fetch_registry_backup.sh /your/chosen/new-backup-directory \
   --host root@dilang.tech \
   --app /opt/diamond-registry/current/app \
   --data /var/lib/diamond-registry
 ```
 
-Replace the application directory with the installed path containing `backup.py`.
+Replace the application directory with the installed path containing `backup.di`.
 The helper uses existing SSH keys and strict host-key verification. It snapshots
 the running registry into a temporary directory on the server, streams the copy
-over SSH, extracts it with Python's data-only tar filter, and performs a local
-restore verification. It reports success only after database/blob checks pass.
+over SSH, checks that it holds only plain files below `snapshot/` (no links, no absolute or
+`..` names), extracts it, and performs a local restore verification with `backup.di`. It reports success only after database/blob checks pass.
 The server temporary copy and local verification copy are removed; the retained
 snapshot includes credential digests and must stay private. The destination must
 not exist, and a failed transfer removes only the newly created destination.
@@ -196,13 +196,13 @@ No transfer is made until an operator supplies the destination and remote paths.
 To rehearse recovery without touching a running service:
 
 ```sh
-python3 applications/registry/backup.py restore \
+diamond applications/registry/backup.di restore \
   /your/chosen/backup-directory/snapshot /your/chosen/new-recovery-directory
 ```
 
 Then run the recovered registry in QEMU, inspect release and credential state,
 and perform a facet installation. Follow the service restore procedure when
-switching real traffic. Manually run `monitor.py https://cuts.dilang.tech` until
+switching real traffic. Manually run `monitor.di https://cuts.dilang.tech` until
 external alert delivery is selected; a successful manual probe does not establish
 continuous monitoring.
 
@@ -223,13 +223,13 @@ backup: it stages the release, swaps `current`, restarts, restores the previous
 release if the health check fails, and otherwise deletes older releases.
 It does not publish packages or configure backup destinations and alert delivery.
 
-For an explicitly approved new seed, use `tools/publish_registry_seed.py` with the
+For an explicitly approved new seed, use `tools/publish_registry_seed.di` with the
 HTTPS registry URL, `--seed <verified-seed-directory>`, and
 `--credentials <private-credential-json>`. Issue short-lived name-scoped credentials
 with `credentials.di`; revoke them after the operation and remove the private file.
 The publisher verifies archive identities and respects the live write rate limit.
 Do not reuse the original deployed 24-cut seed: use the current 18-cut selection.
 
-Run `python3 tools/verify_registry_launch.py https://cuts.dilang.tech` to resolve
+Run `build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech` to resolve
 all selected cuts into a temporary clean consumer, compare the lock against the
 reviewed inventory, load every cut, and reinstall from the unchanged lockfile.

@@ -88,7 +88,7 @@ means the handler produced its response; it does not confirm delivery to the
 client. Configure the reverse proxy's limits and deadlines consistently.
 
 Run `make test-registry-http` from the repository root for the live integration
-suite. It uses Python 3, OpenSSL, real curl, a temporary CA trusted only by the
+suite. It uses OpenSSL, real curl, a temporary CA trusted only by the
 test, a local HTTPS proxy, and a running Diamond service. It publishes cuts with
 transitive dependencies, resolves and executes installed code, reinstalls a
 yanked locked release, and checks takedown visibility.
@@ -152,15 +152,15 @@ fields and authorization rules.
 
 ## Backup and recovery
 
-Use Python 3's standard library tool with trusted local source and destination
-parents. Run as the storage owner. Both commands require a **new destination**:
+Use the Diamond tool (`backup.di`, run with the registry's own `diamond`) with trusted
+local source and destination parents. Run as the storage owner. Both commands require a **new destination**:
 
 ```sh
-python3 backup.py backup /var/lib/diamond-registry /srv/backups/registry-20260923
-python3 backup.py restore /srv/backups/registry-20260923 /srv/recovery/registry
+diamond backup.di backup /var/lib/diamond-registry /srv/backups/registry-20260923
+diamond backup.di restore /srv/backups/registry-20260923 /srv/recovery/registry
 ```
 
-Backup may run while the service publishes. SQLite's backup API captures a
+Backup may run while the service publishes. `VACUUM INTO` captures a
 consistent database; immutable blobs referenced by that snapshot are then copied
 and verified. This relies on the current policy of retaining blobs, including
 taken-down releases. Do not delete blobs or run garbage collection during backup.

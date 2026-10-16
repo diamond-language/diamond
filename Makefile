@@ -619,16 +619,16 @@ test-registry-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/test.sh
 
 test-registry-http: $(TARGET) $(BUILD_DIR)/facet
-	python3 packages/registry/backup_download_test.py
-	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond python3 packages/registry/http_test.py
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/backup_download_test.sh
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond $(CURDIR)/$(BUILD_DIR)/diamond packages/registry/http_test.di
 
 # Opt-in staging gate: requires nginx and local sockets; run in a QEMU guest.
 test-registry-nginx: $(TARGET) $(BUILD_DIR)/facet
-	python3 packages/registry/nginx_test.py
+	$(BUILD_DIR)/diamond packages/registry/nginx_test.di
 
 test-registry-seed: $(TARGET) $(BUILD_DIR)/facet
-	python3 packages/registry/seed_test.py
-	REGISTRY_REHEARSE_SEED=1 python3 packages/registry/nginx_test.py
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/seed_test.sh
+	REGISTRY_REHEARSE_SEED=1 $(BUILD_DIR)/diamond packages/registry/nginx_test.di
 
 test-pheint-application: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash applications/pheint.dia/test.sh

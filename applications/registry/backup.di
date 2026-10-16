@@ -1,0 +1,150 @@
+# Consistent local registry snapshots. Needs trusted directories.
+#
+#   diamond backup.di backup  REGISTRY_DIRECTORY NEW_BACKUP_DIRECTORY
+#   diamond backup.di restore BACKUP_DIRECTORY   NEW_REGISTRY_DIRECTORY
+#
+# The destination is created exclusively: an existing one is never changed or removed. A failed
+# run removes what it created.
+
+BLOB_PATTERN = "^[0-9a-f]{64}$"
+
+def digest(path)
+  Digest.sha256(File.read(path))
+end
+
+def open_read_only(path)
+  if File.symlink?(path) || !File.file?(path)
+    raise ArgumentError.new("database must be a regular file")
+  end
+  SQLite3.open(path, "r")
+end
+
+# The blobs the database references, as a Hash of digest => size, after checking the database.
+def inventory(db)
+  integrity = db.query("PRAGMA integrity_check")
+  unless integrity.length() == 1 && integrity[0]["integrity_check"] == "ok"
+    raise ArgumentError.new("database integrity check failed")
+  end
+  unless db.query("PRAGMA foreign_key_check").length() == 0
+    raise ArgumentError.new("database foreign key check failed")
+  end
+  blobs = {}
+  db.query("SELECT sha256, size FROM releases ORDER BY sha256").each() do |row|
+    sha = row["sha256"]
+    size = row["size"]
+    unless sha.is_a?(String) && Regexp.new(BLOB_PATTERN).match?(sha)
+      raise ArgumentError.new("invalid blob digest")
+    end
+    unless size.is_a?(Int) && size > 0
+      raise ArgumentError.new("invalid blob size")
+    end
+    if blobs.key?(sha) && blobs[sha] != size
+      raise ArgumentError.new("inconsistent blob size")
+    end
+    blobs[sha] = size
+  end
+  blobs
+end
+
+def copy_blob(source, target, sha, size)
+  if File.symlink?(source) || !File.file?(source)
+    raise ArgumentError.new("blob must be a regular file: " + sha)
+  end
+  File.copy(source, target)
+  if File.size(target) != size || digest(target) != sha
+    raise ArgumentError.new("blob integrity check failed: " + sha)
+  end
+  File.sync(target)
+end
+
+def remove_tree(path)
+  Dir.entries(path).each() do |name|
+    child = path + "/" + name
+    if File.directory?(child) && !File.symlink?(child)
+      remove_tree(child)
+    else
+      File.delete(child)
+    end
+  end
+  Dir.delete(path)
+end
+
+# Entries of a Hash sorted by key, as a Hash (so the manifest is stable).
+def sorted(hash)
+  result = {}
+  hash.keys().sort().each() do |key|
+    result[key] = hash[key]
+  end
+  result
+end
+
+def transfer(action, source, target)
+  source = File.expand_path(source)
+  target = File.expand_path(target)
+  parent = File.dirname(target)
+  Dir.mkdir(target, 0o700)
+  begin
+    Dir.mkdir(target + "/blobs", 0o700)
+    blobs = nil
+    if action == "backup"
+      original = open_read_only(source + "/registry.db")
+      begin
+        # VACUUM INTO writes a consistent copy of the live database.
+        original.execute("VACUUM INTO ?", [target + "/registry.db"])
+      ensure
+        original.close()
+      end
+      snapshot = open_read_only(target + "/registry.db")
+      begin
+        blobs = inventory(snapshot)
+      ensure
+        snapshot.close()
+      end
+    else
+      manifest = JSON.parse(File.read(source + "/manifest.json"))
+      unless manifest["format"] == 1 && digest(source + "/registry.db") == manifest["database_sha256"]
+        raise ArgumentError.new("invalid backup manifest or database digest")
+      end
+      File.copy(source + "/registry.db", target + "/registry.db")
+      db = open_read_only(target + "/registry.db")
+      begin
+        blobs = inventory(db)
+      ensure
+        db.close()
+      end
+      raise ArgumentError.new("backup inventory does not match database") unless blobs == manifest["blobs"]
+      Dir.mkdir(target + "/staging", 0o700)
+      Dir.sync(target + "/staging")
+    end
+    blobs.each() do |sha, size|
+      copy_blob(source + "/blobs/" + sha, target + "/blobs/" + sha, sha, size)
+    end
+    File.sync(target + "/registry.db")
+    Dir.sync(target + "/blobs")
+    if action == "backup"
+      # The completion marker is written only after every referenced blob is durable.
+      manifest = {"blobs": sorted(blobs), "database_sha256": digest(target + "/registry.db"), "format": 1}
+      File.write(target + "/manifest.json", JSON.stringify(manifest) + "\n")
+      File.sync(target + "/manifest.json")
+    end
+    Dir.sync(target)
+    Dir.sync(parent)
+  rescue e: StandardError
+    remove_tree(target)
+    raise e
+  end
+end
+
+if ARGV.length() != 3 || (ARGV[0] != "backup" && ARGV[0] != "restore")
+  warn("usage: backup.di backup|restore SOURCE DESTINATION")
+  exit(2)
+end
+action = ARGV[0]
+begin
+  transfer(action, ARGV[1], ARGV[2])
+rescue e: StandardError
+  warn("#{action} failed: #{e.message()}")
+  exit(1)
+end
+puts("#{action} complete: #{ARGV[2]}")
+exit(0)
