@@ -34,7 +34,7 @@ authoritative fine-grained record.
 ### Fixed
 
 - `array[1..-1]` returned `[]` and `array[-2..-1]` raised: a negative bound in a Range index now counts
-  from the end of the Array, as in Ruby.
+  from the end of the Array, as in Ruby. `String#[]` now accepts a Range too (`"hello"[1..-1]`).
 
 - A read on a socket or file that timed out left the stream in an error state, so every later read on
   it failed too ("read error: Success") even after data arrived; the error is now cleared once reported.

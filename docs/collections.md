@@ -142,8 +142,9 @@ relationship to what a positionally-matched C conversion expects.
 Strings also support `[]` with a single `Int` index, returning a new
 one-character `String` (bounds-checked, `IndexError` outside the
 string — the same as `.slice()`; a negative index counts from the end,
-so `s[-1]` is the last byte), and `s[start, length]`, the same as
-`s.slice(start, length)`. Unlike Array/Hash, `[]=` on a String is
+so `s[-1]` is the last byte), `s[start, length]`, the same as
+`s.slice(start, length)`, and `s[a..b]` / `s[a...b]` with a Range (a negative bound counts from the
+end, so `s[1..-1]` drops the first byte; a start outside the string raises `IndexError`). Unlike Array/Hash, `[]=` on a String is
 rejected outright with a `TypeError` (strings are immutable).
 `.repeat(n)` (or `s * n`) returns a new `String` with the receiver
 repeated `n` times (`n == 0` → `""`); a negative `n` raises a rescuable
