@@ -1,4 +1,5 @@
 #define _XOPEN_SOURCE 700
+#include "lexer.h"
 #include "loader.h"
 #include "manifest_literal.h"
 
@@ -8,6 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct Loader {
     DiamondSourceBundle *bundle;
@@ -147,8 +149,124 @@ static bool record_segment(Loader *loader,const char *path,size_t line,
     return true;
 }
 
+/* `__FILE__` and `__dir__`: the absolute path of the source file they appear in and its
+ * directory. They are replaced here, in each file's own text before it is spliced into the
+ * program, because only the loader knows which file a piece of source came from. A token-aware
+ * pass (the real lexer) so a comment or a string that merely mentions them is left alone, plus
+ * the `#{...}` parts of a string, where `"#{__dir__}/lib"` is the usual spelling. */
+static bool path_constant_at(const char *source,size_t at,size_t end,bool *is_dir,size_t *length) {
+    static const char dir_name[]="__dir__";
+    static const char file_name[]="__FILE__";
+    const bool dir=end-at>=sizeof dir_name-1&&memcmp(source+at,dir_name,sizeof dir_name-1)==0;
+    const bool file=end-at>=sizeof file_name-1&&memcmp(source+at,file_name,sizeof file_name-1)==0;
+    if(!dir&&!file)return false;
+    const size_t name_length=dir?sizeof dir_name-1:sizeof file_name-1;
+    const unsigned char before=at>0?(unsigned char)source[at-1]:0;
+    const unsigned char after=at+name_length<end?(unsigned char)source[at+name_length]:0;
+    const bool word_before=(before>='a'&&before<='z')||(before>='A'&&before<='Z')||
+        (before>='0'&&before<='9')||before=='_'||before=='@'||before=='$'||before=='.';
+    const bool word_after=(after>='a'&&after<='z')||(after>='A'&&after<='Z')||
+        (after>='0'&&after<='9')||after=='_'||after=='?'||after=='!';
+    if(word_before||word_after)return false;
+    *is_dir=dir;
+    *length=name_length;
+    return true;
+}
+
+typedef struct PathRewrite {
+    char *text;
+    size_t length;
+    size_t capacity;
+    bool failed;
+} PathRewrite;
+
+static void rewrite_append(PathRewrite *rewrite,const char *text,size_t length) {
+    if(rewrite->failed)return;
+    if(rewrite->length+length+1>rewrite->capacity) {
+        size_t capacity=rewrite->capacity==0?4096:rewrite->capacity;
+        while(capacity<rewrite->length+length+1)capacity*=2;
+        char *grown=realloc(rewrite->text,capacity);
+        if(grown==nullptr) {rewrite->failed=true;return;}
+        rewrite->text=grown;rewrite->capacity=capacity;
+    }
+    memcpy(rewrite->text+rewrite->length,text,length);
+    rewrite->length+=length;
+    rewrite->text[rewrite->length]='\0';
+}
+
+/* The path as a double-quoted Diamond literal, with the characters that would end it or start
+ * an interpolation escaped. */
+static void rewrite_append_literal(PathRewrite *rewrite,const char *value) {
+    rewrite_append(rewrite,"\"",1);
+    for(const char *cursor=value;*cursor!='\0';cursor++) {
+        if(*cursor=='"'||*cursor=='\\'||*cursor=='#')rewrite_append(rewrite,"\\",1);
+        rewrite_append(rewrite,cursor,1);
+    }
+    rewrite_append(rewrite,"\"",1);
+}
+
+static bool rewrite_path_constants(const char *source,const char *path,char **out) {
+    *out=nullptr;
+    if(strstr(source,"__dir__")==nullptr&&strstr(source,"__FILE__")==nullptr)return true;
+    char absolute[DIAMOND_MAX_SOURCE_PATH];
+    char directory[DIAMOND_MAX_SOURCE_PATH];
+    if(realpath(path,absolute)==nullptr) {
+        /* A source with no file (-e, the REPL): the working directory stands in. */
+        if(getcwd(directory,sizeof directory)==nullptr)snprintf(directory,sizeof directory,".");
+        snprintf(absolute,sizeof absolute,"%s",path);
+    } else {
+        snprintf(directory,sizeof directory,"%s",absolute);
+        char *slash=strrchr(directory,'/');
+        if(slash==nullptr)snprintf(directory,sizeof directory,".");
+        else if(slash==directory)directory[1]='\0';
+        else *slash='\0';
+    }
+    PathRewrite rewrite={};
+    size_t copied=0;
+    DiamondLexer lexer;
+    diamond_lexer_init(&lexer,source);
+    for(;;) {
+        const DiamondToken token=diamond_lexer_next(&lexer);
+        if(token.kind==DIAMOND_TOKEN_EOF||token.kind==DIAMOND_TOKEN_ERROR)break;
+        const size_t start=token.span.start,end=start+token.span.length;
+        bool is_dir=false;
+        size_t name_length=0;
+        if(token.kind==DIAMOND_TOKEN_IDENTIFIER&&
+           path_constant_at(source,start,end,&is_dir,&name_length)&&name_length==token.span.length) {
+            rewrite_append(&rewrite,source+copied,start-copied);
+            rewrite_append_literal(&rewrite,is_dir?directory:absolute);
+            copied=end;
+        } else if(token.kind==DIAMOND_TOKEN_STRING) {
+            size_t depth=0;
+            for(size_t at=start;at<end;at++) {
+                if(depth==0&&source[at]=='\\') {at++;continue;}
+                if(depth==0&&source[at]=='#'&&at+1<end&&source[at+1]=='{') {depth=1;at++;continue;}
+                if(depth>0) {
+                    if(source[at]=='{')depth++;
+                    else if(source[at]=='}')depth--;
+                    else if(path_constant_at(source,at,end,&is_dir,&name_length)) {
+                        rewrite_append(&rewrite,source+copied,at-copied);
+                        rewrite_append_literal(&rewrite,is_dir?directory:absolute);
+                        copied=at+name_length;
+                        at+=name_length-1;
+                    }
+                }
+            }
+        }
+    }
+    if(rewrite.failed) {free(rewrite.text);return false;}
+    if(rewrite.text==nullptr)return true;
+    rewrite_append(&rewrite,source+copied,strlen(source+copied));
+    if(rewrite.failed) {free(rewrite.text);return false;}
+    *out=rewrite.text;
+    return true;
+}
+
 static bool expand(Loader *loader,const char *path,const char *source,
-                   const char *including_path,size_t including_line) {
+                   const char *including_path,size_t including_line);
+
+static bool expand_source(Loader *loader,const char *path,const char *source,
+                          const char *including_path,size_t including_line) {
     if(same_path(loader->active,loader->active_count,path)) {
         (void)snprintf(loader->error,loader->error_capacity,
                        "circular require involving '%s' (required from %s:%zu)",
@@ -330,6 +448,20 @@ static bool expand(Loader *loader,const char *path,const char *source,
         return false;
     }
     loader->active_count--;return true;
+}
+
+static bool expand(Loader *loader,const char *path,const char *source,
+                   const char *including_path,size_t including_line) {
+    char *rewritten=nullptr;
+    if(!rewrite_path_constants(source,path,&rewritten)) {
+        (void)snprintf(loader->error,loader->error_capacity,
+                       "%s: out of memory resolving __dir__",path);
+        return false;
+    }
+    const bool ok=expand_source(loader,path,rewritten!=nullptr?rewritten:source,
+                                including_path,including_line);
+    free(rewritten);
+    return ok;
 }
 
 bool diamond_load_program_with_override(const char *name,const char *source,
