@@ -225,17 +225,15 @@ language-design goal.
 ### Fewer languages to build and test
 
 Getting Diamond built, tested and deployed should not need a second scripting language on
-the machine. Python is the offender: it is called from `wasm/build.sh` (SQLite checksum
-verification), the Makefile's registry targets, and about two dozen package, example and
-benchmark test drivers (socket, shutdown and smoke tests that speak raw protocols to a
-running program). Shell plus the tools already required (`sha3sum`/`openssl`, `nc`, `curl`,
-and Diamond itself) covers all of it.
+the machine, and the build and test dependency set should stay a C compiler, make and a POSIX
+shell.
 
-- Replace each Python driver with a bash script or with a Diamond program run by the
-  built binary, so the build/test dependency set is a C compiler, make and a POSIX shell.
-- Until then, treat any new `python3` call in a build or test path as a regression.
-- Node.js (`tests/wasm_repl_test.mjs`, the WebAssembly check) is the one other exception;
-  keep it confined to the optional wasm target.
+- `tools/fetch_registry_backup.sh` still falls back to `python3 backup.py` on a registry server
+  deployed before `backup.di` shipped. Delete that fallback once the production registry has been
+  redeployed from a build that includes `backup.di`.
+- Treat any new `python3` call in a build, test or tooling path as a regression.
+- Node.js (`tests/wasm_repl_test.mjs`, the WebAssembly check) is the one other exception; keep it
+  confined to the optional wasm target.
 
 ### Portability
 

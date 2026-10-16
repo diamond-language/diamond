@@ -44,6 +44,15 @@ authoritative fine-grained record.
 
 ### Tooling
 
+- No Python is needed to build, test, deploy or run the tooling any more: the WebAssembly build, the
+  cache, facet, cancellation, shutdown and example tests, the registry's tests, backup, monitor and
+  seed tools, the gremlin thread sweep (`bench/gremlin_http/sweep.di`, now also covering the
+  instrumented runs via `--instrument`) and the platform report (`platform_report.sh`) are Diamond
+  programs or shell scripts (one transitional `python3` fallback remains in
+  `tools/fetch_registry_backup.sh` for servers deployed before `backup.di`). The three Arel annotation
+  measurement scripts were removed; they remain
+  in Git history.
+
 - The interpreter builds for WebAssembly (`wasm/build.sh`, needs only a wasi-sdk) and runs a REPL in
   the browser at dilang.tech. SQLite works there (in-memory databases), as do `Digest`, `HMAC`,
   `Base64` and `SecureRandom`; fibers, threads, sockets, subprocesses, the other databases and TLS
