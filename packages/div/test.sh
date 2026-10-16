@@ -75,12 +75,12 @@ count=$((count + 1))
 # --- literal text past the string-literal cap (DIAMOND_MAX_STRING_LENGTH,
 # 4095 bytes, src/vm.h) is chunked correctly and reassembles exactly,
 # including text whose escaped form is twice its raw length ---
-python3 -c "
-with open('$work/long.html.div', 'w') as f:
-    f.write('<%# locals: %>\n')
-    f.write('x' * 2500 + chr(34) * 1500)
-    f.write('\n')
-"
+{
+    printf '<%%# locals: %%>\n'
+    printf 'x%.0s' $(seq 1 2500)
+    printf '"%.0s' $(seq 1 1500)
+    printf '\n'
+} > "$work/long.html.div"
 "$diamond" bin/divc.di "$work/long.html.div" "$work/long.html.di" >/dev/null
 cat >"$work/driver_long.di" <<DRIVEREOF
 require "$work/long.html"

@@ -12,6 +12,7 @@ set -euo pipefail
 # ordinary corpus case either.
 
 diamond="$(realpath ./build/diamond)"
+repo_root="$(pwd)"
 count=0
 
 work="$(realpath "$(mktemp -d)")"
@@ -82,8 +83,7 @@ count=$((count + 1))
 # bodies so the structural and bytecode validation has to hold on its own:
 # every mutant must be rejected (a miss, clean recompile), run to a normal
 # exit, or run on -- never die on a signal ---
-if command -v python3 >/dev/null; then
-    cat > "$work/forge.di" <<'EOF2'
+cat > "$work/forge.di" <<'EOF2'
 class Animal
   def initialize(name: String)
     @name = name
@@ -99,43 +99,10 @@ total = 0
 puts(Dog.new("rex").speak())
 puts(h["b"].map() do |x| x + total end.to_s())
 EOF2
-    (cd "$work" && "$diamond" forge.di >/dev/null)
-    forged_crashes="$(python3 - "$work" "$diamond" <<'EOF2'
-import os, random, subprocess, sys
-work, diamond = sys.argv[1], os.path.abspath(sys.argv[2])
-base = open(os.path.join(work, "forge.dic"), "rb").read()
-MASK = (1 << 64) - 1
-def checksum(body):
-    h = (0x9e3779b97f4a7c15 ^ len(body)) & MASK
-    i = 0
-    while i + 8 <= len(body):
-        h = ((h ^ int.from_bytes(body[i:i + 8], "little")) * 0xff51afd7ed558ccd) & MASK
-        h ^= h >> 32
-        i += 8
-    tail = int.from_bytes(body[i:].ljust(8, b"\0"), "little")
-    h = ((h ^ tail) * 0xff51afd7ed558ccd) & MASK
-    return h ^ (h >> 29)
-random.seed(20261004)
-crashes = 0
-for _ in range(200):
-    data = bytearray(base)
-    for _ in range(random.choice([1, 1, 2, 4])):
-        at = random.randrange(100, 20000)
-        data[at] = random.randrange(256) if random.random() < .5 else data[at] ^ (1 << random.randrange(8))
-    data[80:88] = checksum(bytes(data[88:])).to_bytes(8, "little")
-    open(os.path.join(work, "forge.dic"), "wb").write(data)
-    try:
-        status = subprocess.run([diamond, "forge.di"], cwd=work, capture_output=True, timeout=5).returncode
-    except subprocess.TimeoutExpired:
-        status = 0  # a mutant may legitimately loop forever; only a signal is a failure
-    if status < 0:
-        crashes += 1
-print(crashes)
-EOF2
-)"
-    [[ "$forged_crashes" == "0" ]]
-    count=$((count + 1))
-fi
+(cd "$work" && "$diamond" forge.di >/dev/null)
+forged_crashes="$(cd "$work" && "$diamond" "$repo_root/tests/forge_cache.di" "$diamond" forge.di 200)"
+[[ "$forged_crashes" == "0" ]]
+count=$((count + 1))
 
 # --- DIAMOND_NO_CACHE=1 skips it entirely -- no trace output, no
 # rewritten .dic even though one already exists from the runs above ---

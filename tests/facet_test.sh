@@ -922,6 +922,29 @@ for maintainers in '' ', "maintainers": []' \
     rm -f "$error_file"
 done
 printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test \\"Q\\"", "contact": "test@example.com"}, {"name": "Site", "contact": "https://example.com/issues"}]}\n' > checkcut/diamond.cut
+# Byte-level archive edits without a scripting language: `grep -b` reports where the text
+# sits, `dd conv=notrunc` writes over exactly those bytes and nothing else.
+blank_match() { # FILE ERE: overwrite the first match with spaces, keeping the archive length
+    local file="$1" pattern="$2" match offset text
+    match="$(LC_ALL=C grep -boa -E -- "$pattern" "$file" | head -n 1)"
+    [[ -n "$match" ]] || { echo "blank_match: no match for $pattern" >&2; exit 1; }
+    offset="${match%%:*}"
+    text="${match#*:}"
+    printf '%*s' "$(LC_ALL=C; echo ${#text})" '' |
+        dd of="$file" bs=1 seek="$offset" conv=notrunc status=none
+}
+overwrite_payload() { # FILE OLD NEW: replace OLD's bytes with NEW, space padded to OLD's length
+    local file="$1" old="$2" new="$3" match offset size padded
+    match="$(LC_ALL=C grep -boa -F -- "$old" "$file" | head -n 1)"
+    [[ -n "$match" ]] || { echo "overwrite_payload: '$old' not found" >&2; exit 1; }
+    offset="${match%%:*}"
+    size="$(LC_ALL=C; echo ${#old})"
+    padded="$(printf '%s\n' "$new")"
+    (( ${#padded} + 1 <= size )) || { echo "overwrite_payload: replacement too long" >&2; exit 1; }
+    printf '%-*s' "$size" "$new"$'\n' | head -c "$size" |
+        dd of="$file" bs=1 seek="$offset" conv=notrunc status=none
+}
+
 maintained_archive="$(mktemp -d)/checkcut.tar"
 "$facet" pack checkcut "$maintained_archive" >/dev/null
 [[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[{"name":"Test \"Q\"","contact":"test@example.com"},{"name":"Site","contact":"https://example.com/issues"}]}' ]]
@@ -933,14 +956,7 @@ if "$facet" verify "$maintained_archive" --json --readme >/dev/null 2>&1; then
     exit 1
 fi
 # Archives published before the field existed still verify, reporting none.
-python3 - "$maintained_archive" <<'PY'
-import re, sys
-path = sys.argv[1]
-data = open(path, 'rb').read()
-match = re.search(rb', "maintainers": \[.*?\]\]?(?=\})', data)
-assert match
-open(path, 'wb').write(data[:match.start()] + b' ' * (match.end() - match.start()) + data[match.end():])
-PY
+blank_match "$maintained_archive" ', "maintainers": \[.*\]'
 [[ "$("$facet" verify "$maintained_archive" --json)" == *'"maintainers":[]}' ]]
 rm -rf "$(dirname "$maintained_archive")"
 
@@ -1018,19 +1034,7 @@ grep -q '^facet: verified checkcut 1.2.0 (5 files)$' verify_output
 # `facet check`. Change only payload bytes, keeping canonical tar headers.
 for import in 'require "../../x"' 'require_cut "missing"'; do
     cp one.tar imported.tar
-    python3 - imported.tar "$import" <<'PY'
-import sys
-import tarfile
-
-path, statement = sys.argv[1:]
-with tarfile.open(path) as archive:
-    member = archive.getmember("lib/checkcut.di")
-payload = (statement + "\n").encode().ljust(member.size, b" ")
-assert len(payload) == member.size
-with open(path, "r+b") as archive:
-    archive.seek(member.offset_data)
-    archive.write(payload)
-PY
+    overwrite_payload imported.tar 'def checkcut_value() = 1' "$import"
     error_file="$(mktemp)"
     if "$facet" verify imported.tar >/dev/null 2>"$error_file"; then
         echo "facet verify accepted an unsafe import" >&2

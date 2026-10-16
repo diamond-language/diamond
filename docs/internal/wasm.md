@@ -22,7 +22,7 @@ newline-terminated line of the candidate.
 ## Building and testing
 
 `make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
-builds the module (it fetches the SQLite amalgamation, so it needs network access the first time) and drives it through `wasm/web/diamond-wasm.js`: results, session state,
+builds the module (it fetches the SQLite source, so it needs network access the first time) and drives it through `wasm/web/diamond-wasm.js`: results, session state,
 continuation lines, the portable crypto's known answers, and an ordinary error for every
 unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
 
