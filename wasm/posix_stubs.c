@@ -28,6 +28,9 @@ int connect(int fd, const struct sockaddr *address, socklen_t length) {
 int getpeername(int fd, struct sockaddr *address, socklen_t *length) {
     (void)fd; (void)address; (void)length; UNSUPPORTED_INT();
 }
+int getsockname(int fd, struct sockaddr *address, socklen_t *length) {
+    (void)fd; (void)address; (void)length; UNSUPPORTED_INT();
+}
 ssize_t sendto(int fd, const void *buffer, size_t length, int flags, const struct sockaddr *address,
                socklen_t address_length) {
     (void)fd; (void)buffer; (void)length; (void)flags; (void)address; (void)address_length;
