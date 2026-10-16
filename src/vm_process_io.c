@@ -563,6 +563,10 @@ typedef struct DiamondProcessOptions {
     const char *cwd;
     const DiamondString *stdin_data;
     bool stdin_pipe;
+    /* Process.spawn only: a child's output written to a file instead of a pipe. */
+    const char *stdout_path;
+    const char *stderr_path;
+    bool stderr_to_stdout;
 } DiamondProcessOptions;
 
 static void process_options_free(DiamondProcessOptions *options) {
@@ -633,6 +637,24 @@ static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
                 data=(const DiamondString *)value.as.object;
                 out->stdin_data=data;
             }
+        } else if(for_spawn&&((key->length==6&&memcmp(key->chars,"stdout",6)==0)||
+                              (key->length==6&&memcmp(key->chars,"stderr",6)==0))) {
+            const DiamondString *path=nullptr;
+            if(!process_options_string(value,&path)||path->length==0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "%s option '%.*s' must be a non-empty file path String",owner,
+                    (int)key->length,key->chars);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            if(key->chars[3]=='o')out->stdout_path=path->chars;
+            else out->stderr_path=path->chars;
+        } else if(for_spawn&&key->length==16&&memcmp(key->chars,"stderr_to_stdout",16)==0) {
+            if(value.kind!=DIAMOND_VALUE_BOOL) {
+                snprintf(vm->error,sizeof vm->error,
+                    "%s option 'stderr_to_stdout' must be true or false",owner);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            out->stderr_to_stdout=value.as.boolean;
         } else {
             snprintf(vm->error,sizeof vm->error,"unrecognized %s option '%.*s'",owner,
                 (int)key->length,key->chars);
@@ -972,8 +994,21 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
         posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
     if(options!=nullptr&&options->cwd!=nullptr)
         posix_spawn_file_actions_addchdir_np(&actions,options->cwd);
-    posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
+    const bool stdout_to_file=options!=nullptr&&options->stdout_path!=nullptr;
+    const bool stderr_to_file=options!=nullptr&&options->stderr_path!=nullptr;
+    const bool stderr_merged=options!=nullptr&&options->stderr_to_stdout;
+    if(stdout_to_file)
+        posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,options->stdout_path,
+            O_WRONLY|O_CREAT|O_APPEND,0600);
+    else
+        posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
+    if(stderr_merged)
+        posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO);
+    else if(stderr_to_file)
+        posix_spawn_file_actions_addopen(&actions,STDERR_FILENO,options->stderr_path,
+            O_WRONLY|O_CREAT|O_APPEND,0600);
+    else
+        posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
     posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
     posix_spawn_file_actions_addclose(&actions,stdout_pipe[1]);
     posix_spawn_file_actions_addclose(&actions,stderr_pipe[0]);
@@ -996,6 +1031,12 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
     }
     free(argv);
 
+    /* An output sent to a file has no pipe to read: its handle stream stays nil. */
+    const bool keep_stdout=!stdout_to_file;
+    const bool keep_stderr=!stderr_to_file&&!stderr_merged;
+    if(!keep_stdout){close(stdout_pipe[0]);stdout_pipe[0]=-1;}
+    if(!keep_stderr){close(stderr_pipe[0]);stderr_pipe[0]=-1;}
+
     /* Neither read end inherits O_NONBLOCK from anywhere -- pipe(2)
      * always creates blocking fds -- so both are set explicitly here,
      * the same "accept() never inherits it either" reasoning
@@ -1003,6 +1044,7 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
      * documents. */
     int read_fds[2]={stdout_pipe[0],stderr_pipe[0]};
     for(size_t index=0;index<2;index++) {
+        if(read_fds[index]<0)continue;
         const int flags=fcntl(read_fds[index],F_GETFL,0);
         if(flags<0||fcntl(read_fds[index],F_SETFL,flags|O_NONBLOCK)<0) {
             const int saved_errno=errno;
@@ -1018,18 +1060,24 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
      * stream field write below needs its own gc_write_barrier call, the
      * same requirement allocate_process_result's own two field writes
      * have. */
-    DiamondProcessStream *stdout_stream=allocate_process_stream(vm,stdout_pipe[0]);
-    if(stdout_stream==nullptr) {
-        close(stdout_pipe[0]);close(stderr_pipe[0]);
-        return DIAMOND_VM_OUT_OF_MEMORY;
+    if(keep_stdout) {
+        DiamondProcessStream *stdout_stream=allocate_process_stream(vm,stdout_pipe[0]);
+        if(stdout_stream==nullptr) {
+            close(stdout_pipe[0]);
+            if(keep_stderr)close(stderr_pipe[0]);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        handle->stdout_stream=DIAMOND_OBJECT(stdout_stream);
+        if(!gc_write_barrier(vm,(DiamondObject *)handle)) {
+            if(keep_stderr)close(stderr_pipe[0]);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
     }
-    handle->stdout_stream=DIAMOND_OBJECT(stdout_stream);
-    if(!gc_write_barrier(vm,(DiamondObject *)handle)) {
-        close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;
+    if(keep_stderr) {
+        DiamondProcessStream *stderr_stream=allocate_process_stream(vm,stderr_pipe[0]);
+        if(stderr_stream==nullptr) {close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;}
+        handle->stderr_stream=DIAMOND_OBJECT(stderr_stream);
     }
-    DiamondProcessStream *stderr_stream=allocate_process_stream(vm,stderr_pipe[0]);
-    if(stderr_stream==nullptr) {close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;}
-    handle->stderr_stream=DIAMOND_OBJECT(stderr_stream);
     if(!gc_write_barrier(vm,(DiamondObject *)handle)) {
         if(pipe_stdin)close(stdin_pipe[1]);
         return DIAMOND_VM_OUT_OF_MEMORY;
