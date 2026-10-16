@@ -2076,3 +2076,241 @@ def diamond_string_split_extended(text: String, separator = nil, limit: Int = 0)
   pieces.push(rest)
   pieces
 end
+
+# Array#pack / String#unpack: binary encoding by a template string. Integers C c S s L l Q q (little
+# endian), n N (big endian), v V (little endian); strings a A Z; hex H; UTF-8 U; null byte x.
+# A directive takes an optional count or `*` ("all that is left"). Floats and the `_ ! < >`
+# modifiers are not supported.
+def diamond_pack_directives(format: String) -> Array
+  directives = []
+  index = 0
+  while index < format.length()
+    letter = format[index]
+    index += 1
+    next if letter == " " || letter == "\n" || letter == "\t"
+    count = nil
+    if index < format.length() && format[index] == "*"
+      count = -1
+      index += 1
+    else
+      digits = ""
+      while index < format.length() && format[index] >= "0" && format[index] <= "9"
+        digits = digits + format[index]
+        index += 1
+      end
+      count = digits.to_i() if digits != ""
+    end
+    directives.push([letter, count])
+  end
+  directives
+end
+
+# [bytes, signed, big_endian] for an integer directive, or nil.
+def diamond_pack_integer_layout(letter: String) -> Array | Nil
+  return [1, false, false] if letter == "C"
+  return [1, true, false] if letter == "c"
+  return [2, false, false] if letter == "S" || letter == "v"
+  return [2, true, false] if letter == "s"
+  return [2, false, true] if letter == "n"
+  return [4, false, false] if letter == "L" || letter == "V"
+  return [4, true, false] if letter == "l"
+  return [4, false, true] if letter == "N"
+  return [8, false, false] if letter == "Q"
+  return [8, true, false] if letter == "q"
+  nil
+end
+
+# 256 raised to `width`: the range of a width-byte integer (the self-hosted parser has no `**`).
+def diamond_pack_modulus(width: Int) -> Int
+  modulus = 1
+  while width > 0
+    modulus = modulus * 256
+    width -= 1
+  end
+  modulus
+end
+
+def diamond_pack_utf8(code: Int) -> String
+  return code.chr() if code < 128
+  if code < 2048
+    return (192 + code / 64).chr() + (128 + code % 64).chr()
+  end
+  if code < 65536
+    return (224 + code / 4096).chr() + (128 + code / 64 % 64).chr() + (128 + code % 64).chr()
+  end
+  (240 + code / 262144).chr() + (128 + code / 4096 % 64).chr() + (128 + code / 64 % 64).chr() + (128 + code % 64).chr()
+end
+
+# Loops here are `while`, and the output is an Array joined at the end: the prelude keeps blocks and
+# StringBuilder out of it (blocks would move the first `<block>` in the bytecode dump that tests/run.sh
+# slices; an unannotated callee makes the LSP compile twice).
+def diamond_array_pack(items: Array, format: String) -> String
+  out = []
+  position = 0
+  directives = diamond_pack_directives(format)
+  step = 0
+  while step < directives.length()
+    letter = directives[step][0]
+    count = directives[step][1]
+    step += 1
+    layout = diamond_pack_integer_layout(letter)
+    if layout != nil
+      repeat = count == nil ? 1 : (count < 0 ? items.length() - position : count)
+      while repeat > 0
+        repeat -= 1
+        raise ArgumentError.new("too few arguments for pack '#{letter}'") if position >= items.length()
+        value = items[position]
+        position += 1
+        value += diamond_pack_modulus(layout[0]) if value < 0
+        bytes = []
+        b = 0
+        while b < layout[0]
+          bytes.push((value % 256).to_i())
+          value = value / 256
+          b += 1
+        end
+        bytes = bytes.reverse() if layout[2]
+        b = 0
+        while b < bytes.length()
+          out.push(bytes[b].chr())
+          b += 1
+        end
+      end
+    elsif letter == "a" || letter == "A" || letter == "Z"
+      raise ArgumentError.new("too few arguments for pack '#{letter}'") if position >= items.length()
+      text = items[position]
+      position += 1
+      width = count == nil ? 1 : (count < 0 ? text.length() + (letter == "Z" ? 1 : 0) : count)
+      padding = letter == "A" ? " " : 0.chr()
+      body = text.length() > width ? text.slice(0, width) : text
+      out.push(body)
+      missing = width - body.length()
+      while missing > 0
+        out.push(padding)
+        missing -= 1
+      end
+    elsif letter == "H"
+      raise ArgumentError.new("too few arguments for pack 'H'") if position >= items.length()
+      hex = items[position]
+      position += 1
+      digits = count == nil ? 1 : (count < 0 ? hex.length() : count)
+      hex = hex.ljust(digits + digits % 2, "0")
+      i = 0
+      while i < digits + digits % 2
+        out.push((hex.slice(i, 2).to_i(16)).chr())
+        i += 2
+      end
+    elsif letter == "U"
+      repeat = count == nil ? 1 : (count < 0 ? items.length() - position : count)
+      while repeat > 0
+        repeat -= 1
+        raise ArgumentError.new("too few arguments for pack 'U'") if position >= items.length()
+        out.push(diamond_pack_utf8(items[position]))
+        position += 1
+      end
+    elsif letter == "x"
+      repeat = count == nil ? 1 : (count < 0 ? 0 : count)
+      while repeat > 0
+        repeat -= 1
+        out.push(0.chr())
+      end
+    else
+      raise ArgumentError.new("unknown pack directive '#{letter}'")
+    end
+  end
+  out.join("")
+end
+
+def diamond_string_unpack(data: String, format: String) -> Array
+  result = []
+  offset = 0
+  directives = diamond_pack_directives(format)
+  step = 0
+  while step < directives.length()
+    letter = directives[step][0]
+    count = directives[step][1]
+    step += 1
+    layout = diamond_pack_integer_layout(letter)
+    if layout != nil
+      width = layout[0]
+      repeat = count == nil ? 1 : (count < 0 ? (data.length() - offset) / width : count)
+      while repeat > 0
+        repeat -= 1
+        if offset + width > data.length()
+          result.push(nil)
+        else
+          value = 0
+          b = 0
+          while b < width
+            value = value * 256 + data.getbyte(layout[2] ? offset + b : offset + width - 1 - b)
+            b += 1
+          end
+          value -= diamond_pack_modulus(width) if layout[1] && value >= diamond_pack_modulus(width) / 2
+          result.push(value)
+        end
+        offset += width
+      end
+    elsif letter == "a" || letter == "A" || letter == "Z"
+      remaining = data.length() - offset
+      width = count == nil ? 1 : (count < 0 ? remaining : count)
+      width = remaining if width > remaining
+      text = data.slice(offset, width)
+      if letter == "Z"
+        stop = text.index_of(0.chr())
+        if stop != nil
+          offset += count == -1 ? stop + 1 : width
+          text = text.slice(0, stop)
+        else
+          offset += width
+        end
+      else
+        offset += width
+        if letter == "A"
+          last = text.length()
+          while last > 0 && (text[last - 1] == " " || text[last - 1] == 0.chr())
+            last -= 1
+          end
+          text = text.slice(0, last)
+        end
+      end
+      result.push(text)
+    elsif letter == "H"
+      remaining = (data.length() - offset) * 2
+      digits = count == nil ? 1 : (count < 0 ? remaining : count)
+      digits = remaining if digits > remaining
+      hex = ""
+      i = 0
+      while i < digits
+        byte = data.getbyte(offset + i / 2)
+        hex = hex + (i % 2 == 0 ? byte / 16 : byte % 16).to_s(16)
+        i += 1
+      end
+      offset += (digits + 1) / 2
+      result.push(hex)
+    elsif letter == "U"
+      repeat = count == nil ? 1 : (count < 0 ? data.length() : count)
+      while repeat > 0 && offset < data.length()
+        repeat -= 1
+        lead = data.getbyte(offset)
+        extra = lead >= 240 ? 3 : (lead >= 224 ? 2 : (lead >= 192 ? 1 : 0))
+        code = extra == 0 ? lead : lead - (extra == 1 ? 192 : (extra == 2 ? 224 : 240))
+        b = 1
+        while b <= extra
+          code = code * 64 + data.getbyte(offset + b) % 64
+          b += 1
+        end
+        result.push(code)
+        offset += extra + 1
+      end
+    elsif letter == "x"
+      offset += count == nil ? 1 : (count < 0 ? 0 : count)
+    else
+      raise ArgumentError.new("unknown unpack directive '#{letter}'")
+    end
+  end
+  result
+end
+
+def diamond_string_unpack1(data: String, format: String)
+  diamond_string_unpack(data, format)[0]
+end

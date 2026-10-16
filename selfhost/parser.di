@@ -5357,6 +5357,20 @@ class Parser
           result = result + "\r"
         elsif escape == "t"
           result = result + "\t"
+        elsif escape == "0"
+          result = result + 0.chr()
+        elsif escape == "e"
+          result = result + 27.chr()
+        elsif escape == "x"
+          value = 0
+          digits = 0
+          while digits < 2 && index + 1 < raw.length() && "0123456789abcdef".index_of(raw[index + 1].downcase()) != nil
+            value = value * 16 + "0123456789abcdef".index_of(raw[index + 1].downcase())
+            index = index + 1
+            digits = digits + 1
+          end
+          self.fail("\\x needs a hex digit") if digits == 0
+          result = result + value.chr()
         elsif escape == "\"" || escape == "\\" || escape == "#"
           result = result + escape
         else

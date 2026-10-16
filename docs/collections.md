@@ -174,6 +174,14 @@ Ruby), or deleted outright when `to` is `""`. An empty `from` raises
 "hello".tr("aeiou", "*")           # => "h*ll*"
 ```
 
+`Array#pack(template)` and `String#unpack(template)` / `unpack1` convert between values and
+binary Strings: integers `C c S s L l Q q` (little endian), `n N` (big endian), `v V`
+(little endian); strings `a A Z`; hex `H`; UTF-8 code points `U`; `x` (a null byte). A
+directive takes a count or `*` for all that remain: `[1, 513].pack("CS")`,
+`data.unpack("N*")`, `"\xde\xad".unpack("H*")`. `unpack` returns `nil` for an integer past the
+end of the data. Floats and the `_ ! < >` modifiers are not supported; an unknown directive
+raises `ArgumentError`.
+
 Regexp literals: `/pattern/` is the same as `Regexp.new("pattern")`, with the flags `i`
 (ignore case), `m` (`.` matches newline) and `x` (extended) after the closing slash:
 `"a1 b22".scan(/[0-9]+/)`, `/hello/i.match?(text)`, `when /^cost/`. A slash is a regex
