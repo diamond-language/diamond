@@ -111,3 +111,4 @@ ensure
   Process.run(["rm", "-rf", work])
 end
 puts("cancellation DNS tests passed")
+exit(0)

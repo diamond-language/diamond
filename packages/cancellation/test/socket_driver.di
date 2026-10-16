@@ -52,3 +52,4 @@ end
   end
 end
 puts("cancellation socket tests passed")
+exit(0)

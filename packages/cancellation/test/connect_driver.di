@@ -92,3 +92,4 @@ modes.each() do |mode|
   end
 end
 puts("cancellation outbound connect tests passed")
+exit(0)
