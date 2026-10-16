@@ -152,13 +152,17 @@ module Harness
     end
   end
 
-  # One GET over a fresh connection; [status, body]. Raises IOError when the server is not
-  # accepting connections.
-  def self.http_get(port: Int, path: String)
+  # One request over a fresh connection; [status, body]. `body` is a String sent as JSON, or nil.
+  # Raises IOError when the server is not accepting connections.
+  def self.http(port: Int, method: String, path: String, body)
     socket = TCPSocket.connect("127.0.0.1", port,
       {"connect_timeout_ms": 2000, "read_timeout_ms": 2000, "write_timeout_ms": 2000})
     begin
-      socket.write("GET #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+      head = "#{method} #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+      if body != nil
+        head = head + "Content-Type: application/json\r\nContent-Length: #{body.length()}\r\n"
+      end
+      socket.write(head + "\r\n" + (body == nil ? "" : body))
       socket.flush()
       status_line = socket.gets()
       raise IOError.new("no response") if status_line == nil
@@ -171,12 +175,14 @@ module Harness
           length = header.split(":")[1].strip().to_i()
         end
       end
-      body = length > 0 ? socket.read(length) : ""
-      [status, body == nil ? "" : body]
+      text = length > 0 ? socket.read(length) : ""
+      [status, text == nil ? "" : text]
     ensure
       socket.close()
     end
   end
+
+  def self.http_get(port: Int, path: String) = Harness.http(port, "GET", path, nil)
 
   # Number of open descriptors of a process, or nil where /proc does not exist.
   def self.descriptor_count(pid: Int)
