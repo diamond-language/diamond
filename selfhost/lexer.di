@@ -35,9 +35,16 @@ class Lexer
     @column = 1
     @token_line = 1
     @token_column = 1
+    @previous = :eof
   end
 
   def next_token()
+    token = self.scan_token()
+    @previous = token.kind()
+    token
+  end
+
+  def scan_token()
     while !self.at_end?()
       code = self.code_at(@current)
       if code == " ".ord() || code == "\t".ord() || code == "\r".ord()
@@ -127,7 +134,12 @@ class Lexer
   def clone()
     copy = Lexer.new(@source)
     copy.restore_state(@start, @current, @line, @column, @token_line, @token_column)
+    copy.set_previous(@previous)
     copy
+  end
+
+  def set_previous(previous)
+    @previous = previous
   end
 
   def restore_state(start, current, line, column, token_line, token_column)
@@ -140,6 +152,38 @@ class Lexer
   end
 
   private
+
+  # Mirrors regex_allowed / scan_regex_literal in src/lexer.c: a slash starts a regex literal only
+  # where an expression can begin, and only when the literal closes on its own line.
+  def regex_allowed?()
+    [:identifier, :integer, :float, :string, :symbol, :instance_variable, :class_variable,
+     :right_paren, :right_bracket, :right_brace, :end, :true, :false, :nil, :self,
+     :regex, :def, :dot].include?(@previous) == false
+  end
+
+  def scan_regex_literal()
+    index = @current
+    loop do
+      code = self.code_at(index)
+      break if code == "/".ord()
+      return false if code == 0 || code == "\n".ord()
+      if code == "\\".ord() && self.code_at(index + 1) != 0
+        index += 2
+      else
+        index += 1
+      end
+    end
+    index += 1
+    flag = self.code_at(index)
+    while flag == "i".ord() || flag == "m".ord() || flag == "x".ord()
+      index += 1
+      flag = self.code_at(index)
+    end
+    while @current < index
+      self.advance()
+    end
+    true
+  end
 
   # Split out of next_token() itself, not just for readability: register
   # allocation is monotonic per function body and never recycled (see
@@ -198,6 +242,7 @@ class Lexer
       return self.make_token(:star)
     end
     if code == "/".ord()
+      return self.make_token(:regex) if self.regex_allowed?() && self.scan_regex_literal()
       return self.make_token(:slash_equal) if self.match?("=".ord())
       return self.make_token(:slash)
     end

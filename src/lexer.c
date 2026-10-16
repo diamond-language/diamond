@@ -167,7 +167,42 @@ static bool newline_continues_chain(const DiamondLexer *lexer) {
     }
 }
 
-DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
+/* A slash starts a regex literal only where an expression can begin; right after a value it is
+ * division. The previous token is what tells the two apart. */
+static bool regex_allowed(const DiamondLexer *lexer) {
+    switch (lexer->previous) {
+        case DIAMOND_TOKEN_IDENTIFIER: case DIAMOND_TOKEN_INTEGER: case DIAMOND_TOKEN_FLOAT:
+        case DIAMOND_TOKEN_STRING: case DIAMOND_TOKEN_SYMBOL:
+        case DIAMOND_TOKEN_INSTANCE_VARIABLE: case DIAMOND_TOKEN_CLASS_VARIABLE:
+        case DIAMOND_TOKEN_RIGHT_PAREN: case DIAMOND_TOKEN_RIGHT_BRACKET:
+        case DIAMOND_TOKEN_RIGHT_BRACE: case DIAMOND_TOKEN_END: case DIAMOND_TOKEN_TRUE:
+        case DIAMOND_TOKEN_FALSE: case DIAMOND_TOKEN_NIL: case DIAMOND_TOKEN_SELF:
+        case DIAMOND_TOKEN_DEF: case DIAMOND_TOKEN_DOT: /* def /(other), a./(b) */
+        case DIAMOND_TOKEN_REGEX:
+            return false;
+        default:
+            return true;
+    }
+}
+
+/* Scans /pattern/flags with the opening slash already consumed. A backslash keeps the next
+ * character from closing the literal; a literal that is not closed on its own line is not a
+ * regex, so the caller falls back to a plain slash. */
+static bool scan_regex_literal(DiamondLexer *lexer) {
+    size_t index = lexer->current;
+    while (lexer->source[index] != '/') {
+        const char character = lexer->source[index];
+        if (character == '\0' || character == '\n') return false;
+        index += character == '\\' && lexer->source[index + 1] != '\0' ? 2 : 1;
+    }
+    index++;
+    while (lexer->source[index] == 'i' || lexer->source[index] == 'm' ||
+           lexer->source[index] == 'x') index++;
+    while (lexer->current < index) advance(lexer);
+    return true;
+}
+
+static DiamondToken lexer_scan(DiamondLexer *lexer) {
     while (!at_end(lexer)) {
         const char character = lexer->source[lexer->current];
         if (character == ' ' || character == '\t' || character == '\r') {
@@ -432,6 +467,8 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
             return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_STAR_EQUAL
                                                   : DIAMOND_TOKEN_STAR);
         case '/':
+            if (regex_allowed(lexer) && scan_regex_literal(lexer))
+                return token(lexer, DIAMOND_TOKEN_REGEX);
             return token(lexer, match(lexer,'=') ? DIAMOND_TOKEN_SLASH_EQUAL
                                                   : DIAMOND_TOKEN_SLASH);
         case '%':
@@ -464,4 +501,10 @@ DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
         default:
             return token(lexer, DIAMOND_TOKEN_ERROR);
     }
+}
+
+DiamondToken diamond_lexer_next(DiamondLexer *lexer) {
+    const DiamondToken scanned = lexer_scan(lexer);
+    lexer->previous = scanned.kind;
+    return scanned;
 }

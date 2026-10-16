@@ -140,6 +140,9 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_RESCUE,
     DIAMOND_TOKEN_ENSURE,
     DIAMOND_TOKEN_IS,
+    /* /pattern/flags -- only where an expression can start (see regex_allowed in lexer.c);
+     * after a value, a slash is division. The span covers the slashes and flags. */
+    DIAMOND_TOKEN_REGEX,
 } DiamondTokenKind;
 
 typedef struct DiamondToken {
@@ -155,6 +158,7 @@ typedef struct DiamondLexer {
     size_t column;
     size_t token_line;
     size_t token_column;
+    DiamondTokenKind previous;
 } DiamondLexer;
 
 void diamond_lexer_init(DiamondLexer *lexer, const char *source);
