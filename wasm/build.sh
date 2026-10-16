@@ -4,7 +4,7 @@
 #   WASI_SDK=/opt/wasi-sdk wasm/build.sh
 #
 # Needs a WASI SDK (clang 19+ with the wasm32-wasip1 sysroot; https://github.com/WebAssembly/wasi-sdk)
-# (plus python3 and network access once, to fetch the SQLite amalgamation). PostgreSQL, MySQL,
+# (plus curl, tar and openssl, and network access once, to fetch the SQLite source). PostgreSQL, MySQL,
 # zlib, TLS and OpenSSL are compiled out (their features raise an ordinary error; Digest, HMAC,
 # SecureRandom and Base64 use src/portable_crypto.c) and no host library headers are read.
 # SQLite is the pinned amalgamation below, in-memory databases only. See docs/internal/wasm.md.
@@ -16,22 +16,22 @@ out="$root/build/wasm"
 jobs="${JOBS:-2}"
 mkdir -p "$out/obj"
 
-# The SQLite amalgamation, pinned by SHA3-256 (the digest sqlite.org publishes).
+# SQLite, pinned by SHA3-256 (the digest sqlite.org publishes next to the download). The
+# autoconf tarball carries the amalgamation (sqlite3.c, sqlite3.h) and needs only tar and the
+# openssl command to unpack and check.
 sqlite_version=3540000
 sqlite_year=2026
-sqlite_sha3=7b670a62fdfbd672b75fef004cb703c8a3e87d3a5cc7d675b4a08337004a2d93
-sqlite_dir="$out/sqlite-amalgamation-$sqlite_version"
+sqlite_sha3=f5e3e724e9c9b3b5d512c76b02082091a59eeea9becd169a9fbf4d376403acce
+sqlite_dir="$out/sqlite-autoconf-$sqlite_version"
 if [ ! -f "$sqlite_dir/sqlite3.c" ]; then
-    curl -fsSL -o "$out/sqlite.zip" \
-        "https://www.sqlite.org/$sqlite_year/sqlite-amalgamation-$sqlite_version.zip"
-    python3 - "$out/sqlite.zip" "$sqlite_sha3" "$out" <<'PY'
-import hashlib, sys, zipfile
-path, expected, out = sys.argv[1:4]
-data = open(path, "rb").read()
-if hashlib.sha3_256(data).hexdigest() != expected:
-    sys.exit("wasm/build.sh: SQLite amalgamation does not match its pinned SHA3-256")
-zipfile.ZipFile(path).extractall(out)
-PY
+    curl -fsSL -o "$out/sqlite.tar.gz" \
+        "https://www.sqlite.org/$sqlite_year/sqlite-autoconf-$sqlite_version.tar.gz"
+    actual="$(openssl dgst -sha3-256 "$out/sqlite.tar.gz")"
+    if [ "${actual##* }" != "$sqlite_sha3" ]; then
+        echo "wasm/build.sh: SQLite source does not match its pinned SHA3-256" >&2
+        exit 1
+    fi
+    tar xzf "$out/sqlite.tar.gz" -C "$out"
 fi
 
 flags=(--target=wasm32-wasip1 --sysroot="$sdk/share/wasi-sysroot"
