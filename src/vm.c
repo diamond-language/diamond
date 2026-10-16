@@ -8251,6 +8251,9 @@ DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
     errno=read_errno;
     if(ferror(stream)) {
         snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+        /* The error indicator is sticky: without this a read that timed out would make
+         * every later read on the same stream fail too, even once data arrives. */
+        clearerr(stream);
         return DIAMOND_VM_IO_ERROR;
     }
     if(builder->length>0&&builder->chars[builder->length-1]=='\n') {
@@ -11255,6 +11258,7 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         if(ferror(target_file->stream)) {
             free(builder.chars);
             snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            clearerr(target_file->stream);
             return DIAMOND_VM_IO_ERROR;
         }
         DiamondString *string=allocate_string(vm,builder.chars,builder.length);
