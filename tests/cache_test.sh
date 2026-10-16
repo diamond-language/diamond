@@ -12,6 +12,7 @@ set -euo pipefail
 # ordinary corpus case either.
 
 diamond="$(realpath ./build/diamond)"
+repo_root="$(pwd)"
 count=0
 
 work="$(realpath "$(mktemp -d)")"
@@ -99,8 +100,7 @@ puts(Dog.new("rex").speak())
 puts(h["b"].map() do |x| x + total end.to_s())
 EOF2
 (cd "$work" && "$diamond" forge.di >/dev/null)
-${CC:-cc} -std=c23 -O1 -o "$work/forge_cache" "$(dirname "$0")/forge_cache.c"
-forged_crashes="$("$work/forge_cache" "$work" "$diamond" forge.di 200)"
+forged_crashes="$(cd "$work" && "$diamond" "$repo_root/tests/forge_cache.di" "$diamond" forge.di 200)"
 [[ "$forged_crashes" == "0" ]]
 count=$((count + 1))
 
