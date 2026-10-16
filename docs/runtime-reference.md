@@ -70,6 +70,16 @@ read-only in effect, even though nothing stops the write syntax itself.
 A constant or user-defined function named `ARGV`/`ENV` shadows it.
 Constant definitions belong at top level or inside a class or module.
 
+`__FILE__` and `__dir__` are the absolute path of the source file they are
+written in and its directory (`-e` and the REPL have no file: `__FILE__` is the
+name given and `__dir__` the working directory). Each file gets its own: one
+that is `require`d reports itself, not the file that required it, which makes
+`"#{__dir__}/data.json"` the way to find files next to a script whatever the
+working directory is. They are substituted when the program is loaded, so a
+bytecode cache or a `diamond build` binary keeps the path it was compiled
+from. Text in a comment or string that only mentions them is left alone;
+inside a string they work in `#{...}` interpolation.
+
 `exit(code = 0)` immediately terminates the whole process with the given
 status (0–255; anything else raises `ArgumentError`, a non-`Int` raises
 `TypeError`). This is a *hard* exit, not a raised/rescuable control-flow
