@@ -6354,15 +6354,26 @@ static uint16_t parse_json_stringify_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t source = parse_expression(compiler);
     skip_newlines(compiler);
+    /* An optional second argument, a Hash of options (indent, sort_keys). */
+    bool has_options=false;
+    uint16_t options_register=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        options_register=parse_expression(compiler);
+        has_options=true;
+        skip_newlines(compiler);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after arguments");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_JSON_STRINGIFY);
+    emit_opcode(compiler,has_options?DIAMOND_OP_JSON_STRINGIFY_OPTIONS:DIAMOND_OP_JSON_STRINGIFY);
     emit_register(compiler,dest);
     emit_register(compiler,source);
+    if(has_options)emit_register(compiler,options_register);
     compiler->known_types[dest]=DIAMOND_TYPE_STRING;
     return dest;
 }

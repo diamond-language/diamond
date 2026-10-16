@@ -1,0 +1,57 @@
+[{"b":[1,2,{"z":null,"a":true}],"a":{},"c":[],"3":"three","d":{"y":1.5,"x":"q\"uote"}}, {"3":"three","a":{},"b":[1,2,{"a":true,"z":null}],"c":[],"d":{"x":"q\"uote","y":1.5}}, {
+  "b": [
+    1,
+    2,
+    {
+      "z": null,
+      "a": true
+    }
+  ],
+  "a": {},
+  "c": [],
+  "3": "three",
+  "d": {
+    "y": 1.5,
+    "x": "q\"uote"
+  }
+}, {
+  "3": "three",
+  "a": {},
+  "b": [
+    1,
+    2,
+    {
+      "a": true,
+      "z": null
+    }
+  ],
+  "c": [],
+  "d": {
+    "x": "q\"uote",
+    "y": 1.5
+  }
+}, {
+	"b": [
+		1,
+		2,
+		{
+			"z": null,
+			"a": true
+		}
+	],
+	"a": {},
+	"c": [],
+	"3": "three",
+	"d": {
+		"y": 1.5,
+		"x": "q\"uote"
+	}
+}, [], {}, [
+ 1,
+ [
+  2,
+  [
+   3
+  ]
+ ]
+], "text", true, true, true, [JSON.stringify indent must be between 0 and 16 spaces, JSON.stringify indent must be between 0 and 16 spaces, JSON.stringify indent must be spaces or tabs, JSON.stringify indent must be an Int or a String, JSON.stringify sort_keys must be true or false, unknown JSON.stringify option (expected indent or sort_keys), JSON.stringify options must be a Hash]]

@@ -121,6 +121,8 @@ module Opcode
   TO_SYMBOL = 87
   # DIAMOND_OP_JSON_STRINGIFY (native JSON.stringify): keep in step with src/vm.h.
   JSON_STRINGIFY = 178
+  # DIAMOND_OP_JSON_STRINGIFY_OPTIONS: JSON.stringify(value, options); same operands plus the options register.
+  JSON_STRINGIFY_OPTIONS = 186
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
@@ -4962,7 +4964,30 @@ class Parser
   end
 
   def parse_json_stringify_call()
-    self.parse_scalar_conversion_call(Opcode::JSON_STRINGIFY, Type::STRING)
+    self.advance_token()
+    self.skip_newlines()
+    source = self.parse_expression()
+    self.skip_newlines()
+    options = nil
+    if @current.kind() == :comma
+      self.advance_token()
+      self.skip_newlines()
+      options = self.parse_expression()
+      self.skip_newlines()
+    end
+    if @current.kind() != :right_paren
+      self.fail("expected ')' after arguments")
+      return 0
+    end
+    self.advance_token()
+    destination = self.allocate_register()
+    if options == nil
+      self.emit_instruction2(Opcode::JSON_STRINGIFY, destination, source)
+    else
+      self.emit_instruction3(Opcode::JSON_STRINGIFY_OPTIONS, destination, source, options)
+    end
+    self.set_type_fact(destination, Type::STRING)
+    destination
   end
 
   def is_math_unary_target(name)

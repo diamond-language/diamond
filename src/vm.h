@@ -613,6 +613,10 @@ typedef enum DiamondOpCode : uint8_t {
      * ensure body, in order -- and then jumps to `target`. A plain JUMP when
      * the statement is not inside a begin within its loop. */
     DIAMOND_OP_UNWIND_JUMP,
+    /* dest, value, options Hash: JSON.stringify with the optional second argument (indent,
+     * sort_keys). Without options the compiler emits the two-operand JSON_STRINGIFY, which
+     * keeps the layout selfhost/parser.di emits. */
+    DIAMOND_OP_JSON_STRINGIFY_OPTIONS,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

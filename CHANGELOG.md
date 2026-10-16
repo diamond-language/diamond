@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Added
 
+- `JSON.stringify(value, options)`: `"indent"` (a number of spaces up to 16, or a string of spaces and
+  tabs) lays the document out over several lines, and `"sort_keys": true` writes each Hash's keys in
+  sorted order.
 - Endless ranges: `a[1..]`, `"hello"[1..]`, `(1..).each`, `case n when 90..`. A Range whose end is `nil`
   indexes to the end of an Array or String and matches everything above its start; `to_a`, `length`,
   `last`, `step` and `reverse_each` on one raise `RangeError`; `endless?` tells them apart.

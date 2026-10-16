@@ -6096,12 +6096,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[dest]=DIAMOND_OBJECT(symbol);
                 break;
             }
-            case DIAMOND_OP_JSON_STRINGIFY: {
-                uint16_t dest=0,source=0;
+            case DIAMOND_OP_JSON_STRINGIFY:
+            case DIAMOND_OP_JSON_STRINGIFY_OPTIONS: {
+                uint16_t dest=0,source=0,options=UINT16_MAX;
                 READ_SHORT(dest);READ_SHORT(source);
+                if(instruction==DIAMOND_OP_JSON_STRINGIFY_OPTIONS)READ_SHORT(options);
                 DiamondValue json_text=DIAMOND_NIL;
                 const DiamondVmStatus json_status=json_stringify_document(
-                    vm,chunk,depth,registers[source],&json_text);
+                    vm,chunk,depth,registers[source],
+                    options==UINT16_MAX?DIAMOND_NIL:registers[options],&json_text);
                 VM_PROPAGATE(json_status);
                 registers[dest]=json_text;
                 break;

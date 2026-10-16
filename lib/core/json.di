@@ -3,7 +3,13 @@ module JSON
   module_function
 
   # Native (diamond_json_stringify, src/vm.c) -- see json_codec.di.
-  def stringify(value) -> String = diamond_json_stringify(value)
+  # JSON.stringify(value) is compact. The optional second argument is a Hash of options:
+  # "indent" (an Int number of spaces, or a String of whitespace) lays the document out over
+  # several lines, and "sort_keys" (true) writes each Hash's keys in sorted order.
+  def stringify(value, options = nil) -> String
+    return diamond_json_stringify(value) if options == nil
+    diamond_json_stringify(value, options)
+  end
   # Native (String#parse_json, src/vm.c) -- see its own comment for why.
   def parse(source: String) = source.parse_json()
 end
