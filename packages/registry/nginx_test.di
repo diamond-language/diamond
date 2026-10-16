@@ -1,0 +1,274 @@
+# Real nginx/HTTPS staging drill. Run inside a disposable local QEMU VM.
+#
+#   diamond packages/registry/nginx_test.di
+#
+# Needs nginx (NGINX overrides the binary). REGISTRY_REHEARSE_SEED=1 also publishes and reinstalls
+# the whole launch seed through the proxy, honoring the shipped write-rate policy (it takes minutes).
+require "../../tests/harness"
+
+root = File.dirname(File.dirname(__dir__))
+
+def run(argv, env, cwd)
+  result = Harness.run(argv, env, cwd)
+  # Do not echo argv: publishing arguments contain a temporary credential.
+  raise "#{File.basename(argv[0])} failed: #{result.stderr()}" unless result.success?()
+  result
+end
+
+def check(condition, message)
+  raise message unless condition
+end
+
+def counts(statuses)
+  tally = {}
+  statuses.each() do |status|
+    tally[status.to_s()] = tally.key?(status.to_s()) ? tally[status.to_s()] + 1 : 1
+  end
+  tally
+end
+
+class Drill
+  def initialize(root: String)
+    @root = root
+    @diamond = root + "/build/diamond"
+    @facet = root + "/build/facet"
+    @nginx_path = ENV["NGINX"] == nil || ENV["NGINX"] == "" ? "nginx" : ENV["NGINX"]
+    @work = Harness.make_temp_dir()
+    @backend_port = 0
+    @proxy_port = 0
+    @env = nil
+    @url = nil
+    @cert = @work + "/cert.pem"
+    @config = @work + "/nginx.conf"
+    @server = nil
+    @proxy = nil
+    @token = nil
+    @marker = "staging-sensitive-marker"
+    @reads = []
+  end
+
+  def work() = @work
+
+  def cleanup()
+    @proxy.finish() if @proxy != nil
+    @server.finish() if @server != nil
+    Harness.remove_tree(@work)
+  end
+
+  def logs()
+    parts = [File.exist?(@work + "/process.log") ? File.read(@work + "/process.log") : ""]
+    ["startup.log", "error.log"].each() do |name|
+      parts.push(File.read(@work + "/" + name)) if File.exist?(@work + "/" + name)
+    end
+    parts.join("\n")
+  end
+
+  def request(path: String, method: String, body, headers)
+    Harness.https("localhost", @proxy_port, @cert, method, "/registry" + path, body, headers)
+  end
+
+  def setup()
+    @backend_port = Harness.reserve_port()
+    @proxy_port = Harness.reserve_port()
+    check(@backend_port != @proxy_port, "the two ports collided")
+    run([@root + "/tools/install_local_cuts.sh", @work], nil, nil)
+    ["app.di", "credentials.di", "catalog.di", "catalog.html", "catalog.js", "catalog.css", "cut.html", "cut.js", "markdown.js"].each() do |name|
+      File.copy(@root + "/applications/registry/" + name, @work + "/" + name)
+    end
+    Harness.mkdir_p(@work + "/data/blobs")
+    Dir.mkdir(@work + "/data/staging")
+    @env = {"REGISTRY_ROOT": @work + "/data", "REGISTRY_FACET": @facet, "REGISTRY_PORT": @backend_port.to_s(),
+            "REGISTRY_BASE": "/registry", "REGISTRY_OPERATOR": "staging-test", "DIAMOND_NO_CACHE": "1"}
+    run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+      "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+      "-keyout", @work + "/key.pem", "-out", @cert], nil, nil)
+    template = File.read(@root + "/applications/registry/deploy/nginx.conf.example")
+    # Only host-specific settings change; rate, size and buffering policy is exact.
+    [
+      ["    listen 443 ssl;\n", "    listen 127.0.0.1:#{@proxy_port} ssl;\n"],
+      ["    listen [::]:443 ssl;\n", ""],
+      ["/etc/letsencrypt/live/cuts.dilang.tech/fullchain.pem", @cert],
+      ["/etc/letsencrypt/live/cuts.dilang.tech/privkey.pem", @work + "/key.pem"],
+      ["cuts.dilang.tech", "localhost"],
+      ["/var/log/nginx/registry-access.log", @work + "/access.log"],
+      ["/var/log/nginx/registry-error.log", @work + "/error.log"],
+      ["127.0.0.1:18120", "127.0.0.1:#{@backend_port}"],
+    ].each() do |pair|
+      check(template.include?(pair[0]), "the nginx template no longer contains #{pair[0].inspect()}")
+      template = template.split(pair[0]).join(pair[1])
+    end
+    File.write(@config, "daemon off;\nworker_processes 1;\npid " + @work + "/nginx.pid;\n" +
+      "error_log " + @work + "/startup.log;\nevents { worker_connections 256; }\nhttp {\n" +
+      "client_body_temp_path " + @work + "/body;\nproxy_temp_path " + @work + "/proxy;\n" + template + "\n}\n")
+    run([@nginx_path, "-t", "-p", @work, "-c", @config], nil, nil)
+    @env["CURL_CA_BUNDLE"] = @cert
+    @env["NO_PROXY"] = "localhost,127.0.0.1"
+    @url = "https://localhost:#{@proxy_port}/registry"
+  end
+
+  def start()
+    @server = Harness::Service.new([@diamond, "app.di"], @env, @work, @work + "/process.log")
+    Harness.wait_for(10000, "registry did not start") do
+      ok = false
+      begin
+        ok = Harness.http(@backend_port, "GET", "/registry/health", nil)[0] == 200
+      rescue error: IOError
+        ok = false
+      end
+      ok
+    end
+    @proxy = Harness::Service.new([@nginx_path, "-p", @work, "-c", @config], {}, nil, @work + "/nginx-process.log")
+    answer = nil
+    Harness.wait_for(10000, "nginx did not start") do
+      begin
+        answer = self.request("/health", "GET", nil, {})
+      rescue error: IOError
+        answer = nil
+      end
+      answer != nil && answer[0] == 200
+    end
+    check(answer[1]["x-request-id"] != nil && answer[1]["x-request-id"] != "", "no request id from the proxy")
+    check(JSON.parse(answer[2]) == {"protocol": 1, "status": "ok"}, "health body #{answer[2]}")
+  end
+
+  def publish_and_install()
+    issued = run([@diamond, "credentials.di", "issue", "staging", "3600", "publish:canary", "nginx drill"], @env, @work)
+    @token = JSON.parse(issued.stdout())["token"]
+    package = @work + "/canary"
+    Harness.mkdir_p(package + "/lib")
+    File.write(package + "/diamond.cut", JSON.stringify({"name": "canary", "version": "1.0.0", "summary": "staging canary",
+      "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {}}))
+    File.write(package + "/README.md", "Staging canary\n")
+    File.write(package + "/LICENSE", "MIT\n")
+    File.write(package + "/lib/canary.di", "def canary() = \"nginx staging passed\"\n")
+    run([@facet, "publish", package, "--registry", @url, "--token", @token], @env, nil)
+    consumer = @work + "/consumer"
+    Dir.mkdir(consumer)
+    run([@facet, "init", "consumer"], @env, consumer)
+    run([@facet, "add", "canary", "--registry", @url, "--version", "^1.0.0"], @env, consumer)
+    run([@facet, "update"], @env, consumer)
+    loaded = run([@diamond, "-e", "require_cut \"canary\"\nputs(canary())\nexit(0)"], @env, consumer)
+    check(loaded.stdout().strip() == "nginx staging passed", "the canary did not load: #{loaded.stdout()}")
+  end
+
+  def limits()
+    # Declared oversized uploads are rejected before the client sends a body.
+    answer = self.request("/v1/cuts/canary/versions", "POST", nil, {"Content-Length": "26214401", "Expect": "100-continue"})
+    check(answer[0] == 413, "an oversized upload got #{answer[0]}")
+    check(self.request("/v1/cuts/canary/versions", "POST", "invalid", {})[0] == 401, "an unauthenticated upload was accepted")
+    writes = Harness.sequence(8).map() do |i|
+      self.request("/v1/cuts/canary/versions?secret=" + @marker, "POST", "invalid", {"Authorization": "Bearer " + @marker})[0]
+    end
+    # The query-bearing route is not a publish route; an exact route is used for auth.
+    check(writes.include?(429) && writes.all?() do |status| status == 404 || status == 429 end, "write statuses #{writes}")
+    check(self.request("/health", "GET", nil, {})[0] == 200, "write throttling blocked reads")
+    @reads = Harness.sequence(160).map() do |index|
+      self.request("/health", "GET", nil, {"X-Forwarded-For": "198.51.100.#{index % 254 + 1}"})[0]
+    end
+    check(@reads.include?(200) && @reads.include?(429) && @reads.all?() do |status| status == 200 || status == 429 end, "read statuses #{counts(@reads)}")
+    # Allow the full read burst debt to drain; write debt lasts much longer.
+    Harness.sleep_ms(3000)
+    check(self.request("/health", "GET", nil, {})[0] == 200, "reads did not recover")
+  end
+
+  def seed_rehearsal()
+    seed = @work + "/seed"
+    run([@diamond, @root + "/tools/prepare_registry_seed.di", seed, "--expect", @root + "/docs/registry-launch-inventory.json"], nil, nil)
+    inventory = JSON.parse(File.read(seed + "/inventory.json"))["cuts"]
+    scopes = inventory.map() do |cut| "publish:" + cut["name"] end.join(",")
+    issued = run([@diamond, "credentials.di", "issue", "launch-rehearsal", "3600", scopes, "launch seed rehearsal"], @env, @work)
+    seed_token = JSON.parse(issued.stdout())["token"]
+    inventory.each() do |cut|
+      archive = File.read(seed + "/" + cut["archive"])
+      status = 0
+      payload = ""
+      6.times() do |attempt|
+        answer = self.request("/v1/cuts/" + cut["name"] + "/versions", "POST", archive,
+          {"Authorization": "Bearer " + seed_token, "Content-Type": "application/octet-stream"})
+        status = answer[0]
+        payload = answer[2]
+        break if status != 429
+        Harness.sleep_ms(10100)
+      end
+      check(status == 201, "#{cut["name"]} was published with status #{status}")
+      published = JSON.parse(payload)
+      ["name", "version", "sha256", "size"].each() do |key|
+        check(published[key] == cut[key], "published #{key} differs for #{cut["name"]}")
+      end
+      shown = self.request("/v1/cuts/" + cut["name"] + "/versions/" + cut["version"], "GET", nil, {})
+      check(shown[0] == 200 && JSON.parse(shown[2])["dependencies"] == cut["dependencies"], "release #{cut["name"]}")
+      puts("seed published: #{cut["name"]} #{cut["version"]}")
+      # Honor the shipped six writes/minute policy, including across cuts.
+      Harness.sleep_ms(10100)
+    end
+    launch = @work + "/launch-consumer"
+    Dir.mkdir(launch)
+    run([@facet, "init", "launch-consumer"], @env, launch)
+    dependencies = []
+    inventory.each() do |cut|
+      cut["dependencies"].keys().each() do |name|
+        dependencies.push(name)
+      end
+    end
+    wanted = {}
+    inventory.each() do |cut|
+      wanted[cut["name"]] = {"registry": @url, "version": cut["version"]} unless dependencies.include?(cut["name"])
+    end
+    manifest = JSON.parse(File.read(launch + "/diamond.cut"))
+    manifest["dependencies"] = wanted
+    File.write(launch + "/diamond.cut", JSON.stringify(manifest))
+    run([@facet, "update"], @env, launch)
+    lock_bytes = File.read(launch + "/facet.lock")
+    # The canonical facet writer emits one outer trailing comma; remove only that final separator.
+    lock = JSON.parse(lock_bytes.sub(Regexp.new(",\\s*}\\s*$"), "}"))
+    check(lock.keys().sort() == inventory.map() do |cut| cut["name"] end.sort(), "the resolved cut set differs")
+    inventory.each() do |cut|
+      locked = lock[cut["name"]]
+      check(locked["source"] == "registry" && locked["registry"] == @url, "registry source of #{cut["name"]}")
+      ["version", "sha256", "size"].each() do |key|
+        check(locked[key] == cut[key], "locked #{key} of #{cut["name"]}")
+      end
+      run([@diamond, "-e", "require_cut \"" + cut["name"] + "\"\n\"loaded\""], @env, launch)
+    end
+    Harness.remove_tree(launch + "/cuts")
+    Harness.sleep_ms(3000)
+    run([@facet, "install"], @env, launch)
+    check(File.read(launch + "/facet.lock") == lock_bytes, "a locked reinstall changed the lockfile")
+    installed = Dir.entries(launch + "/cuts")
+    check(lock.keys().all?() do |name| installed.include?(name) end, "not every cut was reinstalled")
+    puts("launch seed: #{inventory.length()} exact archives published, resolved, loaded, and reinstalled")
+    check(!File.read(@work + "/access.log").include?(seed_token), "the seed token is in the access log")
+  end
+
+  def access_log()
+    @proxy.terminate()
+    @proxy.finish() if @proxy.wait_exit(5000) == nil
+    access = File.read(@work + "/access.log")
+    records = access.split("\n").select() do |line| line.strip() != "" end.map() do |line| JSON.parse(line) end
+    check(records.any?() do |row| row["status"] == 429 && row["limit"] == "REJECTED" end, "no rejected 429 in the access log")
+    check(records.any?() do |row| row["status"] == 200 && row["request_id"] != nil end, "no completed request in the access log")
+    check(!access.include?(@token) && !access.include?(@marker) && !access.include?("/registry"), "the access log leaks request data")
+    puts("nginx configuration, HTTPS facet publish/install, 413, write/read 429, recovery, and log checks passed")
+    puts("read statuses: #{counts(@reads)}")
+  end
+
+  def all()
+    self.setup()
+    self.start()
+    self.publish_and_install()
+    self.limits()
+    self.seed_rehearsal() if ENV["REGISTRY_REHEARSE_SEED"] == "1"
+    self.access_log()
+  end
+end
+
+drill = Drill.new(root)
+begin
+  drill.all()
+rescue error: StandardError
+  puts(drill.logs())
+  raise error
+ensure
+  drill.cleanup()
+end
+exit(0)

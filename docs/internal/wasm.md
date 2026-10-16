@@ -5,7 +5,7 @@ server. `build/wasm/diamond.wasm` is about 3.3 MB (950 KB gzipped).
 
 ```sh
 WASI_SDK=/path/to/wasi-sdk wasm/build.sh        # needs wasi-sdk 24+ (clang 19+)
-cd build/wasm && cp ../../wasm/web/* . && python3 -m http.server 8000   # open http://localhost:8000
+cd build/wasm && cp ../../wasm/web/* .   # then serve build/wasm with any static file server and open it
 ```
 
 ## What is in the module

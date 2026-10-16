@@ -7235,7 +7235,7 @@ bool array_value_satisfies_constraints(DiamondArray *array,
  * convention (docs/design.md): an over-long range is not an error,
  * only an out-of-bounds start is. */
 static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
-        DiamondValue index_value,size_t array_count,
+        const char *container,DiamondValue index_value,size_t array_count,
         size_t *out_start,size_t *out_length) {
     if(vm->range_class_index==UINT8_MAX)return -1;
     if(index_value.kind!=DIAMOND_VALUE_OBJECT||
@@ -7243,13 +7243,17 @@ static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
         return -1;
     const DiamondInstance *instance=(const DiamondInstance *)index_value.as.object;
     if(instance->class!=&chunk->classes[vm->range_class_index])return -1;
-    const int64_t start=instance->fields[0].as.integer;
-    const int64_t end=instance->fields[1].as.integer;
+    int64_t start=instance->fields[0].as.integer;
+    int64_t end=instance->fields[1].as.integer;
     const bool exclusive=instance->fields[2].as.boolean;
+    /* A negative bound counts from the end, as in Ruby: a[1..-1] is all but the first. */
+    const int64_t original_start=start;
+    if(start<0&&array_count<=(uint64_t)INT64_MAX)start+=(int64_t)array_count;
+    if(end<0&&array_count<=(uint64_t)INT64_MAX)end+=(int64_t)array_count;
     if(start<0||(uint64_t)start>array_count) {
         snprintf(vm->error,sizeof vm->error,
-                 "index %" PRId64 " out of bounds for Array of length %zu",
-                 start,array_count);
+                 "index %" PRId64 " out of bounds for %s of length %zu",
+                 original_start,container,array_count);
         return 0;
     }
     const int64_t inclusive_end=exclusive?end-1:end;
@@ -7325,10 +7329,23 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
         return DIAMOND_VM_OK;
     }
     if (receiver->as.object->kind == DIAMOND_OBJECT_STRING) {
+        {
+            const DiamondString *text = (const DiamondString *)receiver->as.object;
+            size_t slice_start = 0, slice_length = 0;
+            const int slice_result = resolve_array_range(vm, chunk, "String", *index, text->length,
+                &slice_start, &slice_length);
+            if (slice_result == 0) return DIAMOND_VM_INDEX_ERROR;
+            if (slice_result == 1) {
+                DiamondString *piece = allocate_string(vm, text->chars + slice_start, slice_length);
+                if (piece == nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
+                *out = DIAMOND_OBJECT(piece);
+                return DIAMOND_VM_OK;
+            }
+        }
         if (index->kind != DIAMOND_VALUE_INT) {
             char actual[80];
             diamond_format_value_type(actual, sizeof actual, *index);
-            snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int, got %s", actual);
+            snprintf(vm->error, sizeof vm->error, "String#[] index must be an Int or Range, got %s", actual);
             return DIAMOND_VM_TYPE_ERROR;
         }
         const DiamondString *source = (const DiamondString *)receiver->as.object;
@@ -7365,7 +7382,7 @@ DiamondVmStatus diamond_jit_index_get(DiamondVm *vm, const DiamondChunk *chunk,
     }
     DiamondArray *array = (DiamondArray *)receiver->as.object;
     size_t range_start = 0, range_length = 0;
-    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+    const int range_result = resolve_array_range(vm, chunk, "Array", *index, array->count,
         &range_start, &range_length);
     if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
     if (range_result == 1) {
@@ -7470,7 +7487,7 @@ DiamondVmStatus diamond_jit_index_set(DiamondVm *vm, const DiamondChunk *chunk,
     DiamondArray *array = (DiamondArray *)receiver->as.object;
     if (array->object.frozen) return DIAMOND_VM_FROZEN_ERROR;
     size_t range_start = 0, range_length = 0;
-    const int range_result = resolve_array_range(vm, chunk, *index, array->count,
+    const int range_result = resolve_array_range(vm, chunk, "Array", *index, array->count,
         &range_start, &range_length);
     if (range_result == 0) return DIAMOND_VM_INDEX_ERROR;
     if (range_result == 1) {

@@ -23,7 +23,7 @@ these three lines and press Return:
 ```sh
 git clone https://github.com/diamond-language/diamond.git ~/diamond
 cd ~/diamond
-caffeinate -i python3 tools/platform_report/platform_report.py
+caffeinate -i bash tools/platform_report/platform_report.sh
 ```
 
 `caffeinate -i` just keeps the Mac awake until it finishes.

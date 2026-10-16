@@ -40,9 +40,9 @@ if [[ "$2" == all ]]; then
     make test-registry-http
 fi
 if [[ "$2" == all || "$2" == proxy ]]; then
-    python3 packages/registry/nginx_test.py
+    build/diamond packages/registry/nginx_test.di
 fi
 if [[ "$2" == all || "$2" == systemd ]]; then
-    sudo -n env REGISTRY_QEMU_STAGING=1 python3 packages/registry/systemd_test.py
+    sudo -n env REGISTRY_QEMU_STAGING=1 build/diamond packages/registry/systemd_test.di
 fi
 REMOTE

@@ -33,7 +33,10 @@ uses, including calling a user-defined `to_s` override) and joins them
 with `separator` between (not trailing). `.slice(start, length)` works
 the same way `String#slice` does (below): `start` in `0..count`,
 `length >= 0`, clamped to what's actually available rather than
-erroring past the end.
+erroring past the end. `array[a..b]` and `array[a...b]` take a Range the same way, and a
+negative bound counts from the end (`array[1..-1]` is everything but the first element;
+`array[0...-1]` everything but the last); a start before the beginning or past the end raises
+`IndexError`.
 
 `==` on both is real structural (not identity) comparison: `Array` by
 length plus elementwise equality, order-sensitive; `Hash` by entry
@@ -139,8 +142,9 @@ relationship to what a positionally-matched C conversion expects.
 Strings also support `[]` with a single `Int` index, returning a new
 one-character `String` (bounds-checked, `IndexError` outside the
 string — the same as `.slice()`; a negative index counts from the end,
-so `s[-1]` is the last byte), and `s[start, length]`, the same as
-`s.slice(start, length)`. Unlike Array/Hash, `[]=` on a String is
+so `s[-1]` is the last byte), `s[start, length]`, the same as
+`s.slice(start, length)`, and `s[a..b]` / `s[a...b]` with a Range (a negative bound counts from the
+end, so `s[1..-1]` drops the first byte; a start outside the string raises `IndexError`). Unlike Array/Hash, `[]=` on a String is
 rejected outright with a `TypeError` (strings are immutable).
 `.repeat(n)` (or `s * n`) returns a new `String` with the receiver
 repeated `n` times (`n == 0` → `""`); a negative `n` raises a rescuable

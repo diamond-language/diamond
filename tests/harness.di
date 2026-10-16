@@ -126,6 +126,39 @@ module Harness
     end
   end
 
+  # A long-running program whose output goes to a log file (nothing has to keep draining a pipe),
+  # for servers under test. `log_text()` is everything it has printed, stdout and stderr in order.
+  class Service
+    def initialize(argv: Array, env: Hash, cwd, log_path: String)
+      @log_path = log_path
+      options = {"env": env, "stdout": log_path, "stderr_to_stdout": true}
+      options["cwd"] = cwd if cwd != nil
+      @handle = Process.spawn(argv, options)
+    end
+
+    def pid() = @handle.pid()
+    def running?() = @handle.running?()
+    def terminate() = @handle.terminate()
+    def kill() = @handle.kill()
+    def log_text() = File.exist?(@log_path) ? File.read(@log_path) : ""
+
+    # The exit code, waiting at most `timeout_ms`; nil while it is still running.
+    def wait_exit(timeout_ms: Int)
+      deadline = Time.monotonic() + timeout_ms / 1000.0
+      loop do
+        return @handle.wait() unless @handle.running?()
+        return nil if Time.monotonic() > deadline
+        Harness.sleep_ms(10)
+      end
+    end
+
+    # Releases the program whatever state it is in.
+    def finish()
+      @handle.kill() if @handle.running?()
+      @handle.wait()
+    end
+  end
+
   # A port the kernel just handed out and that is free again; something else may take it
   # before the program under test binds it, which `retry_port` accounts for.
   def self.reserve_port()
@@ -203,5 +236,113 @@ module Harness
       raise message if Time.monotonic() > deadline
       Harness.sleep_ms(10)
     end
+  end
+
+  # One HTTPS request over a fresh connection, trusting `ca_file`. Returns [status, headers, body]:
+  # headers is a Hash with lower-case names, and the body is read by Content-Length (or to EOF).
+  # `headers_in` is a Hash of request headers; `body` a String or nil.
+  def self.https(host: String, port: Int, ca_file: String, method: String, path: String, body, headers_in)
+    socket = TLSSocket.connect(host, port,
+      {"ca_file": ca_file, "connect_timeout_ms": 30000, "read_timeout_ms": 30000, "write_timeout_ms": 30000})
+    begin
+      head = "#{method} #{path} HTTP/1.1\r\nHost: #{host}\r\nConnection: close\r\n"
+      headers_in.each() do |name, value|
+        head = head + "#{name}: #{value}\r\n"
+      end
+      head = head + "Content-Length: #{body.length()}\r\n" if body != nil
+      socket.write(head + "\r\n" + (body == nil ? "" : body))
+      status_line = socket.gets()
+      raise IOError.new("no response") if status_line == nil
+      status = status_line.split(" ")[1].to_i()
+      headers = {}
+      loop do
+        line = socket.gets()
+        break if line == nil || line.strip() == ""
+        colon = line.index(":")
+        next if colon == nil
+        headers[line[0, colon].strip().downcase()] = line[colon + 1, line.length() - colon - 1].strip()
+      end
+      text = nil
+      if headers.key?("content-length")
+        length = headers["content-length"].to_i()
+        text = length > 0 ? socket.read(length) : ""
+      else
+        text = socket.read()
+      end
+      [status, headers, text == nil ? "" : text]
+    ensure
+      socket.close()
+    end
+  end
+
+  # One plain-HTTP request to 127.0.0.1:`port` with the headers given and an optional body:
+  # [status, body].
+  def self.http_with_headers(port: Int, method: String, path: String, body, headers_in)
+    socket = TCPSocket.connect("127.0.0.1", port,
+      {"connect_timeout_ms": 2000, "read_timeout_ms": 2000, "write_timeout_ms": 2000})
+    begin
+      head = "#{method} #{path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+      headers_in.each() do |name, value|
+        head = head + "#{name}: #{value}\r\n"
+      end
+      head = head + "Content-Length: #{body.length()}\r\n" if body != nil
+      socket.write(head + "\r\n" + (body == nil ? "" : body))
+      socket.flush()
+      status_line = socket.gets()
+      raise IOError.new("no response") if status_line == nil
+      length = nil
+      loop do
+        line = socket.gets()
+        break if line == nil || line.strip() == ""
+        length = line.split(":")[1].strip().to_i() if line.downcase().start_with?("content-length:")
+      end
+      text = length == nil ? socket.read() : (length > 0 ? socket.read(length) : "")
+      [status_line.split(" ")[1].to_i(), text == nil ? "" : text]
+    ensure
+      socket.close()
+    end
+  end
+
+  # Removes a directory and everything in it; a symlink is removed, never followed.
+  def self.remove_tree(path: String)
+    Dir.entries(path).each() do |name|
+      child = path + "/" + name
+      if File.directory?(child) && !File.symlink?(child)
+        Harness.remove_tree(child)
+      else
+        File.delete(child)
+      end
+    end
+    Dir.delete(path)
+  end
+
+  # A new temporary directory.
+  def self.make_temp_dir()
+    Process.run(["mktemp", "-d"]).stdout().strip()
+  end
+
+  # [0, 1, ..., count - 1].
+  def self.sequence(count: Int)
+    items = []
+    count.times() do |i|
+      items.push(i)
+    end
+    items
+  end
+
+  # Creates `path` and any missing parents.
+  def self.mkdir_p(path: String)
+    return nil if File.directory?(path)
+    parent = File.dirname(path)
+    Harness.mkdir_p(parent) unless parent == path || File.directory?(parent)
+    Dir.mkdir(path)
+  end
+
+  # `command` run to completion; the Process::Result. `env` and `cwd` are optional (nil).
+  def self.run(argv: Array, env, cwd)
+    options = {}
+    options["env"] = env if env != nil
+    options["cwd"] = cwd if cwd != nil
+    Process.run(argv, options)
   end
 end

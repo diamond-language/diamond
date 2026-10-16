@@ -3,6 +3,11 @@
 Working notes for annotating the Arel and ActiveRecord returns and parameters: what is
 fixed, what stays dynamic, and the measurements behind each decision.
 
+The three Python drivers these notes cite (`bench/compare_arel_annotations.py`,
+`bench/audit_arel_query_parameters.py`, `bench/profile_arel_query_guards.py`) were removed when
+the repository dropped Python. The `python3 bench/...` commands below are kept as the record of
+how each number was produced; the scripts are in Git history at `81cec458`.
+
 ## Arel fixed contracts
 
 The first batch adds declared returns for:

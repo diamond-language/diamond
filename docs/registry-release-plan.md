@@ -74,16 +74,16 @@ its inventory entry before the launch gate will pass.
 After 0.7.0, every selected cut received a patch release that adds
 `maintainers`, and later patch releases carried README and code fixes. The
 checked-in selection and inventory describe the newest versions, which are
-published to the registry by an operator with `tools/publish_registry_seed.py`
+published to the registry by an operator with `tools/publish_registry_seed.di`
 and are immutable once published. Until that happens,
-`verify_registry_launch.py` against production fails on the missing versions;
+`verify_registry_launch.di` against production fails on the missing versions;
 the launch digests remain in the `v0.7.0` tag.
 
 Build the exact candidate without publishing anything:
 
 ```sh
 make facet
-python3 tools/prepare_registry_seed.py /tmp/registry-launch-seed \
+build/diamond tools/prepare_registry_seed.di /tmp/registry-launch-seed \
   --expect docs/registry-launch-inventory.json
 ```
 
@@ -124,10 +124,10 @@ The selected version is 0.7.0.
 - [x] Verify removed cuts are unavailable and retained dependency graphs resolve.
 - [x] Record the deployed runtime revision and configuration backup procedure.
 - [x] Download and restore-verify the first snapshot with
-  `tools/fetch_registry_backup.py`. Saved outside the source tree under `~/diamond-registry-backups/`;
+  `tools/fetch_registry_backup.sh`. Saved outside the source tree under `~/diamond-registry-backups/`;
   see the production record for its verification timestamp and retained state.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
-  `monitor.py` probes remain available; automatic notification is not a release gate.
+  `monitor.di` probes remain available; automatic notification is not a release gate.
 - **Deferred past 0.7.0, since resolved in part:** the production reboot drill
   passed on 2026-09-24. The first Diamond certificate renewals (dilang.tech
   ~2026-11-17, cuts.dilang.tech ~2026-11-22) have not yet happened; confirm them
@@ -137,7 +137,7 @@ The selected version is 0.7.0.
   changelog entries under the version/date heading.
 - [x] Verify the final release commit: inspect the complete CI results, run the
   QEMU registry gate (`tools/test_registry_vm.sh`), and run
-  `python3 tools/verify_registry_launch.py https://cuts.dilang.tech`.
+  `build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech`.
   Record the tested SHA and outcomes; earlier runs do not certify a later commit.
   Verified 2026-09-23 on `b98f27cc`: all nine CI jobs passed (run 35922577277);
   `tools/test_registry_vm.sh all` passed (seed, nginx proxy, HTTP, Caddy, systemd

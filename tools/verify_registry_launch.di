@@ -1,0 +1,96 @@
+# Verify the reviewed launch inventory through public facet resolution and reinstall.
+#
+#   diamond verify_registry_launch.di REGISTRY_URL [--inventory FILE]
+require "lib/files"
+
+root = File.dirname(__dir__)
+
+def run(argv, cwd)
+  result = Process.run(argv, {"cwd": cwd, "env": {"DIAMOND_NO_CACHE": "1"}})
+  unless result.success?()
+    message = result.stderr()
+    raise ArgumentError.new(message == "" ? "command failed" : message)
+  end
+  result.stdout()
+end
+
+def verify(root, registry, inventory_path)
+  raise ArgumentError.new("public verification requires HTTPS") unless registry.start_with?("https://")
+  cuts = JSON.parse(File.read(inventory_path))["cuts"]
+  dependencies = []
+  cuts.each() do |cut|
+    cut["dependencies"].keys().each() do |name|
+      dependencies.push(name)
+    end
+  end
+  work = make_temp_dir()
+  begin
+    facet = root + "/build/facet"
+    run([facet, "init", "launch-verification"], work)
+    manifest = JSON.parse(File.read(work + "/diamond.cut"))
+    wanted = {}
+    cuts.each() do |cut|
+      wanted[cut["name"]] = {"registry": registry, "version": cut["version"]} unless dependencies.include?(cut["name"])
+    end
+    manifest["dependencies"] = wanted
+    File.write(work + "/diamond.cut", JSON.stringify(manifest))
+    run([facet, "update"], work)
+    lock_bytes = File.read(work + "/facet.lock")
+    lock = JSON.parse(lock_bytes.sub(Regexp.new(",\\s*}\\s*$"), "}"))
+    unless lock.keys().sort() == cuts.map() do |cut| cut["name"] end.sort()
+      raise ArgumentError.new("resolved cut set differs from inventory")
+    end
+    cuts.each() do |cut|
+      locked = lock[cut["name"]]
+      if locked["source"] != "registry" || locked["registry"] != registry
+        raise ArgumentError.new("registry source mismatch: " + cut["name"])
+      end
+      ["version", "sha256", "size"].each() do |key|
+        if locked[key] != cut[key]
+          raise ArgumentError.new("locked archive differs from inventory: " + cut["name"])
+        end
+      end
+      run([root + "/build/diamond", "-e", "require_cut \"" + cut["name"] + "\"\n\"loaded\""], work)
+    end
+    remove_tree(work + "/cuts")
+    run([facet, "install"], work)
+    unless File.read(work + "/facet.lock") == lock_bytes
+      raise ArgumentError.new("locked reinstall changed the lockfile")
+    end
+    puts("#{cuts.length()} public cuts resolved, digest-checked, loaded, and reinstalled from unchanged lock")
+  ensure
+    remove_tree(work)
+  end
+end
+
+registry = nil
+inventory = root + "/docs/registry-launch-inventory.json"
+index = 0
+while index < ARGV.length()
+  arg = ARGV[index]
+  if arg == "--inventory"
+    index += 1
+    if index >= ARGV.length()
+      warn("--inventory needs a value")
+      exit(2)
+    end
+    inventory = ARGV[index]
+  elsif registry == nil && !arg.start_with?("--")
+    registry = arg
+  else
+    warn("unexpected argument #{arg}")
+    exit(2)
+  end
+  index += 1
+end
+if registry == nil
+  warn("usage: verify_registry_launch.di REGISTRY_URL [--inventory FILE]")
+  exit(2)
+end
+begin
+  verify(root, registry, inventory)
+rescue e: StandardError
+  warn("public verification failed: #{e.message()}")
+  exit(1)
+end
+exit(0)

@@ -29,12 +29,12 @@ cd "$1"
 }
 make -j2 CFLAGS_RELEASE='-O2 -DNDEBUG -march=x86-64-v3' CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' release
 make CFLAGS_DEBUG='-O2 -g -march=x86-64-v3' facet
-FACET_BIN="$PWD/build/facet" DIAMOND_BIN="$PWD/build/diamond" python3 packages/registry/http_test.py
+FACET_BIN="$PWD/build/facet" DIAMOND_BIN="$PWD/build/diamond" build/diamond packages/registry/http_test.di
 mkdir -p payload/bin payload/app payload/deploy
 cp build/diamond build/facet payload/bin/
-cp applications/registry/{app.di,catalog.di,catalog.html,catalog.js,catalog.css,cut.html,cut.js,markdown.js,credentials.di,backup.py,monitor.py} payload/app/
+cp applications/registry/{app.di,catalog.di,catalog.html,catalog.js,catalog.css,cut.html,cut.js,markdown.js,credentials.di,backup.di,monitor.di} payload/app/
 FACET_BIN="$PWD/build/facet" tools/install_local_cuts.sh payload/app
-python3 tools/prepare_registry_seed.py "$PWD/payload/seed" --expect docs/registry-launch-inventory.json
+build/diamond tools/prepare_registry_seed.di "$PWD/payload/seed" --expect docs/registry-launch-inventory.json
 cp applications/registry/deploy/{registry.service,registry.env.example,nginx.conf.example,nginx-host.conf.example} payload/deploy/
 printf '%s\n' "$2" > payload/REVISION
 (cd payload && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > payload/SHA256SUMS

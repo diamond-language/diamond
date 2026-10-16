@@ -5,7 +5,7 @@
 #
 #   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify]
 #
-# By default it stops when tools/registry_needs_upgrade.py says NONE or OPTIONAL;
+# By default it stops when tools/registry_needs_upgrade.di says NONE or OPTIONAL;
 # --force upgrades anyway. --dry-run prints every mutating command instead of
 # running it (the read-only upgrade check still runs).
 #
@@ -25,6 +25,7 @@ for arg in "$@"; do
 done
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
+[[ -x build/diamond ]] || make -s
 host=${REGISTRY_HOST:-root@dilang.tech}
 backups=${REGISTRY_BACKUP_DIR:-$HOME/diamond-registry-backups}
 vm_port=${REGISTRY_VM_PORT:-2222}
@@ -44,7 +45,7 @@ revision=$(git rev-parse HEAD); short=${revision:0:8}
 
 echo "== is an upgrade needed?"
 verdict=0
-python3 tools/registry_needs_upgrade.py --host "$host" || verdict=$?
+build/diamond tools/registry_needs_upgrade.di --host "$host" || verdict=$?
 if [[ $verdict -ne 20 ]] && ! $force; then
     echo; echo "Not upgrading (verdict $verdict). Re-run with --force to upgrade anyway."
     exit 0
@@ -58,7 +59,7 @@ fi
 echo; echo "== verified backup of the live registry"
 backup="$backups/cutbackup-$(date +%F)-pre-$short"
 run mkdir -p -m 700 "$backups"
-run python3 tools/fetch_registry_backup.py "$backup" --host "$host" \
+run tools/fetch_registry_backup.sh "$backup" --host "$host" \
     --app /opt/diamond-registry/current/app --data /var/lib/diamond-registry
 
 echo; echo "== build the bundle at $short"
@@ -76,8 +77,8 @@ if ! $dry; then
     [[ -x build/facet ]] || make -s facet >/dev/null
     curl -fsS https://cuts.dilang.tech/health; echo
 fi
-if $verify; then run python3 tools/verify_registry_launch.py https://cuts.dilang.tech
-else echo "skipped: --no-verify (run tools/verify_registry_launch.py after publishing the new versions)"; fi
+if $verify; then run build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech
+else echo "skipped: --no-verify (run tools/verify_registry_launch.di after publishing the new versions)"; fi
 
 echo; echo "== prune: keep only the newest backup and bundle, remove uploads from the host"
 run ssh "$host" 'rm -f /root/registry-deployment.tar.gz /root/upgrade.sh'
