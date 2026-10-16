@@ -13,9 +13,8 @@ Process.run(["sh", "-c", "echo $NAME; pwd"],
 Process.run(["wc", "-c"], {"stdin": "bytes to feed"})
 ```
 
-- **`"env"`** — a Hash of String to String, merged over the inherited
-  environment (a name already present is replaced). Names must be
-  non-empty and contain no `=`.
+- **`"env"`** — a Hash of String to String, merged over the script's `ENV` (a name already present is replaced).
+  Names must be non-empty and contain no `=`.
 - **`"cwd"`** — the child's working directory. A directory that does
   not exist raises `IOError`, like any other spawn failure.
 - **`"stdin"`** — `Process.run`: a String written to the child's stdin

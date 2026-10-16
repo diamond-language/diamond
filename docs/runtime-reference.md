@@ -64,9 +64,10 @@ for the full rules.
 file run with no trailing args, or from the REPL). `ENV` is a `Hash` of
 `String` to `String`, a snapshot of the process environment taken at
 startup — `ENV["PATH"]`, `ENV["HOME"]`, etc.; a missing key is `nil`,
-same as any other `Hash`. Mutating the `ENV` `Hash` only changes that
-in-memory snapshot, not the real environment (no `setenv` round-trip) —
-read-only in effect, even though nothing stops the write syntax itself.
+same as any other `Hash`. `ENV["K"] = "v"` and `ENV.delete("K")` change that
+Hash, and every `Process.run`/`Process.spawn` after that starts the child with
+the current contents (values must be Strings, or the spawn raises `TypeError`).
+The running process's own C-level environment is not changed.
 A constant or user-defined function named `ARGV`/`ENV` shadows it.
 Constant definitions belong at top level or inside a class or module.
 
