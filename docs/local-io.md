@@ -268,6 +268,7 @@ Dir.delete("backup")               # rmdir: an empty directory only
   bits (subject to the umask) and copies the bytes. An existing destination is
   never replaced (`IOError`), and a failed copy removes the partial file. The
   source must be a regular file.
+- `File.mode(path)` is the permission bits as an `Int` (`File.mode(p) & 0o077 == 0` for a private file).
 - `File.size` reads the size through a symlink and raises `IOError` when the
   path cannot be read. `File.file?` and `File.symlink?` read as `false`, not an
   error, for a missing path, like `File.exist?`. `File.file?(p) &&

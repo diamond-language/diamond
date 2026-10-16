@@ -656,6 +656,8 @@ typedef enum {
     DIAMOND_FILE_PATH_MKDIR,
     DIAMOND_FILE_PATH_RMDIR,
     DIAMOND_FILE_PATH_DIRSYNC,
+    /* File.mode(path): the permission bits (st_mode & 07777) as an Int. */
+    DIAMOND_FILE_PATH_MODE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

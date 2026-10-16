@@ -4593,6 +4593,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         path_result=DIAMOND_INT((int64_t)path_stat.st_size);
                         break;
                     }
+                    case DIAMOND_FILE_PATH_MODE: {
+                        VM_SANDBOX_GUARD("File.mode", "filesystem");
+                        struct stat path_stat;
+                        if(stat(path->chars,&path_stat)!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot read the mode of '%.*s': %s",
+                                (int)path->length,path->chars,strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        path_result=DIAMOND_INT((int64_t)(path_stat.st_mode&07777));
+                        break;
+                    }
                     case DIAMOND_FILE_PATH_FILE: {
                         VM_SANDBOX_GUARD("File.file?", "filesystem");
                         struct stat path_stat;
