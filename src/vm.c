@@ -11158,8 +11158,10 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"close",5)==0;
     const bool flush_method=method_name->length==5&&
         memcmp(method_name->chars,"flush",5)==0;
+    const bool shutdown_write_method=method_name->length==14&&
+        memcmp(method_name->chars,"shutdown_write",14)==0;
     if(!read_method&&!gets_method&&!write_method&&!close_method&&
-       !flush_method) {
+       !flush_method&&!shutdown_write_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"File");
         return DIAMOND_VM_TYPE_ERROR;
@@ -11175,6 +11177,22 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     if(target_file->stream==nullptr) {
         snprintf(vm->error,sizeof vm->error,"file is closed");
         return DIAMOND_VM_IO_ERROR;
+    }
+    /* Half-close of a connected socket (TCPSocket.connect, an accepted
+     * connection): everything written so far is flushed, then the peer sees
+     * EOF while this side can still read the reply. */
+    if(shutdown_write_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(fflush(target_file->stream)!=0) {
+            snprintf(vm->error,sizeof vm->error,"flush failed: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        if(shutdown(fileno(target_file->stream),SHUT_WR)!=0) {
+            snprintf(vm->error,sizeof vm->error,"shutdown_write failed: %s",
+                errno==ENOTSOCK?"not a socket":strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* Hands buffered writes to the OS now rather than at
      * close -- what an append-only log needs after each
@@ -11292,7 +11310,10 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"close",5)==0;
     const bool finish_method=method_name->length==14&&
         memcmp(method_name->chars,"finish_connect",14)==0;
-    if(!read_method&&!write_method&&!close_method&&!finish_method) {
+    const bool shutdown_write_method=method_name->length==14&&
+        memcmp(method_name->chars,"shutdown_write",14)==0;
+    if(!read_method&&!write_method&&!close_method&&!finish_method&&
+       !shutdown_write_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Socket");
         return DIAMOND_VM_TYPE_ERROR;
@@ -11309,10 +11330,18 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
         snprintf(vm->error,sizeof vm->error,"socket is closed");
         return DIAMOND_VM_IO_ERROR;
     }
-    if(finish_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if((finish_method||shutdown_write_method)&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
     const DiamondVmStatus finish_status=socket_finish_connect_helper(vm,socket_handle);
     if(finish_status!=DIAMOND_VM_OK)return finish_status;
     if(finish_method) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    if(shutdown_write_method) {
+        /* Half-close: the peer sees EOF, this side can still read. */
+        if(shutdown(socket_handle->fd,SHUT_WR)!=0) {
+            snprintf(vm->error,sizeof vm->error,"shutdown_write failed: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
     if(read_method) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_INT||
@@ -12566,13 +12595,16 @@ DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"session_reused?",15)==0;
     const bool finish_handshake_method=method_name->length==16&&
         memcmp(method_name->chars,"finish_handshake",16)==0;
+    const bool server_name_method=method_name->length==11&&
+        memcmp(method_name->chars,"server_name",11)==0;
     const bool peer_subject_method=method_name->length==12&&
         memcmp(method_name->chars,"peer_subject",12)==0;
     const bool peer_fingerprint_method=method_name->length==16&&
         memcmp(method_name->chars,"peer_fingerprint",16)==0;
     if(!read_method&&!gets_method&&!write_method&&!close_method&&!abort_method&&
        !alpn_protocol_method&&!session_method&&!session_reused_method&&
-       !peer_subject_method&&!peer_fingerprint_method&&!finish_handshake_method) {
+       !peer_subject_method&&!peer_fingerprint_method&&!finish_handshake_method&&
+       !server_name_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"TLSSocket");
         return DIAMOND_VM_TYPE_ERROR;
@@ -12647,6 +12679,18 @@ DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
     if(session_reused_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         registers[dest]=DIAMOND_BOOL(SSL_session_reused(tls_handle->ssl)==1);
+        return DIAMOND_VM_OK;
+    }
+    if(server_name_method) {
+        /* On an accepted connection: the host name the client asked for in
+         * the SNI extension, or nil when it sent none (it never does for an
+         * IP address). On a client connection it is the name it requested. */
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        const char *name=SSL_get_servername(tls_handle->ssl,TLSEXT_NAMETYPE_host_name);
+        if(name==nullptr) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+        DiamondString *value=allocate_string(vm,name,strlen(name));
+        if(value==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(value);
         return DIAMOND_VM_OK;
     }
     if(peer_subject_method||peer_fingerprint_method) {

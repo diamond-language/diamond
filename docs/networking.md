@@ -43,6 +43,11 @@ server.port()   # => the port the kernel chose
 `Listener#port()` returns the bound port, which is how a listener opened
 on port `0` is found. `listen_nonblocking` takes the same options.
 
+A connected socket (from `TCPSocket.connect`, `accept`, or a
+`Socket`) has `shutdown_write()`: it flushes what was written and half-closes
+the connection, so the peer reads to EOF while this side can still read the
+reply. Calling it on something that is not a socket raises `IOError`.
+
 `TCPSocket.connect(host, port, options)` also takes an optional third
 `options` Hash (defaulting to `nil`, meaning none of this applies —
 existing calls are unaffected):
@@ -594,6 +599,10 @@ zero-external-dependencies stance.
   when the peer presented no certificate (an accepted connection on a
   listener without `client_ca`). On a closed `TLSSocket` both raise
   `IOError`, like the other methods.
+- **`TLSSocket#server_name()`** — the host name from the SNI extension: on
+  an accepted connection, the name the client asked for (`nil` when it sent
+  none, as it does not for an IP address); on a client connection, the name
+  it requested.
 - **`TLSSocket#session_reused?()`** — `Bool`, whether this connection
   actually resumed a previous session (`SSL_session_reused`) rather than
   performing a full handshake. The one reliable way to confirm resumption
