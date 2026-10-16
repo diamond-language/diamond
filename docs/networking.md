@@ -26,6 +26,23 @@ or address. A connect/bind/listen failure raises a rescuable `IOError`
 with `strerror(errno)` from the actual failing attempt, even when
 multiple addresses were tried.
 
+`TCPServer.listen(port)` also takes keyword options after the port, in any
+order:
+
+```ruby
+server = TCPServer.listen(0, host: "127.0.0.1", backlog: 16)
+server.port()   # => the port the kernel chose
+```
+
+- **`host:`** — bind one address (`"127.0.0.1"`, `"::1"`, a hostname)
+  instead of every interface.
+- **`backlog:`** — the `listen(2)` queue length, a positive `Int`
+  (default `SOMAXCONN`).
+- **`reuse_port:`** — `SO_REUSEPORT`, as above.
+
+`Listener#port()` returns the bound port, which is how a listener opened
+on port `0` is found. `listen_nonblocking` takes the same options.
+
 `TCPSocket.connect(host, port, options)` also takes an optional third
 `options` Hash (defaulting to `nil`, meaning none of this applies —
 existing calls are unaffected):
@@ -35,6 +52,9 @@ client = TCPSocket.connect("example.com", 8080,
     {"connect_timeout_ms": 5000, "read_timeout_ms": 10000})
 ```
 
+- **`recv_buffer_bytes`** / **`send_buffer_bytes`** — `SO_RCVBUF` /
+  `SO_SNDBUF`, set before connecting so the window is negotiated from
+  them. The kernel clamps the value (and Linux doubles it).
 - **`connect_timeout_ms`** — bounds only the `connect(2)` step. Applies
   per candidate address, not as one aggregate deadline across every
   address `getaddrinfo` returns (an ordinary connection refusal already

@@ -646,6 +646,8 @@ typedef struct DiamondProcessHandle {
     pid_t pid;
     DiamondValue stdout_stream;
     DiamondValue stderr_stream;
+    /* The writable end of the child's stdin; nil unless spawned with {"stdin": true}. */
+    DiamondValue stdin_stream;
     bool reaped;
     int64_t exit_code;
 } DiamondProcessHandle;

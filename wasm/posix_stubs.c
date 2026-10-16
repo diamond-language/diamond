@@ -28,6 +28,9 @@ int connect(int fd, const struct sockaddr *address, socklen_t length) {
 int getpeername(int fd, struct sockaddr *address, socklen_t *length) {
     (void)fd; (void)address; (void)length; UNSUPPORTED_INT();
 }
+int getsockname(int fd, struct sockaddr *address, socklen_t *length) {
+    (void)fd; (void)address; (void)length; UNSUPPORTED_INT();
+}
 ssize_t sendto(int fd, const void *buffer, size_t length, int flags, const struct sockaddr *address,
                socklen_t address_length) {
     (void)fd; (void)buffer; (void)length; (void)flags; (void)address; (void)address_length;
@@ -64,6 +67,9 @@ int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *actions, int fd
 }
 int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *actions, int fd) {
     (void)actions; (void)fd; return 0;
+}
+int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *actions, const char *path) {
+    (void)actions; (void)path; return ENOSYS;
 }
 int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *actions, int fd, const char *path,
                                      int flags, mode_t mode) {

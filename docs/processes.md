@@ -4,6 +4,28 @@
 
 ## `Process.run` and `Process.spawn`
 
+Both take an optional second argument, a Hash of options with String
+keys:
+
+```ruby
+Process.run(["sh", "-c", "echo $NAME; pwd"],
+  {"env": {"NAME": "demo"}, "cwd": "/tmp"})
+Process.run(["wc", "-c"], {"stdin": "bytes to feed"})
+```
+
+- **`"env"`** — a Hash of String to String, merged over the inherited
+  environment (a name already present is replaced). Names must be
+  non-empty and contain no `=`.
+- **`"cwd"`** — the child's working directory. A directory that does
+  not exist raises `IOError`, like any other spawn failure.
+- **`"stdin"`** — `Process.run`: a String written to the child's stdin
+  followed by EOF. It is fed while the output is drained, so a child
+  that writes before it finishes reading cannot deadlock the call, and
+  a child that exits early is not an error. `Process.spawn`: `true`
+  gives the handle a writable pipe at `handle.stdin()` (see below).
+
+An unknown key, or a value of the wrong type, raises `TypeError`.
+
 ```ruby
 result = Process.run(["ls", "-la", dir])
 puts(result.stdout())
@@ -39,11 +61,10 @@ Instance methods on the result, all ordinary `.method()` calls:
 
 **`Process.run`'s own v1 scope, deliberately minimal**:
 
-- The child's stdin is always `/dev/null` — there is no way to feed it
-  data, on `Process.run` or `Process.spawn` alike. A command that tries
-  to read from stdin sees immediate EOF (e.g. `Process.run(["cat"])`
-  returns empty stdout and exit code `0` immediately, rather than
-  hanging). A writable stdin is a real, separate future slice.
+- By default the child's stdin is `/dev/null`: a command that reads
+  stdin sees immediate EOF (`Process.run(["cat"])` returns empty stdout
+  and exit code `0` rather than hanging). The `"stdin"` option, below,
+  feeds it data.
 - Fully blocking/synchronous — no way to run a child in the background,
   poll it, or kill it early (`Process.spawn`, below, is exactly that).
   A long-running or hung child blocks the calling Diamond program for as
@@ -99,9 +120,14 @@ waiting for exit:
   `Socket#read`'s own contract (see the non-blocking-sockets section
   above), and for the same reason: it *is* that contract, on a pipe fd
   instead of a network one. `.close()` is idempotent. No `.write()` —
-  this is a read-only pipe end (the child's stdin is `/dev/null`).
+  this end is read-only (the child's stdin end is a separate stream, below).
   Poll it directly: `IO.poll([handle.stdout(), handle.stderr()], [], timeout_ms)`
   accepts a `Process::Stream` exactly like a `Socket`.
+- **`.stdin()`** → the child's stdin, a writable `Process::Stream`, when
+  spawned with `{"stdin": true}`, otherwise `nil`. `.write(string)`
+  writes all of the String (blocking until the child has read it) and
+  returns its length; `.close()` sends EOF. Close it for a child that
+  reads to EOF before it exits (`cat`, `wc`).
 - **`.wait()`** → `Int`, the same exit-code convention `Process.run`'s
   own `.exit_code()` uses (real exit status, or `128 + signal number`).
   Blocks until the child exits, `waitpid`-style — **does not drain

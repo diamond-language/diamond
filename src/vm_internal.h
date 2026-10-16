@@ -330,8 +330,8 @@ DIAMOND_INTERNAL DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondStr
 DIAMOND_INTERNAL DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *data,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm, DiamondProcessHandle *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
 DIAMOND_INTERNAL DiamondVmStatus process_result_dispatch_helper(DiamondVm *vm, DiamondProcessResult *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
-DIAMOND_INTERNAL DiamondVmStatus process_run_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessResult *result);
-DIAMOND_INTERNAL DiamondVmStatus process_spawn_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessHandle *handle);
+DIAMOND_INTERNAL DiamondVmStatus process_run_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessResult *result,DiamondValue options_value);
+DIAMOND_INTERNAL DiamondVmStatus process_spawn_helper(DiamondVm *vm, DiamondArray *argv_array,DiamondProcessHandle *handle,DiamondValue options_value);
 DIAMOND_INTERNAL DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm, DiamondProcessStream *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t base,uint16_t dest);
 
 /* Shared primitives that stay in vm.c (needed by vm_process_io.c) */
@@ -341,9 +341,9 @@ DIAMOND_INTERNAL bool gc_write_barrier(DiamondVm *vm, DiamondObject *owner);
 /* vm_network.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL DiamondVmStatus dns_resolve_helper(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue host_value,DiamondValue channels,DiamondValue deadline, DiamondValue *out);
 DIAMOND_INTERNAL DiamondVmStatus socket_finish_connect_helper(DiamondVm *vm,DiamondSocketHandle *handle);
-DIAMOND_INTERNAL DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host, int64_t port,int64_t connect_timeout_ms,int *out_fd);
+DIAMOND_INTERNAL DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host, int64_t port,int64_t connect_timeout_ms,int64_t recv_buffer_bytes,int64_t send_buffer_bytes,int *out_fd);
 DIAMOND_INTERNAL DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm, const DiamondString *address,int64_t port,DiamondSocketHandle **out_handle);
-DIAMOND_INTERNAL DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port, bool nonblocking,bool reuse_port,DiamondListenerHandle **out_handle);
+DIAMOND_INTERNAL DiamondVmStatus tcp_listen_helper(DiamondVm *vm,const char *host,int64_t port, bool nonblocking,bool reuse_port,int64_t backlog,DiamondListenerHandle **out_handle);
 DIAMOND_INTERNAL void tls_abort_handshake(DiamondTlsSocketHandle *handle);
 DIAMOND_INTERNAL DiamondVmStatus tls_encode_alpn_protocols(DiamondVm *vm,const char *owner, const DiamondArray *protocols,unsigned char **out_buffer,unsigned int *out_length);
 DIAMOND_INTERNAL DiamondVmStatus diamond_tls_finish_handshake(DiamondVm *vm, DiamondTlsSocketHandle *handle,const char **direction);
@@ -842,6 +842,9 @@ typedef struct {
     int64_t connect_timeout_ms;
     int64_t read_timeout_ms;
     int64_t write_timeout_ms;
+    /* SO_RCVBUF/SO_SNDBUF requested before connect; -1 leaves the system default. */
+    int64_t recv_buffer_bytes;
+    int64_t send_buffer_bytes;
     const DiamondString *ca_file;
     const DiamondString *ca_path;
     const DiamondString *cert;

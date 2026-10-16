@@ -5834,17 +5834,44 @@ static uint16_t parse_tcp_connect_call(Compiler *compiler) {
     return dest;
 }
 
+/* A string constant the compiler itself supplies (an option name), not source. */
+static uint16_t emit_literal_string(Compiler *compiler,const char *text) {
+    const size_t length=strlen(text);
+    if(compiler->function->string_count==compiler->function->string_capacity&&
+       !diamond_function_reserve_strings(compiler->function,
+          compiler->function->string_capacity==0?16:
+          compiler->function->string_capacity*2)) {
+        fail(compiler,compiler->previous.span,"out of memory growing function strings");
+        return 0;
+    }
+    if(compiler->function->string_count==DIAMOND_MAX_STRING_CONSTANTS) {
+        fail(compiler,compiler->previous.span,"too many or oversized names in function");
+        return 0;
+    }
+    DiamondStringConstant *string=
+        &compiler->function->strings[compiler->function->string_count];
+    memcpy(string->chars,text,length);
+    string->length=length;
+    string->chars[length]='\0';
+    const uint16_t index=(uint16_t)compiler->function->string_count++;
+    const uint16_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_STRING,destination,index,0,2);
+    compiler->known_types[destination]=DIAMOND_TYPE_STRING;
+    return destination;
+}
+
 /* `TCPServer.listen(port)`/`listen_nonblocking(port)`, optionally followed
- * by `, reuse_port: <expr>` -- a compiler special form like Thread.new's
- * own trailing-argument parsing, so this hand-rolls the keyword rather than
- * reusing the generic call-argument path (which only exists for ordinary
- * Diamond-defined functions). Omitting the keyword compiles to a literal
- * `false` (see parse_literal's own DIAMOND_OP_BOOL emission), so the
- * opcode always receives exactly 3 operands and reuse_port stays off by
- * default -- every existing single-listener caller (http_serve, arbitrary
- * user code) keeps today's exclusive-port-ownership behavior unless it
- * explicitly opts in. See docs/io.md and packages/gremlin's own
- * gremlin_worker for why a caller would want this. */
+ * by keyword options `reuse_port:`, `host:` and `backlog:` in any order --
+ * a compiler special form like Thread.new's own trailing-argument parsing,
+ * so this hand-rolls the keywords rather than reusing the generic
+ * call-argument path (which only exists for ordinary Diamond-defined
+ * functions). The opcode always receives exactly 3 operands. With no
+ * options, or only `reuse_port:`, the third is that Bool (a literal `false`
+ * when omitted, so every existing single-listener caller -- http_serve,
+ * arbitrary user code -- keeps exclusive-port-ownership behavior unless it
+ * opts in). With `host:` or `backlog:` it is a Hash of the given options,
+ * which the VM reads by name. See docs/io.md and packages/gremlin's own
+ * gremlin_worker for why a caller would want reuse_port. */
 static uint16_t parse_tcp_listen_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
     const bool nonblocking=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
@@ -5864,39 +5891,76 @@ static uint16_t parse_tcp_listen_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t port_register=parse_expression(compiler);
     skip_newlines(compiler);
-    uint16_t reuse_port_register;
-    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+    enum { LISTEN_REUSE_PORT,LISTEN_HOST,LISTEN_BACKLOG,LISTEN_OPTION_COUNT };
+    static const char *const option_names[LISTEN_OPTION_COUNT]={"reuse_port","host","backlog"};
+    uint16_t option_registers[LISTEN_OPTION_COUNT];
+    bool option_given[LISTEN_OPTION_COUNT]={};
+    while(compiler->current.kind==DIAMOND_TOKEN_COMMA&&!compiler->failed) {
         advance_token(compiler);
         skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-           !name_equals(compiler,"reuse_port",compiler->current.span,false)) {
+        int matched=-1;
+        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+            for(int option=0;option<LISTEN_OPTION_COUNT;option++)
+                if(name_equals(compiler,option_names[option],compiler->current.span,false))
+                    matched=option;
+        }
+        if(matched<0) {
             fail(compiler,compiler->current.span,
-                 "expected 'reuse_port' after ',' in TCPServer.listen arguments");
+                 "expected 'reuse_port', 'host' or 'backlog' after ',' in TCPServer.listen arguments");
             return 0;
         }
-        advance_token(compiler); /* consume 'reuse_port' */
+        if(option_given[matched]) {
+            fail(compiler,compiler->current.span,
+                 "duplicate option in TCPServer.listen arguments");
+            return 0;
+        }
+        advance_token(compiler); /* consume the option name */
         if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
-            fail(compiler,compiler->current.span,"expected ':' after 'reuse_port'");
+            fail(compiler,compiler->current.span,"expected ':' after TCPServer.listen option name");
             return 0;
         }
         advance_token(compiler); /* consume ':' */
         skip_newlines(compiler);
-        reuse_port_register=parse_expression(compiler);
+        option_registers[matched]=parse_expression(compiler);
+        option_given[matched]=true;
         skip_newlines(compiler);
-    } else {
-        reuse_port_register=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_BOOL,reuse_port_register,false,0,2);
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after TCPServer.listen arguments");
         return 0;
     }
     advance_token(compiler);
+    uint16_t options_register;
+    if(!option_given[LISTEN_HOST]&&!option_given[LISTEN_BACKLOG]) {
+        if(option_given[LISTEN_REUSE_PORT]) options_register=option_registers[LISTEN_REUSE_PORT];
+        else {
+            options_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_BOOL,options_register,false,0,2);
+        }
+    } else {
+        uint16_t keys[LISTEN_OPTION_COUNT],values[LISTEN_OPTION_COUNT];
+        size_t count=0;
+        for(int option=0;option<LISTEN_OPTION_COUNT;option++) {
+            if(!option_given[option])continue;
+            keys[count]=emit_literal_string(compiler,option_names[option]);
+            values[count]=option_registers[option];
+            count++;
+        }
+        const uint16_t base=allocate_register(compiler);
+        for(size_t i=1;i<count*2;i++) (void)allocate_register(compiler);
+        for(size_t i=0;i<count;i++) {
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i*2),keys[i],0,2);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,(uint16_t)(base+i*2+1),values[i],0,2);
+        }
+        options_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_HASH,options_register,base,(uint16_t)count,3);
+        compiler->known_types[options_register]=DIAMOND_TYPE_HASH;
+    }
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,nonblocking?DIAMOND_OP_TCP_LISTEN_NONBLOCK:DIAMOND_OP_TCP_LISTEN);
     emit_register(compiler,dest);
     emit_register(compiler,port_register);
-    emit_register(compiler,reuse_port_register);
+    emit_register(compiler,options_register);
     return dest;
 }
 
@@ -6613,15 +6677,26 @@ static uint16_t parse_process_run_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t argv_register=parse_expression(compiler);
     skip_newlines(compiler);
+    /* An optional second argument, a Hash of options (env, cwd, stdin). */
+    bool has_options=false;
+    uint16_t options_register=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        options_register=parse_expression(compiler);
+        has_options=true;
+        skip_newlines(compiler);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Process.run arguments");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_PROCESS_RUN);
+    emit_opcode(compiler,has_options?DIAMOND_OP_PROCESS_RUN_OPTIONS:DIAMOND_OP_PROCESS_RUN);
     emit_register(compiler,dest);
     emit_register(compiler,argv_register);
+    if(has_options)emit_register(compiler,options_register);
     return dest;
 }
 
@@ -6636,15 +6711,26 @@ static uint16_t parse_process_spawn_call(Compiler *compiler) {
     skip_newlines(compiler);
     const uint16_t argv_register=parse_expression(compiler);
     skip_newlines(compiler);
+    /* An optional second argument, a Hash of options (env, cwd, stdin). */
+    bool has_options=false;
+    uint16_t options_register=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        options_register=parse_expression(compiler);
+        has_options=true;
+        skip_newlines(compiler);
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after Process.spawn arguments");
         return 0;
     }
     advance_token(compiler);
     const uint16_t dest=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_PROCESS_SPAWN);
+    emit_opcode(compiler,has_options?DIAMOND_OP_PROCESS_SPAWN_OPTIONS:DIAMOND_OP_PROCESS_SPAWN);
     emit_register(compiler,dest);
     emit_register(compiler,argv_register);
+    if(has_options)emit_register(compiler,options_register);
     return dest;
 }
 

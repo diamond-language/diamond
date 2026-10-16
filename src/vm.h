@@ -601,6 +601,12 @@ typedef enum DiamondOpCode : uint8_t {
      * class (a subclass is a different class). A struct's generated `==`
      * uses it so `Point.new(1, 2) == Point3D.new(1, 2, 3)` is false. */
     DIAMOND_OP_SAME_CLASS,
+    /* dest, argv Array, options Hash: Process.run / Process.spawn with the
+     * optional second argument (env, cwd, stdin). Without options the compiler
+     * emits the two-operand PROCESS_RUN / PROCESS_SPAWN, which keeps the
+     * layout selfhost/parser.di emits. */
+    DIAMOND_OP_PROCESS_RUN_OPTIONS,
+    DIAMOND_OP_PROCESS_SPAWN_OPTIONS,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

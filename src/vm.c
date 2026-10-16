@@ -466,6 +466,7 @@ static void mark_object_children(DiamondObject *object, bool minor) {
         DiamondProcessHandle *handle=(DiamondProcessHandle *)object;
         mark_value(handle->stdout_stream,minor);
         mark_value(handle->stderr_stream,minor);
+        mark_value(handle->stdin_stream,minor);
     }
 }
 
@@ -3070,7 +3071,8 @@ DiamondVmStatus parse_socket_connect_options_helper(DiamondVm *vm,
         DiamondValue options_value,bool allow_tls_fields,
         DiamondSocketConnectOptions *out) {
     *out=(DiamondSocketConnectOptions){.connect_timeout_ms=-1,
-        .read_timeout_ms=-1,.write_timeout_ms=-1};
+        .read_timeout_ms=-1,.write_timeout_ms=-1,
+        .recv_buffer_bytes=-1,.send_buffer_bytes=-1};
     if(options_value.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OK;
     if(options_value.kind!=DIAMOND_VALUE_OBJECT||
        options_value.as.object->kind!=DIAMOND_OBJECT_HASH) {
@@ -3083,6 +3085,8 @@ DiamondVmStatus parse_socket_connect_options_helper(DiamondVm *vm,
         {"connect_timeout_ms",DIAMOND_SOCKET_OPTION_INT,&out->connect_timeout_ms,nullptr,nullptr},
         {"read_timeout_ms",DIAMOND_SOCKET_OPTION_INT,&out->read_timeout_ms,nullptr,nullptr},
         {"write_timeout_ms",DIAMOND_SOCKET_OPTION_INT,&out->write_timeout_ms,nullptr,nullptr},
+        {"recv_buffer_bytes",DIAMOND_SOCKET_OPTION_INT,&out->recv_buffer_bytes,nullptr,nullptr},
+        {"send_buffer_bytes",DIAMOND_SOCKET_OPTION_INT,&out->send_buffer_bytes,nullptr,nullptr},
         {"ca_file",DIAMOND_SOCKET_OPTION_STRING,nullptr,&out->ca_file,nullptr},
         {"ca_path",DIAMOND_SOCKET_OPTION_STRING,nullptr,&out->ca_path,nullptr},
         {"cert",DIAMOND_SOCKET_OPTION_STRING,nullptr,&out->cert,nullptr},
@@ -3091,7 +3095,7 @@ DiamondVmStatus parse_socket_connect_options_helper(DiamondVm *vm,
         {"alpn",DIAMOND_SOCKET_OPTION_ARRAY,nullptr,nullptr,&out->alpn},
     };
     const size_t field_count=allow_tls_fields?
-        sizeof fields/sizeof fields[0]:3;
+        sizeof fields/sizeof fields[0]:5;
     for(size_t index=0;index<options->count;index++) {
         const DiamondValue entry_key=options->entries[index].key;
         if(entry_key.kind!=DIAMOND_VALUE_OBJECT||
@@ -3363,6 +3367,7 @@ DiamondProcessHandle *allocate_process_handle(DiamondVm *vm,pid_t pid) {
     *handle=(DiamondProcessHandle){
         .object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_PROCESS_HANDLE},
         .pid=pid,.stdout_stream=DIAMOND_NIL,.stderr_stream=DIAMOND_NIL,
+        .stdin_stream=DIAMOND_NIL,
         .reaped=false,.exit_code=0};
     vm->young_objects=&handle->object;
     vm->bytes_allocated+=sizeof(DiamondProcessHandle);
@@ -12148,12 +12153,33 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"accept",6)==0;
     const bool close_method=method_name->length==5&&
         memcmp(method_name->chars,"close",5)==0;
-    if(!accept_method&&!close_method) {
+    const bool port_method=method_name->length==4&&
+        memcmp(method_name->chars,"port",4)==0;
+    if(!accept_method&&!close_method&&!port_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Listener");
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(port_method) {
+        /* The bound port, which is how a listener opened on port 0 (the kernel
+         * picks a free one) is found out. */
+        if(listener->fd<0) {
+            snprintf(vm->error,sizeof vm->error,"listener is closed");
+            return DIAMOND_VM_IO_ERROR;
+        }
+        struct sockaddr_storage address;
+        socklen_t address_length=sizeof address;
+        if(getsockname(listener->fd,(struct sockaddr *)&address,&address_length)!=0) {
+            snprintf(vm->error,sizeof vm->error,"cannot read the listener's port: %s",
+                strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        const int port=address.ss_family==AF_INET6
+            ?ntohs(((struct sockaddr_in6 *)&address)->sin6_port)
+            :ntohs(((struct sockaddr_in *)&address)->sin_port);
+        registers[dest]=DIAMOND_INT(port);return DIAMOND_VM_OK;
+    }
     if(close_method) {
         if(listener->fd>=0) {
             close(listener->fd);

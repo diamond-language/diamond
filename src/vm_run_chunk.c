@@ -3491,9 +3491,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 tensor_random_helper(tensor,registers[seed_reg].as.integer);
                 break;
             }
-            case DIAMOND_OP_PROCESS_RUN: {
-                uint16_t destination=0,argv_register=0;
+            case DIAMOND_OP_PROCESS_RUN:
+            case DIAMOND_OP_PROCESS_RUN_OPTIONS: {
+                uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
                 READ_SHORT(destination);READ_SHORT(argv_register);
+                if(instruction==DIAMOND_OP_PROCESS_RUN_OPTIONS)READ_SHORT(options_register);
                 VM_SANDBOX_GUARD("Process.run", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
@@ -3508,13 +3510,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * comment. */
                 registers[destination]=DIAMOND_OBJECT(process_result);
                 const DiamondVmStatus run_status=process_run_helper(vm,
-                    (DiamondArray *)registers[argv_register].as.object,process_result);
+                    (DiamondArray *)registers[argv_register].as.object,process_result,
+                    options_register==UINT16_MAX?DIAMOND_NIL:registers[options_register]);
                 VM_PROPAGATE(run_status);
                 break;
             }
-            case DIAMOND_OP_PROCESS_SPAWN: {
-                uint16_t destination=0,argv_register=0;
+            case DIAMOND_OP_PROCESS_SPAWN:
+            case DIAMOND_OP_PROCESS_SPAWN_OPTIONS: {
+                uint16_t destination=0,argv_register=0,options_register=UINT16_MAX;
                 READ_SHORT(destination);READ_SHORT(argv_register);
+                if(instruction==DIAMOND_OP_PROCESS_SPAWN_OPTIONS)READ_SHORT(options_register);
                 VM_SANDBOX_GUARD("Process.spawn", "subprocess");
                 if(registers[argv_register].kind!=DIAMOND_VALUE_OBJECT||
                    registers[argv_register].as.object->kind!=DIAMOND_OBJECT_ARRAY) {
@@ -3529,7 +3534,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * comment. */
                 registers[destination]=DIAMOND_OBJECT(process_handle);
                 const DiamondVmStatus spawn_status=process_spawn_helper(vm,
-                    (DiamondArray *)registers[argv_register].as.object,process_handle);
+                    (DiamondArray *)registers[argv_register].as.object,process_handle,
+                    options_register==UINT16_MAX?DIAMOND_NIL:registers[options_register]);
                 VM_PROPAGATE(spawn_status);
                 break;
             }
@@ -5308,7 +5314,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondString *host=(const DiamondString *)registers[host_reg].as.object;
                 int connected_fd=-1;
                 const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
-                    registers[port_reg].as.integer,options.connect_timeout_ms,&connected_fd);
+                    registers[port_reg].as.integer,options.connect_timeout_ms,
+                    options.recv_buffer_bytes,options.send_buffer_bytes,&connected_fd);
                 VM_PROPAGATE(connect_status);
                 const DiamondVmStatus timeout_status=apply_socket_timeouts_helper(vm,
                     connected_fd,options.read_timeout_ms,options.write_timeout_ms);
@@ -5337,16 +5344,68 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              "TCPServer.listen argument must be an Int port");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                if(registers[reuse_port_reg].kind!=DIAMOND_VALUE_BOOL) {
+                /* The third operand is a Bool (reuse_port, the original form), nil,
+                 * or a Hash of the keyword options {"reuse_port", "host", "backlog"}
+                 * the compiler builds when more than reuse_port is given. */
+                bool reuse_port=false;
+                const char *listen_host=nullptr;
+                int64_t listen_backlog=0;
+                if(registers[reuse_port_reg].kind==DIAMOND_VALUE_BOOL) {
+                    reuse_port=registers[reuse_port_reg].as.boolean;
+                } else if(registers[reuse_port_reg].kind==DIAMOND_VALUE_OBJECT&&
+                          registers[reuse_port_reg].as.object->kind==DIAMOND_OBJECT_HASH) {
+                    const DiamondHash *listen_options=
+                        (const DiamondHash *)registers[reuse_port_reg].as.object;
+                    for(size_t option_index=0;option_index<listen_options->count;option_index++) {
+                        const DiamondValue option_key=listen_options->entries[option_index].key;
+                        const DiamondValue option_value=listen_options->entries[option_index].value;
+                        const DiamondString *key_string=
+                            option_key.kind==DIAMOND_VALUE_OBJECT&&
+                            option_key.as.object->kind==DIAMOND_OBJECT_STRING
+                            ?(const DiamondString *)option_key.as.object:nullptr;
+                        if(key_string!=nullptr&&key_string->length==10&&
+                           memcmp(key_string->chars,"reuse_port",10)==0) {
+                            if(option_value.kind!=DIAMOND_VALUE_BOOL) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "TCPServer.listen's reuse_port option must be a Bool");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            reuse_port=option_value.as.boolean;
+                        } else if(key_string!=nullptr&&key_string->length==4&&
+                                  memcmp(key_string->chars,"host",4)==0) {
+                            if(option_value.kind!=DIAMOND_VALUE_OBJECT||
+                               option_value.as.object->kind!=DIAMOND_OBJECT_STRING||
+                               ((const DiamondString *)option_value.as.object)->length==0) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "TCPServer.listen's host option must be a non-empty String");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            listen_host=((const DiamondString *)option_value.as.object)->chars;
+                        } else if(key_string!=nullptr&&key_string->length==7&&
+                                  memcmp(key_string->chars,"backlog",7)==0) {
+                            if(option_value.kind!=DIAMOND_VALUE_INT||
+                               option_value.as.integer<1) {
+                                snprintf(vm->error,sizeof vm->error,
+                                    "TCPServer.listen's backlog option must be a positive Int");
+                                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                            }
+                            listen_backlog=option_value.as.integer;
+                        } else {
+                            snprintf(vm->error,sizeof vm->error,
+                                "unrecognized TCPServer.listen option");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                    }
+                } else if(registers[reuse_port_reg].kind!=DIAMOND_VALUE_NIL) {
                     snprintf(vm->error,sizeof vm->error,
                              "TCPServer.listen's reuse_port option must be a Bool");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 DiamondListenerHandle *listener_handle=nullptr;
-                const DiamondVmStatus listen_status=tcp_listen_helper(vm,
+                const DiamondVmStatus listen_status=tcp_listen_helper(vm,listen_host,
                     registers[port_reg].as.integer,
                     instruction==DIAMOND_OP_TCP_LISTEN_NONBLOCK,
-                    registers[reuse_port_reg].as.boolean,&listener_handle);
+                    reuse_port,listen_backlog,&listener_handle);
                 VM_PROPAGATE(listen_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)listener_handle};
@@ -5497,7 +5556,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     connected_fd=tcp->fd;tcp->fd=-1; /* ownership moves exactly once */
                 } else {
                     const DiamondVmStatus connect_status=tcp_connect_helper(vm,host,
-                        registers[port_reg].as.integer,options.connect_timeout_ms,&connected_fd);
+                        registers[port_reg].as.integer,options.connect_timeout_ms,
+                    options.recv_buffer_bytes,options.send_buffer_bytes,&connected_fd);
                     VM_PROPAGATE(connect_status);
                 }
                 const DiamondVmStatus timeout_status=apply_socket_timeouts_helper(vm,
