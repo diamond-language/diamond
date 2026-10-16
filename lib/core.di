@@ -2161,6 +2161,7 @@ def diamond_array_pack(items: Array, format: String) -> String
         raise ArgumentError.new("too few arguments for pack '#{letter}'") if position >= items.length()
         value = items[position]
         position += 1
+        raise TypeError.new("pack '#{letter}' needs an Integer, got #{value.inspect()}") unless value.is_a?(Int)
         value += diamond_pack_modulus(layout[0]) if value < 0
         bytes = []
         b = 0
@@ -2180,6 +2181,7 @@ def diamond_array_pack(items: Array, format: String) -> String
       raise ArgumentError.new("too few arguments for pack '#{letter}'") if position >= items.length()
       text = items[position]
       position += 1
+      raise TypeError.new("pack '#{letter}' needs a String") unless text.is_a?(String)
       width = count == nil ? 1 : (count < 0 ? text.length() + (letter == "Z" ? 1 : 0) : count)
       padding = letter == "A" ? " " : 0.chr()
       body = text.length() > width ? text.slice(0, width) : text
@@ -2193,6 +2195,7 @@ def diamond_array_pack(items: Array, format: String) -> String
       raise ArgumentError.new("too few arguments for pack 'H'") if position >= items.length()
       hex = items[position]
       position += 1
+      raise TypeError.new("pack 'H' needs a String") unless hex.is_a?(String)
       digits = count == nil ? 1 : (count < 0 ? hex.length() : count)
       hex = hex.ljust(digits + digits % 2, "0")
       i = 0

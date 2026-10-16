@@ -177,6 +177,12 @@ module Opcode
   # Confirmed with the same throwaway C probe technique as SHIFT_LEFT
   # above, not counted by hand.
   SHIFT_RIGHT = 161
+  # Int-only `&`, `|`, `^` follow SHIFT_RIGHT directly in src/vm.h (checked with the same probe).
+  BITWISE_AND = 162
+  BITWISE_OR = 163
+  BITWISE_XOR = 164
+  # `.class()` (DIAMOND_OP_CLASS_NAME), probed from src/vm.h the same way.
+  CLASS_NAME = 165
 end
 
 module Precedence
@@ -3562,6 +3568,39 @@ class Parser
       name = name + "="
       self.advance_token()
     end
+    if name == "class" && @current.kind() == :left_paren
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :right_paren
+        self.fail("class() takes no arguments")
+        return 0
+      end
+      self.advance_token()
+      destination = self.allocate_register()
+      self.emit_instruction2(Opcode::CLASS_NAME, destination, receiver)
+      self.set_type_fact(destination, Type::STRING)
+      return destination
+    end
+    if name == "is_a?" && @current.kind() == :left_paren
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :identifier
+        self.fail("expected a type name")
+        return 0
+      end
+      type_id = self.resolve_type_name(self.token_text(@current))
+      self.advance_token()
+      self.skip_newlines()
+      if @current.kind() != :right_paren
+        self.fail("expected ')' after is_a? type")
+        return 0
+      end
+      self.advance_token()
+      destination = self.allocate_register()
+      self.emit_instruction3(Opcode::IS_TYPE, destination, receiver, type_id)
+      self.set_type_fact(destination, Type::BOOL)
+      return destination
+    end
     # Explicit generic arguments (`obj.method[Type](...)`) -- unlike
     # compile_call's own handling, there's no arity check against a
     # known type_variable_count here either: the target method is only
@@ -4170,7 +4209,8 @@ class Parser
     return Precedence::EQUALITY if kind == :equal_equal || kind == :bang_equal ||
       kind == :is || kind == :spaceship
     return Precedence::COMPARISON if kind == :less || kind == :less_equal || kind == :greater || kind == :greater_equal
-    return Precedence::SHIFT if kind == :less_less || kind == :greater_greater
+    return Precedence::SHIFT if kind == :less_less || kind == :greater_greater ||
+      kind == :ampersand || kind == :pipe || kind == :caret
     return Precedence::TERM if kind == :plus || kind == :minus
     return Precedence::FACTOR if kind == :star || kind == :slash || kind == :percent
     Precedence::NONE
@@ -4190,6 +4230,9 @@ class Parser
     return Opcode::GREATER_EQUAL if kind == :greater_equal
     return Opcode::COMPARE if kind == :spaceship
     return Opcode::SHIFT_RIGHT if kind == :greater_greater
+    return Opcode::BITWISE_AND if kind == :ampersand
+    return Opcode::BITWISE_OR if kind == :pipe
+    return Opcode::BITWISE_XOR if kind == :caret
     Opcode::SHIFT_LEFT
   end
 
@@ -5313,14 +5356,22 @@ class Parser
   def parse_integer()
     text = self.token_text(@previous)
     digits = ""
+    base = 10
     index = 0
+    if text.length() > 2 && text[0] == "0"
+      prefix = text[1].downcase()
+      base = 16 if prefix == "x"
+      base = 2 if prefix == "b"
+      base = 8 if prefix == "o"
+      index = 2 if base != 10
+    end
     while index < text.length()
       character = text[index]
       digits = digits + character unless character == "_"
       index = index + 1
     end
     destination = self.allocate_register()
-    constant = self.add_constant(digits.to_i())
+    constant = self.add_constant(digits.to_i(base))
     self.emit_instruction2(Opcode::CONSTANT, destination, constant)
     self.set_type_fact(destination, Type::INT)
     destination
