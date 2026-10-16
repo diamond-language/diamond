@@ -180,6 +180,35 @@ jobs:
   # about once in 40 runs of one test. This runs every Thread/Channel/Supervisor
   # case 60 times, each pinned to two CPUs under a timeout, which reproduced that
   # race on its 46th run before it was fixed (tests/stress_threads.sh).
+  # The WebAssembly module behind the browser REPL (docs/internal/wasm.md): builds with a
+  # wasi-sdk and no other library, then drives it through the same JavaScript the site uses.
+  test-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux unzip nodejs ca-certificates
+      - name: Install wasi-sdk
+        run: |
+          curl -sSL -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          mkdir -p /opt/wasi-sdk
+          tar xzf wasi-sdk.tar.gz -C /opt/wasi-sdk --strip-components=1
+      # The module embeds the compiled prelude, which the host build generates.
+      - name: Generate the compiled prelude
+        run: make -j4 MINIMAL=1 build/compiled_prelude.bin
+      - name: Build the module
+        run: WASI_SDK=/opt/wasi-sdk JOBS=4 bash wasm/build.sh
+      - name: Test the module
+        run: node tests/wasm_repl_test.mjs
+
   # A build with every optional native library compiled out, on a machine that does not have
   # their headers: proves MINIMAL=1 really drops them (SQLite, PostgreSQL, MySQL/MariaDB, zlib,
   # OpenSSL).

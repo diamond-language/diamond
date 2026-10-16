@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -850,6 +850,13 @@ test-cross-build: debug
 # runs the same script against a full build, where the error checks are expected to fail.
 test-minimal: debug
 	bash tests/minimal_cases.sh
+
+# The browser module: needs WASI_SDK=/path/to/wasi-sdk (https://github.com/WebAssembly/wasi-sdk)
+# and Node 18+.
+test-wasm:
+	@test -n '$(WASI_SDK)' || { echo 'test-wasm needs WASI_SDK=/path/to/wasi-sdk' >&2; exit 1; }
+	WASI_SDK='$(WASI_SDK)' bash wasm/build.sh
+	node tests/wasm_repl_test.mjs
 
 test-repl: debug
 	bash tests/repl_test.sh
