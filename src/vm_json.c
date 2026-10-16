@@ -713,11 +713,11 @@ static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
         if(status==DIAMOND_VM_OK&&!builder_append(out,"{",1))status=DIAMOND_VM_OUT_OF_MEMORY;
         for(size_t position=0;status==DIAMOND_VM_OK&&position<entry_count;position++) {
             const size_t index=order!=nullptr?order[position]:position;
+            /* A key's to_s may have shrunk the Hash. */
+            if(index>=hash->count)break;
             if((position>0&&!builder_append(out,",",1))||!json_write_break(writer,writer->nesting)) {
                 status=DIAMOND_VM_OUT_OF_MEMORY;break;
             }
-            /* A key's to_s may have shrunk the Hash. */
-            if(index>=hash->count)break;
             status=json_write_hash_key(writer,hash->entries[index].key);
             if(status!=DIAMOND_VM_OK)break;
             if(!builder_append(out,writer->indent_length>0?": ":":",writer->indent_length>0?2:1)) {
