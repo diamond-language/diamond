@@ -1,0 +1,54 @@
+# Drives socket_test.di with real TCP stalls, backpressure, EOF, deadlines and signal cleanup.
+#
+#   diamond socket_driver.di PROGRAM...    (PROGRAM is `diamond socket_test.di` or a built binary)
+require "../../../tests/harness"
+
+command = ARGV
+env = {"DIAMOND_NO_CACHE": "1"}
+
+def start(command, env, mode)
+  Harness.with_port(5) do |port|
+    child = Harness::Child.new(command + [port.to_s(), mode], env)
+    begin
+      child.line("ready", 10000)
+      [child, port]
+    rescue error: StandardError
+      child.finish()
+      if child.errors().index("Address already in use") != nil
+        raise Harness::PortTaken.new("port taken")
+      end
+      raise error
+    end
+  end
+end
+
+["read", "write", "deadline", "signal", "success"].each() do |mode|
+  started = start(command, env, mode)
+  child = started[0]
+  port = started[1]
+  begin
+    options = {"connect_timeout_ms": 10000, "read_timeout_ms": 10000}
+    # A small receive buffer makes the writer stall quickly instead of the kernel absorbing it.
+    options["recv_buffer_bytes"] = 4096 if mode == "write"
+    peer = TCPSocket.connect("127.0.0.1", port, options)
+    if mode == "success"
+      peer.write("abc")
+      peer.shutdown_write()
+      received = peer.read()
+      raise "partial write corrupted data" unless received == "abc".repeat(1048576)
+      child.line("success", 10000)
+    else
+      child.line(mode == "write" ? "blocked" : "waiting", 10000)
+      child.terminate() if mode == "signal"
+      child.line(mode == "deadline" ? "deadline" : "cancelled", 10000)
+    end
+    child.line("cleaned", 10000)
+    peer.close()
+    raise "#{mode}: unclean exit" unless child.wait() == 0
+  rescue error: StandardError
+    child.finish()
+    puts("socket scenario #{mode}: #{child.errors()}")
+    raise error
+  end
+end
+puts("cancellation socket tests passed")
