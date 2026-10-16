@@ -2502,6 +2502,18 @@ static int find_namespace_constant(const Compiler *compiler,DiamondSpan name) {
 /* Indexed writes mutate the value, not the constant binding. Discovery
  * must tolerate forward constants here just as it does in parse_name. */
 static int load_constant_receiver(Compiler *compiler,DiamondSpan name) {
+    /* ENV["K"] = v and ARGV << v at the start of a statement reach here, since ENV and ARGV
+     * are not constants; read them as the expression form does. */
+    if(find_function(compiler,name)<0) {
+        const bool is_env=name_equals(compiler,"ENV",name,false);
+        if(is_env||name_equals(compiler,"ARGV",name,false)) {
+            const uint16_t receiver=allocate_register(compiler);
+            emit_opcode(compiler,is_env?DIAMOND_OP_ENV:DIAMOND_OP_ARGV);
+            emit_register(compiler,receiver);
+            compiler->known_types[receiver]=is_env?DIAMOND_TYPE_HASH:DIAMOND_TYPE_ARRAY;
+            return (int)receiver;
+        }
+    }
     const int constant=find_namespace_constant(compiler,name);
     if(constant<0&&!(compiler->discovery_pass&&
        compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z'))

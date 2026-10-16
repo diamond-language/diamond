@@ -585,10 +585,13 @@ static bool process_options_string(DiamondValue value,const DiamondString **out)
     return true;
 }
 
+static DiamondVmStatus process_build_env(DiamondVm *vm,const char *owner,
+        const DiamondHash *env,DiamondProcessOptions *out);
+
 static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
         bool for_spawn,DiamondValue options_value,DiamondProcessOptions *out) {
     *out=(DiamondProcessOptions){};
-    if(options_value.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OK;
+    if(options_value.kind==DIAMOND_VALUE_NIL)return process_build_env(vm,owner,nullptr,out);
     if(options_value.kind!=DIAMOND_VALUE_OBJECT||
        options_value.as.object->kind!=DIAMOND_OBJECT_HASH) {
         snprintf(vm->error,sizeof vm->error,"%s options must be a Hash or nil",owner);
@@ -661,53 +664,69 @@ static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
             return DIAMOND_VM_TYPE_ERROR;
         }
     }
-    if(env==nullptr)return DIAMOND_VM_OK;
+    return process_build_env(vm,owner,env,out);
+}
 
-    /* The inherited environment, with the given variables replacing or added. */
-    size_t inherited=0;
-    while(environ!=nullptr&&environ[inherited]!=nullptr)inherited++;
-    out->envp=calloc(inherited+env->count+1,sizeof(char *));
-    out->owned_strings=calloc(env->count+1,sizeof(char *));
+/* Adds NAME=VALUE to the child's environment, replacing an earlier entry of the same name. */
+static DiamondVmStatus process_env_put(DiamondVm *vm,const char *owner,bool from_option,
+        const DiamondString *name,const DiamondString *text,DiamondProcessOptions *out) {
+    if(name->length==0||memchr(name->chars,'=',name->length)!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "%s %s names must be non-empty and contain no '='",owner,
+            from_option?"option 'env'":"ENV");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    char *entry=malloc(name->length+1+text->length+1);
+    if(entry==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    memcpy(entry,name->chars,name->length);
+    entry[name->length]='=';
+    memcpy(entry+name->length+1,text->chars,text->length);
+    entry[name->length+1+text->length]='\0';
+    out->owned_strings[out->owned_count++]=entry;
+    for(size_t slot=0;slot<out->env_count;slot++) {
+        if(strncmp(out->envp[slot],name->chars,name->length)==0&&
+           out->envp[slot][name->length]=='=') {
+            out->envp[slot]=entry;
+            return DIAMOND_VM_OK;
+        }
+    }
+    out->envp[out->env_count++]=entry;
+    return DIAMOND_VM_OK;
+}
+
+/* The child's environment: the script's ENV Hash (so `ENV["K"] = "v"` reaches children), with
+ * the "env" option's variables replacing or added. */
+static DiamondVmStatus process_build_env(DiamondVm *vm,const char *owner,
+        const DiamondHash *env,DiamondProcessOptions *out) {
+    const DiamondHash *base=vm->env_value.kind==DIAMOND_VALUE_OBJECT&&
+        vm->env_value.as.object->kind==DIAMOND_OBJECT_HASH?
+        (const DiamondHash *)vm->env_value.as.object:nullptr;
+    const size_t base_count=base!=nullptr?base->count:0;
+    const size_t extra_count=env!=nullptr?env->count:0;
+    out->envp=calloc(base_count+extra_count+1,sizeof(char *));
+    out->owned_strings=calloc(base_count+extra_count+1,sizeof(char *));
     if(out->envp==nullptr||out->owned_strings==nullptr) {
         process_options_free(out);
         return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    for(size_t index=0;index<inherited;index++)out->envp[out->env_count++]=environ[index];
-    for(size_t index=0;index<env->count;index++) {
-        const DiamondString *name=nullptr,*text=nullptr;
-        if(!process_options_string(env->entries[index].key,&name)||
-           !process_options_string(env->entries[index].value,&text)) {
-            snprintf(vm->error,sizeof vm->error,
-                "%s option 'env' must map Strings to Strings (no NUL bytes)",owner);
-            process_options_free(out);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(name->length==0||memchr(name->chars,'=',name->length)!=nullptr) {
-            snprintf(vm->error,sizeof vm->error,
-                "%s option 'env' names must be non-empty and contain no '='",owner);
-            process_options_free(out);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        char *entry=malloc(name->length+1+text->length+1);
-        if(entry==nullptr) {
-            process_options_free(out);
-            return DIAMOND_VM_OUT_OF_MEMORY;
-        }
-        memcpy(entry,name->chars,name->length);
-        entry[name->length]='=';
-        memcpy(entry+name->length+1,text->chars,text->length);
-        entry[name->length+1+text->length]='\0';
-        out->owned_strings[out->owned_count++]=entry;
-        bool replaced=false;
-        for(size_t slot=0;slot<out->env_count;slot++) {
-            if(strncmp(out->envp[slot],name->chars,name->length)==0&&
-               out->envp[slot][name->length]=='=') {
-                out->envp[slot]=entry;
-                replaced=true;
-                break;
+    for(int pass=0;pass<2;pass++) {
+        const DiamondHash *source=pass==0?base:env;
+        for(size_t index=0;source!=nullptr&&index<source->count;index++) {
+            const DiamondString *name=nullptr,*text=nullptr;
+            if(!process_options_string(source->entries[index].key,&name)||
+               !process_options_string(source->entries[index].value,&text)) {
+                snprintf(vm->error,sizeof vm->error,
+                    "%s %s must map Strings to Strings (no NUL bytes)",owner,
+                    pass==0?"ENV":"option 'env'");
+                process_options_free(out);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            const DiamondVmStatus status=process_env_put(vm,owner,pass==1,name,text,out);
+            if(status!=DIAMOND_VM_OK) {
+                process_options_free(out);
+                return status;
             }
         }
-        if(!replaced)out->envp[out->env_count++]=entry;
     }
     out->envp[out->env_count]=nullptr;
     return DIAMOND_VM_OK;
