@@ -124,6 +124,15 @@ Collections are stop-the-world within each isolated VM.
 
 Current state: [WebAssembly build](internal/wasm.md).
 
+- **Website REPL editing** -- syntax highlighting of the input and echoed lines, and
+  as-you-type completion in the prompt. Whether it is worth the effort is undecided; if it
+  is done, do it fully rather than halfway. Highlighting should come from the real lexer
+  (a token-listing entry point in the wasm driver, with JavaScript only mapping token kinds
+  to CSS classes) so the site cannot drift from the language, and the lexer's
+  previous-token state (regex literals) has to carry across lines. Completion can reuse
+  what the native REPL's Tab completion already does. The prompt is a plain `<input>`, so
+  coloured live input means an overlay or a contenteditable line.
+
 - **Fibers** -- need stack switching (Asyncify or the stack-switching proposal).
 
 ### Native-code execution
