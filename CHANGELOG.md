@@ -11,6 +11,7 @@ authoritative fine-grained record.
 - `Process.run` and `Process.spawn` take an options Hash: `"env"` (merged over the inherited
   environment), `"cwd"`, and `"stdin"` (a String to feed, or `true` for a writable
   `handle.stdin()` pipe on spawn; `Process::Stream#write`).
+- Sockets have `shutdown_write()` (half-close) and `TLSSocket#server_name()` returns the SNI name.
 - `TCPServer.listen` takes `host:` and `backlog:` keywords, `Listener#port()` returns the bound
   port (so `listen(0)` is usable), and `TCPSocket.connect` options accept `recv_buffer_bytes` and
   `send_buffer_bytes`.
