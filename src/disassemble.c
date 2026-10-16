@@ -1572,6 +1572,14 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                         ? "PUSH_ENSURE" : "RUN_ENSURE",target);
                 offset+=3;break;
             }
+            case DIAMOND_OP_UNWIND_JUMP: {
+                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                const size_t target=((size_t)chunk->code[offset+2]<<8)|chunk->code[offset+3];
+                if(target>chunk->code_count) valid=false;
+                else pending_targets[pending_count++]=target;
+                fprintf(stream,"%-18s %u levels -> %04zu\n","UNWIND_JUMP",chunk->code[offset+1],target);
+                offset+=4;break;
+            }
             case DIAMOND_OP_END_ENSURE:
                 fprintf(stream,"%-18s\n","END_ENSURE");offset++;break;
             default:
