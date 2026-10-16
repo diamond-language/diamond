@@ -497,15 +497,31 @@ DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source,
     return DIAMOND_VM_OK;
 }
 
+enum { JSON_MAX_INDENT = 16 };
+
 typedef struct JsonWriter {
     DiamondVm *vm;
     const DiamondChunk *chunk;
     size_t call_depth;
     size_t nesting;
     StringBuilder out;
+    /* JSON.stringify options: a non-empty `indent` lays the document out one element per line,
+     * and `sort_keys` writes each Hash's keys in sorted order. */
+    char indent[JSON_MAX_INDENT+1];
+    size_t indent_length;
+    bool sort_keys;
 } JsonWriter;
 
 static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value);
+
+/* A newline and `level` copies of the indent, when the document is being laid out. */
+static bool json_write_break(JsonWriter *writer,size_t level) {
+    if(writer->indent_length==0)return true;
+    if(!builder_append(&writer->out,"\n",1))return false;
+    for(size_t index=0;index<level;index++)
+        if(!builder_append(&writer->out,writer->indent,writer->indent_length))return false;
+    return true;
+}
 
 static bool json_write_string(StringBuilder *out,const char *chars,size_t length) {
     static const char hex[]="0123456789abcdef";
@@ -560,6 +576,78 @@ static DiamondVmStatus json_write_hash_key(JsonWriter *writer,DiamondValue key) 
         DIAMOND_VM_OK:DIAMOND_VM_OUT_OF_MEMORY;
 }
 
+/* The text a Hash key is written as, for sorting: a String or Symbol is itself, anything else
+ * is its string form (the same conversion json_write_hash_key uses). */
+typedef struct JsonKeySort {
+    char *chars;
+    size_t length;
+    size_t index;
+} JsonKeySort;
+
+static int json_key_compare(const void *left_pointer,const void *right_pointer) {
+    const JsonKeySort *left=left_pointer,*right=right_pointer;
+    const size_t shared=left->length<right->length?left->length:right->length;
+    const int order=shared==0?0:memcmp(left->chars,right->chars,shared);
+    if(order!=0)return order;
+    if(left->length!=right->length)return left->length<right->length?-1:1;
+    return left->index<right->index?-1:left->index>right->index?1:0;
+}
+
+/* Entry indices of `hash` in ascending key order (bytewise; equal text keeps insertion order).
+ * `*order` is malloc'd for the caller to free. */
+static DiamondVmStatus json_sorted_order(JsonWriter *writer,const DiamondHash *hash,size_t **order) {
+    const size_t count=hash->count;
+    JsonKeySort *keys=calloc(count,sizeof *keys);
+    size_t *result=malloc(count*sizeof *result);
+    if(keys==nullptr||result==nullptr) {
+        free(keys);free(result);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    for(size_t index=0;index<count&&status==DIAMOND_VM_OK;index++) {
+        if(index>=hash->count) {
+            keys[index].index=index;
+            continue;
+        }
+        const DiamondValue key=hash->entries[index].key;
+        DiamondValue text=key;
+        if(!(key.kind==DIAMOND_VALUE_OBJECT&&(key.as.object->kind==DIAMOND_OBJECT_STRING||
+                                              key.as.object->kind==DIAMOND_OBJECT_SYMBOL))) {
+            status=stringify_value(writer->vm,writer->chunk,writer->call_depth,key,&text);
+            if(status!=DIAMOND_VM_OK)break;
+        }
+        const char *chars;
+        size_t length;
+        if(text.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+            chars=((const DiamondSymbol *)text.as.object)->chars;
+            length=((const DiamondSymbol *)text.as.object)->length;
+        } else {
+            chars=((const DiamondString *)text.as.object)->chars;
+            length=((const DiamondString *)text.as.object)->length;
+        }
+        keys[index].chars=malloc(length>0?length:1);
+        if(keys[index].chars==nullptr) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;
+            break;
+        }
+        memcpy(keys[index].chars,chars,length);
+        keys[index].length=length;
+        keys[index].index=index;
+    }
+    if(status==DIAMOND_VM_OK) {
+        qsort(keys,count,sizeof *keys,json_key_compare);
+        for(size_t position=0;position<count;position++)result[position]=keys[position].index;
+    }
+    for(size_t index=0;index<count;index++)free(keys[index].chars);
+    free(keys);
+    if(status!=DIAMOND_VM_OK) {
+        free(result);
+        return status;
+    }
+    *order=result;
+    return DIAMOND_VM_OK;
+}
+
 static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
     StringBuilder *out=&writer->out;
     switch(value.kind) {
@@ -606,29 +694,41 @@ static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
         const DiamondArray *array=(const DiamondArray *)object;
         if(!builder_append(out,"[",1))status=DIAMOND_VM_OUT_OF_MEMORY;
         for(size_t index=0;status==DIAMOND_VM_OK&&index<array->count;index++) {
-            if(index>0&&!builder_append(out,",",1)) {
+            if((index>0&&!builder_append(out,",",1))||!json_write_break(writer,writer->nesting)) {
                 status=DIAMOND_VM_OUT_OF_MEMORY;break;
             }
             status=json_write_value(writer,array->values[index]);
         }
+        if(status==DIAMOND_VM_OK&&array->count>0&&!json_write_break(writer,writer->nesting-1))
+            status=DIAMOND_VM_OUT_OF_MEMORY;
         if(status==DIAMOND_VM_OK&&!builder_append(out,"]",1))
             status=DIAMOND_VM_OUT_OF_MEMORY;
     } else {
         const DiamondHash *hash=(const DiamondHash *)object;
-        if(!builder_append(out,"{",1))status=DIAMOND_VM_OUT_OF_MEMORY;
-        for(size_t index=0;status==DIAMOND_VM_OK&&index<hash->count;index++) {
-            if(index>0&&!builder_append(out,",",1)) {
+        size_t *order=nullptr;
+        const size_t entry_count=hash->count;
+        if(writer->sort_keys&&entry_count>1) {
+            status=json_sorted_order(writer,hash,&order);
+        }
+        if(status==DIAMOND_VM_OK&&!builder_append(out,"{",1))status=DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t position=0;status==DIAMOND_VM_OK&&position<entry_count;position++) {
+            const size_t index=order!=nullptr?order[position]:position;
+            if((position>0&&!builder_append(out,",",1))||!json_write_break(writer,writer->nesting)) {
                 status=DIAMOND_VM_OUT_OF_MEMORY;break;
             }
+            /* A key's to_s may have shrunk the Hash. */
+            if(index>=hash->count)break;
             status=json_write_hash_key(writer,hash->entries[index].key);
             if(status!=DIAMOND_VM_OK)break;
-            if(!builder_append(out,":",1)) {
+            if(!builder_append(out,writer->indent_length>0?": ":":",writer->indent_length>0?2:1)) {
                 status=DIAMOND_VM_OUT_OF_MEMORY;break;
             }
-            /* The key's to_s may have shrunk the Hash. */
             if(index>=hash->count)break;
             status=json_write_value(writer,hash->entries[index].value);
         }
+        free(order);
+        if(status==DIAMOND_VM_OK&&entry_count>0&&!json_write_break(writer,writer->nesting-1))
+            status=DIAMOND_VM_OUT_OF_MEMORY;
         if(status==DIAMOND_VM_OK&&!builder_append(out,"}",1))
             status=DIAMOND_VM_OUT_OF_MEMORY;
     }
@@ -637,9 +737,69 @@ static DiamondVmStatus json_write_value(JsonWriter *writer,DiamondValue value) {
 }
 
 /* JSON.stringify's single entry point; `*result` is a fresh String. */
+static DiamondVmStatus json_type_error(DiamondVm *vm,const char *message) {
+    snprintf(vm->error,sizeof vm->error,"%s",message);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* Reads JSON.stringify's options Hash into `writer`: "indent" is an Int number of spaces (0 for
+ * none, at most JSON_MAX_INDENT) or a String of JSON whitespace; "sort_keys" is a Bool. Keys may
+ * be Strings or Symbols. nil means no options. */
+static DiamondVmStatus json_read_options(JsonWriter *writer,DiamondValue options) {
+    if(options.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OK;
+    if(options.kind!=DIAMOND_VALUE_OBJECT||options.as.object->kind!=DIAMOND_OBJECT_HASH)
+        return json_type_error(writer->vm,"JSON.stringify options must be a Hash");
+    const DiamondHash *hash=(const DiamondHash *)options.as.object;
+    for(size_t index=0;index<hash->count;index++) {
+        const DiamondValue key=hash->entries[index].key;
+        const DiamondValue value=hash->entries[index].value;
+        const char *name=nullptr;
+        size_t name_length=0;
+        if(key.kind==DIAMOND_VALUE_OBJECT&&key.as.object->kind==DIAMOND_OBJECT_STRING) {
+            name=((const DiamondString *)key.as.object)->chars;
+            name_length=((const DiamondString *)key.as.object)->length;
+        } else if(key.kind==DIAMOND_VALUE_OBJECT&&key.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+            name=((const DiamondSymbol *)key.as.object)->chars;
+            name_length=((const DiamondSymbol *)key.as.object)->length;
+        }
+        if(name!=nullptr&&name_length==6&&memcmp(name,"indent",6)==0) {
+            if(value.kind==DIAMOND_VALUE_NIL)continue;
+            if(value.kind==DIAMOND_VALUE_INT) {
+                if(value.as.integer<0||value.as.integer>JSON_MAX_INDENT)
+                    return json_type_error(writer->vm,"JSON.stringify indent must be between 0 and 16 spaces");
+                writer->indent_length=(size_t)value.as.integer;
+                memset(writer->indent,' ',writer->indent_length);
+            } else if(value.kind==DIAMOND_VALUE_OBJECT&&value.as.object->kind==DIAMOND_OBJECT_STRING) {
+                const DiamondString *text=(const DiamondString *)value.as.object;
+                if(text->length>JSON_MAX_INDENT)
+                    return json_type_error(writer->vm,"JSON.stringify indent is longer than 16 characters");
+                for(size_t at=0;at<text->length;at++) {
+                    const char c=text->chars[at];
+                    if(c!=' '&&c!='\t')
+                        return json_type_error(writer->vm,"JSON.stringify indent must be spaces or tabs");
+                }
+                writer->indent_length=text->length;
+                memcpy(writer->indent,text->chars,text->length);
+            } else {
+                return json_type_error(writer->vm,"JSON.stringify indent must be an Int or a String");
+            }
+        } else if(name!=nullptr&&name_length==9&&memcmp(name,"sort_keys",9)==0) {
+            if(value.kind==DIAMOND_VALUE_NIL)continue;
+            if(value.kind!=DIAMOND_VALUE_BOOL)
+                return json_type_error(writer->vm,"JSON.stringify sort_keys must be true or false");
+            writer->sort_keys=value.as.boolean;
+        } else {
+            return json_type_error(writer->vm,"unknown JSON.stringify option (expected indent or sort_keys)");
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk,
-        size_t depth,DiamondValue value,DiamondValue *result) {
+        size_t depth,DiamondValue value,DiamondValue options,DiamondValue *result) {
     JsonWriter writer={.vm=vm,.chunk=chunk,.call_depth=depth};
+    const DiamondVmStatus options_status=json_read_options(&writer,options);
+    if(options_status!=DIAMOND_VM_OK)return options_status;
     DiamondVmStatus status=json_write_value(&writer,value);
     if(status==DIAMOND_VM_OK) {
         DiamondString *text=allocate_string(vm,writer.out.chars!=nullptr?

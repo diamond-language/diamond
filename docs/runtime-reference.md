@@ -203,7 +203,25 @@ those. Hash keys that aren't Strings are written as their string form
 Strings are escaped as JSON requires (quotes, backslashes, and control
 characters) and otherwise written byte for byte. Anything else -- a
 `Symbol`, an instance, `NaN`, `Infinity` -- raises a rescuable `JSONError`.
-Output is compact, with no whitespace. Nesting is limited to 91 levels, the same
+Output is compact, with no whitespace unless you ask for it: `JSON.stringify(value, options)` takes a Hash of
+options (String or Symbol keys). `"indent"` is a number of spaces (0 to 16; 0 is compact) or a String of
+spaces and tabs, and puts each array element and object entry on its own line, with `": "` after a
+key; empty arrays and objects stay `[]` and `{}`. `"sort_keys": true` writes every Hash's keys in
+ascending bytewise order (equal text keeps insertion order). Any other option, or a value of the wrong
+type, raises `TypeError`.
+
+```ruby
+JSON.stringify({"b": [1, 2], "a": {}}, {"indent": 2, "sort_keys": true})
+# {
+#   "a": {},
+#   "b": [
+#     1,
+#     2
+#   ]
+# }
+```
+
+Nesting is limited to 91 levels, the same
 bound `JSON.parse` uses; a deeper document, or an Array/Hash that contains
 itself, raises `SystemStackError` rather than recursing without end.
 

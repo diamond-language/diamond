@@ -5,7 +5,6 @@
 # --expect requires an exact match to a reviewed inventory. The destination is created exclusively
 # (an existing directory is never overwritten) and removed again if anything fails.
 require "lib/files"
-require "lib/json_pretty"
 
 root = File.dirname(__dir__)
 
@@ -77,7 +76,7 @@ def prepare(root, destination, selection_path, facet, expected_path)
     if expected_path != nil && inventory != JSON.parse(File.read(expected_path))
       raise ArgumentError.new("seed differs from reviewed inventory; review changes before updating it")
     end
-    File.write(destination + "/inventory.json", json_pretty(inventory, 0) + "\n")
+    File.write(destination + "/inventory.json", JSON.stringify(inventory, {"indent": 2, "sort_keys": true}) + "\n")
     inventory
   rescue e: StandardError
     remove_tree(destination)

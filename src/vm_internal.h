@@ -273,7 +273,7 @@ DIAMOND_INTERNAL DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChun
 /* vm_json.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL bool debug_json_append_escaped_string(GrowBuffer *buffer, const char *chars,size_t length);
 DIAMOND_INTERNAL DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source, size_t length,DiamondValue *out);
-DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value,DiamondValue *result);
+DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value,DiamondValue options,DiamondValue *result);
 
 /* Shared primitives that stay in vm.c (needed by vm_json.c) */
 DIAMOND_INTERNAL DiamondHash *allocate_hash(DiamondVm *vm);
