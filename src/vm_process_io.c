@@ -483,6 +483,150 @@ static DiamondVmStatus process_build_argv_helper(DiamondVm *vm,const char *owner
     return DIAMOND_VM_OK;
 }
 
+/* Optional third argument of Process.run/Process.spawn: a Hash with String keys.
+ *   "env"   Hash of String => String merged over the inherited environment
+ *   "cwd"   String, the child's working directory
+ *   "stdin" run: a String fed to the child's stdin, then EOF
+ *           spawn: true, to get a writable pipe at handle.stdin()
+ * Absent (nil) keeps the original behavior: inherited environment and cwd and
+ * stdin from /dev/null. `owned_strings` are the "KEY=value" strings built for
+ * the environment, freed by process_options_free along with the array. */
+typedef struct DiamondProcessOptions {
+    char **envp;
+    size_t env_count;
+    char **owned_strings;
+    size_t owned_count;
+    const char *cwd;
+    const DiamondString *stdin_data;
+    bool stdin_pipe;
+} DiamondProcessOptions;
+
+static void process_options_free(DiamondProcessOptions *options) {
+    for(size_t index=0;index<options->owned_count;index++)free(options->owned_strings[index]);
+    free(options->owned_strings);
+    free(options->envp);
+    *options=(DiamondProcessOptions){};
+}
+
+static bool process_options_string(DiamondValue value,const DiamondString **out) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_STRING)
+        return false;
+    const DiamondString *string=(const DiamondString *)value.as.object;
+    if(strlen(string->chars)!=string->length)return false;
+    *out=string;
+    return true;
+}
+
+static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
+        bool for_spawn,DiamondValue options_value,DiamondProcessOptions *out) {
+    *out=(DiamondProcessOptions){};
+    if(options_value.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OK;
+    if(options_value.kind!=DIAMOND_VALUE_OBJECT||
+       options_value.as.object->kind!=DIAMOND_OBJECT_HASH) {
+        snprintf(vm->error,sizeof vm->error,"%s options must be a Hash or nil",owner);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondHash *options=(const DiamondHash *)options_value.as.object;
+    const DiamondHash *env=nullptr;
+    for(size_t index=0;index<options->count;index++) {
+        const DiamondString *key=nullptr;
+        if(!process_options_string(options->entries[index].key,&key)) {
+            snprintf(vm->error,sizeof vm->error,"%s options Hash keys must be Strings",owner);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondValue value=options->entries[index].value;
+        if(key->length==3&&memcmp(key->chars,"env",3)==0) {
+            if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object->kind!=DIAMOND_OBJECT_HASH) {
+                snprintf(vm->error,sizeof vm->error,
+                    "%s option 'env' must be a Hash of Strings",owner);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            env=(const DiamondHash *)value.as.object;
+        } else if(key->length==3&&memcmp(key->chars,"cwd",3)==0) {
+            const DiamondString *cwd=nullptr;
+            if(!process_options_string(value,&cwd)||cwd->length==0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "%s option 'cwd' must be a non-empty String",owner);
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            out->cwd=cwd->chars;
+        } else if(key->length==5&&memcmp(key->chars,"stdin",5)==0) {
+            if(for_spawn) {
+                if(value.kind!=DIAMOND_VALUE_BOOL) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "%s option 'stdin' must be true or false",owner);
+                    return DIAMOND_VM_TYPE_ERROR;
+                }
+                out->stdin_pipe=value.as.boolean;
+            } else if(value.kind!=DIAMOND_VALUE_NIL) {
+                const DiamondString *data=nullptr;
+                if(value.kind!=DIAMOND_VALUE_OBJECT||
+                   value.as.object->kind!=DIAMOND_OBJECT_STRING) {
+                    snprintf(vm->error,sizeof vm->error,
+                        "%s option 'stdin' must be a String",owner);
+                    return DIAMOND_VM_TYPE_ERROR;
+                }
+                data=(const DiamondString *)value.as.object;
+                out->stdin_data=data;
+            }
+        } else {
+            snprintf(vm->error,sizeof vm->error,"unrecognized %s option '%.*s'",owner,
+                (int)key->length,key->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    if(env==nullptr)return DIAMOND_VM_OK;
+
+    /* The inherited environment, with the given variables replacing or added. */
+    size_t inherited=0;
+    while(environ!=nullptr&&environ[inherited]!=nullptr)inherited++;
+    out->envp=calloc(inherited+env->count+1,sizeof(char *));
+    out->owned_strings=calloc(env->count+1,sizeof(char *));
+    if(out->envp==nullptr||out->owned_strings==nullptr) {
+        process_options_free(out);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    for(size_t index=0;index<inherited;index++)out->envp[out->env_count++]=environ[index];
+    for(size_t index=0;index<env->count;index++) {
+        const DiamondString *name=nullptr,*text=nullptr;
+        if(!process_options_string(env->entries[index].key,&name)||
+           !process_options_string(env->entries[index].value,&text)) {
+            snprintf(vm->error,sizeof vm->error,
+                "%s option 'env' must map Strings to Strings (no NUL bytes)",owner);
+            process_options_free(out);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(name->length==0||memchr(name->chars,'=',name->length)!=nullptr) {
+            snprintf(vm->error,sizeof vm->error,
+                "%s option 'env' names must be non-empty and contain no '='",owner);
+            process_options_free(out);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        char *entry=malloc(name->length+1+text->length+1);
+        if(entry==nullptr) {
+            process_options_free(out);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        memcpy(entry,name->chars,name->length);
+        entry[name->length]='=';
+        memcpy(entry+name->length+1,text->chars,text->length);
+        entry[name->length+1+text->length]='\0';
+        out->owned_strings[out->owned_count++]=entry;
+        bool replaced=false;
+        for(size_t slot=0;slot<out->env_count;slot++) {
+            if(strncmp(out->envp[slot],name->chars,name->length)==0&&
+               out->envp[slot][name->length]=='=') {
+                out->envp[slot]=entry;
+                replaced=true;
+                break;
+            }
+        }
+        if(!replaced)out->envp[out->env_count++]=entry;
+    }
+    out->envp[out->env_count]=nullptr;
+    return DIAMOND_VM_OK;
+}
+
 /* Process.run(argv): argv-array-only (never a shell string -- there is no
  * injection surface to guard against, by construction, matching the
  * design settled with the user before building this), blocking, full
@@ -503,8 +647,9 @@ static DiamondVmStatus process_build_argv_helper(DiamondVm *vm,const char *owner
  * immediately. Acceptable for a "minimal blocking capture" v1; a
  * non-blocking Process.spawn with a live handle (a real future feature,
  * not this one) would be the natural place to fix that. */
-DiamondVmStatus process_run_helper(DiamondVm *vm,
-        DiamondArray *argv_array,DiamondProcessResult *result) {
+static DiamondVmStatus process_run_with_options(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessResult *result,
+        const DiamondProcessOptions *options) {
     char **argv=nullptr;const char *command_name=nullptr;
     const DiamondVmStatus argv_status=process_build_argv_helper(vm,"Process.run",
         argv_array,&argv,&command_name);
@@ -512,12 +657,16 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
 
     int stdout_pipe[2]={-1,-1};
     int stderr_pipe[2]={-1,-1};
-    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0) {
+    int stdin_pipe[2]={-1,-1};
+    const bool feed_stdin=options!=nullptr&&options->stdin_data!=nullptr;
+    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0||(feed_stdin&&pipe(stdin_pipe)!=0)) {
         const int saved_errno=errno;
         if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
         if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
         if(stderr_pipe[0]>=0)close(stderr_pipe[0]);
         if(stderr_pipe[1]>=0)close(stderr_pipe[1]);
+        if(stdin_pipe[0]>=0)close(stdin_pipe[0]);
+        if(stdin_pipe[1]>=0)close(stdin_pipe[1]);
         free(argv);
         snprintf(vm->error,sizeof vm->error,"Process.run: pipe: %s",
             strerror(saved_errno));
@@ -526,7 +675,14 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    if(feed_stdin) {
+        posix_spawn_file_actions_adddup2(&actions,stdin_pipe[0],STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&actions,stdin_pipe[0]);
+        posix_spawn_file_actions_addclose(&actions,stdin_pipe[1]);
+    } else
+        posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    if(options!=nullptr&&options->cwd!=nullptr)
+        posix_spawn_file_actions_addchdir_np(&actions,options->cwd);
     posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
     posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
@@ -536,12 +692,14 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
 
     pid_t pid=0;
     const int spawn_status=posix_spawnp(&pid,command_name,&actions,
-        nullptr,argv,environ);
+        nullptr,argv,options!=nullptr&&options->envp!=nullptr?options->envp:environ);
     posix_spawn_file_actions_destroy(&actions);
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
+    if(feed_stdin)close(stdin_pipe[0]);
     if(spawn_status!=0) {
         close(stdout_pipe[0]);close(stderr_pipe[0]);
+        if(feed_stdin)close(stdin_pipe[1]);
         snprintf(vm->error,sizeof vm->error,"Process.run: %s: %s",
             command_name,strerror(spawn_status));
         free(argv);
@@ -549,16 +707,33 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
     }
     free(argv);
 
+    /* The child's stdin is fed from the poll loop below, together with
+     * draining its output, so a child that writes before it finishes reading
+     * cannot deadlock against this call. */
+    int stdin_fd=-1;
+    size_t stdin_offset=0;
+    const size_t stdin_total=feed_stdin?options->stdin_data->length:0;
+    if(feed_stdin) {
+        const int flags=fcntl(stdin_pipe[1],F_GETFL,0);
+        if(stdin_total==0||flags<0||fcntl(stdin_pipe[1],F_SETFL,flags|O_NONBLOCK)<0)
+            close(stdin_pipe[1]);
+        else stdin_fd=stdin_pipe[1];
+    }
+
     StringBuilder stdout_builder={};
     StringBuilder stderr_builder={};
     bool stdout_open=true,stderr_open=true,out_of_memory=false;
     /* Set when the supervisor interrupted this VM mid-wait: the child is
      * killed and reaped rather than waited for. */
     bool interrupted=false;
-    while((stdout_open||stderr_open)&&!out_of_memory&&!interrupted) {
-        struct pollfd fds[2];
+    while((stdout_open||stderr_open||stdin_fd>=0)&&!out_of_memory&&!interrupted) {
+        struct pollfd fds[3];
         nfds_t fd_count=0;
-        int stdout_slot=-1,stderr_slot=-1;
+        int stdout_slot=-1,stderr_slot=-1,stdin_slot=-1;
+        if(stdin_fd>=0) {
+            stdin_slot=(int)fd_count;
+            fds[fd_count++]=(struct pollfd){.fd=stdin_fd,.events=POLLOUT};
+        }
         if(stdout_open) {
             stdout_slot=(int)fd_count;
             fds[fd_count++]=(struct pollfd){.fd=stdout_pipe[0],.events=POLLIN};
@@ -580,6 +755,17 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
             break;
         }
         char chunk_buffer[4096];
+        if(stdin_slot>=0&&fds[stdin_slot].revents!=0) {
+            /* A child that exits or closes its stdin early is not an error:
+             * the write fails with EPIPE and feeding just stops. */
+            const ssize_t written=write(stdin_fd,
+                options->stdin_data->chars+stdin_offset,stdin_total-stdin_offset);
+            if(written>0)stdin_offset+=(size_t)written;
+            if((written<0&&errno!=EINTR&&errno!=EAGAIN&&errno!=EWOULDBLOCK)||
+               stdin_offset>=stdin_total) {
+                close(stdin_fd);stdin_fd=-1;
+            }
+        }
         if(stdout_slot>=0&&fds[stdout_slot].revents!=0) {
             const ssize_t bytes_read=read(stdout_pipe[0],chunk_buffer,sizeof chunk_buffer);
             if(bytes_read>0) {
@@ -601,6 +787,7 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
     }
     if(stdout_open)close(stdout_pipe[0]);
     if(stderr_open)close(stderr_pipe[0]);
+    if(stdin_fd>=0)close(stdin_fd);
 
     int wait_status=0;
     pid_t wait_result=0;
@@ -666,6 +853,17 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+DiamondVmStatus process_run_helper(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessResult *result,DiamondValue options_value) {
+    DiamondProcessOptions options;
+    const DiamondVmStatus options_status=
+        process_parse_options(vm,"Process.run",false,options_value,&options);
+    if(options_status!=DIAMOND_VM_OK)return options_status;
+    const DiamondVmStatus status=process_run_with_options(vm,argv_array,result,&options);
+    process_options_free(&options);
+    return status;
+}
+
 /* Process.spawn(argv): like Process.run, but doesn't wait -- returns a
  * live DiamondProcessHandle immediately with two O_NONBLOCK stdout/
  * stderr streams (DiamondProcessStream, each independently pollable via
@@ -675,8 +873,9 @@ DiamondVmStatus process_run_helper(DiamondVm *vm,
  * calls #wait themselves, on their own schedule. Child's stdin is
  * /dev/null, the same v1 scope cut Process.run's own comment documents
  * -- a writable stdin is a real, separate future slice, not this one. */
-DiamondVmStatus process_spawn_helper(DiamondVm *vm,
-        DiamondArray *argv_array,DiamondProcessHandle *handle) {
+static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessHandle *handle,
+        const DiamondProcessOptions *options) {
     char **argv=nullptr;const char *command_name=nullptr;
     const DiamondVmStatus argv_status=process_build_argv_helper(vm,"Process.spawn",
         argv_array,&argv,&command_name);
@@ -684,12 +883,16 @@ DiamondVmStatus process_spawn_helper(DiamondVm *vm,
 
     int stdout_pipe[2]={-1,-1};
     int stderr_pipe[2]={-1,-1};
-    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0) {
+    int stdin_pipe[2]={-1,-1};
+    const bool pipe_stdin=options!=nullptr&&options->stdin_pipe;
+    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0||(pipe_stdin&&pipe(stdin_pipe)!=0)) {
         const int saved_errno=errno;
         if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
         if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
         if(stderr_pipe[0]>=0)close(stderr_pipe[0]);
         if(stderr_pipe[1]>=0)close(stderr_pipe[1]);
+        if(stdin_pipe[0]>=0)close(stdin_pipe[0]);
+        if(stdin_pipe[1]>=0)close(stdin_pipe[1]);
         free(argv);
         snprintf(vm->error,sizeof vm->error,"Process.spawn: pipe: %s",strerror(saved_errno));
         return DIAMOND_VM_IO_ERROR;
@@ -697,7 +900,14 @@ DiamondVmStatus process_spawn_helper(DiamondVm *vm,
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    if(pipe_stdin) {
+        posix_spawn_file_actions_adddup2(&actions,stdin_pipe[0],STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&actions,stdin_pipe[0]);
+        posix_spawn_file_actions_addclose(&actions,stdin_pipe[1]);
+    } else
+        posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    if(options!=nullptr&&options->cwd!=nullptr)
+        posix_spawn_file_actions_addchdir_np(&actions,options->cwd);
     posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
     posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
@@ -706,12 +916,15 @@ DiamondVmStatus process_spawn_helper(DiamondVm *vm,
     posix_spawn_file_actions_addclose(&actions,stderr_pipe[1]);
 
     pid_t pid=0;
-    const int spawn_status=posix_spawnp(&pid,command_name,&actions,nullptr,argv,environ);
+    const int spawn_status=posix_spawnp(&pid,command_name,&actions,nullptr,argv,
+        options!=nullptr&&options->envp!=nullptr?options->envp:environ);
     posix_spawn_file_actions_destroy(&actions);
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
+    if(pipe_stdin)close(stdin_pipe[0]);
     if(spawn_status!=0) {
         close(stdout_pipe[0]);close(stderr_pipe[0]);
+        if(pipe_stdin)close(stdin_pipe[1]);
         snprintf(vm->error,sizeof vm->error,"Process.spawn: %s: %s",
             command_name,strerror(spawn_status));
         free(argv);
@@ -753,8 +966,32 @@ DiamondVmStatus process_spawn_helper(DiamondVm *vm,
     DiamondProcessStream *stderr_stream=allocate_process_stream(vm,stderr_pipe[0]);
     if(stderr_stream==nullptr) {close(stderr_pipe[0]);return DIAMOND_VM_OUT_OF_MEMORY;}
     handle->stderr_stream=DIAMOND_OBJECT(stderr_stream);
-    if(!gc_write_barrier(vm,(DiamondObject *)handle))return DIAMOND_VM_OUT_OF_MEMORY;
+    if(!gc_write_barrier(vm,(DiamondObject *)handle)) {
+        if(pipe_stdin)close(stdin_pipe[1]);
+        return DIAMOND_VM_OUT_OF_MEMORY;
+    }
+    if(pipe_stdin) {
+        /* The write end stays blocking: a write waits for the child to read. */
+        DiamondProcessStream *stdin_stream=allocate_process_stream(vm,stdin_pipe[1]);
+        if(stdin_stream==nullptr) {
+            close(stdin_pipe[1]);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        handle->stdin_stream=DIAMOND_OBJECT(stdin_stream);
+        if(!gc_write_barrier(vm,(DiamondObject *)handle))return DIAMOND_VM_OUT_OF_MEMORY;
+    }
     return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus process_spawn_helper(DiamondVm *vm,
+        DiamondArray *argv_array,DiamondProcessHandle *handle,DiamondValue options_value) {
+    DiamondProcessOptions options;
+    const DiamondVmStatus options_status=
+        process_parse_options(vm,"Process.spawn",true,options_value,&options);
+    if(options_status!=DIAMOND_VM_OK)return options_status;
+    const DiamondVmStatus status=process_spawn_with_options(vm,argv_array,handle,&options);
+    process_options_free(&options);
+    return status;
 }
 
 /* Reaps `handle`'s child exactly once -- every dispatch path that needs
@@ -806,6 +1043,11 @@ DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm,
     if(method_name->length==6&&memcmp(method_name->chars,"stderr",6)==0) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         registers[dest]=target->stderr_stream;return DIAMOND_VM_OK;
+    }
+    if(method_name->length==5&&memcmp(method_name->chars,"stdin",5)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        /* nil unless the process was spawned with {"stdin": true}. */
+        registers[dest]=target->stdin_stream;return DIAMOND_VM_OK;
     }
     if(method_name->length==4&&memcmp(method_name->chars,"wait",4)==0) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
@@ -872,6 +1114,35 @@ DiamondVmStatus process_stream_dispatch_helper(DiamondVm *vm,
         DiamondValue *registers,uint8_t argc,uint16_t base,uint16_t dest) {
     const bool read_method=method_name->length==4&&memcmp(method_name->chars,"read",4)==0;
     const bool close_method=method_name->length==5&&memcmp(method_name->chars,"close",5)==0;
+    const bool write_method=method_name->length==5&&memcmp(method_name->chars,"write",5)==0;
+    if(write_method) {
+        /* Only the child's stdin end (Process.spawn with {"stdin": true}) is
+         * writable; writing to an output stream fails with EBADF. Blocks until
+         * the child has read everything; a closed pipe raises IOError. */
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "Process::Stream#write argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(target->fd<0) {
+            snprintf(vm->error,sizeof vm->error,"process stream is closed");
+            return DIAMOND_VM_IO_ERROR;
+        }
+        const DiamondString *data=(const DiamondString *)registers[base].as.object;
+        size_t offset=0;
+        while(offset<data->length) {
+            const ssize_t written=write(target->fd,data->chars+offset,data->length-offset);
+            if(written<0) {
+                if(errno==EINTR)continue;
+                snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+                return DIAMOND_VM_IO_ERROR;
+            }
+            offset+=(size_t)written;
+        }
+        registers[dest]=DIAMOND_INT((int64_t)data->length);return DIAMOND_VM_OK;
+    }
     if(!read_method&&!close_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for Process::Stream",
             (int)method_name->length,method_name->chars);

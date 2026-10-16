@@ -284,7 +284,8 @@ static DiamondVmStatus resolve_interruptible(DiamondVm *vm,const char *host,
  * the existing try-each-candidate loop already treats an ordinary
  * connection refusal (move on to the next candidate, not a hard stop). */
 DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
-        int64_t port,int64_t connect_timeout_ms,int *out_fd) {
+        int64_t port,int64_t connect_timeout_ms,int64_t recv_buffer_bytes,
+        int64_t send_buffer_bytes,int *out_fd) {
     char port_text[32];
     (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
     struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM};
@@ -308,6 +309,17 @@ DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
         const int fd=socket(candidate->ai_family,candidate->ai_socktype,
                              candidate->ai_protocol);
         if(fd<0) {last_errno=errno;continue;}
+        /* Buffer sizes have to be set before connect for the TCP window to
+         * be negotiated from them. The kernel clamps (and on Linux doubles)
+         * the value; failure to set one is not a connect failure. */
+        if(recv_buffer_bytes>0) {
+            const int size=recv_buffer_bytes>INT_MAX?INT_MAX:(int)recv_buffer_bytes;
+            (void)setsockopt(fd,SOL_SOCKET,SO_RCVBUF,&size,sizeof size);
+        }
+        if(send_buffer_bytes>0) {
+            const int size=send_buffer_bytes>INT_MAX?INT_MAX:(int)send_buffer_bytes;
+            (void)setsockopt(fd,SOL_SOCKET,SO_SNDBUF,&size,sizeof size);
+        }
         if(connect_timeout_ms>=0||vm->interrupt_flag!=nullptr) {
             const int flags=fcntl(fd,F_GETFL,0);
             if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0) {
@@ -688,17 +700,17 @@ failed:;
  * independent accept loop against its own listener rather than sharing one
  * across a Thread boundary (Listener values can never cross one -- see
  * docs/threads.md) -- see packages/gremlin's own gremlin_worker. */
-DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
-        bool nonblocking,bool reuse_port,DiamondListenerHandle **out_handle) {
+DiamondVmStatus tcp_listen_helper(DiamondVm *vm,const char *host,int64_t port,
+        bool nonblocking,bool reuse_port,int64_t backlog,DiamondListenerHandle **out_handle) {
     char port_text[32];
     (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
     struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM,
         .ai_flags=AI_PASSIVE};
     struct addrinfo *results=nullptr;
-    const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
+    const int resolve_status=getaddrinfo(host,port_text,&hints,&results);
     if(resolve_status!=0) {
-        snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
-                 port_text,gai_strerror(resolve_status));
+        snprintf(vm->error,sizeof vm->error,"cannot listen on %s%sport %s: %s",
+                 host!=nullptr?host:"",host!=nullptr?" ":"",port_text,gai_strerror(resolve_status));
         return DIAMOND_VM_IO_ERROR;
     }
     int listening_fd=-1;
@@ -755,7 +767,7 @@ DiamondVmStatus tcp_listen_helper(DiamondVm *vm,int64_t port,
      * itself runs. Confirmed as the dominant cause of connection-refused
      * failures benchmarking packages/gremlin's reuse_port workers under
      * concurrency well above the old value. */
-    if(listen(listening_fd,SOMAXCONN)!=0) {
+    if(listen(listening_fd,backlog>0?(backlog>INT_MAX?INT_MAX:(int)backlog):SOMAXCONN)!=0) {
         snprintf(vm->error,sizeof vm->error,"cannot listen on port %s: %s",
                  port_text,strerror(errno));
         close(listening_fd);
@@ -784,7 +796,7 @@ DiamondVmStatus tls_listen_helper(DiamondVm *vm,int64_t port,
         const char *cert_path,const char *key_path,const DiamondArray *alpn_protocols,
         const char *client_ca_path,DiamondListenerHandle **out_handle) {
     DiamondListenerHandle *listener_handle=nullptr;
-    const DiamondVmStatus listen_status=tcp_listen_helper(vm,port,false,false,&listener_handle);
+    const DiamondVmStatus listen_status=tcp_listen_helper(vm,nullptr,port,false,false,0,&listener_handle);
     if(listen_status!=DIAMOND_VM_OK)return listen_status;
     SSL_CTX *context=SSL_CTX_new(TLS_server_method());
     if(context==nullptr) {

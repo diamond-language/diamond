@@ -1339,6 +1339,10 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 offset=two_registers(stream,chunk,"PROCESS_RUN",offset, &valid);break;
             case DIAMOND_OP_PROCESS_SPAWN:
                 offset=two_registers(stream,chunk,"PROCESS_SPAWN",offset, &valid);break;
+            case DIAMOND_OP_PROCESS_RUN_OPTIONS:
+                offset=three_registers(stream,chunk,"PROCESS_RUN_OPTIONS",offset, &valid);break;
+            case DIAMOND_OP_PROCESS_SPAWN_OPTIONS:
+                offset=three_registers(stream,chunk,"PROCESS_SPAWN_OPTIONS",offset, &valid);break;
             case DIAMOND_OP_BCRYPT_HASH:
                 offset=three_registers(stream,chunk,"BCRYPT_HASH",offset, &valid);break;
             case DIAMOND_OP_BCRYPT_VERIFY:

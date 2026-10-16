@@ -6,6 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- `Process.run` and `Process.spawn` take an options Hash: `"env"` (merged over the inherited
+  environment), `"cwd"`, and `"stdin"` (a String to feed, or `true` for a writable
+  `handle.stdin()` pipe on spawn; `Process::Stream#write`).
+- `TCPServer.listen` takes `host:` and `backlog:` keywords, `Listener#port()` returns the bound
+  port (so `listen(0)` is usable), and `TCPSocket.connect` options accept `recv_buffer_bytes` and
+  `send_buffer_bytes`.
+
 ### Changed
 
 - Arbitrary-precision `Int`s now work with the bitwise operators `&`, `|`, `^`, `<<` and `>>`
