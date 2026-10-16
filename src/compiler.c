@@ -54,6 +54,9 @@ typedef struct Local {
 
 typedef struct LoopContext {
     struct LoopContext *previous;
+    /* compiler->begin_depth where the loop started: a break/next/redo from deeper than this
+     * is inside begin blocks that must be left (running their ensure bodies) on the way out. */
+    size_t begin_depth;
     size_t continue_target;
     size_t redo_target;
     uint16_t result_register;
@@ -10819,6 +10822,7 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     }
     LoopContext loop={
         .previous=compiler->current_loop,
+        .begin_depth=compiler->begin_depth,
         .continue_target=loop_start,
         .redo_target=compiler->function->code_count,
         .result_register=destination,
@@ -10885,6 +10889,7 @@ static uint16_t parse_loop(Compiler *compiler) {
         return destination;
     }
     LoopContext loop={.previous=compiler->current_loop,
+        .begin_depth=compiler->begin_depth,
         .continue_target=body_start,.redo_target=body_start,
         .result_register=destination,.flow_reg_count=flow_reg_count,
         .exit_types=exit_types,.exit_sets=exit_sets,
@@ -13676,6 +13681,29 @@ static uint16_t compile_retry(Compiler *compiler) {
     return result;
 }
 
+/* The jump a break/next/redo ends in. From inside begin blocks that sit within the loop it is an
+ * UNWIND_JUMP, which leaves those blocks (running their ensure bodies) before landing; otherwise a
+ * plain JUMP. Returns the operand offset to patch when the target is not known yet (a break). */
+static size_t emit_loop_jump(Compiler *compiler,const LoopContext *loop,size_t target,bool forward) {
+    const size_t levels=compiler->begin_depth>loop->begin_depth?
+        compiler->begin_depth-loop->begin_depth:0;
+    if(levels==0) {
+        if(forward)return emit_jump(compiler,DIAMOND_OP_JUMP,0);
+        emit_absolute_jump(compiler,target);
+        return 0;
+    }
+    if(levels>UINT8_MAX||target>UINT16_MAX) {
+        fail(compiler,compiler->previous.span,"loop control is nested too deeply in begin blocks");
+        return 0;
+    }
+    emit_opcode(compiler,DIAMOND_OP_UNWIND_JUMP);
+    emit_byte(compiler,(uint8_t)levels);
+    const size_t operand=compiler->function->code_count;
+    emit_byte(compiler,(uint8_t)(target>>8));
+    emit_byte(compiler,(uint8_t)(target&UINT8_MAX));
+    return operand;
+}
+
 static uint16_t compile_loop_control(Compiler *compiler) {
     const DiamondTokenKind kind=compiler->current.kind;
     const DiamondSpan keyword=compiler->current.span;
@@ -13733,11 +13761,13 @@ static uint16_t compile_loop_control(Compiler *compiler) {
         merge_loop_exit(compiler,compiler->current_loop,break_type,break_set,
             break_tooling_set);
         compiler->current_loop->breaks[compiler->current_loop->break_count++]=
-            emit_jump(compiler,DIAMOND_OP_JUMP,0);
+            emit_loop_jump(compiler,compiler->current_loop,0,true);
     } else if(kind==DIAMOND_TOKEN_NEXT) {
-        emit_absolute_jump(compiler,compiler->current_loop->continue_target);
+        (void)emit_loop_jump(compiler,compiler->current_loop,
+            compiler->current_loop->continue_target,false);
     } else {
-        emit_absolute_jump(compiler,compiler->current_loop->redo_target);
+        (void)emit_loop_jump(compiler,compiler->current_loop,
+            compiler->current_loop->redo_target,false);
     }
     const uint16_t result=allocate_register(compiler);
     /* Dead code: break/next/redo all jump unconditionally above, so

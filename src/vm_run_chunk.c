@@ -3924,6 +3924,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     .kind=HANDLER_ENSURE,.target=target,.enabled=true};
                 break;
             }
+            case DIAMOND_OP_UNWIND_JUMP: {
+                uint8_t levels=0,high=0,low=0;READ_BYTE(levels);READ_BYTE(high);READ_BYTE(low);
+                const size_t target=((size_t)high<<8)|low;
+                if(target>chunk->code_count||
+                   !unwind_for_jump(handlers,&handler_count,&pending,levels,target,&ip))
+                    VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                break;
+            }
             case DIAMOND_OP_RUN_ENSURE: {
                 uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
                 const size_t continuation=((size_t)high<<8)|low;
@@ -3983,6 +3991,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const PendingUnwind resume=pending;
                 (void)pop_unwind_handler(handlers,&handler_count,&pending);
                 if(resume.kind==PENDING_NORMAL) {ip=resume.continuation;break;}
+                if(resume.kind==PENDING_JUMP) {
+                    if(!unwind_for_jump(handlers,&handler_count,&pending,
+                            (size_t)resume.nonlocal_target,resume.continuation,&ip))
+                        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                    break;
+                }
                 if(resume.kind==PENDING_RETURN) {
                     while(handler_count>0 &&
                           handlers[handler_count-1].kind!=HANDLER_ENSURE)

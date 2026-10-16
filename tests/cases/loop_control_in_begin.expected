@@ -1,0 +1,1 @@
+[after loop, value after loop, 2, 4, [ensure 1, body 2, ensure 2, ensure 3, rescued, inner ensure, outer ensure, inner 1, outer 1, inner 2, outer 2, done 1, even 2, done 2, done 3, even 4, done 4]]

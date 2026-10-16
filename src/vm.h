@@ -607,6 +607,12 @@ typedef enum DiamondOpCode : uint8_t {
      * layout selfhost/parser.di emits. */
     DIAMOND_OP_PROCESS_RUN_OPTIONS,
     DIAMOND_OP_PROCESS_SPAWN_OPTIONS,
+    /* count (1 byte), target (2 bytes): `break`/`next`/`redo` from inside
+     * begin/rescue/ensure blocks that sit within a loop. Leaves `count` of
+     * those begin levels -- discarding their rescue handlers and running each
+     * ensure body, in order -- and then jumps to `target`. A plain JUMP when
+     * the statement is not inside a begin within its loop. */
+    DIAMOND_OP_UNWIND_JUMP,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 

@@ -35,6 +35,9 @@ authoritative fine-grained record.
 
 - A read on a socket or file that timed out left the stream in an error state, so every later read on
   it failed too ("read error: Success") even after data arrived; the error is now cleared once reported.
+- `break` and `next` from inside a `begin`/`rescue`/`ensure` within a loop skipped the `ensure` body (or ran the wrong
+  one) and left the handler stack inconsistent, so code after the loop could fail with "invalid bytecode".
+  They now leave the begin blocks properly, running each `ensure` once and in order.
 
 ### Tooling
 
