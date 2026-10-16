@@ -33,7 +33,10 @@ uses, including calling a user-defined `to_s` override) and joins them
 with `separator` between (not trailing). `.slice(start, length)` works
 the same way `String#slice` does (below): `start` in `0..count`,
 `length >= 0`, clamped to what's actually available rather than
-erroring past the end.
+erroring past the end. `array[a..b]` and `array[a...b]` take a Range the same way, and a
+negative bound counts from the end (`array[1..-1]` is everything but the first element;
+`array[0...-1]` everything but the last); a start before the beginning or past the end raises
+`IndexError`.
 
 `==` on both is real structural (not identity) comparison: `Array` by
 length plus elementwise equality, order-sensitive; `Hash` by entry

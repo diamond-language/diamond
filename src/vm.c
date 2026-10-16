@@ -7243,13 +7243,17 @@ static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
         return -1;
     const DiamondInstance *instance=(const DiamondInstance *)index_value.as.object;
     if(instance->class!=&chunk->classes[vm->range_class_index])return -1;
-    const int64_t start=instance->fields[0].as.integer;
-    const int64_t end=instance->fields[1].as.integer;
+    int64_t start=instance->fields[0].as.integer;
+    int64_t end=instance->fields[1].as.integer;
     const bool exclusive=instance->fields[2].as.boolean;
+    /* A negative bound counts from the end, as in Ruby: a[1..-1] is all but the first. */
+    const int64_t original_start=start;
+    if(start<0&&array_count<=(uint64_t)INT64_MAX)start+=(int64_t)array_count;
+    if(end<0&&array_count<=(uint64_t)INT64_MAX)end+=(int64_t)array_count;
     if(start<0||(uint64_t)start>array_count) {
         snprintf(vm->error,sizeof vm->error,
                  "index %" PRId64 " out of bounds for Array of length %zu",
-                 start,array_count);
+                 original_start,array_count);
         return 0;
     }
     const int64_t inclusive_end=exclusive?end-1:end;
