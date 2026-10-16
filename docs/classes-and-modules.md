@@ -541,11 +541,12 @@ resource-backed types are skipped rather than traversed. A call to
 
 `respond_to?(name)` takes a `Symbol` and checks whether the receiver's
 class defines a method by that name — `false` for a private method, same
-as Ruby's own default (no `include_private` second argument yet). Only
-defined for `Instance` receivers; calling it on a native type
-(`Array`/`Int`/`String`/...) is currently an `undefined method` error
-rather than an approximate answer — accurately enumerating every method a
-native type actually supports isn't tracked anywhere as one real list.
+as Ruby's own default (no `include_private` second argument yet). On a
+`String`, `Array`, `Hash`, `Int` or `Float` it is `true` for a native method, a
+prelude method, or a program's own `string_x`/`array_x`/`hash_x`/`integer_x`/`float_x`
+extension function, and the name may be a `Symbol` or a `String`:
+`"abc".respond_to?(:upcase)`. Other native values (`File`, `Process`, a Socket) do not
+answer it.
 
 Like `tap`, a class's own method of the same name always takes priority
 over `dup`/`respond_to?`/`public_send`'s own built-in behavior, checked first.

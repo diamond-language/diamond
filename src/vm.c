@@ -12854,7 +12854,61 @@ DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+/* value.respond_to?(name) on a String, Array, Hash, Int or Float: true for a native method
+ * (the same tables the editor completes from), for a prelude or program extension function
+ * (string_x, array_x, integer_x, ...) and for the universal respond_to? itself. The argument
+ * is a Symbol or a String, as for the other universal methods. */
+static DiamondVmStatus builtin_respond_to(const DiamondChunk *chunk,DiamondValue receiver,
+        DiamondValue name_value,uint8_t argc,DiamondValue *out) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    const char *name=nullptr;size_t length=0;
+    if(name_value.kind==DIAMOND_VALUE_OBJECT&&
+       name_value.as.object->kind==DIAMOND_OBJECT_SYMBOL) {
+        name=((const DiamondSymbol *)name_value.as.object)->chars;
+        length=((const DiamondSymbol *)name_value.as.object)->length;
+    } else if(name_value.kind==DIAMOND_VALUE_OBJECT&&
+              name_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        name=((const DiamondString *)name_value.as.object)->chars;
+        length=((const DiamondString *)name_value.as.object)->length;
+    } else return DIAMOND_VM_TYPE_ERROR;
+    bool found=length==11&&memcmp(name,"respond_to?",11)==0;
+    uint8_t type=0;
+    const DiamondFunction *extension=nullptr;
+    if(receiver.kind==DIAMOND_VALUE_INT)type=DIAMOND_TYPE_INT;
+    else if(receiver.kind==DIAMOND_VALUE_FLOAT)type=DIAMOND_TYPE_FLOAT;
+    else if(receiver.kind==DIAMOND_VALUE_OBJECT) {
+        switch(receiver.as.object->kind) {
+            case DIAMOND_OBJECT_STRING: type=DIAMOND_TYPE_STRING;break;
+            case DIAMOND_OBJECT_ARRAY: type=DIAMOND_TYPE_ARRAY;break;
+            case DIAMOND_OBJECT_HASH: type=DIAMOND_TYPE_HASH;break;
+            default: break;
+        }
+    }
+    const char *const *natives=nullptr;
+    const size_t native_count=diamond_native_member_names(type,&natives);
+    for(size_t index=0;!found&&index<native_count;index++)
+        found=strlen(natives[index])==length&&memcmp(natives[index],name,length)==0;
+    if(!found&&type==DIAMOND_TYPE_ARRAY)
+        extension=find_collection_extension(chunk,DIAMOND_OBJECT_ARRAY,name,length);
+    else if(!found&&type==DIAMOND_TYPE_HASH)
+        extension=find_collection_extension(chunk,DIAMOND_OBJECT_HASH,name,length);
+    else if(!found&&type==DIAMOND_TYPE_STRING) {
+        static const char *const prefixes[]={"string_"};
+        extension=find_value_extension(chunk,prefixes,1,name,length);
+    } else if(!found&&type==DIAMOND_TYPE_INT) {
+        static const char *const prefixes[]={"integer_","numeric_"};
+        extension=find_value_extension(chunk,prefixes,2,name,length);
+    } else if(!found&&type==DIAMOND_TYPE_FLOAT) {
+        static const char *const prefixes[]={"float_","numeric_"};
+        extension=find_value_extension(chunk,prefixes,2,name,length);
+    }
+    *out=DIAMOND_BOOL(found||extension!=nullptr);
+    return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
+        return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
     const DiamondObjectKind receiver_kind=registers[recv].as.object->kind;
     const bool length_method=method_name->length==6&&
         memcmp(method_name->chars,"length",6)==0;
@@ -13983,6 +14037,8 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
 }
 
 DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
+        return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
     const bool ago_method=method_name->length==3&&
         memcmp(method_name->chars,"ago",3)==0;
     const bool from_now_method=method_name->length==8&&
