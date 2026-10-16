@@ -311,13 +311,22 @@ jobs:
           dnf install -y gcc make git diffutils findutils file bc clang lld \
             qemu-user-static openssl-devel sqlite-devel libpq-devel \
             mariadb-connector-c-devel zlib-devel libxcrypt-devel
+      # Download the aarch64 rpms and unpack them; nothing is installed, so no
+      # foreign-architecture scriptlet ever runs.
       - name: Assemble the aarch64 sysroot
         run: |
-          dnf install -y --installroot=/sysroot --forcearch=aarch64 \
-            --use-host-config --releasever="$(rpm -E %fedora)" \
-            --setopt=install_weak_deps=False --setopt=tsflags=nodocs,noscripts \
+          dnf install -y dnf-plugins-core cpio
+          mkdir /dl /sysroot
+          dnf download --use-host-config --releasever="$(rpm -E %fedora)" \
+            --installroot=/dl --forcearch=aarch64 --resolve --alldeps \
+            --destdir=/dl/rpms \
             glibc-devel gcc libgcc openssl-devel sqlite-devel libpq-devel \
             mariadb-connector-c-devel zlib-devel libxcrypt-devel
+          cd /sysroot
+          for rpm in /dl/rpms/*.aarch64.rpm /dl/rpms/*.noarch.rpm; do
+            [ -e "$rpm" ] || continue
+            rpm2cpio "$rpm" | cpio -idmu --quiet
+          done
       - name: Build the host runtime
         run: make -j2 debug
       - name: Cross-build the kit and run the result
