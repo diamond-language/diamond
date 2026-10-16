@@ -2099,7 +2099,7 @@ static uint16_t parse_identifier(Compiler *compiler) {
                   compiler->capture_registers[capture]!=compiler->enclosing_locals[i-1].reg)
                 capture++;
             if(capture==compiler->capture_count) {
-                if(capture==16){fail(compiler,compiler->previous.span,"too many captured variables");return 0;}
+                if(capture==DIAMOND_MAX_CAPTURES){fail(compiler,compiler->previous.span,"too many captured variables");return 0;}
                 compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
             }
             const uint16_t destination=allocate_register(compiler);
@@ -12318,6 +12318,25 @@ static void drop_facts_after_block_break(Compiler *compiler,uint16_t reg) {
     compiler->known_type_sets[reg]=-1;
 }
 
+/* After `..` or `...`: is this an endless range (`a[1..]`, `(1..)`, `when 5..`) with no end
+ * expression? That is so when the next token closes or separates rather than starts one. */
+static bool range_end_absent(const Compiler *compiler) {
+    switch(compiler->current.kind) {
+        case DIAMOND_TOKEN_RIGHT_BRACKET:
+        case DIAMOND_TOKEN_RIGHT_PAREN:
+        case DIAMOND_TOKEN_RIGHT_BRACE:
+        case DIAMOND_TOKEN_COMMA:
+        case DIAMOND_TOKEN_NEWLINE:
+        case DIAMOND_TOKEN_EOF:
+        case DIAMOND_TOKEN_THEN:
+        case DIAMOND_TOKEN_END:
+        case DIAMOND_TOKEN_DO:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
     uint16_t left = parse_prefix(compiler);
     drop_facts_after_block_break(compiler,left);
@@ -12466,8 +12485,14 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
         }
         if(operator==DIAMOND_TOKEN_DOT_DOT||operator==DIAMOND_TOKEN_DOT_DOT_DOT) {
             const bool exclusive=operator==DIAMOND_TOKEN_DOT_DOT_DOT;
-            const uint16_t right=parse_precedence(
-                compiler,(Precedence)(operator_precedence+1));
+            /* `1..` with nothing after it is an endless range: the end is nil. */
+            uint16_t right=0;
+            if(range_end_absent(compiler)) {
+                right=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_NIL,right,0,0,1);
+            } else {
+                right=parse_precedence(compiler,(Precedence)(operator_precedence+1));
+            }
             const int class_index=find_class_name(compiler,"Range");
             if(class_index<0) {
                 fail(compiler,compiler->previous.span,
@@ -18210,7 +18235,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
             while(capture<compiler->capture_count &&
                   compiler->capture_registers[capture]!=compiler->enclosing_locals[i-1].reg)capture++;
             if(capture==compiler->capture_count) {
-                if(capture==16){fail(compiler,name,"too many captured variables");return 0;}
+                if(capture==DIAMOND_MAX_CAPTURES){fail(compiler,name,"too many captured variables");return 0;}
                 compiler->capture_registers[compiler->capture_count++]=compiler->enclosing_locals[i-1].reg;
             }
             emit_instruction(compiler,DIAMOND_OP_SET_CAPTURE,(uint8_t)capture,value,0,2);

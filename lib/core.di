@@ -985,7 +985,7 @@ end
 class Range
   include Enumerable
 
-  def initialize(start: Int, end_value: Int, exclusive: Bool)
+  def initialize(start: Int, end_value: Int | Nil, exclusive: Bool)
     @start = start
     @end = end_value
     @exclusive = exclusive
@@ -994,12 +994,40 @@ class Range
   # first() is the start; first(n) the first n values, as an Array.
   def first(n = nil)
     return @start if n == nil
-    self.to_a().take(n)
+    return self.to_a().take(n) unless @end == nil
+    values = []
+    i = @start
+    while values.length() < n
+      values.push(i)
+      i += 1
+    end
+    values
   end
-  def last() -> Int = @end
+
+  def last() -> Int
+    raise RangeError.new("cannot get the last element of an endless range") if @end == nil
+    @end
+  end
+
+  # `1..` has no end: it runs on forever, so each and include? work but anything that needs
+  # the whole range (to_a, length, step, reverse_each, last) raises RangeError.
+  def endless?() -> Bool = @end == nil
+
+  def to_a() -> Array
+    raise RangeError.new("cannot convert an endless range to an Array") if @end == nil
+    values = []
+    i = @start
+    stop = if @exclusive then @end else @end + 1 end
+    while i < stop
+      values.push(i)
+      i += 1
+    end
+    values
+  end
 
   # Every `size`-th value from the start: (1..10).step(3) is [1, 4, 7, 10].
   def step(size: Int) -> Array[Int]
+    raise RangeError.new("cannot step through an endless range") if @end == nil
     raise ArgumentError.new("step must be positive") if size <= 0
     result = []
     i = @start
@@ -1012,6 +1040,7 @@ class Range
   end
 
   def reverse_each(callback: Callable[1])
+    raise RangeError.new("cannot reverse an endless range") if @end == nil
     self.to_a().reverse().each(callback)
     self
   end
@@ -1019,10 +1048,12 @@ class Range
 
   def to_s() -> String
     dots = if @exclusive then "..." else ".." end
+    return "#{@start}#{dots}" if @end == nil
     "#{@start}#{dots}#{@end}"
   end
 
   def length() -> Int
+    raise RangeError.new("cannot get the length of an endless range") if @end == nil
     n = @end - @start
     n = n + 1 unless @exclusive
     n = 0 if n < 0
@@ -1030,6 +1061,7 @@ class Range
   end
 
   def include?(value: Int) -> Bool
+    return value >= @start if @end == nil
     within_end = if @exclusive
       value < @end
     else
@@ -1040,6 +1072,12 @@ class Range
 
   def each(callback: Callable[1])
     i = @start
+    if @end == nil
+      loop do
+        callback(i)
+        i += 1
+      end
+    end
     stop = if @exclusive
       @end
     else
@@ -1055,6 +1093,13 @@ class Range
 
   def each_until(callback: Callable[1, Bool])
     i = @start
+    if @end == nil
+      loop do
+        break unless callback(i)
+        i += 1
+      end
+      return self
+    end
     stop = if @exclusive
       @end
     else
