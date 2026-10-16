@@ -136,7 +136,7 @@ separate design question rather than part of this investigation.
 
 ## Results (2026-10-02)
 
-Tooling: `bench/gremlin_http/instrumented.py` (frequency, user/system split,
+Tooling: `bench/gremlin_http/sweep.di --instrument` (frequency, user/system split,
 context switches, per-thread balance, RSS) plus `perf stat`/`perf record`
 (user-space only: `perf_event_paranoid` is 2, so kernel time is measured with
 `/proc` CPU accounting instead). Machine: 6 cores, SMT sibling pairs
