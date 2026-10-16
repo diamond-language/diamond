@@ -64,7 +64,8 @@ function makeWasi(state) {
     fd_prestat_dir_name: () => EBADF,
     fd_readdir: () => EBADF,
     path_open: unsupported, path_filestat_get: unsupported, path_link: unsupported,
-    path_readlink: unsupported, path_remove_directory: unsupported, path_rename: unsupported,
+    path_create_directory: unsupported, path_readlink: unsupported,
+    path_remove_directory: unsupported, path_rename: unsupported,
     path_unlink_file: unsupported, poll_oneoff: unsupported, sock_accept: unsupported,
     sock_shutdown: unsupported, sock_recv: unsupported, sock_send: unsupported,
     random_get(pointer, length) {
