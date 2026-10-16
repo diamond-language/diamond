@@ -640,6 +640,22 @@ typedef enum {
      * byte count. Both raise IOError when the file can't be opened. */
     DIAMOND_FILE_PATH_READ,
     DIAMOND_FILE_PATH_WRITE,
+    /* File.copy(from, to): a new file with the contents of `from`; an existing
+     * destination is never replaced. */
+    DIAMOND_FILE_PATH_COPY,
+    /* File.size(path): bytes, following a symlink; IOError when it cannot be read. */
+    DIAMOND_FILE_PATH_SIZE,
+    /* File.file?(path): a regular file (following a symlink); false rather than an
+     * error when it does not exist. File.symlink?(path) is lstat() on the path
+     * itself, so the two together say "a regular file that is not a link". */
+    DIAMOND_FILE_PATH_FILE,
+    DIAMOND_FILE_PATH_SYMLINK,
+    /* Dir.mkdir(path, mode = 0o777): the second operand is an Int, unlike the
+     * String second operand of the other selectors. Dir.delete(path) is rmdir
+     * (an empty directory only); Dir.sync(path) is fsync of the directory itself. */
+    DIAMOND_FILE_PATH_MKDIR,
+    DIAMOND_FILE_PATH_RMDIR,
+    DIAMOND_FILE_PATH_DIRSYNC,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

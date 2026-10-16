@@ -4522,12 +4522,19 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondString *path=(const DiamondString *)registers[arg1].as.object;
                 const bool has_second=registers[arg2].kind!=DIAMOND_VALUE_NIL;
-                if(has_second&&(registers[arg2].kind!=DIAMOND_VALUE_OBJECT||
+                /* Dir.mkdir's second operand is the mode, an Int; every other selector
+                 * takes a String there. */
+                const bool second_is_mode=selector==DIAMOND_FILE_PATH_MKDIR;
+                if(second_is_mode&&has_second&&registers[arg2].kind!=DIAMOND_VALUE_INT) {
+                    snprintf(vm->error,sizeof vm->error,"Dir.mkdir mode must be an Int");
+                    VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                if(has_second&&!second_is_mode&&(registers[arg2].kind!=DIAMOND_VALUE_OBJECT||
                                 registers[arg2].as.object->kind!=DIAMOND_OBJECT_STRING)) {
                     snprintf(vm->error,sizeof vm->error,"File path argument must be a String");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const DiamondString *second=has_second?
+                const DiamondString *second=has_second&&!second_is_mode?
                     (const DiamondString *)registers[arg2].as.object:nullptr;
                 DiamondValue path_result=DIAMOND_NIL;
                 DiamondVmStatus path_status=DIAMOND_VM_OK;
@@ -4570,6 +4577,67 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     case DIAMOND_FILE_PATH_WRITE:
                         VM_SANDBOX_GUARD("File.write", "filesystem");
                         path_status=file_write_helper(vm,path,second,&path_result);break;
+                    case DIAMOND_FILE_PATH_COPY:
+                        VM_SANDBOX_GUARD("File.copy", "filesystem");
+                        path_status=file_copy_helper(vm,path,second);
+                        path_result=registers[arg2];
+                        break;
+                    case DIAMOND_FILE_PATH_SIZE: {
+                        VM_SANDBOX_GUARD("File.size", "filesystem");
+                        struct stat path_stat;
+                        if(stat(path->chars,&path_stat)!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot read the size of '%.*s': %s",
+                                (int)path->length,path->chars,strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        path_result=DIAMOND_INT((int64_t)path_stat.st_size);
+                        break;
+                    }
+                    case DIAMOND_FILE_PATH_FILE: {
+                        VM_SANDBOX_GUARD("File.file?", "filesystem");
+                        struct stat path_stat;
+                        path_result=DIAMOND_BOOL(stat(path->chars,&path_stat)==0&&S_ISREG(path_stat.st_mode));
+                        break;
+                    }
+                    case DIAMOND_FILE_PATH_SYMLINK: {
+                        VM_SANDBOX_GUARD("File.symlink?", "filesystem");
+                        struct stat path_stat;
+                        path_result=DIAMOND_BOOL(lstat(path->chars,&path_stat)==0&&S_ISLNK(path_stat.st_mode));
+                        break;
+                    }
+                    case DIAMOND_FILE_PATH_MKDIR: {
+                        VM_SANDBOX_GUARD("Dir.mkdir", "filesystem");
+                        const mode_t mode=has_second?(mode_t)(registers[arg2].as.integer&07777):0777;
+                        if(mkdir(path->chars,mode)!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot create directory '%.*s': %s",
+                                (int)path->length,path->chars,strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        path_result=registers[arg1];
+                        break;
+                    }
+                    case DIAMOND_FILE_PATH_RMDIR:
+                        VM_SANDBOX_GUARD("Dir.delete", "filesystem");
+                        if(rmdir(path->chars)!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot remove directory '%.*s': %s",
+                                (int)path->length,path->chars,strerror(errno));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        path_result=registers[arg1];
+                        break;
+                    case DIAMOND_FILE_PATH_DIRSYNC: {
+                        VM_SANDBOX_GUARD("Dir.sync", "filesystem");
+                        const int directory=open(path->chars,O_RDONLY|O_DIRECTORY);
+                        const int saved=directory<0?errno:(fsync(directory)!=0?errno:0);
+                        if(directory>=0)close(directory);
+                        if(saved!=0) {
+                            snprintf(vm->error,sizeof vm->error,"cannot sync directory '%.*s': %s",
+                                (int)path->length,path->chars,strerror(saved));
+                            VM_RETURN(DIAMOND_VM_IO_ERROR);
+                        }
+                        path_result=registers[arg1];
+                        break;
+                    }
                     case DIAMOND_FILE_PATH_DIRECTORY: {
                         VM_SANDBOX_GUARD("File.directory?", "filesystem");
                         struct stat path_stat;
