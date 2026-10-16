@@ -293,6 +293,51 @@ jobs:
   # against musl, so claiming that coverage here would be dishonest, not
   # just broader. See docs/portability.md for the full inventory of what
   # building and testing against musl actually required.
+  # `diamond build --target` for a real foreign architecture: an aarch64
+  # sysroot is assembled with dnf (--forcearch), the aarch64 kit is built with
+  # the host clang + lld, and the resulting binary runs under qemu-user.
+  test-cross-aarch64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: fedora:latest
+      options: --init
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Install host toolchain and emulator
+        run: |
+          dnf install -y gcc make git diffutils findutils file bc clang lld \
+            qemu-user-static openssl-devel sqlite-devel libpq-devel \
+            mariadb-connector-c-devel zlib-devel libxcrypt-devel
+      # Download the aarch64 rpms and unpack them; nothing is installed, so no
+      # foreign-architecture scriptlet ever runs.
+      - name: Assemble the aarch64 sysroot
+        run: |
+          dnf install -y dnf-plugins-core cpio
+          mkdir /dl /sysroot
+          dnf download --use-host-config --releasever="$(rpm -E %fedora)" \
+            --installroot=/dl --forcearch=aarch64 --resolve --alldeps \
+            --destdir=/dl/rpms \
+            glibc-devel gcc libgcc openssl-devel sqlite-devel libpq-devel \
+            mariadb-connector-c-devel zlib-devel libxcrypt-devel
+          cd /sysroot
+          for rpm in /dl/rpms/*.aarch64.rpm /dl/rpms/*.noarch.rpm; do
+            [ -e "$rpm" ] || continue
+            rpm2cpio "$rpm" | cpio -idmu --quiet
+          done
+      - name: Build the host runtime
+        run: make -j2 debug
+      - name: Cross-build the kit and run the result
+        run: |
+          gccdir="$(dirname "$(find /sysroot/usr/lib/gcc -name crtbegin.o | head -1)")"
+          DIAMOND_CROSS_SYSROOT=/sysroot \
+          DIAMOND_CROSS_TARGET=aarch64-redhat-linux-gnu \
+          DIAMOND_CROSS_FLAGS_EXTRA="--gcc-install-dir=$gccdir -fuse-ld=lld" \
+          DIAMOND_CROSS_RUN="qemu-aarch64-static -L /sysroot" \
+          make test-cross-build
+
   test-musl:
     runs-on: ubuntu-latest
     timeout-minutes: 20
