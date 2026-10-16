@@ -22,7 +22,7 @@ newline-terminated line of the candidate.
 ## Building and testing
 
 `make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
-builds the module and drives it through `wasm/web/diamond-wasm.js`: results, session state,
+builds the module (it fetches the SQLite amalgamation, so it needs network access the first time) and drives it through `wasm/web/diamond-wasm.js`: results, session state,
 continuation lines, the portable crypto's known answers, and an ordinary error for every
 unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
 
@@ -30,10 +30,16 @@ unavailable feature. CI runs it as the `test-wasm` job, downloading wasi-sdk 34.
 
 - **Fibers** need stack switching. `getcontext` is a stub that fails, so `Fiber.new` raises.
 - **Threads, Supervisor, Channel** need pthreads; wasi-libc without threads has none.
-- **SQLite, PostgreSQL, MySQL, zlib, TLS and OpenSSL** are compiled out (the `MINIMAL=1`
-  switches): `SQLite3.open`, `PostgreSQL.open`, `MySQL.open`, `Gzip.compress`, `TLSServer.listen` and
-  `Cipher.encrypt` raise an ordinary error ("... is not compiled into this build"), and none of
-  their headers is needed to build. `Digest`, `HMAC`, `SecureRandom` and `Base64` still work, through
+- **SQLite runs, in memory.** `SQLite3.open(":memory:")` works with the full query and statement
+  API; opening a file raises "cannot open ... unable to open database file" (there is no filesystem
+  to put one in). The build fetches the pinned amalgamation from sqlite.org (SHA3-256 checked in
+  `wasm/build.sh`) and compiles it with `SQLITE_OS_OTHER`, no WAL, no extension loading, one thread;
+  `wasm/sqlite_vfs.c` supplies the time and randomness an in-memory database needs. It adds about
+  160 KB gzipped.
+- **PostgreSQL, MySQL, zlib, TLS and OpenSSL** are compiled out (`NO_POSTGRES`, `NO_MYSQL`,
+  `NO_ZLIB`, `NO_TLS`, `NO_CRYPTO`): `PostgreSQL.open`, `MySQL.open`, `Gzip.compress`,
+  `TLSServer.listen` and `Cipher.encrypt` raise an ordinary error ("... is not compiled into this
+  build"), and none of their headers is needed to build. `Digest`, `HMAC`, `SecureRandom` and `Base64` still work, through
   `src/portable_crypto.c` (SHA-256, SHA-1, HMAC, Base64, and `getentropy` for random bytes).
 - **Sockets, name lookup, subprocesses, signal handlers and temporary files** are not available.
   `wasm/posix_stubs.c` defines those calls to fail with `ENOSYS`, so a program gets an ordinary
@@ -55,5 +61,4 @@ is compiled from source once per page load (about 100 ms).
 
 ## Not done
 
-- SQLite from the amalgamation, as an opt-in for the browser.
 - AES-GCM (`Cipher`) in portable code.
