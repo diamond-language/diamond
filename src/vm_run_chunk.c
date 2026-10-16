@@ -4598,6 +4598,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         path_result=DIAMOND_INT((int64_t)path_stat.st_size);
                         break;
                     }
+                    case DIAMOND_FILE_PATH_SHA256:
+                        VM_SANDBOX_GUARD("File.sha256", "filesystem");
+                        path_status=file_sha256_helper(vm,path,&path_result);break;
                     case DIAMOND_FILE_PATH_MODE: {
                         VM_SANDBOX_GUARD("File.mode", "filesystem");
                         struct stat path_stat;

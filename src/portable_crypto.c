@@ -78,38 +78,85 @@ static void sha1_block(uint32_t state[5], const uint8_t block[64]) {
     state[0] += a; state[1] += b; state[2] += c; state[3] += d; state[4] += e;
 }
 
-/* One-shot digest of `data` with Merkle-Damgard padding; both hashes are big-endian. */
-static void digest_message(const EVP_MD *type, const uint8_t *data, size_t length,
-        unsigned char *out) {
-    const bool sha256 = type->kind == DIGEST_SHA256;
+/* Streaming digest state: the chaining value, the not-yet-compressed tail (under one block)
+ * and the byte count so far. Both hashes pad with 0x80, zeros and the big-endian bit length. */
+struct evp_md_ctx_st {
+    const EVP_MD *type;
     uint32_t state[8];
-    if (sha256) {
+    uint8_t pending[64];
+    size_t pending_length;
+    uint64_t total;
+};
+
+EVP_MD_CTX *EVP_MD_CTX_new(void) { return calloc(1, sizeof(EVP_MD_CTX)); }
+void EVP_MD_CTX_free(EVP_MD_CTX *context) { free(context); }
+
+int EVP_DigestInit_ex(EVP_MD_CTX *context, const EVP_MD *type, void *impl) {
+    (void)impl;
+    if (context == nullptr || type == nullptr) return 0;
+    memset(context, 0, sizeof *context);
+    context->type = type;
+    if (type->kind == DIGEST_SHA256) {
         static const uint32_t initial[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
                                             0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-        memcpy(state, initial, sizeof initial);
+        memcpy(context->state, initial, sizeof initial);
     } else {
         static const uint32_t initial[5] = {0x67452301,0xefcdab89,0x98badcfe,0x10325476,0xc3d2e1f0};
-        memcpy(state, initial, sizeof initial);
+        memcpy(context->state, initial, sizeof initial);
     }
-    size_t offset = 0;
-    for (; offset + 64 <= length; offset += 64) {
-        if (sha256) sha256_block(state, data + offset); else sha1_block(state, data + offset);
+    return 1;
+}
+
+static void compress_block(EVP_MD_CTX *context, const uint8_t *block) {
+    if (context->type->kind == DIGEST_SHA256) sha256_block(context->state, block);
+    else sha1_block(context->state, block);
+}
+
+int EVP_DigestUpdate(EVP_MD_CTX *context, const void *data, size_t count) {
+    if (context == nullptr || context->type == nullptr) return 0;
+    const uint8_t *bytes = data;
+    context->total += count;
+    if (context->pending_length > 0) {
+        const size_t room = 64 - context->pending_length;
+        const size_t take = count < room ? count : room;
+        memcpy(context->pending + context->pending_length, bytes, take);
+        context->pending_length += take; bytes += take; count -= take;
+        if (context->pending_length < 64) return 1;
+        compress_block(context, context->pending);
+        context->pending_length = 0;
     }
+    for (; count >= 64; bytes += 64, count -= 64) compress_block(context, bytes);
+    memcpy(context->pending, bytes, count);
+    context->pending_length = count;
+    return 1;
+}
+
+int EVP_DigestFinal_ex(EVP_MD_CTX *context, unsigned char *md, unsigned int *size) {
+    if (context == nullptr || context->type == nullptr || md == nullptr) return 0;
     uint8_t tail[128] = {0};
-    const size_t remaining = length - offset;
-    memcpy(tail, data + offset, remaining);
+    const size_t remaining = context->pending_length;
+    memcpy(tail, context->pending, remaining);
     tail[remaining] = 0x80;
     const size_t tail_length = remaining + 1 + 8 <= 64 ? 64 : 128;
-    const uint64_t bits = (uint64_t)length * 8u;
+    const uint64_t bits = context->total * 8u;
     for (size_t i = 0; i < 8; i++) tail[tail_length - 1 - i] = (uint8_t)(bits >> (8 * i));
-    for (size_t block = 0; block < tail_length; block += 64) {
-        if (sha256) sha256_block(state, tail + block); else sha1_block(state, tail + block);
-    }
-    const size_t words = type->size / 4;
+    for (size_t block = 0; block < tail_length; block += 64) compress_block(context, tail + block);
+    const size_t words = context->type->size / 4;
     for (size_t i = 0; i < words; i++) {
-        out[i * 4] = (uint8_t)(state[i] >> 24); out[i * 4 + 1] = (uint8_t)(state[i] >> 16);
-        out[i * 4 + 2] = (uint8_t)(state[i] >> 8); out[i * 4 + 3] = (uint8_t)state[i];
+        md[i * 4] = (uint8_t)(context->state[i] >> 24); md[i * 4 + 1] = (uint8_t)(context->state[i] >> 16);
+        md[i * 4 + 2] = (uint8_t)(context->state[i] >> 8); md[i * 4 + 3] = (uint8_t)context->state[i];
     }
+    if (size != nullptr) *size = (unsigned int)context->type->size;
+    return 1;
+}
+
+/* One-shot digest of `data`. */
+static void digest_message(const EVP_MD *type, const uint8_t *data, size_t length,
+        unsigned char *out) {
+    EVP_MD_CTX context;
+    EVP_DigestInit_ex(&context, type, nullptr);
+    EVP_DigestUpdate(&context, data, length);
+    EVP_DigestFinal_ex(&context, out, nullptr);
 }
 
 int EVP_Digest(const void *data, size_t count, unsigned char *md, unsigned int *size,

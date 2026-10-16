@@ -12,8 +12,14 @@
 #define EVP_MAX_MD_SIZE 64
 
 typedef struct evp_md_st EVP_MD;
+typedef struct evp_md_ctx_st EVP_MD_CTX;
 const EVP_MD *EVP_sha256(void);
 const EVP_MD *EVP_sha1(void);
+EVP_MD_CTX *EVP_MD_CTX_new(void);
+void EVP_MD_CTX_free(EVP_MD_CTX *context);
+int EVP_DigestInit_ex(EVP_MD_CTX *context, const EVP_MD *type, void *impl);
+int EVP_DigestUpdate(EVP_MD_CTX *context, const void *data, size_t count);
+int EVP_DigestFinal_ex(EVP_MD_CTX *context, unsigned char *md, unsigned int *size);
 int EVP_Digest(const void *data, size_t count, unsigned char *md, unsigned int *size,
                const EVP_MD *type, void *impl);
 unsigned char *HMAC(const EVP_MD *evp_md, const void *key, int key_len,

@@ -249,7 +249,7 @@ All three are recognized in the compiler the same way `File.open`/
 same name). See [Sandbox mode](sandbox.md) for how `--sandbox` gates
 all three under its `filesystem` capability.
 
-### Files and directories: `File.copy`, `File.size`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
+### Files and directories: `File.copy`, `File.size`, `File.sha256`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
 
 ```ruby
 Dir.mkdir("backup", 0o700)         # => "backup"; IOError if it exists or the parent is missing
@@ -268,6 +268,7 @@ Dir.delete("backup")               # rmdir: an empty directory only
   bits (subject to the umask) and copies the bytes. An existing destination is
   never replaced (`IOError`), and a failed copy removes the partial file. The
   source must be a regular file.
+- `File.sha256(path)` is the lowercase hex SHA-256 of the file, read in chunks so a large file never has to fit in memory (`Digest.sha256(File.read(path))` gives the same digest).
 - `File.mode(path)` is the permission bits as an `Int` (`File.mode(p) & 0o077 == 0` for a private file).
 - `File.size` reads the size through a symlink and raises `IOError` when the
   path cannot be read. `File.file?` and `File.symlink?` read as `false`, not an

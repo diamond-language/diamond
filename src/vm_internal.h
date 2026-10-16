@@ -327,6 +327,7 @@ DIAMOND_INTERNAL DiamondVmStatus file_publish_helper(DiamondVm *vm,const Diamond
 DIAMOND_INTERNAL DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from, const DiamondString *to);
 DIAMOND_INTERNAL DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,const DiamondString *to);
+DIAMOND_INTERNAL DiamondVmStatus file_sha256_helper(DiamondVm *vm,const DiamondString *path,DiamondValue *out_result);
 DIAMOND_INTERNAL DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path);
 DIAMOND_INTERNAL DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *data,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm, DiamondProcessHandle *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
