@@ -149,6 +149,70 @@ DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path) {
     return DIAMOND_VM_OK;
 }
 
+/* File.copy(from, to): the bytes of `from` in a new file at `to`. The
+ * destination is created exclusively, so nothing is ever replaced, and gets
+ * the source's permission bits (subject to the umask). A failed copy removes
+ * the partial destination. */
+DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,
+                                 const DiamondString *to) {
+    if(memchr(from->chars,'\0',from->length)!=nullptr||
+       memchr(to->chars,'\0',to->length)!=nullptr||from->length==0||to->length==0) {
+        snprintf(vm->error,sizeof vm->error,"File.copy paths must be nonempty and contain no NUL");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int source=open(from->chars,O_RDONLY);
+    if(source<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
+                 (int)from->length,from->chars,strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    struct stat status;
+    if(fstat(source,&status)!=0||!S_ISREG(status.st_mode)) {
+        snprintf(vm->error,sizeof vm->error,"'%.*s' is not a regular file",
+                 (int)from->length,from->chars);
+        close(source);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    const int target=open(to->chars,O_WRONLY|O_CREAT|O_EXCL,status.st_mode&0777);
+    if(target<0) {
+        snprintf(vm->error,sizeof vm->error,"cannot create '%.*s': %s",
+                 (int)to->length,to->chars,strerror(errno));
+        close(source);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    char buffer[65536];
+    int saved=0;
+    for(;;) {
+        const ssize_t got=read(source,buffer,sizeof buffer);
+        if(got<0) {
+            if(errno==EINTR)continue;
+            saved=errno;
+            break;
+        }
+        if(got==0)break;
+        size_t done=0;
+        while(done<(size_t)got) {
+            const ssize_t put=write(target,buffer+done,(size_t)got-done);
+            if(put<0) {
+                if(errno==EINTR)continue;
+                saved=errno;
+                break;
+            }
+            done+=(size_t)put;
+        }
+        if(saved!=0)break;
+    }
+    close(source);
+    if(close(target)!=0&&saved==0)saved=errno;
+    if(saved!=0) {
+        unlink(to->chars);
+        snprintf(vm->error,sizeof vm->error,"cannot copy '%.*s': %s",
+                 (int)from->length,from->chars,strerror(saved));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* File.rename(from, to): rename(2), so an existing `to` is replaced
  * atomically -- a reader sees the old file or the new one, never a
  * partial write. Both paths must be on the same filesystem. */

@@ -5327,14 +5327,33 @@ static uint16_t parse_file_delete_arguments(Compiler *compiler) {
     return dest;
 }
 
+static uint16_t parse_file_path_unary_call(Compiler *compiler,DiamondFilePathFunction id);
+static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFunction id);
+
 /* `Dir.entries(path)` -- single String argument, mirrors
  * parse_file_delete_arguments's own single-fixed-argument shape
  * exactly. */
 static uint16_t parse_dir_entries_call(Compiler *compiler) {
     advance_token(compiler); /* consume '.' */
+    /* Dir.mkdir/delete/sync share DIAMOND_OP_FILE_PATH's fixed-arity shape. */
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
+        const DiamondSpan method=compiler->current.span;
+        if(name_equals(compiler,"mkdir",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_MKDIR);
+        }
+        if(name_equals(compiler,"delete",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_RMDIR);
+        }
+        if(name_equals(compiler,"sync",method,false)) {
+            advance_token(compiler);
+            return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_DIRSYNC);
+        }
+    }
     if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
        !name_equals(compiler,"entries",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'entries' after 'Dir'");
+        fail(compiler,compiler->current.span,"expected 'entries', 'mkdir', 'delete' or 'sync' after 'Dir'");
         return 0;
     }
     advance_token(compiler); /* consume 'entries' */
@@ -5464,6 +5483,10 @@ static uint16_t parse_file_path_binary_call(Compiler *compiler,DiamondFilePathFu
             fail(compiler,compiler->current.span,"File.rename requires a source and destination path");
             return 0;
         }
+        if(id==DIAMOND_FILE_PATH_COPY) {
+            fail(compiler,compiler->current.span,"File.copy requires a source and destination path");
+            return 0;
+        }
         second_register=allocate_register(compiler);
         emit_instruction(compiler,DIAMOND_OP_NIL,second_register,0,0,1);
     }
@@ -5548,14 +5571,37 @@ static uint16_t parse_file_call(Compiler *compiler) {
         advance_token(compiler);
         return parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_READ);
     }
+    if(name_equals(compiler,"copy",method,false)) {
+        advance_token(compiler);
+        return parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_COPY);
+    }
+    if(name_equals(compiler,"size",method,false)) {
+        advance_token(compiler);
+        const uint16_t size=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_SIZE);
+        compiler->known_types[size]=DIAMOND_TYPE_INT;
+        return size;
+    }
+    if(name_equals(compiler,"file?",method,false)) {
+        advance_token(compiler);
+        const uint16_t result=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_FILE);
+        compiler->known_types[result]=DIAMOND_TYPE_BOOL;
+        return result;
+    }
+    if(name_equals(compiler,"symlink?",method,false)) {
+        advance_token(compiler);
+        const uint16_t result=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_SYMLINK);
+        compiler->known_types[result]=DIAMOND_TYPE_BOOL;
+        return result;
+    }
     if(name_equals(compiler,"write",method,false)) {
         advance_token(compiler);
         const uint16_t written=parse_file_path_binary_call(compiler,DIAMOND_FILE_PATH_WRITE);
         compiler->known_types[written]=DIAMOND_TYPE_INT;
         return written;
     }
-    fail(compiler,method,"unknown File method (expected open/read/write/exist?/delete/rename/"
-        "publish/sync/join/dirname/basename/extname/absolute?/directory?/expand_path)");
+    fail(compiler,method,"unknown File method (expected open/read/write/copy/size/exist?/file?/"
+        "symlink?/delete/rename/publish/sync/join/dirname/basename/extname/absolute?/directory?/"
+        "expand_path)");
     return 0;
 }
 
