@@ -800,11 +800,12 @@ DIAMOND_INTERNAL DiamondInstance *allocate_instance(DiamondVm *vm,const DiamondC
 static inline DiamondClosure *allocate_closure(DiamondVm *vm,uint16_t function_index,
                                         const DiamondValue *captures,size_t count) {
     if (!maybe_collect(vm)) return nullptr;
-    DiamondClosure *closure=malloc(sizeof(DiamondClosure));if(closure==nullptr)return nullptr;
-    *closure=(DiamondClosure){.object={.next=vm->young_objects,.kind=DIAMOND_OBJECT_CLOSURE},
-      .function_index=function_index,.capture_count=(uint8_t)count};
-    for(size_t i=0;i<count;i++)closure->captures[i]=captures[i];
-    vm->young_objects=&closure->object;vm->bytes_allocated+=sizeof(DiamondClosure);return closure;
+    const size_t size=sizeof(DiamondClosure)+count*sizeof(DiamondValue);
+    DiamondClosure *closure=calloc(1,size);if(closure==nullptr)return nullptr;
+    closure->object.next=vm->young_objects;closure->object.kind=DIAMOND_OBJECT_CLOSURE;
+    closure->function_index=function_index;closure->capture_count=(uint8_t)count;
+    for(size_t i=0;i<count;i++)closure->captures[i]=captures==nullptr?DIAMOND_NIL:captures[i];
+    vm->young_objects=&closure->object;vm->bytes_allocated+=size;return closure;
 }
 
 static inline DiamondCell *allocate_cell(DiamondVm *vm,DiamondValue value) {

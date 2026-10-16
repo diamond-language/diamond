@@ -758,7 +758,8 @@ static void sweep_list(DiamondVm *vm, DiamondObject **list_head,
                 free(hash->constraints[index].type_variable_bindings);
             free(hash->entries);free(hash->buckets);free(hash->dirty_cards);
         } else if(unreached->kind==DIAMOND_OBJECT_CLOSURE) {
-            size=sizeof(DiamondClosure);
+            size=sizeof(DiamondClosure)+
+                ((DiamondClosure *)unreached)->capture_count*sizeof(DiamondValue);
         } else if(unreached->kind==DIAMOND_OBJECT_FIBER) {
             size=sizeof(DiamondFiberHandle);
             diamond_fiber_free(((DiamondFiberHandle *)unreached)->fiber);
@@ -4933,6 +4934,11 @@ DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondInstance *range=(const DiamondInstance *)pattern.as.object;
         if(range->class==&chunk->classes[vm->range_class_index]&&range->field_count>=3) {
             int from_start=0,from_end=0;
+            if(range->fields[1].kind==DIAMOND_VALUE_NIL) {
+                /* Endless: `when 5..` matches anything from 5 up. */
+                if(!case_numeric_compare(subject,range->fields[0],&from_start))return DIAMOND_VM_OK;
+                *matched=from_start>=0;return DIAMOND_VM_OK;
+            }
             if(!case_numeric_compare(subject,range->fields[0],&from_start)||
                !case_numeric_compare(subject,range->fields[1],&from_end))return DIAMOND_VM_OK;
             const bool exclusive=range->fields[2].kind==DIAMOND_VALUE_BOOL&&
@@ -7244,8 +7250,10 @@ static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
     const DiamondInstance *instance=(const DiamondInstance *)index_value.as.object;
     if(instance->class!=&chunk->classes[vm->range_class_index])return -1;
     int64_t start=instance->fields[0].as.integer;
-    int64_t end=instance->fields[1].as.integer;
-    const bool exclusive=instance->fields[2].as.boolean;
+    /* An endless range (`a[1..]`) has a nil end: it runs to the last element. */
+    const bool endless=instance->fields[1].kind!=DIAMOND_VALUE_INT;
+    int64_t end=endless?-1:instance->fields[1].as.integer;
+    const bool exclusive=!endless&&instance->fields[2].as.boolean;
     /* A negative bound counts from the end, as in Ruby: a[1..-1] is all but the first. */
     const int64_t original_start=start;
     if(start<0&&array_count<=(uint64_t)INT64_MAX)start+=(int64_t)array_count;

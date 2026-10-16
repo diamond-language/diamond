@@ -1903,21 +1903,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CLOSURE: {
                 uint16_t dest=0;uint8_t count=0;uint16_t index=0;
                 READ_SHORT(dest);READ_SHORT(index);READ_BYTE(count);
-                /* This check is load-bearing, unlike a same-shaped one
-                 * might look for DIAMOND_MAX_ARGUMENTS elsewhere: count
-                 * is a uint8_t (0-255) but DIAMOND_MAX_CAPTURES is only
-                 * 32 (object.h -- DiamondClosure's own captures field is
-                 * a real per-instance runtime cost, not a one-off
-                 * compile-time buffer), so count genuinely can exceed it.
-                 * A first pass of the capture-cap fix this constant is
-                 * part of dropped this check by (wrongly, at the time)
-                 * assuming it -- see object.h's own DIAMOND_MAX_CAPTURES
-                 * comment for exactly what that let happen. */
-                if(index>=chunk->function_count||count>DIAMOND_MAX_CAPTURES)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                DiamondValue captures[DIAMOND_MAX_CAPTURES];
-                for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);captures[i]=registers[reg];}
-                DiamondClosure *created=allocate_closure(vm,index,captures,count);
+                /* count is a uint8_t, so DIAMOND_MAX_CAPTURES (255) bounds it; this only rejects bytecode
+                 * that names a function that does not exist. */
+                if(index>=chunk->function_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                DiamondClosure *created=allocate_closure(vm,index,nullptr,count);
                 if(created==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                for(size_t i=0;i<count;i++){uint16_t reg=0;READ_SHORT(reg);created->captures[i]=registers[reg];}
                 created->is_block=strcmp(chunk->functions[index]->name,"<block>")==0;
                 if(created->is_block) {
                     created->break_target=frame.serial;

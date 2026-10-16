@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Added
 
+- Endless ranges: `a[1..]`, `"hello"[1..]`, `(1..).each`, `case n when 90..`. A Range whose end is `nil`
+  indexes to the end of an Array or String and matches everything above its start; `to_a`, `length`,
+  `last`, `step` and `reverse_each` on one raise `RangeError`; `endless?` tells them apart.
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
 - Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.mode`, `File.file?` and
   `File.symlink?`.
@@ -33,6 +36,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- A block or nested function could capture at most 32 enclosing locals, so a script or method with
+  more than 32 locals could not use a block ("block sees too many lexical bindings"). The limit is now
+  255 (a function holds at most 64 locals); a closure only pays for the captures it has.
 - `array[1..-1]` returned `[]` and `array[-2..-1]` raised: a negative bound in a Range index now counts
   from the end of the Array, as in Ruby. `String#[]` now accepts a Range too (`"hello"[1..-1]`).
 

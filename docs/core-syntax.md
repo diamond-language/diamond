@@ -593,13 +593,20 @@ the desugaring reuses the exact same `NEW` instruction sequence
 `&&`/`||`, matching Ruby's own precedence table: `1..n+1` reads as
 `1..(n+1)`, and `a > 0 .. b < 10` reads as `(a>0)..(b<10)`.
 
+`1..` (nothing after the dots) is an endless range, written as a Range whose end is `nil`: `arr[1..]` is
+everything from index 1 on, `case n when 90.. then ...` matches anything from 90 up, `(1..).each`
+runs forever until a `break`, and `include?`, `first(n)` and `endless?` work. Anything that needs the
+whole range (`to_a`, `length`, `last`, `step`, `reverse_each`) raises `RangeError`. A negative bound
+in an Array or String index counts from the end: `arr[1..-1]` drops the first element, `arr[0...-1]`
+the last.
+
 `Range` includes `Enumerable`, so `.select`/`.count`/`.any?`/`.all?`/
 `.map`/`.reduce` and the rest of `Enumerable`'s methods all work on a range
 the same way they do on any other `Enumerable`-including class (see
 "Collections" below).
 
-Scope, deliberately: `Range` is `Int`-only for v1 (`start`/`end` must
-both be `Int`) — constructing one with `Float` or any other type raises
+Scope, deliberately: `Range` is `Int`-only for v1 (`start` must be an `Int`, `end` an
+`Int` or `nil`) — constructing one with `Float` or any other type raises
 a `TypeError`, the same cut `array_sort` already makes elsewhere.
 Range-based indexing/slicing works for `Array` (not `Hash` — real Ruby
 doesn't support `Hash#[]` with a Range either, `[]` there is always plain
