@@ -123,6 +123,10 @@ static inline void SSL_get0_alpn_selected(const SSL *ssl, const unsigned char **
 }
 static inline int SSL_set_session(SSL *ssl, SSL_SESSION *session) { (void)ssl; (void)session; return 0; }
 static inline int SSL_session_reused(const SSL *ssl) { (void)ssl; return 0; }
+#define TLSEXT_NAMETYPE_host_name 0
+static inline const char *SSL_get_servername(const SSL *ssl, int type) {
+    (void)ssl; (void)type; return nullptr;
+}
 static inline void SSL_SESSION_free(SSL_SESSION *session) { (void)session; }
 static inline int i2d_SSL_SESSION(const SSL_SESSION *session, unsigned char **out) {
     (void)session; (void)out; return 0;
