@@ -16,6 +16,7 @@ authoritative fine-grained record.
   `last`, `step` and `reverse_each` on one raise `RangeError`; `endless?` tells them apart.
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
 - `Array#pack` and `String#unpack`/`unpack1` for integers, strings, hex and UTF-8 (no floats).
+- Self-hosted parser: hex/octal/binary integer literals, `&`, `|` and `^`, `.class()` and `is_a?(Type)`.
 - `respond_to?` on a String, Array, Hash, Int or Float (native, prelude and extension methods).
 - Regex literals: `/pattern/imx`, equivalent to `Regexp.new` (a slash after a value is still division).
 - `ENV["K"] = "v"` works at the start of a statement, and child processes get the current `ENV`.
