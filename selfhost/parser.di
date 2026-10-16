@@ -3558,7 +3558,7 @@ class Parser
   # surfaces from the VM instead, mirroring compiler.c's own parse_invoke.
   def compile_invoke(receiver)
     self.advance_token()
-    if @current.kind() != :identifier
+    if @current.kind() != :identifier && @current.kind() != :class
       self.fail("expected method name after '.'")
       return 0
     end
