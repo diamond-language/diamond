@@ -14,7 +14,9 @@ IO.poll([handle.stdout()], [], 5000)
 spawned = handle.stdout().read(100)
 spawned_exit = handle.wait()
 
-no_stdin = Process.spawn(["true"]).stdin()
+quiet = Process.spawn(["true"])
+no_stdin = quiet.stdin()
+quiet.wait()
 
 rejected = false
 begin

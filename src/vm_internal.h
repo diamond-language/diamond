@@ -326,6 +326,7 @@ DIAMOND_INTERNAL DiamondVmStatus file_path_join_helper(DiamondVm *vm,const Diamo
 DIAMOND_INTERNAL DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *bytes);
 DIAMOND_INTERNAL DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path, DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus file_rename_helper(DiamondVm *vm,const DiamondString *from, const DiamondString *to);
+DIAMOND_INTERNAL DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,const DiamondString *to);
 DIAMOND_INTERNAL DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path);
 DIAMOND_INTERNAL DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path, const DiamondString *data,DiamondValue *result);
 DIAMOND_INTERNAL DiamondVmStatus process_handle_dispatch_helper(DiamondVm *vm, DiamondProcessHandle *target,const DiamondStringConstant *method_name, DiamondValue *registers,uint8_t argc,uint16_t dest);
@@ -401,6 +402,9 @@ typedef enum PendingKind : uint8_t {
     /* An ensure block run while a block's non-local return/break unwinds
      * through this frame; END_ENSURE resumes the unwinding. */
     PENDING_NONLOCAL,
+    /* A loop's break/next leaving begin levels: `continuation` is where it lands and
+     * `nonlocal_target` how many begin levels are still to leave after this ensure. */
+    PENDING_JUMP,
 } PendingKind;
 
 typedef struct PendingUnwind {
@@ -439,6 +443,29 @@ static inline size_t enter_ensure(UnwindHandler *handler,PendingUnwind *pending,
     handler->saved_pending=*pending;
     *pending=next;
     return handler->target;
+}
+
+/* Leaves `levels` begin levels, then jumps to `target`. Each level is one ENSURE handler (any
+ * RESCUE handlers above it are simply discarded): a live ensure body is entered with a
+ * PENDING_JUMP that resumes this unwinding when it ends, and one already running (the jump is
+ * written inside an ensure clause) is just left. Returns false on an inconsistent handler stack. */
+static inline bool unwind_for_jump(UnwindHandler *handlers,size_t *count,PendingUnwind *pending,
+        size_t levels,size_t target,size_t *ip) {
+    while(levels>0) {
+        while(*count>0&&handlers[*count-1].kind==HANDLER_RESCUE)(void)pop_unwind_handler(handlers,count,pending);
+        if(*count==0)return false;
+        UnwindHandler *top=&handlers[*count-1];
+        if(top->kind==HANDLER_ACTIVE_ENSURE) {
+            (void)pop_unwind_handler(handlers,count,pending);
+            levels--;
+            continue;
+        }
+        *ip=enter_ensure(top,pending,(PendingUnwind){.kind=PENDING_JUMP,
+            .continuation=target,.nonlocal_target=levels-1});
+        return true;
+    }
+    *ip=target;
+    return true;
 }
 
 typedef struct DiamondFrame {

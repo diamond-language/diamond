@@ -607,6 +607,12 @@ typedef enum DiamondOpCode : uint8_t {
      * layout selfhost/parser.di emits. */
     DIAMOND_OP_PROCESS_RUN_OPTIONS,
     DIAMOND_OP_PROCESS_SPAWN_OPTIONS,
+    /* count (1 byte), target (2 bytes): `break`/`next`/`redo` from inside
+     * begin/rescue/ensure blocks that sit within a loop. Leaves `count` of
+     * those begin levels -- discarding their rescue handlers and running each
+     * ensure body, in order -- and then jumps to `target`. A plain JUMP when
+     * the statement is not inside a begin within its loop. */
+    DIAMOND_OP_UNWIND_JUMP,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
 
@@ -640,6 +646,24 @@ typedef enum {
      * byte count. Both raise IOError when the file can't be opened. */
     DIAMOND_FILE_PATH_READ,
     DIAMOND_FILE_PATH_WRITE,
+    /* File.copy(from, to): a new file with the contents of `from`; an existing
+     * destination is never replaced. */
+    DIAMOND_FILE_PATH_COPY,
+    /* File.size(path): bytes, following a symlink; IOError when it cannot be read. */
+    DIAMOND_FILE_PATH_SIZE,
+    /* File.file?(path): a regular file (following a symlink); false rather than an
+     * error when it does not exist. File.symlink?(path) is lstat() on the path
+     * itself, so the two together say "a regular file that is not a link". */
+    DIAMOND_FILE_PATH_FILE,
+    DIAMOND_FILE_PATH_SYMLINK,
+    /* Dir.mkdir(path, mode = 0o777): the second operand is an Int, unlike the
+     * String second operand of the other selectors. Dir.delete(path) is rmdir
+     * (an empty directory only); Dir.sync(path) is fsync of the directory itself. */
+    DIAMOND_FILE_PATH_MKDIR,
+    DIAMOND_FILE_PATH_RMDIR,
+    DIAMOND_FILE_PATH_DIRSYNC,
+    /* File.mode(path): the permission bits (st_mode & 07777) as an Int. */
+    DIAMOND_FILE_PATH_MODE,
 } DiamondFilePathFunction;
 
 typedef enum DiamondMathFunction : uint8_t {

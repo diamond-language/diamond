@@ -24,6 +24,15 @@ Process.run(["wc", "-c"], {"stdin": "bytes to feed"})
   a child that exits early is not an error. `Process.spawn`: `true`
   gives the handle a writable pipe at `handle.stdin()` (see below).
 
+`Process.spawn` also takes three options that send the child's output to a
+file instead of a pipe, for a long-running child nobody is reading from:
+
+- **`"stdout"`** / **`"stderr"`** — a file path; the file is created (mode 0600)
+  and appended to. The matching `handle.stdout()` / `handle.stderr()` is `nil`.
+- **`"stderr_to_stdout"`** — `true` points the child's stderr at wherever its
+  stdout goes (the pipe, or the `"stdout"` file), so the two interleave in
+  order. `handle.stderr()` is `nil`.
+
 An unknown key, or a value of the wrong type, raises `TypeError`.
 
 ```ruby

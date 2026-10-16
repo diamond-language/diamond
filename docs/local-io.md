@@ -249,6 +249,35 @@ All three are recognized in the compiler the same way `File.open`/
 same name). See [Sandbox mode](sandbox.md) for how `--sandbox` gates
 all three under its `filesystem` capability.
 
+### Files and directories: `File.copy`, `File.size`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
+
+```ruby
+Dir.mkdir("backup", 0o700)         # => "backup"; IOError if it exists or the parent is missing
+File.copy("db.sqlite", "backup/db.sqlite")   # => the destination path
+File.size("backup/db.sqlite")      # => bytes, as an Int
+File.file?("backup/db.sqlite")     # => true for a regular file (a symlink to one counts)
+File.symlink?("backup/db.sqlite")  # => true only for a symlink itself, not what it points at
+Dir.sync("backup")                 # fsync the directory so its entries are durable
+Dir.delete("backup")               # rmdir: an empty directory only
+```
+
+- `Dir.mkdir(path, mode = 0o777)` creates one directory (the mode is subject to
+  the umask). An existing path, or a missing parent, raises `IOError`; nothing
+  is created recursively.
+- `File.copy(from, to)` creates `to` exclusively with the source's permission
+  bits (subject to the umask) and copies the bytes. An existing destination is
+  never replaced (`IOError`), and a failed copy removes the partial file. The
+  source must be a regular file.
+- `File.mode(path)` is the permission bits as an `Int` (`File.mode(p) & 0o077 == 0` for a private file).
+- `File.size` reads the size through a symlink and raises `IOError` when the
+  path cannot be read. `File.file?` and `File.symlink?` read as `false`, not an
+  error, for a missing path, like `File.exist?`. `File.file?(p) &&
+  !File.symlink?(p)` is "a regular file that is not a link".
+- `Dir.delete` removes an empty directory; `Dir.sync` flushes the directory
+  itself (`File.sync` flushes a file and its parent).
+
+All are gated by the `filesystem` sandbox capability.
+
 ## Atomic creation: `File.publish(path, bytes)`
 
 Publishes a complete String as a new file and returns its path. Both arguments

@@ -9,6 +9,10 @@ authoritative fine-grained record.
 ### Added
 
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
+- Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.mode`, `File.file?` and
+  `File.symlink?`.
+- `Process.spawn` options `"stdout"`, `"stderr"` (append the child's output to a file) and
+  `"stderr_to_stdout"` (merge the two).
 - `Process.run` and `Process.spawn` take an options Hash: `"env"` (merged over the inherited
   environment), `"cwd"`, and `"stdin"` (a String to feed, or `true` for a writable
   `handle.stdin()` pipe on spawn; `Process::Stream#write`).
@@ -31,6 +35,9 @@ authoritative fine-grained record.
 
 - A read on a socket or file that timed out left the stream in an error state, so every later read on
   it failed too ("read error: Success") even after data arrived; the error is now cleared once reported.
+- `break` and `next` from inside a `begin`/`rescue`/`ensure` within a loop skipped the `ensure` body (or ran the wrong
+  one) and left the handler stack inconsistent, so code after the loop could fail with "invalid bytecode".
+  They now leave the begin blocks properly, running each `ensure` once and in order.
 
 ### Tooling
 
