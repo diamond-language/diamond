@@ -1,0 +1,95 @@
+# Drives connect_test.di: real outbound TCP completion, refusal, cancellation and descriptor
+# ownership.
+#
+#   diamond connect_driver.di PROGRAM...
+require "../../../tests/harness"
+
+command = ARGV
+env = {"DIAMOND_NO_CACHE": "1"}
+modes = ["success", "raw", "refused", "leaks", "cancel_leaks", "pending", "cancel", "deadline",
+         "signal", "pre", "ipv6"]
+saturating = ["pending", "cancel", "deadline", "signal", "cancel_leaks"]
+
+modes.each() do |mode|
+  address = mode == "ipv6" ? "::1" : "127.0.0.1"
+  listener = nil
+  port = 0
+  begin
+    if mode == "refused" || mode == "leaks" || mode == "pre"
+      # Nothing listens on the port: a connect is refused.
+      holder = TCPServer.listen(0, host: address)
+      port = holder.port()
+      holder.close()
+    else
+      # A one-slot backlog that is never accepted from, so it can be filled deterministically
+      # instead of relying on unroutable addresses or the host network's timeouts.
+      listener = TCPServer.listen(0, host: address, backlog: 1)
+      port = listener.port()
+    end
+  rescue error: IOError
+    raise error unless mode == "ipv6"
+    puts("IPv6 loopback unavailable; skipped IPv6 connect")
+    next
+  end
+
+  fillers = []
+  if saturating.include?(mode)
+    saturated = false
+    128.times() do |attempt|
+      break if saturated
+      begin
+        fillers.push(TCPSocket.connect(address, port, {"connect_timeout_ms": 100}))
+      rescue error: IOError
+        saturated = true
+      end
+    end
+    raise "could not saturate the loopback backlog" unless saturated
+  end
+
+  child = Harness::Child.new(command + [address, port.to_s(), mode == "ipv6" ? "success" : mode], env)
+  begin
+    if mode == "success" || mode == "raw" || mode == "ipv6"
+      peer = listener.accept()
+      request = peer.read(5)
+      raise "client closed before sending the request" unless request == "hello"
+      peer.write("world")
+      peer.shutdown_write()
+      child.line("success", 10000)
+      raise "successful socket not closed by caller" unless peer.read(1) == ""
+      peer.close()
+    elsif mode == "refused" || mode == "leaks" || mode == "cancel_leaks"
+      baseline = nil
+      if mode == "leaks" || mode == "cancel_leaks"
+        child.line("baseline", 10000)
+        baseline = Harness.descriptor_count(child.pid())
+        child.send("go\n")
+      end
+      child.line(mode == "cancel_leaks" ? "cancelled repeatedly" : "refused", 10000)
+      if mode == "leaks" || mode == "cancel_leaks"
+        if baseline != nil && Harness.descriptor_count(child.pid()) != baseline
+          raise "failed connects leaked descriptors"
+        end
+        child.send("go\n")
+      end
+    elsif mode == "pending"
+      child.line("pending", 10000)
+    else
+      child.line("connecting", 10000)
+      child.terminate() if mode == "signal"
+      child.line(mode == "deadline" ? "deadline" : "cancelled", 10000)
+    end
+    child.line("cleaned", 10000)
+    raise "#{mode}: unclean exit" unless child.wait() == 0
+  rescue error: StandardError
+    puts("connect scenario #{mode}: #{child.errors()}")
+    raise error
+  ensure
+    child.finish()
+    fillers.each() do |filler|
+      filler.close()
+    end
+    listener.close() if listener != nil
+  end
+end
+puts("cancellation outbound connect tests passed")
+exit(0)

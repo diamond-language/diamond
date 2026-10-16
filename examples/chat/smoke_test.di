@@ -1,0 +1,165 @@
+# End-to-end check against a real server: two WebSocket clients, the supervised bot, a crash and
+# restart, and a clean SIGTERM shutdown.
+#
+# Run from this directory after `facet install`:
+#
+#   ../../build/diamond smoke_test.di
+#
+# Pass a different diamond binary as the first argument.
+require "../../tests/harness"
+
+diamond = ARGV.length() > 0 ? ARGV[0] : "../../build/diamond"
+
+# Just enough RFC 6455 for text frames: masked sends, unmasked receives.
+class Client
+  def initialize(port: Int)
+    @socket = TCPSocket.connect("127.0.0.1", port,
+      {"connect_timeout_ms": 10000, "read_timeout_ms": 10000})
+    key = Base64.encode(SecureRandom.bytes(16))
+    @socket.write("GET /ws HTTP/1.1\r\nHost: 127.0.0.1:#{port}\r\nUpgrade: websocket\r\n" +
+      "Connection: Upgrade\r\nSec-WebSocket-Key: #{key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    @socket.flush()
+    head = ""
+    until head.include?("\r\n\r\n")
+      head = head + self.read_exact(1)
+    end
+    raise "upgrade refused: #{head}" unless head.start_with?("HTTP/1.1 101")
+  end
+
+  def send(event: Hash)
+    payload = JSON.stringify(event)
+    mask = SecureRandom.bytes(4).bytes()
+    header = 0x81.chr()
+    if payload.length() < 126
+      header = header + (0x80 | payload.length()).chr()
+    else
+      header = header + (0x80 | 126).chr() + (payload.length() >> 8).chr() + (payload.length() & 255).chr()
+    end
+    bytes = payload.bytes()
+    masked = ""
+    bytes.each_with_index() do |byte, index|
+      masked = masked + (byte ^ mask[index % 4]).chr()
+    end
+    @socket.write(header + mask.map() do |m| m.chr() end.join() + masked)
+    @socket.flush()
+  end
+
+  def read_exact(count: Int)
+    data = ""
+    while data.length() < count
+      chunk = @socket.read(count - data.length())
+      raise "connection closed" if chunk == nil || chunk == ""
+      data = data + chunk
+    end
+    data
+  end
+
+  def receive()
+    head = self.read_exact(2).bytes()
+    length = head[1] & 0x7F
+    if length == 126
+      extra = self.read_exact(2).bytes()
+      length = (extra[0] << 8) | extra[1]
+    elsif length == 127
+      extra = self.read_exact(8).bytes()
+      length = 0
+      extra.each() do |byte|
+        length = (length << 8) | byte
+      end
+    end
+    payload = self.read_exact(length)
+    raise "unexpected opcode #{head[0] & 0x0F}" unless (head[0] & 0x0F) == 1
+    JSON.parse(payload)
+  end
+
+  # The first event satisfying the block, within 10 seconds' worth of events.
+  def expect(what: String, &predicate)
+    seen = []
+    200.times() do |attempt|
+      event = self.receive()
+      seen.push(event)
+      return event if yield(event)
+    end
+    raise "never saw #{what}; got #{seen.inspect()}"
+  end
+
+  def close() = @socket.close()
+end
+
+port = Harness.reserve_port()
+server = Harness::Child.new([diamond, "app.di"],
+  {"CHAT_PORT": port.to_s(), "DIAMOND_NO_CACHE": "1"})
+begin
+  Harness.wait_for(10000, "server did not start") do
+    server.pump(10)
+    raise "the server exited: #{server.stdout_text()}#{server.stderr_text()}" unless server.running?()
+    started = true
+    begin
+      probe = TCPSocket.connect("127.0.0.1", port, {"connect_timeout_ms": 1000})
+      probe.close()
+    rescue error: IOError
+      started = false
+    end
+    started
+  end
+
+  ada = Client.new(port)
+  ada.send({"type": "say", "text": "too early"})
+  raise "expected a join prompt" unless ada.receive()["text"].include?("Join first")
+  ada.send({"type": "join", "name": "  Ada  "})
+  welcome = ada.receive()
+  raise "bad welcome #{welcome}" unless welcome["type"] == "welcome" && welcome["name"] == "Ada"
+  ada.expect("Ada joined") do |e| e["type"] == "joined" && e["members"] == ["Ada"] end
+
+  dup = Client.new(port)
+  dup.send({"type": "join", "name": "Ada"})
+  raise "expected a duplicate-name refusal" unless dup.receive()["text"].include?("already here")
+  dup.close()
+
+  bob = Client.new(port)
+  bob.send({"type": "join", "name": "Bob"})
+  raise "Bob was not welcomed" unless bob.receive()["type"] == "welcome"
+  ada.expect("Bob joined") do |e| e["type"] == "joined" && e["name"] == "Bob" end
+
+  ada.send({"type": "say", "text": "hello from Ada"})
+  bob.expect("Ada message") do |e| e["text"] == "hello from Ada" && e["name"] == "Ada" end
+
+  bob.send({"type": "say", "text": "/roll 20"})
+  roll = ada.expect("bot roll") do |e| e["type"] == "bot" && e["text"].include?("rolled") end
+  value = roll["text"].split("rolled ")[1].split(" ")[0].to_i()
+  raise "bad roll #{roll}" unless value >= 1 && value <= 20 && roll["text"].start_with?("Bob rolled")
+
+  ada.send({"type": "say", "text": "/crash"})
+  restart = bob.expect("restart notice") do |e| e["type"] == "bot" && e["text"].include?("restarted") end
+  unless restart["text"].include?("RuntimeError: Ada asked the bot to crash")
+    raise "unexpected restart notice #{restart}"
+  end
+  ada.send({"type": "say", "text": "/time"})
+  ada.expect("bot after restart") do |e| e["type"] == "bot" && e["text"].start_with?("Server time") end
+  ada.send({"type": "say", "text": "/stats"})
+  stats = ada.expect("stats") do |e| e["type"] == "bot" && e["text"].include?("online") end
+  raise "unexpected stats #{stats}" unless stats["text"] == "2 online; bot restarts: 1"
+
+  carol = Client.new(port)
+  carol.send({"type": "join", "name": "Carol"})
+  history = carol.receive()["history"]
+  unless history.any?() do |e| e["text"] == "hello from Ada" end
+    raise "late joiner got no history: #{history}"
+  end
+
+  bob.close()
+  ada.expect("Bob left") do |e| e["type"] == "left" && e["name"] == "Bob" end
+  ada.close()
+  carol.close()
+
+  server.terminate()
+  code = server.wait_exit(15000)
+  raise "server did not exit on SIGTERM:\n#{server.stdout_text()}#{server.stderr_text()}" if code == nil
+rescue error: StandardError
+  puts(server.stdout_text() + server.stderr_text())
+  raise error
+ensure
+  server.finish()
+end
+puts("chat smoke test passed")
+exit(0)

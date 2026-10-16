@@ -47,15 +47,15 @@ check_signal_wait "$diamond" test/signal_test.di
 "$diamond" build test/signal_test.di -o "$work/signal-test" > "$work/signal-build.log"
 check_signal_wait "$work/signal-test"
 echo "cancellation signal tests passed"
-python3 test/socket_test.py "$diamond" test/socket_test.di
+"$diamond" test/socket_driver.di "$diamond" test/socket_test.di
 "$diamond" build test/socket_test.di -o "$work/socket-test" > "$work/socket-build.log"
-python3 test/socket_test.py "$work/socket-test"
-python3 test/connect_test.py "$diamond" test/connect_test.di
+"$diamond" test/socket_driver.di "$work/socket-test"
+"$diamond" test/connect_driver.di "$diamond" test/connect_test.di
 "$diamond" build test/connect_test.di -o "$work/connect-test" > "$work/connect-build.log"
-python3 test/connect_test.py "$work/connect-test"
-python3 test/dns_test.py "$diamond" test/dns_test.di
+"$diamond" test/connect_driver.di "$work/connect-test"
+"$diamond" test/dns_driver.di "$diamond" test/dns_test.di
 "$diamond" build test/dns_test.di -o "$work/dns-test" > "$work/dns-build.log"
-python3 test/dns_test.py "$work/dns-test"
-python3 test/tls_test.py "$diamond" test/tls_test.di
+"$diamond" test/dns_driver.di "$work/dns-test"
+"$diamond" test/tls_driver.di "$diamond" test/tls_test.di
 "$diamond" build test/tls_test.di -o "$work/tls-test" > "$work/tls-build.log"
-python3 test/tls_test.py "$work/tls-test"
+"$diamond" test/tls_driver.di "$work/tls-test"

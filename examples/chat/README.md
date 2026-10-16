@@ -52,11 +52,11 @@ with `textContent`, so chat text can't inject markup.
 ## Test
 
 ```sh
-python3 smoke_test.py
+../../build/diamond smoke_test.di
 ```
 
-This starts the real server and uses a minimal WebSocket client (Python's
-standard library has none) to cover joining, duplicate names, fan-out, bot
+This starts the real server and uses a minimal WebSocket client written in
+Diamond to cover joining, duplicate names, fan-out, bot
 replies, a crash and restart, `/stats`, history for late joiners, departure
 notices, and a clean SIGTERM exit.
 
