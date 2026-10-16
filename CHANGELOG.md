@@ -10,6 +10,7 @@ authoritative fine-grained record.
 
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
 - Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.file?` and
+- Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.mode`, `File.file?` and
   `File.symlink?`.
 - `Process.run` and `Process.spawn` take an options Hash: `"env"` (merged over the inherited
   environment), `"cwd"`, and `"stdin"` (a String to feed, or `true` for a writable

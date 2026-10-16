@@ -5581,6 +5581,12 @@ static uint16_t parse_file_call(Compiler *compiler) {
         compiler->known_types[size]=DIAMOND_TYPE_INT;
         return size;
     }
+    if(name_equals(compiler,"mode",method,false)) {
+        advance_token(compiler);
+        const uint16_t mode=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_MODE);
+        compiler->known_types[mode]=DIAMOND_TYPE_INT;
+        return mode;
+    }
     if(name_equals(compiler,"file?",method,false)) {
         advance_token(compiler);
         const uint16_t result=parse_file_path_unary_call(compiler,DIAMOND_FILE_PATH_FILE);
@@ -5599,7 +5605,7 @@ static uint16_t parse_file_call(Compiler *compiler) {
         compiler->known_types[written]=DIAMOND_TYPE_INT;
         return written;
     }
-    fail(compiler,method,"unknown File method (expected open/read/write/copy/size/exist?/file?/"
+    fail(compiler,method,"unknown File method (expected open/read/write/copy/size/mode/exist?/file?/"
         "symlink?/delete/rename/publish/sync/join/dirname/basename/extname/absolute?/directory?/"
         "expand_path)");
     return 0;

@@ -4,6 +4,10 @@ Dir.mkdir("#{root}/a", 0o700)
 mode = Process.run(["stat", "-c", "%a", "#{root}/a"]).stdout().strip()
 File.write("#{root}/a/f", "hello")
 size = File.size("#{root}/a/f")
+File.write("#{root}/private", "x")
+Process.run(["chmod", "600", "#{root}/private"])
+modes = [File.mode("#{root}/a") & 0o777, File.mode("#{root}/private")]
+File.delete("#{root}/private")
 File.copy("#{root}/a/f", "#{root}/a/g")
 copied = File.read("#{root}/a/g")
 
@@ -40,5 +44,5 @@ Dir.delete("#{root}/a")
 gone = !File.exist?("#{root}/a")
 Process.run(["rm", "-rf", root])
 
-[mode, size, copied, copy_refuses_to_replace, kinds, mkdir_refuses_existing,
+[mode, size, modes, copied, copy_refuses_to_replace, kinds, mkdir_refuses_existing,
  delete_refuses_non_empty, synced, gone]
