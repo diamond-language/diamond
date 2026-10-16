@@ -13413,18 +13413,30 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
                (source->chars[position]=='-'||source->chars[position]=='+')) {
                 negative=source->chars[position]=='-';position++;
             }
-            int64_t value=0;
+            int64_t value=0;bool overflowed=false;
+            const size_t digits_start=position;
             for(;position<source->length;position++) {
                 const char c=source->chars[position];
                 if(c=='_')continue;
                 const int digit=c>='0'&&c<='9'?c-'0':
                     c>='a'&&c<='z'?c-'a'+10:c>='A'&&c<='Z'?c-'A'+10:99;
                 if(digit>=radix)break;
-                if(ckd_mul(&value,value,radix)||ckd_add(&value,value,(int64_t)digit)) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "String#to_i result doesn't fit in 64 bits");
-                    return DIAMOND_VM_INTEGER_OVERFLOW;
-                }
+                if(!overflowed&&
+                   (ckd_mul(&value,value,radix)||ckd_add(&value,value,(int64_t)digit)))
+                    overflowed=true;
+            }
+            if(overflowed) {
+                /* Past 64 bits: parse the digits again into a bignum. */
+                char *clean=malloc(position-digits_start+1);
+                if(clean==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+                size_t clean_length=0;
+                for(size_t index=digits_start;index<position;index++)
+                    if(source->chars[index]!='_')clean[clean_length++]=source->chars[index];
+                const DiamondValue big=diamond_bignum_from_radix_digits(vm,clean,
+                    clean_length,(int)radix,negative);
+                free(clean);
+                if(big.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+                registers[dest]=big;return DIAMOND_VM_OK;
             }
             registers[dest]=DIAMOND_INT(negative?-value:value);return DIAMOND_VM_OK;
         }

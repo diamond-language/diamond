@@ -811,20 +811,32 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * arithmetic is. */
                 uint16_t destination=0,left=0,right=0;
                 READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
-                if(registers[left].kind==DIAMOND_VALUE_INT&&
-                   registers[right].kind==DIAMOND_VALUE_INT&&
-                   !value_is_bignum(registers[left])&&
-                   !value_is_bignum(registers[right])) {
-                    const int64_t shift_amount=registers[right].as.integer;
-                    if(shift_amount<0||shift_amount>=64) {
+                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+                    if(value_is_bignum(registers[right])||registers[right].as.integer<0||
+                       registers[right].as.integer>DIAMOND_MAX_SHIFT_BITS) {
                         snprintf(vm->error,sizeof vm->error,
-                            "shift amount must be between 0 and 63");
+                            "shift amount must be between 0 and %d",
+                            (int)DIAMOND_MAX_SHIFT_BITS);
                         VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
                     }
-                    const int64_t left_value=registers[left].as.integer;
-                    const int64_t result_value=(int64_t)
-                        ((uint64_t)left_value<<(unsigned)shift_amount);
-                    registers[destination]=DIAMOND_INT(result_value);
+                    const int64_t shift_amount=registers[right].as.integer;
+                    if(registers[left].kind==DIAMOND_VALUE_INT&&shift_amount<64) {
+                        const int64_t left_value=registers[left].as.integer;
+                        const int64_t result_value=(int64_t)
+                            ((uint64_t)left_value<<(unsigned)shift_amount);
+                        if((result_value>>(unsigned)shift_amount)==left_value) {
+                            registers[destination]=DIAMOND_INT(result_value);
+                            break;
+                        }
+                    }
+                    /* Overflowed 64 bits, or already a bignum: the result
+                     * promotes like every other Int operation. */
+                    DiamondIntView left_view;
+                    diamond_int_view(registers[left],&left_view);
+                    const DiamondValue shifted=diamond_bignum_shift_left(vm,
+                        left_view,(uint64_t)shift_amount);
+                    if(shifted.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[destination]=shifted;
                     break;
                 }
                 if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
@@ -844,29 +856,37 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 VM_RETURN(DIAMOND_VM_TYPE_ERROR);
             }
             case DIAMOND_OP_SHIFT_RIGHT: {
-                /* Int only -- same scope cut as DIAMOND_OP_SHIFT_LEFT
-                 * (no bignum, not user-overloadable, no quickening; see
-                 * that case's own comment). Arithmetic (sign-extending),
+                /* Int only (a bignum on either side is handled below, not
+                 * user-overloadable, no quickening; see SHIFT_LEFT). Arithmetic (sign-extending),
                  * matching Ruby's own Integer#>>, and well-defined for a
                  * negative left-hand side under C23 (this project's own
                  * -std=c23) -- not the "implementation-defined" territory
                  * an older C standard would put a signed right-shift in. */
                 uint16_t destination=0,left=0,right=0;
                 READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
-                if(registers[left].kind!=DIAMOND_VALUE_INT||
-                   registers[right].kind!=DIAMOND_VALUE_INT||
-                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                if(!is_int_value(registers[left])||!is_int_value(registers[right])) {
                     format_operator_type_error(vm,registers[left],registers[right],">>");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const int64_t shift_amount=registers[right].as.integer;
-                if(shift_amount<0||shift_amount>=64) {
+                if(value_is_bignum(registers[right])||registers[right].as.integer<0) {
                     snprintf(vm->error,sizeof vm->error,
-                        "shift amount must be between 0 and 63");
+                        "shift amount must not be negative");
                     VM_RETURN(DIAMOND_VM_INTEGER_OVERFLOW);
                 }
-                registers[destination]=
-                    DIAMOND_INT(registers[left].as.integer>>(unsigned)shift_amount);
+                const int64_t shift_amount=registers[right].as.integer;
+                if(registers[left].kind==DIAMOND_VALUE_INT) {
+                    /* Arithmetic shift; one past the width keeps only the sign. */
+                    const int64_t left_value=registers[left].as.integer;
+                    registers[destination]=DIAMOND_INT(shift_amount>=64?
+                        (left_value<0?-1:0):left_value>>(unsigned)shift_amount);
+                    break;
+                }
+                DiamondIntView left_view;
+                diamond_int_view(registers[left],&left_view);
+                const DiamondValue shifted=diamond_bignum_shift_right(vm,left_view,
+                    (uint64_t)shift_amount);
+                if(shifted.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                registers[destination]=shifted;
                 break;
             }
             case DIAMOND_OP_BITWISE_AND:
@@ -885,8 +905,18 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,left=0,right=0;
                 READ_SHORT(destination);READ_SHORT(left);READ_SHORT(right);
                 if(registers[left].kind!=DIAMOND_VALUE_INT||
-                   registers[right].kind!=DIAMOND_VALUE_INT||
-                   value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
+                   registers[right].kind!=DIAMOND_VALUE_INT) {
+                    if(is_int_value(registers[left])&&is_int_value(registers[right])) {
+                        DiamondIntView left_view,right_view;
+                        diamond_int_view(registers[left],&left_view);
+                        diamond_int_view(registers[right],&right_view);
+                        const DiamondValue combined=diamond_bignum_bitwise(vm,
+                            bitwise_opcode==DIAMOND_OP_BITWISE_AND?DIAMOND_BIGNUM_BITWISE_AND:
+                            bitwise_opcode==DIAMOND_OP_BITWISE_OR?DIAMOND_BIGNUM_BITWISE_OR:
+                            DIAMOND_BIGNUM_BITWISE_XOR,left_view,right_view);
+                        if(combined.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                        registers[destination]=combined;break;
+                    }
                     const char *name=bitwise_opcode==DIAMOND_OP_BITWISE_AND?"&":
                         bitwise_opcode==DIAMOND_OP_BITWISE_OR?"|":"^";
                     DiamondValue prelude_result=DIAMOND_NIL;
@@ -2753,6 +2783,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             diamond_jit_frozen(vm,&registers[recv],&registers[dest]);
                         VM_PROPAGATE(frozen_status);break;
                     }
+                }
+                /* Int#to_s(base) on a promoted Int: digits in base 2..36. */
+                if(value_is_bignum(registers[recv])&&argc==1&&
+                   method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0) {
+                    if(registers[base].kind!=DIAMOND_VALUE_INT||
+                       registers[base].as.integer<2||registers[base].as.integer>36) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Int#to_s base must be an Int from 2 to 36");
+                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+                    }
+                    DiamondIntView view;
+                    diamond_int_view(registers[recv],&view);
+                    size_t digit_count=0;
+                    char *digits=diamond_bignum_to_radix_string(view,
+                        (int)registers[base].as.integer,&digit_count);
+                    if(digits==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    DiamondString *formatted=allocate_string(vm,digits,digit_count);
+                    free(digits);
+                    if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+                    registers[dest]=DIAMOND_OBJECT(formatted);
+                    break;
                 }
                 /* An Int past 64 bits is a bignum object; give it the same
                  * conversions as a small Int. */

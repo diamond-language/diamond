@@ -1,6 +1,6 @@
 shift_overflow_rejected = false
 begin
-  1 >> 64
+  1 >> (0 - 1)
 rescue error: RangeError
   shift_overflow_rejected = true
 end
