@@ -123,6 +123,8 @@ module Opcode
   JSON_STRINGIFY = 178
   # DIAMOND_OP_JSON_STRINGIFY_OPTIONS: JSON.stringify(value, options); same operands plus the options register.
   JSON_STRINGIFY_OPTIONS = 186
+  # DIAMOND_OP_CASE_MATCH: `when` tests (Range, Regexp, class and == patterns); keep in step with src/vm.h.
+  CASE_MATCH = 131
   MATH_UNARY = 88
   MATH_BINARY = 89
   PROGRAM_BUILDER_NEW = 90
@@ -3983,7 +3985,7 @@ class Parser
       skip_jump = self.emit_jump(Opcode::JUMP_IF_TRUE, match_reg) unless first_value
       value_reg = self.parse_expression()
       eq_reg = self.allocate_register()
-      self.emit_instruction3(Opcode::EQUAL, eq_reg, subject, value_reg)
+      self.emit_instruction3(Opcode::CASE_MATCH, eq_reg, value_reg, subject)
       self.set_type_fact(eq_reg, Type::BOOL)
       self.emit_instruction2(Opcode::MOVE, match_reg, eq_reg)
       self.patch_jump(skip_jump, @code_count) unless first_value
@@ -4343,6 +4345,7 @@ class Parser
     return self.parse_integer() if kind == :integer
     return self.parse_float() if kind == :float
     return self.parse_string() if kind == :string
+    return self.parse_regex_literal() if kind == :regex
     return self.parse_symbol() if kind == :symbol
     return self.parse_literal() if kind == :true || kind == :false || kind == :nil
     return self.parse_name() if kind == :identifier
@@ -5374,6 +5377,60 @@ class Parser
     name_index = self.add_string(name)
     self.emit_instruction2(Opcode::SYMBOL, destination, name_index)
     self.set_type_fact(destination, Type::SYMBOL)
+    destination
+  end
+
+  # /pattern/imx -- mirrors parse_regex_literal in src/compiler.c: the pattern is kept as written
+  # (the regex engine reads its own escapes) except that \/ stands for a plain slash.
+  def parse_regex_literal()
+    span = @previous
+    close = span.start() + span.length()
+    ignore_case = false
+    multiline = false
+    extended = false
+    while @source[close - 1] != "/"
+      close = close - 1
+      flag = @source[close]
+      if flag == "i"
+        ignore_case = true
+      elsif flag == "m"
+        multiline = true
+      else
+        extended = true
+      end
+    end
+    options = (ignore_case ? 1 : 0) + (multiline ? 2 : 0) + (extended ? 4 : 0)
+    pattern_start = span.start() + 1
+    pattern_length = close - 1 - pattern_start
+    raw = @source.slice(pattern_start, pattern_length)
+    text = ""
+    index = 0
+    while index < raw.length()
+      character = raw[index]
+      if character == "\\" && index + 1 < raw.length()
+        if raw[index + 1] == "/"
+          text = text + "/"
+        else
+          text = text + character + raw[index + 1]
+        end
+        index = index + 2
+        next
+      end
+      if character == "#" && raw[index + 1] == "{"
+        self.fail("regex literals do not interpolate; build the pattern with Regexp.new")
+        return 0
+      end
+      text = text + character
+      index = index + 1
+    end
+    pattern_register = self.allocate_register()
+    pattern = self.add_string(text)
+    self.emit_instruction2(Opcode::STRING, pattern_register, pattern)
+    options_register = self.allocate_register()
+    options_constant = self.add_constant(options)
+    self.emit_instruction2(Opcode::CONSTANT, options_register, options_constant)
+    destination = self.allocate_register()
+    self.emit_instruction3(Opcode::REGEXP_NEW, destination, pattern_register, options_register)
     destination
   end
 

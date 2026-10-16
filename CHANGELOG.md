@@ -15,6 +15,7 @@ authoritative fine-grained record.
   indexes to the end of an Array or String and matches everything above its start; `to_a`, `length`,
   `last`, `step` and `reverse_each` on one raise `RangeError`; `endless?` tells them apart.
 - `__FILE__` and `__dir__`: the absolute path of the file they are written in, and its directory.
+- Regex literals: `/pattern/imx`, equivalent to `Regexp.new` (a slash after a value is still division).
 - `ENV["K"] = "v"` works at the start of a statement, and child processes get the current `ENV`.
 - Filesystem primitives: `Dir.mkdir`, `Dir.delete`, `Dir.sync`, `File.copy`, `File.size`, `File.mode`, `File.file?` and
   `File.symlink?`. `File.sha256(path)` hashes a file in chunks.

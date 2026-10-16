@@ -114,6 +114,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_RESCUE: return "rescue";
         case DIAMOND_TOKEN_ENSURE: return "ensure";
         case DIAMOND_TOKEN_IS: return "is";
+        case DIAMOND_TOKEN_REGEX: return "regex";
     }
     return "<unknown>";
 }

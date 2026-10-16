@@ -1519,8 +1519,10 @@ static size_t utf8_encode_code_point(unsigned long code_point,char out[4]) {
     return 4;
 }
 
-static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
-                                DiamondSpan span) {
+/* raw: regex literal text -- bytes are kept as written (the regex engine reads its own escapes),
+ * except that \/ stands for a plain slash. */
+static uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
+                                DiamondSpan span,bool raw) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS) {
         fail(compiler, span, "function has too many string literals");
         return 0;
@@ -1537,7 +1539,15 @@ static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
         char character=compiler->source[start+index];
         char encoded[4];
         size_t encoded_length=0;
-        if (character == '\\') {
+        if(raw) {
+            if(character=='\\'&&index+1<length) {
+                if(compiler->source[start+index+1]=='/')character=compiler->source[start+(++index)];
+                else {
+                    encoded[0]=character;encoded[1]=compiler->source[start+(++index)];
+                    encoded_length=2;
+                }
+            }
+        } else if (character == '\\') {
             index++;
             if(index==length) {fail(compiler,span,"incomplete string escape");return 0;}
             character=compiler->source[start+index];
@@ -1601,6 +1611,11 @@ static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
     }
     string->chars[string->length] = '\0';
     return (uint16_t)compiler->function->string_count++;
+}
+
+static uint16_t add_string_range(Compiler *compiler,size_t start,size_t length,
+                                DiamondSpan span) {
+    return add_string_range_mode(compiler,start,length,span,false);
 }
 
 static uint16_t add_string(Compiler *compiler,DiamondSpan span) {
@@ -10942,6 +10957,39 @@ static uint16_t parse_loop(Compiler *compiler) {
     free(exit_types);free(exit_sets);free(exit_tooling_sets);return destination;
 }
 
+/* /pattern/imx -- the same as Regexp.new("pattern", options), compiled each time the literal is
+ * evaluated. The pattern is kept as written, so \d reaches the regex engine intact. */
+static uint16_t parse_regex_literal(Compiler *compiler) {
+    const DiamondSpan span=compiler->previous.span;
+    size_t close=span.start+span.length;
+    int64_t options=0;
+    while(compiler->source[close-1]!='/') {
+        const char flag=compiler->source[--close];
+        options|=flag=='i'?1:flag=='m'?2:4;
+    }
+    const size_t pattern_start=span.start+1,pattern_length=close-1-pattern_start;
+    for(size_t index=0;index+1<pattern_length;index++) {
+        if(compiler->source[pattern_start+index]=='\\') {index++;continue;}
+        if(compiler->source[pattern_start+index]=='#'&&
+           compiler->source[pattern_start+index+1]=='{') {
+            fail(compiler,span,"regex literals do not interpolate; build the pattern with Regexp.new");
+            return 0;
+        }
+    }
+    const uint16_t pattern_register=allocate_register(compiler);
+    const uint16_t pattern=add_string_range_mode(compiler,pattern_start,pattern_length,span,true);
+    emit_instruction(compiler,DIAMOND_OP_STRING,pattern_register,pattern,0,2);
+    const uint16_t options_register=allocate_register(compiler);
+    const uint16_t options_constant=add_constant(compiler,DIAMOND_INT(options));
+    emit_instruction(compiler,DIAMOND_OP_CONSTANT,options_register,options_constant,0,2);
+    const uint16_t dest=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_REGEXP_NEW);
+    emit_register(compiler,dest);
+    emit_register(compiler,pattern_register);
+    emit_register(compiler,options_register);
+    return dest;
+}
+
 static uint16_t parse_prefix(Compiler *compiler) {
     advance_token(compiler);
     switch (compiler->previous.kind) {
@@ -10951,6 +10999,8 @@ static uint16_t parse_prefix(Compiler *compiler) {
             return parse_float(compiler);
         case DIAMOND_TOKEN_STRING:
             return parse_string(compiler);
+        case DIAMOND_TOKEN_REGEX:
+            return parse_regex_literal(compiler);
         case DIAMOND_TOKEN_SYMBOL:
             return parse_symbol(compiler);
         case DIAMOND_TOKEN_TRUE:
@@ -17588,6 +17638,7 @@ static bool prescan_ends_value(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_SELF: case DIAMOND_TOKEN_END:
         case DIAMOND_TOKEN_INSTANCE_VARIABLE: case DIAMOND_TOKEN_CLASS_VARIABLE:
         case DIAMOND_TOKEN_RETURN: case DIAMOND_TOKEN_BREAK: case DIAMOND_TOKEN_NEXT:
+        case DIAMOND_TOKEN_REGEX:
         case DIAMOND_TOKEN_REDO: case DIAMOND_TOKEN_RETRY:
             return true;
         default:

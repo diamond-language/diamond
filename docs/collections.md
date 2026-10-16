@@ -174,6 +174,15 @@ Ruby), or deleted outright when `to` is `""`. An empty `from` raises
 "hello".tr("aeiou", "*")           # => "h*ll*"
 ```
 
+Regexp literals: `/pattern/` is the same as `Regexp.new("pattern")`, with the flags `i`
+(ignore case), `m` (`.` matches newline) and `x` (extended) after the closing slash:
+`"a1 b22".scan(/[0-9]+/)`, `/hello/i.match?(text)`, `when /^cost/`. A slash is a regex
+only where an expression can start; right after a value (a name, number, string, `)`, `]`,
+`}` or `end`) it is division, so `x /2/ 3` stays arithmetic and `puts /x/` needs
+parentheses: `puts(/x/)`. Write `\/` for a slash inside the pattern. Literals do not
+interpolate (`#{}` is a compile error; build the pattern with `Regexp.new`), and the
+literal compiles each time it is evaluated, so hoist one out of a hot loop.
+
 `.sub(pattern, replacement)`/`.gsub(pattern, replacement)` replace the
 first/every match of `pattern` (a `Regexp` -- a `String` pattern raises
 `TypeError`, there's no implicit `Regexp.new` coercion) with
