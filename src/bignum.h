@@ -89,4 +89,34 @@ size_t diamond_bignum_to_string(const DiamondBignum *value, char *out, size_t ou
 DiamondValue diamond_bignum_from_decimal_digits(DiamondVm *vm, const char *digits,
     size_t length, bool negative);
 
+
+/* Bitwise AND/OR/XOR with Ruby's infinite two's-complement semantics for
+ * negative operands. Either operand may be a small Int viewed through
+ * diamond_int_view_int64. Returns DIAMOND_NIL only on allocation failure. */
+/* Largest accepted shift count: a shifted value is converted through base-2^32
+ * words twice, so the cost grows with the square of its width. */
+enum { DIAMOND_MAX_SHIFT_BITS = 1 << 20 };
+
+typedef enum {
+    DIAMOND_BIGNUM_BITWISE_AND,
+    DIAMOND_BIGNUM_BITWISE_OR,
+    DIAMOND_BIGNUM_BITWISE_XOR,
+} DiamondBignumBitwiseOp;
+DiamondValue diamond_bignum_bitwise(DiamondVm *vm, DiamondBignumBitwiseOp op,
+                                    DiamondIntView left, DiamondIntView right);
+
+/* Shifts by a non-negative bit count. Left shifts never overflow (the result
+ * promotes); right shifts floor, so a negative value never rounds toward zero
+ * and a shift past the width gives 0 (or -1 for a negative value). Callers
+ * bound `bits` themselves. */
+DiamondValue diamond_bignum_shift_left(DiamondVm *vm, DiamondIntView value, uint64_t bits);
+DiamondValue diamond_bignum_shift_right(DiamondVm *vm, DiamondIntView value, uint64_t bits);
+
+/* Radix (2..36) conversion, lowercase digits. The first returns a malloc'd
+ * nul-terminated string (nullptr on allocation failure) and writes its length;
+ * the second parses digits the caller has already validated against `radix`. */
+char *diamond_bignum_to_radix_string(DiamondIntView value, int radix, size_t *length);
+DiamondValue diamond_bignum_from_radix_digits(DiamondVm *vm, const char *digits,
+    size_t length, int radix, bool negative);
+
 #endif

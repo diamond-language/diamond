@@ -838,8 +838,9 @@ only way *user code* opts into operator support. [`Time`](time.md) is the one
 `+`/`-`/comparison support — implemented directly in the VM's own
 arithmetic/comparison opcodes, not through this dispatch, since a
 native type has no instance methods for it to reach. `<<` is native the
-same way, on two types: `Int << Int` is a bitwise left shift (shift
-amount must be `0..63`, else `RangeError`); `Array << value` pushes
+same way, on two types: `Int << Int` is a bitwise left shift (the amount
+must be `0..1048576`, else `RangeError`, and a result past 64 bits promotes
+to an arbitrary-precision `Int` like any other overflow); `Array << value` pushes
 `value` and returns the array itself, the same as `Array#push`, letting
 pushes chain (`arr << 1 << 2 << 3`). `<<` binds tighter than comparisons
 but looser than `+`/`-` (`1 + 2 << 3` is `(1 + 2) << 3`, matching Ruby).
@@ -849,10 +850,12 @@ this way; each would need its own dedicated VM-level support, same as
 `Time` and `<<` did.
 
 `>>`/`&`/`|`/`^` are `Int`-only bitwise operators sharing `<<`'s own
-scope cut: no bignum support, not user-overloadable, no quickening.
-`>>` is arithmetic (sign-extending, matching Ruby's `Integer#>>` —
-`-8 >> 1` is `-4`); a shift amount (either direction) outside `0..63`
-raises `RangeError`. `&`/`|`/`^` are ordinary bitwise and/or/xor;
+scope cut: not user-overloadable, no quickening. They work on
+arbitrary-precision `Int`s too, with Ruby's infinite two's-complement
+semantics for negative operands (`-1 & x` is `x`). `>>` is arithmetic
+(sign-extending, matching Ruby's `Integer#>>` — `-8 >> 1` is `-4`, and a
+shift past the width gives `0`, or `-1` for a negative value); a negative
+shift amount raises `RangeError`. `&`/`|`/`^` are ordinary bitwise and/or/xor;
 either operand not an `Int` is `TypeError`. All four share `<<`'s own
 precedence tier (no separate tier per bitwise op). `&`/`|` also have
 unrelated meanings elsewhere in the grammar (`&block` parameter-

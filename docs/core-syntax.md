@@ -466,9 +466,9 @@ to_i(y)      # => 2
 
 `Int` has no fixed size limit: arithmetic that overflows 64 bits
 transparently promotes to an arbitrary-precision representation, the same
-auto-promoting behavior as Ruby, Python, or Lisp. `Int` *literals* in source
-still cap at 64-bit, though — only runtime arithmetic overflow promotes, not
-literal syntax. `Float` is an IEEE-754 double. Float
+auto-promoting behavior as Ruby, Python, or Lisp. A literal larger than 64 bits
+(`18446744073709551615`, `0xFFFF_FFFF_FFFF_FFFF_FFFF`) is an arbitrary-precision
+`Int` too. `Float` is an IEEE-754 double. Float
 literals need a digit on both sides of the `.` (`2.5`, not `.5` or `2.`),
 so `5.abs()` still parses as a method call rather than a float literal.
 Both accept `_` digit separators (`1_234.567_8`). `Int` literals can
@@ -538,8 +538,9 @@ rules as the global `to_i`: `NaN` and `Infinity` raise a rescuable
 `RangeError`, and a value beyond 64 bits promotes to an arbitrary-precision
 `Int`. `round(digits)` takes an `Int` from -15 to 15 and returns a `Float`;
 because it scales by a power of ten, results inherit ordinary binary
-floating-point imprecision. `to_s`, `to_i`, `to_f`, and `abs` also work on
-`Int`s that have promoted past 64 bits. Unary minus binds after a method
+floating-point imprecision. `to_s` (including `to_s(base)` for bases 2 to 36), `to_i`, `to_f`, and `abs` also work on
+`Int`s that have promoted past 64 bits, as do the bitwise operators `&`, `|`, `^`, `<<` and `>>`;
+`"ff...".to_i(16)` parses digits past 64 bits into one. Unary minus binds after a method
 call, so `-2.5.round()` is `-(2.5.round())`; write `(0 - 2.5).round()` or
 use a variable for a negative receiver.
 

@@ -450,3 +450,270 @@ DiamondValue diamond_bignum_from_decimal_digits(DiamondVm *vm, const char *digit
     free(limbs);
     return value;
 }
+
+/* --- Bitwise operators, shifts and radix conversion ---
+ *
+ * Limbs are base 10^9 (see above), so bit-level work goes through a base-2^32
+ * form: the magnitude is converted to little-endian 32-bit words, operated on,
+ * and converted back. Negative values follow Ruby's infinite two's-complement
+ * semantics (-1 & x == x, ~0 sign-extends), which is what a fixed-width
+ * hash or checksum written against a bignum expects. All scratch buffers are
+ * malloc'd; the only GC allocation is the final result, as everywhere above. */
+
+/* Divides a base-10^9 magnitude (modified in place) by 2^32 and returns the
+ * remainder. */
+static uint32_t magnitude_divide_word(uint32_t *limbs, size_t *count) {
+    uint64_t remainder = 0;
+    for (size_t i = *count; i > 0; i--) {
+        const uint64_t current = remainder * DIAMOND_BIGNUM_BASE + limbs[i - 1];
+        limbs[i - 1] = (uint32_t)(current >> 32);
+        remainder = current & 0xFFFFFFFFull;
+    }
+    *count = magnitude_trim(limbs, *count);
+    return (uint32_t)remainder;
+}
+
+/* Converts to base-2^32 words. Returns the word count (0 for zero), or
+ * SIZE_MAX on allocation failure; *out is malloc'd with room for one extra
+ * word that callers use for the sign. */
+static size_t magnitude_to_words(const uint32_t *limbs, size_t count, uint32_t **out) {
+    /* Each base-10^9 limb is < 2^30, so 30 bits per limb bounds the length. */
+    const size_t capacity = (count * 30 + 31) / 32 + 2;
+    uint32_t *words = calloc(capacity, sizeof(uint32_t));
+    uint32_t *scratch = malloc((count == 0 ? 1 : count) * sizeof(uint32_t));
+    if (words == nullptr || scratch == nullptr) {
+        free(words);
+        free(scratch);
+        return SIZE_MAX;
+    }
+    memcpy(scratch, limbs, count * sizeof(uint32_t));
+    size_t remaining = magnitude_trim(scratch, count);
+    size_t produced = 0;
+    while (remaining > 0) words[produced++] = magnitude_divide_word(scratch, &remaining);
+    free(scratch);
+    *out = words;
+    return produced;
+}
+
+/* Replaces `limbs` (base 10^9, capacity at least count + 2) with
+ * limbs * scalar + addend, returning the new count. */
+static size_t magnitude_multiply_add(uint32_t *limbs, size_t count,
+                                     uint32_t scalar, uint32_t addend) {
+    uint64_t carry = addend;
+    for (size_t i = 0; i < count; i++) {
+        const uint64_t product = (uint64_t)limbs[i] * scalar + carry;
+        limbs[i] = (uint32_t)(product % DIAMOND_BIGNUM_BASE);
+        carry = product / DIAMOND_BIGNUM_BASE;
+    }
+    while (carry > 0) {
+        limbs[count++] = (uint32_t)(carry % DIAMOND_BIGNUM_BASE);
+        carry /= DIAMOND_BIGNUM_BASE;
+    }
+    return count;
+}
+
+/* Canonical value from a magnitude held as base-2^32 words. */
+static DiamondValue words_to_value(DiamondVm *vm, bool negative,
+                                   const uint32_t *words, size_t word_count) {
+    while (word_count > 0 && words[word_count - 1] == 0) word_count--;
+    if (word_count == 0) return DIAMOND_INT(0);
+    /* 2^32 is just above 4.29 * 10^9: at most 2 limbs per word, plus slack. */
+    uint32_t *limbs = calloc(word_count * 2 + 3, sizeof(uint32_t));
+    if (limbs == nullptr) return DIAMOND_NIL;
+    size_t count = 0;
+    for (size_t i = word_count; i > 0; i--) {
+        /* limbs * 2^32 + word, as two multiplies by 2^16 then an add (the
+         * scalar must stay below 2^32). */
+        count = magnitude_multiply_add(limbs, count, 65536u, 0);
+        count = magnitude_multiply_add(limbs, count, 65536u, 0);
+        uint64_t carry = words[i - 1];
+        size_t index = 0;
+        while (carry > 0) {
+            if (index == count) limbs[count++] = 0;
+            const uint64_t sum = (uint64_t)limbs[index] + carry;
+            limbs[index] = (uint32_t)(sum % DIAMOND_BIGNUM_BASE);
+            carry = sum / DIAMOND_BIGNUM_BASE;
+            index++;
+        }
+    }
+    const DiamondValue value = bignum_canonicalize(vm, negative, limbs, magnitude_trim(limbs, count));
+    free(limbs);
+    return value;
+}
+
+/* Two's-complement form of a signed value in exactly `width` words. */
+static bool value_to_twos_complement(DiamondIntView view, size_t width, uint32_t *out) {
+    uint32_t *words = nullptr;
+    const size_t used = magnitude_to_words(view.limbs, view.limb_count, &words);
+    if (used == SIZE_MAX) return false;
+    memset(out, 0, width * sizeof(uint32_t));
+    memcpy(out, words, (used < width ? used : width) * sizeof(uint32_t));
+    free(words);
+    if (view.negative) {
+        uint64_t carry = 1;
+        for (size_t i = 0; i < width; i++) {
+            const uint64_t sum = (uint64_t)(uint32_t)~out[i] + carry;
+            out[i] = (uint32_t)sum;
+            carry = sum >> 32;
+        }
+    }
+    return true;
+}
+
+static size_t view_word_count(DiamondIntView view) {
+    /* 30 bits per limb, rounded up, plus one word for the sign. */
+    return (view.limb_count * 30 + 31) / 32 + 2;
+}
+
+DiamondValue diamond_bignum_bitwise(DiamondVm *vm, DiamondBignumBitwiseOp op,
+                                    DiamondIntView left, DiamondIntView right) {
+    const size_t a_width = view_word_count(left), b_width = view_word_count(right);
+    const size_t width = a_width > b_width ? a_width : b_width;
+    uint32_t *a = malloc(width * sizeof(uint32_t));
+    uint32_t *b = malloc(width * sizeof(uint32_t));
+    if (a == nullptr || b == nullptr ||
+        !value_to_twos_complement(left, width, a) ||
+        !value_to_twos_complement(right, width, b)) {
+        free(a);
+        free(b);
+        return DIAMOND_NIL;
+    }
+    for (size_t i = 0; i < width; i++) {
+        a[i] = op == DIAMOND_BIGNUM_BITWISE_AND ? (a[i] & b[i])
+             : op == DIAMOND_BIGNUM_BITWISE_OR ? (a[i] | b[i]) : (a[i] ^ b[i]);
+    }
+    free(b);
+    const bool negative = (a[width - 1] & 0x80000000u) != 0;
+    if (negative) {
+        uint64_t carry = 1;
+        for (size_t i = 0; i < width; i++) {
+            const uint64_t sum = (uint64_t)(uint32_t)~a[i] + carry;
+            a[i] = (uint32_t)sum;
+            carry = sum >> 32;
+        }
+    }
+    const DiamondValue value = words_to_value(vm, negative, a, width);
+    free(a);
+    return value;
+}
+
+DiamondValue diamond_bignum_shift_left(DiamondVm *vm, DiamondIntView value, uint64_t bits) {
+    uint32_t *words = nullptr;
+    const size_t used = magnitude_to_words(value.limbs, value.limb_count, &words);
+    if (used == SIZE_MAX) return DIAMOND_NIL;
+    if (used == 0) {
+        free(words);
+        return DIAMOND_INT(0);
+    }
+    const size_t whole = (size_t)(bits / 32);
+    const unsigned part = (unsigned)(bits % 32);
+    const size_t width = used + whole + 2;
+    uint32_t *shifted = calloc(width, sizeof(uint32_t));
+    if (shifted == nullptr) {
+        free(words);
+        return DIAMOND_NIL;
+    }
+    for (size_t i = 0; i < used; i++) {
+        const uint64_t spread = (uint64_t)words[i] << part;
+        shifted[i + whole] |= (uint32_t)spread;
+        shifted[i + whole + 1] |= (uint32_t)(spread >> 32);
+    }
+    free(words);
+    const DiamondValue result = words_to_value(vm, value.negative, shifted, width);
+    free(shifted);
+    return result;
+}
+
+DiamondValue diamond_bignum_shift_right(DiamondVm *vm, DiamondIntView value, uint64_t bits) {
+    uint32_t *words = nullptr;
+    const size_t used = magnitude_to_words(value.limbs, value.limb_count, &words);
+    if (used == SIZE_MAX) return DIAMOND_NIL;
+    if (used == 0) {
+        free(words);
+        return DIAMOND_INT(0);
+    }
+    const size_t whole = bits / 32 > (uint64_t)used ? used : (size_t)(bits / 32);
+    const unsigned part = (unsigned)(bits % 32);
+    /* Floor semantics: a negative value rounds toward minus infinity, so it
+     * gains one when any shifted-out bit was set. */
+    bool lost = false;
+    for (size_t i = 0; i < whole && i < used; i++) lost |= words[i] != 0;
+    if (whole < used && part != 0) lost |= (words[whole] & ((1u << part) - 1u)) != 0;
+    size_t count = 0;
+    uint32_t *result = calloc(used + 1, sizeof(uint32_t));
+    if (result == nullptr) {
+        free(words);
+        return DIAMOND_NIL;
+    }
+    for (size_t i = whole; i < used; i++) {
+        uint64_t current = words[i] >> part;
+        if (part != 0 && i + 1 < used) current |= ((uint64_t)words[i + 1] << (32 - part)) & 0xFFFFFFFFull;
+        result[count++] = (uint32_t)current;
+    }
+    free(words);
+    if (value.negative && lost) {
+        size_t index = 0;
+        for (; index < count; index++) {
+            if (++result[index] != 0) break;
+        }
+        if (index == count) result[count++] = 1;
+    }
+    const DiamondValue out = words_to_value(vm, value.negative, result, count);
+    free(result);
+    return out;
+}
+
+char *diamond_bignum_to_radix_string(DiamondIntView value, int radix, size_t *length) {
+    static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    /* Every limb is below 2^30, so no more than 30 digits per limb (radix 2). */
+    const size_t capacity = value.limb_count * 30 + 3;
+    char *reversed = malloc(capacity);
+    uint32_t *scratch = malloc((value.limb_count == 0 ? 1 : value.limb_count) * sizeof(uint32_t));
+    if (reversed == nullptr || scratch == nullptr) {
+        free(reversed);
+        free(scratch);
+        return nullptr;
+    }
+    memcpy(scratch, value.limbs, value.limb_count * sizeof(uint32_t));
+    size_t remaining = magnitude_trim(scratch, value.limb_count);
+    size_t produced = 0;
+    while (remaining > 0) {
+        uint64_t carry = 0;
+        for (size_t i = remaining; i > 0; i--) {
+            const uint64_t current = carry * DIAMOND_BIGNUM_BASE + scratch[i - 1];
+            scratch[i - 1] = (uint32_t)(current / (uint32_t)radix);
+            carry = current % (uint32_t)radix;
+        }
+        remaining = magnitude_trim(scratch, remaining);
+        reversed[produced++] = digits[carry];
+    }
+    free(scratch);
+    if (produced == 0) reversed[produced++] = '0';
+    if (value.negative) reversed[produced++] = '-';
+    for (size_t i = 0; i < produced / 2; i++) {
+        const char swap = reversed[i];
+        reversed[i] = reversed[produced - 1 - i];
+        reversed[produced - 1 - i] = swap;
+    }
+    reversed[produced] = '\0';
+    *length = produced;
+    return reversed;
+}
+
+DiamondValue diamond_bignum_from_radix_digits(DiamondVm *vm, const char *digits,
+        size_t length, int radix, bool negative) {
+    /* A digit is at most 6 bits for radix 36, a limb holds 29.9 bits. */
+    const size_t capacity = length * 6 / 29 + 3;
+    uint32_t *limbs = calloc(capacity, sizeof(uint32_t));
+    if (limbs == nullptr) return DIAMOND_NIL;
+    size_t count = 0;
+    for (size_t i = 0; i < length; i++) {
+        const char c = digits[i];
+        const uint32_t digit = c >= '0' && c <= '9' ? (uint32_t)(c - '0')
+            : c >= 'a' && c <= 'z' ? (uint32_t)(c - 'a' + 10) : (uint32_t)(c - 'A' + 10);
+        count = magnitude_multiply_add(limbs, count, (uint32_t)radix, digit);
+    }
+    const DiamondValue value = bignum_canonicalize(vm, negative, limbs, magnitude_trim(limbs, count));
+    free(limbs);
+    return value;
+}

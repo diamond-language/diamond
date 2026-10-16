@@ -6,6 +6,16 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- Arbitrary-precision `Int`s now work with the bitwise operators `&`, `|`, `^`, `<<` and `>>`
+  (Ruby's infinite two's-complement semantics for negatives), `to_s(base)` and
+  `String#to_i(base)` past 64 bits, and integer literals past 64 bits are accepted
+  (`18446744073709551615`, `0xFFFF_FFFF_FFFF_FFFF_FFFF`). `<<` now promotes instead of wrapping
+  when the result does not fit 64 bits (`1 << 63` is `9223372036854775808`), and a shift by 64
+  or more no longer raises: `1 << 70` is `1180591620717411303424`, `1 >> 64` is `0`, `-1 >> 64`
+  is `-1`. A negative shift amount, or a left shift past 1048576 bits, still raises `RangeError`.
+
 ### Tooling
 
 - The interpreter builds for WebAssembly (`wasm/build.sh`, needs only a wasi-sdk) and runs a REPL in

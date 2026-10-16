@@ -1931,6 +1931,9 @@ static Precedence infix_precedence(const Compiler *compiler) {
 }
 static uint16_t compile_block(Compiler *compiler);
 
+static uint16_t emit_invoke_named(Compiler *compiler, uint16_t receiver,
+        const char *name, const uint16_t *args, size_t count);
+
 static uint16_t parse_integer(Compiler *compiler) {
     const DiamondSpan span = compiler->previous.span;
     int64_t value = 0;
@@ -1942,14 +1945,31 @@ static uint16_t parse_integer(Compiler *compiler) {
                prefix == 'o' || prefix == 'O' ? 8 : 10;
         if (base != 10) first = 2;
     }
+    bool too_large = false;
     for (size_t index = first; index < span.length; index++) {
         if(compiler->source[span.start+index]=='_') continue;
         const int digit = (int)hex_digit_value(compiler->source[span.start + index]);
         if (value > (INT64_MAX - digit) / base) {
-            fail(compiler, span, "integer literal is too large");
-            return 0;
+            too_large = true;
+            break;
         }
         value = value * base + digit;
+    }
+    if (too_large) {
+        /* Past 64 bits there is no inline constant to hold the value, so the
+         * literal is built at run time from its digits: "digits".to_i(base)
+         * yields the arbitrary-precision Int, and needs no new constant kind
+         * in the bytecode, the cache or standalone builds. */
+        const uint16_t text = allocate_register(compiler);
+        const uint16_t literal = add_string_range(compiler, span.start + first,
+            span.length - first, span);
+        emit_instruction(compiler, DIAMOND_OP_STRING, text, literal, 0, 2);
+        const uint16_t base_register = allocate_register(compiler);
+        const uint16_t base_constant = add_constant(compiler, DIAMOND_INT(base));
+        emit_instruction(compiler, DIAMOND_OP_CONSTANT, base_register, base_constant, 0, 2);
+        const uint16_t result = emit_invoke_named(compiler, text, "to_i", &base_register, 1);
+        compiler->known_types[result] = DIAMOND_TYPE_INT;
+        return result;
     }
     const uint16_t destination = allocate_register(compiler);
     const uint16_t constant = add_constant(compiler, DIAMOND_INT(value));
