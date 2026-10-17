@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.16.0 — 2026-10-16
+
 ### Added
 
 - The website REPL colours what you type and the lines it echoes, using the language's own lexer
