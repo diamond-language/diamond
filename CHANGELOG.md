@@ -8,6 +8,7 @@ authoritative fine-grained record.
 
 ### Added
 
+- `p(value)` prints `value.inspect()` and returns `value`. A function, local or method named `p` still wins.
 - `Array.new(n)` and `Array.new(n, fill)` build an Array of `n` nils or copies of `fill`, compiled as `[fill] * n`.
   The block form is rejected with a message pointing at `map`.
 - `diamond build --lto` links an optional `-O3` fat-LTO runtime from the AOT kit (`make aot-kit AOT_LTO=1`):

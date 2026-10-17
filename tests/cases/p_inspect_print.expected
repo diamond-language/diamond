@@ -1,0 +1,17 @@
+5
+"a\nb"
+nil
+:sym
+[1, "two", nil, 2.5]
+{"k": [1]}
+[1, 2, 3]
+3
+2
+3
+5
+#<Point x=3>
+#<Point x=9>
+10
+method p 7
+8
+nil
