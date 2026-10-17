@@ -1,0 +1,11 @@
+0
+3
+true
+[7, 7]
+x,x,x,x
+x,y,x,x
+[[1], [1]]
+[6, 6, 6]
+expected Int, got String
+negative
+nil
