@@ -3,6 +3,8 @@
 
 #include "compiler.h"
 
+#include <stdbool.h>
+
 /* Single-entry cache for the sequential stdio request loop. Callers must build
  * a fresh compile buffer first so disk imports and open-document overrides are
  * included in the key. The borrowed result lives until the next cache miss or
@@ -10,5 +12,10 @@
  * Source bundles and position mappings remain owned by each request. */
 const DiamondProgram *diamond_lsp_analyze(const char *combined);
 void diamond_lsp_analysis_clear(void);
+
+/* Compiles later analyses with top-level redefinition allowed, as a REPL session does (it
+ * replays every accepted `def f() = 1` then `def f() = 2`). Off by default; changing it drops
+ * the cached result. The language server never turns it on. */
+void diamond_lsp_analysis_allow_redefinition(bool allow);
 
 #endif

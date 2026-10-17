@@ -88,5 +88,29 @@ int main(void) {
     for (size_t index = 0; index < count; index++) free(labels[index]);
     free(labels);
 
+    /* The caret inside a word completes the whole word: `outer` with the caret after `ou`. */
+    static const char middle[] = "outer";
+    if (!repl_compute_completions(session, session_length, "", 0, middle, 2,
+            &labels, &count)) return 13;
+    if (!has_label(labels, count, "outer")) return 14;
+    for (size_t index = 0; index < count; index++) free(labels[index]);
+    free(labels);
+
+    /* A session that redefines a name still completes: the REPL replays both definitions. */
+    static const char redefined[] = "def twice() = 1\ndef twice() = 2\n";
+    static const char twi[] = "twi";
+    if (!repl_compute_completions(redefined, sizeof redefined - 1, "", 0, twi, 3,
+            &labels, &count)) return 15;
+    if (!has_label(labels, count, "twice")) return 16;
+    for (size_t index = 0; index < count; index++) free(labels[index]);
+    free(labels);
+
+    /* A caret past the end of the line (a byte offset counted beyond an embedded NUL) is an
+     * empty result, not an out-of-bounds copy. */
+    static const char with_nul[] = {'a', '\0', 'b', '\0'};
+    if (!repl_compute_completions(session, session_length, "", 0, with_nul, 3,
+            &labels, &count)) return 17;
+    if (count != 0) return 18;
+
     return 0;
 }
