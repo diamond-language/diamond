@@ -6,10 +6,12 @@
  * separator so the page can tell program output from the value, and a compile
  * or runtime error goes to stderr. */
 #include "compiler.h"
+#include "lexer.h"
 #include "prelude.h"
 #include "value.h"
 #include "vm.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,4 +73,66 @@ WASM_EXPORT("diamond_wasm_eval") int diamond_wasm_eval(const char *source) {
     fflush(stdout);
     fflush(stderr);
     return exit_code;
+}
+
+/* Syntax highlighting for the page. The lexer is the language's own, so the colours
+ * cannot drift from what the compiler accepts. Returns a pointer to
+ * [count, (class, byte_start, byte_length) * count] as uint32_t, valid until the next call.
+ * Whitespace and comments are not tokens; the page treats any gap starting with '#' as a
+ * comment. Classes match HIGHLIGHT_CLASSES in wasm/web/diamond-wasm.js. */
+enum { HL_PLAIN, HL_KEYWORD, HL_STRING, HL_NUMBER, HL_FUNCTION, HL_CONSTANT, HL_IVAR, HL_SYMBOL, HL_REGEX };
+
+static uint32_t *highlight_buffer;
+static size_t highlight_capacity;
+
+static uint32_t highlight_class(DiamondTokenKind kind, DiamondTokenKind previous, char first) {
+    if (kind >= DIAMOND_TOKEN_IF && kind <= DIAMOND_TOKEN_IS) return HL_KEYWORD;
+    switch (kind) {
+    case DIAMOND_TOKEN_STRING: return HL_STRING;
+    case DIAMOND_TOKEN_INTEGER:
+    case DIAMOND_TOKEN_FLOAT: return HL_NUMBER;
+    case DIAMOND_TOKEN_SYMBOL: return HL_SYMBOL;
+    case DIAMOND_TOKEN_REGEX: return HL_REGEX;
+    case DIAMOND_TOKEN_INSTANCE_VARIABLE:
+    case DIAMOND_TOKEN_CLASS_VARIABLE: return HL_IVAR;
+    case DIAMOND_TOKEN_IDENTIFIER:
+        if (previous == DIAMOND_TOKEN_DEF) return HL_FUNCTION;
+        return first >= 'A' && first <= 'Z' ? HL_CONSTANT : HL_PLAIN;
+    default: return HL_PLAIN;
+    }
+}
+
+WASM_EXPORT("diamond_wasm_tokens") uint32_t *diamond_wasm_tokens(const char *source) {
+    size_t count = 0;
+    DiamondLexer lexer;
+    diamond_lexer_init(&lexer, source);
+    DiamondTokenKind previous = DIAMOND_TOKEN_EOF;
+    for (;;) {
+        const DiamondToken token = diamond_lexer_next(&lexer);
+        if (token.kind == DIAMOND_TOKEN_EOF) break;
+        if (token.span.length == 0) break;
+        if (token.kind != DIAMOND_TOKEN_NEWLINE) {
+            if ((count + 1) * 3 + 1 > highlight_capacity) {
+                const size_t capacity = highlight_capacity == 0 ? 256 : highlight_capacity * 2;
+                uint32_t *grown = realloc(highlight_buffer, capacity * sizeof *grown);
+                if (grown == nullptr) break;
+                highlight_buffer = grown;
+                highlight_capacity = capacity;
+            }
+            uint32_t *entry = highlight_buffer + 1 + count * 3;
+            entry[0] = highlight_class(token.kind, previous, source[token.span.start]);
+            entry[1] = (uint32_t)token.span.start;
+            entry[2] = (uint32_t)token.span.length;
+            count++;
+        }
+        previous = token.kind;
+        if (token.kind == DIAMOND_TOKEN_ERROR) break;
+    }
+    if (highlight_buffer == nullptr) {
+        highlight_buffer = malloc(256 * sizeof *highlight_buffer);
+        highlight_capacity = 256;
+        if (highlight_buffer == nullptr) return nullptr;
+    }
+    highlight_buffer[0] = (uint32_t)count;
+    return highlight_buffer;
 }

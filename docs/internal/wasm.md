@@ -19,6 +19,11 @@ and replays it for every line, as the terminal REPL does (`src/repl.c`): only ou
 previous run printed is shown. An entry is unfinished when the parser's error lies past the last
 newline-terminated line of the candidate.
 
+`diamond_wasm_tokens(source)` runs the language's own lexer and returns `[count, (class, byte start,
+byte length) ...]` so the page colours the prompt and echoed lines (`DiamondRepl.highlight`) with
+no second tokenizer to drift. Each line is lexed on its own, so a multi-line string or regex colours
+only approximately.
+
 ## Building and testing
 
 `make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
