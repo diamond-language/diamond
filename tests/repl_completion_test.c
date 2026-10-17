@@ -42,6 +42,13 @@ int main(void) {
     if (!repl_compute_completions(session, session_length, "", 0, dot, 2,
             &labels, &count)) return 3;
     if (!has_label(labels, count, "bark")) return 4;
+    /* After a dot only the receiver's members are offered: not the program's own functions,
+     * classes or locals -- and no label twice. */
+    if (has_label(labels, count, "Foo") || has_label(labels, count, "outer") ||
+        has_label(labels, count, "x")) return 11;
+    for (size_t first = 0; first < count; first++)
+        for (size_t second = first + 1; second < count; second++)
+            if (strcmp(labels[first], labels[second]) == 0) return 12;
     for (size_t index = 0; index < count; index++) free(labels[index]);
     free(labels);
 

@@ -83,6 +83,9 @@ function completes(name, setup, line, check) {
 }
 completes('completes a method after a dot', ['words = ["a", "b"]'], 'words.ma', (r) =>
   r.prefix === 'ma' && r.labels.includes('map') && r.labels.every((label) => label.startsWith('ma')));
+completes('only the receiver\'s members follow a dot, each once', ['def squared(n) = n * n', 'words = ["a"]'],
+  'words.', (r) => r.labels.includes('map') && !r.labels.includes('squared') && !r.labels.includes('words')
+    && new Set(r.labels).size === r.labels.length);
 completes('completes a name defined earlier', ['def squared(n) = n * n'], 'squ', (r) =>
   r.prefix === 'squ' && r.labels.includes('squared'));
 completes('completes a name from an unfinished entry', ['class Dog', '  def speak() = 1'], '  def x() = spe',
