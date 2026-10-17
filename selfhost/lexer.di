@@ -258,6 +258,7 @@ class Lexer
     return self.make_token(:newline) if code == ";".ord()
     if code == "=".ord()
       return self.make_token(:equal_equal) if self.match?("=".ord())
+      return self.make_token(:fat_arrow) if self.match?(">".ord())
       return self.make_token(:equal)
     end
     if code == "!".ord()

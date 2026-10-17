@@ -8,6 +8,7 @@ authoritative fine-grained record.
 
 ### Added
 
+- Hash literals accept `=>` as well as `:` between key and value: `{"a" => 1}`.
 - Postfix loops: `statement while cond` and `statement until cond`, compiled as the block-form loop.
 - `p(value)` prints `value.inspect()` and returns `value`. A function, local or method named `p` still wins.
 - `Array.new(n)` and `Array.new(n, fill)` build an Array of `n` nils or copies of `fill`, compiled as `[fill] * n`.

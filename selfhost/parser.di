@@ -4547,8 +4547,8 @@ class Parser
         self.fail("hash literal has too many entries")
       else
         keys.push(self.parse_expression())
-        if @current.kind() != :colon
-          self.fail("expected ':' after hash key")
+        if @current.kind() != :colon && @current.kind() != :fat_arrow
+          self.fail("expected ':' or '=>' after hash key")
         else
           self.advance_token()
           values.push(self.parse_expression())
