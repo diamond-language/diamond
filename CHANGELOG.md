@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- `Array.new(n)` and `Array.new(n, fill)` build an Array of `n` nils or copies of `fill`, compiled as `[fill] * n`.
+  The block form is rejected with a message pointing at `map`.
 - `diamond build --lto` links an optional `-O3` fat-LTO runtime from the AOT kit (`make aot-kit AOT_LTO=1`):
   about 3% faster on the `bench/` programs, at the cost of a link that recompiles the runtime
   (tens of seconds). The default build is unchanged.

@@ -5297,6 +5297,87 @@ static uint16_t parse_supervisor_new_call(Compiler *compiler) {
     return dest;
 }
 
+/* The function's type set holding exactly one bare member of type id (no element
+ * or callable detail), added on first use. */
+static uint16_t plain_type_set_index(Compiler *compiler,uint8_t type_id) {
+    for(size_t index=0;index<compiler->function->type_set_count;index++) {
+        const DiamondTypeSet *set=&compiler->function->type_sets[index];
+        if(set->count==1&&set->members[0].id==type_id&&
+           set->members[0].argument_set==DIAMOND_NO_TYPE_SET)
+            return (uint16_t)index;
+    }
+    if(!reserve_type_sets(compiler,1))return 0;
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    set->count=1;
+    set->members[0]=(DiamondTypeMember){.id=type_id,
+        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t member_index=0;member_index<16;member_index++)
+        set->members[0].callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
+    return (uint16_t)set_index;
+}
+
+static uint16_t compile_binary_op(Compiler *compiler,DiamondTokenKind operator,
+        uint16_t left,uint16_t right);
+
+/* Array.new(n) and Array.new(n, fill): n copies of fill (nil when omitted),
+ * compiled as `[fill] * n` so the VM's own Array * Int supplies the length
+ * checks and the copying -- no opcode of its own. As in Ruby, every slot holds
+ * the same fill value, not a copy of it. Array.new(n) { |i| ... } is not
+ * supported. */
+static uint16_t parse_array_new_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '.' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"new",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'new' after 'Array'");
+        return 0;
+    }
+    advance_token(compiler); /* consume 'new' */
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,"expected '(' after 'Array.new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    const DiamondSpan length_span=compiler->current.span;
+    const uint16_t length_register=parse_expression(compiler);
+    /* `Array * String` joins, so a non-Int length must not reach the multiply. */
+    emit_type_check(compiler,length_register,
+        plain_type_set_index(compiler,DIAMOND_TYPE_INT),length_span);
+    skip_newlines(compiler);
+    uint16_t fill_register;
+    if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        fill_register=parse_expression(compiler);
+        skip_newlines(compiler);
+    } else {
+        fill_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,fill_register,0,0,1);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+            "expected ')' after Array.new arguments (Array.new(n) { |i| ... } is not supported)");
+        return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||
+       compiler->current.kind==DIAMOND_TOKEN_DO) {
+        fail(compiler,compiler->current.span,
+            "Array.new does not take a block; build the array with n.times or map instead");
+        return 0;
+    }
+    /* ARRAY reads its elements from consecutive registers starting at base. */
+    const uint16_t base=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,base,fill_register,0,2);
+    const uint16_t single=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_ARRAY,single,base,1,3);
+    compiler->known_types[single]=DIAMOND_TYPE_ARRAY;
+    return compile_binary_op(compiler,DIAMOND_TOKEN_STAR,single,length_register);
+}
+
 static uint16_t parse_file_open_arguments(Compiler *compiler) {
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after 'File.open'");
@@ -7585,6 +7666,10 @@ static uint16_t parse_name(Compiler *compiler) {
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"Supervisor",name,false))
         return parse_supervisor_new_call(compiler);
+    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
+       compiler->current.kind==DIAMOND_TOKEN_DOT&&
+       name_equals(compiler,"Array",name,false))
+        return parse_array_new_call(compiler);
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
        compiler->current.kind==DIAMOND_TOKEN_DOT&&
        name_equals(compiler,"TCPSocket",name,false))
@@ -18471,23 +18556,7 @@ static uint16_t compile_compound_assignment(Compiler *compiler) {
  * destructuring statement in the same function rather than burning a
  * fresh type-set slot per statement. */
 static uint16_t array_type_set_index(Compiler *compiler) {
-    for(size_t index=0;index<compiler->function->type_set_count;index++) {
-        const DiamondTypeSet *set=&compiler->function->type_sets[index];
-        if(set->count==1&&set->members[0].id==DIAMOND_TYPE_ARRAY&&
-           set->members[0].argument_set==DIAMOND_NO_TYPE_SET)
-            return (uint16_t)index;
-    }
-    if(!reserve_type_sets(compiler,1))return 0;
-    const size_t set_index=compiler->function->type_set_count++;
-    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
-    set->count=1;
-    set->members[0]=(DiamondTypeMember){.id=DIAMOND_TYPE_ARRAY,
-        .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
-        .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET,
-        .callable_parameters_typed=false};
-    for(size_t member_index=0;member_index<16;member_index++)
-        set->members[0].callable_parameter_sets[member_index]=DIAMOND_NO_TYPE_SET;
-    return (uint16_t)set_index;
+    return plain_type_set_index(compiler,DIAMOND_TYPE_ARRAY);
 }
 
 static uint16_t hash_type_set_index(Compiler *compiler) {
