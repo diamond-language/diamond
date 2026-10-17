@@ -8,10 +8,9 @@
  * (Ctrl-D) or a fatal I/O error. Returns a process exit code. */
 int diamond_repl_run(void);
 
-/* Tab-completion's own logic, exposed here (rather than kept static in
- * repl.c) solely so tests/repl_completion_test.c can call it directly
- * without simulating raw terminal Tab bytes -- see repl.c's own doc
- * comment on each for the real contract. Not part of this header's
+/* Tab-completion's own logic (lsp/repl_completion.c, shared with the WebAssembly build), exposed
+ * here so tests/repl_completion_test.c can call it directly without simulating raw terminal Tab
+ * bytes -- see that file's doc comments for the real contract. Not part of this header's
  * historical "just the REPL entry point" scope in spirit, but this
  * project has no separate internal-testing-header convention, and
  * these take plain char pointer / size_t rather than repl.c's private
@@ -22,5 +21,6 @@ bool repl_compute_completions(const char *session, size_t session_length,
     const char *pending, size_t pending_length,
     const char *line, size_t cursor,
     char ***out_labels, size_t *out_count);
+void repl_free_completions(char **labels, size_t count);
 
 #endif

@@ -74,6 +74,23 @@ expect('sqlite aggregate', [
 expect('sqlite file is refused cleanly', 'SQLite3.open("/tmp/diamond-test.db")',
   errorContaining('cannot open'));
 
+// Completion: the engine behind the terminal REPL's Tab key, driven through the page's API.
+function completes(name, setup, line, check) {
+  repl.reset();
+  feed(setup);
+  const result = repl.complete(line);
+  if (!check(result)) { failures++; console.error(`FAIL ${name}: ${JSON.stringify(result)}`); }
+}
+completes('completes a method after a dot', ['words = ["a", "b"]'], 'words.ma', (r) =>
+  r.prefix === 'ma' && r.labels.includes('map') && r.labels.every((label) => label.startsWith('ma')));
+completes('completes a name defined earlier', ['def squared(n) = n * n'], 'squ', (r) =>
+  r.prefix === 'squ' && r.labels.includes('squared'));
+completes('completes a name from an unfinished entry', ['class Dog', '  def speak() = 1'], '  def x() = spe',
+  (r) => Array.isArray(r.labels));
+completes('no candidates for a name nothing starts with', [], 'qqqzzz', (r) => r.labels.length === 0);
+completes('a dangling operator is not an error', [], '1 +', (r) => Array.isArray(r.labels));
+expect('still evaluates after completing', ['x = 20', 'x * 2'], equals('40'));
+
 // The session survives every failure above.
 expect('still alive', ['TCPSocket.connect("example.com", 80)', '1 + 1'], equals('2'));
 

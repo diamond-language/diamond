@@ -124,11 +124,6 @@ Collections are stop-the-world within each isolated VM.
 
 Current state: [WebAssembly build](internal/wasm.md).
 
-- **Website REPL completion** -- as-you-type completion in the prompt (ghost text for the best
-  match, a short list for the rest). It can reuse what the native REPL's Tab completion
-  already does, but that code lives in `src/repl.c`, which the wasm build leaves out, and
-  pulls in the LSP completion engine, so it needs splitting out and measuring in wasm first.
-
 - **Fibers** -- need stack switching (Asyncify or the stack-switching proposal).
 
 ### Native-code execution

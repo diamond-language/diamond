@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "lexer.h"
 #include "prelude.h"
+#include "repl.h"
 #include "value.h"
 #include "vm.h"
 
@@ -135,4 +136,34 @@ WASM_EXPORT("diamond_wasm_tokens") uint32_t *diamond_wasm_tokens(const char *sou
     }
     highlight_buffer[0] = (uint32_t)count;
     return highlight_buffer;
+}
+
+/* Completion for the page's prompt: the same engine as the terminal REPL's Tab key
+ * (lsp/repl_completion.c). `cursor` is a byte offset into `line`. Returns the candidates, each
+ * followed by '\n', as one NUL-terminated string valid until the next call (empty when there
+ * are none, nullptr when out of memory). The module compiles the whole session plus the line
+ * to answer, so a call costs about as much as one evaluation. */
+static char *completion_buffer;
+
+WASM_EXPORT("diamond_wasm_complete") const char *diamond_wasm_complete(
+        const char *session, const char *pending, const char *line, size_t cursor) {
+    char **labels = nullptr;
+    size_t count = 0;
+    if (!repl_compute_completions(session, strlen(session), pending, strlen(pending),
+            line, cursor, &labels, &count)) return nullptr;
+    size_t length = 1;
+    for (size_t index = 0; index < count; index++) length += strlen(labels[index]) + 1;
+    char *grown = realloc(completion_buffer, length);
+    if (grown == nullptr) { repl_free_completions(labels, count); return nullptr; }
+    completion_buffer = grown;
+    char *cursor_out = completion_buffer;
+    for (size_t index = 0; index < count; index++) {
+        const size_t label_length = strlen(labels[index]);
+        memcpy(cursor_out, labels[index], label_length);
+        cursor_out += label_length;
+        *cursor_out++ = '\n';
+    }
+    *cursor_out = '\0';
+    repl_free_completions(labels, count);
+    return completion_buffer;
 }
