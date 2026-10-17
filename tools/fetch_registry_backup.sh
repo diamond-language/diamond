@@ -47,10 +47,7 @@ app_dir="${app%/}"
 quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 # The server's own diamond runs backup.di (installed next to the app directory, in bin/).
 remote_command="set -eu; work=\$(mktemp -d /tmp/diamond-registry-backup.XXXXXXXX); trap 'rm -rf -- \"\$work\"' EXIT; "
-# Servers deployed before backup.di shipped still have the Python script; fall back to it until
-# the registry has been upgraded once (then this branch can go).
-remote_command+="if [ -f $(quote "$app_dir/backup.di") ]; then $(quote "$app_dir/../bin/diamond") $(quote "$app_dir/backup.di") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
-remote_command+="else python3 $(quote "$app_dir/backup.py") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; fi; "
+remote_command+="$(quote "$app_dir/../bin/diamond") $(quote "$app_dir/backup.di") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
 remote_command+="tar -C \"\$work\" -cf - snapshot"
 
 archive="$destination/.transfer.tar"

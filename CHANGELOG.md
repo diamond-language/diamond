@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Tooling
+
+- `tools/fetch_registry_backup.sh` no longer falls back to a Python backup script; the registry server
+  runs `backup.di`, so tooling needs no `python3`.
+
 ## 0.16.0 — 2026-10-16
 
 ### Added

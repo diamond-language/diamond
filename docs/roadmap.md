@@ -228,9 +228,6 @@ Getting Diamond built, tested and deployed should not need a second scripting la
 the machine, and the build and test dependency set should stay a C compiler, make and a POSIX
 shell.
 
-- `tools/fetch_registry_backup.sh` still falls back to `python3 backup.py` on a registry server
-  deployed before `backup.di` shipped. Delete that fallback once the production registry has been
-  redeployed from a build that includes `backup.di`.
 - Treat any new `python3` call in a build, test or tooling path as a regression.
 - Node.js (`tests/wasm_repl_test.mjs`, the WebAssembly check) is the one other exception; keep it
   confined to the optional wasm target.
