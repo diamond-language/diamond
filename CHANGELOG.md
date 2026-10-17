@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- `diamond build --lto` links an optional `-O3` fat-LTO runtime from the AOT kit (`make aot-kit AOT_LTO=1`):
+  about 3% faster on the `bench/` programs, at the cost of a link that recompiles the runtime
+  (tens of seconds). The default build is unchanged.
+
 ### Tooling
 
 - `tools/fetch_registry_backup.sh` no longer falls back to a Python backup script; the registry server

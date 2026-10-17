@@ -710,6 +710,13 @@ AOT_OUTPUT ?= $(BUILD_DIR)/a.out
 AOT_CACHE_ROOT ?= $(BUILD_DIR)/aot
 AOT_CACHE_DIR := $(AOT_CACHE_ROOT)-$(subst /,_,$(CC))
 AOT_CFLAGS := $(CFLAGS_COMMON) -O2 -g0
+# `make aot-kit AOT_LTO=1` adds a second runtime archive for `diamond build --lto`: the same
+# sources at -O3 as fat LTO objects (ordinary code that links like any other object, plus the
+# compiler's intermediate form), so the app's link can optimise the runtime and the program
+# together. That link recompiles the runtime for every app (tens of seconds), which is why it
+# is opt-in at both ends.
+AOT_LTO ?=
+AOT_LTO_CFLAGS := $(CFLAGS_COMMON) -O3 -g0 -flto -ffat-lto-objects
 AOT_CONFIG := $(AOT_CACHE_DIR)/config
 AOT_FINGERPRINT_EXTRA ?=
 AOT_FINGERPRINT_INPUTS := Makefile tools/aot_fingerprint.sh \
@@ -717,13 +724,16 @@ AOT_FINGERPRINT_INPUTS := Makefile tools/aot_fingerprint.sh \
 	$(wildcard $(REGINOLD_DIR)/*.h) $(PRELUDE_BIN) $(AOT_FINGERPRINT_EXTRA)
 AOT_RUNTIME_OBJECTS := $(API_SOURCES:src/%.c=$(AOT_CACHE_DIR)/%.o) $(AOT_CACHE_DIR)/runtime_main.o
 AOT_RUNTIME_LIB := $(AOT_CACHE_DIR)/libdiamond-aot.a
+AOT_LTO_DIR := $(AOT_CACHE_DIR)/lto
+AOT_LTO_OBJECTS := $(AOT_RUNTIME_OBJECTS:$(AOT_CACHE_DIR)/%.o=$(AOT_LTO_DIR)/%.o)
+AOT_LTO_LIB := $(AOT_CACHE_DIR)/libdiamond-aot-lto.a
 
 .PHONY: aot-config-check
 aot-config-check:
 
 $(AOT_CONFIG): aot-config-check $(AOT_FINGERPRINT_INPUTS)
 	@mkdir -p $(AOT_CACHE_DIR)
-	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(shell $(CC) -dumpversion)' \
+	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(AOT_LTO_CFLAGS)' '$(shell $(CC) -dumpversion)' \
 		"$$(tools/aot_fingerprint.sh $(AOT_FINGERPRINT_INPUTS))" > $@.tmp
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
@@ -738,6 +748,19 @@ $(AOT_CACHE_DIR)/runtime_main.o: tools/aot_runtime_main.c $(AOT_CONFIG)
 $(AOT_CACHE_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
 
 $(AOT_RUNTIME_LIB): $(AOT_RUNTIME_OBJECTS)
+	$(AR) rcs $@ $^
+
+$(AOT_LTO_DIR)/%.o: src/%.c $(AOT_CONFIG)
+	@mkdir -p $(AOT_LTO_DIR)
+	$(CC) $(CPPFLAGS) $(AOT_LTO_CFLAGS) -MMD -MP -c $< -o $@
+
+$(AOT_LTO_DIR)/runtime_main.o: tools/aot_runtime_main.c $(AOT_CONFIG)
+	@mkdir -p $(AOT_LTO_DIR)
+	$(CC) $(CPPFLAGS) $(AOT_LTO_CFLAGS) -MMD -MP -c $< -o $@
+
+$(AOT_LTO_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
+
+$(AOT_LTO_LIB): $(AOT_LTO_OBJECTS)
 	$(AR) rcs $@ $^
 
 .PHONY: aot-build
@@ -756,10 +779,13 @@ AOT_KIT_LINK_ARGS := $(LDFLAGS_EXTRA) -lm $(OPTIONAL_LIBS) $(LDLIBS_DL) \
 DIAMOND_VERSION := $(shell sed -n 's/.*DIAMOND_VERSION\[\] = "\(.*\)";/\1/p' src/main.c)
 
 .PHONY: aot-kit
-aot-kit: $(AOT_RUNTIME_LIB) $(REGINOLD_LIB)
+aot-kit: $(AOT_RUNTIME_LIB) $(if $(AOT_LTO),$(AOT_LTO_LIB)) $(REGINOLD_LIB)
 	@rm -rf $(AOT_KIT_DIR)
 	@mkdir -p $(AOT_KIT_DIR)
 	cp $(AOT_RUNTIME_LIB) $(REGINOLD_LIB) $(AOT_KIT_DIR)/
+	@if [ -n '$(AOT_LTO)' ]; then \
+		cp $(AOT_LTO_LIB) $(AOT_KIT_DIR)/ && printf '%s\n' $(AOT_LTO_CFLAGS) > $(AOT_KIT_DIR)/compile-lto.args; \
+	fi
 	@printf '%s\n' '$(DIAMOND_VERSION)' > $(AOT_KIT_DIR)/version
 	@printf '%s\n' '$(CC)' > $(AOT_KIT_DIR)/cc
 	@printf '%s\n' $(AOT_CFLAGS) > $(AOT_KIT_DIR)/compile.args

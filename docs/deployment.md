@@ -21,7 +21,7 @@ cd ../skindicate.dia
 ## CLI contract
 
 ```text
-diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE]
+diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 ```
 
 - `SOURCE` is compiled exactly the way `diamond program.di` compiles it --
@@ -38,6 +38,9 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE]
 - `--target=TRIPLE` links for another platform from a cross kit built with
   `make aot-kit-cross` (see "Cross-compilation" below). It never falls back to the
   host toolchain: a missing or mismatched kit exits 74.
+- `--lto` links the kit's LTO runtime (see "Optional LTO runtime" below) instead of the
+  default one. It needs an installed kit built with `AOT_LTO=1`; without one it exits 74
+  and says how to build it. It does not combine with the checkout's `make` path.
 - A compile error (a real syntax/type/name error in `SOURCE` or anything it
   `require`s) prints the same diagnostic `diamond program.di` would and
   exits 65 -- the C compiler and `make` are never invoked in this case.
@@ -83,6 +86,18 @@ compiler with `#embed` support (GCC 15+ or Clang 19+) and the development
 libraries named in the link flags, but not the Diamond sources, headers, or
 `make`. The kit is specific to the platform and library versions it was built
 against.
+
+### Optional LTO runtime
+
+The default runtime is compiled at `-O2` without link-time optimization, so `diamond build`
+links in a fraction of a second. `make aot-kit AOT_LTO=1` (or `make install AOT_LTO=1`) adds a
+second archive, `libdiamond-aot-lto.a`, holding the same sources at `-O3` as fat LTO objects,
+plus `compile-lto.args`; `diamond build --lto` links against that, so the compiler optimizes
+the runtime and the program together. Measured on five `bench/` programs against the default:
+`-O2` with LTO is about 2% slower and `-O3` with LTO about 3% faster (instructions and cycles
+both), and every `--lto` build recompiles the runtime in that link, about 38 s instead of
+0.2 s. That is why it is opt-in at both ends. The compiler needs LTO support (GCC's works with
+plain `ar`; Clang needs a linker plugin or lld).
 
 ## JIT in standalone programs
 

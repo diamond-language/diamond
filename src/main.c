@@ -468,7 +468,7 @@ static int wait_for_child(pid_t child, const char *tool) {
 /* Links the generated embed-data file against a prebuilt kit with a single
  * compiler invocation: no make, runtime sources, or headers are needed. */
 static int run_kit_aot_build(const char *kit, const char *embed_path,
-        const char *output_path, const char *cc_override, const char *target) {
+        const char *output_path, const char *cc_override, const char *target, bool lto) {
     char *version_path = kit_path(kit, "version");
     char *version = version_path != nullptr ? read_file(version_path) : nullptr;
     free(version_path);
@@ -503,7 +503,9 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
     char *args[MAX_ARGS];
     size_t count = 0;
     char *cc_text = nullptr, *compile_text = nullptr, *link_text = nullptr;
-    char *runtime = kit_path(kit, "libdiamond-aot.a");
+    /* --lto links the kit's second runtime (fat LTO objects at -O3, `make aot-kit AOT_LTO=1`),
+     * compiled with its own flags; the compiler then optimises runtime and program together. */
+    char *runtime = kit_path(kit, lto ? "libdiamond-aot-lto.a" : "libdiamond-aot.a");
     char *reginold = kit_path(kit, "libreginold.a");
     int result = 74;
     if (cc_override != nullptr) {
@@ -512,8 +514,14 @@ static int run_kit_aot_build(const char *kit, const char *embed_path,
         fprintf(stderr, "diamond: AOT kit '%s' does not name a compiler\n", kit);
         goto done;
     }
+    if (lto && (runtime == nullptr || access(runtime, R_OK) != 0)) {
+        fprintf(stderr, "diamond: AOT kit '%s' has no LTO runtime (build the kit with "
+            "`make aot-kit AOT_LTO=1`, see docs/deployment.md)\n", kit);
+        goto done;
+    }
     if (runtime == nullptr || reginold == nullptr ||
-        !append_kit_lines(kit, "compile.args", args, &count, MAX_ARGS, &compile_text) ||
+        !append_kit_lines(kit, lto ? "compile-lto.args" : "compile.args", args, &count,
+            MAX_ARGS, &compile_text) ||
         count + 3 >= MAX_ARGS) {
         fprintf(stderr, "diamond: AOT kit '%s' is incomplete\n", kit);
         goto done;
@@ -558,16 +566,19 @@ done:
  * (still dynamically links whatever `diamond` itself does). */
 static int handle_build_command(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE]\n");
+        fprintf(stderr, "usage: diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]\n");
         return 64;
     }
     const char *source_path = argv[2];
     const char *output_path = nullptr;
     const char *cc = nullptr;
     const char *target = nullptr;
+    bool lto = false;
     for (int index = 3; index < argc; index++) {
         if (strcmp(argv[index], "-o") == 0 && index + 1 < argc) {
             output_path = argv[++index];
+        } else if (strcmp(argv[index], "--lto") == 0) {
+            lto = true;
         } else if (strncmp(argv[index], "--cc=", 5) == 0) {
             cc = argv[index] + 5;
         } else if (strncmp(argv[index], "--target=", 9) == 0) {
@@ -643,9 +654,13 @@ static int handle_build_command(int argc, char **argv) {
             "diamond: no AOT kit for target '%s' (build one with `make aot-kit-cross "
             "TARGET_TRIPLE=%s SYSROOT=...`, see docs/deployment.md)\n", target, target);
         status = 74;
+    } else if (lto && kit == nullptr) {
+        fprintf(stderr, "diamond: --lto needs an installed AOT kit built with "
+            "`make aot-kit AOT_LTO=1` (see docs/deployment.md)\n");
+        status = 74;
     } else {
         status = kit != nullptr
-            ? run_kit_aot_build(kit, embed_path, output_path, cc, target)
+            ? run_kit_aot_build(kit, embed_path, output_path, cc, target, lto)
             : run_make_aot_build(embed_path, output_path, cc, argv[0]);
     }
     free(kit);
