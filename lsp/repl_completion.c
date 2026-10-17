@@ -1,5 +1,6 @@
 #include "repl.h"
 
+#include "analysis_cache.h"
 #include "completion.h"
 #include "json.h"
 
@@ -17,15 +18,13 @@
  * (lsp/receiver.c) only cares about tokens strictly before the query
  * offset, not about repl.c distinguishing "bare name" from
  * "receiver.name" completion itself. */
+static bool repl_is_identifier_char(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
 size_t repl_word_start(const char *line, size_t cursor) {
     size_t start = cursor;
-    while (start > 0) {
-        const unsigned char c = (unsigned char)line[start - 1];
-        const bool identifier_char = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') || c == '_';
-        if (!identifier_char) break;
-        start--;
-    }
+    while (start > 0 && repl_is_identifier_char((unsigned char)line[start - 1])) start--;
     return start;
 }
 
@@ -71,8 +70,20 @@ bool repl_compute_completions(const char *session, size_t session_length,
         char ***out_labels, size_t *out_count) {
     *out_labels = nullptr;
     *out_count = 0;
+    /* A session redefines names the way the REPL evaluates them. */
+    diamond_lsp_analysis_allow_redefinition(true);
     const size_t line_length = strlen(line);
+    /* A cursor past the end of the line (the caller's offset counts bytes after an embedded NUL,
+     * say) has nothing to complete; going on would size the copies below from it. */
+    if (cursor > line_length) return true;
     const size_t word_start_in_line = repl_word_start(line, cursor);
+    /* The word being completed also covers identifier characters after the caret: with the
+     * caret inside `squared`, only `squ` is replaced by the placeholder, which would leave
+     * `__cared` behind, an undefined name that stops the buffer compiling. The candidates are
+     * still filtered by what was typed before the caret. */
+    size_t word_end_in_line = cursor;
+    while (word_end_in_line < line_length && repl_is_identifier_char((unsigned char)line[word_end_in_line]))
+        word_end_in_line++;
 
     const size_t full_length = session_length + pending_length + line_length;
     char *full_text = malloc(full_length + 1);
@@ -84,7 +95,7 @@ bool repl_compute_completions(const char *session, size_t session_length,
     full_text[full_length] = '\0';
 
     const size_t word_start = line_offset_in_full + word_start_in_line;
-    const size_t word_end = line_offset_in_full + cursor;
+    const size_t word_end = line_offset_in_full + word_end_in_line;
     const size_t typed_prefix_length = cursor - word_start_in_line;
 
     /* The placeholder identifier also replaces a *bare* (non-receiver)

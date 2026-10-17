@@ -18,6 +18,9 @@ authoritative fine-grained record.
   class and local in the program (`words.` listed `abs` and `numeric_seconds`) and repeat names that
   came from more than one source. When the receiver's type cannot be proven it now offers nothing.
   This applies to the language server, the terminal REPL's Tab key and the website REPL.
+- Website and terminal REPL completion: a caret inside a word (`squ|ared`) completes the whole word, completion
+  keeps working after a top-level `def` has been redefined, and a caret offset past the end of the line (a
+  byte offset counted beyond an embedded NUL) is an empty result instead of trapping the WebAssembly module.
 
 ### Tooling
 

@@ -75,10 +75,10 @@ expect('sqlite file is refused cleanly', 'SQLite3.open("/tmp/diamond-test.db")',
   errorContaining('cannot open'));
 
 // Completion: the engine behind the terminal REPL's Tab key, driven through the page's API.
-function completes(name, setup, line, check) {
+function completes(name, setup, line, check, caret) {
   repl.reset();
   feed(setup);
-  const result = repl.complete(line);
+  const result = repl.complete(line, caret);
   if (!check(result)) { failures++; console.error(`FAIL ${name}: ${JSON.stringify(result)}`); }
 }
 completes('completes a method after a dot', ['words = ["a", "b"]'], 'words.ma', (r) =>
@@ -88,6 +88,9 @@ completes('only the receiver\'s members follow a dot, each once', ['def squared(
     && new Set(r.labels).size === r.labels.length);
 completes('completes a name defined earlier', ['def squared(n) = n * n'], 'squ', (r) =>
   r.prefix === 'squ' && r.labels.includes('squared'));
+completes('completes with the caret inside the word', ['def squared(n) = n * n'], 'squared', (r) => r.prefix === 'squ' && r.labels.includes('squared'), 3);
+completes('completes after a top-level redefinition', ['def f() = 1', 'def f() = 2'], 'f', (r) => r.labels.includes('f'));
+completes('a caret past a NUL byte is an empty result', [], 'a\0b', (r) => r.labels.length === 0);
 completes('completes a name from an unfinished entry', ['class Dog', '  def speak() = 1'], '  def x() = spe',
   (r) => Array.isArray(r.labels));
 completes('no candidates for a name nothing starts with', [], 'qqqzzz', (r) => r.labels.length === 0);

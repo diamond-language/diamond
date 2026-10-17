@@ -5,6 +5,13 @@
 
 static DiamondProgram *cached_program;
 static char *cached_source;
+static bool allow_redefinition;
+
+void diamond_lsp_analysis_allow_redefinition(bool allow) {
+    if(allow==allow_redefinition)return;
+    allow_redefinition=allow;
+    diamond_lsp_analysis_clear();
+}
 
 const DiamondProgram *diamond_lsp_analyze(const char *combined) {
     if(cached_source!=nullptr&&strcmp(cached_source,combined)==0)
@@ -14,6 +21,7 @@ const DiamondProgram *diamond_lsp_analyze(const char *combined) {
         cached_program=calloc(1,sizeof *cached_program);
         if(cached_program==nullptr)return nullptr;
     }
+    cached_program->allow_top_level_redefinition=allow_redefinition;
     DiamondDiagnostic diagnostic;
     if(!diamond_compile_for_tooling(combined,cached_program,&diagnostic))
         return nullptr;
