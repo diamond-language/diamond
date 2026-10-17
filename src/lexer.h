@@ -57,6 +57,8 @@ typedef enum DiamondTokenKind {
     DIAMOND_TOKEN_PLUS,
     DIAMOND_TOKEN_MINUS,
     DIAMOND_TOKEN_ARROW,
+    /* `=>`, the Ruby hash-rocket separator between a hash literal's key and value. */
+    DIAMOND_TOKEN_FAT_ARROW,
     DIAMOND_TOKEN_STAR,
     DIAMOND_TOKEN_SLASH,
     DIAMOND_TOKEN_PERCENT,

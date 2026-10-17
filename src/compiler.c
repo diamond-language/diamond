@@ -10094,8 +10094,10 @@ static uint16_t parse_hash(Compiler *compiler) {
                 return 0;
             }
             keys[count]=parse_with_expected_set(compiler,expected_key);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
-                fail(compiler,compiler->current.span,"expected ':' after hash key");
+            /* `{"a": 1}` and Ruby's `{"a" => 1}` mean the same thing. */
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON&&
+               compiler->current.kind!=DIAMOND_TOKEN_FAT_ARROW) {
+                fail(compiler,compiler->current.span,"expected ':' or '=>' after hash key");
                 return 0;
             }
             advance_token(compiler);

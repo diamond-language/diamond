@@ -1,1 +1,1 @@
-expected ':' after hash key
+expected ':' or '=>' after hash key

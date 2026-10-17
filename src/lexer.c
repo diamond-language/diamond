@@ -482,7 +482,8 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
         case ';':
             return token(lexer, DIAMOND_TOKEN_NEWLINE);
         case '=':
-            return token(lexer, match(lexer, '=') ? DIAMOND_TOKEN_EQUAL_EQUAL
+            if(match(lexer, '=')) return token(lexer, DIAMOND_TOKEN_EQUAL_EQUAL);
+            return token(lexer, match(lexer, '>') ? DIAMOND_TOKEN_FAT_ARROW
                                                    : DIAMOND_TOKEN_EQUAL);
         case '!':
             return token(lexer, match(lexer, '=') ? DIAMOND_TOKEN_BANG_EQUAL

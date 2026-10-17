@@ -59,6 +59,7 @@ static const char *kind_name(DiamondTokenKind kind) {
         case DIAMOND_TOKEN_AND_AND_EQUAL: return "and_and_equal";
         case DIAMOND_TOKEN_EQUAL: return "equal";
         case DIAMOND_TOKEN_EQUAL_EQUAL: return "equal_equal";
+        case DIAMOND_TOKEN_FAT_ARROW: return "fat_arrow";
         case DIAMOND_TOKEN_BANG_EQUAL: return "bang_equal";
         case DIAMOND_TOKEN_LESS: return "less";
         case DIAMOND_TOKEN_LESS_EQUAL: return "less_equal";

@@ -495,6 +495,7 @@ static bool is_spaced_operator(DiamondTokenKind kind) {
     switch(kind) {
         case DIAMOND_TOKEN_EQUAL:
         case DIAMOND_TOKEN_EQUAL_EQUAL:
+        case DIAMOND_TOKEN_FAT_ARROW:
         case DIAMOND_TOKEN_BANG_EQUAL:
         case DIAMOND_TOKEN_LESS_EQUAL:
         case DIAMOND_TOKEN_GREATER_EQUAL:
