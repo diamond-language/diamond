@@ -3912,6 +3912,7 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
 
 static bool singleton_call_name_equals(const Compiler *compiler,
         const char *method_name,DiamondSpan name);
+static uint16_t parse_p_call(Compiler *compiler);
 
 /* Does the class being compiled have an instance method `name` -- one
  * already registered (its own so far, a superclass's, an included
@@ -4011,6 +4012,11 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
        compiler->in_singleton_method&&compiler->current_class>=0&&
        self_has_singleton_method(compiler,name))
         return parse_self_class_method_arguments(compiler,name,false);
+    /* Last resort for a bare `p(...)`: only when no function, local, or method of
+     * self by that name exists (all handled above), so it never changes the meaning
+     * of a program that defines its own `p`. */
+    if(function_index<0&&!compiler->discovery_pass&&name_equals(compiler,"p",name,false))
+        return parse_p_call(compiler);
     if (function_index < 0) {
         note_self_reference(compiler,name);
         if(compiler->discovery_pass)
@@ -6573,6 +6579,29 @@ static uint16_t parse_print_call(Compiler *compiler, uint8_t flags) {
     emit_byte(compiler,flags);
     compiler->known_types[dest]=DIAMOND_TYPE_NIL;
     return dest;
+}
+
+/* p(value): puts(value.inspect()) that then evaluates to value, so it can wrap an
+ * expression while debugging. Takes exactly one argument; a user-defined `p` (function
+ * or local) takes precedence over it, as for puts. */
+static uint16_t parse_p_call(Compiler *compiler) {
+    advance_token(compiler); /* consume '(' */
+    skip_newlines(compiler);
+    const uint16_t value=parse_expression(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"expected ')' after arguments (p takes one value)");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t text=emit_invoke_named(compiler,value,"inspect",nullptr,0);
+    const uint16_t printed=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_PRINT);
+    emit_register(compiler,printed);
+    emit_register(compiler,text);
+    emit_byte(compiler,DIAMOND_PRINT_NEWLINE);
+    compiler->known_types[printed]=DIAMOND_TYPE_NIL;
+    return value;
 }
 
 static uint16_t parse_gets_call(Compiler *compiler) {

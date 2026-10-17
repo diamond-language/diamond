@@ -86,6 +86,17 @@ somewhere else. It compiles to the same `DIAMOND_OP_PRINT` instruction with
 the stderr flag set, and like `print`/`puts` a local or user-defined function
 named `warn` takes precedence over the built-in.
 
+## Debug printing: `p`
+
+```ruby
+total = p(price * quantity) + shipping   # prints 42, then adds
+```
+
+`p(value)` writes `value.inspect()` and a newline to stdout and evaluates to `value`, so it can wrap
+any expression while you debug. Strings print quoted with escapes and `nil` prints as `nil`, unlike
+`puts`. It takes exactly one argument (no `p a`, no `p(a, b)`). It is the last resort for the name: a
+local, a function, or a method of the surrounding class or its superclass named `p` takes precedence.
+
 ## stdin: `gets()`
 
 ```ruby
