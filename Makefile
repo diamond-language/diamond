@@ -30,7 +30,7 @@ REGINOLD_LIB := $(REGINOLD_DIR)/libreginold.a
 # /usr/include/postgresql instead. Harmless to add unconditionally on
 # distros where it's not needed -- gcc/clang silently ignore a nonexistent
 # -I path -- so there's no reason to special-case any of these per platform.
-# -Ilsp: src/repl.c includes lsp/completion.h/json.h directly for
+# -Ilsp: lsp/repl_completion.c includes lsp/completion.h/json.h directly for
 # Tab-completion (see REPL_COMPLETION_SOURCES below) -- global rather
 # than scoped to just that one file's own compile step, since no
 # src/*.h/lsp/*.h basename collision exists to make that a risk.
@@ -227,7 +227,7 @@ BUILD_DIR := build
 TARGET := $(BUILD_DIR)/diamond
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
-# The REPL's Tab-completion (src/repl.c) reuses lsp/completion.c's
+# The REPL's Tab-completion (lsp/repl_completion.c, called from src/repl.c) reuses lsp/completion.c's
 # completion_compute_with_resolver directly (in-process, no LSP
 # transport) rather than re-implementing candidate-list logic -- these
 # are its own transitive dependencies (compile_buffer.c for the shared
@@ -244,7 +244,7 @@ OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 # actual basename collision exists today, but this stays true even if
 # one is ever introduced.
 REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_cache.c \
-	lsp/receiver.c lsp/json.c
+	lsp/receiver.c lsp/json.c lsp/repl_completion.c
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 

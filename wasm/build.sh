@@ -40,7 +40,7 @@ flags=(--target=wasm32-wasip1 --sysroot="$sdk/share/wasi-sysroot"
     -I"$root/wasm/include" -I"$sqlite_dir"
     -include "$root/wasm/include/diamond_wasm_shim.h"
     -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS
-    -std=c23 -O2 -I"$root/src" -I"$root/reginold" -w)
+    -std=c23 -O2 -I"$root/src" -I"$root/lsp" -I"$root/reginold" -w)
 cc="$sdk/bin/clang"
 
 # Object files do not track flags: start over when they change.
@@ -51,7 +51,10 @@ if [ "$(cat "$out/obj/.flags" 2>/dev/null)" != "$stamp" ]; then
 fi
 
 # main.c is the CLI and repl.c the terminal REPL; the page drives wasm/repl_driver.c instead.
+# The completion engine the terminal REPL's Tab key uses comes from lsp/ (the same list as
+# REPL_COMPLETION_SOURCES in the Makefile).
 sources=$(cd "$root" && ls src/*.c | grep -v -e src/main.c -e src/repl.c)
+sources="$sources lsp/completion.c lsp/compile_buffer.c lsp/analysis_cache.c lsp/receiver.c lsp/json.c lsp/repl_completion.c"
 running=0
 for source in $sources wasm/repl_driver.c wasm/posix_stubs.c wasm/sqlite_vfs.c; do
     object="$out/obj/$(basename "${source%.c}").o"

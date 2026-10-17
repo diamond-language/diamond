@@ -203,6 +203,39 @@ export class DiamondRepl {
     return segments;
   }
 
+  // Completion candidates for `line` with the caret at character index `caret`, from the same
+  // engine as the terminal REPL's Tab key (diamond_wasm_complete). Returns { prefix, labels }:
+  // `prefix` is the identifier typed before the caret, and every label starts with it. An
+  // unfinished entry's earlier lines count as context, as they do in the terminal.
+  complete(line, caret = line.length) {
+    const { exports } = this.#instance;
+    const encoder = new TextEncoder();
+    const prefix = /[A-Za-z0-9_]*$/.exec(line.slice(0, caret))[0];
+    const put = (text) => {
+      const bytes = encoder.encode(text + '\0');
+      const pointer = exports.diamond_wasm_alloc(bytes.length);
+      new Uint8Array(exports.memory.buffer, pointer, bytes.length).set(bytes);
+      return pointer;
+    };
+    const pointers = [put(this.#session), put(this.#pending), put(line)];
+    let text = '';
+    try {
+      const result = exports.diamond_wasm_complete(...pointers, encoder.encode(line.slice(0, caret)).length);
+      if (result) {
+        const memory = new Uint8Array(exports.memory.buffer);
+        let end = result;
+        while (memory[end]) end++;
+        text = new TextDecoder().decode(memory.subarray(result, end));
+      }
+    } catch (error) {
+      if (!(error instanceof NativeUnavailable)) this.#instantiate();
+      throw error;
+    } finally {
+      for (const pointer of pointers) exports.diamond_wasm_free(pointer);
+    }
+    return { prefix, labels: text ? text.slice(0, -1).split('\n') : [] };
+  }
+
   get prompt() { return this.#pending ? '... ' : '{> '; }
 
   reset() { this.#session = '_ = nil\n'; this.#pending = ''; this.#previousOutput = ''; }

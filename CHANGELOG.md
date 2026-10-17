@@ -10,6 +10,10 @@ authoritative fine-grained record.
 
 - The website REPL colours what you type and the lines it echoes, using the language's own lexer
   from the WebAssembly module (`diamond_wasm_tokens`).
+- The website REPL completes as you type: the best match shows as faint text after the caret and a
+  short list opens when there are several (Tab takes one, the arrows move, Escape closes). It uses the
+  engine behind the terminal REPL's Tab key, now compiled into the WebAssembly module
+  (`diamond_wasm_complete`).
 - `JSON.stringify(value, options)`: `"indent"` (a number of spaces up to 16, or a string of spaces and
   tabs) lays the document out over several lines, and `"sort_keys": true` writes each Hash's keys in
   sorted order.

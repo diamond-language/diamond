@@ -24,6 +24,13 @@ byte length) ...]` so the page colours the prompt and echoed lines (`DiamondRepl
 no second tokenizer to drift. Each line is lexed on its own, so a multi-line string or regex colours
 only approximately.
 
+`diamond_wasm_complete(session, pending, line, cursor)` is the terminal REPL's Tab-completion
+(`repl_compute_completions`, now in `lsp/repl_completion.c` so both builds share it, with the LSP
+files it depends on). It returns the candidates one per line; `DiamondRepl.complete(line)` wraps it
+for the page, which shows the best match as faint text and the rest as a list. An answer compiles the
+whole session, so it costs about as much as one evaluation (tens of milliseconds); the page waits for a
+pause in typing before asking.
+
 ## Building and testing
 
 `make test-wasm WASI_SDK=/path/to/wasi-sdk` (or `wasm/build.sh` then `node tests/wasm_repl_test.mjs`)
