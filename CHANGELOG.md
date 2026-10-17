@@ -8,6 +8,7 @@ authoritative fine-grained record.
 
 ### Added
 
+- Postfix loops: `statement while cond` and `statement until cond`, compiled as the block-form loop.
 - `p(value)` prints `value.inspect()` and returns `value`. A function, local or method named `p` still wins.
 - `Array.new(n)` and `Array.new(n, fill)` build an Array of `n` nils or copies of `fill`, compiled as `[fill] * n`.
   The block form is rejected with a message pointing at `map`.

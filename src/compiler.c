@@ -10946,17 +10946,41 @@ static bool statement_may_capture(const Compiler *compiler) {
     return false;
 }
 
-static uint16_t parse_while(Compiler *compiler,bool inverted) {
+/* `body while cond` / `body until cond`: the loop is compiled exactly like the block form
+ * (same flow bookkeeping, same break/next context), but the source order is body first.
+ * The condition is therefore compiled first by moving the lexer to just past the modifier,
+ * then the lexer returns to the body, and finally it skips past the condition. */
+typedef struct {
+    DiamondLexer after_modifier;
+} PostfixLoop;
+
+static uint16_t compile_expression_statement(Compiler *compiler,bool has_postfix);
+
+static uint16_t parse_while_core(Compiler *compiler,bool inverted,const PostfixLoop *postfix) {
     const uint16_t destination=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
     const size_t loop_start = compiler->function->code_count;
     const bool outer_loop_captures_pending=compiler->loop_captures_pending;
-    if(!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
+    /* A postfix loop's statement was already checked for blocks by compile_sequence. */
+    if(postfix==nullptr&&!compiler->loop_captures_pending&&loop_body_may_capture(compiler)) {
         compiler->loop_captures_pending=true;
         mark_locals_captured(compiler);
     }
+    DiamondLexer body_lexer={},end_lexer={};
+    DiamondToken body_current={},body_previous={},end_current={},end_previous={};
+    if(postfix!=nullptr) {
+        body_lexer=compiler->lexer;body_current=compiler->current;
+        body_previous=compiler->previous;
+        compiler->lexer=postfix->after_modifier;
+        compiler->current=diamond_lexer_next(&compiler->lexer);
+    }
     const uint16_t condition = parse_expression(compiler);
-    if (!consume_loop_start(compiler)) {
+    if(postfix!=nullptr) {
+        end_lexer=compiler->lexer;end_current=compiler->current;
+        end_previous=compiler->previous;
+        compiler->lexer=body_lexer;compiler->current=body_current;
+        compiler->previous=body_previous;
+    } else if (!consume_loop_start(compiler)) {
         compiler->loop_captures_pending=outer_loop_captures_pending;
         return 0;
     }
@@ -10994,7 +11018,16 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
      * state and Nil result are always one real exit path. */
     merge_loop_exit(compiler,&loop,DIAMOND_TYPE_NIL,-1,-1);
     compiler->current_loop=&loop;
-    (void)compile_sequence(compiler);
+    if(postfix!=nullptr) {
+        (void)compile_expression_statement(compiler,false);
+        if(!compiler->failed&&compiler->current.kind!=
+               (inverted?DIAMOND_TOKEN_UNTIL:DIAMOND_TOKEN_WHILE))
+            fail(compiler,compiler->current.span,"expected the loop modifier after the statement");
+        compiler->lexer=end_lexer;compiler->current=end_current;
+        compiler->previous=end_previous;
+    } else {
+        (void)compile_sequence(compiler);
+    }
     compiler->current_loop=loop.previous;
     /* A completed body reaches the condition again and may then exit. One
      * conservative source-level join is sufficient for advisory metadata. */
@@ -11005,13 +11038,13 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     for(size_t index=0;index<loop.break_count;index++)
         patch_jump(compiler,loop.breaks[index],compiler->function->code_count);
 
-    if (compiler->current.kind != DIAMOND_TOKEN_END) {
+    if (postfix==nullptr&&compiler->current.kind != DIAMOND_TOKEN_END) {
         fail(compiler, compiler->current.span, "expected 'end' after while expression");
         free(exit_types);free(exit_sets);free(exit_tooling_sets);
         return 0;
     }
     const size_t join_offset=compiler->current.span.start;
-    advance_token(compiler);
+    if(postfix==nullptr)advance_token(compiler);
     /* A break-free loop may have no reachable expression result at all
      * (`while true` with only return/raise exits). Without constant-condition
      * reachability analysis, keep that result unknown instead of claiming Nil
@@ -11023,6 +11056,15 @@ static uint16_t parse_while(Compiler *compiler,bool inverted) {
     finish_loop_flow(compiler,&loop,join_offset);
     free(exit_types);free(exit_sets);free(exit_tooling_sets);
     return destination;
+}
+
+static uint16_t parse_while(Compiler *compiler,bool inverted) {
+    return parse_while_core(compiler,inverted,nullptr);
+}
+
+static uint16_t parse_postfix_while(Compiler *compiler,bool inverted,DiamondLexer after_modifier) {
+    const PostfixLoop postfix={.after_modifier=after_modifier};
+    return parse_while_core(compiler,inverted,&postfix);
 }
 
 static uint16_t parse_loop(Compiler *compiler) {
@@ -13005,7 +13047,11 @@ static bool multi_assignment_ahead(const Compiler *compiler) {
     return token.kind==DIAMOND_TOKEN_EQUAL;
 }
 
-static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
+/* The trailing modifier of the statement starting at the current token: IF, UNLESS, WHILE or
+ * UNTIL, or EOF when there is none. *modifier_end, when given, is the lexer just past the
+ * modifier token (the first token of its condition comes next). */
+static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler,
+        DiamondLexer *modifier_end) {
     if (compiler->current.kind == DIAMOND_TOKEN_DEF ||
         compiler->current.kind == DIAMOND_TOKEN_CLOSURE ||
         compiler->current.kind == DIAMOND_TOKEN_CLASS ||
@@ -13065,6 +13111,11 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
             continue;
         }
         if (block_depth > 0) continue;
+        if (depth == 0 && seen && !expression_expected &&
+            (token.kind == DIAMOND_TOKEN_WHILE || token.kind == DIAMOND_TOKEN_UNTIL)) {
+            if (modifier_end != nullptr) *modifier_end = lookahead;
+            return token.kind;
+        }
         if (depth == 0 && seen &&
             (token.kind == DIAMOND_TOKEN_IF ||
              token.kind == DIAMOND_TOKEN_UNLESS)) {
@@ -13077,6 +13128,7 @@ static DiamondTokenKind postfix_modifier_ahead(const Compiler *compiler) {
                  after.kind != DIAMOND_TOKEN_NEWLINE && after.kind != DIAMOND_TOKEN_EOF;
                  after = diamond_lexer_next(&rest))
                 if (after.kind == DIAMOND_TOKEN_THEN) return DIAMOND_TOKEN_EOF;
+            if (modifier_end != nullptr) *modifier_end = lookahead;
             return token.kind;
         }
         switch (token.kind) {
@@ -15419,7 +15471,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     bool body_diverges=false;
     if(endless) {
         advance_token(compiler);
-        const DiamondTokenKind postfix=postfix_modifier_ahead(compiler);
+        const DiamondTokenKind postfix=postfix_modifier_ahead(compiler,nullptr);
         const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
                                postfix==DIAMOND_TOKEN_UNLESS;
         const uint16_t postfix_result=has_postfix?allocate_register(compiler):0;
@@ -19033,6 +19085,45 @@ static bool expression_finishes_block(const Compiler *compiler) {
     }
 }
 
+/* One assignment or expression statement. has_postfix: an if/unless modifier follows it, which
+ * stops the block's return-type expectation from applying to the statement. */
+static uint16_t compile_expression_statement(Compiler *compiler,bool has_postfix) {
+    if(index_assignment_ahead(compiler))
+        return compile_index_assignment(compiler);
+    if(index_compound_assignment_ahead(compiler))
+        return compile_index_compound_assignment(compiler);
+    if(multi_assignment_ahead(compiler))
+        return compile_multi_assignment(compiler);
+    if(compound_assignment_ahead(compiler))
+        return compile_compound_assignment(compiler);
+    if(assignment_ahead(compiler))
+        return compile_assignment(compiler);
+    if(!has_postfix&&
+       compiler->function->return_type_set!=DIAMOND_NO_TYPE_SET&&
+       expression_finishes_block(compiler))
+        return parse_with_expected_set(compiler,
+            compiler->function->return_type_set);
+    return parse_expression(compiler);
+}
+
+/* Can the statement starting at the current token take a `while`/`until` modifier? Only a plain
+ * expression or assignment: not a declaration, a keyword statement, or a block-form
+ * control structure (whose own `while`/`until`/`end` the modifier scan could misread). */
+static bool statement_takes_loop_modifier(const Compiler *compiler) {
+    switch(compiler->current.kind) {
+    case DIAMOND_TOKEN_DEF: case DIAMOND_TOKEN_CLOSURE: case DIAMOND_TOKEN_CLASS:
+    case DIAMOND_TOKEN_SEALED: case DIAMOND_TOKEN_STRUCT: case DIAMOND_TOKEN_INTERFACE:
+    case DIAMOND_TOKEN_MODULE: case DIAMOND_TOKEN_RETURN: case DIAMOND_TOKEN_RAISE:
+    case DIAMOND_TOKEN_RETRY: case DIAMOND_TOKEN_BEGIN: case DIAMOND_TOKEN_BREAK:
+    case DIAMOND_TOKEN_NEXT: case DIAMOND_TOKEN_REDO: case DIAMOND_TOKEN_IF:
+    case DIAMOND_TOKEN_UNLESS: case DIAMOND_TOKEN_WHILE: case DIAMOND_TOKEN_UNTIL:
+    case DIAMOND_TOKEN_LOOP: case DIAMOND_TOKEN_CASE:
+        return false;
+    default:
+        return true;
+    }
+}
+
 static uint16_t compile_sequence(Compiler *compiler) {
     skip_newlines(compiler);
     uint16_t result = allocate_register(compiler);
@@ -19091,9 +19182,13 @@ static uint16_t compile_sequence(Compiler *compiler) {
             compiler->current.kind == DIAMOND_TOKEN_NEXT ||
             compiler->current.kind == DIAMOND_TOKEN_REDO ||
             compiler->current.kind == DIAMOND_TOKEN_RETRY;
-        const DiamondTokenKind postfix = postfix_modifier_ahead(compiler);
+        DiamondLexer modifier_end={};
+        const DiamondTokenKind postfix = postfix_modifier_ahead(compiler,&modifier_end);
         const bool has_postfix = postfix == DIAMOND_TOKEN_IF ||
                                  postfix == DIAMOND_TOKEN_UNLESS;
+        const bool postfix_loop = (postfix == DIAMOND_TOKEN_WHILE ||
+                                   postfix == DIAMOND_TOKEN_UNTIL) &&
+                                  statement_takes_loop_modifier(compiler);
         const uint16_t body_result_slot = result;
         const uint16_t postfix_result = has_postfix
             ? allocate_register(compiler)
@@ -19110,7 +19205,10 @@ static uint16_t compile_sequence(Compiler *compiler) {
             compiler->current.kind == DIAMOND_TOKEN_STRUCT ||
             compiler->current.kind == DIAMOND_TOKEN_INTERFACE ||
             compiler->current.kind == DIAMOND_TOKEN_MODULE;
-        if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
+        if (postfix_loop) {
+            result = parse_postfix_while(compiler,postfix == DIAMOND_TOKEN_UNTIL,
+                                         modifier_end);
+        } else if (compiler->current.kind == DIAMOND_TOKEN_DEF) {
             result = compile_definition(compiler,false);
         } else if (compiler->current.kind == DIAMOND_TOKEN_CLOSURE) {
             result = compile_definition(compiler,true);
@@ -19138,22 +19236,7 @@ static uint16_t compile_sequence(Compiler *compiler) {
                    compiler->current.kind == DIAMOND_TOKEN_REDO) {
             result=compile_loop_control(compiler);
         } else {
-            if(index_assignment_ahead(compiler))
-                result=compile_index_assignment(compiler);
-            else if(index_compound_assignment_ahead(compiler))
-                result=compile_index_compound_assignment(compiler);
-            else if(multi_assignment_ahead(compiler))
-                result=compile_multi_assignment(compiler);
-            else if(compound_assignment_ahead(compiler))
-                result=compile_compound_assignment(compiler);
-            else if(assignment_ahead(compiler))
-                result=compile_assignment(compiler);
-            else if(!has_postfix&&
-                    compiler->function->return_type_set!=DIAMOND_NO_TYPE_SET&&
-                    expression_finishes_block(compiler))
-                result=parse_with_expected_set(compiler,
-                    compiler->function->return_type_set);
-            else result=parse_expression(compiler);
+            result=compile_expression_statement(compiler,has_postfix);
         }
         if (has_postfix) {
             if (compiler->current.kind != postfix) {

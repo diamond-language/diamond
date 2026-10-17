@@ -28,6 +28,12 @@ end
 block is its value. Blocks are `end`-delimited throughout; there are no
 braces. `next`/`break` work inside loops.
 
+A one-line loop puts the condition after the statement: `i += 1 while i < 10` and
+`i -= 1 until i == 0`. As in the block form the condition is tested first, so the statement may
+never run, and the loop evaluates to `nil`. The statement must be an assignment or an expression
+(not `return`, `break`, `next`, a declaration or a block-form `if`/`while`), only one modifier is
+allowed per statement, and `begin ... end while cond` (a body that runs first) is not supported.
+
 Strings are double-quoted, with `#{expression}` interpolation and the
 escapes `\n`, `\r`, `\t`, `\0`, `\e` (escape), `\"`, `\\`, `\#`,
 `\xHH` (one byte), and `\uHHHH` or `\u{H...}` (a Unicode code point,
