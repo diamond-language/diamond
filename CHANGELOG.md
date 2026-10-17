@@ -12,6 +12,13 @@ authoritative fine-grained record.
   about 3% faster on the `bench/` programs, at the cost of a link that recompiles the runtime
   (tens of seconds). The default build is unchanged.
 
+### Fixed
+
+- Completion after a `.` offers only the receiver's members, each once. It used to add every function,
+  class and local in the program (`words.` listed `abs` and `numeric_seconds`) and repeat names that
+  came from more than one source. When the receiver's type cannot be proven it now offers nothing.
+  This applies to the language server, the terminal REPL's Tab key and the website REPL.
+
 ### Tooling
 
 - `tools/fetch_registry_backup.sh` no longer falls back to a Python backup script; the registry server

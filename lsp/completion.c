@@ -27,7 +27,16 @@ enum {
     COMPLETION_KIND_MODULE = 9,
 };
 
+/* A label is offered once: the same name reaches this list from several sources (an override
+ * further down a class chain, a top-level function and a local, a native method and its
+ * prelude bridge). The first one found keeps its kind. */
 static bool push_item(JsonValue *items,const char *name,int kind) {
+    for(size_t index=0;index<items->as.array.count;index++) {
+        const char *label;size_t label_length;
+        if(json_as_string(json_object_get(items->as.array.items[index],"label"),
+               &label,&label_length)&&label_length==strlen(name)&&
+           memcmp(label,name,label_length)==0)return true;
+    }
     JsonValue *item=json_object();
     if(item==nullptr)return false;
     json_object_set(item,"label",json_string_z(name));
@@ -52,6 +61,19 @@ static size_t raw_offset_for(const char *text,size_t length,size_t line,size_t c
     for(size_t moved=1;moved<column&&result<length&&text[result]!='\n';moved++)
         result++;
     return result;
+}
+
+/* True when the word being completed at `offset` follows a single `.` (`receiver.na|`, but not
+ * the end of a range such as `1..`): only the receiver's members make sense there, not every
+ * function, class and local in the program. */
+static bool follows_member_dot(const char *source,size_t offset) {
+    while(offset>0) {
+        const unsigned char c=(unsigned char)source[offset-1];
+        const bool identifier=(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_';
+        if(!identifier)break;
+        offset--;
+    }
+    return offset>0&&source[offset-1]=='.'&&(offset<2||source[offset-2]!='.');
 }
 
 /* Pushes every method name in `class_index`'s own singleton_methods[]
@@ -191,19 +213,22 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
     }
     bool okay=true;
     const DiamondChunk chunk=diamond_program_chunk(scratch);
-    for(size_t index=0;okay&&index<chunk.function_count;index++)
+    const bool member=cursor_offset!=SIZE_MAX&&follows_member_dot(combined,cursor_offset);
+    for(size_t index=0;okay&&!member&&index<chunk.function_count;index++)
         if(chunk.functions[index]->owner_class==UINT8_MAX&&!chunk.functions[index]->nested)
             okay=push_item(items,chunk.functions[index]->name,COMPLETION_KIND_FUNCTION);
-    for(size_t index=0;okay&&index<chunk.class_count;index++)
+    for(size_t index=0;okay&&!member&&index<chunk.class_count;index++)
         okay=push_item(items,chunk.classes[index].name,COMPLETION_KIND_CLASS);
-    for(size_t index=0;okay&&index<chunk.interface_count;index++)
+    for(size_t index=0;okay&&!member&&index<chunk.interface_count;index++)
         okay=push_item(items,chunk.interfaces[index].name,COMPLETION_KIND_INTERFACE);
-    for(size_t index=0;okay&&index<chunk.module_count;index++)
+    for(size_t index=0;okay&&!member&&index<chunk.module_count;index++)
         okay=push_item(items,chunk.modules[index].name,COMPLETION_KIND_MODULE);
     if(okay&&cursor_offset!=SIZE_MAX) {
-        okay=push_scope_locals(items,&scratch->entry,cursor_offset);
-        for(size_t index=0;okay&&index<scratch->function_count;index++)
-            okay=push_scope_locals(items,scratch->functions[index],cursor_offset);
+        if(!member) {
+            okay=push_scope_locals(items,&scratch->entry,cursor_offset);
+            for(size_t index=0;okay&&index<scratch->function_count;index++)
+                okay=push_scope_locals(items,scratch->functions[index],cursor_offset);
+        }
         size_t class_indices[DIAMOND_MAX_UNION_TYPES];bool is_singleton;
         if(okay) {
             const size_t candidate_count=receiver_resolve_classes(scratch,&chunk,combined,
