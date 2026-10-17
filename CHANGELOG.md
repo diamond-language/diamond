@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.17.0 — 2026-10-17
+
 ### Added
 
 - Hash literals accept `=>` as well as `:` between key and value: `{"a" => 1}`.
