@@ -104,8 +104,10 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
    `credential.json`, and revoke the credential
    (`credentials.di revoke <id> "<reason>"`) or let it expire.
 
-gremlin 0.4.0 was published this way on 2026-10-02 (`gremlin` now lists 0.2.1,
-0.2.2, and 0.4.0).
+gremlin 0.4.0 was published this way on 2026-10-02 and 0.4.2 (a raising handler answers 500)
+on 2026-10-17 with a 30-minute credential (revoked; archive sha256
+`8cebe7161bc9040642859bd8eebd3d761ca4729918f109b90ca0c123c2dbe782`), after which
+`tools/verify_registry_launch.di` passed for all 18 cuts.
 
 ## Host disk and logs
 
