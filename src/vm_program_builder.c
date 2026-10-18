@@ -1547,7 +1547,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             const DiamondArray *callable_parameters=
                 (const DiamondArray *)descriptor->values[5].as.object;
             set->members[member]=(DiamondTypeMember){
-                .id=(uint8_t)descriptor->values[0].as.integer,
+                .id=(uint16_t)descriptor->values[0].as.integer,
                 .argument_set=argument_set<0?DIAMOND_NO_TYPE_SET:(uint16_t)argument_set,
                 .second_argument_set=second_argument_set<0?DIAMOND_NO_TYPE_SET:
                     (uint16_t)second_argument_set,

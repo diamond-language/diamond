@@ -223,8 +223,8 @@ module Type
   SYMBOL = 9
   CLASS_BASE = 10
   # Keep the non-overlapping partitions in sync with DiamondTypeId in vm.h.
-  VARIABLE_BASE = 192
-  INTERFACE_BASE = 224
+  VARIABLE_BASE = 61696
+  INTERFACE_BASE = 61952
 end
 
 class Parser
@@ -1119,15 +1119,15 @@ class Parser
     function_index = @builder.declare_function(name, arity + self_offset,
       required_arity + self_offset)
     if self_offset == 1
-      # 254 (UINT8_MAX-1) is the same module-method sentinel
-      # declare_module_method's bridge handler uses -- distinct from 255
-      # ("not a method"), so REDEFINE_METHOD's owner_class check (and
+      # 65534 (UINT16_MAX-1, DIAMOND_OWNER_MODULE) is the same module-method
+      # sentinel declare_module_method's bridge handler uses -- distinct from
+      # 65535 ("not a method"), so REDEFINE_METHOD's owner_class check (and
       # the private-method parameter_offset bypass) both still treat
       # this function as belonging to its class/module.
       @builder.set_function_owner_class(function_index, if @current_class_index != nil
         @current_class_index
       else
-        254
+        65534
       end)
     end
     @builder.set_type_variables(function_index, @current_type_variables)
@@ -4340,7 +4340,7 @@ class Parser
           destination = self.allocate_register()
           self.emit_byte(Opcode::NEW)
           self.emit_register(destination)
-          self.emit_byte(class_entry[1])
+          self.emit_register(class_entry[1])
           self.emit_register(argument_base)
           self.emit_byte(3)
           self.set_type_fact(destination, Type::CLASS_BASE + class_entry[1])
@@ -4479,7 +4479,7 @@ class Parser
     method_name_index = self.add_string(@current_method_name)
     self.emit_byte(Opcode::SUPER)
     self.emit_register(destination)
-    self.emit_byte(@current_class_index)
+    self.emit_register(@current_class_index)
     self.emit_register(method_name_index)
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
@@ -4917,7 +4917,7 @@ class Parser
     destination = self.allocate_register()
     self.emit_byte(Opcode::REDEFINE_METHOD)
     self.emit_register(destination)
-    self.emit_byte(class_index)
+    self.emit_register(class_index)
     self.emit_register(name_register)
     self.emit_register(callable_register)
     self.set_type_fact(destination, Type::NIL)
@@ -4941,7 +4941,7 @@ class Parser
     destination = self.allocate_register()
     self.emit_byte(Opcode::NEW)
     self.emit_register(destination)
-    self.emit_byte(class_index)
+    self.emit_register(class_index)
     self.emit_register(parsed[0])
     self.emit_byte(parsed[1])
     self.set_type_fact(destination, Type::CLASS_BASE + class_index)
