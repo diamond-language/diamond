@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- An endless `def name(params) = expr` may start its body on the next line (blank and comment lines may come first), in the
+  compiler and the self-hosted parser.
 - `peer_address()` on a connected socket (client or accepted, blocking or non-blocking) returns the remote
   address as text, so a server can rate-limit or log by client address without a proxy header.
 

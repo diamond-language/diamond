@@ -335,6 +335,16 @@ names = users
 ```
 `..` at the start of a line is still a range, not a method call.
 
+## Endless methods
+
+`def name(params) = expr` defines a method whose body is one expression, with no `end`. The expression may begin on the
+next line (blank and comment lines may come first), which keeps a long body readable:
+```ruby
+def total_price(items, tax) =
+  items.map() do |item| item.price() end.sum() * (1 + tax)
+```
+The parentheses after the name are required, as for any `def`.
+
 ## Compound assignment
 
 ```ruby
