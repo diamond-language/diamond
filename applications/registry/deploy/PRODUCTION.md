@@ -107,7 +107,8 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
 gremlin 0.4.0 was published this way on 2026-10-02 and 0.4.2 (a raising handler answers 500)
 on 2026-10-17 with a 30-minute credential (revoked; archive sha256
 `8cebe7161bc9040642859bd8eebd3d761ca4729918f109b90ca0c123c2dbe782`), after which
-`tools/verify_registry_launch.di` passed for all 18 cuts.
+`tools/verify_registry_launch.di` passed for all 18 cuts. `div` 0.2.4 (`Div.check_fresh`) followed the same day the same way (archive sha256
+`474ba288bae1b16cf8a8799b8b3fe60e9a97087c8a578ad279d19437e0be3872`, credential revoked, verification passed).
 
 ## Host disk and logs
 
