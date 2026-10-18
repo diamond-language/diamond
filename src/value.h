@@ -35,7 +35,7 @@ typedef struct DiamondValue {
         int64_t integer;
         double real;
         DiamondObject *object;
-        uint8_t class_index;
+        uint16_t class_index;
     } as;
 } DiamondValue;
 
@@ -50,7 +50,7 @@ typedef struct DiamondValue {
 #define DIAMOND_OBJECT(value_) \
     ((DiamondValue){.kind = DIAMOND_VALUE_OBJECT, .as.object = (DiamondObject *)(value_)})
 #define DIAMOND_CLASS(value_) \
-    ((DiamondValue){.kind = DIAMOND_VALUE_CLASS, .as.class_index = (uint8_t)(value_)})
+    ((DiamondValue){.kind = DIAMOND_VALUE_CLASS, .as.class_index = (uint16_t)(value_)})
 
 void diamond_value_print(DiamondValue value);
 void diamond_value_fprint(FILE *stream, DiamondValue value);

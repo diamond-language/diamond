@@ -1078,7 +1078,7 @@ DIAMOND_INTERNAL DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue
         DiamondValue *out_result);
 
 DIAMOND_INTERNAL bool resolve_class_operand(DiamondVm *vm,const DiamondChunk *chunk,
-        const DiamondValue *registers,const char *operation,uint8_t *class_operand);
+        const DiamondValue *registers,const char *operation,uint16_t *class_operand);
 
 DIAMOND_INTERNAL DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value);
 
@@ -1169,7 +1169,7 @@ static inline int named_field_index(const DiamondInstance *instance,
 }
 
 DIAMOND_INTERNAL bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
-                               uint8_t type);
+                               uint16_t type);
 
 DIAMOND_INTERNAL bool value_matches_set(const DiamondChunk *chunk,DiamondValue value,
                               uint16_t set_index,bool attach);
@@ -1297,7 +1297,7 @@ DIAMOND_INTERNAL DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         size_t depth,DiamondValue *result);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
-        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
@@ -1307,7 +1307,7 @@ DIAMOND_INTERNAL DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, cons
         size_t depth, DiamondValue *out);
 
 DIAMOND_INTERNAL DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
-        DiamondValue *registers, uint16_t dest, uint8_t class_index,
+        DiamondValue *registers, uint16_t dest, uint16_t class_index,
         uint16_t base, uint8_t argc, size_t depth);
 
 DIAMOND_INTERNAL DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,

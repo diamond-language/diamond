@@ -158,7 +158,7 @@ typedef struct DiamondChunk DiamondChunk;
 
 enum { DIAMOND_BOUND_TYPE_NODES=16,DIAMOND_BOUND_TYPE_MEMBERS=8 };
 typedef struct DiamondBoundTypeMember {
-    uint8_t id;
+    uint16_t id;
     uint8_t argument_node;
     uint8_t second_argument_node;
 } DiamondBoundTypeMember;

@@ -90,7 +90,7 @@ static const DiamondScopeLocal *find_scope_local(
 /* True iff `known_type` (a compiler known_types[reg]-shaped byte) names
  * a specific, in-range class -- shared by the single-class known_type
  * path and by each member of a known_type_set's own class-kind check. */
-static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_t *class_index) {
+static bool decode_class_type(const DiamondChunk *chunk,uint16_t known_type,size_t *class_index) {
     if(known_type<DIAMOND_TYPE_CLASS_BASE||known_type>=DIAMOND_TYPE_VARIABLE_BASE)return false;
     const size_t index=(size_t)(known_type-DIAMOND_TYPE_CLASS_BASE);
     if(index>=chunk->class_count)return false;
@@ -99,7 +99,7 @@ static bool decode_class_type(const DiamondChunk *chunk,uint8_t known_type,size_
 }
 
 static void local_type_at_offset(const DiamondFunction *owner,
-        const DiamondScopeLocal *local,size_t offset,uint8_t *known_type,
+        const DiamondScopeLocal *local,size_t offset,uint16_t *known_type,
         int32_t *known_type_set,int32_t *tooling_type_set) {
     *known_type=local->known_type;
     *known_type_set=local->known_type_set;
@@ -129,7 +129,7 @@ bool receiver_resolve_local_type_set(const DiamondProgram *program,
     const DiamondScopeLocal *local=find_scope_local(program,chunk,name,
         name_length,offset,owner);
     if(local==nullptr||*owner==nullptr)return false;
-    uint8_t known_type;int32_t known_type_set,tooling_type_set;
+    uint16_t known_type;int32_t known_type_set,tooling_type_set;
     local_type_at_offset(*owner,local,offset,&known_type,&known_type_set,
         &tooling_type_set);
     (void)known_type;
@@ -195,7 +195,7 @@ static size_t function_return_classes_bound(const DiamondChunk *chunk,
     size_t count=0;
     for(size_t index=0;index<set->count;index++) {
         size_t class_index;
-        const uint8_t type=set->members[index].id;
+        const uint16_t type=set->members[index].id;
         if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
             const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
             if(variable>=binding_count||bindings==nullptr||
@@ -527,7 +527,7 @@ static bool resolve_array_base_graph(const DiamondProgram *program,
             source+name_token.span.start,name_token.span.length,
             name_token.span.start,&owner);
         if(local==nullptr||owner==nullptr)return false;
-        uint8_t known_type;int32_t tooling_set;
+        uint16_t known_type;int32_t tooling_set;
         local_type_at_offset(owner,local,name_token.span.start,&known_type,
             &known_set,&tooling_set);
         (void)known_type;
@@ -673,7 +673,7 @@ static size_t resolve_indexed_expression(const DiamondProgram *program,
     size_t count=0;
     for(size_t index=0;index<elements->count;index++) {
         size_t class_index;
-        const uint8_t type=elements->members[index].id;
+        const uint16_t type=elements->members[index].id;
         if(type>=DIAMOND_TYPE_VARIABLE_BASE&&type<DIAMOND_TYPE_INTERFACE_BASE) {
             const size_t variable=(size_t)(type-DIAMOND_TYPE_VARIABLE_BASE);
             if(variable>=binding_count)return 0;
@@ -721,7 +721,7 @@ static size_t infer_class_bindings(const DiamondProgram *program,
                         source+argument.span.start,argument.span.length,
                         argument.span.start,&owner);
                     if(local!=nullptr&&owner!=nullptr) {
-                        uint8_t known_type;int32_t actual,tooling;
+                        uint16_t known_type;int32_t actual,tooling;
                         local_type_at_offset(owner,local,argument.span.start,
                             &known_type,&actual,&tooling);
                         (void)known_type;
@@ -788,7 +788,7 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
         token.span.start,&owner);
     if(local==nullptr)return 0;
     *is_singleton=false;
-    uint8_t known_type=local->known_type;int32_t known_type_set=local->known_type_set;
+    uint16_t known_type=local->known_type;int32_t known_type_set=local->known_type_set;
     int32_t tooling_type_set=local->tooling_type_set;
     local_type_at_offset(owner,local,token.span.start,&known_type,&known_type_set,
         &tooling_type_set);
@@ -1021,12 +1021,12 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
     free(tokens);return result;
 }
 
-static bool is_builtin_value_type(uint8_t type) {
+static bool is_builtin_value_type(uint16_t type) {
     return type==DIAMOND_TYPE_STRING||type==DIAMOND_TYPE_ARRAY||
            type==DIAMOND_TYPE_HASH||type==DIAMOND_TYPE_INT||type==DIAMOND_TYPE_FLOAT;
 }
 
-const char *const *receiver_builtin_prefixes(uint8_t builtin_type,size_t *count) {
+const char *const *receiver_builtin_prefixes(uint16_t builtin_type,size_t *count) {
     static const char *const array_prefixes[]={"array_","enumerable_"};
     static const char *const hash_prefixes[]={"hash_","enumerable_"};
     static const char *const string_prefixes[]={"string_"};
@@ -1051,7 +1051,7 @@ bool receiver_hash_uses_enumerable(const char *name) {
 
 /* The one built-in type a function's declared (or, failing that, inferred)
  * return type names, if it names exactly one. */
-static bool function_builtin_return(const DiamondFunction *function,uint8_t *type) {
+static bool function_builtin_return(const DiamondFunction *function,uint16_t *type) {
     const uint16_t sets[2]={function->return_type_set,function->inferred_return_type_set};
     for(size_t index=0;index<2;index++) {
         if(sets[index]==DIAMOND_NO_TYPE_SET||sets[index]>=function->type_set_count)continue;
@@ -1077,8 +1077,8 @@ static const DiamondFunction *find_plain_function(const DiamondChunk *chunk,
 /* What calling `method` on a built-in value of `receiver` returns, when known:
  * a native with one fixed result type first (natives win at runtime), then the
  * prelude extension function the VM would dispatch to. */
-static bool builtin_method_result(const DiamondChunk *chunk,uint8_t receiver,
-        const char *method,size_t length,uint8_t *result) {
+static bool builtin_method_result(const DiamondChunk *chunk,uint16_t receiver,
+        const char *method,size_t length,uint16_t *result) {
     if(diamond_native_method_return_type(receiver,method,length,result)&&
        is_builtin_value_type(*result))return true;
     if(length>0&&method[length-1]=='?')length--;
@@ -1118,7 +1118,7 @@ static size_t matching_open(const DiamondToken *tokens,size_t start,size_t close
 
 static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *chunk,
         const char *source,const DiamondToken *tokens,size_t start,size_t end,
-        unsigned depth,uint8_t *type) {
+        unsigned depth,uint16_t *type) {
     if(start>end||depth>32)return false;
     if(tokens[start].kind==DIAMOND_TOKEN_LEFT_PAREN&&
        tokens[end].kind==DIAMOND_TOKEN_RIGHT_PAREN&&
@@ -1127,7 +1127,7 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
         return builtin_type_of(program,chunk,source,tokens,start+1,end-1,depth+1,type);
     if(start==end) {
         const DiamondToken token=tokens[start];
-        uint8_t found=DIAMOND_TYPE_NIL;
+        uint16_t found=DIAMOND_TYPE_NIL;
         if(token.kind==DIAMOND_TOKEN_STRING)found=DIAMOND_TYPE_STRING;
         else if(token.kind==DIAMOND_TOKEN_INTEGER)found=DIAMOND_TYPE_INT;
         else if(token.kind==DIAMOND_TOKEN_FLOAT)found=DIAMOND_TYPE_FLOAT;
@@ -1168,7 +1168,7 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
         return function!=nullptr&&function_builtin_return(function,type);
     }
     if(callee<2||tokens[callee-1].kind!=DIAMOND_TOKEN_DOT)return false;
-    uint8_t receiver;
+    uint16_t receiver;
     if(!builtin_type_of(program,chunk,source,tokens,start,callee-2,depth+1,&receiver))
         return false;
     return builtin_method_result(chunk,receiver,name,length,type);
@@ -1176,7 +1176,7 @@ static bool builtin_type_of(const DiamondProgram *program,const DiamondChunk *ch
 
 bool receiver_resolve_builtin_type(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        uint8_t *builtin_type) {
+        uint16_t *builtin_type) {
     DiamondToken *tokens;size_t start,end;
     if(!locate_receiver(source,stop_offset,&tokens,&start,&end))return false;
     const bool found=builtin_type_of(program,chunk,source,tokens,start,end,0,builtin_type);

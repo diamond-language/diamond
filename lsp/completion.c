@@ -138,7 +138,7 @@ static bool function_returns_bool(const DiamondFunction *function) {
 }
 
 static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
-        uint8_t type) {
+        uint16_t type) {
     size_t prefix_count;
     const char *const *prefixes=receiver_builtin_prefixes(type,&prefix_count);
     if(prefixes==nullptr)return true;
@@ -235,7 +235,7 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
                 cursor_offset,class_indices,DIAMOND_MAX_UNION_TYPES,&is_singleton);
             for(size_t index=0;okay&&index<candidate_count;index++)
                 okay=push_class_methods(items,&chunk,class_indices[index],is_singleton);
-            uint8_t builtin_type;
+            uint16_t builtin_type;
             if(okay&&candidate_count==0&&
                receiver_resolve_builtin_type(scratch,&chunk,combined,cursor_offset,&builtin_type))
                 okay=push_builtin_members(items,&chunk,builtin_type);

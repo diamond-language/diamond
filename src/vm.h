@@ -691,7 +691,7 @@ typedef enum DiamondMathFunction : uint8_t {
  * DIAMOND_MAX_CLASSES - 1). */
 enum { DIAMOND_CLASS_FROM_SELF = 0xFF };
 
-typedef enum DiamondTypeId : uint8_t {
+typedef enum DiamondTypeId : uint16_t {
     DIAMOND_TYPE_INT,
     DIAMOND_TYPE_FLOAT,
     DIAMOND_TYPE_STRING,
@@ -735,7 +735,7 @@ const char *diamond_native_type_name(uint8_t kind);
  * so a change here must be reflected in compile_check_type's two kind
  * switches. tests/cases/plain_type_guard_matrix.di checks every plain id
  * against every value kind. */
-static inline int diamond_plain_type_match(DiamondValue value, uint8_t id) {
+static inline int diamond_plain_type_match(DiamondValue value, uint16_t id) {
     const bool object = value.kind == DIAMOND_VALUE_OBJECT;
     switch (id) {
         case DIAMOND_TYPE_INT: return value.kind == DIAMOND_VALUE_INT ||
@@ -804,7 +804,7 @@ typedef struct DiamondStringConstant {
 } DiamondStringConstant;
 
 typedef struct DiamondTypeMember {
-    uint8_t id;
+    uint16_t id;
     uint16_t argument_set;
     uint16_t second_argument_set;
     uint8_t callable_arity;
@@ -945,7 +945,7 @@ struct DiamondClass {
     uint32_t declaration_line;
     uint32_t declaration_column;
     size_t declaration_start;
-    uint8_t superclass;
+    uint16_t superclass;
     /* `sealed class Name ... end` -- rejects `Name.new(...)` at compile
      * time (see src/compiler.c's own `.new`-dispatch site) and makes a
      * `case` subject whose plain (non-union) type names this class
@@ -978,13 +978,13 @@ struct DiamondClass {
     /* LSP-only conservative receiver metadata: 0 unseen, 1 every compiled
      * assignment agreed on field_known_class, 2 unknown/conflicting. */
     uint8_t field_type_status[DIAMOND_MAX_FIELDS];
-    uint8_t field_known_class[DIAMOND_MAX_FIELDS];
+    uint16_t field_known_class[DIAMOND_MAX_FIELDS];
     /* Final field facts from the declaration-discovery pass. Unlike the
      * real pass's table above, these are complete before any real method
      * body is emitted, so GET_IVAR can safely publish a receiver class for
      * later call-return chaining without depending on source order. */
     uint8_t discovered_field_type_status[DIAMOND_MAX_FIELDS];
-    uint8_t discovered_field_known_class[DIAMOND_MAX_FIELDS];
+    uint16_t discovered_field_known_class[DIAMOND_MAX_FIELDS];
     /* The instance methods the discovery pass found (function indices),
      * kept when the real pass resets `methods`: a bare `name(...)` call
      * in one method can then resolve to a method defined further down. */
@@ -1030,7 +1030,7 @@ typedef struct DiamondScopeLocal {
     uint16_t reg;
     /* Fallback compiler type snapshot for this local. Position-sensitive
      * assignment facts below take precedence for receiver resolution. */
-    uint8_t known_type;
+    uint16_t known_type;
     /* Fallback compiler known_type_sets[reg] for this local's register --
      * meaningful only relative to the *owning function's own* type_sets[]
      * table (a set index means nothing against any other function's), unlike
@@ -1050,7 +1050,7 @@ typedef struct DiamondScopeTypeFact {
      * the cursor without retaining an AST. */
     uint16_t reg;
     size_t effective_start;
-    uint8_t known_type;
+    uint16_t known_type;
     int32_t known_type_set;
     int32_t tooling_type_set;
 } DiamondScopeTypeFact;
@@ -1067,7 +1067,7 @@ typedef struct DiamondScopeTypeFact {
  * See DiamondFunction.invoke_site_known_class's own comment. */
 typedef struct DiamondInvokeSiteFact {
     uint32_t offset;
-    uint8_t known_type;
+    uint16_t known_type;
 } DiamondInvokeSiteFact;
 
 typedef struct DiamondFunction {
@@ -1133,7 +1133,7 @@ typedef struct DiamondFunction {
     /* The final public parameter was declared with `&name`. Tooling uses this
      * to preserve source-level signature shape. */
     bool has_block_parameter;
-    uint8_t owner_class;
+    uint16_t owner_class;
     bool nested;
     uint8_t capture_count;
     uint16_t return_type_set;
@@ -1180,7 +1180,7 @@ typedef struct DiamondFunction {
      * Never mutated after this snapshot; diamond_function_copy's whole-
      * struct assignment carries it across a Thread.new/gremlin_serve clone
      * for free, same as every other fixed-size DiamondFunction field. */
-    uint8_t ivar_known_class[DIAMOND_MAX_FIELDS];
+    uint16_t ivar_known_class[DIAMOND_MAX_FIELDS];
     /* JIT-only (src/jit.c, Phase 12, docs/internal/jit-design.md): the
      * third class-producing terminal alongside DIAMOND_OP_NEW (Phase 10)
      * and DIAMOND_OP_GET_IVAR (Phase 11) -- for a DIAMOND_OP_INVOKE/
@@ -1201,7 +1201,7 @@ typedef struct DiamondFunction {
      * function's own redefine_method_used_anywhere (below) is false --
      * see that field's own comment for why a method's return type, unlike
      * an ivar's declared type, can go stale at runtime. */
-    uint8_t register_known_class[DIAMOND_JIT_MAX_REGISTERS];
+    uint16_t register_known_class[DIAMOND_JIT_MAX_REGISTERS];
     /* JIT-only (src/jit.c, Phase 12): true if `redefine_method` is called
      * *anywhere* in the whole program (not just on this function's own
      * class) -- broadcast identically onto every function at the end of
@@ -1332,7 +1332,7 @@ typedef struct DiamondFunction {
  * passing it to Array#find, storing it and calling it as a Callable
  * value -- only ever supplies its own real, self-less arguments. */
 static inline uint8_t diamond_function_self_offset(const DiamondFunction *fn) {
-    return (fn->owner_class!=UINT8_MAX&&fn->owner_class!=(uint8_t)(UINT8_MAX-2))?1:0;
+    return (fn->owner_class!=UINT8_MAX&&fn->owner_class!=(uint16_t)(UINT8_MAX-2))?1:0;
 }
 
 struct DiamondChunk {
@@ -1376,7 +1376,7 @@ struct DiamondChunk {
      * without the prelude). DIAMOND_OP_INDEX_GET/SET's only reason for
      * existing -- recognizing a Range receiver for arr[range] slicing
      * without a native VM value kind for Range at all. */
-    uint8_t range_class_index;
+    uint16_t range_class_index;
 };
 
 typedef enum DiamondVmStatus : uint8_t {
@@ -1778,7 +1778,7 @@ struct DiamondVm {
      * core.di, no native VM value kind for Range at all -- without a
      * hardcoded class index, confirmed directly that one can shift with
      * conservative prelude module selection). */
-    uint8_t range_class_index;
+    uint16_t range_class_index;
     DiamondValue namespace_constants[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     bool namespace_constant_initialized[DIAMOND_MAX_NAMESPACE_CONSTANTS];
     /* True for a VM that Thread.new created: it never ran the program's
@@ -2148,13 +2148,13 @@ void diamond_vm_exit_if_threads_running(int status);
 /* The fixed result type (a DIAMOND_TYPE_*) of the native method `name` on a
  * built-in receiver type, from DIAMOND_NATIVE_METHODS. False when the method is
  * not listed there or its result is not one fixed type. */
-bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
-                                       size_t length,uint8_t *return_type);
+bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
+                                       size_t length,uint16_t *return_type);
 
-size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names);
+size_t diamond_native_member_names(uint16_t receiver_type,const char *const **names);
 
-bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
-                                     uint8_t arity,uint8_t *return_type);
+bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
+                                     uint8_t arity,uint16_t *return_type);
 /* Writes `value`'s bare runtime type name ("String", "Int", "Tensor", a
  * user class's own name for an Instance, ...) into `buffer` -- the exact
  * name every "expected X, got Y" type-error message and `.class()`

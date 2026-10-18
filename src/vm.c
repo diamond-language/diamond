@@ -6209,7 +6209,7 @@ DiamondVmStatus base64_decode_helper(DiamondVm *vm,DiamondValue data_value,
  * class singleton method), leaving a literal class operand unchanged.
  * False, with vm->error set, when self isn't a class. */
 bool resolve_class_operand(DiamondVm *vm,const DiamondChunk *chunk,
-        const DiamondValue *registers,const char *operation,uint8_t *class_operand) {
+        const DiamondValue *registers,const char *operation,uint16_t *class_operand) {
     if(*class_operand!=DIAMOND_CLASS_FROM_SELF)return true;
     if(chunk->parameter_offset!=1||registers[0].kind!=DIAMOND_VALUE_CLASS) {
         snprintf(vm->error,sizeof vm->error,
@@ -6505,10 +6505,10 @@ static bool value_is_native_kind(DiamondValue value,uint8_t kind);
  * interface already matches them the normal way, through a class's
  * own method table. */
 typedef struct DiamondNativeMethod {
-    uint8_t receiver_type;
+    uint16_t receiver_type;
     const char *name;
     uint8_t arity;
-    uint8_t return_type;
+    uint16_t return_type;
 } DiamondNativeMethod;
 
 static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
@@ -6587,8 +6587,8 @@ static const char *const NATIVE_MEMBERS_FLOAT[]={
     "frozen?","hour","hours","inspect","minute","minutes","nil?","round","second","seconds",
     "tap","to_f","to_i","to_s","week","weeks"};
 
-bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
-                                       size_t length,uint8_t *return_type) {
+bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
+                                       size_t length,uint16_t *return_type) {
     bool found=false;
     for(size_t index=0;index<sizeof DIAMOND_NATIVE_METHODS/
         sizeof DIAMOND_NATIVE_METHODS[0];index++) {
@@ -6604,7 +6604,7 @@ bool diamond_native_method_return_type(uint8_t receiver_type,const char *name,
     return found;
 }
 
-size_t diamond_native_member_names(uint8_t receiver_type,const char *const **names) {
+size_t diamond_native_member_names(uint16_t receiver_type,const char *const **names) {
 #define NATIVE_MEMBERS_CASE(type,list) \
     case type: *names=list;return sizeof list/sizeof list[0];
     switch(receiver_type) {
@@ -6618,8 +6618,8 @@ size_t diamond_native_member_names(uint8_t receiver_type,const char *const **nam
 #undef NATIVE_MEMBERS_CASE
 }
 
-bool diamond_native_method_satisfies(uint8_t receiver_type,const char *name,
-                                     uint8_t arity,uint8_t *return_type) {
+bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
+                                     uint8_t arity,uint16_t *return_type) {
     for(size_t index=0;index<sizeof DIAMOND_NATIVE_METHODS/
         sizeof DIAMOND_NATIVE_METHODS[0];index++) {
         const DiamondNativeMethod *method=&DIAMOND_NATIVE_METHODS[index];
@@ -6665,7 +6665,7 @@ static bool value_matches_bound_node(const DiamondChunk *chunk,DiamondValue valu
 }
 
 bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
-                               uint8_t type) {
+                               uint16_t type) {
     /* A bare id can't say which native kind; any native object will do.
      * (Members check the kind -- see value_matches_member.) */
     if(type==DIAMOND_TYPE_NATIVE) {
@@ -6712,7 +6712,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         if(builtin!=UINT8_MAX) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                uint8_t native_return=UINT8_MAX;
+                uint16_t native_return=UINT8_MAX;
                 if(!diamond_native_method_satisfies(builtin,method->name,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
@@ -6784,8 +6784,8 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
                                   const DiamondTypeSet *expected_sets,
                                   uint16_t expected_index);
 
-static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
-                                      uint8_t expected) {
+static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
+                                      uint16_t expected) {
     if(known==expected)return true;
     if(expected>=DIAMOND_TYPE_VARIABLE_BASE&&
        expected<DIAMOND_TYPE_INTERFACE_BASE) {
@@ -6835,7 +6835,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                uint8_t native_return=UINT8_MAX;
+                uint16_t native_return=UINT8_MAX;
                 if(!diamond_native_method_satisfies(known,method->name,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
@@ -6893,7 +6893,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint8_t known,
     const size_t wanted=(size_t)(expected-DIAMOND_TYPE_CLASS_BASE);
     while(index<chunk->class_count) {
         if(index==wanted)return true;
-        const uint8_t parent=chunk->classes[index].superclass;
+        const uint16_t parent=chunk->classes[index].superclass;
         if(parent==UINT8_MAX)break;
         index=parent;
     }
@@ -7165,7 +7165,7 @@ DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
  * = value_matches_type(...)), just through the trampoline's out-pointer
  * convention instead of a direct register write. */
 DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
-        const DiamondValue *value, uint8_t type, DiamondValue *out) {
+        const DiamondValue *value, uint16_t type, DiamondValue *out) {
     *out = DIAMOND_BOOL(value_matches_type(chunk, *value, type));
     return DIAMOND_VM_OK;
 }
@@ -7684,7 +7684,7 @@ bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
 }
 
-static const char *type_name(const DiamondChunk *chunk,uint8_t type) {
+static const char *type_name(const DiamondChunk *chunk,uint16_t type) {
     const char *name="<invalid type>";
     if(type==DIAMOND_TYPE_INT) name="Int";
     else if(type==DIAMOND_TYPE_FLOAT) name="Float";
@@ -8769,7 +8769,7 @@ static DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk
  * directory sync can leave a complete published file: never remove that file
  * on failure, since another process may already have observed it. */
 
-static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) {
+static uint16_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) {
     if(value.kind==DIAMOND_VALUE_NIL)return DIAMOND_TYPE_NIL;
     if(value.kind==DIAMOND_VALUE_BOOL)return DIAMOND_TYPE_BOOL;
     if(value.kind==DIAMOND_VALUE_INT)return DIAMOND_TYPE_INT;
@@ -8780,12 +8780,12 @@ static uint8_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value) 
     if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE)return DIAMOND_TYPE_CALLABLE;
     const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
     for(size_t index=0;index<chunk->class_count;index++)
-        if(&chunk->classes[index]==class)return (uint8_t)(DIAMOND_TYPE_CLASS_BASE+index);
+        if(&chunk->classes[index]==class)return (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index);
     return UINT8_MAX;
 }
 
 static DiamondBoundTypeMember *binding_member(DiamondTypeBinding *binding,
-                                               uint8_t node,uint8_t id) {
+                                               uint8_t node,uint16_t id) {
     if(node>=binding->node_count)return nullptr;
     DiamondBoundTypeNode *target=&binding->nodes[node];
     for(size_t index=0;index<target->count;index++)
@@ -8798,7 +8798,7 @@ static DiamondBoundTypeMember *binding_member(DiamondTypeBinding *binding,
 
 static void bind_value_graph(const DiamondChunk *chunk,DiamondTypeBinding *binding,
                              uint8_t node,DiamondValue value) {
-    const uint8_t type=runtime_value_type(chunk,value);
+    const uint16_t type=runtime_value_type(chunk,value);
     DiamondBoundTypeMember *member=binding_member(binding,node,type);
     if(member==nullptr)return;
     if(type==DIAMOND_TYPE_ARRAY) {
@@ -9465,7 +9465,7 @@ uint8_t diamond_jit_tail_call_function(DiamondVm *vm, const DiamondChunk *chunk,
  * which -- now that a real call with real side effects can have already
  * happened -- would risk invoking this same super() call a second time. */
 DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
-        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out) {
     if ((size_t)owner_index >= chunk->class_count ||
         (size_t)name >= chunk->string_count ||
@@ -9882,7 +9882,7 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
  * compile_body has no case for either, so a function containing one still
  * bails whole, same as any other unsupported construct. */
 DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
-        DiamondValue *registers, uint16_t dest, uint8_t class_index,
+        DiamondValue *registers, uint16_t dest, uint16_t class_index,
         uint16_t base, uint8_t argc, size_t depth) {
     if((size_t)class_index>=chunk->class_count) return DIAMOND_VM_INVALID_BYTECODE;
     const DiamondClass *class=&chunk->classes[class_index];
@@ -12915,7 +12915,7 @@ static DiamondVmStatus builtin_respond_to(const DiamondChunk *chunk,DiamondValue
         length=((const DiamondString *)name_value.as.object)->length;
     } else return DIAMOND_VM_TYPE_ERROR;
     bool found=length==11&&memcmp(name,"respond_to?",11)==0;
-    uint8_t type=0;
+    uint16_t type=0;
     const DiamondFunction *extension=nullptr;
     if(receiver.kind==DIAMOND_VALUE_INT)type=DIAMOND_TYPE_INT;
     else if(receiver.kind==DIAMOND_VALUE_FLOAT)type=DIAMOND_TYPE_FLOAT;

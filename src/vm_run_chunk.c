@@ -4059,7 +4059,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_REDEFINE_METHOD: {
-                uint16_t dest=0,name_reg=0,callable_reg=0;uint8_t class_operand=0;
+                uint16_t dest=0,name_reg=0,callable_reg=0;uint16_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);READ_SHORT(callable_reg);
                 if(!resolve_class_operand(vm,chunk,registers,"redefine_method",&class_operand))
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -4145,7 +4145,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * repointing it, keeping the two operations' contracts
              * separate and predictable. */
             case DIAMOND_OP_DEFINE_METHOD: {
-                uint16_t dest=0,name_reg=0,callable_reg=0;uint8_t class_operand=0;
+                uint16_t dest=0,name_reg=0,callable_reg=0;uint16_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);READ_SHORT(callable_reg);
                 if(!resolve_class_operand(vm,chunk,registers,"define_method",&class_operand))
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
@@ -4242,7 +4242,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_COMPILE_METHOD: {
                 uint16_t dest=0,name_reg=0,params_reg=0,body_reg=0,bound_values_reg=0;
-                uint8_t class_operand=0;
+                uint16_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);READ_SHORT(name_reg);
                 READ_SHORT(params_reg);READ_SHORT(body_reg);READ_SHORT(bound_values_reg);
                 if(!resolve_class_operand(vm,chunk,registers,"compile_method",&class_operand))
@@ -4281,7 +4281,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_LOAD_CLASS: {
-                uint16_t dest=0;uint8_t class_operand=0;
+                uint16_t dest=0;uint16_t class_operand=0;
                 READ_SHORT(dest);READ_BYTE(class_operand);
                 if((size_t)class_operand>=chunk->class_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
@@ -4305,7 +4305,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(dest);READ_SHORT(name_index);READ_SHORT(base);READ_BYTE(argc);
                 if(registers[0].kind!=DIAMOND_VALUE_CLASS)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const uint8_t class_operand=registers[0].as.class_index;
+                const uint16_t class_operand=registers[0].as.class_index;
                 if((size_t)class_operand>=chunk->class_count||
                    (size_t)name_index>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);

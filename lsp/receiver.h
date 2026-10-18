@@ -80,14 +80,14 @@ size_t receiver_resolve_classes(const DiamondProgram *program,
  * `*builtin_type`; false means the receiver is not one of those. */
 bool receiver_resolve_builtin_type(const DiamondProgram *program,
         const DiamondChunk *chunk,const char *source,size_t stop_offset,
-        uint8_t *builtin_type);
+        uint16_t *builtin_type);
 
 /* The prelude function-name prefixes the VM probes, in order, when a method is
  * called on a built-in value of `builtin_type` (`items.foo` calls array_foo,
  * then enumerable_foo; see find_collection_extension and find_value_extension
  * in src/vm.c). Each is also tried under a `diamond_` prefix. Writes the count
  * to `*count`; nullptr for any other type. */
-const char *const *receiver_builtin_prefixes(uint8_t builtin_type,size_t *count);
+const char *const *receiver_builtin_prefixes(uint16_t builtin_type,size_t *count);
 
 /* True iff a Hash dispatches `name` to an enumerable_ function (it shares only
  * these with Array; every other enumerable_ function is Array-only). */
