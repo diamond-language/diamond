@@ -186,9 +186,13 @@ module Mjolnir
 
     # Runs `callback` (given this repo) in a transaction. An exception
     # rolls back and propagates; a returned Err rolls back and is returned;
-    # anything else commits.
+    # anything else commits. On SQLite the write lock is taken up front
+    # (BEGIN IMMEDIATE), so a read followed by a write cannot fail partway through
+    # when another connection writes in between; a competing writer waits
+    # for the connection's busy timeout instead.
     def transaction(callback: Callable[1])
-      @db.execute("BEGIN")
+      sqlite = @visitor == nil || @visitor.is_a?(Arel::SQLiteVisitor)
+      @db.execute(if sqlite then "BEGIN IMMEDIATE" else "BEGIN" end)
       begin
         result = callback(self)
         if result is Err

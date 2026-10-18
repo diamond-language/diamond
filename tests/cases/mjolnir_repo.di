@@ -83,6 +83,37 @@ def run_tests()
     Minitest.assert(raised)
   end
 
+  suite.test("a changeset can update an entity built as a plain Hash row") do
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE boards (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, slug TEXT NOT NULL, label TEXT)")
+    boards = Mjolnir::Schema.new("boards", {"id": :int, "game_id": :int, "slug": :string, "label": :string}, build_board_row)
+    repo = Mjolnir::Repo.new(db)
+    row = repo.insert!(Mjolnir::Changeset.cast(boards, nil, {"game_id": 1, "slug": "a", "label": "x"}, ["game_id", "slug", "label"]))
+    updated = repo.update!(Mjolnir::Changeset.cast(boards, row, {"label": "y"}, ["label"]))
+    Minitest.assert_equal("y", updated["label"])
+    Minitest.assert_equal("a", repo.get(boards, row["id"])["slug"])
+  end
+
+  suite.test("a transaction takes the write lock up front") do
+    path = "/tmp/mjolnir_tx_#{Time.now().to_i()}.db"
+    first = SQLite3.open(path)
+    first.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    second = SQLite3.open(path)
+    first_repo = Mjolnir::Repo.new(first)
+    second_repo = Mjolnir::Repo.new(second)
+    blocked = false
+    first_repo.transaction() do |tx|
+      begin
+        second_repo.transaction() do |other| 1 end
+      rescue error: StandardError
+        blocked = true
+      end
+      1
+    end
+    File.delete(path)
+    Minitest.assert(blocked)
+  end
+
   suite.test("a composite primary key finds, updates and deletes by its parts") do
     db = SQLite3.open(":memory:")
     db.execute("CREATE TABLE seen (game_id INTEGER NOT NULL, player_id INTEGER NOT NULL, hits INTEGER NOT NULL, PRIMARY KEY (game_id, player_id))")
