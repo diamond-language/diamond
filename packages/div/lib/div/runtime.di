@@ -6,6 +6,8 @@
 # on this package. Keep the two in behavioral sync; `test.sh` checks this
 # directly by comparing this function's output against a generated
 # template's own escaping for the same inputs.
+require "./compiler"
+
 module Div
   module_function
 
@@ -53,6 +55,39 @@ module Div
   # do with what the field holds.
   def hidden_field_tag(name, value)
     "<input type=\"hidden\" name=\"#{Div.escape_html(name)}\" value=\"#{Div.escape_html(value)}\">"
+  end
+
+  # The templates under `directory` (recursively) whose compiled file in the
+  # neighboring `.cache/` is missing, or was compiled from different source.
+  # Empty when everything is current.
+  def stale_templates(directory)
+    stale = []
+    Dir.entries(directory).sort().each() do |name|
+      path = "#{directory}/#{name}"
+      if name == ".cache"
+        next
+      elsif File.directory?(path)
+        stale = stale + Div.stale_templates(path)
+      elsif name.end_with?(".html.div")
+        compiled = "#{directory}/.cache/#{name.slice(0, name.length() - 4)}.di"
+        stamp = Div.source_stamp(File.sha256(path))
+        if !File.exist?(compiled) || !File.read(compiled).start_with?(stamp)
+          stale.push(path)
+        end
+      end
+    end
+    stale
+  end
+
+  # Raises, naming the stale templates and the fix, unless every template
+  # under `directory` has been compiled from its current source. Call it at
+  # startup, before serving pages from a stale `.cache/`.
+  def check_fresh(directory, command = "divc_all.sh " + directory)
+    stale = Div.stale_templates(directory)
+    if stale.length() > 0
+      raise RuntimeError.new("stale compiled templates (run #{command}): " + stale.join(", "))
+    end
+    nil
   end
 
   # Wraps a rendered template body into the [status, headers, body] shape

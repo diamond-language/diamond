@@ -297,4 +297,39 @@ assert_contains "$actual" '<input type="hidden" name="csrf_token" value="abc123"
 assert_contains "$actual" '<input type="hidden" name="weird&quot;name" value="tom &amp; jerry&#39;s">'
 count=$((count + 1))
 
+# --- Div.stale_templates / check_fresh: compiled output records its source's
+# SHA-256, so an edited, new or uncompiled template is reported (recursively) ---
+mkdir -p "$work/fresh/views/sub"
+printf '<p>one</p>\n' >"$work/fresh/views/one.html.div"
+printf '<p>two</p>\n' >"$work/fresh/views/sub/two.html.div"
+DIAMOND_BIN="$diamond" bin/divc_all.sh "$work/fresh/views" >/dev/null
+cat >"$work/fresh_driver.di" <<DRIVEREOF
+require "$(pwd)/lib/div"
+dir = "$work/fresh/views"
+puts("fresh=" + Div.stale_templates(dir).length().to_s())
+puts("check=" + Div.check_fresh(dir).inspect())
+DRIVEREOF
+actual="$("$diamond" "$work/fresh_driver.di")"
+assert_contains "$actual" "fresh=0"
+assert_contains "$actual" "check=nil"
+printf '<p>edited</p>\n' >"$work/fresh/views/sub/two.html.div"
+printf '<p>three</p>\n' >"$work/fresh/views/three.html.div"
+cat >"$work/stale_driver.di" <<DRIVEREOF
+require "$(pwd)/lib/div"
+dir = "$work/fresh/views"
+puts("stale=" + Div.stale_templates(dir).map() do |path| path.slice(dir.length() + 1, path.length()) end.join(","))
+begin
+  Div.check_fresh(dir, "make views")
+rescue error: RuntimeError
+  puts(error.message().slice(0, 48))
+end
+DRIVEREOF
+actual="$("$diamond" "$work/stale_driver.di")"
+assert_contains "$actual" "stale=sub/two.html.div,three.html.div"
+assert_contains "$actual" "stale compiled templates (run make views): "
+DIAMOND_BIN="$diamond" bin/divc_all.sh "$work/fresh/views" >/dev/null
+actual="$("$diamond" "$work/fresh_driver.di")"
+assert_contains "$actual" "fresh=0"
+count=$((count + 1))
+
 echo "$count div tests passed"
