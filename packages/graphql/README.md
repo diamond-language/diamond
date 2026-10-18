@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add graphql --registry https://cuts.dilang.tech --version "^0.1.4"
+facet add graphql --registry https://cuts.dilang.tech --version "^0.1.5"
 facet update
 ```
 
@@ -196,6 +196,16 @@ context["dataloader"].with("author_by_id", BatchModule.batch).load(key)
 ```
 
 Batching is local to a group of siblings (one list's items, or one selection set's fields), not global across the whole query tree. That covers the usual shape: N parents each resolving the same child.
+
+## SDL
+
+`schema.to_sdl()` returns the schema as GraphQL SDL text, for client codegen and review. Types are in name order,
+the built-in scalars are omitted, and field and argument descriptions are printed as block strings. Resolvers and
+`resolve_type` callables are not part of SDL. A server can serve it directly:
+
+```ruby
+[200, {"Content-Type": "text/plain; charset=utf-8"}, schema.to_sdl()]
+```
 
 ## Introspection
 

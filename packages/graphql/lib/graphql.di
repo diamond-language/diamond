@@ -27,4 +27,5 @@ require "./graphql/validation/validator"
 require "./graphql/introspection"
 require "./graphql/execution/executor"
 
+require "./graphql/sdl"
 require "./graphql/schema"

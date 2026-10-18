@@ -915,4 +915,33 @@ assert_contains "$actual" "unpaired surrogate in \\ude00"
 assert_contains "$actual" "invalid unicode escape \\u00zz"
 count=$((count + 1))
 
+# --- Schema#to_sdl: stable, name-ordered SDL with arguments, defaults, descriptions, enums, inputs,
+# interfaces and unions; built-in scalars are left out ---
+actual="$(run_file '
+level = GraphQL::EnumType.new("Level").value("EASY").value("HARD", "The hard one")
+filter = GraphQL::InputObjectType.new("Filter").argument("level", level, "EASY", true).argument("tags", GraphQL::ListType.of(GraphQL::ScalarType.string().non_null()))
+node = GraphQL::InterfaceType.new("Node").field("id", GraphQL::ScalarType.id().non_null())
+book = GraphQL::ObjectType.new("Book").implements(node)
+book.field("id", GraphQL::ScalarType.id().non_null())
+book.field("title", GraphQL::ScalarType.string().non_null(), nil, [], "The title")
+thing = GraphQL::UnionType.new("Thing").possible_type(book)
+query = GraphQL::ObjectType.new("Query")
+query.field("books", GraphQL::ListType.of(book.non_null()).non_null(), nil, [GraphQL::Argument.new("limit", GraphQL::ScalarType.int(), 20, true), GraphQL::Argument.new("filter", filter)])
+query.field("thing", thing)
+mutation = GraphQL::ObjectType.new("Mutation")
+mutation.field("rename", book, nil, [GraphQL::Argument.new("title", GraphQL::ScalarType.string().non_null(), nil, false, "New title")])
+puts(GraphQL::Schema.new().query(query).mutation(mutation).to_sdl())
+')"
+assert_contains "$actual" $'type Book implements Node {\n  id: ID!\n  """The title"""\n  title: String!\n}'
+assert_contains "$actual" $'input Filter {\n  level: Level = EASY\n  tags: [String!]\n}'
+assert_contains "$actual" $'enum Level {\n  EASY\n  """The hard one"""\n  HARD\n}'
+assert_contains "$actual" $'interface Node {\n  id: ID!\n}'
+assert_contains "$actual" $'type Query {\n  books(limit: Int = 20, filter: Filter): [Book!]!\n  thing: Thing\n}'
+assert_contains "$actual" $'type Mutation {\n  rename(\n    """New title"""\n    title: String!\n  ): Book\n}'
+assert_contains "$actual" "union Thing = Book"
+[[ "$actual" != *"scalar String"* && "$actual" != *"schema {"* ]]
+# types come out in name order
+[[ "$actual" == *"type Book"*"input Filter"*"enum Level"*"type Mutation"*"interface Node"*"type Query"*"union Thing"* ]]
+count=$((count + 1))
+
 echo "$count graphql tests passed"
