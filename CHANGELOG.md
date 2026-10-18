@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- `mjolnir` 0.2.2: `Schema.new(..., primary_key: ["a", "b"])` declares a composite primary key; `Repo#get`, `update` and
+  `delete` address a row by an Array of its parts.
 - `GraphQL::ExecutionError.new(message, extensions)` accepts an optional Hash that is returned under the error's
   `"extensions"` key (`graphql` 0.1.6).
 - An endless `def name(params) = expr` may start its body on the next line (blank and comment lines may come first), in the
