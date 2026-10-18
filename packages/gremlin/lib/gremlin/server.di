@@ -99,7 +99,16 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
         # that wants to opt in.
         context["gremlin_connection"] = conn
         if limits != nil then request["request_id"] = conn.request_id() end
-        response = handler(request, context)
+        # A handler that raises answers 500 and logs the error; the message
+        # stays in the log, never in the response. A handler that had already
+        # taken over `conn` (a WebSocket) and then raised gets the 500 written
+        # onto its own stream, which the peer sees as a protocol error.
+        begin
+          response = handler(request, context)
+        rescue error: StandardError
+          log.error("request.handler_failed", {"request_id": conn.request_id(), "error": error.message()})
+          response = [500, {"Content-Type": "text/plain; charset=utf-8", "Connection": "close", "X-Request-ID": conn.request_id()}, "Internal Server Error"]
+        end
         # nil is the signal a handler already fully took over `conn`
         # itself (via context["gremlin_connection"] above) and wrote
         # its own response directly -- no ordinary handler could

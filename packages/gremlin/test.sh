@@ -408,6 +408,46 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out" "$out.di"
 
+# A handler that raises answers 500 with a generic body (the message stays in
+# the log) and the server keeps serving the next request.
+port=19419
+out="$(mktemp)"
+cat >"$out.di" <<SRCEOF
+require "$package_root/lib/gremlin"
+def run()
+  def handler(request, context)
+    if request["path"] == "/boom" then raise RuntimeError.new("secret detail") end
+    [200, {"Content-Type": "text/plain"}, "fine"]
+  end
+  gremlin_serve($port, handler, threads: 1)
+end
+run()
+SRCEOF
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /boom HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == HTTP/1.1\ 500\ * ]]
+[[ "$response" == *"Internal Server Error" ]]
+[[ "$response" != *"secret detail"* ]]
+grep -q '"message":"request.handler_failed"' "$out"
+grep -q 'secret detail' "$out"
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /next HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == HTTP/1.1\ 200\ * && "$response" == *fine ]]
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$out.di"
+
 # Graceful shutdown still exits promptly with a tick configured -- the
 # combined gremlin_poll_timeout_ms bound (shutdown deadline vs. next
 # tick) must not let a far-future tick override the shutdown deadline,
