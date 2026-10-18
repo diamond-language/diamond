@@ -22,6 +22,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- A keyword argument on a continuation line of a `Foo.new(...)` (or other dynamic-target) call, as in
+  `Foo.new(a,\n  b,\n  key: value)`, was a parse error ("expected ')' after arguments"): the keyword look-ahead
+  forgot that a newline after a comma still starts an argument.
 - `gremlin` shutdown could take the whole 10-second grace period: a SIGTERM landing just after the worker loop's
   "shutdown requested and no connections" check, before it polled, left the poll with no file descriptors and nothing
   to wake it. Found by stress-testing start/SIGTERM cycles under CPU load (about 1 in 40 with three workers).
