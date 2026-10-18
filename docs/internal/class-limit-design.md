@@ -70,7 +70,12 @@ and the roughly dozen `(uint8_t)(DIAMOND_TYPE_CLASS_BASE + ...)` casts in `compi
 `DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES <= DIAMOND_TYPE_NATIVE`. Sentinels move to `0xFFFF` and
 `0xFFFD`; `DIAMOND_NATIVE_TYPE_OPERAND_BASE` moves above 0xFFFF's operand range.
 
-This stage changes no behaviour and no bytecode, so it can be verified by the existing suite alone.
+Type ids are also emitted as single bytes in bytecode (type checks, union operands), so the
+*operand* widening is part of stage 2. Stage 1 widens only the in-memory containers and keeps every value
+and every emitted byte the same: the bases above stay where they are (the unknown sentinel stays 255), so
+the bytecode of the whole test corpus must come out byte-identical. Raising the bases to the table above
+happens together with the operand change in stage 2. Stage 1 landed with that check: 1,765 of 1,766
+`--dump-bytecode` outputs identical, the remaining one differing only in program output.
 
 ### 2. Widen class operands in bytecode (format break)
 
@@ -116,9 +121,11 @@ measured footprint is a problem.
 Each stage is its own branch and PR, and each ends green on all 26 CI checks (including TSan, ASan/UBSan,
 the macOS builds and the differential fuzzer) before the next starts.
 
-1. Widen type ids. Verification: the full suite; a disassembly/`.dic` byte-for-byte comparison of the
-   corpus before and after (identical bytecode proves it changed nothing).
-2. Widen class operands. Verification: suite; `.dic` rejected by version mismatch and rebuilt; the
+1. Widen the type-id containers (values and bytecode unchanged). Verification: the full suite; a
+   `--dump-bytecode` comparison of the corpus before and after (identical bytecode proves it changed
+   nothing). Hand-check every `malloc`/`memcpy` sized in bytes for a type array: the compiler does not
+   flag those.
+2. Widen class and type operands in bytecode and move the id bases. Verification: suite; `.dic` rejected by version mismatch and rebuilt; the
    differential fuzzer with class-heavy seeds; JIT and interpreter agree on a program that builds
    instances of 150+ classes.
 3. Dynamic storage. Verification: suite; a `Thread.new` start-up benchmark before/after; peak RSS of a

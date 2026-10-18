@@ -1133,7 +1133,7 @@ static void compile_check_type(JitCompiler *jc, uint16_t source, uint16_t set_in
  * &registers[dest]). Same 4-argument, no-stack-overflow shape as compile_
  * check_type plus one more register-width arg -- see jit.h's own comment
  * for why this needs neither jc->needs_frame nor jc->has_called. */
-static void compile_is_type(JitCompiler *jc, uint16_t dest, uint16_t source, uint8_t type) {
+static void compile_is_type(JitCompiler *jc, uint16_t dest, uint16_t source, uint16_t type) {
     JitBuffer *buf = &jc->buf;
     emit_mov_rr(buf, REG_RDI, JIT_CHUNK);
     emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(source, 0));
@@ -1210,7 +1210,7 @@ static void compile_new_array(JitCompiler *jc, uint16_t dest, uint16_t base, uin
  * own incoming depth (JIT_DEPTH), passed on unchanged, exactly mirroring
  * the interpreter's own `depth` (not `depth+1`) argument to invoke_
  * resolved_method_helper. */
-static void compile_super_call(JitCompiler *jc, uint16_t dest, uint8_t owner_index,
+static void compile_super_call(JitCompiler *jc, uint16_t dest, uint16_t owner_index,
                                 uint16_t name, uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
@@ -1416,7 +1416,7 @@ static void compile_native_call(JitCompiler *jc,uint16_t dest,uint16_t recv,
  * instance's own maybe_collect can trigger GC) and jc->has_called (a
  * user-defined `initialize` can run arbitrary code), mirroring every
  * other call-capable trampoline here. */
-static void compile_new(JitCompiler *jc, uint16_t dest, uint8_t class_index,
+static void compile_new(JitCompiler *jc, uint16_t dest, uint16_t class_index,
                          uint16_t base, uint8_t argc) {
     jc->needs_frame = true;
     jc->has_called = true;
@@ -1477,7 +1477,7 @@ static bool parameter_is_single_class(const DiamondFunction *fn, uint16_t recv_r
     if (set_index == DIAMOND_NO_TYPE_SET || set_index >= fn->type_set_count) return false;
     const DiamondTypeSet *set = &fn->type_sets[set_index];
     if (set->count != 1) return false;
-    const uint8_t id = set->members[0].id;
+    const uint16_t id = set->members[0].id;
     /* Below DIAMOND_TYPE_NATIVE: a native object type (Time, Channel, ...)
      * shares the byte space above the class range but is not an Instance. */
     return id >= DIAMOND_TYPE_CLASS_BASE && id < DIAMOND_TYPE_NATIVE;
@@ -2292,7 +2292,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                uint8_t site_type=UINT8_MAX;
+                uint16_t site_type=UINT8_MAX;
                 for(size_t site=0;site<fn->invoke_site_known_class_count;site++)
                     if(fn->invoke_site_known_class[site].offset==
                             (uint32_t)instruction_start) {

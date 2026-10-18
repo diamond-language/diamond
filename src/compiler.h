@@ -36,7 +36,7 @@ typedef struct DiamondProgram {
      * for -- resolved once at the end of diamond_compile, UINT8_MAX
      * (set in diamond_program_init, alongside every other zero-init
      * default) until then/if never found. */
-    uint8_t range_class_index;
+    uint16_t range_class_index;
     /* True the moment DIAMOND_OP_REDEFINE_METHOD is emitted anywhere
      * during this compile (parse_redefine_method_call, src/compiler.c) --
      * broadcast onto every DiamondFunction.redefine_method_used_anywhere

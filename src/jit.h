@@ -201,7 +201,7 @@ DiamondVmStatus diamond_jit_check_type(const DiamondChunk *chunk,
  * jc->has_called. Always returns DIAMOND_VM_OK; the status return exists
  * only to match every other trampoline's emit_bail_if_al_nonzero tail. */
 DiamondVmStatus diamond_jit_is_type(const DiamondChunk *chunk,
-        const DiamondValue *value, uint8_t type, DiamondValue *out);
+        const DiamondValue *value, uint16_t type, DiamondValue *out);
 
 /* SAME_CLASS: whether both values are instances of exactly one class. Pure
  * inspection like IS_TYPE, so it needs neither a frame nor has_called. */
@@ -334,7 +334,7 @@ DiamondVmStatus diamond_jit_equal_general(DiamondVm *vm, const DiamondChunk *chu
  * start still respects DIAMOND_MAX_CALL_DEPTH (enforced in jit_call_or_
  * interpret, not here). */
 DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
-        uint8_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
+        uint16_t owner_index, uint16_t name, DiamondValue *registers, uint16_t base,
         uint8_t argc, size_t depth, DiamondValue *out);
 
 /* Phase 3. JIT trampolines for ADD_INT/SUBTRACT_INT/MULTIPLY_INT/
@@ -474,7 +474,7 @@ DiamondVmStatus diamond_jit_native_call(DiamondVm *vm,
  * unconditionally, same as diamond_jit_super_call/diamond_jit_invoke_
  * instance's own treatment. */
 DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chunk,
-        DiamondValue *registers, uint16_t dest, uint8_t class_index,
+        DiamondValue *registers, uint16_t dest, uint16_t class_index,
         uint16_t base, uint8_t argc, size_t depth);
 
 /* DIAMOND_OP_CALL (a plain call to a named function): validates exactly as the
