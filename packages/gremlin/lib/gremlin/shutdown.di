@@ -71,7 +71,15 @@ class GremlinShutdown
   end
 
   def self.poll(readables, writables, timeout_ms)
-    unless self.token_managed?() then return IO.poll(readables, writables, timeout_ms) end
+    # Draining with nothing left to wait on: the signal landed after the
+    # worker loop's own "requested and no connections" check but before this
+    # poll, so the listener is already out of `readables`. Blocking here would
+    # sleep out the whole grace period (nothing can wake a poll with no fds),
+    # so report "nothing ready" and let the loop's next check exit.
+    if @@requested == true && readables.empty?() && writables.empty?()
+      return {"readable": [], "writable": []}
+    end
+    unless self.token_managed?() then return self.poll_fds(readables, writables, timeout_ms) end
     deadline = if timeout_ms < 0 then nil else Time.monotonic() + timeout_ms.to_f() / 1000.0 end
     # Once draining, the cancelled token must not keep waking poll in a loop.
     # Only the drain/request/tick deadlines and live sockets matter then.
@@ -80,7 +88,19 @@ class GremlinShutdown
       deadline = token_deadline
     end
     channels = if @@requested == true then [] else @@channels end
-    IO.poll(readables, writables, {"cancellations": channels, "deadline": deadline})
+    self.poll_fds(readables, writables, {"cancellations": channels, "deadline": deadline})
+  end
+
+  # IO.poll, except that a listener closed by the shutdown signal between the
+  # worker loop building its poll list and this call is not an error: during
+  # drain it simply means "nothing is ready".
+  def self.poll_fds(readables, writables, options)
+    begin
+      IO.poll(readables, writables, options)
+    rescue error: IOError
+      if @@requested != true then raise error end
+      {"readable": readables.map() do |fd| false end, "writable": writables.map() do |fd| false end}
+    end
   end
 
   def self.return_after_shutdown(value)
