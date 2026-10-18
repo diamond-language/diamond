@@ -114,7 +114,9 @@ on 2026-10-17 with a 30-minute credential (revoked; archive sha256
 each with its own revoked credential and a passing verification. `mjolnir` 0.2.1 (composite `unique_constraint`, sha256
 `bd98ce4a26d8f3405fedd181eaa13166da836f0aaad425b3a0ddc0ad336e18a3`) followed the same way (its seed was prepared with `--selection` naming `arel` and `mjolnir`, then trimmed to mjolnir). `gremlin` 0.4.4 (the shutdown-race fix, sha256
 `3193e94ba166304acca80014e79bacc6dc1a2723314df3c507534f25b5d3005b`) followed the same way, with a passing verification of all 18 launch cuts. `graphql` 0.1.6 (`GraphQL::ExecutionError` extensions, sha256
-`d4bd03cd6210591b0e42d2b5c36da3fb6eb81b56e8329aab4cb51002bb1c7ed8`) followed the same way (credential 21, revoked), with a passing verification of all 18 launch cuts.
+`d4bd03cd6210591b0e42d2b5c36da3fb6eb81b56e8329aab4cb51002bb1c7ed8`) followed the same way (credential 21, revoked), with a passing verification of all 18 launch cuts. `mjolnir` 0.2.2 (composite primary keys, sha256
+`abd5244bd466bbe0e0886384c7b3e37a1a8fd95b0950f40596b0bc7206860618`, credential 22) and 0.2.3 (Hash-row updates and `BEGIN IMMEDIATE` transactions, sha256
+`3f845a09c545c320840703faa38c3e7b19863a57d6b00d2b2a950c5c6af21987`, credential 23) followed the same way, each credential revoked and each followed by a passing verification.
 
 ## Host disk and logs
 
