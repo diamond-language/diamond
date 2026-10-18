@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add mjolnir --registry https://cuts.dilang.tech --version "^0.2.0"
+facet add mjolnir --registry https://cuts.dilang.tech --version "^0.2.1"
 facet update
 ```
 
@@ -68,6 +68,12 @@ end
 ada = result.value()
 repo.update(user_changeset(users, ada, {"age": 37}))   # writes only age
 repo.delete(users, ada.id())                           # rows removed
+```
+
+A `UNIQUE` over several columns is declared once, with all its columns in the index's order; the error lands on the field you name:
+
+```ruby
+.unique_constraint("slug", columns: ["game_id", "slug"])   # UNIQUE (game_id, slug)
 ```
 
 An invalid changeset is returned as `Err` without a query. A failed constraint declared with `unique_constraint` becomes a field error; any other database error raises. Updating a row that no longer exists raises `Mjolnir::StaleEntryError`.

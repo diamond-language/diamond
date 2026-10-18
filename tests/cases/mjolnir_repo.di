@@ -17,6 +17,12 @@ def user_changeset(users, entity, attrs)
     .unique_constraint("email")
 end
 
+def build_board_row(row) = row
+
+def board_changeset(boards, attrs)
+  Mjolnir::Changeset.cast(boards, nil, attrs, ["game_id", "slug", "label"]).unique_constraint("slug", columns: ["game_id", "slug"])
+end
+
 def fresh_repo()
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, age INTEGER)")
@@ -50,6 +56,26 @@ def run_tests()
     result = repo.insert(user_changeset(users, nil, {"name": "Other", "email": "a@example.com"}))
     Minitest.assert(result.err?())
     Minitest.assert_equal(["has already been taken"], result.error().errors()["email"])
+  end
+
+  suite.test("a composite unique constraint becomes a field error, and a different one still raises") do
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE boards (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, slug TEXT NOT NULL, label TEXT UNIQUE, UNIQUE (game_id, slug))")
+    boards = Mjolnir::Schema.new("boards", {"id": :int, "game_id": :int, "slug": :string, "label": :string}, build_board_row)
+    repo = Mjolnir::Repo.new(db)
+    attrs = {"game_id": 1, "slug": "a", "label": "x"}
+    Minitest.assert(repo.insert(board_changeset(boards, attrs)).ok?())
+    taken = repo.insert(board_changeset(boards, {"game_id": 1, "slug": "a", "label": "y"}))
+    Minitest.assert(taken.err?())
+    Minitest.assert_equal(["has already been taken"], taken.error().errors()["slug"])
+    Minitest.assert(repo.insert(board_changeset(boards, {"game_id": 2, "slug": "a", "label": "z"})).ok?())
+    raised = false
+    begin
+      repo.insert(board_changeset(boards, {"game_id": 3, "slug": "b", "label": "x"}))
+    rescue error: StandardError
+      raised = true
+    end
+    Minitest.assert(raised)
   end
 
   suite.test("an undeclared constraint failure raises") do

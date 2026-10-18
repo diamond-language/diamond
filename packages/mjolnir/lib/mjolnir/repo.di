@@ -236,7 +236,10 @@ module Mjolnir
     def violated_constraint(changeset: Changeset, message: String)
       table = changeset.schema().table_name()
       changeset.constraints().find() do |declared|
-        by_column = message.include?("UNIQUE constraint failed: #{table}.#{declared["field"]}")
+        columns = declared["columns"]
+        # A composite UNIQUE is reported as "t.a, t.b"; a single one as "t.a".
+        reported = if columns.empty?() then "#{table}.#{declared["field"]}" else columns.map() do |column| "#{table}.#{column}" end.join(", ") end
+        by_column = message.include?("UNIQUE constraint failed: #{reported}")
         named = declared["constraint"]
         by_name = named != nil && message.include?(named)
         by_column || by_name
