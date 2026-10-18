@@ -1007,6 +1007,22 @@ assert_contains "$actual" '{data: {hello: hi}}'
 assert_contains "$actual" 'cycle through "A", "B", "C"'
 count=$((count + 1))
 
+# --- a fragment that only leads into a cycle is not named as part of it ---
+actual="$(run_case '
+module R
+  module_function
+  def hello(o, a, c) = "hi"
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), R.hello)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ ...A ...C } fragment A on Query { ...B } fragment B on Query { ...A } fragment C on Query { ...A }"))
+')"
+assert_contains "$actual" 'cycle through "A", "B")'
+[[ "$actual" != *'"C"'* ]]
+count=$((count + 1))
+
 # --- a thousand fragments chained end to end is not a stack overflow ---
 actual="$(run_case '
 t = GraphQL::ObjectType.new("Query")

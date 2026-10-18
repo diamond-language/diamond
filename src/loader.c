@@ -242,7 +242,11 @@ static bool rewrite_path_constants(const char *source,const char *path,char **ou
                 if(depth==0&&source[at]=='\\') {at++;continue;}
                 if(depth==0&&source[at]=='#'&&at+1<end&&source[at+1]=='{') {depth=1;at++;continue;}
                 if(depth>0) {
-                    if(source[at]=='{')depth++;
+                    /* A string inside the interpolation: skip it as the lexer does, so a brace
+                     * in it neither changes the depth nor hides the text that follows. */
+                    if(source[at]=='"') {
+                        for(at++;at<end&&source[at]!='"';at++)if(source[at]=='\\')at++;
+                    } else if(source[at]=='{')depth++;
                     else if(source[at]=='}')depth--;
                     else if(path_constant_at(source,at,end,&is_dir,&name_length)) {
                         rewrite_append(&rewrite,source+copied,at-copied);
