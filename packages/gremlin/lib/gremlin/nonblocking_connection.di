@@ -7,6 +7,14 @@ class NonblockingConnection
     @closed = false
     @deadline = nil
     @request_id = nil
+    # The client's address, read once while the socket is open. nil on a runtime without
+    # peer_address (older than the release that added it) or when there is none.
+    @peer_address = nil
+    begin
+      @peer_address = socket.peer_address()
+    rescue error: StandardError
+      @peer_address = nil
+    end
     if limits != nil
       @deadline = Time.monotonic() + limits["timeout_seconds"]
       @request_id = SecureRandom.hex(16)
@@ -16,6 +24,7 @@ class NonblockingConnection
   def deadline() = @deadline
   def request_id() = @request_id
   def socket() = @socket
+  def peer_address() = @peer_address
   def closed?() = @closed
 
   # Whether #write is currently mid-flight, blocked on a prior

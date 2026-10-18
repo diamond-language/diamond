@@ -6,8 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- `peer_address()` on a connected socket (client or accepted, blocking or non-blocking) returns the remote
+  address as text, so a server can rate-limit or log by client address without a proxy header.
+
 ### Packages
 
+- `gremlin` 0.4.3: the request hash carries `request["peer_address"]`, the TCP peer's address. It needs a runtime with
+  `peer_address()` (it is `nil` on an older one). The registry's launch seed now pins 0.4.3.
 - `div` 0.2.4: compiled templates record the SHA-256 of their source, and `Div.check_fresh(dir)` /
   `Div.stale_templates(dir)` report templates edited, added or never compiled since, so a forgotten
   recompile fails at startup instead of serving an old page. The registry's launch seed pins 0.2.4.

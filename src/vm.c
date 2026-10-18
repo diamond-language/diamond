@@ -41,6 +41,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 #include "tls_crypto.h"
 #include <poll.h>
 #include <pthread.h>
@@ -11169,6 +11170,36 @@ NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const DiamondChunk *chunk,
     return NONLOCAL_PASS_ON;
 }
 
+/* The remote address of a connected socket as text ("203.0.113.7", "2001:db8::1"; an IPv4-mapped IPv6 peer
+ * is reported as plain IPv4), or nil when it has none (not connected yet, or a Unix-domain peer). Raises
+ * IOError when `fd` is not a socket at all. */
+static DiamondVmStatus peer_address_helper(DiamondVm *vm,int fd,DiamondValue *dest) {
+    struct sockaddr_storage peer;socklen_t length=sizeof peer;
+    if(getpeername(fd,(struct sockaddr *)&peer,&length)!=0) {
+        if(errno==ENOTSOCK) {
+            snprintf(vm->error,sizeof vm->error,"peer_address failed: not a socket");
+            return DIAMOND_VM_IO_ERROR;
+        }
+        *dest=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    char text[INET6_ADDRSTRLEN]="";
+    if(peer.ss_family==AF_INET) {
+        const struct sockaddr_in *address=(const struct sockaddr_in *)&peer;
+        inet_ntop(AF_INET,&address->sin_addr,text,sizeof text);
+    } else if(peer.ss_family==AF_INET6) {
+        const struct sockaddr_in6 *address=(const struct sockaddr_in6 *)&peer;
+        if(IN6_IS_ADDR_V4MAPPED(&address->sin6_addr)) {
+            inet_ntop(AF_INET,&address->sin6_addr.s6_addr[12],text,sizeof text);
+        } else {
+            inet_ntop(AF_INET6,&address->sin6_addr,text,sizeof text);
+        }
+    }
+    if(text[0]=='\0') {*dest=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    DiamondString *string=allocate_string(vm,text,strlen(text));
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    *dest=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus file_invoke_helper(DiamondVm *vm,
                                           const DiamondChunk *chunk, size_t depth,
                                           DiamondValue *registers, uint16_t recv, uint16_t base,
@@ -11188,8 +11219,10 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"flush",5)==0;
     const bool shutdown_write_method=method_name->length==14&&
         memcmp(method_name->chars,"shutdown_write",14)==0;
+    const bool peer_address_method=method_name->length==12&&
+        memcmp(method_name->chars,"peer_address",12)==0;
     if(!read_method&&!gets_method&&!write_method&&!close_method&&
-       !flush_method&&!shutdown_write_method) {
+       !flush_method&&!shutdown_write_method&&!peer_address_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"File");
         return DIAMOND_VM_TYPE_ERROR;
@@ -11205,6 +11238,10 @@ DiamondVmStatus file_invoke_helper(DiamondVm *vm,
     if(target_file->stream==nullptr) {
         snprintf(vm->error,sizeof vm->error,"file is closed");
         return DIAMOND_VM_IO_ERROR;
+    }
+    if(peer_address_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return peer_address_helper(vm,fileno(target_file->stream),&registers[dest]);
     }
     /* Half-close of a connected socket (TCPSocket.connect, an accepted
      * connection): everything written so far is flushed, then the peer sees
@@ -11341,8 +11378,10 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"finish_connect",14)==0;
     const bool shutdown_write_method=method_name->length==14&&
         memcmp(method_name->chars,"shutdown_write",14)==0;
+    const bool peer_address_method=method_name->length==12&&
+        memcmp(method_name->chars,"peer_address",12)==0;
     if(!read_method&&!write_method&&!close_method&&!finish_method&&
-       !shutdown_write_method) {
+       !shutdown_write_method&&!peer_address_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Socket");
         return DIAMOND_VM_TYPE_ERROR;
@@ -11358,6 +11397,10 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
     if(socket_handle->fd<0) {
         snprintf(vm->error,sizeof vm->error,"socket is closed");
         return DIAMOND_VM_IO_ERROR;
+    }
+    if(peer_address_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return peer_address_helper(vm,socket_handle->fd,&registers[dest]);
     }
     if((finish_method||shutdown_write_method)&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
     const DiamondVmStatus finish_status=socket_finish_connect_helper(vm,socket_handle);

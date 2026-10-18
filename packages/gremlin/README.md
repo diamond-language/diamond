@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.2"
+facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.3"
 facet update
 ```
 
@@ -53,6 +53,13 @@ continues even with no socket activity. These are I/O deadlines from accept,
 not preemption of synchronous handlers; stalled response writes also expire.
 Long-lived protocols such as WebSockets should not use this policy without
 accounting for the connection lifetime limit.
+
+## The client's address
+
+The request hash carries `request["peer_address"]`: the TCP peer's address as text (`"203.0.113.7"`, `"::1"`),
+read from the socket, never from a header. Behind a reverse proxy it is the proxy's address, so use the proxy's
+forwarding header (`X-Real-IP`) for the real client, and only when the proxy overwrites it. It is `nil` on a runtime
+older than the release that added `TCPSocket#peer_address`.
 
 ## Handler errors
 

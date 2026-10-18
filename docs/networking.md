@@ -48,6 +48,12 @@ A connected socket (from `TCPSocket.connect`, `accept`, or a
 the connection, so the peer reads to EOF while this side can still read the
 reply. Calling it on something that is not a socket raises `IOError`.
 
+`peer_address()` returns the remote end of a connected socket as text: `"203.0.113.7"` or
+`"2001:db8::1"` (an IPv4-mapped IPv6 peer is reported as plain IPv4), the same on a client socket and an
+accepted one. It is `nil` when there is no such address (a socket still connecting, or a Unix-domain
+peer) and raises `IOError` on something that is not a socket. A server that sits behind a proxy sees the
+proxy's address here; use the proxy's forwarding header for the client.
+
 `TCPSocket.connect(host, port, options)` also takes an optional third
 `options` Hash (defaulting to `nil`, meaning none of this applies —
 existing calls are unaffected):
