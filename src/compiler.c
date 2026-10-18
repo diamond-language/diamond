@@ -2923,9 +2923,10 @@ static bool call_arguments_have_keyword(Compiler *compiler) {
         else if(kind==DIAMOND_TOKEN_RIGHT_PAREN||
                 kind==DIAMOND_TOKEN_RIGHT_BRACKET||
                 kind==DIAMOND_TOKEN_RIGHT_BRACE) {if(nesting>0)nesting--;}
-        argument_start=nesting==0&&kind==DIAMOND_TOKEN_COMMA;
-        if(kind!=DIAMOND_TOKEN_NEWLINE&&kind!=DIAMOND_TOKEN_COMMA)
-            argument_start=false;
+        /* A newline after a comma (or the call's open paren) leaves the next
+         * token at the start of an argument. */
+        if(kind==DIAMOND_TOKEN_COMMA)argument_start=nesting==0;
+        else if(kind!=DIAMOND_TOKEN_NEWLINE)argument_start=false;
         advance_token(&probe);
     }
     return false;
@@ -3071,9 +3072,10 @@ static bool call_arguments_have_spread(Compiler *compiler) {
                 kind==DIAMOND_TOKEN_RIGHT_BRACE) {
             if(nesting>0)nesting--;
         }
-        argument_start=nesting==0&&kind==DIAMOND_TOKEN_COMMA;
-        if(kind!=DIAMOND_TOKEN_NEWLINE&&kind!=DIAMOND_TOKEN_COMMA)
-            argument_start=false;
+        /* A newline after a comma (or the call's open paren) leaves the next
+         * token at the start of an argument. */
+        if(kind==DIAMOND_TOKEN_COMMA)argument_start=nesting==0;
+        else if(kind!=DIAMOND_TOKEN_NEWLINE)argument_start=false;
         advance_token(&probe);
     }
     return false;
