@@ -13,6 +13,8 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `mjolnir` 0.2.1: `unique_constraint(name, columns: [...])` turns a failed multi-column `UNIQUE` into a field error
+  (it used to match single-column constraints only, so a composite violation raised).
 - `gremlin` 0.4.3: the request hash carries `request["peer_address"]`, the TCP peer's address. It needs a runtime with
   `peer_address()` (it is `nil` on an older one). The registry's launch seed now pins 0.4.3.
 - `graphql` 0.1.5: `schema.to_sdl()` prints a schema as SDL (name-ordered, built-in scalars omitted), for client codegen.

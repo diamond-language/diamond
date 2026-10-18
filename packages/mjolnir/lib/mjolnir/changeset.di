@@ -157,9 +157,13 @@ module Mjolnir
     # Declare that a failed UNIQUE constraint on `name` is a validation
     # error, not an exception. `constraint_name` is only needed where the
     # database reports a constraint's name rather than its column (PostgreSQL).
-    def unique_constraint(name, constraint_name = nil, message: String = "has already been taken") -> Changeset
+    # For a UNIQUE over several columns, pass them all as `columns` (in the
+    # order the index declares them); the error lands on `name`, which is
+    # usually the one the user can change.
+    def unique_constraint(name, constraint_name = nil, message: String = "has already been taken", columns: Array = []) -> Changeset
       @schema.column(name)
-      declared = @constraints + [{"field": "#{name}", "constraint": constraint_name, "message": message}]
+      columns.each() do |column| @schema.column(column) end
+      declared = @constraints + [{"field": "#{name}", "constraint": constraint_name, "message": message, "columns": columns}]
       Changeset.new(@schema, @entity, @data, @changes, @errors, declared)
     end
   end
