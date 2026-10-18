@@ -1280,7 +1280,9 @@ static inline DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *
             sizeof(DiamondValue));
         if(vm->class_variables==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    vm->class_variables[(size_t)class_index*DIAMOND_MAX_FIELDS+slot]=value;
+    const size_t position=(size_t)class_index*DIAMOND_MAX_FIELDS+slot;
+    vm->class_variables[position]=value;
+    if(position>=vm->class_variable_extent)vm->class_variable_extent=position+1;
     return DIAMOND_VM_OK;
 }
 

@@ -901,7 +901,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * class -- caught by the self-hosted parser's own private/public
          * support calling a private method via `self.foo()`, not by any
          * existing scalar-argument differential case. */
-        built->functions[target_function]->owner_class=(uint8_t)registers[base].as.integer;
+        built->functions[target_function]->owner_class=(uint16_t)registers[base].as.integer;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_module_method_method) {
@@ -1076,7 +1076,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "set_function_owner_class has invalid arguments");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        built->functions[function_index]->owner_class=(uint8_t)owner_class;
+        built->functions[function_index]->owner_class=(uint16_t)owner_class;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {

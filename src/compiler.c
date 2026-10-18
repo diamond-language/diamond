@@ -7926,7 +7926,7 @@ static uint16_t parse_name(Compiler *compiler) {
             }
             if(has_block)emit_register(compiler,block);
             compiler->known_types[destination]=
-                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             return destination;
         }
         if(call_arguments_have_spread(compiler)) {
@@ -7956,7 +7956,7 @@ static uint16_t parse_name(Compiler *compiler) {
                 emit_register(compiler,spread);emit_byte(compiler,0x80u);
                 emit_register(compiler,block);
                 compiler->known_types[destination]=
-                    (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
                 return destination;
             }
             const uint16_t destination=allocate_register(compiler);
@@ -7965,7 +7965,7 @@ static uint16_t parse_name(Compiler *compiler) {
             emit_register(compiler,(uint16_t)class_index);
             emit_register(compiler,spread);
             compiler->known_types[destination]=
-                (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             return destination;
         }
         uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
@@ -8009,7 +8009,7 @@ static uint16_t parse_name(Compiler *compiler) {
                 emit_register(compiler,positional);emit_byte(compiler,0x80u);
                 emit_register(compiler,block);
                 compiler->known_types[destination]=
-                    (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
                 return destination;
             }
             args[count++]=block;
@@ -8022,7 +8022,7 @@ static uint16_t parse_name(Compiler *compiler) {
         emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
         emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
         emit_byte(compiler, (uint8_t)count);
-        compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+        compiler->known_types[dest]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
         return dest;
     }
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN||
@@ -11210,7 +11210,7 @@ static uint16_t parse_prefix(Compiler *compiler) {
             const uint16_t destination = allocate_register(compiler);
             const int slot = class_variable_index(compiler,compiler->previous.span,true);
             emit_instruction(compiler,DIAMOND_OP_GET_CVAR,destination,
-                             (uint8_t)class_variable_owner(compiler,compiler->previous.span),(uint8_t)slot,3);
+                             (uint16_t)class_variable_owner(compiler,compiler->previous.span),(uint8_t)slot,3);
             if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
                 return parse_closure_call_arguments(compiler,destination);
             return destination;
@@ -11706,7 +11706,7 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         if(object_class>=0&&
            object_probe.current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
             node->kind=CASE_OBJECT_GROUP;
-            node->class_index=(uint8_t)object_class;
+            node->class_index=(uint16_t)object_class;
             node->value_register=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
             emit_register(compiler,node->value_register);
@@ -11729,7 +11729,7 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
                 }
                 const DiamondSpan reader_name=compiler->current.span;
                 const DiamondMethod *reader=case_pattern_reader(
-                    compiler,(uint8_t)object_class,reader_name);
+                    compiler,(uint16_t)object_class,reader_name);
                 if(reader==nullptr||reader->is_private||reader->required_arity>0) {
                     fail(compiler,reader_name,
                         "case object pattern requires a public zero-argument reader");
@@ -12757,7 +12757,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
             emit_opcode(compiler,DIAMOND_OP_NEW); emit_register(compiler,dest);
             emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
             emit_byte(compiler,3);
-            compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            compiler->known_types[dest]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             left=dest;continue;
         }
         const uint16_t right = parse_precedence(
@@ -13188,7 +13188,7 @@ static uint16_t compile_index_assignment(Compiler *compiler) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
+                         (uint16_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
@@ -13283,7 +13283,7 @@ static uint16_t compile_index_compound_assignment(Compiler *compiler) {
         receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
+                         (uint16_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         mutation_receiver=receiver;
     } else {
         const int local=find_local(compiler,name);
@@ -13623,7 +13623,7 @@ static uint16_t compile_return(Compiler *compiler) {
             parse_expression(compiler);
     }
     if(compiler->current_return_type>=0)
-        emit_type_check(compiler,value,(uint8_t)compiler->current_return_type,
+        emit_type_check(compiler,value,(uint16_t)compiler->current_return_type,
                         compiler->current_return_type_span);
     /* See return_flow_seen's own comment (the Compiler struct) --
      * compile_definition's inference reads this back once the whole body
@@ -17080,7 +17080,7 @@ static uint16_t compile_class(Compiler *compiler) {
         }
     } else {
         if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-            fail(compiler, name, "too many classes: a program holds at most 180 "
+            fail(compiler, name, "too many classes: a program holds at most 1024 "
                  "classes and structs, cuts included"); return 0;
         }
         class=diamond_program_class_slot(compiler->program,compiler->program->class_count);
@@ -17320,7 +17320,7 @@ static uint16_t compile_struct(Compiler *compiler) {
         index=existing_class;
     } else {
         if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
-            fail(compiler,name,"too many classes: a program holds at most 180 "
+            fail(compiler,name,"too many classes: a program holds at most 1024 "
                  "classes and structs, cuts included");return 0;
         }
         class=diamond_program_class_slot(compiler->program,compiler->program->class_count);
@@ -17501,7 +17501,7 @@ static uint16_t compile_struct(Compiler *compiler) {
             fail(compiler,name,"out of memory");
         } else {
             (void)snprintf(init->name,sizeof init->name,"initialize");
-            init->owner_class=(uint8_t)index;
+            init->owner_class=(uint16_t)index;
             init->arity=(uint8_t)(total_count+1);
             init->required_arity=init->arity;
             init->return_type_set=DIAMOND_NO_TYPE_SET;
@@ -17583,7 +17583,7 @@ static uint16_t compile_struct(Compiler *compiler) {
             fail(compiler,name,"out of memory");
         } else {
             (void)snprintf(eq->name,sizeof eq->name,"==");
-            eq->owner_class=(uint8_t)index;
+            eq->owner_class=(uint16_t)index;
             eq->arity=2;eq->required_arity=2;
             eq->return_type_set=DIAMOND_NO_TYPE_SET;
             eq->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
@@ -17646,7 +17646,7 @@ static uint16_t compile_struct(Compiler *compiler) {
             fail(compiler,name,"out of memory");
         } else {
             (void)snprintf(to_s->name,sizeof to_s->name,"to_s");
-            to_s->owner_class=(uint8_t)index;
+            to_s->owner_class=(uint16_t)index;
             to_s->arity=1;to_s->required_arity=1;
             to_s->return_type_set=DIAMOND_NO_TYPE_SET;
             to_s->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
@@ -18464,7 +18464,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
     if (class_variable) {
         const int slot = class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_SET_CVAR,
-                         (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,value,3);
+                         (uint16_t)class_variable_owner(compiler,name),(uint8_t)slot,value,3);
         return value;
     }
     if(compiler->source[name.start]>='A'&&compiler->source[name.start]<='Z')
@@ -18709,7 +18709,7 @@ static uint16_t load_destructure_target(Compiler *compiler,DiamondSpan name,
         const uint16_t receiver=allocate_register(compiler);
         const int slot=class_variable_index(compiler,name,true);
         emit_instruction(compiler,DIAMOND_OP_GET_CVAR,receiver,
-            (uint8_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
+            (uint16_t)class_variable_owner(compiler,name),(uint8_t)slot,3);
         return receiver;
     }
     const int local=find_local(compiler,name);
@@ -19915,7 +19915,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
              * nothing should assume that stays true). See DiamondChunk's
              * own comment (src/vm.h) for what this is for. */
             if(strcmp(class->name,"Range")==0)
-                program->range_class_index=(uint8_t)class_index;
+                program->range_class_index=(uint16_t)class_index;
         }
         /* Defensive, not expected to ever actually fire: every
          * prescan_singleton_signatures placeholder names a real

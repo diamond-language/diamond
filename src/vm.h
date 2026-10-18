@@ -69,7 +69,7 @@ enum {
      * setup_db.di and winamp_api.di for real examples this fix
      * eliminates the workaround for. */
     DIAMOND_MAX_STRING_LENGTH = 4095,
-    DIAMOND_MAX_CLASSES = 180,
+    DIAMOND_MAX_CLASSES = 1024,
     DIAMOND_MAX_INTERFACES = 32,
     /* Include lists store both indices and their count in uint8_t. */
     DIAMOND_MAX_MODULES = UINT8_MAX,
@@ -1843,6 +1843,10 @@ struct DiamondVm {
      * guard, defaults to nil (DIAMOND_VALUE_NIL == 0, so calloc already
      * gives every slot the right default) until first assigned. */
     DiamondValue *class_variables;
+    /* How many leading entries of class_variables have ever been written
+     * (one past the highest slot set). The GC marks only that prefix: the
+     * table is sized for DIAMOND_MAX_CLASSES classes, almost all unused. */
+    size_t class_variable_extent;
     DiamondValue exception;
     bool has_exception;
     /* Every run_chunk activation gets the next serial; block closures

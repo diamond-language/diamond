@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Changed
 
+- A program may now hold up to 1,024 classes and structs, cuts included (it was 180). Classes are allocated one at a time
+  instead of as a 180-slot array, so a small program and each `Thread`/`gremlin` worker it starts use less memory too.
+  See docs/internal/class-limit-design.md for the staged change.
 - Class operands in bytecode are 16 bits wide and the native, generic-variable and interface type-id bases moved, as the
   first steps of lifting the 180-class limit (docs/internal/class-limit-design.md). Bytecode caches (`.dic`) are
   rebuilt automatically once; hand-assembled `ProgramBuilder` bytecode that names a class needs a two-byte operand.

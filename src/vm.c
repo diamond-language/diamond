@@ -687,7 +687,7 @@ static void mark_roots(DiamondVm *vm, bool minor) {
      * flat array unconditionally costs nothing extra over tracking real
      * per-class counts here would. */
     if(vm->class_variables!=nullptr)
-        for(size_t index=0;index<(size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS;index++)
+        for(size_t index=0;index<vm->class_variable_extent;index++)
             mark_value(vm->class_variables[index],minor);
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
         mark_value(vm->trapped_signal_handlers[index],minor);

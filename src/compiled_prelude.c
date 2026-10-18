@@ -253,7 +253,7 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
 
     /* Counts before arrays, not after: only the *used* prefix of each
      * fixed-size table is written (class_count entries out of
-     * DIAMOND_MAX_CLASSES=180, not all 180 -- the prelude only ever
+     * DIAMOND_MAX_CLASSES=1024, not all 1024 -- the prelude only ever
      * populates ~23), so the reader needs each count in hand before it
      * knows how many bytes to expect. The unused suffix doesn't need
      * writing at all: diamond_program_init/calloc already zero it on
