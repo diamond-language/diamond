@@ -6,13 +6,15 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.18.0 — 2026-10-18
+
 ### Changed
 
 - A program may now hold up to 1,024 classes and structs, cuts included (it was 180). Classes are allocated one at a time
   instead of as a 180-slot array, so a small program and each `Thread`/`gremlin` worker it starts use less memory too.
   See docs/internal/class-limit-design.md for the staged change.
-- Class operands in bytecode are 16 bits wide and the native, generic-variable and interface type-id bases moved, as the
-  first steps of lifting the 180-class limit (docs/internal/class-limit-design.md). Bytecode caches (`.dic`) are
+- Class operands in bytecode are 16 bits wide and the native, generic-variable and interface type-id bases moved, which
+  is what lifted the 180-class limit (docs/internal/class-limit-design.md). Bytecode caches (`.dic`) are
   rebuilt automatically once; hand-assembled `ProgramBuilder` bytecode that names a class needs a two-byte operand.
 
 ### Added
@@ -38,6 +40,8 @@ authoritative fine-grained record.
 - `gremlin` shutdown could take the whole 10-second grace period: a SIGTERM landing just after the worker loop's
   "shutdown requested and no connections" check, before it polled, left the poll with no file descriptors and nothing
   to wake it. Found by stress-testing start/SIGTERM cycles under CPU load (about 1 in 40 with three workers).
+- Gremlin answers `500 Internal Server Error` (generic body, error and `request_id` in the log) when a handler
+  raises. It used to close the connection without a response, which clients saw as a dropped connection.
 
 ### Packages
 
@@ -53,11 +57,6 @@ authoritative fine-grained record.
   recompile fails at startup instead of serving an old page. The registry's launch seed pins 0.2.4.
 - `gremlin` 0.4.2: a handler that raises answers `500 Internal Server Error` instead of dropping the connection;
   the registry's launch seed now pins 0.4.2.
-
-### Fixed
-
-- Gremlin answers `500 Internal Server Error` (generic body, error and `request_id` in the log) when a handler
-  raises. It used to close the connection without a response, which clients saw as a dropped connection.
 
 ## 0.17.0 — 2026-10-17
 
