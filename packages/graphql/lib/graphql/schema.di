@@ -97,6 +97,9 @@ module GraphQL
 
     def types() = self.type_map()
 
+    # The schema as SDL text (see GraphQL::SchemaPrinter).
+    def to_sdl() = GraphQL::SchemaPrinter.print(self)
+
     # `Schema.new().query(query_type).execute(query_string)` -- a fresh
     # `GraphQL::Execution::Executor` per call (see executor.di's own
     # header comment for why: no state to reset between requests, no
