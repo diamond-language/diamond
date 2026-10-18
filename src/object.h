@@ -203,7 +203,7 @@ typedef struct DiamondArray {
         const DiamondTypeSet *type_sets;
         size_t type_set_count;
         uint16_t set_index;
-        const DiamondClass *classes;
+        DiamondClass *const *classes;
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;
@@ -246,7 +246,7 @@ typedef struct DiamondHash {
         size_t type_set_count;
         uint16_t key_set;
         uint16_t value_set;
-        const DiamondClass *classes;
+        DiamondClass *const *classes;
         size_t class_count;
         const DiamondInterface *interfaces;
         size_t interface_count;

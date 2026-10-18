@@ -233,8 +233,8 @@ static bool parse_explicit_type_binding(const DiamondChunk *chunk,
         binding->array_depth++;(*index)++;return true;
     }
     for(size_t candidate=0;candidate<chunk->class_count;candidate++)
-        if(strlen(chunk->classes[candidate].name)==length&&
-           memcmp(chunk->classes[candidate].name,name,length)==0) {
+        if(strlen(chunk->classes[candidate]->name)==length&&
+           memcmp(chunk->classes[candidate]->name,name,length)==0) {
             binding->classes[0]=candidate;binding->class_count=1;
             binding->array_depth=0;
             (*index)++;return true;
@@ -779,7 +779,7 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
     if(length>=sizeof name)length=sizeof name-1;
     memcpy(name,source+token.span.start,length);name[length]='\0';
     for(size_t index=0;index<chunk->class_count;index++) {
-        if(strcmp(chunk->classes[index].name,name)==0) {
+        if(strcmp(chunk->classes[index]->name,name)==0) {
             classes[0]=index;*is_singleton=true;return 1;
         }
     }
@@ -882,13 +882,13 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
             const DiamondFunction *function=find_enclosing_function(program,chunk,token.span.start);
             if(function==nullptr||function->owner_class>=chunk->class_count)return 0;
             classes[0]=function->owner_class;
-            *is_singleton=function_is_singleton_of(chunk,&chunk->classes[function->owner_class],function);
+            *is_singleton=function_is_singleton_of(chunk,chunk->classes[function->owner_class],function);
             return 1;
         }
         if(token.kind==DIAMOND_TOKEN_INSTANCE_VARIABLE) {
             const DiamondFunction *function=find_enclosing_function(program,chunk,token.span.start);
             if(function==nullptr||function->owner_class>=chunk->class_count)return 0;
-            const DiamondClass *class=&chunk->classes[function->owner_class];
+            const DiamondClass *class=chunk->classes[function->owner_class];
             const char *name=source+token.span.start+1;const size_t length=token.span.length-1;
             for(size_t field=0;field<class->field_count;field++) {
                 if(strlen(class->fields[field])==length&&memcmp(class->fields[field],name,length)==0&&
@@ -903,7 +903,7 @@ static size_t resolve_expression(const DiamondProgram *program,const DiamondChun
         char qualified[DIAMOND_MAX_FUNCTION_NAME*2];
         if(qualified_constant_name(source,tokens,start,end,qualified,sizeof qualified)) {
             for(size_t index=0;index<chunk->class_count;index++)
-                if(strcmp(chunk->classes[index].name,qualified)==0) {
+                if(strcmp(chunk->classes[index]->name,qualified)==0) {
                     classes[0]=index;*is_singleton=true;return 1;
                 }
             return 0;
@@ -1185,7 +1185,7 @@ bool receiver_resolve_builtin_type(const DiamondProgram *program,
 
 const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
         size_t class_index,bool is_singleton,const char *name,size_t name_length) {
-    const DiamondClass *current=&chunk->classes[class_index];
+    const DiamondClass *current=chunk->classes[class_index];
     while(current!=nullptr) {
         const DiamondMethod *methods=is_singleton?current->singleton_methods:current->methods;
         const size_t count=is_singleton?current->singleton_method_count:current->method_count;
@@ -1194,7 +1194,7 @@ const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
             if(strlen(method->name)==name_length&&memcmp(method->name,name,name_length)==0)
                 return method;
         }
-        current=current->superclass==DIAMOND_NO_CLASS?nullptr:&chunk->classes[current->superclass];
+        current=current->superclass==DIAMOND_NO_CLASS?nullptr:chunk->classes[current->superclass];
     }
     return nullptr;
 }

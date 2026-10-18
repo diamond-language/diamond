@@ -147,7 +147,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.class_count&&!found;index++) {
-        const DiamondClass *class=&chunk.classes[index];
+        const DiamondClass *class=chunk.classes[index];
         if(class->declaration_start>=user_offset&&strcmp(class->name,name)==0) {
             declaration_line=class->declaration_line;
             declaration_column=class->declaration_column;

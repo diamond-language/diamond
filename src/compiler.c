@@ -432,7 +432,7 @@ static const char *closed_type_name(const Compiler *compiler,uint16_t id) {
     if(id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_INTERFACE_BASE) {
         const size_t index=(size_t)(id-DIAMOND_TYPE_CLASS_BASE);
         if(index<compiler->program->class_count)
-            return compiler->program->classes[index].name;
+            return compiler->program->classes[index]->name;
     }
     return "unknown";
 }
@@ -601,7 +601,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
             bool found=false;
             size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
             while(class_index<compiler->program->class_count&&!found) {
-                const DiamondClass *class=&compiler->program->classes[class_index];
+                const DiamondClass *class=compiler->program->classes[class_index];
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -645,7 +645,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
         if(known<DIAMOND_TYPE_CLASS_BASE)return false;
         size_t class_index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
         while(class_index<compiler->program->class_count) {
-            const DiamondClass *class=&compiler->program->classes[class_index];
+            const DiamondClass *class=compiler->program->classes[class_index];
             for(size_t index=0;index<class->method_count;index++)
                 if(strcmp(class->methods[index].name,"length")==0&&
                    class->methods[index].arity==0)return true;
@@ -660,7 +660,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
     const size_t wanted=(size_t)(expected-DIAMOND_TYPE_CLASS_BASE);
     while(class_index<compiler->program->class_count) {
         if(class_index==wanted) return true;
-        const uint16_t parent=compiler->program->classes[class_index].superclass;
+        const uint16_t parent=compiler->program->classes[class_index]->superclass;
         if(parent==DIAMOND_NO_CLASS) break;
         class_index=parent;
     }
@@ -814,7 +814,7 @@ static const char *compiler_type_name(const Compiler *compiler,uint16_t type) {
     if(type>=DIAMOND_TYPE_CLASS_BASE) {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
         return index<compiler->program->class_count?
-            compiler->program->classes[index].name:"<invalid type>";
+            compiler->program->classes[index]->name:"<invalid type>";
     }
     return "<invalid type>";
 }
@@ -2269,7 +2269,7 @@ static int find_class(const Compiler *compiler, DiamondSpan name) {
                 (int)name.length,compiler->source+name.start);
             if(written>0&&(size_t)written<sizeof qualified)
                 for(size_t index=0;index<compiler->program->class_count;index++)
-                    if(strcmp(compiler->program->classes[index].name,qualified)==0)
+                    if(strcmp(compiler->program->classes[index]->name,qualified)==0)
                         return (int)index;
             char *separator=strrchr(scope,':');
             if(separator==nullptr)break;
@@ -2277,7 +2277,7 @@ static int find_class(const Compiler *compiler, DiamondSpan name) {
         }
     }
     for (size_t index = 0; index < compiler->program->class_count; index++) {
-        if (name_equals(compiler, compiler->program->classes[index].name, name, false))
+        if (name_equals(compiler, compiler->program->classes[index]->name, name, false))
             return (int)index;
     }
     return -1;
@@ -2330,7 +2330,7 @@ static bool stored_name_equals(const char *stored,const char *name) {
 
 static int find_class_name(const Compiler *compiler,const char *name) {
     for(size_t index=0;index<compiler->program->class_count;index++)
-        if(stored_name_equals(compiler->program->classes[index].name,name))
+        if(stored_name_equals(compiler->program->classes[index]->name,name))
             return (int)index;
     return -1;
 }
@@ -2399,7 +2399,7 @@ static int find_namespace_constant_name(const Compiler *compiler,
 /* Constants use lexical namespace lookup, ending at the program scope. */
 static const char *constant_scope(const Compiler *compiler) {
     if(compiler->current_class>=0)
-        return compiler->program->classes[(size_t)compiler->current_class].name;
+        return compiler->program->classes[(size_t)compiler->current_class]->name;
     if(compiler->current_module>=0)
         return compiler->program->modules[(size_t)compiler->current_module].name;
     return "";
@@ -2442,7 +2442,7 @@ static int find_module_chain_constant(const Compiler *compiler,int module_index,
 static int find_class_chain_constant(const Compiler *compiler,int class_index,
                                      const char *name) {
     for(size_t depth=0;class_index>=0&&depth<=DIAMOND_MAX_CLASSES;depth++) {
-        const DiamondClass *class=&compiler->program->classes[(size_t)class_index];
+        const DiamondClass *class=compiler->program->classes[(size_t)class_index];
         char qualified[DIAMOND_MAX_FUNCTION_NAME];
         const int written=snprintf(qualified,sizeof qualified,"%s::%s",class->name,name);
         if(written>0&&(size_t)written<sizeof qualified) {
@@ -2782,7 +2782,7 @@ static int field_index(Compiler *compiler, DiamondSpan name, bool create) {
         fail(compiler, name, "instance variable used outside a method");
         return -1;
     }
-    DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
+    DiamondClass *class = compiler->program->classes[(size_t)compiler->current_class];
     for (size_t index = 0; index < class->field_count; index++) {
         if (name_equals(compiler, class->fields[index], name, true)) return (int)index;
     }
@@ -2843,7 +2843,7 @@ static int class_variable_owner(Compiler *compiler, DiamondSpan name) {
         return -1;
     }
     for (size_t index = 0; index < compiler->program->class_count; index++) {
-        DiamondClass *existing = &compiler->program->classes[index];
+        DiamondClass *existing = compiler->program->classes[index];
         if (strcmp(existing->name, hidden) != 0) continue;
         if (!compiler->discovery_pass) existing->declared_by_discovery = false;
         return (int)index;
@@ -2852,9 +2852,15 @@ static int class_variable_owner(Compiler *compiler, DiamondSpan name) {
         fail(compiler, name, "too many classes");
         return -1;
     }
-    const size_t index = compiler->program->class_count++;
-    DiamondClass *class = &compiler->program->classes[index];
+    const size_t index = compiler->program->class_count;
+    DiamondClass *class = diamond_program_class_slot(compiler->program, index);
+    if (class == nullptr) {
+        fail(compiler, name, "out of memory");
+        return -1;
+    }
+    compiler->program->class_count++;
     memset(class, 0, sizeof *class);
+    class->index = (uint16_t)index;
     memcpy(class->name, hidden, (size_t)written + 1);
     class->superclass = DIAMOND_NO_CLASS;
     return (int)index;
@@ -2863,7 +2869,7 @@ static int class_variable_owner(Compiler *compiler, DiamondSpan name) {
 static int class_variable_index(Compiler *compiler, DiamondSpan name, bool create) {
     const int owner = class_variable_owner(compiler, name);
     if (owner < 0) return -1;
-    DiamondClass *class = &compiler->program->classes[(size_t)owner];
+    DiamondClass *class = compiler->program->classes[(size_t)owner];
     for (size_t index = 0; index < class->class_variable_count; index++) {
         if (class_variable_name_equals(compiler, class->class_variables[index], name))
             return (int)index;
@@ -3922,7 +3928,7 @@ static uint16_t parse_p_call(Compiler *compiler);
 static bool self_has_method(const Compiler *compiler,DiamondSpan name) {
     const uint16_t type=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+compiler->current_class);
     if(class_instance_signature(compiler,type,name)!=nullptr)return true;
-    const DiamondClass *class=&compiler->program->classes[(size_t)compiler->current_class];
+    const DiamondClass *class=compiler->program->classes[(size_t)compiler->current_class];
     for(size_t index=0;index<class->discovered_method_count;index++) {
         const uint16_t function=class->discovered_methods[index];
         if(function<compiler->program->function_count&&
@@ -3937,13 +3943,13 @@ static bool self_has_method(const Compiler *compiler,DiamondSpan name) {
  * `name`? Class singleton methods are registered before any body compiles,
  * so one defined further down the class counts too. */
 static bool self_has_singleton_method(const Compiler *compiler,DiamondSpan name) {
-    const DiamondClass *owner=&compiler->program->classes[(size_t)compiler->current_class];
+    const DiamondClass *owner=compiler->program->classes[(size_t)compiler->current_class];
     for(size_t depth=0;owner!=nullptr&&depth<=DIAMOND_MAX_CLASSES;depth++) {
         for(size_t index=0;index<owner->singleton_method_count;index++)
             if(singleton_call_name_equals(compiler,owner->singleton_methods[index].name,name))
                 return true;
         owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
-            &compiler->program->classes[owner->superclass];
+            compiler->program->classes[owner->superclass];
     }
     return false;
 }
@@ -7537,7 +7543,7 @@ static uint16_t parse_crypto_call(Compiler *compiler,bool keyed) {
 static const DiamondFunction *constructor_signature(const Compiler *compiler,
         int class_index) {
     while(class_index>=0&&(size_t)class_index<compiler->program->class_count) {
-        const DiamondClass *class=&compiler->program->classes[(size_t)class_index];
+        const DiamondClass *class=compiler->program->classes[(size_t)class_index];
         for(size_t index=0;index<class->method_count;index++) {
             const DiamondMethod *method=&class->methods[index];
             if(strcmp(method->name,"initialize")!=0)continue;
@@ -7844,7 +7850,7 @@ static uint16_t parse_name(Compiler *compiler) {
         if(!name_equals(compiler,"new",compiler->current.span,false)) {
             const DiamondMethod *method=nullptr;
             const DiamondClass *owner=
-                &compiler->program->classes[(size_t)class_index];
+                compiler->program->classes[(size_t)class_index];
             while(owner!=nullptr&&method==nullptr) {
                 for(size_t index=0;index<owner->singleton_method_count;index++)
                     if(singleton_call_name_equals(compiler,
@@ -7852,7 +7858,7 @@ static uint16_t parse_name(Compiler *compiler) {
                            compiler->current.span))
                         method=&owner->singleton_methods[index];
                 owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
-                    &compiler->program->classes[owner->superclass];
+                    compiler->program->classes[owner->superclass];
             }
             if(method==nullptr) {
                 fail(compiler,compiler->current.span,
@@ -7867,7 +7873,7 @@ static uint16_t parse_name(Compiler *compiler) {
          * flag yet if discovery reaches this call site first, and fail()
          * only remembers the first failure. */
         if(!compiler->discovery_pass&&
-           compiler->program->classes[(size_t)class_index].sealed) {
+           compiler->program->classes[(size_t)class_index]->sealed) {
             fail(compiler,compiler->current.span,
                 "cannot instantiate a sealed class directly -- "
                 "use one of its subclasses");
@@ -8268,7 +8274,7 @@ static const DiamondFunction *class_instance_signature(
         const Compiler *compiler,uint16_t type,DiamondSpan name) {
     size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     while(class_index<compiler->program->class_count) {
-        const DiamondClass *class=&compiler->program->classes[class_index];
+        const DiamondClass *class=compiler->program->classes[class_index];
         for(size_t index=0;index<class->method_count;index++) {
             const DiamondMethod *method=&class->methods[index];
             if(!singleton_call_name_equals(compiler,method->name,name))continue;
@@ -9119,12 +9125,12 @@ static uint16_t compile_instance_contextual_block(Compiler *compiler,
     return block;
 }
 
-int diamond_reader_return_class(const DiamondClass *classes,size_t class_count,
+int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
         const DiamondFunction *function,size_t receiver_class) {
     if(function->return_type_set!=DIAMOND_NO_TYPE_SET||
        function->tooling_reader_field==0||function->owner_class>=class_count||
        receiver_class>=class_count)return -1;
-    const DiamondClass *owner=&classes[function->owner_class];
+    const DiamondClass *owner=classes[function->owner_class];
     const size_t owner_field=(size_t)function->tooling_reader_field-1;
     if(owner_field>=owner->field_count)return -1;
     const char *name=owner->fields[owner_field];
@@ -9134,7 +9140,7 @@ int diamond_reader_return_class(const DiamondClass *classes,size_t class_count,
      * invalidate that snapshot. Keep all writes, even overridden initializer
      * writes, since an explicit super call can still execute them. */
     for(size_t depth=0;receiver_class<class_count&&depth<class_count;depth++) {
-        const DiamondClass *class=&classes[receiver_class];
+        const DiamondClass *class=classes[receiver_class];
         if(receiver_class==function->owner_class)found_owner=true;
         for(size_t field=0;field<class->field_count;field++) {
             if(strcmp(class->fields[field],name)!=0)continue;
@@ -9209,7 +9215,7 @@ static const DiamondFunction *tooling_forward_instance_target(
     size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     for(size_t depth=0;class_index<compiler->program->class_count&&
             depth<compiler->program->class_count;depth++) {
-        const DiamondClass *class=&compiler->program->classes[class_index];
+        const DiamondClass *class=compiler->program->classes[class_index];
         for(size_t index=0;index<class->method_count;index++)
             if(singleton_call_name_equals(compiler,class->methods[index].name,name))
                 return nullptr;
@@ -9913,7 +9919,7 @@ static uint16_t parse_super(Compiler *compiler) {
         return 0;
     }
     const DiamondClass *owner =
-        &compiler->program->classes[(size_t)compiler->current_class];
+        compiler->program->classes[(size_t)compiler->current_class];
     if (owner->superclass == DIAMOND_NO_CLASS) {
         fail(compiler, keyword, "'super' used in a class without a superclass");
         return 0;
@@ -11188,7 +11194,7 @@ static uint16_t parse_prefix(Compiler *compiler) {
                  * to reach Phase 12's existing JIT proof. */
                 if(!compiler->discovery_pass&&field>=0&&
                    compiler->current_class>=0) {
-                    const DiamondClass *class=&compiler->program->classes[
+                    const DiamondClass *class=compiler->program->classes[
                         (size_t)compiler->current_class];
                     if(class->discovered_field_type_status[(size_t)field]==1)
                         compiler->known_types[destination]=(uint8_t)(
@@ -11539,14 +11545,14 @@ static bool span_is_underscore(const Compiler *compiler,DiamondSpan span) {
 
 static const DiamondMethod *case_pattern_reader(const Compiler *compiler,
         uint16_t class_index,DiamondSpan name) {
-    const DiamondClass *class=&compiler->program->classes[class_index];
+    const DiamondClass *class=compiler->program->classes[class_index];
     while(class!=nullptr) {
         for(size_t method=class->method_count;method>0;method--) {
             const DiamondMethod *candidate=&class->methods[method-1];
             if(name_equals(compiler,candidate->name,name,false))return candidate;
         }
         class=class->superclass==DIAMOND_NO_CLASS?nullptr:
-            &compiler->program->classes[class->superclass];
+            compiler->program->classes[class->superclass];
     }
     return nullptr;
 }
@@ -12374,7 +12380,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                         break;
                     }
                     const uint16_t parent=
-                        compiler->program->classes[walk-DIAMOND_TYPE_CLASS_BASE].superclass;
+                        compiler->program->classes[walk-DIAMOND_TYPE_CLASS_BASE]->superclass;
                     if(parent==DIAMOND_NO_CLASS)break;
                     walk=(size_t)DIAMOND_TYPE_CLASS_BASE+parent;
                 }
@@ -12460,7 +12466,7 @@ static uint16_t parse_case(Compiler *compiler) {
        compiler->known_types[subject]>=DIAMOND_TYPE_CLASS_BASE&&
        compiler->known_types[subject]<DIAMOND_TYPE_CLASS_BASE+DIAMOND_MAX_CLASSES&&
        compiler->program->classes[
-           compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE].sealed) {
+           compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE]->sealed) {
         /* A single (non-union) subject type naming a sealed class --
          * every direct subclass is required, found by a plain linear
          * scan since discovery has already registered every class in
@@ -12471,7 +12477,7 @@ static uint16_t parse_case(Compiler *compiler) {
         uint16_t required_ids[DIAMOND_MAX_UNION_TYPES];
         size_t direct_subclass_count=0;
         for(size_t candidate=0;candidate<compiler->program->class_count;candidate++) {
-            if(compiler->program->classes[candidate].superclass!=
+            if(compiler->program->classes[candidate]->superclass!=
                     compiler->known_types[subject]-DIAMOND_TYPE_CLASS_BASE)
                 continue;
             /* Counted unconditionally, past DIAMOND_MAX_UNION_TYPES too --
@@ -13865,8 +13871,8 @@ static uint16_t compile_begin(Compiler *compiler) {
                         const size_t ancestor=(size_t)(
                             seen_rescue_types[existing]-DIAMOND_TYPE_CLASS_BASE);
                         while(child<compiler->program->class_count&&child!=ancestor&&
-                              compiler->program->classes[child].superclass!=DIAMOND_NO_CLASS)
-                            child=compiler->program->classes[child].superclass;
+                              compiler->program->classes[child]->superclass!=DIAMOND_NO_CLASS)
+                            child=compiler->program->classes[child]->superclass;
                         if(child==ancestor)
                             fail(compiler,rescue_type_span,
                                  "rescue type is covered by an earlier clause");
@@ -15695,7 +15701,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     free(heap_outer_tooling_type_sets);
     if(compiler->current_class>=0&&!module_singleton&&
        !compiler->failed&&at_top_level) {
-        DiamondClass *class = &compiler->program->classes[(size_t)compiler->current_class];
+        DiamondClass *class = compiler->program->classes[(size_t)compiler->current_class];
         bool duplicate=false;
         size_t duplicate_index=0;
         for(size_t existing=0;existing<class->method_count;existing++)
@@ -15744,7 +15750,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     } else if(compiler->current_class>=0&&module_singleton&&
               !compiler->failed&&at_top_level) {
         DiamondClass *class=
-            &compiler->program->classes[(size_t)compiler->current_class];
+            compiler->program->classes[(size_t)compiler->current_class];
         DiamondMethod *prescanned=nullptr;
         bool duplicate=false;
         for(size_t existing=0;existing<class->singleton_method_count;existing++) {
@@ -16000,7 +16006,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     method_name[method_name_length]='\0';
     if(compiler->current_class>=0) {
         DiamondClass *class=
-            &compiler->program->classes[(size_t)compiler->current_class];
+            compiler->program->classes[(size_t)compiler->current_class];
         for(size_t index=0;index<class->method_count;index++)
             if(!class->methods[index].included&&
                strcmp(class->methods[index].name,method_name)==0) {
@@ -16082,10 +16088,10 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     if(!writer&&type_set<0&&!compiler->discovery_pass&&
        compiler->current_class>=0) {
         const DiamondClass *class=
-            &compiler->program->classes[(size_t)compiler->current_class];
+            compiler->program->classes[(size_t)compiler->current_class];
         bool has_subclasses=false;
         for(size_t index=0;index<compiler->program->class_count;index++)
-            if(compiler->program->classes[index].superclass==
+            if(compiler->program->classes[index]->superclass==
                (uint16_t)compiler->current_class)has_subclasses=true;
         if(!has_subclasses&&class->discovered_field_type_status[field]==1) {
             DiamondFunction *outer_function=compiler->function;
@@ -16144,7 +16150,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
          * wrongly look "never assigned" (status 0) instead of either a real
          * concrete class or "unknown" (status 2). */
         if(writer)record_field_known_type(
-            &compiler->program->classes[(size_t)compiler->current_class],
+            compiler->program->classes[(size_t)compiler->current_class],
             (size_t)field,type_set_single_class(compiler,type_set));
     }
     if(!writer&&type_set>=0) {
@@ -16227,7 +16233,7 @@ static void compile_visibility(Compiler *compiler,bool is_private,bool is_protec
         DiamondMethod *found=nullptr;
         if(compiler->current_class>=0) {
             DiamondClass *class=
-                &compiler->program->classes[(size_t)compiler->current_class];
+                compiler->program->classes[(size_t)compiler->current_class];
             for(size_t index=class->method_count;index>0;index--)
                 if((!writer_name&&name_equals(compiler,
                        class->methods[index-1].name,name,false))||
@@ -16392,7 +16398,7 @@ static void compile_alias_method(Compiler *compiler) {
     DiamondMethod *methods=nullptr;size_t *count=nullptr;
     if(compiler->current_class>=0) {
         DiamondClass *class=
-            &compiler->program->classes[(size_t)compiler->current_class];
+            compiler->program->classes[(size_t)compiler->current_class];
         methods=class->methods;count=&class->method_count;
     } else {
         DiamondModule *module=
@@ -16567,7 +16573,7 @@ static void compile_delegate(Compiler *compiler) {
     DiamondMethod *methods=nullptr;size_t *method_count=nullptr;
     if(in_class) {
         DiamondClass *class=
-            &compiler->program->classes[(size_t)compiler->current_class];
+            compiler->program->classes[(size_t)compiler->current_class];
         methods=class->methods;method_count=&class->method_count;
     } else {
         DiamondModule *module=
@@ -17006,7 +17012,7 @@ static uint16_t compile_class(Compiler *compiler) {
     bool superclass_decided;
     if(existing_class>=0) {
         index=existing_class;
-        class=&compiler->program->classes[(size_t)index];
+        class=compiler->program->classes[(size_t)index];
         if(class->declared_by_discovery&&class->from_template) {
             /* A reopened template (prelude) class: back to the template's
              * own methods, fields, and superclass, dropping only what the
@@ -17077,8 +17083,9 @@ static uint16_t compile_class(Compiler *compiler) {
             fail(compiler, name, "too many classes: a program holds at most 180 "
                  "classes and structs, cuts included"); return 0;
         }
+        class=diamond_program_class_slot(compiler->program,compiler->program->class_count);
+        if(class==nullptr) {fail(compiler,name,"out of memory");return 0;}
         index=(int)compiler->program->class_count++;
-        class=&compiler->program->classes[(size_t)index];
         /* Explicit reset, not reliance on this slot already being zero:
          * see the declared_by_discovery branch's own identical reset
          * just above, and compile_module's own copy of this comment.
@@ -17134,7 +17141,7 @@ static uint16_t compile_class(Compiler *compiler) {
         if(parent<0) { fail(compiler,superclass_span,"undefined superclass"); return 0; }
         if(!superclass_decided) {
             class->superclass=(uint16_t)parent;
-            const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
+            const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
             class->field_count=parent_class->field_count;
             for(size_t field=0;field<parent_class->field_count;field++) {
                 for(size_t ch=0;ch<DIAMOND_MAX_FUNCTION_NAME;ch++)
@@ -17306,7 +17313,7 @@ static uint16_t compile_struct(Compiler *compiler) {
     const int existing_class=find_class_name(compiler,stored_name);
     int index;DiamondClass *class;
     if(existing_class>=0) {
-        class=&compiler->program->classes[(size_t)existing_class];
+        class=compiler->program->classes[(size_t)existing_class];
         if(!class->declared_by_discovery) {
             fail(compiler,name,"struct is already defined");return 0;
         }
@@ -17316,8 +17323,9 @@ static uint16_t compile_struct(Compiler *compiler) {
             fail(compiler,name,"too many classes: a program holds at most 180 "
                  "classes and structs, cuts included");return 0;
         }
+        class=diamond_program_class_slot(compiler->program,compiler->program->class_count);
+        if(class==nullptr) {fail(compiler,name,"out of memory");return 0;}
         index=(int)compiler->program->class_count++;
-        class=&compiler->program->classes[(size_t)index];
     }
     if(class->declared_by_discovery) {
         memcpy(class->discovered_field_type_status,class->field_type_status,
@@ -17427,7 +17435,7 @@ static uint16_t compile_struct(Compiler *compiler) {
         if(parent<0) {
             fail(compiler,superclass_span,"undefined superclass");return 0;
         }
-        const DiamondClass *parent_class=&compiler->program->classes[(size_t)parent];
+        const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
         if(parent==index||!parent_class->generated_struct) {
             fail(compiler,superclass_span,
                  "a struct's superclass must be a struct declared earlier");
@@ -18441,7 +18449,7 @@ static uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
                              value,3);
             if(field>=0) {
                 DiamondClass *class=
-                    &compiler->program->classes[(size_t)compiler->current_class];
+                    compiler->program->classes[(size_t)compiler->current_class];
                 const uint16_t known=compiler->known_types[value];
                 const bool concrete=known>=DIAMOND_TYPE_CLASS_BASE&&
                     known<DIAMOND_TYPE_VARIABLE_BASE&&
@@ -19529,6 +19537,17 @@ static void diamond_function_free_arrays(DiamondFunction *function) {
     function->jit_call_count=0;function->jit_ineligible=false;
 }
 
+DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index) {
+    if(index>=DIAMOND_MAX_CLASSES)return nullptr;
+    if(program->classes[index]==nullptr) {
+        DiamondClass *class=calloc(1,sizeof *class);
+        if(class==nullptr)return nullptr;
+        class->index=(uint16_t)index;
+        program->classes[index]=class;
+    }
+    return program->classes[index];
+}
+
 void diamond_program_free(DiamondProgram *program) {
     if(program==nullptr)return;
     diamond_function_free_arrays(&program->entry);
@@ -19540,6 +19559,11 @@ void diamond_program_free(DiamondProgram *program) {
     program->functions=nullptr;
     program->function_count=0;
     program->function_capacity=0;
+    for(size_t index=0;index<DIAMOND_MAX_CLASSES;index++) {
+        free(program->classes[index]);
+        program->classes[index]=nullptr;
+    }
+    program->class_count=0;
 }
 
 /* The non-memset half of diamond_program_init: populate `program`'s
@@ -19584,7 +19608,7 @@ void diamond_program_free(DiamondProgram *program) {
  * `class` pointer no longer matched the class actually being read. */
 void diamond_program_recompute_shapes(DiamondProgram *program) {
     for(size_t class_index=0;class_index<program->class_count;class_index++) {
-        DiamondClass *class=&program->classes[class_index];
+        DiamondClass *class=program->classes[class_index];
         for(size_t field_count=0;field_count<=class->field_count;field_count++) {
             class->shapes[field_count]=(DiamondShape){
                 .class=class,.field_count=(uint8_t)field_count};
@@ -19631,7 +19655,11 @@ void diamond_program_init_fresh(DiamondProgram *program) {
     program->interface_count=0;
     program->module_count=0;
     for(size_t index=0;index<DIAMOND_BUILTIN_CLASS_COUNT;index++) {
-        DiamondClass *class=&program->classes[index];
+        DiamondClass *class=diamond_program_class_slot(program,index);
+        if(class==nullptr) {
+            (void)fputs("diamond: out of memory allocating the built-in classes\n",stderr);
+            abort();
+        }
         /* A builtin class can be reopened by user code (`class Exception
          * ... end` adding a method is ordinary, allowed monkey-patching,
          * same as any other class -- compile_class's own comment on
@@ -19878,7 +19906,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
             }
 #endif
         for(size_t class_index=0;class_index<program->class_count;class_index++) {
-            DiamondClass *class=&program->classes[class_index];
+            DiamondClass *class=program->classes[class_index];
             /* Resolved by name, once, here -- never hardcoded, since a
              * conservative prelude that skips optional modules can shift
              * which index a *later*-defined class lands at (confirmed
@@ -19943,8 +19971,12 @@ static bool seed_program_from_template(DiamondProgram *destination,
                                        const DiamondProgram *template) {
     /* Copy only the used prefix of each metadata table. Unused slots are
      * initialized explicitly when claimed, just as after program_init. */
-    memcpy(destination->classes,template->classes,
-        template->class_count*sizeof destination->classes[0]);
+    for(size_t index=0;index<template->class_count;index++) {
+        DiamondClass *copy=diamond_program_class_slot(destination,index);
+        if(copy==nullptr)return false;
+        memcpy(copy,template->classes[index],sizeof *copy);
+        copy->index=(uint16_t)index;
+    }
     destination->class_count=template->class_count;
     memcpy(destination->interfaces,template->interfaces,
         template->interface_count*sizeof destination->interfaces[0]);
@@ -20042,8 +20074,14 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * *every* diamond_compile/diamond_compile_incremental call, template
      * or not -- unlike seed_program_from_template, which only runs when
      * a template is given. */
-    memcpy(program->classes, discovery->classes,
-        discovery->class_count*sizeof program->classes[0]);
+    /* Hand the discovery pass's classes to `program` by swapping slot
+     * pointers: each side keeps owning exactly the slots it points at, and
+     * freeing `discovery` later releases whatever `program` held before. */
+    for (size_t index = 0; index < discovery->class_count; index++) {
+        DiamondClass *kept = program->classes[index];
+        program->classes[index] = discovery->classes[index];
+        discovery->classes[index] = kept;
+    }
     program->class_count = discovery->class_count;
     memcpy(program->interfaces, discovery->interfaces,
         discovery->interface_count*sizeof program->interfaces[0]);
@@ -20102,7 +20140,7 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * their names). */
     for(size_t index=template!=nullptr?template->class_count:DIAMOND_BUILTIN_CLASS_COUNT;
         index<program->class_count;index++)
-        program->classes[index].declared_by_discovery=true;
+        program->classes[index]->declared_by_discovery=true;
     for(size_t index=template!=nullptr?template->module_count:0;
         index<program->module_count;index++)
         program->modules[index].declared_by_discovery=true;
@@ -20113,8 +20151,8 @@ static bool diamond_compile_impl(const char *source, DiamondProgram *program,
      * the template itself had (from_template), not to empty. */
     if(template!=nullptr) {
         for(size_t index=0;index<template->class_count;index++) {
-            DiamondClass *class=&program->classes[index];
-            const DiamondClass *original=&template->classes[index];
+            DiamondClass *class=program->classes[index];
+            const DiamondClass *original=template->classes[index];
             if(class->method_count==original->method_count&&
                class->singleton_method_count==original->singleton_method_count&&
                class->field_count==original->field_count&&

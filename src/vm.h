@@ -957,6 +957,11 @@ typedef struct DiamondShape {
 
 struct DiamondClass {
     char name[DIAMOND_MAX_FUNCTION_NAME];
+    /* This class's own position in its program's classes[] table (set when
+     * the class is created or deserialized). Lets a class pointer be mapped
+     * to the same class in a copy of the program without pointer arithmetic
+     * on the table, which is a table of separately allocated classes. */
+    uint16_t index;
     /* 1-based source position of the class's own name token in `class
      * Name` -- lsp/definition.c and lsp/document_symbol.c's only reason
      * for existing. Nothing in the VM itself reads these.
@@ -1373,7 +1378,7 @@ struct DiamondChunk {
     size_t type_set_count;
     DiamondFunction *const *functions;
     size_t function_count;
-    const DiamondClass *classes;
+    DiamondClass *const *classes;
     size_t class_count;
     const DiamondInterface *interfaces;
     size_t interface_count;

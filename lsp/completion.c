@@ -86,7 +86,7 @@ static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
         size_t class_index,bool is_singleton) {
     size_t current=class_index;
     while(current!=DIAMOND_NO_CLASS) {
-        const DiamondClass *class=&chunk->classes[current];
+        const DiamondClass *class=chunk->classes[current];
         const DiamondMethod *methods=is_singleton?class->singleton_methods:class->methods;
         const size_t count=is_singleton?class->singleton_method_count:class->method_count;
         for(size_t index=0;index<count;index++)
@@ -218,7 +218,7 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
         if(chunk.functions[index]->owner_class==DIAMOND_OWNER_NONE&&!chunk.functions[index]->nested)
             okay=push_item(items,chunk.functions[index]->name,COMPLETION_KIND_FUNCTION);
     for(size_t index=0;okay&&!member&&index<chunk.class_count;index++)
-        okay=push_item(items,chunk.classes[index].name,COMPLETION_KIND_CLASS);
+        okay=push_item(items,chunk.classes[index]->name,COMPLETION_KIND_CLASS);
     for(size_t index=0;okay&&!member&&index<chunk.interface_count;index++)
         okay=push_item(items,chunk.interfaces[index].name,COMPLETION_KIND_INTERFACE);
     for(size_t index=0;okay&&!member&&index<chunk.module_count;index++)

@@ -2111,7 +2111,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(has_block)READ_SHORT(block_register);
                 if(has_block&&block_register>=DIAMOND_REGISTER_COUNT)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondClass *class=&chunk->classes[class_index];
+                const DiamondClass *class=chunk->classes[class_index];
                 const DiamondMethod *initialize=lookup_method(chunk,class,
                     "initialize",sizeof("initialize")-1);
                 if(initialize==nullptr) {snprintf(vm->error,sizeof vm->error,
@@ -2160,7 +2160,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondArray *spread=(const DiamondArray *)
                     registers[spread_register].as.object;
-                const DiamondClass *class=&chunk->classes[class_index];
+                const DiamondClass *class=chunk->classes[class_index];
                 DiamondInstance *instance=allocate_instance(vm,class,nullptr);
                 if(instance==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
                 registers[dest]=DIAMOND_OBJECT(instance);
@@ -2211,11 +2211,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 } else {
                     bool exception_class=false;const DiamondClass *ancestor=class;
                     while(ancestor!=nullptr) {
-                        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+                        if(ancestor==chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
                             exception_class=true;break;
                         }
                         ancestor=ancestor->superclass==DIAMOND_NO_CLASS?nullptr:
-                            &chunk->classes[ancestor->superclass];
+                            chunk->classes[ancestor->superclass];
                     }
                     if(exception_class) {
                         if(spread->count>2)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
@@ -4077,7 +4077,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 const DiamondString *name_string=(const DiamondString *)registers[name_reg].as.object;
                 DiamondClosure *replacement=(DiamondClosure *)registers[callable_reg].as.object;
-                DiamondClass *class=(DiamondClass *)(void *)&chunk->classes[class_operand];
+                DiamondClass *class=(DiamondClass *)(void *)chunk->classes[class_operand];
                 DiamondMethod *target=nullptr;
                 for(size_t index=0;index<class->method_count;index++)
                     if(strlen(class->methods[index].name)==name_string->length&&
@@ -4169,7 +4169,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
                 DiamondClosure *replacement=(DiamondClosure *)registers[callable_reg].as.object;
-                DiamondClass *class=(DiamondClass *)(void *)&chunk->classes[class_operand];
+                DiamondClass *class=(DiamondClass *)(void *)chunk->classes[class_operand];
                 for(size_t index=0;index<class->method_count;index++)
                     if(strlen(class->methods[index].name)==name_string->length&&
                        memcmp(class->methods[index].name,name_string->chars,
@@ -4275,7 +4275,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const DiamondString *body_string=(const DiamondString *)registers[body_reg].as.object;
                 const DiamondHash *bound_values_hash=
                     (const DiamondHash *)registers[bound_values_reg].as.object;
-                const DiamondClass *target_class=&chunk->classes[class_operand];
+                const DiamondClass *target_class=chunk->classes[class_operand];
                 const DiamondVmStatus compile_status=compile_method_helper(vm,target_class,
                     name_string,params_array,body_string,bound_values_hash,&registers[dest]);
                 VM_PROPAGATE(compile_status);
@@ -4310,7 +4310,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if((size_t)class_operand>=chunk->class_count||
                    (size_t)name_index>=chunk->string_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                const DiamondClass *class=&chunk->classes[class_operand];
+                const DiamondClass *class=chunk->classes[class_operand];
                 const DiamondStringConstant *method_name=&chunk->strings[name_index];
                 const DiamondMethod *method=lookup_singleton_method(chunk,class,
                     method_name->chars,method_name->length);

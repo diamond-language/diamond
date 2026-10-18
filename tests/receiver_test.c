@@ -44,11 +44,11 @@ static int check_receiver(const DiamondProgram *program,const DiamondChunk *chun
         return 1;
     }
     if(count!=1||classes[0]>=chunk->class_count||
-       strcmp(chunk->classes[classes[0]].name,expected)!=0||
+       strcmp(chunk->classes[classes[0]]->name,expected)!=0||
        actual_singleton!=singleton) {
         fprintf(stderr,"unexpected receiver for %s: count=%zu class=%s singleton=%d\n",
-            needle,count,count==1&&classes[0]<chunk->class_count
-                ?chunk->classes[classes[0]].name:"<none>",actual_singleton);
+            needle,count,count==1&classes[0]<chunk->class_count
+                ?chunk->classes[classes[0]]->name:"<none>",actual_singleton);
         return 1;
     }
     return 0;
@@ -64,8 +64,8 @@ static int check_receiver_pair(const DiamondProgram *program,const DiamondChunk 
         DIAMOND_MAX_UNION_TYPES,&singleton);
     bool found_first=false,found_second=false;
     for(size_t index=0;index<count;index++) {
-        if(strcmp(chunk->classes[classes[index]].name,first)==0)found_first=true;
-        if(strcmp(chunk->classes[classes[index]].name,second)==0)found_second=true;
+        if(strcmp(chunk->classes[classes[index]]->name,first)==0)found_first=true;
+        if(strcmp(chunk->classes[classes[index]]->name,second)==0)found_second=true;
     }
     if(count==2&&!singleton&&found_first&&found_second)return 0;
     fprintf(stderr,"unexpected union receiver for %s: count=%zu\n",needle,count);

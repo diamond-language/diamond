@@ -142,7 +142,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
             ok_so_far=push_symbol(symbols,function->name,12,line,column,name_length);
     }
     for(size_t index=0;index<chunk.class_count&&ok_so_far;index++) {
-        const DiamondClass *class=&chunk.classes[index];
+        const DiamondClass *class=chunk.classes[index];
         size_t line=0,column=0;
         const size_t name_length=strlen(class->name);
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
