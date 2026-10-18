@@ -6,6 +6,23 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixed
+
+- A request that drove a handler into a call-stack overflow (`SystemStackError`, which is not a `StandardError`) killed the whole
+  Gremlin worker; it now answers `500 Internal Server Error` like any other handler failure. Found with a deeply nested GraphQL
+  query (a 30-level selection crashed a Pheint worker).
+- GraphQL: the parser refuses a document nested more than 20 levels deep (selection sets, list and object literals, list types)
+  with a parse error instead of recursing until the stack overflows.
+- GraphQL: fragments on the introspection types (`fragment F on __Type { ... }`, as GraphiQL's introspection query uses) were
+  rejected as targeting an unknown type; they validate and execute now.
+- GraphQL: a fragment that spreads itself, directly or through others, is rejected with a validation error (it used to execute
+  as an empty result).
+
+### Packages
+
+- `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
+- `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.
+
 ## 0.18.0 — 2026-10-18
 
 ### Changed

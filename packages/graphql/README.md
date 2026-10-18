@@ -219,7 +219,14 @@ the built-in scalars are omitted, and field and argument descriptions are printe
 ## Introspection
 
 Standard introspection queries (`__schema`, `__type`) are supported, so GraphiQL-style tooling works against a `Schema`.
+Fragments may name the meta types (`fragment F on __Type { name kind }`, `... on __Type { ... }`), as introspection tools write them.
 
 ## Validation
 
 Queries are validated against the schema before execution. An invalid document returns a request-level `{"errors": [...]}`.
+A fragment that spreads itself, directly or through other fragments, is rejected (the check is iterative, so a long chain of
+fragments cannot exhaust the stack).
+
+The parser refuses a document nested more than `GraphQL::Language::Parser.max_nesting()` (20) levels deep, counting selection sets,
+list and object literals and list types, with a parse error. Parsing, validation and execution recurse once per level and a call
+stack is only about 90 frames deep (a request handler runs on a fiber), so an unbounded document would otherwise crash the server.

@@ -46,9 +46,9 @@
       "archive": "graphql.tar",
       "dependencies": {},
       "name": "graphql",
-      "sha256": "d4bd03cd6210591b0e42d2b5c36da3fb6eb81b56e8329aab4cb51002bb1c7ed8",
-      "size": 164864,
-      "version": "0.1.6"
+      "sha256": "e8109c37cbbec5ecf5eb31ec2358b47bbfea60a8266bf6ab501bbc09bd770933",
+      "size": 169984,
+      "version": "0.1.7"
     },
     {
       "archive": "graphsql.tar",
@@ -84,9 +84,9 @@
         "logger": "^0.4.0"
       },
       "name": "gremlin",
-      "sha256": "3193e94ba166304acca80014e79bacc6dc1a2723314df3c507534f25b5d3005b",
-      "size": 56832,
-      "version": "0.4.4"
+      "sha256": "536c6072f05b1e41aefc95dc6f921d391f55abd5ca7e546d675f6d549e2ee3bf",
+      "size": 57344,
+      "version": "0.4.5"
     },
     {
       "archive": "jobs.tar",
