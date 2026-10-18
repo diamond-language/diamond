@@ -133,7 +133,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
     bool ok_so_far=true;
     for(size_t index=0;index<chunk.function_count&&ok_so_far;index++) {
         const DiamondFunction *function=chunk.functions[index];
-        if(function->owner_class!=UINT8_MAX||function->nested)continue;
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested)continue;
         size_t line=0,column=0;
         const size_t name_length=strlen(function->name);
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,

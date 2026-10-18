@@ -65,7 +65,7 @@ static bool name_is_non_global_declaration(const DiamondChunk *chunk,
            strncmp(function->name,name,name_length)!=0)continue;
         const char *suffix=function->name+name_length;
         if(*suffix!='\0'&&strcmp(suffix,"=")!=0)continue;
-        return function->owner_class!=UINT8_MAX||function->nested;
+        return function->owner_class!=DIAMOND_OWNER_NONE||function->nested;
     }
     return false;
 }
@@ -81,7 +81,7 @@ static bool name_is_global_symbol(const DiamondChunk *chunk,const char *name,
         size_t name_length) {
     for(size_t index=0;index<chunk->function_count;index++) {
         const DiamondFunction *function=chunk->functions[index];
-        if(function->owner_class==UINT8_MAX&&!function->nested&&
+        if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&
            strlen(function->name)==name_length&&
            memcmp(function->name,name,name_length)==0)
             return true;

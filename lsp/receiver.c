@@ -368,7 +368,7 @@ static bool resolve_call_targets(const DiamondProgram *program,
     if(call->callee_index==start) {
         for(size_t index=chunk->function_count;index>0;index--) {
             const DiamondFunction *function=chunk->functions[index-1];
-            if(function->owner_class==UINT8_MAX&&!function->nested&&
+            if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&
                strlen(function->name)==name_length&&
                memcmp(function->name,name,name_length)==0) {
                 targets->functions[0]=function;targets->function_count=1;
@@ -1067,7 +1067,7 @@ static const DiamondFunction *find_plain_function(const DiamondChunk *chunk,
         const char *name,size_t length) {
     for(size_t index=chunk->function_count;index>0;index--) {
         const DiamondFunction *function=chunk->functions[index-1];
-        if(function->owner_class==UINT8_MAX&&!function->nested&&
+        if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&
            strlen(function->name)==length&&memcmp(function->name,name,length)==0)
             return function;
     }
@@ -1194,7 +1194,7 @@ const DiamondMethod *receiver_lookup_method(const DiamondChunk *chunk,
             if(strlen(method->name)==name_length&&memcmp(method->name,name,name_length)==0)
                 return method;
         }
-        current=current->superclass==UINT8_MAX?nullptr:&chunk->classes[current->superclass];
+        current=current->superclass==DIAMOND_NO_CLASS?nullptr:&chunk->classes[current->superclass];
     }
     return nullptr;
 }

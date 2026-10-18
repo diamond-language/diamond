@@ -788,32 +788,32 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 offset+=total;break;
             }
             case DIAMOND_OP_NEW_SPREAD: {
-                if(!require_bytes(stream,chunk,offset,6)) {
+                if(!require_bytes(stream,chunk,offset,7)) {
                     valid=false;offset=chunk->code_count;break;
                 }
-                const uint8_t class_index=chunk->code[offset+3];
+                const uint16_t class_index=(uint16_t)read_operand(chunk,offset+3);
                 fprintf(stream,"%-18s r%u, c%u, r%u\n","NEW_SPREAD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
                     class_index,
-                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid));
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
                 if((size_t)class_index>=chunk->class_count)valid=false;
-                offset+=6;break;
+                offset+=7;break;
             }
             case DIAMOND_OP_NEW_KEYWORDS: {
-                if(!require_bytes(stream,chunk,offset,7)) {valid=false;offset=chunk->code_count;break;}
-                const uint8_t class_index=chunk->code[offset+3];
-                const uint8_t encoded_keyword_count=chunk->code[offset+6];
+                if(!require_bytes(stream,chunk,offset,8)) {valid=false;offset=chunk->code_count;break;}
+                const uint16_t class_index=(uint16_t)read_operand(chunk,offset+3);
+                const uint8_t encoded_keyword_count=chunk->code[offset+7];
                 const bool has_block=(encoded_keyword_count&0x80u)!=0;
                 const uint8_t keyword_count=encoded_keyword_count&0x7fu;
-                const size_t total=7+(size_t)keyword_count*4+(has_block?2u:0u);
+                const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
                 if(keyword_count==0||keyword_count>16||
                    !require_bytes(stream,chunk,offset,total)) {valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, c%u, r%u, %u keywords\n","NEW_KEYWORDS",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),class_index,
-                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),keyword_count);
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),keyword_count);
                 if((size_t)class_index>=chunk->class_count)valid=false;
                 for(size_t index=0;index<keyword_count;index++) {
-                    const size_t entry=offset+7+index*4;
+                    const size_t entry=offset+8+index*4;
                     if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
                     (void)checked_register(chunk,stream,read_operand(chunk,entry+2),&valid);
                 }
@@ -822,13 +822,13 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 offset+=total;break;
             }
             case DIAMOND_OP_CALL_SINGLETON_SPREAD: {
-                if(!require_bytes(stream,chunk,offset,9)) {
+                if(!require_bytes(stream,chunk,offset,10)) {
                     valid=false;offset=chunk->code_count;break;
                 }
                 const size_t function_index=
                     ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-                const uint8_t class_index=chunk->code[offset+7];
-                const uint8_t needs_receiver=chunk->code[offset+8];
+                const uint16_t class_index=(uint16_t)read_operand(chunk,offset+7);
+                const uint8_t needs_receiver=chunk->code[offset+9];
                 fprintf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u\n",
                     "CALL_SINGLETON_SPREAD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
@@ -836,20 +836,20 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
                     class_index,needs_receiver);
                 if(function_index>=chunk->function_count||needs_receiver>1||
-                   (class_index!=UINT8_MAX&&(size_t)class_index>=chunk->class_count))
+                   (class_index!=DIAMOND_NO_CLASS&&(size_t)class_index>=chunk->class_count))
                     valid=false;
-                offset+=9;break;
+                offset+=10;break;
             }
             case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
-                if(!require_bytes(stream,chunk,offset,10)) {
+                if(!require_bytes(stream,chunk,offset,11)) {
                     valid=false;offset=chunk->code_count;break;
                 }
                 const size_t function_index=
                     ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-                const uint8_t class_index=chunk->code[offset+7];
-                const uint8_t needs_receiver=chunk->code[offset+8];
-                const uint8_t type_count=chunk->code[offset+9];
-                if(!require_bytes(stream,chunk,offset,(size_t)10+type_count*2)) {
+                const uint16_t class_index=(uint16_t)read_operand(chunk,offset+7);
+                const uint8_t needs_receiver=chunk->code[offset+9];
+                const uint8_t type_count=chunk->code[offset+10];
+                if(!require_bytes(stream,chunk,offset,(size_t)11+type_count*2)) {
                     valid=false;offset=chunk->code_count;break;
                 }
                 fprintf(stream,"%-18s r%u, f%zu, r%u, c%u, self=%u, %u types\n",
@@ -859,19 +859,19 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
                     class_index,needs_receiver,type_count);
                 if(function_index>=chunk->function_count||needs_receiver>1||
-                   type_count>8||(class_index!=UINT8_MAX&&
+                   type_count>8||(class_index!=DIAMOND_NO_CLASS&&
                     (size_t)class_index>=chunk->class_count))valid=false;
                 for(size_t index=0;index<type_count;index++)
-                    if((size_t)read_operand(chunk,offset+10+index*2)>=chunk->type_set_count)
+                    if((size_t)read_operand(chunk,offset+11+index*2)>=chunk->type_set_count)
                         valid=false;
-                offset+=(size_t)10+type_count*2;break;
+                offset+=(size_t)11+type_count*2;break;
             }
             case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
             case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
-                if(!require_bytes(stream,chunk,offset,10)) {valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,11)) {valid=false;offset=chunk->code_count;break;}
                 const size_t function_index=read_operand(chunk,offset+3);
-                const uint8_t keyword_count=chunk->code[offset+9];
-                const size_t keyword_end=10+(size_t)keyword_count*4;
+                const uint8_t keyword_count=chunk->code[offset+10];
+                const size_t keyword_end=11+(size_t)keyword_count*4;
                 const bool typed=(DiamondOpCode)opcode==DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS;
                 if(keyword_count==0||keyword_count>16||
                    !require_bytes(stream,chunk,offset,keyword_end+(typed?1:0))) {
@@ -884,7 +884,7 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                     checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),keyword_count);
                 if(function_index>=chunk->function_count)valid=false;
                 for(size_t index=0;index<keyword_count;index++) {
-                    const size_t entry=offset+10+index*4;
+                    const size_t entry=offset+11+index*4;
                     if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
                     (void)checked_register(chunk,stream,read_operand(chunk,entry+2),&valid);
                 }
@@ -994,46 +994,46 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 offset+=6+count*2;break;
             }
             case DIAMOND_OP_NEW:
-                if(!require_bytes(stream,chunk,offset,7)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, %u args\n","NEW",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3],
-                    checked_register_range(chunk,stream,read_operand(chunk,offset+4),
-                        chunk->code[offset+6],&valid),
-                    chunk->code[offset+6]);
-                offset+=7;break;
+                    read_operand(chunk,offset+3),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                        chunk->code[offset+7],&valid),
+                    chunk->code[offset+7]);
+                offset+=8;break;
             case DIAMOND_OP_REDEFINE_METHOD:
-                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","REDEFINE_METHOD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3],
-                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
-                offset+=8;break;
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
+                offset+=9;break;
             case DIAMOND_OP_DEFINE_METHOD:
-                if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, r%u\n","DEFINE_METHOD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3],
-                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid));
-                offset+=8;break;
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
+                offset+=9;break;
             case DIAMOND_OP_COMPILE_METHOD:
-                if(!require_bytes(stream,chunk,offset,12)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,13)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u, r%u, r%u, r%u, r%u\n","COMPILE_METHOD",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3],
-                    checked_register(chunk,stream,read_operand(chunk,offset+4),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+6),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+8),&valid),
-                    checked_register(chunk,stream,read_operand(chunk,offset+10),&valid));
-                offset+=12;break;
+                    read_operand(chunk,offset+3),
+                    checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+7),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+9),&valid),
+                    checked_register(chunk,stream,read_operand(chunk,offset+11),&valid));
+                offset+=13;break;
             case DIAMOND_OP_LOAD_CLASS:
-                if(!require_bytes(stream,chunk,offset,4)){valid=false;offset=chunk->code_count;break;}
+                if(!require_bytes(stream,chunk,offset,5)){valid=false;offset=chunk->code_count;break;}
                 fprintf(stream,"%-18s r%u, class%u\n","LOAD_CLASS",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3]);
-                offset+=4;break;
+                    read_operand(chunk,offset+3));
+                offset+=5;break;
             case DIAMOND_OP_INVOKE_SELF_METHOD:
                 if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
                 if((size_t)read_operand(chunk,offset+3)>=chunk->string_count)
@@ -1199,16 +1199,16 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                 fputs("]\n",stream);offset+=(size_t)11+count*2;break;
             }
             case DIAMOND_OP_SUPER:
-                if(!require_bytes(stream,chunk,offset,9)){valid=false;offset=chunk->code_count;break;}
-                if((size_t)chunk->code[offset+3]>=chunk->class_count||
-                   (size_t)read_operand(chunk,offset+4)>=chunk->string_count)
+                if(!require_bytes(stream,chunk,offset,10)){valid=false;offset=chunk->code_count;break;}
+                if((size_t)read_operand(chunk,offset+3)>=chunk->class_count||
+                   (size_t)read_operand(chunk,offset+5)>=chunk->string_count)
                     valid=false;
                 fprintf(stream,"%-18s r%u, class%u, s%u, r%u, %u args\n","SUPER",
                     checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                    chunk->code[offset+3],read_operand(chunk,offset+4),
-                    checked_register_range(chunk,stream,read_operand(chunk,offset+6),
-                        chunk->code[offset+8],&valid),
-                    chunk->code[offset+8]);offset+=9;break;
+                    read_operand(chunk,offset+3),read_operand(chunk,offset+5),
+                    checked_register_range(chunk,stream,read_operand(chunk,offset+7),
+                        chunk->code[offset+9],&valid),
+                    chunk->code[offset+9]);offset+=10;break;
             /* GET_IVAR/SET_IVAR's third operand is a field index, checked
              * against the receiver's own instance->field_count at runtime
              * (a per-instance/per-class bound, not something this purely

@@ -125,7 +125,10 @@ the macOS builds and the differential fuzzer) before the next starts.
    `--dump-bytecode` comparison of the corpus before and after (identical bytecode proves it changed
    nothing). Hand-check every `malloc`/`memcpy` sized in bytes for a type array: the compiler does not
    flag those.
-2. Widen class and type operands in bytecode and move the id bases. Verification: suite; `.dic` rejected by version mismatch and rebuilt; the
+2. Widen class operands in bytecode and move the id bases. (Only class operands needed widening: `IS_TYPE` and the
+   type-set operands were already 16 bits. Every `UINT8_MAX` that meant "no class", "no owner" or "unknown type"
+   became a named 16-bit sentinel; one missed (the built-in `Exception`'s missing superclass) made every
+   superclass walk loop forever.) Verification: suite; `.dic` rejected by version mismatch and rebuilt; the
    differential fuzzer with class-heavy seeds; JIT and interpreter agree on a program that builds
    instances of 150+ classes.
 3. Dynamic storage. Verification: suite; a `Thread.new` start-up benchmark before/after; peak RSS of a

@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Changed
+
+- Class operands in bytecode are 16 bits wide and the native, generic-variable and interface type-id bases moved, as the
+  first steps of lifting the 180-class limit (docs/internal/class-limit-design.md). Bytecode caches (`.dic`) are
+  rebuilt automatically once; hand-assembled `ProgramBuilder` bytecode that names a class needs a two-byte operand.
+
 ### Added
 
 - `mjolnir` 0.2.3: a changeset can update an entity that is a plain Hash row, and `Repo#transaction` begins with
