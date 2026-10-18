@@ -118,7 +118,9 @@ each with its own revoked credential and a passing verification. `mjolnir` 0.2.1
 `3193e94ba166304acca80014e79bacc6dc1a2723314df3c507534f25b5d3005b`) followed the same way, with a passing verification of all 18 launch cuts. `graphql` 0.1.6 (`GraphQL::ExecutionError` extensions, sha256
 `d4bd03cd6210591b0e42d2b5c36da3fb6eb81b56e8329aab4cb51002bb1c7ed8`) followed the same way (credential 21, revoked), with a passing verification of all 18 launch cuts. `mjolnir` 0.2.2 (composite primary keys, sha256
 `abd5244bd466bbe0e0886384c7b3e37a1a8fd95b0950f40596b0bc7206860618`, credential 22) and 0.2.3 (Hash-row updates and `BEGIN IMMEDIATE` transactions, sha256
-`3f845a09c545c320840703faa38c3e7b19863a57d6b00d2b2a950c5c6af21987`, credential 23) followed the same way, each credential revoked and each followed by a passing verification.
+`3f845a09c545c320840703faa38c3e7b19863a57d6b00d2b2a950c5c6af21987`, credential 23) followed the same way, each credential revoked and each followed by a passing verification. `graphql` 0.1.7 (parser nesting cap, fragments on introspection types, fragment-cycle validation, sha256
+`e8109c37cbbec5ecf5eb31ec2358b47bbfea60a8266bf6ab501bbc09bd770933`, credential 24) and `gremlin` 0.4.5 (a handler's stack overflow answers 500, sha256
+`536c6072f05b1e41aefc95dc6f921d391f55abd5ca7e546d675f6d549e2ee3bf`, credential 25) followed the same way on 2026-10-18, both credentials revoked, with a passing verification of all 18 launch cuts.
 
 ## Host disk and logs
 
