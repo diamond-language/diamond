@@ -54,6 +54,14 @@ not preemption of synchronous handlers; stalled response writes also expire.
 Long-lived protocols such as WebSockets should not use this policy without
 accounting for the connection lifetime limit.
 
+## Handler errors
+
+A handler that raises answers `500 Internal Server Error` with a plain generic body and
+logs `request.handler_failed` (with the `request_id` and the error message) as JSON. The
+message is never sent to the client, and the server keeps serving other requests. A handler
+that took over the connection itself (a WebSocket) and then raised gets the 500 written onto
+its own stream, so catch errors inside such handlers.
+
 ## Returning to an application owner on shutdown
 
 The optional seventh argument, `return_after_shutdown: true`, makes a

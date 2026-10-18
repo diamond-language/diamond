@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Fixed
+
+- Gremlin answers `500 Internal Server Error` (generic body, error and `request_id` in the log) when a handler
+  raises. It used to close the connection without a response, which clients saw as a dropped connection.
+
 ## 0.17.0 — 2026-10-17
 
 ### Added
