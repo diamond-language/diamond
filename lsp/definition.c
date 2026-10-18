@@ -136,7 +136,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
         /* declaration_start>=user_offset excludes lib/core.di's own
          * prelude -- see definition.h for why a prelude match returns
          * null instead of a location nobody can jump to. */
-        if(function->owner_class==UINT8_MAX&&!function->nested&&
+        if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&
            function->declaration_start>=user_offset&&
            strcmp(function->name,name)==0) {
             declaration_line=function->declaration_line;

@@ -1448,7 +1448,7 @@ static void compile_new(JitCompiler *jc, uint16_t dest, uint16_t class_index,
 /* Phase 9: true iff `recv_register` is a genuine declared-parameter home
  * register whose static type is a single concrete class (not a union, and
  * not DIAMOND_NO_TYPE_SET). compile_definition (src/compiler.c) always
- * allocates register 0 for self first for any owner_class!=UINT8_MAX (real
+ * allocates register 0 for self first for any owner_class!=DIAMOND_OWNER_NONE (real
  * class, module-method UINT8_MAX-1, and closure-capturing-self UINT8_MAX-2
  * alike -- see DiamondFunction.owner_class's own comment, src/vm.h), then
  * allocates the declared parameters' own registers in source order right
@@ -1469,7 +1469,7 @@ static void compile_new(JitCompiler *jc, uint16_t dest, uint16_t class_index,
  * Type|Nil) -- correct, since a nil receiver must still raise through the
  * interpreter, not hit this Instance-only trampoline. */
 static bool parameter_is_single_class(const DiamondFunction *fn, uint16_t recv_register) {
-    const uint16_t self_offset = fn->owner_class == UINT8_MAX ? 0 : 1;
+    const uint16_t self_offset = fn->owner_class == DIAMOND_OWNER_NONE ? 0 : 1;
     if (recv_register < self_offset) return false;
     const uint16_t param_index = (uint16_t)(recv_register - self_offset);
     if (param_index >= DIAMOND_MAX_DECLARED_PARAMETERS) return false;
@@ -1634,8 +1634,8 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
             return decode_u16(fn, pc, &a) && decode_u16(fn, pc, &b);
         }
         case DIAMOND_OP_SUPER: {
-            uint16_t a = 0, b = 0; uint8_t c = 0, d = 0;
-            return decode_u8(fn, pc, &c) && decode_u16(fn, pc, &a) &&
+            uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
+            return decode_u16(fn, pc, &c) && decode_u16(fn, pc, &a) &&
                 decode_u16(fn, pc, &b) && decode_u8(fn, pc, &d);
         }
         case DIAMOND_OP_INVOKE: case DIAMOND_OP_INVOKE_MONO: {
@@ -1644,8 +1644,8 @@ static bool decode_instruction_operands(const DiamondFunction *fn, size_t *pc,
                 decode_u16(fn, pc, &c) && decode_u8(fn, pc, &d);
         }
         case DIAMOND_OP_NEW: {
-            uint16_t a = 0; uint8_t b = 0, c = 0;
-            return decode_u8(fn, pc, &b) && decode_u16(fn, pc, &a) &&
+            uint16_t a = 0, b = 0; uint8_t c = 0;
+            return decode_u16(fn, pc, &b) && decode_u16(fn, pc, &a) &&
                 decode_u8(fn, pc, &c);
         }
         case DIAMOND_OP_CALL:
@@ -1806,13 +1806,13 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
                 uint16_t a = 0, field = 0;
                 if (!decode_u16(fn, &pc, &a) || !decode_u16(fn, &pc, &field)) return -1;
                 if (writes_target && field < DIAMOND_MAX_FIELDS &&
-                    fn->ivar_known_class[field] != UINT8_MAX)
+                    fn->ivar_known_class[field] != DIAMOND_NO_CLASS)
                     new_class = (int32_t)fn->ivar_known_class[field];
                 break;
             }
             case DIAMOND_OP_SUPER: {
-                uint16_t a = 0, b = 0; uint8_t c = 0, d = 0;
-                if (!decode_u8(fn, &pc, &c) || !decode_u16(fn, &pc, &a) ||
+                uint16_t a = 0, b = 0, c = 0; uint8_t d = 0;
+                if (!decode_u16(fn, &pc, &c) || !decode_u16(fn, &pc, &a) ||
                     !decode_u16(fn, &pc, &b) || !decode_u8(fn, &pc, &d)) return -1;
                 break;
             }
@@ -1832,13 +1832,13 @@ static int32_t register_new_class_or_move_src(const DiamondFunction *fn,
                     !decode_u16(fn, &pc, &c) || !decode_u8(fn, &pc, &d)) return -1;
                 if (writes_target && !fn->redefine_method_used_anywhere &&
                     target_register < DIAMOND_JIT_MAX_REGISTERS &&
-                    fn->register_known_class[target_register] != UINT8_MAX)
+                    fn->register_known_class[target_register] != DIAMOND_NO_CLASS)
                     new_class = (int32_t)fn->register_known_class[target_register];
                 break;
             }
             case DIAMOND_OP_NEW: {
-                uint8_t class_index = 0, argc = 0; uint16_t base = 0;
-                if (!decode_u8(fn, &pc, &class_index) || !decode_u16(fn, &pc, &base) ||
+                uint16_t class_index = 0, base = 0; uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &class_index) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) return -1;
                 if (writes_target) new_class = (int32_t)class_index;
                 break;
@@ -2038,8 +2038,8 @@ static void compile_body(JitCompiler *jc) {
                 uint16_t dest = 0, source = 0, type = 0;
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &source) ||
                     !decode_u16(fn, &pc, &type)) { jc->bailed = true; return; }
-                if (type > UINT8_MAX) { jc->bailed = true; return; }
-                compile_is_type(jc, dest, source, (uint8_t)type);
+                if (diamond_type_operand_is_native(type)) { jc->bailed = true; return; }
+                compile_is_type(jc, dest, source, type);
                 break;
             }
             case DIAMOND_OP_SAME_CLASS: {
@@ -2097,8 +2097,8 @@ static void compile_body(JitCompiler *jc) {
             }
             case DIAMOND_OP_SUPER: {
                 uint16_t dest = 0, name = 0, base = 0;
-                uint8_t owner_index = 0, argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &owner_index) ||
+                uint16_t owner_index = 0; uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &owner_index) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
                 compile_super_call(jc, dest, owner_index, name, base, argc);
@@ -2154,9 +2154,9 @@ static void compile_body(JitCompiler *jc) {
                 break;
             }
             case DIAMOND_OP_NEW: {
-                uint16_t dest = 0, base = 0;
-                uint8_t class_index = 0, argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u8(fn, &pc, &class_index) ||
+                uint16_t dest = 0, base = 0, class_index = 0;
+                uint8_t argc = 0;
+                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &class_index) ||
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
@@ -2292,7 +2292,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                uint16_t site_type=UINT8_MAX;
+                uint16_t site_type=DIAMOND_TYPE_NONE;
                 for(size_t site=0;site<fn->invoke_site_known_class_count;site++)
                     if(fn->invoke_site_known_class[site].offset==
                             (uint32_t)instruction_start) {
@@ -2339,9 +2339,9 @@ static void compile_body(JitCompiler *jc) {
                         break;
                     }
                 }
-                if (recv == 0 && jc->function->owner_class != UINT8_MAX &&
-                    jc->function->owner_class != (uint8_t)(UINT8_MAX - 1) &&
-                    jc->function->owner_class != (uint8_t)(UINT8_MAX - 2)) {
+                if (recv == 0 && jc->function->owner_class != DIAMOND_OWNER_NONE &&
+                    jc->function->owner_class != DIAMOND_OWNER_MODULE &&
+                    jc->function->owner_class != DIAMOND_OWNER_CAPTURED_SELF) {
                     compile_invoke_dispatch(jc, instruction_start, dest, 0, name, base, argc,
                                          opcode == DIAMOND_OP_INVOKE_MONO);
                     break;
@@ -2350,7 +2350,7 @@ static void compile_body(JitCompiler *jc) {
                  * of a single concrete class -- see parameter_is_single_
                  * class/parameter_never_reassigned's own comments. No
                  * explicit recv!=0 guard here: for a genuinely self-less
-                 * function (owner_class==UINT8_MAX, self_offset==0 inside
+                 * function (owner_class==DIAMOND_OWNER_NONE, self_offset==0 inside
                  * parameter_is_single_class), register 0 legitimately IS
                  * the first declared parameter's own home register, not a
                  * self slot -- parameter_is_single_class's own self_offset
