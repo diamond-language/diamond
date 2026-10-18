@@ -61,6 +61,18 @@ int main(void) {
     for (size_t index = 0; index < count; index++) free(labels[index]);
     free(labels);
 
+    /* An Array offers its API, not the prelude helpers that happen to dispatch on it. */
+    static const char array_session[] = "values = [3, 1, 2]\n";
+    static const char array_dot[] = "values.";
+    if (!repl_compute_completions(array_session, sizeof array_session - 1, "", 0, array_dot, 7,
+            &labels, &count)) return 13;
+    if (!has_label(labels, count, "map") || !has_label(labels, count, "each_with_index")) return 14;
+    static const char *const internal[] = {"membership", "member", "map_int", "map_string", "map_typed", "swap_first_two"};
+    for (size_t index = 0; index < sizeof internal / sizeof internal[0]; index++)
+        if (has_label(labels, count, internal[index])) return 15;
+    for (size_t index = 0; index < count; index++) free(labels[index]);
+    free(labels);
+
     /* Zero matches: not a failure, just an empty result. */
     static const char no_match[] = "x.zzz";
     if (!repl_compute_completions(session, session_length, "", 0, no_match, 5,
