@@ -110,11 +110,12 @@ module Mjolnir
       entity
     end
 
-    # An entity's declared fields as a Hash.
+    # An entity's declared fields as a Hash. An entity built as a plain
+    # Hash row (a builder that returns the row itself) is read by key.
     def dump(entity) -> Hash
       values = {}
       @fields.keys().each() do |name|
-        values[name] = entity.public_send(name)
+        values[name] = if entity is Hash then entity[name] else entity.public_send(name) end
       end
       values
     end

@@ -145,7 +145,7 @@ repo.transaction() do |tx|
 end
 ```
 
-The block's value is returned. A returned `Err` or a raised exception rolls back; anything else commits.
+The block's value is returned. A returned `Err` or a raised exception rolls back; anything else commits. On SQLite a transaction starts with `BEGIN IMMEDIATE`, taking the write lock up front: a read followed by a write cannot fail partway through because another connection wrote in between, and a competing writer waits for the connection's busy timeout (`PRAGMA busy_timeout`) instead.
 
 ## Notes
 

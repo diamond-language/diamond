@@ -8,6 +8,9 @@ authoritative fine-grained record.
 
 ### Added
 
+- `mjolnir` 0.2.3: a changeset can update an entity that is a plain Hash row, and `Repo#transaction` begins with
+  `BEGIN IMMEDIATE`, so a read-then-write transaction no longer fails with a lock error when another connection
+  writes in between (a competing writer waits for the busy timeout instead).
 - `mjolnir` 0.2.2: `Schema.new(..., primary_key: ["a", "b"])` declares a composite primary key; `Repo#get`, `update` and
   `delete` address a row by an Array of its parts.
 - `GraphQL::ExecutionError.new(message, extensions)` accepts an optional Hash that is returned under the error's
