@@ -108,7 +108,10 @@ gremlin 0.4.0 was published this way on 2026-10-02 and 0.4.2 (a raising handler 
 on 2026-10-17 with a 30-minute credential (revoked; archive sha256
 `8cebe7161bc9040642859bd8eebd3d761ca4729918f109b90ca0c123c2dbe782`), after which
 `tools/verify_registry_launch.di` passed for all 18 cuts. `div` 0.2.4 (`Div.check_fresh`) followed the same day the same way (archive sha256
-`474ba288bae1b16cf8a8799b8b3fe60e9a97087c8a578ad279d19437e0be3872`, credential revoked, verification passed).
+`474ba288bae1b16cf8a8799b8b3fe60e9a97087c8a578ad279d19437e0be3872`, credential revoked, verification passed). `gremlin` 0.4.3 (`request["peer_address"]`, sha256
+`47b899ebc0e5ea0ca1797fd1874883831207f11e06f1f5e27fe0ae707aea70a1`) and `graphql` 0.1.5 (`Schema#to_sdl`, sha256
+`522ecb0e961c9522b4689324536b60746277d1e9ab40a60d754e9313030d90f3`) were published later the same day the same way,
+each with its own revoked credential and a passing verification.
 
 ## Host disk and logs
 
