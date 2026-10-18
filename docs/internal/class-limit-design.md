@@ -66,7 +66,7 @@ unchanged. The three bases above the class range move out of the way:
 Every `uint8_t` that stores a type id or class index becomes `uint16_t`: `known_types`,
 `DiamondTypeMember.id`, `field_known_class`, `discovered_field_known_class`, `owner_class`,
 `superclass`, `range_class_index`, the JIT arrays, `DiamondValue.as.class_index`, `Compiler.current_class`
-and the casts at the 40-odd `(uint8_t)(DIAMOND_TYPE_CLASS_BASE + ...)` sites. The `static_assert`s become
+and the roughly dozen `(uint8_t)(DIAMOND_TYPE_CLASS_BASE + ...)` casts in `compiler.c`. The `static_assert`s become
 `DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES <= DIAMOND_TYPE_NATIVE`. Sentinels move to `0xFFFF` and
 `0xFFFD`; `DIAMOND_NATIVE_TYPE_OPERAND_BASE` moves above 0xFFFF's operand range.
 
@@ -75,10 +75,11 @@ This stage changes no behaviour and no bytecode, so it can be verified by the ex
 ### 2. Widen class operands in bytecode (format break)
 
 Each class operand becomes a big-endian 16-bit value (`emit_function_index`'s convention): `emit_byte`
-becomes `emit_register`-style emission at the 11 compiler sites, `READ_BYTE(ci)` becomes `READ_SHORT(ci)`
-at the matching interpreter, JIT, disassembler, loader-verifier and `selfhost/parser.di` opcode-table
-entries. Instruction length changes, so `DIAMOND_BYTECODE_VERSION` is bumped and every `.dic` is
-rejected and rebuilt (a cache miss, not an error). The JIT's `READ_*` decoding and its inline-cache
+becomes 16-bit emission at the nine class-operand sites in `compiler.c`, and `READ_BYTE` becomes
+`READ_SHORT` at the matching interpreter, JIT, disassembler and `selfhost/parser.di` entries (a first
+count is nine `READ_BYTE` class reads; stage 2 starts by enumerating them properly). Instruction length
+changes, so `DIAMOND_CACHE_FORMAT_VERSION` is bumped and every `.dic` is rejected and rebuilt (a cache
+miss, not an error). The JIT's `READ_*` decoding and its inline-cache
 site tables change with the operand width.
 
 ### 3. Dynamic class and module storage
