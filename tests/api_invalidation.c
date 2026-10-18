@@ -72,7 +72,7 @@ int main(void) {
     klass->methods[1].is_private=true;
     diamond_vm_invalidate_method_caches(&vm);
     if (diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_TYPE_ERROR)return 6;
-    child->superclass=UINT8_MAX;
+    child->superclass=DIAMOND_NO_CLASS;
     diamond_vm_invalidate_method_caches(&vm);
     if(diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_NO_METHOD_ERROR)return 8;
     child->superclass=(uint8_t)(klass-program.classes);
