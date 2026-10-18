@@ -111,7 +111,8 @@ on 2026-10-17 with a 30-minute credential (revoked; archive sha256
 `474ba288bae1b16cf8a8799b8b3fe60e9a97087c8a578ad279d19437e0be3872`, credential revoked, verification passed). `gremlin` 0.4.3 (`request["peer_address"]`, sha256
 `47b899ebc0e5ea0ca1797fd1874883831207f11e06f1f5e27fe0ae707aea70a1`) and `graphql` 0.1.5 (`Schema#to_sdl`, sha256
 `522ecb0e961c9522b4689324536b60746277d1e9ab40a60d754e9313030d90f3`) were published later the same day the same way,
-each with its own revoked credential and a passing verification.
+each with its own revoked credential and a passing verification. `mjolnir` 0.2.1 (composite `unique_constraint`, sha256
+`bd98ce4a26d8f3405fedd181eaa13166da836f0aaad425b3a0ddc0ad336e18a3`) followed the same way (its seed was prepared with `--selection` naming `arel` and `mjolnir`, then trimmed to mjolnir).
 
 ## Host disk and logs
 
