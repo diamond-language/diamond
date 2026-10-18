@@ -6,6 +6,11 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Packages
+
+- `gremlin` 0.4.2: a handler that raises answers `500 Internal Server Error` instead of dropping the connection;
+  the registry's launch seed now pins 0.4.2.
+
 ### Fixed
 
 - Gremlin answers `500 Internal Server Error` (generic body, error and `request_id` in the log) when a handler
