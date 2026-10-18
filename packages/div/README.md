@@ -11,7 +11,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add div --registry https://cuts.dilang.tech --version "^0.2.3"
+facet add div --registry https://cuts.dilang.tech --version "^0.2.4"
 facet update
 ```
 
@@ -107,6 +107,21 @@ http_serve(8080, handler)
 diamond app.di
 curl localhost:8080/notes
 ```
+
+**4. Fail fast on a stale cache.** Forgetting step 2 after editing a template serves the
+old page silently. Each compiled file starts with the SHA-256 of its source, and
+`Div.check_fresh` raises at startup, naming the templates that changed, were added, or were
+never compiled:
+
+```ruby
+require_cut "div"
+Div.check_fresh("views")                          # raises: stale compiled templates (run divc_all.sh views): views/index.html.div
+Div.check_fresh("views", "./compile_views.sh")    # the second argument is the command the message suggests
+Div.stale_templates("views")                      # the stale paths as an Array, to report your own way
+```
+
+Call it before the `require`s of the generated files are used, for example first thing in `app.di`.
+Files compiled by an older Div have no stamp and read as stale until recompiled.
 
 ## Template syntax
 

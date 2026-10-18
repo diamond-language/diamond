@@ -38,9 +38,9 @@
       "archive": "div.tar",
       "dependencies": {},
       "name": "div",
-      "sha256": "ea3802dab1bbd745497adf22373d8dbba633163694bb291bfa07ec8b4e9e894a",
-      "size": 33280,
-      "version": "0.2.3"
+      "sha256": "474ba288bae1b16cf8a8799b8b3fe60e9a97087c8a578ad279d19437e0be3872",
+      "size": 35328,
+      "version": "0.2.4"
     },
     {
       "archive": "graphql.tar",

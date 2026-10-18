@@ -294,6 +294,13 @@ module Div
     out.join("\n") + "\n"
   end
 
+  # First line of every generated file: the SHA-256 of the template it was
+  # compiled from, so `Div.stale_templates` can tell an edited template from
+  # an up-to-date one without file timestamps (Diamond has none).
+  def source_stamp(digest)
+    "# div-source-sha256: #{digest}\n"
+  end
+
   # `name_path`, when given, is used instead of `input_path` to derive
   # the generated function's own name -- via function_name_for_relative,
   # not function_name_for, so a caller passing one actually gets
@@ -308,7 +315,7 @@ module Div
     function_name = if name_path == nil then Div.function_name_for(input_path) else Div.function_name_for_relative(name_path) end
     generated = Div.compile_source(source, function_name)
     output = File.open(output_path, "w")
-    output.write(generated)
+    output.write(Div.source_stamp(Digest.sha256(source)) + generated)
     output.close()
   end
 end
