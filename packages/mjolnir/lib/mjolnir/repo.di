@@ -27,9 +27,11 @@ module Mjolnir
     end
 
     def get(schema: Schema, id)
-      condition = {}
-      condition[schema.primary_key()] = id
-      self.one(schema.query().where(condition))
+      query = schema.query()
+      schema.key_predicates(id).each() do |predicate|
+        query = query.where(predicate)
+      end
+      self.one(query)
     end
 
     def count(query: Query) -> Int = query.arel().count(@db, @visitor)
@@ -49,6 +51,9 @@ module Mjolnir
     #   posts = repo.preload(users, users_list, "posts")
     #   posts[user.id()]   # Array of Post
     def preload(schema: Schema, entities: Array, name: String, scope = nil) -> Hash
+      if schema.composite?()
+        raise ArgumentError.new("preload does not support the composite key of #{schema.table_name()}")
+      end
       found = schema.association(name)
       target = found["target"]
       key = found["key"]
@@ -114,11 +119,13 @@ module Mjolnir
         return Ok.new(changeset.entity())
       end
       schema = changeset.schema()
-      id = changeset.get_field(schema.primary_key())
-      statement = Arel.update(schema.table())
-        .set(self.stamped(changeset, false))
-        .where(schema.column(schema.primary_key()).eq(id))
-        .returning(["*"])
+      parts = schema.primary_keys().map() do |key| changeset.get_field(key) end
+      id = if schema.composite?() then parts else parts[0] end
+      statement = Arel.update(schema.table()).set(self.stamped(changeset, false))
+      schema.key_predicates(id).each() do |predicate|
+        statement = statement.where(predicate)
+      end
+      statement = statement.returning(["*"])
       result = self.write(changeset, statement)
       if result is Ok && result.value() == nil
         raise StaleEntryError.new(schema.table_name(), id)
@@ -170,7 +177,10 @@ module Mjolnir
 
     # Rows removed.
     def delete(schema: Schema, id)
-      statement = Arel.delete_from(schema.table()).where(schema.column(schema.primary_key()).eq(id))
+      statement = Arel.delete_from(schema.table())
+      schema.key_predicates(id).each() do |predicate|
+        statement = statement.where(predicate)
+      end
       statement.execute(@db, @visitor)
     end
 

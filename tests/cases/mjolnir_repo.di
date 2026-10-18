@@ -19,6 +19,11 @@ end
 
 def build_board_row(row) = row
 
+struct Seen(game_id: Int, player_id: Int, hits: Int)
+end
+
+def build_seen(row) = Seen.new(row["game_id"], row["player_id"], row["hits"])
+
 def board_changeset(boards, attrs)
   Mjolnir::Changeset.cast(boards, nil, attrs, ["game_id", "slug", "label"]).unique_constraint("slug", columns: ["game_id", "slug"])
 end
@@ -73,6 +78,32 @@ def run_tests()
     begin
       repo.insert(board_changeset(boards, {"game_id": 3, "slug": "b", "label": "x"}))
     rescue error: StandardError
+      raised = true
+    end
+    Minitest.assert(raised)
+  end
+
+  suite.test("a composite primary key finds, updates and deletes by its parts") do
+    db = SQLite3.open(":memory:")
+    db.execute("CREATE TABLE seen (game_id INTEGER NOT NULL, player_id INTEGER NOT NULL, hits INTEGER NOT NULL, PRIMARY KEY (game_id, player_id))")
+    seen = Mjolnir::Schema.new("seen", {"game_id": :int, "player_id": :int, "hits": :int}, build_seen, primary_key: ["game_id", "player_id"])
+    repo = Mjolnir::Repo.new(db)
+    Minitest.assert(seen.composite?())
+    Minitest.assert_equal(["game_id", "player_id"], seen.primary_keys())
+    repo.insert!(Mjolnir::Changeset.cast(seen, nil, {"game_id": 1, "player_id": 2, "hits": 1}, ["game_id", "player_id", "hits"]))
+    repo.insert!(Mjolnir::Changeset.cast(seen, nil, {"game_id": 1, "player_id": 3, "hits": 5}, ["game_id", "player_id", "hits"]))
+    row = repo.get(seen, [1, 2])
+    Minitest.assert_equal(1, row.hits())
+    Minitest.assert_equal(nil, repo.get(seen, [2, 2]))
+    repo.update!(Mjolnir::Changeset.cast(seen, row, {"hits": 9}, ["hits"]))
+    Minitest.assert_equal(9, repo.get(seen, [1, 2]).hits())
+    Minitest.assert_equal(5, repo.get(seen, [1, 3]).hits())
+    Minitest.assert_equal(1, repo.delete(seen, [1, 2]))
+    Minitest.assert_equal(1, repo.count(seen.query()))
+    raised = false
+    begin
+      repo.get(seen, 1)
+    rescue error: ArgumentError
       raised = true
     end
     Minitest.assert(raised)

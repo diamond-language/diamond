@@ -125,6 +125,18 @@ The result is a Hash keyed by each entity's primary key. An optional fourth argu
 
 `Schema.new(..., "id", true)` (or `timestamps: true`) requires `created_at` and `updated_at` integer fields. `insert` stamps both with the current epoch seconds, and `update` and `update_all` refresh `updated_at`, unless the changeset sets them itself.
 
+### Composite primary keys
+
+Pass an Array of field names as `primary_key:` for a table keyed by several columns, such as a join table. `get`, `update` and `delete` then take the key parts as an Array, in the order declared:
+
+```ruby
+seen = Mjolnir::Schema.new("seen", fields, build_seen, primary_key: ["game_id", "player_id"])
+repo.get(seen, [1, 2])
+repo.delete(seen, [1, 2])
+```
+
+There is no autoincrement, so every part is supplied on insert. `schema.primary_key()` raises for a composite key (use `primary_keys()`), and `preload` does not support composite keys.
+
 ### Transactions
 
 ```ruby
