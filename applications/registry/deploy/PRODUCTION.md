@@ -5,9 +5,11 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `c9622650766b2f732693003efa7b2c2ce8ee6b3d` (v0.16.0, deployed
-2026-10-16 with `tools/deploy_registry.sh` after a verified backup; no cut was published, and
-`tools/verify_registry_launch.di` passed for all 18 cuts);
+Runtime revision: `bb35699e95bd3b9c8521d61e0d85e32417c59009` (v0.18.0, deployed
+2026-10-18 with `tools/deploy_registry.sh` after a verified backup; the gremlin 0.4.4, graphql 0.1.6 and
+mjolnir 0.2.3 cuts had been published earlier, and `tools/verify_registry_launch.di` passed for all 18 cuts);
+previously `c9622650766b2f732693003efa7b2c2ce8ee6b3d` (v0.16.0, deployed
+2026-10-16 the same way, no cut published);
 previously `7f76de9d6e9c8397a0796e377e2da3610a2fc17d` (v0.14.0, deployed 2026-10-14 the same way);
 previously `54c37ee66475dfbefde4e3620891f69d7532fdef` (main, deployed
 2026-10-12 with `tools/deploy_registry.sh` after a verified backup; the bundled seed pins
