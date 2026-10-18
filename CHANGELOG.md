@@ -31,6 +31,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Completion on an Array (the website REPL, the terminal REPL and the language server) no longer offers prelude helpers that are not part of its API: `membership`, `member`, `map_int`, `map_string`, `map_typed` and `swap_first_two`.
 - A keyword argument on a continuation line of a `Foo.new(...)` (or other dynamic-target) call, as in
   `Foo.new(a,\n  b,\n  key: value)`, was a parse error ("expected ')' after arguments"): the keyword look-ahead
   forgot that a newline after a comma still starts an argument.

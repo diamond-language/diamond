@@ -1049,6 +1049,14 @@ bool receiver_hash_uses_enumerable(const char *name) {
     return false;
 }
 
+bool receiver_builtin_member_hidden(uint16_t builtin_type,const char *member) {
+    static const char *const array_hidden[]={"membership","member","map_int","map_string","map_typed","swap_first_two"};
+    if(builtin_type!=DIAMOND_TYPE_ARRAY)return false;
+    for(size_t index=0;index<sizeof array_hidden/sizeof array_hidden[0];index++)
+        if(strcmp(member,array_hidden[index])==0)return true;
+    return false;
+}
+
 /* The one built-in type a function's declared (or, failing that, inferred)
  * return type names, if it names exactly one. */
 static bool function_builtin_return(const DiamondFunction *function,uint16_t *type) {

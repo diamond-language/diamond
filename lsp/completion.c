@@ -158,7 +158,8 @@ static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
             if(strncmp(name,prefixes[prefix],prefix_length)!=0)continue;
             const char *member=name+prefix_length;
             /* Operator bridges (array_op_minus) and prelude internals. */
-            if(*member=='\0'||strncmp(member,"op_",3)==0||strcmp(member,"call_pair")==0)continue;
+            if(*member=='\0'||strncmp(member,"op_",3)==0||strcmp(member,"call_pair")==0||
+               receiver_builtin_member_hidden(type,member))continue;
             if(type==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0&&
                !receiver_hash_uses_enumerable(member))continue;
             char label[DIAMOND_MAX_FUNCTION_NAME+2];

@@ -93,6 +93,11 @@ const char *const *receiver_builtin_prefixes(uint16_t builtin_type,size_t *count
  * these with Array; every other enumerable_ function is Array-only). */
 bool receiver_hash_uses_enumerable(const char *name);
 
+/* True for a prelude function that dispatches as a method of `builtin_type` but is not part of its
+ * API: an internal helper (Array#-'s membership table) or a typed-call test fixture. Completion
+ * leaves these out; calling one by hand still works. */
+bool receiver_builtin_member_hidden(uint16_t builtin_type,const char *member);
+
 /* True iff a lexical local (or parameter) named `name` is in scope at
  * `offset` -- the same innermost-shadow-aware lookup
  * receiver_resolve_local_type_set uses internally, exposed standalone
