@@ -582,7 +582,21 @@ rescue error: ArgumentError
   puts(error.message())
 end")"
 [[ "$actual" == *'return_after_shutdown requires threads = 1'* ]]
-echo "18 gremlin tests passed"
+# A shutdown signal that lands after the worker loop's "requested and no
+# connections" check but before its poll leaves a poll with nothing to wait on
+# (the listener is closed and out of the list). That poll used to sleep out the
+# whole grace period; it must return at once, and a closed listener still in the
+# list must read as "nothing ready" rather than raise.
+actual="$("$diamond" -e "require \"$package_root/lib/gremlin\"
+listener = TCPServer.listen_nonblocking(0)
+GremlinShutdown.register_listener(listener)
+GremlinShutdown.request()
+started = Time.monotonic()
+empty = GremlinShutdown.poll([], [], 8000)
+closed = GremlinShutdown.poll([listener], [], 8000)
+puts([Time.monotonic() - started < 2.0, empty[\"readable\"].length(), closed[\"readable\"]].inspect())")"
+[[ "$actual" == *'[true, 0, [false]]'* ]]
+echo "19 gremlin tests passed"
 
 # Token-managed shutdown returns through the owner and bounds stalled clients.
 "$diamond" "$package_root/test/shutdown_driver.di" "$diamond" "$package_root/test/shutdown.di"

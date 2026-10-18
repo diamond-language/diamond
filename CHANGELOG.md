@@ -13,8 +13,15 @@ authoritative fine-grained record.
 - `peer_address()` on a connected socket (client or accepted, blocking or non-blocking) returns the remote
   address as text, so a server can rate-limit or log by client address without a proxy header.
 
+### Fixed
+
+- `gremlin` shutdown could take the whole 10-second grace period: a SIGTERM landing just after the worker loop's
+  "shutdown requested and no connections" check, before it polled, left the poll with no file descriptors and nothing
+  to wake it. Found by stress-testing start/SIGTERM cycles under CPU load (about 1 in 40 with three workers).
+
 ### Packages
 
+- `gremlin` 0.4.4: the shutdown race above. The registry's launch seed now pins 0.4.4.
 - `mjolnir` 0.2.1: `unique_constraint(name, columns: [...])` turns a failed multi-column `UNIQUE` into a field error
   (it used to match single-column constraints only, so a composite violation raised).
 - `gremlin` 0.4.3: the request hash carries `request["peer_address"]`, the TCP peer's address. It needs a runtime with
