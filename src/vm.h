@@ -687,9 +687,23 @@ typedef enum DiamondMathFunction : uint8_t {
  * COMPILE_METHOD when the call was `self.define_method(...)` (etc.) inside
  * a class singleton method: the class is whichever one `self` holds at run
  * time, so a base class's `def self.fields(...)` can add methods to the
- * subclass it's called on. Above every real class index (at most
- * DIAMOND_MAX_CLASSES - 1). */
-enum { DIAMOND_CLASS_FROM_SELF = 0xFF };
+ * subclass it's called on. Above every real class index. */
+enum { DIAMOND_CLASS_FROM_SELF = 0xFFFF };
+
+/* "No class": a class with no superclass, the unresolved Range class, the
+ * unknown class of an instance field or register, and the class operand of
+ * a singleton call whose receiver class is not known statically. Above
+ * every real class index (class operands and indices are 16 bits). */
+enum { DIAMOND_NO_CLASS = UINT16_MAX };
+
+/* DiamondFunction.owner_class is a real class index for a method, or one of
+ * these sentinels: NONE for a plain function, MODULE for a module method,
+ * CAPTURED_SELF for a closure that gets `self` through its captures. */
+enum {
+    DIAMOND_OWNER_NONE = UINT16_MAX,
+    DIAMOND_OWNER_MODULE = UINT16_MAX - 1,
+    DIAMOND_OWNER_CAPTURED_SELF = UINT16_MAX - 2,
+};
 
 typedef enum DiamondTypeId : uint16_t {
     DIAMOND_TYPE_INT,
@@ -703,25 +717,35 @@ typedef enum DiamondTypeId : uint16_t {
     DIAMOND_TYPE_SIZED,
     DIAMOND_TYPE_SYMBOL,
     DIAMOND_TYPE_CLASS_BASE,
-    /* Class ids occupy CLASS_BASE..CLASS_BASE+MAX_CLASSES-1 (10..189).
-     * Keep generic variables and interfaces above that full advertised
-     * range: the old 96/128 split caused programs with more than 86 classes
-     * to reinterpret ordinary class ids as generic/interface ids. */
+    /* Class ids occupy CLASS_BASE..DIAMOND_TYPE_CLASS_LIMIT-1; everything
+     * above is reserved, so the class count can grow without a class id
+     * ever reading as a native, generic-variable or interface id. */
+    DIAMOND_TYPE_CLASS_LIMIT = 0xE000,
+    /* DIAMOND_OP_IS_TYPE's operand for `x is Time`: this base plus the
+     * native object kind. Above every class id, below every id that can
+     * appear in a type set. */
+    DIAMOND_NATIVE_TYPE_OPERAND_BASE = 0xE000,
     /* A native object type (Time, Fiber, Channel, File, ...). One id for
      * all of them; a DiamondTypeMember with this id stores which object
      * kind in its callable_arity byte (meaningless for anything but
-     * Callable otherwise). It sits in the gap after the class range. */
-    DIAMOND_TYPE_NATIVE = 190,
-    DIAMOND_TYPE_VARIABLE_BASE = 192,
-    DIAMOND_TYPE_INTERFACE_BASE = 224,
+     * Callable otherwise). */
+    DIAMOND_TYPE_NATIVE = 0xF000,
+    DIAMOND_TYPE_VARIABLE_BASE = 0xF100,
+    DIAMOND_TYPE_INTERFACE_BASE = 0xF200,
+    /* No type is known. */
+    DIAMOND_TYPE_NONE = 0xFFFF,
 } DiamondTypeId;
 
-static_assert(DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES <= DIAMOND_TYPE_NATIVE,
-              "class type ids must not reach DIAMOND_TYPE_NATIVE");
+static_assert((int)DIAMOND_TYPE_CLASS_BASE + (int)DIAMOND_MAX_CLASSES <= (int)DIAMOND_TYPE_CLASS_LIMIT,
+              "class type ids must stay below DIAMOND_TYPE_CLASS_LIMIT");
+static_assert((int)DIAMOND_MAX_CLASSES < (int)DIAMOND_OWNER_CAPTURED_SELF,
+              "class indices must stay below the owner_class sentinels");
 
-/* DIAMOND_OP_IS_TYPE's operand for `x is Time`: this base plus the object
- * kind, above every real type id (which fit in a byte). */
-enum { DIAMOND_NATIVE_TYPE_OPERAND_BASE = 256 };
+/* True for a DIAMOND_OP_IS_TYPE / resolved-type operand that names a native
+ * object type (BASE + kind) rather than a type id. */
+static inline bool diamond_type_operand_is_native(int operand) {
+    return operand >= (int)DIAMOND_NATIVE_TYPE_OPERAND_BASE && operand < (int)DIAMOND_TYPE_NATIVE;
+}
 
 /* The native types an annotation can name, and their object kinds. */
 bool diamond_native_type_kind(const char *name, uint8_t *kind);
@@ -1332,7 +1356,7 @@ typedef struct DiamondFunction {
  * passing it to Array#find, storing it and calling it as a Callable
  * value -- only ever supplies its own real, self-less arguments. */
 static inline uint8_t diamond_function_self_offset(const DiamondFunction *fn) {
-    return (fn->owner_class!=UINT8_MAX&&fn->owner_class!=(uint16_t)(UINT8_MAX-2))?1:0;
+    return (fn->owner_class!=DIAMOND_OWNER_NONE&&fn->owner_class!=DIAMOND_OWNER_CAPTURED_SELF)?1:0;
 }
 
 struct DiamondChunk {

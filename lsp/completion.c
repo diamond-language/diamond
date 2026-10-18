@@ -85,7 +85,7 @@ static bool follows_member_dot(const char *source,size_t offset) {
 static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
         size_t class_index,bool is_singleton) {
     size_t current=class_index;
-    while(current!=UINT8_MAX) {
+    while(current!=DIAMOND_NO_CLASS) {
         const DiamondClass *class=&chunk->classes[current];
         const DiamondMethod *methods=is_singleton?class->singleton_methods:class->methods;
         const size_t count=is_singleton?class->singleton_method_count:class->method_count;
@@ -150,7 +150,7 @@ static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
         okay=push_member(items,&seen,natives[index]);
     for(size_t index=0;okay&&index<chunk->function_count;index++) {
         const DiamondFunction *function=chunk->functions[index];
-        if(function->owner_class!=UINT8_MAX||function->nested)continue;
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested)continue;
         const char *name=function->name;
         if(strncmp(name,"diamond_",8)==0)name+=8;
         for(size_t prefix=0;okay&&prefix<prefix_count;prefix++) {
@@ -215,7 +215,7 @@ JsonValue *completion_compute_with_resolver(DiamondSourceOverride resolver,
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     const bool member=cursor_offset!=SIZE_MAX&&follows_member_dot(combined,cursor_offset);
     for(size_t index=0;okay&&!member&&index<chunk.function_count;index++)
-        if(chunk.functions[index]->owner_class==UINT8_MAX&&!chunk.functions[index]->nested)
+        if(chunk.functions[index]->owner_class==DIAMOND_OWNER_NONE&&!chunk.functions[index]->nested)
             okay=push_item(items,chunk.functions[index]->name,COMPLETION_KIND_FUNCTION);
     for(size_t index=0;okay&&!member&&index<chunk.class_count;index++)
         okay=push_item(items,chunk.classes[index].name,COMPLETION_KIND_CLASS);

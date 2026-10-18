@@ -16,7 +16,7 @@
 #include <string.h>
 #include <time.h>
 
-enum { TYPE_UNKNOWN = UINT8_MAX };
+enum { TYPE_UNKNOWN = DIAMOND_TYPE_NONE };
 
 typedef struct ToolingDependencies {
     bool forward_calls;
@@ -580,11 +580,11 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                uint16_t native_return=UINT8_MAX;
+                uint16_t native_return=DIAMOND_TYPE_NONE;
                 if(!diamond_native_method_satisfies(known,method->name,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
-                    if(native_return==UINT8_MAX)return false;
+                    if(native_return==DIAMOND_TYPE_NONE)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
@@ -632,7 +632,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
                                 wanted->return_type_set)))found=false;
                         if(found)break;
                     }
-                if(found||class->superclass==UINT8_MAX)break;
+                if(found||class->superclass==DIAMOND_NO_CLASS)break;
                 class_index=class->superclass;
             }
             if(!found)return false;
@@ -649,7 +649,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
             for(size_t index=0;index<class->method_count;index++)
                 if(strcmp(class->methods[index].name,"length")==0&&
                    class->methods[index].arity==0)return true;
-            if(class->superclass==UINT8_MAX)break;
+            if(class->superclass==DIAMOND_NO_CLASS)break;
             class_index=class->superclass;
         }
         return false;
@@ -661,7 +661,7 @@ static bool known_type_satisfies_one(const Compiler *compiler, uint16_t known,
     while(class_index<compiler->program->class_count) {
         if(class_index==wanted) return true;
         const uint16_t parent=compiler->program->classes[class_index].superclass;
-        if(parent==UINT8_MAX) break;
+        if(parent==DIAMOND_NO_CLASS) break;
         class_index=parent;
     }
     return false;
@@ -2132,7 +2132,7 @@ static uint16_t parse_identifier(Compiler *compiler) {
          * CLOSURE value); this is the same closure value with zero
          * captures, for a function that needs none since it isn't
          * nested inside anything with locals to close over. find_function
-         * already applies the same owner_class==UINT8_MAX && !nested
+         * already applies the same owner_class==DIAMOND_OWNER_NONE && !nested
          * filter find_top_level_function (src/vm.c) uses at runtime, so
          * this can never resolve a class/module method or another
          * function's own nested def by bare name. */
@@ -2198,7 +2198,7 @@ static int find_function(const Compiler *compiler, DiamondSpan name) {
     for (size_t index = compiler->program->function_count; index > 0; index--) {
         const size_t function_index = index - 1;
         const char *candidate = compiler->program->functions[function_index]->name;
-        if (compiler->program->functions[function_index]->owner_class != UINT8_MAX ||
+        if (compiler->program->functions[function_index]->owner_class != DIAMOND_OWNER_NONE ||
             compiler->program->functions[function_index]->nested) continue;
         size_t length = 0;
         while (candidate[length] != '\0') length++;
@@ -2454,7 +2454,7 @@ static int find_class_chain_constant(const Compiler *compiler,int class_index,
                 class->included_modules[index-1],name,0);
             if(found>=0)return found;
         }
-        class_index=class->superclass==UINT8_MAX?-1:(int)class->superclass;
+        class_index=class->superclass==DIAMOND_NO_CLASS?-1:(int)class->superclass;
     }
     return -1;
 }
@@ -2668,7 +2668,7 @@ static int parse_type_annotation(Compiler *compiler) {
             fail(compiler,member_span,"type name is too long");break;
         }
         const int resolved=resolve_type_name(compiler,type_name_buffer,member_span);
-        const bool native=resolved>=DIAMOND_NATIVE_TYPE_OPERAND_BASE;
+        const bool native=diamond_type_operand_is_native(resolved);
         const uint16_t type=native?DIAMOND_TYPE_NATIVE:(uint16_t)resolved;
         if(set->count==DIAMOND_MAX_UNION_TYPES) {
             fail(compiler,compiler->current.span,"too many types in union");break;
@@ -2856,7 +2856,7 @@ static int class_variable_owner(Compiler *compiler, DiamondSpan name) {
     DiamondClass *class = &compiler->program->classes[index];
     memset(class, 0, sizeof *class);
     memcpy(class->name, hidden, (size_t)written + 1);
-    class->superclass = UINT8_MAX;
+    class->superclass = DIAMOND_NO_CLASS;
     return (int)index;
 }
 
@@ -3942,7 +3942,7 @@ static bool self_has_singleton_method(const Compiler *compiler,DiamondSpan name)
         for(size_t index=0;index<owner->singleton_method_count;index++)
             if(singleton_call_name_equals(compiler,owner->singleton_methods[index].name,name))
                 return true;
-        owner=owner->superclass==UINT8_MAX?nullptr:
+        owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
             &compiler->program->classes[owner->superclass];
     }
     return false;
@@ -4003,7 +4003,7 @@ static uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * call means. */
     if(function_index<0&&!compiler->discovery_pass&&compiler->in_method&&
        !compiler->in_singleton_method&&compiler->current_class>=0&&
-       compiler->function->owner_class!=UINT8_MAX&&
+       compiler->function->owner_class!=DIAMOND_OWNER_NONE&&
        self_has_method(compiler,name)) {
         return parse_invoke_named(compiler,0,0,compiler->known_type_sets[0],name);
     }
@@ -4367,7 +4367,7 @@ static uint16_t emit_singleton_call(Compiler *compiler,const DiamondMethod *meth
     if(method->needs_receiver&&receiver_class_index>=0) {
         emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
         emit_register(compiler,base);
-        emit_byte(compiler,(uint8_t)receiver_class_index);
+        emit_register(compiler,(uint16_t)receiver_class_index);
     }
     for(size_t index=0;index<argument_count;index++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,
@@ -4439,7 +4439,7 @@ static bool infer_reference_type_arguments(Compiler *compiler,
 
 /* `Namespace.method`, no call following -- a bare reference to a class/
  * module singleton method as a value, not a call. Synthesizes a small
- * hidden top-level function (owner_class=UINT8_MAX, nested=true -- not
+ * hidden top-level function (owner_class=DIAMOND_OWNER_NONE, nested=true -- not
  * findable by bare name, only reachable via the DIAMOND_OP_CLOSURE this
  * emits at the reference site) whose entire body forwards its own
  * parameters into method via emit_singleton_call, the exact same call
@@ -4518,7 +4518,7 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
         fail(compiler,namespace_name,"out of memory");
         return 0;
     }
-    function->owner_class=UINT8_MAX;
+    function->owner_class=DIAMOND_OWNER_NONE;
     function->nested=true;
     function->return_type_set=return_set;
     function->arity=method->arity;
@@ -4580,8 +4580,8 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
         else
             emit_function_index(compiler,method->function_index);
         emit_register(compiler,spread);
-        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
-            (uint8_t)receiver_class_index);
+        emit_register(compiler,receiver_class_index<0?DIAMOND_NO_CLASS:
+            (uint16_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
@@ -4737,8 +4737,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         emit_register(compiler,destination);
         emit_function_index(compiler,method->function_index);
         emit_register(compiler,positional);
-        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
-            (uint8_t)receiver_class_index);
+        emit_register(compiler,receiver_class_index<0?DIAMOND_NO_CLASS:
+            (uint16_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
         emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
         for(size_t index=0;index<keyword_count;index++) {
@@ -4785,8 +4785,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             emit_register(compiler,destination);
             emit_function_index(compiler,method->function_index);
             emit_register(compiler,spread);
-            emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
-                (uint8_t)receiver_class_index);
+            emit_register(compiler,receiver_class_index<0?DIAMOND_NO_CLASS:
+            (uint16_t)receiver_class_index);
             emit_byte(compiler,method->needs_receiver?1:0);
             emit_byte(compiler,0x80u);emit_register(compiler,block);
             if(type_argument_count>0) {
@@ -4805,8 +4805,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
         emit_register(compiler,destination);
         emit_function_index(compiler,method->function_index);
         emit_register(compiler,spread);
-        emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
-            (uint8_t)receiver_class_index);
+        emit_register(compiler,receiver_class_index<0?DIAMOND_NO_CLASS:
+            (uint16_t)receiver_class_index);
         emit_byte(compiler,method->needs_receiver?1:0);
         if(type_argument_count>0) {
             emit_byte(compiler,(uint8_t)type_argument_count);
@@ -4876,8 +4876,8 @@ static uint16_t parse_singleton_call(Compiler *compiler,
             emit_register(compiler,destination);
             emit_function_index(compiler,method->function_index);
             emit_register(compiler,positional);
-            emit_byte(compiler,receiver_class_index<0?UINT8_MAX:
-                (uint8_t)receiver_class_index);
+            emit_register(compiler,receiver_class_index<0?DIAMOND_NO_CLASS:
+            (uint16_t)receiver_class_index);
             emit_byte(compiler,method->needs_receiver?1:0);
             emit_byte(compiler,0x80u);emit_register(compiler,block);
             if(type_argument_count>0) {
@@ -4906,7 +4906,7 @@ static uint16_t parse_singleton_call(Compiler *compiler,
     if(method->needs_receiver&&receiver_class_index>=0) {
         emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
         emit_register(compiler,base);
-        emit_byte(compiler,(uint8_t)receiver_class_index);
+        emit_register(compiler,(uint16_t)receiver_class_index);
     }
     for(size_t index=0;index<argument_count;index++)
         emit_instruction(compiler,DIAMOND_OP_MOVE,
@@ -4964,7 +4964,7 @@ static uint16_t parse_redefine_method_call(Compiler *compiler, int class_index) 
     const uint16_t dest = allocate_register(compiler);
     emit_opcode(compiler, DIAMOND_OP_REDEFINE_METHOD);
     emit_register(compiler,dest);
-    emit_byte(compiler, (uint8_t)class_index);
+    emit_register(compiler,(uint16_t)class_index);
     emit_register(compiler,name_register);
     emit_register(compiler,callable_register);
     compiler->known_types[dest] = DIAMOND_TYPE_NIL;
@@ -5004,7 +5004,7 @@ static uint16_t parse_define_method_call(Compiler *compiler, int class_index) {
     const uint16_t dest = allocate_register(compiler);
     emit_opcode(compiler, DIAMOND_OP_DEFINE_METHOD);
     emit_register(compiler,dest);
-    emit_byte(compiler, (uint8_t)class_index);
+    emit_register(compiler,(uint16_t)class_index);
     emit_register(compiler,name_register);
     emit_register(compiler,callable_register);
     compiler->known_types[dest] = DIAMOND_TYPE_NIL;
@@ -5065,7 +5065,7 @@ static uint16_t parse_compile_method_call(Compiler *compiler, int class_index) {
     const uint16_t dest = allocate_register(compiler);
     emit_opcode(compiler, DIAMOND_OP_COMPILE_METHOD);
     emit_register(compiler,dest);
-    emit_byte(compiler, (uint8_t)class_index);
+    emit_register(compiler,(uint16_t)class_index);
     emit_register(compiler,name_register);
     emit_register(compiler,params_register);
     emit_register(compiler,body_register);
@@ -7545,7 +7545,7 @@ static const DiamondFunction *constructor_signature(const Compiler *compiler,
                 return nullptr;
             return compiler->program->functions[method->function_index];
         }
-        class_index=class->superclass==UINT8_MAX?-1:(int)class->superclass;
+        class_index=class->superclass==DIAMOND_NO_CLASS?-1:(int)class->superclass;
     }
     return nullptr;
 }
@@ -7851,7 +7851,7 @@ static uint16_t parse_name(Compiler *compiler) {
                            owner->singleton_methods[index].name,
                            compiler->current.span))
                         method=&owner->singleton_methods[index];
-                owner=owner->superclass==UINT8_MAX?nullptr:
+                owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
                     &compiler->program->classes[owner->superclass];
             }
             if(method==nullptr) {
@@ -7911,7 +7911,7 @@ static uint16_t parse_name(Compiler *compiler) {
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
             emit_register(compiler,destination);
-            emit_byte(compiler,(uint8_t)class_index);
+            emit_register(compiler,(uint16_t)class_index);
             emit_register(compiler,positional);
             emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
             for(size_t index=0;index<keyword_count;index++) {
@@ -7946,7 +7946,7 @@ static uint16_t parse_name(Compiler *compiler) {
                 const uint16_t destination=allocate_register(compiler);
                 emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
                 emit_register(compiler,destination);
-                emit_byte(compiler,(uint8_t)class_index);
+                emit_register(compiler,(uint16_t)class_index);
                 emit_register(compiler,spread);emit_byte(compiler,0x80u);
                 emit_register(compiler,block);
                 compiler->known_types[destination]=
@@ -7956,7 +7956,7 @@ static uint16_t parse_name(Compiler *compiler) {
             const uint16_t destination=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
             emit_register(compiler,destination);
-            emit_byte(compiler,(uint8_t)class_index);
+            emit_register(compiler,(uint16_t)class_index);
             emit_register(compiler,spread);
             compiler->known_types[destination]=
                 (uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
@@ -7999,7 +7999,7 @@ static uint16_t parse_name(Compiler *compiler) {
                 const uint16_t destination=allocate_register(compiler);
                 emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
                 emit_register(compiler,destination);
-                emit_byte(compiler,(uint8_t)class_index);
+                emit_register(compiler,(uint16_t)class_index);
                 emit_register(compiler,positional);emit_byte(compiler,0x80u);
                 emit_register(compiler,block);
                 compiler->known_types[destination]=
@@ -8014,7 +8014,7 @@ static uint16_t parse_name(Compiler *compiler) {
             emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base+i), args[i], 0, 2);
         const uint16_t dest = allocate_register(compiler);
         emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
-        emit_byte(compiler, (uint8_t)class_index); emit_register(compiler,base);
+        emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
         emit_byte(compiler, (uint8_t)count);
         compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
         return dest;
@@ -8276,7 +8276,7 @@ static const DiamondFunction *class_instance_signature(
                 return nullptr;
             return compiler->program->functions[method->function_index];
         }
-        if(class->superclass==UINT8_MAX)break;
+        if(class->superclass==DIAMOND_NO_CLASS)break;
         class_index=class->superclass;
     }
     return nullptr;
@@ -8678,9 +8678,9 @@ static void publish_native_scalar_method_return_type(Compiler *compiler,
     for(size_t index=0;index<name.length;index++)
         method_name[index]=compiler->source[name.start+index];
     method_name[name.length]='\0';
-    uint16_t return_type=UINT8_MAX;
+    uint16_t return_type=DIAMOND_TYPE_NONE;
     if(diamond_native_method_satisfies(receiver_type,method_name,arity,&return_type)&&
-       return_type!=UINT8_MAX)
+       return_type!=DIAMOND_TYPE_NONE)
         compiler->known_types[reg]=return_type;
 }
 
@@ -9270,7 +9270,7 @@ static void publish_instance_return_type(Compiler *compiler,uint16_t reg,
          * own ivar_known_class/NEW-class-index terminals already use. */
         compiler->function->register_known_class[reg]=
             known>=DIAMOND_TYPE_CLASS_BASE&&known<DIAMOND_TYPE_VARIABLE_BASE?
-                (uint8_t)(known-DIAMOND_TYPE_CLASS_BASE):UINT8_MAX;
+                (uint16_t)(known-DIAMOND_TYPE_CLASS_BASE):DIAMOND_NO_CLASS;
     }
     publish_collection_method_return_type(compiler,reg,receiver_set_index,name);
     publish_array_transform_tooling_type(compiler,reg,receiver,name);
@@ -9329,7 +9329,7 @@ static uint16_t parse_bound_method_reference(Compiler *compiler,uint16_t receive
     DiamondFunction *wrapper=compiler_add_function(compiler,&function_index);
     if(wrapper==nullptr) {fail(compiler,method_name,"out of memory");return 0;}
     (void)snprintf(wrapper->name,sizeof wrapper->name,"<bound method>");
-    wrapper->owner_class=UINT8_MAX;wrapper->nested=true;
+    wrapper->owner_class=DIAMOND_OWNER_NONE;wrapper->nested=true;
     wrapper->arity=typed_wrapper?(uint8_t)(target->arity-1):1;
     wrapper->required_arity=typed_wrapper?
         (uint8_t)(target->required_arity>0?target->required_arity-1:0):0;
@@ -9914,7 +9914,7 @@ static uint16_t parse_super(Compiler *compiler) {
     }
     const DiamondClass *owner =
         &compiler->program->classes[(size_t)compiler->current_class];
-    if (owner->superclass == UINT8_MAX) {
+    if (owner->superclass == DIAMOND_NO_CLASS) {
         fail(compiler, keyword, "'super' used in a class without a superclass");
         return 0;
     }
@@ -9953,7 +9953,7 @@ static uint16_t parse_super(Compiler *compiler) {
     const uint16_t method = add_name_string(compiler, compiler->current_method);
     emit_opcode(compiler, DIAMOND_OP_SUPER);
     emit_register(compiler,destination);
-    emit_byte(compiler, (uint8_t)compiler->current_class);
+    emit_register(compiler,(uint16_t)compiler->current_class);
     emit_register(compiler,method);
     emit_register(compiler,base);
     emit_byte(compiler, (uint8_t)count);
@@ -11545,7 +11545,7 @@ static const DiamondMethod *case_pattern_reader(const Compiler *compiler,
             const DiamondMethod *candidate=&class->methods[method-1];
             if(name_equals(compiler,candidate->name,name,false))return candidate;
         }
-        class=class->superclass==UINT8_MAX?nullptr:
+        class=class->superclass==DIAMOND_NO_CLASS?nullptr:
             &compiler->program->classes[class->superclass];
     }
     return nullptr;
@@ -11568,7 +11568,7 @@ static uint16_t compile_case_pattern_class(Compiler *compiler,int class_index) {
     char name[DIAMOND_MAX_FUNCTION_NAME]={};
     const uint16_t result=allocate_register(compiler);
     emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-    emit_register(compiler,result);emit_byte(compiler,(uint8_t)class_index);
+    emit_register(compiler,result);emit_register(compiler,(uint16_t)class_index);
     (void)consume_qualified_name(compiler,name,sizeof name);
     return result;
 }
@@ -11704,7 +11704,7 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
             node->value_register=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
             emit_register(compiler,node->value_register);
-            emit_byte(compiler,(uint8_t)object_class);
+            emit_register(compiler,(uint16_t)object_class);
             (void)consume_qualified_name(compiler,object_name,
                                          sizeof object_name);
             advance_token(compiler);skip_newlines(compiler);
@@ -12375,7 +12375,7 @@ static uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                     }
                     const uint16_t parent=
                         compiler->program->classes[walk-DIAMOND_TYPE_CLASS_BASE].superclass;
-                    if(parent==UINT8_MAX)break;
+                    if(parent==DIAMOND_NO_CLASS)break;
                     walk=(size_t)DIAMOND_TYPE_CLASS_BASE+parent;
                 }
             }
@@ -12650,7 +12650,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
             }
             const int tested=resolve_type_name(
                 compiler,tested_type_name,tested_type_span);
-            const bool tested_native=tested>=DIAMOND_NATIVE_TYPE_OPERAND_BASE;
+            const bool tested_native=diamond_type_operand_is_native(tested);
             const uint16_t tested_type=tested_native?DIAMOND_TYPE_NATIVE:(uint16_t)tested;
             if(tested_type>=DIAMOND_TYPE_VARIABLE_BASE&&
                tested_type<DIAMOND_TYPE_INTERFACE_BASE)
@@ -12749,7 +12749,7 @@ static uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
                              exclusive_reg,0,2);
             const uint16_t dest=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_NEW); emit_register(compiler,dest);
-            emit_byte(compiler,(uint8_t)class_index); emit_register(compiler,base);
+            emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
             emit_byte(compiler,3);
             compiler->known_types[dest]=(uint8_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
             left=dest;continue;
@@ -13846,7 +13846,7 @@ static uint16_t compile_begin(Compiler *compiler) {
                 }
                 const int rescue_resolved=resolve_type_name(
                     compiler,rescue_type_name,rescue_type_span);
-                if(rescue_resolved>=DIAMOND_NATIVE_TYPE_OPERAND_BASE) {
+                if(diamond_type_operand_is_native(rescue_resolved)) {
                     fail(compiler,rescue_type_span,"rescue type must be an exception class");
                     break;
                 }
@@ -13865,7 +13865,7 @@ static uint16_t compile_begin(Compiler *compiler) {
                         const size_t ancestor=(size_t)(
                             seen_rescue_types[existing]-DIAMOND_TYPE_CLASS_BASE);
                         while(child<compiler->program->class_count&&child!=ancestor&&
-                              compiler->program->classes[child].superclass!=UINT8_MAX)
+                              compiler->program->classes[child].superclass!=DIAMOND_NO_CLASS)
                             child=compiler->program->classes[child].superclass;
                         if(child==ancestor)
                             fail(compiler,rescue_type_span,
@@ -14105,7 +14105,7 @@ static uint16_t compile_block(Compiler *compiler) {
      * into its own register 0 below, the same way a `closure name()
      * ... end` (captures_self) already does; call_closure_helper
      * (src/vm.c) already shifts real arguments to register 1+ for any
-     * owner_class!=UINT8_MAX callable, so reusing that exact sentinel
+     * owner_class!=DIAMOND_OWNER_NONE callable, so reusing that exact sentinel
      * here needs no further runtime changes at all. compiler->in_method
      * is deliberately left untouched anywhere in this function (still
      * whatever the enclosing function had) -- that's already why `self`
@@ -14113,7 +14113,7 @@ static uint16_t compile_block(Compiler *compiler) {
      * method; only *which* value ended up in register 0 was wrong
      * before this fix (the block's own first real parameter, since
      * nothing reserved register 0 for self at all). */
-    function->owner_class=compiler->in_method?UINT8_MAX-2:UINT8_MAX;
+    function->owner_class=compiler->in_method?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
     function->nested=true;
     static const char block_name[]="<block>";
     for(size_t index=0;index<sizeof(block_name);index++)
@@ -14261,7 +14261,7 @@ static uint16_t compile_block(Compiler *compiler) {
      * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
      * register 0 unconditionally, so this is what makes all of those work
      * unmodified inside a block body too. */
-    if(function->owner_class==UINT8_MAX-2) {
+    if(function->owner_class==DIAMOND_OWNER_CAPTURED_SELF) {
         if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
             fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
         } else {
@@ -14758,7 +14758,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * class_operand`, src/vm.c) -- and (2) "register 0 is already
      * spoken for, every calling convention that places arguments must
      * skip it" (parameter_offset, computed everywhere in src/vm.c as a
-     * plain `fn->owner_class==UINT8_MAX?0:1` binary check -- confirmed
+     * plain `fn->owner_class==DIAMOND_OWNER_NONE?0:1` binary check -- confirmed
      * nowhere in this codebase tests for one *specific* non-UINT8_MAX
      * value except the assignment sites themselves, so any non-UINT8_MAX
      * sentinel gets (2) for free with no other call site changes).
@@ -14783,7 +14783,7 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * used by CALL_CLOSURE and tap's block-invocation sites, the only
      * ways a Callable *value* (as opposed to ordinary method dispatch)
      * ever actually runs -- inflates its own arity-bounds check by one
-     * for *any* owner_class!=UINT8_MAX function, correct for a genuine
+     * for *any* owner_class!=DIAMOND_OWNER_NONE function, correct for a genuine
      * method's real implicit-receiver argument but wrong here too: this
      * sentinel's whole point is that nothing external ever supplies
      * register 0's value, so the bounds check must stay un-inflated,
@@ -14793,8 +14793,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
          (nested_in_singleton_method&&!captures_self&&compiler->current_class>=0))?
             (uint16_t)compiler->current_class:
         (direct_module_member||(nested_in_singleton_method&&!captures_self&&compiler->current_module>=0))?
-            UINT8_MAX-1:
-        captures_self?UINT8_MAX-2:UINT8_MAX;
+            DIAMOND_OWNER_MODULE:
+        captures_self?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
     function->nested=!at_top_level;
     size_t copy_length=name.length;
     for (size_t index = 0; index < copy_length; index++) {
@@ -16057,7 +16057,7 @@ static void compile_attribute_named(Compiler *compiler,bool writer,bool predicat
     const uint16_t function_index=(uint16_t)allocated_function_index;
     (void)snprintf(function->name,sizeof function->name,"%s",method_name);
     function->owner_class=compiler->current_class>=0?
-        (uint16_t)compiler->current_class:UINT8_MAX-1;
+        (uint16_t)compiler->current_class:DIAMOND_OWNER_MODULE;
     function->arity=writer?2:1;function->required_arity=function->arity;
     function->return_type_set=DIAMOND_NO_TYPE_SET;
     function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
@@ -16635,7 +16635,7 @@ static void compile_delegate(Compiler *compiler) {
     }
     const uint16_t function_index=(uint16_t)allocated_function_index;
     (void)snprintf(function->name,sizeof function->name,"%s",stored_name);
-    function->owner_class=in_class?(uint16_t)compiler->current_class:UINT8_MAX-1;
+    function->owner_class=in_class?(uint16_t)compiler->current_class:DIAMOND_OWNER_MODULE;
     function->declaration_line=(uint32_t)keyword.line;
     function->declaration_column=(uint32_t)keyword.column;
     function->declaration_start=keyword.start;
@@ -16845,7 +16845,7 @@ static void snapshot_ivar_known_classes(Compiler *compiler, DiamondClass *class)
         for (size_t field = 0; field < DIAMOND_MAX_FIELDS; field++)
             function->ivar_known_class[field] =
                 (field < class->field_count && class->field_type_status[field] == 1)
-                    ? class->field_known_class[field] : UINT8_MAX;
+                    ? class->field_known_class[field] : DIAMOND_NO_CLASS;
     }
 }
 
@@ -17059,7 +17059,7 @@ static uint16_t compile_class(Compiler *compiler) {
             class->singleton_method_count=0;
             class->field_count=0;
             class->class_variable_count=0;
-            class->superclass=UINT8_MAX;
+            class->superclass=DIAMOND_NO_CLASS;
             class->sealed=false;
             class->declared_by_discovery=false;
             superclass_decided=false;
@@ -17106,7 +17106,7 @@ static uint16_t compile_class(Compiler *compiler) {
         class->class_variable_count=0;
         class->included_module_count=0;
         class->declared_by_discovery=false;
-        class->superclass=UINT8_MAX;
+        class->superclass=DIAMOND_NO_CLASS;
         class->sealed=false;
         superclass_decided=false;
     }
@@ -17339,7 +17339,7 @@ static uint16_t compile_struct(Compiler *compiler) {
     class->method_count=0;class->singleton_method_count=0;
     class->field_count=0;class->class_variable_count=0;
     class->declared_by_discovery=false;
-    class->superclass=UINT8_MAX;class->sealed=false;
+    class->superclass=DIAMOND_NO_CLASS;class->sealed=false;
     class->generated_struct=true;
     class->declaration_line=(uint32_t)name.line;
     class->declaration_column=(uint32_t)name.column;
@@ -19597,7 +19597,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         const char *name;
         uint16_t superclass;
     } builtins[DIAMOND_BUILTIN_CLASS_COUNT] = {
-        [DIAMOND_CLASS_EXCEPTION]={"Exception",UINT8_MAX},
+        [DIAMOND_CLASS_EXCEPTION]={"Exception",DIAMOND_NO_CLASS},
         [DIAMOND_CLASS_STANDARD_ERROR]={"StandardError",DIAMOND_CLASS_EXCEPTION},
         [DIAMOND_CLASS_RUNTIME_ERROR]={"RuntimeError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_TYPE_ERROR]={"TypeError",DIAMOND_CLASS_STANDARD_ERROR},
@@ -19621,7 +19621,7 @@ void diamond_program_init_fresh(DiamondProgram *program) {
         [DIAMOND_CLASS_RESOURCE_LIMIT_ERROR]={"ResourceLimitError",DIAMOND_CLASS_STANDARD_ERROR},
         [DIAMOND_CLASS_FROZEN_ERROR]={"FrozenError",DIAMOND_CLASS_STANDARD_ERROR},
     };
-    program->range_class_index=UINT8_MAX;
+    program->range_class_index=DIAMOND_NO_CLASS;
     program->class_count=DIAMOND_BUILTIN_CLASS_COUNT;
     /* Explicit here too, not just class_count above: diamond_program_init
      * (below) no longer memsets classes[]/interfaces[]/modules[] at all

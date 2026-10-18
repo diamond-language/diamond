@@ -124,8 +124,8 @@ static char *format_function_signature(const DiamondChunk *chunk,
     /* Runtime method arity includes self, but parameter metadata is indexed
      * only by declared arguments. Captured-self closures use the sentinel
      * owner UINT8_MAX-2 and do not receive an implicit argument. */
-    const size_t receiver_slots=function->owner_class!=UINT8_MAX&&
-        function->owner_class!=UINT8_MAX-2?1u:0u;
+    const size_t receiver_slots=function->owner_class!=DIAMOND_OWNER_NONE&&
+        function->owner_class!=DIAMOND_OWNER_CAPTURED_SELF?1u:0u;
     const size_t arity=function->arity>=receiver_slots
         ?function->arity-receiver_slots:0;
     const size_t required_arity=function->required_arity>=receiver_slots
@@ -205,7 +205,7 @@ static char *format_class_signature(const DiamondChunk *chunk,const DiamondClass
     FILE *stream=open_memstream(&buffer,&buffer_length);
     if(stream==nullptr)return nullptr;
     fprintf(stream,"class %s",class->name);
-    if(class->superclass!=UINT8_MAX&&(size_t)class->superclass<chunk->class_count)
+    if(class->superclass!=DIAMOND_NO_CLASS&&(size_t)class->superclass<chunk->class_count)
         fprintf(stream," < %s",chunk->classes[class->superclass].name);
     fclose(stream);
     return buffer;
@@ -280,7 +280,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.function_count;index++) {
         const DiamondFunction *function=chunk.functions[index];
-        if(function->owner_class==UINT8_MAX&&!function->nested&&
+        if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&
            strcmp(function->name,name)==0) {
             char *signature=format_function_signature(&chunk,function);
             free(combined);free(path);diamond_source_bundle_free(&bundle);

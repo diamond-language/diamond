@@ -616,7 +616,7 @@ static bool program_is_valid(const DiamondProgram *program) {
         if (!constants_are_scalar(program->functions[index])) return false;
     for (size_t index = 0; index < program->class_count; index++) {
         const DiamondClass *class = &program->classes[index];
-        if (class->superclass != UINT8_MAX && class->superclass >= program->class_count) return false;
+        if (class->superclass != DIAMOND_NO_CLASS && class->superclass >= program->class_count) return false;
         if (!method_table_valid(class->methods, class->method_count, program->function_count) ||
             !method_table_valid(class->singleton_methods, class->singleton_method_count,
                 program->function_count))
@@ -670,8 +670,11 @@ enum { DIAMOND_CACHE_MAGIC_LENGTH = 8 };
  * 6: each function's struct image is stored as zero-run records instead of
  *    its full ~11 KB.
  * 7: the fingerprint carries the writer's byte order, so an image built for
- *    an opposite-endian target is rejected instead of misread. */
-enum { DIAMOND_CACHE_FORMAT_VERSION = 7 };
+ *    an opposite-endian target is rejected instead of misread.
+ * 8: class operands are 16 bits wide and the native/variable/interface
+ *    type-id bases moved, so every instruction that names a class is a byte
+ *    longer and every stored type id has a different value. */
+enum { DIAMOND_CACHE_FORMAT_VERSION = 8 };
 
 /* A checksum of the compiler's own sources and prelude (every .c and .h
  * file under src/, plus lib/core.di and lib/core/), passed in by the

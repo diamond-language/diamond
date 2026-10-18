@@ -187,7 +187,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
     const DiamondChunk chunk=diamond_program_chunk(scratch);
     for(size_t index=0;index<chunk.function_count&&ok;index++) {
         const DiamondFunction *function=chunk.functions[index];
-        if(function->owner_class!=UINT8_MAX||function->nested)continue;
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested)continue;
         if(!contains_ignore_case(function->name,query))continue;
         size_t line=0,column=0;
         const size_t name_length=strlen(function->name);

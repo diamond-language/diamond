@@ -469,7 +469,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *function=(DiamondFunction){};
         memcpy(function->name,fname->chars,fname->length);
         function->name[fname->length]='\0';
-        function->owner_class=UINT8_MAX;
+        function->owner_class=DIAMOND_OWNER_NONE;
         function->arity=(uint8_t)arity_value;
         function->required_arity=(uint8_t)required_value;
         function->return_type_set=DIAMOND_NO_TYPE_SET;
@@ -669,7 +669,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         *class=(DiamondClass){};
         memcpy(class->name,cname->chars,cname->length);
         class->name[cname->length]='\0';
-        class->superclass=parent==nullptr?UINT8_MAX:(uint8_t)superclass_index;
+        class->superclass=parent==nullptr?DIAMOND_NO_CLASS:(uint16_t)superclass_index;
         if(parent!=nullptr) {
             class->field_count=parent->field_count;
             memcpy(class->fields,parent->fields,
@@ -943,7 +943,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * distinct from UINT8_MAX's "not a method at all" so the private-
          * bypass's parameter_offset==1 check still fires for module
          * methods too). */
-        built->functions[function_index]->owner_class=UINT8_MAX-1;
+        built->functions[function_index]->owner_class=DIAMOND_OWNER_MODULE;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_class_singleton_method_method) {
@@ -1066,7 +1066,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         const int64_t function_index=registers[base].as.integer;
         const int64_t owner_class=registers[(size_t)base+1].as.integer;
         if(function_index<0||(uint64_t)function_index>=built->function_count||
-           owner_class<0||owner_class>UINT8_MAX) {
+           owner_class<0||owner_class>UINT16_MAX) {
             snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
                 "set_function_owner_class has invalid arguments");
             return DIAMOND_VM_TYPE_ERROR;

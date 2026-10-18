@@ -1517,7 +1517,7 @@ static inline void note_storage_growth(DiamondVm *vm) {
 }
 
 void diamond_vm_init(DiamondVm *vm) {
-    *vm = (DiamondVm){.next_gc = 2048,.range_class_index=UINT8_MAX,
+    *vm = (DiamondVm){.next_gc = 2048,.range_class_index=DIAMOND_NO_CLASS,
         .minor_gc_threshold_bytes = 1048576,.debug_fd=-1,
         .blocking_call_lock = PTHREAD_MUTEX_INITIALIZER};
     vm->quickening_threshold = 1;
@@ -1835,7 +1835,7 @@ static void diamond_fiber_trampoline(void) {
           .interfaces=self->program_tables.interfaces,.interface_count=self->program_tables.interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
-          .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+          .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count};
         self->status=run_chunk(&child,self->vm,nullptr,0,0,self->entry_closure,&self->result);
     } else {
@@ -2424,7 +2424,7 @@ void *thread_entry_trampoline(void *argument) {
         .interface_count=thread->child_program->interface_count,
         .parameter_type_sets=target_fn->parameter_type_sets,
         .type_variable_count=target_fn->type_variable_count,
-        .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+        .parameter_offset=target_fn->owner_class==DIAMOND_OWNER_NONE?0:1,
         .register_count=target_fn->register_count,
         .has_variadic=target_fn->has_variadic,
         .range_class_index=thread->child_program->range_class_index};
@@ -2568,7 +2568,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         .interface_count=child->program_template->interface_count,
         .parameter_type_sets=target_fn->parameter_type_sets,
         .type_variable_count=target_fn->type_variable_count,
-        .parameter_offset=target_fn->owner_class==UINT8_MAX?0:1,
+        .parameter_offset=target_fn->owner_class==DIAMOND_OWNER_NONE?0:1,
         .register_count=target_fn->register_count,
         .has_variadic=target_fn->has_variadic,
         .range_class_index=child->program_template->range_class_index};
@@ -2960,7 +2960,7 @@ DiamondVmStatus dispatch_pending_signals(DiamondVm *vm,const DiamondChunk *chunk
           .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
           .parameter_type_sets=fn->parameter_type_sets,
           .type_variable_count=fn->type_variable_count,
-          .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+          .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
           .register_count=fn->register_count};
         DiamondValue ignored=DIAMOND_NIL;
         const DiamondVmStatus status=run_chunk(&child,vm,nullptr,0,depth+1,handler,&ignored);
@@ -4732,7 +4732,7 @@ const DiamondMethod *lookup_method(const DiamondChunk *chunk,
                 return method;
             }
         }
-        current = current->superclass == UINT8_MAX
+        current = current->superclass == DIAMOND_NO_CLASS
             ? nullptr : &chunk->classes[current->superclass];
     }
     return nullptr;
@@ -4844,7 +4844,7 @@ DiamondVmStatus invoke_operator_method(DiamondVm *vm,
       .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,argument_count,depth+1,nullptr,result);
 }
@@ -4911,7 +4911,7 @@ DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondClass *current=instance->class;
         while(current!=nullptr) {
             if(current==target) {*matched=true;break;}
-            current=current->superclass==UINT8_MAX?nullptr:
+            current=current->superclass==DIAMOND_NO_CLASS?nullptr:
                 &owner->classes[current->superclass];
         }
         return DIAMOND_VM_OK;
@@ -4930,7 +4930,7 @@ DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
         }
         *matched=status==REGINOLD_OK;return DIAMOND_VM_OK;
     }
-    if(vm->range_class_index!=UINT8_MAX&&pattern.kind==DIAMOND_VALUE_OBJECT&&
+    if(vm->range_class_index!=DIAMOND_NO_CLASS&&pattern.kind==DIAMOND_VALUE_OBJECT&&
        pattern.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *range=(const DiamondInstance *)pattern.as.object;
         if(range->class==&chunk->classes[vm->range_class_index]&&range->field_count>=3) {
@@ -5022,7 +5022,7 @@ DiamondVmStatus method_missing_helper(DiamondVm *vm,const DiamondChunk *owner,
       .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,args,3,depth+1,nullptr,result);
 }
@@ -6255,7 +6255,7 @@ DiamondVmStatus exit_helper(DiamondVm *vm,DiamondValue code_value) {
 
 /* Mirrors find_function's two filters (compiler.c) exactly, operating on
  * the runtime DiamondChunk instead of the compile-time DiamondProgram:
- * excludes class/module methods (owner_class!=UINT8_MAX) and nested
+ * excludes class/module methods (owner_class!=DIAMOND_OWNER_NONE) and nested
  * def's, so a same-named local closure can never shadow a real
  * top-level prelude function. */
 static const DiamondFunction *find_top_level_function(
@@ -6265,7 +6265,7 @@ static const DiamondFunction *find_top_level_function(
     if (length >= DIAMOND_MAX_FUNCTION_NAME) return nullptr;
     for (size_t index = chunk->function_count; index > 0; index--) {
         const DiamondFunction *candidate = chunk->functions[index - 1];
-        if (candidate->owner_class != UINT8_MAX || candidate->nested) continue;
+        if (candidate->owner_class != DIAMOND_OWNER_NONE || candidate->nested) continue;
         /* The extension protocol probes this table two or three times per
          * call on a native collection, and the table holds every prelude
          * function: reject on the first and last character (both inside the
@@ -6527,13 +6527,13 @@ static const DiamondNativeMethod DIAMOND_NATIVE_METHODS[]={
     {DIAMOND_TYPE_STRING,"upcase",0,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_STRING,"to_i",0,DIAMOND_TYPE_INT},
     {DIAMOND_TYPE_STRING,"to_f",0,DIAMOND_TYPE_FLOAT},
-    {DIAMOND_TYPE_STRING,"index_of",1,UINT8_MAX},
+    {DIAMOND_TYPE_STRING,"index_of",1,DIAMOND_TYPE_NONE},
     {DIAMOND_TYPE_STRING,"slice",2,DIAMOND_TYPE_STRING},
     {DIAMOND_TYPE_ARRAY,"push",1,DIAMOND_TYPE_ARRAY},
-    {DIAMOND_TYPE_ARRAY,"pop",0,UINT8_MAX},
-    {DIAMOND_TYPE_HASH,"key_at",1,UINT8_MAX},
-    {DIAMOND_TYPE_HASH,"value_at",1,UINT8_MAX},
-    {DIAMOND_TYPE_HASH,"delete",1,UINT8_MAX},
+    {DIAMOND_TYPE_ARRAY,"pop",0,DIAMOND_TYPE_NONE},
+    {DIAMOND_TYPE_HASH,"key_at",1,DIAMOND_TYPE_NONE},
+    {DIAMOND_TYPE_HASH,"value_at",1,DIAMOND_TYPE_NONE},
+    {DIAMOND_TYPE_HASH,"delete",1,DIAMOND_TYPE_NONE},
     {DIAMOND_TYPE_HASH,"clear",0,DIAMOND_TYPE_HASH},
     {DIAMOND_TYPE_HASH,"include_key?",1,DIAMOND_TYPE_BOOL},
     {DIAMOND_TYPE_INT,"to_s",0,DIAMOND_TYPE_STRING},
@@ -6597,7 +6597,7 @@ bool diamond_native_method_return_type(uint16_t receiver_type,const char *name,
            memcmp(method->name,name,length)!=0)continue;
         /* Overloads (Float#round with and without digits) that disagree, or a
          * result that is not one fixed type, leave the answer unknown. */
-        if(method->return_type==UINT8_MAX||(found&&*return_type!=method->return_type))
+        if(method->return_type==DIAMOND_TYPE_NONE||(found&&*return_type!=method->return_type))
             return false;
         *return_type=method->return_type;found=true;
     }
@@ -6695,7 +6695,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
             for(size_t index=0;index<class->method_count;index++)
                 if(strcmp(class->methods[index].name,"length")==0&&
                    class->methods[index].arity==0)return true;
-            class=class->superclass==UINT8_MAX?nullptr:
+            class=class->superclass==DIAMOND_NO_CLASS?nullptr:
                 &chunk->classes[class->superclass];
         }
         return false;
@@ -6705,18 +6705,18 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
         if(interface_index>=chunk->interface_count||value.kind!=DIAMOND_VALUE_OBJECT)
             return false;
         const DiamondInterface *interface=&chunk->interfaces[interface_index];
-        uint8_t builtin=UINT8_MAX;
+        uint16_t builtin=DIAMOND_TYPE_NONE;
         if(value.as.object->kind==DIAMOND_OBJECT_STRING)builtin=DIAMOND_TYPE_STRING;
         else if(value.as.object->kind==DIAMOND_OBJECT_ARRAY)builtin=DIAMOND_TYPE_ARRAY;
         else if(value.as.object->kind==DIAMOND_OBJECT_HASH)builtin=DIAMOND_TYPE_HASH;
-        if(builtin!=UINT8_MAX) {
+        if(builtin!=DIAMOND_TYPE_NONE) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                uint16_t native_return=UINT8_MAX;
+                uint16_t native_return=DIAMOND_TYPE_NONE;
                 if(!diamond_native_method_satisfies(builtin,method->name,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
-                    if(native_return==UINT8_MAX)return false;
+                    if(native_return==DIAMOND_TYPE_NONE)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
@@ -6759,7 +6759,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                                 wanted->return_type_set)))found=false;
                         if(found)break;
                     }
-                class=class->superclass==UINT8_MAX?nullptr:
+                class=class->superclass==DIAMOND_NO_CLASS?nullptr:
                     &chunk->classes[class->superclass];
             }
             if(!found)return false;
@@ -6773,7 +6773,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
     const DiamondClass *actual=((DiamondInstance *)value.as.object)->class;
     while(actual!=nullptr) {
         if(actual==wanted) return true;
-        actual=actual->superclass==UINT8_MAX?nullptr:&chunk->classes[actual->superclass];
+        actual=actual->superclass==DIAMOND_NO_CLASS?nullptr:&chunk->classes[actual->superclass];
     }
     return false;
 }
@@ -6822,7 +6822,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
             for(size_t method=0;method<class->method_count;method++)
                 if(strcmp(class->methods[method].name,"length")==0&&
                    class->methods[method].arity==0)return true;
-            if(class->superclass==UINT8_MAX)break;
+            if(class->superclass==DIAMOND_NO_CLASS)break;
             index=class->superclass;
         }
         return false;
@@ -6835,11 +6835,11 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
            known==DIAMOND_TYPE_HASH) {
             for(size_t required=0;required<interface->method_count;required++) {
                 const DiamondInterfaceMethod *method=&interface->methods[required];
-                uint16_t native_return=UINT8_MAX;
+                uint16_t native_return=DIAMOND_TYPE_NONE;
                 if(!diamond_native_method_satisfies(known,method->name,
                     method->arity,&native_return))return false;
                 if(method->return_type_set!=DIAMOND_NO_TYPE_SET) {
-                    if(native_return==UINT8_MAX)return false;
+                    if(native_return==DIAMOND_TYPE_NONE)return false;
                     const DiamondTypeSet native={.members={{.id=native_return,
                         .argument_set=DIAMOND_NO_TYPE_SET,.second_argument_set=DIAMOND_NO_TYPE_SET,
                         .callable_arity=UINT8_MAX,.callable_return_set=DIAMOND_NO_TYPE_SET}},.count=1};
@@ -6881,7 +6881,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
                                 wanted->return_type_set)))found=false;
                         if(found)break;
                     }
-                if(found||class->superclass==UINT8_MAX)break;
+                if(found||class->superclass==DIAMOND_NO_CLASS)break;
                 index=class->superclass;
             }
             if(!found)return false;
@@ -6894,7 +6894,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
     while(index<chunk->class_count) {
         if(index==wanted)return true;
         const uint16_t parent=chunk->classes[index].superclass;
-        if(parent==UINT8_MAX)break;
+        if(parent==DIAMOND_NO_CLASS)break;
         index=parent;
     }
     return false;
@@ -7244,7 +7244,7 @@ bool array_value_satisfies_constraints(DiamondArray *array,
 static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
         const char *container,DiamondValue index_value,size_t array_count,
         size_t *out_start,size_t *out_length) {
-    if(vm->range_class_index==UINT8_MAX)return -1;
+    if(vm->range_class_index==DIAMOND_NO_CLASS)return -1;
     if(index_value.kind!=DIAMOND_VALUE_OBJECT||
        index_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
         return -1;
@@ -7586,10 +7586,10 @@ bool catch_exception(DiamondVm *vm,const DiamondChunk *chunk,
  * genuine crisis, so it's surfaced as the same catchable ResourceLimitError
  * instruction-count/wall-clock budgets already use, rather than silently
  * reusing the uncatchable path a real OOM deliberately takes. */
-static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus status) {
+static uint16_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus status) {
     if(status==DIAMOND_VM_OUT_OF_MEMORY)
         return vm->memory_limit_tripped&&!vm->memory_hard_stopped?
-            DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:UINT8_MAX;
+            DIAMOND_CLASS_RESOURCE_LIMIT_ERROR:DIAMOND_NO_CLASS;
     switch(status) {
         case DIAMOND_VM_TYPE_ERROR: return DIAMOND_CLASS_TYPE_ERROR;
         case DIAMOND_VM_INTEGER_OVERFLOW: return DIAMOND_CLASS_RANGE_ERROR;
@@ -7614,7 +7614,7 @@ static uint8_t exception_class_for_status(const DiamondVm *vm,DiamondVmStatus st
         case DIAMOND_VM_SANDBOX_ERROR: return DIAMOND_CLASS_SANDBOX_ERROR;
         case DIAMOND_VM_RESOURCE_LIMIT_ERROR: return DIAMOND_CLASS_RESOURCE_LIMIT_ERROR;
         case DIAMOND_VM_FROZEN_ERROR: return DIAMOND_CLASS_FROZEN_ERROR;
-        default: return UINT8_MAX;
+        default: return DIAMOND_NO_CLASS;
     }
 }
 
@@ -7622,8 +7622,8 @@ bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
                                 DiamondVmStatus status,UnwindHandler *handlers,
                                 size_t *handler_count,PendingUnwind *pending,
                                 DiamondValue *registers,size_t *ip) {
-    const uint8_t class_index=exception_class_for_status(vm,status);
-    if(class_index==UINT8_MAX || (size_t)class_index>=chunk->class_count)return false;
+    const uint16_t class_index=exception_class_for_status(vm,status);
+    if(class_index==DIAMOND_NO_CLASS || (size_t)class_index>=chunk->class_count)return false;
     char message[sizeof vm->error];
     (void)snprintf(message,sizeof message,"%s",vm->error[0]!='\0'?vm->error:
                    diamond_vm_status_name(status));
@@ -8535,7 +8535,7 @@ static bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *ins
     const DiamondClass *ancestor=instance->class;
     while(ancestor!=nullptr) {
         if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION])return true;
-        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+        ancestor=ancestor->superclass==DIAMOND_NO_CLASS?nullptr:
             &owner->classes[ancestor->superclass];
     }
     return false;
@@ -8623,7 +8623,7 @@ static DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
       .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     DiamondValue args[1+DIAMOND_MAX_BOUND_VALUES]={value};
     for(size_t i=0;i<method->bound_value_count;i++)
@@ -8781,7 +8781,7 @@ static uint16_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value)
     const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
     for(size_t index=0;index<chunk->class_count;index++)
         if(&chunk->classes[index]==class)return (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index);
-    return UINT8_MAX;
+    return DIAMOND_TYPE_NONE;
 }
 
 static DiamondBoundTypeMember *binding_member(DiamondTypeBinding *binding,
@@ -9075,7 +9075,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondFunction *fn,const DiamondClosure *called,
         const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,
         DiamondValue *result) {
-    const bool needs_self_slot=fn->owner_class!=UINT8_MAX;
+    const bool needs_self_slot=fn->owner_class!=DIAMOND_OWNER_NONE;
     /* A `closure` (compiler.c's UINT8_MAX-2 owner_class sentinel) also
      * needs the phantom-slot-0 padding below -- it reserves register 0
      * for its own materialized captured self, so real arguments still
@@ -9086,7 +9086,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
      * compiler.c's owner_class comment) -- the arity-bounds check below
      * must compare against the real, un-inflated argc, not the padded
      * argument_count used only to place real arguments correctly. */
-    const bool self_via_capture=fn->owner_class==UINT8_MAX-2;
+    const bool self_via_capture=fn->owner_class==DIAMOND_OWNER_CAPTURED_SELF;
     /* No argc>DIAMOND_MAX_ARGUMENTS guard needed here: argc is a plain
      * uint8_t (the wire format's own argument-count width), so it can
      * never exceed DIAMOND_MAX_ARGUMENTS (255) in the first place --
@@ -9114,7 +9114,7 @@ DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk,
       .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return run_chunk(&child,vm,arguments,argument_count,depth+1,called,result);
 }
@@ -9150,7 +9150,7 @@ static DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
       .interfaces=chunk->interfaces,.interface_count=chunk->interface_count,
       .parameter_type_sets=target->parameter_type_sets,
       .type_variable_count=target->type_variable_count,
-      .parameter_offset=target->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=target->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=target->register_count};
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
 }
@@ -9391,7 +9391,7 @@ DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
       .interfaces=function_chunk->interfaces,.interface_count=function_chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .type_variable_bindings=type_argument_count==0?nullptr:explicit_bindings,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     return jit_call_or_interpret(vm,fn,&child,args,total_args,depth,nullptr,result);
@@ -9473,7 +9473,7 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         registers[0].as.object->kind != DIAMOND_OBJECT_INSTANCE)
         return DIAMOND_VM_TYPE_ERROR;
     const DiamondClass *owner = &chunk->classes[owner_index];
-    if (owner->superclass == UINT8_MAX) return DIAMOND_VM_TYPE_ERROR;
+    if (owner->superclass == DIAMOND_NO_CLASS) return DIAMOND_VM_TYPE_ERROR;
     const DiamondStringConstant *method_name = &chunk->strings[name];
     const DiamondMethod *method = lookup_method(chunk,
         &chunk->classes[owner->superclass], method_name->chars, method_name->length);
@@ -9489,7 +9489,7 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
                 reaches_exception = true;
                 break;
             }
-            ancestor = ancestor->superclass == UINT8_MAX ? nullptr :
+            ancestor = ancestor->superclass == DIAMOND_NO_CLASS ? nullptr :
                 &chunk->classes[ancestor->superclass];
         }
         if (reaches_exception && method_name->length == 10 &&
@@ -9905,7 +9905,7 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
         if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
             exception_class=true;break;
         }
-        ancestor=ancestor->superclass==UINT8_MAX?nullptr:
+        ancestor=ancestor->superclass==DIAMOND_NO_CLASS?nullptr:
             &chunk->classes[ancestor->superclass];
     }
     if(exception_class) {
@@ -9920,8 +9920,8 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *fn,
         const DiamondClosure *called,const DiamondArray *spread,size_t depth,
         DiamondValue *result) {
-    const bool needs_self_slot=fn->owner_class!=UINT8_MAX;
-    const bool self_via_capture=fn->owner_class==UINT8_MAX-2;
+    const bool needs_self_slot=fn->owner_class!=DIAMOND_OWNER_NONE;
+    const bool self_via_capture=fn->owner_class==DIAMOND_OWNER_CAPTURED_SELF;
     const size_t arity_count=self_via_capture?spread->count:
         spread->count+(needs_self_slot?1:0);
     if(arity_count<fn->required_arity||
@@ -9950,7 +9950,7 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
       .interface_count=chunk->interface_count,
       .parameter_type_sets=fn->parameter_type_sets,
       .type_variable_count=fn->type_variable_count,
-      .parameter_offset=fn->owner_class==UINT8_MAX?0:1,
+      .parameter_offset=fn->owner_class==DIAMOND_OWNER_NONE?0:1,
       .register_count=fn->register_count,.has_variadic=fn->has_variadic};
     const DiamondVmStatus status=run_chunk(&child,vm,arguments,argument_count,
         depth+1,called,result);
@@ -10774,7 +10774,7 @@ DiamondVmStatus merge_keyword_arguments(DiamondVm *vm,
         filled[block_slot]=true;
         if(block_slot+1>count)count=block_slot+1;
     }
-    const size_t parameter_offset=function->owner_class==UINT8_MAX?0:1;
+    const size_t parameter_offset=function->owner_class==DIAMOND_OWNER_NONE?0:1;
     const size_t required_public=function->required_arity>parameter_offset?
         function->required_arity-parameter_offset:0;
     for(size_t index=0;index<count;index++)if(!filled[index]&&

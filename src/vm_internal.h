@@ -735,7 +735,7 @@ static inline DiamondChunk plain_call_chunk(const DiamondFunction *function,
         .interface_count = caller->interface_count,
         .parameter_type_sets = function->parameter_type_sets,
         .type_variable_count = function->type_variable_count,
-        .parameter_offset = function->owner_class == UINT8_MAX ? 0 : 1,
+        .parameter_offset = function->owner_class == DIAMOND_OWNER_NONE ? 0 : 1,
         .register_count = function->register_count,
         .has_variadic = function->has_variadic,
     };
@@ -961,7 +961,7 @@ static inline const DiamondClass *method_declaring_class(const DiamondChunk *chu
     while(current!=nullptr) {
         for(size_t index=0;index<current->method_count;index++)
             if(method==&current->methods[index])return current;
-        current=current->superclass==UINT8_MAX?nullptr:
+        current=current->superclass==DIAMOND_NO_CLASS?nullptr:
             &chunk->classes[current->superclass];
     }
     return nullptr;
@@ -970,7 +970,7 @@ static inline const DiamondClass *method_declaring_class(const DiamondChunk *chu
 static inline bool class_is_a(const DiamondChunk *chunk,const DiamondClass *class,
         const DiamondClass *ancestor) {
     for(const DiamondClass *current=class;current!=nullptr;
-        current=current->superclass==UINT8_MAX?nullptr:
+        current=current->superclass==DIAMOND_NO_CLASS?nullptr:
             &chunk->classes[current->superclass])
         if(current==ancestor)return true;
     return false;
@@ -995,7 +995,7 @@ static inline const DiamondMethod *lookup_singleton_method(const DiamondChunk *c
                 return method;
             }
         }
-        current = current->superclass == UINT8_MAX
+        current = current->superclass == DIAMOND_NO_CLASS
             ? nullptr : &chunk->classes[current->superclass];
     }
     return nullptr;
