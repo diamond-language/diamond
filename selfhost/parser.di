@@ -1862,6 +1862,7 @@ class Parser
     endless = @current.kind() == :equal
     if endless
       self.advance_token()
+      self.skip_newlines()
       postfix = self.postfix_modifier_ahead()
       has_postfix = postfix == :if || postfix == :unless
       postfix_result = self.allocate_register() if has_postfix
@@ -2741,6 +2742,7 @@ class Parser
     endless = @current.kind() == :equal
     if endless
       self.advance_token()
+      self.skip_newlines()
       postfix = self.postfix_modifier_ahead()
       has_postfix = postfix == :if || postfix == :unless
       postfix_result = self.allocate_register() if has_postfix

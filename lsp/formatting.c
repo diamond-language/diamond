@@ -262,6 +262,13 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * deeper, until a later line that does not start with `.` (NEWLINE
      * tokens never reach this pass, see tokenize) ends it. */
     int chain_base=-1;
+    /* Depth an endless `def f() =` whose body starts on the next line was
+     * at, or -1: the body prints one level deeper, like a chain. It ends at
+     * the first later line that starts with everything balanced again and
+     * does not start with `.` (body_first skips the check for the body's own
+     * first line). */
+    int body_base=-1;
+    bool body_first=false;
     size_t token_index=0;
     size_t last_processed_line=0;
     for(size_t line=1;line<=line_count&&token_index<token_count;line++) {
@@ -273,6 +280,13 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
             continue;
         }
         size_t k=token_index;
+        if(body_base>=0&&depth==body_base+1) {
+            if(body_first)body_first=false;
+            else if(tokens[k].kind!=DIAMOND_TOKEN_DOT&&chain_base<0) {
+                depth--;
+                body_base=-1;
+            }
+        }
         if(chain_base>=0&&depth==chain_base+1&&tokens[k].kind!=DIAMOND_TOKEN_DOT) {
             depth--;
             chain_base=-1;
@@ -295,6 +309,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
         lines[line-1]=(FormatLineDepth){.has_tokens=true,.depth=print_depth};
 
         bool first_in_rest_of_line=true;
+        bool line_has_endless_def=false;
         /* True right after a block-form `loop`/`while`/`until` on this
          * same physical line, until either a `do` is actually seen (it
          * absorbs it, see below) or the line just ends -- naturally
@@ -408,6 +423,8 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
                         const bool signature_only=depth>0&&interface_level[depth-1];
                         if(!signature_only&&!def_is_endless(tokens,token_count,k)) {
                             if(!push_level(&depth,false,interface_level))return false;
+                        } else if(!signature_only) {
+                            line_has_endless_def=true;
                         }
                     }
                     break;
@@ -446,6 +463,12 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
             k++;
         }
         token_index=k;
+        /* `def f(x) =` with nothing after the `=`: the body is on the next line. */
+        if(line_has_endless_def&&prev_kind==DIAMOND_TOKEN_EQUAL&&body_base<0) {
+            body_base=depth;
+            body_first=true;
+            if(!push_level(&depth,false,interface_level))return false;
+        }
     }
     /* Any lines past the last one the main loop actually visited
      * (trailing blank/comment lines once every real token is
@@ -458,6 +481,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
     for(size_t line=last_processed_line+1;line<=line_count;line++)
         lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=depth};
     if(chain_base>=0&&depth==chain_base+1)depth--;
+    if(body_base>=0&&depth==body_base+1)depth--;
     return depth==0;
 }
 

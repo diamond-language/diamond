@@ -15473,6 +15473,8 @@ static uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     bool body_diverges=false;
     if(endless) {
         advance_token(compiler);
+        /* The body may start on the next line: `def f(x) =` / `  x + 1`. */
+        skip_newlines(compiler);
         const DiamondTokenKind postfix=postfix_modifier_ahead(compiler,nullptr);
         const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
                                postfix==DIAMOND_TOKEN_UNLESS;
