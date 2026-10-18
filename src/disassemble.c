@@ -215,7 +215,7 @@ static bool print_type_set(FILE *stream,const DiamondChunk *chunk,
                 (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
             fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);
         else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-            fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
+            fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
         else {fputs("<invalid type>",stream);valid=false;}
         if(member.argument_set!=DIAMOND_NO_TYPE_SET) {
             fputc('[',stream);
@@ -1506,7 +1506,7 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
                         (size_t)(type-DIAMOND_TYPE_INTERFACE_BASE)<chunk->interface_count)
                     fputs(chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name,stream);
                 else if((size_t)(type-DIAMOND_TYPE_CLASS_BASE)<chunk->class_count)
-                    fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE].name,stream);
+                    fputs(chunk->classes[type-DIAMOND_TYPE_CLASS_BASE]->name,stream);
                 else {fputs("<invalid type>",stream);valid=false;}
                 fputc('\n',stream);offset+=7;break;
             }

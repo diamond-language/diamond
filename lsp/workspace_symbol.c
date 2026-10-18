@@ -197,7 +197,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
             ok=push_symbol(symbols,function->name,12,uri,line,column,name_length);
     }
     for(size_t index=0;index<chunk.class_count&&ok;index++) {
-        const DiamondClass *class=&chunk.classes[index];
+        const DiamondClass *class=chunk.classes[index];
         if(!contains_ignore_case(class->name,query))continue;
         size_t line=0,column=0;
         const size_t name_length=strlen(class->name);

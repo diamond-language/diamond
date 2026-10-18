@@ -206,7 +206,7 @@ static char *format_class_signature(const DiamondChunk *chunk,const DiamondClass
     if(stream==nullptr)return nullptr;
     fprintf(stream,"class %s",class->name);
     if(class->superclass!=DIAMOND_NO_CLASS&&(size_t)class->superclass<chunk->class_count)
-        fprintf(stream," < %s",chunk->classes[class->superclass].name);
+        fprintf(stream," < %s",chunk->classes[class->superclass]->name);
     fclose(stream);
     return buffer;
 }
@@ -291,8 +291,8 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
         }
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.class_count;index++) {
-        if(strcmp(chunk.classes[index].name,name)==0) {
-            char *signature=format_class_signature(&chunk,&chunk.classes[index]);
+        if(strcmp(chunk.classes[index]->name,name)==0) {
+            char *signature=format_class_signature(&chunk,chunk.classes[index]);
             free(combined);free(path);diamond_source_bundle_free(&bundle);
             if(signature==nullptr)return nullptr;
             JsonValue *result=hover_result(signature);
@@ -339,7 +339,7 @@ JsonValue *hover_compute(const DocumentTable *documents,const char *uri,
                 &chunk,class_indices[index],is_singleton,name,name_length);
             if(method==nullptr)continue;
             matched_functions[matched_count]=chunk.functions[method->function_index];
-            matched_class_names[matched_count]=chunk.classes[class_indices[index]].name;
+            matched_class_names[matched_count]=chunk.classes[class_indices[index]]->name;
             matched_count++;
         }
         if(matched_count>0) {

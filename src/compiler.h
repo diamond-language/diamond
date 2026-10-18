@@ -23,7 +23,7 @@ typedef struct DiamondProgram {
     DiamondFunction **functions;
     size_t function_count;
     size_t function_capacity;
-    DiamondClass classes[DIAMOND_MAX_CLASSES];
+    DiamondClass *classes[DIAMOND_MAX_CLASSES];
     size_t class_count;
     DiamondInterface interfaces[DIAMOND_MAX_INTERFACES];
     size_t interface_count;
@@ -201,7 +201,13 @@ size_t diamond_combined_buffer_line(const char *combined, size_t offset);
 /* Concrete tooling return for an unannotated generated reader on this
  * receiver, or -1 when any discovered write in its ancestry is unknown or
  * conflicting. Does not establish a checked return contract. */
-int diamond_reader_return_class(const DiamondClass *classes,size_t class_count,
+/* The class stored at `index` in program->classes, allocated (zeroed, with
+ * its own `index` set) on first use; nullptr past DIAMOND_MAX_CLASSES or on
+ * allocation failure. A slot stays allocated until diamond_program_free, so
+ * a reused DiamondProgram keeps its slots, exactly as the inline array did. */
+DiamondClass *diamond_program_class_slot(DiamondProgram *program,size_t index);
+
+int diamond_reader_return_class(DiamondClass *const *classes,size_t class_count,
     const DiamondFunction *function,size_t receiver_class);
 
 #endif

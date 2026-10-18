@@ -103,7 +103,7 @@ static DiamondClass *program_builder_class(DiamondProgram *program,
                                            int64_t class_index) {
     if(class_index<0||(uint64_t)class_index>=program->class_count)
         return nullptr;
-    return &program->classes[class_index];
+    return program->classes[class_index];
 }
 
 /* Recomputes shapes[0..field_count] for a class -- mirrors the loop
@@ -665,8 +665,13 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         const int64_t new_index=(int64_t)built->class_count;
-        DiamondClass *class=&built->classes[built->class_count++];
-        *class=(DiamondClass){};
+        DiamondClass *class=diamond_program_class_slot(built,built->class_count);
+        if(class==nullptr) {
+            snprintf(vm->error,sizeof vm->error,"out of memory declaring a class");
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        built->class_count++;
+        *class=(DiamondClass){.index=(uint16_t)new_index};
         memcpy(class->name,cname->chars,cname->length);
         class->name[cname->length]='\0';
         class->superclass=parent==nullptr?DIAMOND_NO_CLASS:(uint16_t)superclass_index;
@@ -896,7 +901,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
          * class -- caught by the self-hosted parser's own private/public
          * support calling a private method via `self.foo()`, not by any
          * existing scalar-argument differential case. */
-        built->functions[target_function]->owner_class=(uint8_t)registers[base].as.integer;
+        built->functions[target_function]->owner_class=(uint16_t)registers[base].as.integer;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(declare_module_method_method) {
@@ -1071,7 +1076,7 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
                 "set_function_owner_class has invalid arguments");
             return DIAMOND_VM_TYPE_ERROR;
         }
-        built->functions[function_index]->owner_class=(uint8_t)owner_class;
+        built->functions[function_index]->owner_class=(uint16_t)owner_class;
         *result=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(include_module_method) {

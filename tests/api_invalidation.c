@@ -49,12 +49,12 @@ int main(void) {
         second_result.kind!=DIAMOND_VALUE_INT || second_result.as.integer!=3)return 10;
     DiamondClass *klass=nullptr;
     for(size_t index=0;index<program.class_count;index++)
-        if(strcmp(program.classes[index].name,"Parent")==0)klass=&program.classes[index];
+        if(strcmp(program.classes[index]->name,"Parent")==0)klass=program.classes[index];
     if(klass==nullptr||klass->method_count<2)return 3;
     const uint16_t original_value_function=klass->methods[0].function_index;
     DiamondClass *child=nullptr;
     for(size_t index=0;index<program.class_count;index++)
-        if(strcmp(program.classes[index].name,"Child")==0)child=&program.classes[index];
+        if(strcmp(program.classes[index]->name,"Child")==0)child=program.classes[index];
     if(child==nullptr)return 7;
     klass->methods[0].function_index=klass->methods[1].function_index;
     diamond_vm_invalidate_method_caches(&vm);
@@ -75,7 +75,7 @@ int main(void) {
     child->superclass=DIAMOND_NO_CLASS;
     diamond_vm_invalidate_method_caches(&vm);
     if(diamond_vm_run(&vm,&chunk,&result)!=DIAMOND_VM_NO_METHOD_ERROR)return 8;
-    child->superclass=(uint8_t)(klass-program.classes);
+    child->superclass=klass->index;
     klass->methods[0].function_index=original_value_function;
     klass->methods[1].is_private=false;
     diamond_vm_invalidate_method_caches(&vm);

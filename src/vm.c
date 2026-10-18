@@ -687,7 +687,7 @@ static void mark_roots(DiamondVm *vm, bool minor) {
      * flat array unconditionally costs nothing extra over tracking real
      * per-class counts here would. */
     if(vm->class_variables!=nullptr)
-        for(size_t index=0;index<(size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS;index++)
+        for(size_t index=0;index<vm->class_variable_extent;index++)
             mark_value(vm->class_variables[index],minor);
     for(size_t index=0;index<DIAMOND_SIGNAL_COUNT;index++)
         mark_value(vm->trapped_signal_handlers[index],minor);
@@ -2383,7 +2383,14 @@ DiamondProgram *clone_program_from_chunk(const DiamondChunk *chunk) {
             diamond_program_free(clone);free(clone);return nullptr;
         }
     }
-    memcpy(clone->classes,chunk->classes,sizeof clone->classes);
+    for(size_t index=0;index<chunk->class_count;index++) {
+        DiamondClass *copy=diamond_program_class_slot(clone,index);
+        if(copy==nullptr) {
+            diamond_program_free(clone);free(clone);return nullptr;
+        }
+        memcpy(copy,chunk->classes[index],sizeof *copy);
+        copy->index=(uint16_t)index;
+    }
     clone->class_count=chunk->class_count;
     memcpy(clone->interfaces,chunk->interfaces,sizeof clone->interfaces);
     clone->interface_count=chunk->interface_count;
@@ -3573,7 +3580,7 @@ static const DiamondClass *find_matching_synthetic_class(const DiamondChunk *syn
         const DiamondClass *target_class,DiamondVm *vm) {
     const size_t class_name_length=strlen(target_class->name);
     for(size_t index=0;index<synthetic_chunk->class_count;index++) {
-        const DiamondClass *candidate=&synthetic_chunk->classes[index];
+        const DiamondClass *candidate=synthetic_chunk->classes[index];
         if(strlen(candidate->name)==class_name_length&&
            memcmp(candidate->name,target_class->name,class_name_length)==0) {
             if(candidate->field_count!=target_class->field_count) {
@@ -3623,7 +3630,7 @@ DiamondVmStatus compile_method_helper(DiamondVm *vm,const DiamondClass *target_c
     const size_t offset=diamond_prelude_write(combined,include_json);
     memcpy(combined+offset,source.data,source.length+1);
     free(source.data);
-    DiamondProgram *program=malloc(sizeof *program);
+    DiamondProgram *program=calloc(1,sizeof *program);
     if(program==nullptr) {
         free(combined);
         return DIAMOND_VM_OUT_OF_MEMORY;
@@ -3865,8 +3872,8 @@ bool gc_protect(DiamondVm *vm, DiamondValue value) {
  * supported combination -- exactly one caller mode applies per call. */
 static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
-                               const DiamondClass *rebase_source_classes,
-                               const DiamondClass *rebase_dest_classes,
+                               DiamondClass *const *rebase_source_classes,
+                               DiamondClass *const *rebase_dest_classes,
                                const DiamondChunk **adopted_owner,
                                DiamondValue *out) {
     if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
@@ -3955,10 +3962,9 @@ static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
             const DiamondInstance *source=(const DiamondInstance *)value.as.object;
             DiamondInstance *copy;
             if(rebase_dest_classes!=nullptr) {
-                const size_t offset=
-                    (size_t)(source->class-rebase_source_classes);
+                (void)rebase_source_classes;
                 copy=allocate_instance(dest_vm,
-                    &rebase_dest_classes[offset],nullptr);
+                    rebase_dest_classes[source->class->index],nullptr);
             } else {
                 if(*adopted_owner==nullptr) {
                     const DiamondAdoptedProgram *adopted=
@@ -4109,8 +4115,8 @@ const char *copy_failure_reason(void) {
 
 bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                DiamondProgram *source_program,
-                               const DiamondClass *rebase_source_classes,
-                               const DiamondClass *rebase_dest_classes,
+                               DiamondClass *const *rebase_source_classes,
+                               DiamondClass *const *rebase_dest_classes,
                                const DiamondChunk **adopted_owner,
                                DiamondValue *out) {
     if(value.kind!=DIAMOND_VALUE_OBJECT) {*out=value;return true;}
@@ -4134,8 +4140,8 @@ bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
  * constant" error. Each copy is stored immediately, where the collector
  * reaches it, so no allocation happens between producing it and rooting it. */
 void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
-                                      const DiamondClass *source_classes,
-                                      const DiamondClass *dest_classes) {
+                                      DiamondClass *const *source_classes,
+                                      DiamondClass *const *dest_classes) {
     for(size_t index=0;index<DIAMOND_MAX_NAMESPACE_CONSTANTS;index++) {
         if(!parent->namespace_constant_initialized[index])continue;
         DiamondValue copy=DIAMOND_NIL;
@@ -4733,7 +4739,7 @@ const DiamondMethod *lookup_method(const DiamondChunk *chunk,
             }
         }
         current = current->superclass == DIAMOND_NO_CLASS
-            ? nullptr : &chunk->classes[current->superclass];
+            ? nullptr : chunk->classes[current->superclass];
     }
     return nullptr;
 }
@@ -4907,12 +4913,12 @@ DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
         const DiamondInstance *instance=(const DiamondInstance *)subject.as.object;
         const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
         if(owner==nullptr||owner->classes!=chunk->classes)return DIAMOND_VM_OK;
-        const DiamondClass *target=&chunk->classes[pattern.as.class_index];
+        const DiamondClass *target=chunk->classes[pattern.as.class_index];
         const DiamondClass *current=instance->class;
         while(current!=nullptr) {
             if(current==target) {*matched=true;break;}
             current=current->superclass==DIAMOND_NO_CLASS?nullptr:
-                &owner->classes[current->superclass];
+                owner->classes[current->superclass];
         }
         return DIAMOND_VM_OK;
     }
@@ -4933,7 +4939,7 @@ DiamondVmStatus case_match_value(DiamondVm *vm,const DiamondChunk *chunk,
     if(vm->range_class_index!=DIAMOND_NO_CLASS&&pattern.kind==DIAMOND_VALUE_OBJECT&&
        pattern.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
         const DiamondInstance *range=(const DiamondInstance *)pattern.as.object;
-        if(range->class==&chunk->classes[vm->range_class_index]&&range->field_count>=3) {
+        if(range->class==chunk->classes[vm->range_class_index]&&range->field_count>=3) {
             int from_start=0,from_end=0;
             if(range->fields[1].kind==DIAMOND_VALUE_NIL) {
                 /* Endless: `when 5..` matches anything from 5 up. */
@@ -6696,7 +6702,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                 if(strcmp(class->methods[index].name,"length")==0&&
                    class->methods[index].arity==0)return true;
             class=class->superclass==DIAMOND_NO_CLASS?nullptr:
-                &chunk->classes[class->superclass];
+                chunk->classes[class->superclass];
         }
         return false;
     }
@@ -6760,7 +6766,7 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
                         if(found)break;
                     }
                 class=class->superclass==DIAMOND_NO_CLASS?nullptr:
-                    &chunk->classes[class->superclass];
+                    chunk->classes[class->superclass];
             }
             if(!found)return false;
         }
@@ -6769,11 +6775,11 @@ bool value_matches_type(const DiamondChunk *chunk, DiamondValue value,
     const size_t class_index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
     if(class_index>=chunk->class_count || value.kind!=DIAMOND_VALUE_OBJECT ||
        value.as.object->kind!=DIAMOND_OBJECT_INSTANCE) return false;
-    const DiamondClass *wanted=&chunk->classes[class_index];
+    const DiamondClass *wanted=chunk->classes[class_index];
     const DiamondClass *actual=((DiamondInstance *)value.as.object)->class;
     while(actual!=nullptr) {
         if(actual==wanted) return true;
-        actual=actual->superclass==DIAMOND_NO_CLASS?nullptr:&chunk->classes[actual->superclass];
+        actual=actual->superclass==DIAMOND_NO_CLASS?nullptr:chunk->classes[actual->superclass];
     }
     return false;
 }
@@ -6818,7 +6824,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
         if(known<DIAMOND_TYPE_CLASS_BASE)return false;
         size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
         while(index<chunk->class_count) {
-            const DiamondClass *class=&chunk->classes[index];
+            const DiamondClass *class=chunk->classes[index];
             for(size_t method=0;method<class->method_count;method++)
                 if(strcmp(class->methods[method].name,"length")==0&&
                    class->methods[method].arity==0)return true;
@@ -6854,7 +6860,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
         for(size_t required=0;required<interface->method_count;required++) {
             bool found=false;size_t index=(size_t)(known-DIAMOND_TYPE_CLASS_BASE);
             while(index<chunk->class_count&&!found) {
-                const DiamondClass *class=&chunk->classes[index];
+                const DiamondClass *class=chunk->classes[index];
                 for(size_t method=0;method<class->method_count;method++)
                     if(strcmp(class->methods[method].name,
                               interface->methods[required].name)==0&&
@@ -6893,7 +6899,7 @@ static bool runtime_type_id_satisfies(const DiamondChunk *chunk,uint16_t known,
     const size_t wanted=(size_t)(expected-DIAMOND_TYPE_CLASS_BASE);
     while(index<chunk->class_count) {
         if(index==wanted)return true;
-        const uint16_t parent=chunk->classes[index].superclass;
+        const uint16_t parent=chunk->classes[index]->superclass;
         if(parent==DIAMOND_NO_CLASS)break;
         index=parent;
     }
@@ -6963,7 +6969,7 @@ static bool runtime_set_satisfies(const DiamondChunk *chunk,
  * and both resolve class/interface indexes against the same tables. */
 static bool constraint_already_implies(const DiamondChunk *chunk,
         const DiamondTypeSet *held_sets,size_t held_set_count,uint16_t held_set,
-        const DiamondClass *held_classes,const DiamondInterface *held_interfaces,
+        DiamondClass *const *held_classes,const DiamondInterface *held_interfaces,
         size_t held_type_variable_count,uint16_t wanted_set) {
     if(held_type_variable_count!=0||chunk->type_variable_count!=0)return false;
     if(held_classes!=chunk->classes||held_interfaces!=chunk->interfaces)return false;
@@ -7249,7 +7255,7 @@ static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
        index_value.as.object->kind!=DIAMOND_OBJECT_INSTANCE)
         return -1;
     const DiamondInstance *instance=(const DiamondInstance *)index_value.as.object;
-    if(instance->class!=&chunk->classes[vm->range_class_index])return -1;
+    if(instance->class!=chunk->classes[vm->range_class_index])return -1;
     int64_t start=instance->fields[0].as.integer;
     /* An endless range (`a[1..]`) has a nil end: it runs to the last element. */
     const bool endless=instance->fields[1].kind!=DIAMOND_VALUE_INT;
@@ -7633,7 +7639,7 @@ bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
      * text a raised Exception.new(message) carries. */
     char *location=strstr(message,"\n  at ");
     if(location!=nullptr)*location='\0';
-    DiamondInstance *exception=allocate_instance(vm,&chunk->classes[class_index],nullptr);
+    DiamondInstance *exception=allocate_instance(vm,chunk->classes[class_index],nullptr);
     if(exception==nullptr)return false;
     vm->exception=DIAMOND_OBJECT(exception);vm->has_exception=true;
     DiamondString *text=allocate_string(vm,message,strlen(message));
@@ -7710,7 +7716,7 @@ static const char *type_name(const DiamondChunk *chunk,uint16_t type) {
         name=chunk->interfaces[type-DIAMOND_TYPE_INTERFACE_BASE].name;
     else {
         const size_t index=(size_t)(type-DIAMOND_TYPE_CLASS_BASE);
-        if(index<chunk->class_count) name=chunk->classes[index].name;
+        if(index<chunk->class_count) name=chunk->classes[index]->name;
     }
     return name;
 }
@@ -8393,7 +8399,7 @@ bool builder_format_value(StringBuilder *builder,DiamondValue value) {
        (size_t)value.as.class_index<builder->format_context->chunk->class_count) {
         /* With a chunk to look it up in, a class prints as its name. */
         const char *class_name=
-            builder->format_context->chunk->classes[value.as.class_index].name;
+            builder->format_context->chunk->classes[value.as.class_index]->name;
         return builder_append(builder,class_name,strlen(class_name));
     }
     if(value.kind==DIAMOND_VALUE_CLASS) {
@@ -8534,9 +8540,9 @@ static bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *ins
     if(owner==nullptr)return false;
     const DiamondClass *ancestor=instance->class;
     while(ancestor!=nullptr) {
-        if(ancestor==&owner->classes[DIAMOND_CLASS_EXCEPTION])return true;
+        if(ancestor==owner->classes[DIAMOND_CLASS_EXCEPTION])return true;
         ancestor=ancestor->superclass==DIAMOND_NO_CLASS?nullptr:
-            &owner->classes[ancestor->superclass];
+            owner->classes[ancestor->superclass];
     }
     return false;
 }
@@ -8780,7 +8786,7 @@ static uint16_t runtime_value_type(const DiamondChunk *chunk,DiamondValue value)
     if(value.as.object->kind==DIAMOND_OBJECT_CLOSURE)return DIAMOND_TYPE_CALLABLE;
     const DiamondClass *class=((DiamondInstance *)value.as.object)->class;
     for(size_t index=0;index<chunk->class_count;index++)
-        if(&chunk->classes[index]==class)return (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index);
+        if(chunk->classes[index]==class)return (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index);
     return DIAMOND_TYPE_NONE;
 }
 
@@ -9472,25 +9478,25 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         registers[0].kind != DIAMOND_VALUE_OBJECT ||
         registers[0].as.object->kind != DIAMOND_OBJECT_INSTANCE)
         return DIAMOND_VM_TYPE_ERROR;
-    const DiamondClass *owner = &chunk->classes[owner_index];
+    const DiamondClass *owner = chunk->classes[owner_index];
     if (owner->superclass == DIAMOND_NO_CLASS) return DIAMOND_VM_TYPE_ERROR;
     const DiamondStringConstant *method_name = &chunk->strings[name];
     const DiamondMethod *method = lookup_method(chunk,
-        &chunk->classes[owner->superclass], method_name->chars, method_name->length);
+        chunk->classes[owner->superclass], method_name->chars, method_name->length);
     if (method == nullptr) {
         /* No user-defined method anywhere up the superclass chain -- if
          * this is super(...) from an overridden initialize() reaching for
          * the built-in Exception constructor, apply that same behavior
          * here instead of treating the built-in as missing. */
         bool reaches_exception = false;
-        const DiamondClass *ancestor = &chunk->classes[owner->superclass];
+        const DiamondClass *ancestor = chunk->classes[owner->superclass];
         while (ancestor != nullptr) {
-            if (ancestor == &chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+            if (ancestor == chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
                 reaches_exception = true;
                 break;
             }
             ancestor = ancestor->superclass == DIAMOND_NO_CLASS ? nullptr :
-                &chunk->classes[ancestor->superclass];
+                chunk->classes[ancestor->superclass];
         }
         if (reaches_exception && method_name->length == 10 &&
             memcmp(method_name->chars, "initialize", 10) == 0) {
@@ -9885,7 +9891,7 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
         DiamondValue *registers, uint16_t dest, uint16_t class_index,
         uint16_t base, uint8_t argc, size_t depth) {
     if((size_t)class_index>=chunk->class_count) return DIAMOND_VM_INVALID_BYTECODE;
-    const DiamondClass *class=&chunk->classes[class_index];
+    const DiamondClass *class=chunk->classes[class_index];
     DiamondInstance *instance=allocate_instance(vm,class,nullptr);
     if(instance==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
     registers[dest]=DIAMOND_OBJECT(instance);
@@ -9902,11 +9908,11 @@ DiamondVmStatus diamond_jit_new_instance(DiamondVm *vm, const DiamondChunk *chun
     }
     bool exception_class=false;const DiamondClass *ancestor=class;
     while(ancestor!=nullptr) {
-        if(ancestor==&chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
+        if(ancestor==chunk->classes[DIAMOND_CLASS_EXCEPTION]) {
             exception_class=true;break;
         }
         ancestor=ancestor->superclass==DIAMOND_NO_CLASS?nullptr:
-            &chunk->classes[ancestor->superclass];
+            chunk->classes[ancestor->superclass];
     }
     if(exception_class) {
         if(argc>2) return DIAMOND_VM_ARITY_ERROR;
@@ -11647,7 +11653,7 @@ DiamondVmStatus thread_invoke_helper(DiamondVm *vm,
         if((size_t)DIAMOND_CLASS_THREAD_ERROR>=chunk->class_count)
             return DIAMOND_VM_THREAD_ERROR;
         DiamondInstance *thread_error=allocate_instance(vm,
-            &chunk->classes[DIAMOND_CLASS_THREAD_ERROR],nullptr);
+            chunk->classes[DIAMOND_CLASS_THREAD_ERROR],nullptr);
         if(thread_error==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         /* Root immediately, before the allocate_string call
          * below can itself trigger a collection -- same

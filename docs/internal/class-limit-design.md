@@ -6,7 +6,8 @@ Past it, compilation stops with `too many classes`. A real application (Pheint, 
 only fits by turning its namespaces into `module`s (which do not count) and its tables into hash rows.
 Modules are capped too (255), and have the same storage problem.
 
-This document is the plan for removing the limit. Nothing here is implemented yet.
+This document is the plan for removing the limit. Stages 1-4 are implemented (the limit is now 1,024); stage 5 is
+still optional.
 
 ## Why it is 180
 

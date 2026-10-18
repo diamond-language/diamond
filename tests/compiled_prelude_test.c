@@ -103,8 +103,8 @@ int main(void) {
         "restored module_count matches original");
     check(restored->range_class_index == original->range_class_index,
         "restored range_class_index matches original");
-    check(strcmp(restored->classes[0].name, original->classes[0].name) == 0,
-        "restored classes[0].name matches original");
+    check(strcmp(restored->classes[0]->name, original->classes[0]->name) == 0,
+        "restored classes[0]->name matches original");
 
     /* The real test: use `restored` (built purely from a byte buffer,
      * never itself passed through diamond_compile) as a

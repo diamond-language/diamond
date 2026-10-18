@@ -239,10 +239,10 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
         if (!write_function(file, program->functions[index])) return false;
 
     for (size_t index = 0; index < program->class_count; index++) {
-        assert_methods_are_plain(program->classes[index].methods,
-            program->classes[index].method_count);
-        assert_methods_are_plain(program->classes[index].singleton_methods,
-            program->classes[index].singleton_method_count);
+        assert_methods_are_plain(program->classes[index]->methods,
+            program->classes[index]->method_count);
+        assert_methods_are_plain(program->classes[index]->singleton_methods,
+            program->classes[index]->singleton_method_count);
     }
     for (size_t index = 0; index < program->module_count; index++) {
         assert_methods_are_plain(program->modules[index].methods,
@@ -253,7 +253,7 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
 
     /* Counts before arrays, not after: only the *used* prefix of each
      * fixed-size table is written (class_count entries out of
-     * DIAMOND_MAX_CLASSES=180, not all 180 -- the prelude only ever
+     * DIAMOND_MAX_CLASSES=1024, not all 1024 -- the prelude only ever
      * populates ~23), so the reader needs each count in hand before it
      * knows how many bytes to expect. The unused suffix doesn't need
      * writing at all: diamond_program_init/calloc already zero it on
@@ -272,7 +272,7 @@ static bool write_program_body(const DiamondProgram *program, size_t skip, FILE 
     if (!write_all(file, &namespace_constant_count, sizeof namespace_constant_count)) return false;
 
     for (size_t index = 0; index < program->class_count; index++)
-        if (!write_class(file, &program->classes[index])) return false;
+        if (!write_class(file, program->classes[index])) return false;
     for (size_t index = 0; index < program->interface_count; index++)
         if (!write_interface(file, &program->interfaces[index])) return false;
     for (size_t index = 0; index < program->module_count; index++)
@@ -550,8 +550,11 @@ static bool read_program_body(const uint8_t *data, size_t size, DiamondProgram *
     out->module_count = (size_t)module_count;
     out->namespace_constant_count = (size_t)namespace_constant_count;
 
-    for (uint64_t index = 0; index < class_count; index++)
-        if (!read_class(&cursor, end, &out->classes[index])) return false;
+    for (uint64_t index = 0; index < class_count; index++) {
+        DiamondClass *class = diamond_program_class_slot(out, (size_t)index);
+        if (class == nullptr || !read_class(&cursor, end, class)) return false;
+        class->index = (uint16_t)index;
+    }
     for (uint64_t index = 0; index < interface_count; index++)
         if (!read_interface(&cursor, end, &out->interfaces[index])) return false;
     for (uint64_t index = 0; index < module_count; index++)
@@ -615,7 +618,7 @@ static bool program_is_valid(const DiamondProgram *program) {
     for (size_t index = 0; index < program->function_count; index++)
         if (!constants_are_scalar(program->functions[index])) return false;
     for (size_t index = 0; index < program->class_count; index++) {
-        const DiamondClass *class = &program->classes[index];
+        const DiamondClass *class = program->classes[index];
         if (class->superclass != DIAMOND_NO_CLASS && class->superclass >= program->class_count) return false;
         if (!method_table_valid(class->methods, class->method_count, program->function_count) ||
             !method_table_valid(class->singleton_methods, class->singleton_method_count,

@@ -174,16 +174,16 @@ static void fuzz_fill_types(DiamondFunction *function, FuzzReader *reader, size_
         DiamondTypeSet *set = &function->type_sets[index];
         *set = (DiamondTypeSet){.count = (uint8_t)(1 + fuzz_byte(reader) % 3)};
         for (size_t member = 0; member < set->count; member++) {
-            uint8_t ids[DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES + 64];
+            uint16_t ids[DIAMOND_TYPE_CLASS_BASE + DIAMOND_MAX_CLASSES + 64];
             size_t id_count = 0;
-            for (size_t id = 0; id < DIAMOND_TYPE_CLASS_BASE; id++) ids[id_count++] = (uint8_t)id;
+            for (size_t id = 0; id < DIAMOND_TYPE_CLASS_BASE; id++) ids[id_count++] = (uint16_t)id;
             for (size_t id = 0; id < class_count && id < DIAMOND_MAX_CLASSES; id++)
-                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_CLASS_BASE + id);
+                ids[id_count++] = (uint16_t)(DIAMOND_TYPE_CLASS_BASE + id);
             for (size_t id = 0; id < variable_count; id++)
-                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_VARIABLE_BASE + id);
+                ids[id_count++] = (uint16_t)(DIAMOND_TYPE_VARIABLE_BASE + id);
             for (size_t id = 0; id < interface_count; id++)
-                ids[id_count++] = (uint8_t)(DIAMOND_TYPE_INTERFACE_BASE + id);
-            const uint8_t type_id = ids[fuzz_byte(reader) % id_count];
+                ids[id_count++] = (uint16_t)(DIAMOND_TYPE_INTERFACE_BASE + id);
+            const uint16_t type_id = ids[fuzz_byte(reader) % id_count];
             const uint8_t first = fuzz_byte(reader), second = fuzz_byte(reader);
             int argument = -1, second_argument = -1, arity = -1, callable_return = -1;
             uint16_t parameters[16];
@@ -296,13 +296,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         const uint8_t superclass_byte = fuzz_byte(&reader);
         const size_t field_total = fuzz_byte(&reader) % 5;
         const size_t method_total = fuzz_byte(&reader) % 3;
-        const size_t class_index = program->class_count++;
-        DiamondClass *class = &program->classes[class_index];
-        *class = (DiamondClass){};
+        const size_t class_index = program->class_count;
+        DiamondClass *class = diamond_program_class_slot(program, class_index);
+        if (class == nullptr) return 0;
+        program->class_count++;
+        *class = (DiamondClass){.index = (uint16_t)class_index};
         (void)snprintf(class->name, sizeof class->name, "K%zu", index);
-        class->superclass = UINT8_MAX;
+        class->superclass = DIAMOND_NO_CLASS;
         if (superclass_byte < class_index) {
-            const DiamondClass *parent = &program->classes[superclass_byte];
+            const DiamondClass *parent = program->classes[superclass_byte];
             class->superclass = superclass_byte;
             class->field_count = parent->field_count;
             memcpy(class->fields, parent->fields, parent->field_count * sizeof class->fields[0]);
@@ -320,7 +322,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             entry->function_index = (uint16_t)function_index;
             entry->arity = arity;
             entry->required_arity = arity;
-            program->functions[function_index]->owner_class = (uint8_t)class_index;
+            program->functions[function_index]->owner_class = (uint16_t)class_index;
         }
         for (size_t field_count = 0; field_count <= class->field_count; field_count++)
             class->shapes[field_count] = (DiamondShape){.class = class, .field_count = (uint8_t)field_count};

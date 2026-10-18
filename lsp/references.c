@@ -87,8 +87,8 @@ static bool name_is_global_symbol(const DiamondChunk *chunk,const char *name,
             return true;
     }
     for(size_t index=0;index<chunk->class_count;index++)
-        if(strlen(chunk->classes[index].name)==name_length&&
-           memcmp(chunk->classes[index].name,name,name_length)==0)
+        if(strlen(chunk->classes[index]->name)==name_length&&
+           memcmp(chunk->classes[index]->name,name,name_length)==0)
             return true;
     for(size_t index=0;index<chunk->interface_count;index++)
         if(strlen(chunk->interfaces[index].name)==name_length&&

@@ -222,16 +222,16 @@ typedef struct StringBuilder {
 DIAMOND_INTERNAL DiamondString *allocate_string(DiamondVm *vm, const char *chars, size_t length);
 DIAMOND_INTERNAL bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                          DiamondProgram *source_program,
-                                         const DiamondClass *rebase_source_classes,
-                                         const DiamondClass *rebase_dest_classes,
+                                         DiamondClass *const *rebase_source_classes,
+                                         DiamondClass *const *rebase_dest_classes,
                                          const DiamondChunk **adopted_owner,
                                          DiamondValue *out);
 DIAMOND_INTERNAL DiamondRegexp *allocate_regexp_handle(DiamondVm *vm, reginold_regex *compiled,
                                                        const char *source, size_t source_length,
                                                        unsigned int options);
 DIAMOND_INTERNAL void copy_namespace_constants_into_vm(const DiamondVm *parent, DiamondVm *child,
-                                                       const DiamondClass *source_classes,
-                                                       const DiamondClass *dest_classes);
+                                                       DiamondClass *const *source_classes,
+                                                       DiamondClass *const *dest_classes);
 DIAMOND_INTERNAL bool methods_have_own_named(const DiamondMethod *methods, size_t count,
                                              const char *name);
 DIAMOND_INTERNAL bool sandbox_category_allowed(const char *category);
@@ -962,7 +962,7 @@ static inline const DiamondClass *method_declaring_class(const DiamondChunk *chu
         for(size_t index=0;index<current->method_count;index++)
             if(method==&current->methods[index])return current;
         current=current->superclass==DIAMOND_NO_CLASS?nullptr:
-            &chunk->classes[current->superclass];
+            chunk->classes[current->superclass];
     }
     return nullptr;
 }
@@ -971,7 +971,7 @@ static inline bool class_is_a(const DiamondChunk *chunk,const DiamondClass *clas
         const DiamondClass *ancestor) {
     for(const DiamondClass *current=class;current!=nullptr;
         current=current->superclass==DIAMOND_NO_CLASS?nullptr:
-            &chunk->classes[current->superclass])
+            chunk->classes[current->superclass])
         if(current==ancestor)return true;
     return false;
 }
@@ -996,7 +996,7 @@ static inline const DiamondMethod *lookup_singleton_method(const DiamondChunk *c
             }
         }
         current = current->superclass == DIAMOND_NO_CLASS
-            ? nullptr : &chunk->classes[current->superclass];
+            ? nullptr : chunk->classes[current->superclass];
     }
     return nullptr;
 }
@@ -1256,7 +1256,7 @@ static inline DiamondVmStatus get_cvar_helper(DiamondVm *vm,
         const DiamondChunk *chunk, uint16_t class_index, uint16_t slot,
         DiamondValue *out) {
     if(class_index>=chunk->class_count||
-       slot>=chunk->classes[class_index].class_variable_count)
+       slot>=chunk->classes[class_index]->class_variable_count)
         return DIAMOND_VM_INVALID_BYTECODE;
     /* A read before any write anywhere in this VM: no slot has ever been
      * allocated, so the value is definitionally the class variable
@@ -1273,14 +1273,16 @@ static inline DiamondVmStatus get_cvar_helper(DiamondVm *vm,
 static inline DiamondVmStatus set_cvar_helper(DiamondVm *vm,const DiamondChunk *chunk,
         uint16_t class_index,uint16_t slot,DiamondValue value) {
     if(class_index>=chunk->class_count||
-       slot>=chunk->classes[class_index].class_variable_count)
+       slot>=chunk->classes[class_index]->class_variable_count)
         return DIAMOND_VM_INVALID_BYTECODE;
     if(vm->class_variables==nullptr) {
         vm->class_variables=calloc((size_t)DIAMOND_MAX_CLASSES*DIAMOND_MAX_FIELDS,
             sizeof(DiamondValue));
         if(vm->class_variables==nullptr) return DIAMOND_VM_OUT_OF_MEMORY;
     }
-    vm->class_variables[(size_t)class_index*DIAMOND_MAX_FIELDS+slot]=value;
+    const size_t position=(size_t)class_index*DIAMOND_MAX_FIELDS+slot;
+    vm->class_variables[position]=value;
+    if(position>=vm->class_variable_extent)vm->class_variable_extent=position+1;
     return DIAMOND_VM_OK;
 }
 
