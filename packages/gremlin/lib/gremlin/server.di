@@ -88,6 +88,7 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
         return nil
       end
       unless request == nil
+        request["peer_address"] = conn.peer_address()
         # context["gremlin_connection"]: this request's own live
         # NonblockingConnection -- an escape hatch for a handler that
         # needs the raw connection itself, not just a [status, headers,

@@ -448,6 +448,34 @@ kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
 rm -f "$out" "$out.di"
 
+# The request hash carries the client's address as "peer_address" (the TCP peer, not a header).
+port=19420
+out="$(mktemp)"
+cat >"$out.di" <<SRCEOF
+require "$package_root/lib/gremlin"
+def run()
+  def handler(request, context)
+    [200, {"Content-Type": "text/plain"}, "peer=#{request["peer_address"]}"]
+  end
+  gremlin_serve($port, handler, threads: 1)
+end
+run()
+SRCEOF
+timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /who HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 9.9.9.9\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == *"peer=127.0.0.1" ]]
+
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$out.di"
+
 # Graceful shutdown still exits promptly with a tick configured -- the
 # combined gremlin_poll_timeout_ms bound (shutdown deadline vs. next
 # tick) must not let a far-future tick override the shutdown deadline,
