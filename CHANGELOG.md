@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- `GraphQL::ExecutionError.new(message, extensions)` accepts an optional Hash that is returned under the error's
+  `"extensions"` key (`graphql` 0.1.6).
 - An endless `def name(params) = expr` may start its body on the next line (blank and comment lines may come first), in the
   compiler and the self-hosted parser.
 - `peer_address()` on a connected socket (client or accepted, blocking or non-blocking) returns the remote
