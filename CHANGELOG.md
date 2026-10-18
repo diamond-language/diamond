@@ -6,8 +6,18 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- `gremlin_serve`'s tenth argument, `host`, listens on one address (for example `"127.0.0.1"` behind a reverse proxy) instead of every
+  interface.
+
 ### Fixed
 
+- `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
+  opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
+  `TypeError` instead of silently ignoring the path; a failed pipe setup now stops and reaps the child and closes its pipes.
+- `File.size`, `mode`, `file?`, `symlink?`, `exist?`, `directory?` and `Dir.mkdir`, `Dir.delete`, `Dir.sync` raise `TypeError` for a path
+  with an embedded NUL byte instead of acting on the part before it.
 - A request that drove a handler into a call-stack overflow (`SystemStackError`, which is not a `StandardError`) killed the whole
   Gremlin worker; it now answers `500 Internal Server Error` like any other handler failure. Found with a deeply nested GraphQL
   query (a 30-level selection crashed a Pheint worker).
@@ -20,6 +30,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
 - `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
 - `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.
 

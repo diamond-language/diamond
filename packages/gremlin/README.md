@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.5"
+facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.6"
 facet update
 ```
 
@@ -53,6 +53,19 @@ continues even with no socket activity. These are I/O deadlines from accept,
 not preemption of synchronous handlers; stalled response writes also expire.
 Long-lived protocols such as WebSockets should not use this policy without
 accounting for the connection lifetime limit.
+
+## Binding to one address
+
+By default every worker listens on all interfaces (`0.0.0.0`). A server that sits behind a reverse proxy on the same machine should not
+be reachable directly, and an application that trusts a proxy's `X-Real-IP` header must not be (anyone who can reach the port could forge
+it). Pass the optional tenth argument, `host`, to listen on one address only:
+
+```diamond
+gremlin_serve(8080, handler, 1, nil, nil, nil, false, nil, 10.0, "127.0.0.1")
+```
+
+The arguments before it are `threads`, `tick_interval`, `on_tick`, `limits`, `return_after_shutdown`, `shutdown_token` and
+`shutdown_timeout`; give them their defaults to reach `host`. It applies to every worker, with or without a shutdown token.
 
 ## The client's address
 
