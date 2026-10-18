@@ -7,10 +7,14 @@ module GraphQL
   # by the executor at the same point any other resolver exception is
   # caught; distinguished only so a resolver can choose its own message
   # with intent instead of it being an implementation-detail leak.
+  # `extensions` is an optional Hash returned to the client under the
+  # error's "extensions" key (the spec's place for things like a code).
   class ExecutionError < StandardError
     attr_reader message: String
-    def initialize(message: String)
+    attr_reader extensions: Hash
+    def initialize(message: String, extensions: Hash = {})
       @message = message
+      @extensions = extensions
     end
   end
 

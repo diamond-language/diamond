@@ -181,6 +181,15 @@ def sign_in(object, args, context)
 end
 ```
 
+Pass a Hash as the second argument to attach `extensions` to the error, the spec's place for machine-readable detail such as a code:
+
+```ruby
+raise GraphQL::ExecutionError.new("invalid email or password", {"code": "UNAUTHENTICATED"})
+# => {"message": "invalid email or password", "path": ["signIn"], "extensions": {"code": "UNAUTHENTICATED"}}
+```
+
+An error without extensions has no `"extensions"` key.
+
 ### Lookahead
 
 Immediately before each field resolves, the executor sets `context["lookahead"]` to a `GraphQL::Execution::Lookahead` describing that field's sub-selections. A resolver can use it to skip work the query didn't ask for. [`graphsql`](https://github.com/diamond-language/diamond/blob/main/packages/graphsql/README.md) builds on this to select only the requested SQL columns and to preload only the requested associations.

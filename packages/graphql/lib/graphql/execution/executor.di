@@ -319,7 +319,7 @@ module GraphQL
           begin
             args = GraphQL::Execution::Coercion.coerce_arguments(field_node.arguments(), @type_name_argument, coerced_variables)
           rescue e: StandardError
-            @errors.push({"message": e.message(), "path": path})
+            @errors.push(self.error_entry(e, path))
             return nil
           end
           resolved_value = @type_map[args["name"]]
@@ -353,7 +353,7 @@ module GraphQL
               resolver(object_value, args, context)
             end
           rescue e: StandardError
-            @errors.push({"message": e.message(), "path": path})
+            @errors.push(self.error_entry(e, path))
             if schema_field.type().kind() == "NON_NULL"
               raise NullBubbleError.new(e.message())
             end
@@ -368,12 +368,24 @@ module GraphQL
           end
           nil
         rescue e: StandardError
-          @errors.push({"message": e.message(), "path": path})
+          @errors.push(self.error_entry(e, path))
           if schema_field.type().kind() == "NON_NULL"
             raise NullBubbleError.new(e.message())
           end
           nil
         end
+      end
+
+      # One entry of the response's "errors" list. A GraphQL::ExecutionError
+      # may carry `extensions` (machine-readable detail such as an error
+      # code); they ride along under the spec's "extensions" key. Any other
+      # exception contributes only its message and path.
+      def error_entry(e, path)
+        entry = {"message": e.message(), "path": path}
+        if e.is_a?(GraphQL::ExecutionError) && e.extensions().length() > 0
+          entry["extensions"] = e.extensions()
+        end
+        entry
       end
 
       def merged_selection_set(fields)
@@ -491,7 +503,7 @@ module GraphQL
               end
               output[item_index] = nil
             rescue e: StandardError
-              @errors.push({"message": e.message(), "path": item_path})
+              @errors.push(self.error_entry(e, item_path))
               if item_type.kind() == "NON_NULL"
                 raise NullBubbleError.new(e.message())
               end

@@ -455,6 +455,32 @@ assert_contains "$actual" "custom failure"
 assert_contains "$actual" 'missing required argument "x"'
 count=$((count + 1))
 
+# --- ExecutionError extensions ride along under "extensions"; a plain
+# error and one without extensions get no such key ---
+actual="$(run_file '
+module R
+  module_function
+  def coded(o, a, c)
+    raise GraphQL::ExecutionError.new("nope", {"code": "DENIED", "retry": false})
+  end
+  def plain(o, a, c)
+    raise GraphQL::ExecutionError.new("plain")
+  end
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("coded", GraphQL::ScalarType.string(), R.coded)
+t.field("plain", GraphQL::ScalarType.string(), R.plain)
+t.field("nonnull", GraphQL::ScalarType.string().non_null(), R.coded)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ coded plain }"))
+puts(schema.execute("{ nonnull }"))
+')"
+assert_contains "$actual" '{message: nope, path: [coded], extensions: {code: DENIED, retry: false}}'
+assert_contains "$actual" '{message: plain, path: [plain]}'
+assert_contains "$actual" '{data: nil, errors: [{message: nope, path: [nonnull], extensions: {code: DENIED, retry: false}}]}'
+count=$((count + 1))
+
 # --- union type: __typename + resolve_type + typed inline fragments ---
 actual="$(run_file '
 module R
