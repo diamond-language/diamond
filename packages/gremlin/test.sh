@@ -409,14 +409,17 @@ wait "$pid" 2>/dev/null || true
 rm -f "$out" "$out.di"
 
 # A handler that raises answers 500 with a generic body (the message stays in
-# the log) and the server keeps serving the next request.
+# the log) and the server keeps serving the next request. That includes one that
+# recurses until the call stack overflows (SystemStackError is not a StandardError).
 port=19419
 out="$(mktemp)"
 cat >"$out.di" <<SRCEOF
 require "$package_root/lib/gremlin"
+def descend(depth) = descend(depth + 1) + 1
 def run()
   def handler(request, context)
     if request["path"] == "/boom" then raise RuntimeError.new("secret detail") end
+    if request["path"] == "/deep" then descend(0) end
     [200, {"Content-Type": "text/plain"}, "fine"]
   end
   gremlin_serve($port, handler, threads: 1)
@@ -437,6 +440,13 @@ response="$(timeout 3 cat <&3)"
 [[ "$response" != *"secret detail"* ]]
 grep -q '"message":"request.handler_failed"' "$out"
 grep -q 'secret detail' "$out"
+
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /deep HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3
+response="$(timeout 3 cat <&3)"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+[[ "$response" == HTTP/1.1\ 500\ * && "$response" == *"Internal Server Error" ]]
+grep -q 'call stack overflow' "$out"
 
 exec 3<>"/dev/tcp/127.0.0.1/$port"
 printf 'GET /next HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3

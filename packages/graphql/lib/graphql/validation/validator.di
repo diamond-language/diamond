@@ -53,6 +53,7 @@ module GraphQL
         self.check_unique_operation_names(operations, errors)
         self.check_unique_fragment_names(document, errors)
         self.check_fragment_type_conditions(document, type_map, errors)
+        self.check_fragment_cycles(document, errors)
 
         index = 0
         while index < operations.length()
@@ -134,13 +135,71 @@ module GraphQL
         end
       end
 
+      # The meta types a document may name in a type condition (`fragment F on __Type`, as introspection tools write
+      # it). They are not in the schema's type map, and nothing inside an introspection selection is validated.
+      def self.introspection_type?(name) = ["__Schema", "__Type", "__Field", "__InputValue", "__EnumValue", "__Directive"].include?(name)
+
+      # Fragment spreads inside `selections`, nested selection sets and inline fragments included, as names.
+      def self.spreads_in(selections, found)
+        selections.each() do |selection|
+          if selection is GraphQL::Language::FragmentSpread
+            found.push(selection.name())
+          elsif selection is GraphQL::Language::InlineFragment
+            self.spreads_in(selection.selection_set(), found)
+          elsif selection is GraphQL::Language::Field
+            if selection.selection_set() != nil then self.spreads_in(selection.selection_set(), found) end
+          end
+        end
+        found
+      end
+
+      # A fragment may not spread itself, directly or through others. Kahn's algorithm over the spread graph (no
+      # recursion, so a long chain of fragments cannot exhaust the stack): fragments that spread only resolved
+      # fragments are resolved in turn, and whatever is left over sits on a cycle or leads into one.
+      def self.check_fragment_cycles(document, errors)
+        spreads = {}
+        document.definitions().each() do |definition|
+          if definition is GraphQL::Language::FragmentDefinition
+            spreads[definition.name()] = self.spreads_in(definition.selection_set(), []).uniq().select() do |name| name != nil end
+          end
+        end
+        waiting = {}
+        dependents = {}
+        spreads.keys().each() do |name|
+          known = spreads[name].select() do |other| spreads.has_key?(other) end
+          waiting[name] = known.length()
+          known.each() do |other|
+            if !dependents.has_key?(other) then dependents[other] = [] end
+            dependents[other].push(name)
+          end
+        end
+        ready = spreads.keys().select() do |name| waiting[name] == 0 end
+        resolved = 0
+        while !ready.empty?()
+          name = ready.pop()
+          resolved += 1
+          if dependents.has_key?(name)
+            dependents[name].each() do |waiter|
+              waiting[waiter] -= 1
+              if waiting[waiter] == 0 then ready.push(waiter) end
+            end
+          end
+        end
+        if resolved < spreads.length()
+          stuck = spreads.keys().select() do |name| waiting[name] > 0 end
+          errors.push("fragments cannot spread themselves, directly or through others (cycle through #{stuck.map() do |name| "\"#{name}\"" end.join(", ")})")
+        end
+      end
+
       def self.check_fragment_type_conditions(document, type_map, errors)
         index = 0
         while index < document.definitions().length()
           definition = document.definitions()[index]
           if definition is GraphQL::Language::FragmentDefinition
             named = type_map[definition.type_condition()]
-            if named == nil
+            if named == nil && self.introspection_type?(definition.type_condition())
+              named = nil
+            elsif named == nil
               errors.push("fragment \"#{definition.name()}\" targets unknown type \"#{definition.type_condition()}\"")
             elsif !(named.kind() == "OBJECT" || named.kind() == "INTERFACE" || named.kind() == "UNION")
               errors.push("fragment \"#{definition.name()}\" cannot target non-composite type \"#{definition.type_condition()}\"")
@@ -216,7 +275,9 @@ module GraphQL
             target_type = parent_type
             if selection.type_condition() != nil
               named = type_map[selection.type_condition()]
-              if named == nil
+              if named == nil && self.introspection_type?(selection.type_condition())
+                target_type = parent_type
+              elsif named == nil
                 errors.push("inline fragment targets unknown type \"#{selection.type_condition()}\"")
               else
                 target_type = named

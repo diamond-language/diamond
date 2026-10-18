@@ -970,4 +970,85 @@ assert_contains "$actual" "union Thing = Book"
 [[ "$actual" == *"type Book"*"input Filter"*"enum Level"*"type Mutation"*"interface Node"*"type Query"*"union Thing"* ]]
 count=$((count + 1))
 
+# --- fragments on introspection types validate and execute (GraphiQL-style introspection) ---
+actual="$(run_case '
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), nil)
+schema = GraphQL::Schema.new()
+schema.query(t)
+named = "{ __schema { queryType { ...T } } } fragment T on __Type { name kind }"
+puts(schema.execute(named))
+inline = "{ __schema { queryType { ... on __Type { name } } } }"
+puts(schema.execute(inline))
+puts(schema.execute("{ __schema { queryType { ...T } } } fragment T on __Nope { name }"))
+')"
+assert_contains "$actual" '{data: {__schema: {queryType: {name: Query, kind: OBJECT}}}}'
+assert_contains "$actual" '{data: {__schema: {queryType: {name: Query}}}}'
+assert_contains "$actual" 'fragment "T" targets unknown type "__Nope"'
+count=$((count + 1))
+
+# --- fragment cycles are rejected; chains and shared dependencies are not ---
+actual="$(run_case '
+module R
+  module_function
+  def hello(o, a, c) = "hi"
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), R.hello)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ ...A } fragment A on Query { ...A }"))
+puts(schema.execute("{ ...A } fragment A on Query { ...B } fragment B on Query { ...C } fragment C on Query { ...A }"))
+puts(schema.execute("{ ...A } fragment A on Query { hello ...B ...C } fragment B on Query { ...D } fragment C on Query { ...D } fragment D on Query { hello }"))
+puts(schema.execute("{ ...A } fragment A on Query { ... on Query { ...A } }"))
+')"
+[[ "$(grep -c 'fragments cannot spread themselves' <<<"$actual")" == "3" ]]
+assert_contains "$actual" '{data: {hello: hi}}'
+assert_contains "$actual" 'cycle through "A", "B", "C"'
+count=$((count + 1))
+
+# --- a thousand fragments chained end to end is not a stack overflow ---
+actual="$(run_case '
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), nil)
+schema = GraphQL::Schema.new()
+schema.query(t)
+parts = ["{ ...F0 }"]
+n = 1000
+i = 0
+while i < n
+  parts.push("fragment F#{i} on Query { ...F#{i + 1} }")
+  i += 1
+end
+parts.push("fragment F#{n} on Query { hello }")
+cyclic = parts.join(" ") + " fragment G on Query { ...G }"
+puts(schema.execute(cyclic).key?("errors"))
+')"
+assert_contains "$actual" 'true'
+count=$((count + 1))
+
+# --- the parser refuses a document nested past Parser.max_nesting (selection sets, list and object values, list types) ---
+actual="$(run_case '
+ok = "{ a " * 20 + "x" + " }" * 20
+too_deep = "{ a " * 21 + "x" + " }" * 21
+puts(GraphQL::Language::Parser.parse(ok).definitions().length())
+def message(source)
+  begin
+    GraphQL::Language::Parser.parse(source)
+    "parsed"
+  rescue error: StandardError
+    error.message()
+  end
+end
+puts(message(too_deep))
+puts(message("{ a(x: " + "[" * 21 + "1" + "]" * 21 + ") }"))
+puts(message("{ a(x: " + "{k: " * 21 + "1" + "}" * 21 + ") }"))
+puts(message("query($v: " + "[" * 21 + "Int" + "]" * 21 + ") { a }"))
+puts(message("{ a(x: " + "[" * 5 + "1" + "]" * 5 + ") }"))
+puts(GraphQL::Language::Parser.max_nesting())
+')"
+[[ "$(grep -c 'nested more than 20 levels deep' <<<"$actual")" == "4" ]]
+assert_contains "$actual" 'parsed'
+count=$((count + 1))
+
 echo "$count graphql tests passed"

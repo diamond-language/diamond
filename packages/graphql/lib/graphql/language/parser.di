@@ -12,9 +12,27 @@ module GraphQL
     end
 
     class Parser
+      # How deeply selection sets, list/object literals and list types may nest. The parser, the validator and the
+      # executor all recurse once per level, and a call stack is only about 90 frames deep (a request handler runs on
+      # a fiber), so an unbounded document is a way to crash the server. A method, not a constant, because a
+      # worker thread does not run top-level statements.
+      def self.max_nesting() = 20
+
       def initialize(tokens)
         @tokens = tokens
         @pos = 0
+        @depth = 0
+      end
+
+      def enter_nesting()
+        @depth += 1
+        if @depth > Parser.max_nesting()
+          raise ParseError.new("the document is nested more than #{Parser.max_nesting()} levels deep")
+        end
+      end
+
+      def leave_nesting()
+        @depth -= 1
       end
 
       def self.parse(source: String)
@@ -132,7 +150,9 @@ module GraphQL
       def parse_type_reference()
         if self.at_punct("[")
           self.advance()
+          self.enter_nesting()
           inner = self.parse_type_reference()
+          self.leave_nesting()
           self.expect_punct("]")
           type = ListType.new(inner)
         else
@@ -182,10 +202,12 @@ module GraphQL
 
       def parse_selection_set()
         self.expect_punct("{")
+        self.enter_nesting()
         selections = []
         while !self.at_punct("}")
           selections.push(self.parse_selection())
         end
+        self.leave_nesting()
         self.expect_punct("}")
         selections
       end
@@ -296,16 +318,19 @@ module GraphQL
 
       def parse_list_value()
         self.expect_punct("[")
+        self.enter_nesting()
         values = []
         while !self.at_punct("]")
           values.push(self.parse_value())
         end
+        self.leave_nesting()
         self.expect_punct("]")
         ListValue.new(values)
       end
 
       def parse_object_value()
         self.expect_punct("{")
+        self.enter_nesting()
         fields = []
         while !self.at_punct("}")
           name = self.expect_name()
@@ -313,6 +338,7 @@ module GraphQL
           value = self.parse_value()
           fields.push(ObjectField.new(name, value))
         end
+        self.leave_nesting()
         self.expect_punct("}")
         ObjectValue.new(fields)
       end

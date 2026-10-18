@@ -8,7 +8,7 @@ From your project directory (see the [package guide](https://github.com/diamond-
 
 ```sh
 facet init myapp          # once, if the project has no diamond.cut yet
-facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.4"
+facet add gremlin --registry https://cuts.dilang.tech --version "^0.4.5"
 facet update
 ```
 
@@ -65,7 +65,9 @@ older than the release that added `TCPSocket#peer_address`.
 
 A handler that raises answers `500 Internal Server Error` with a plain generic body and
 logs `request.handler_failed` (with the `request_id` and the error message) as JSON. The
-message is never sent to the client, and the server keeps serving other requests. A handler
+message is never sent to the client, and the server keeps serving other requests. This includes a
+handler that recurses until the call stack overflows (`SystemStackError`, which is not a `StandardError`):
+a request whose input drives a handler that deep gets the same 500 instead of taking the worker down. A handler
 that took over the connection itself (a WebSocket) and then raised gets the 500 written onto
 its own stream, so catch errors inside such handlers.
 

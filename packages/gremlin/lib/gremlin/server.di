@@ -104,9 +104,14 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
         # stays in the log, never in the response. A handler that had already
         # taken over `conn` (a WebSocket) and then raised gets the 500 written
         # onto its own stream, which the peer sees as a protocol error.
+        # SystemStackError is not a StandardError (a handler that recurses too deeply on a hostile input would
+        # otherwise take the whole worker down), so it is answered the same way.
         begin
           response = handler(request, context)
         rescue error: StandardError
+          log.error("request.handler_failed", {"request_id": conn.request_id(), "error": error.message()})
+          response = [500, {"Content-Type": "text/plain; charset=utf-8", "Connection": "close", "X-Request-ID": conn.request_id()}, "Internal Server Error"]
+        rescue error: SystemStackError
           log.error("request.handler_failed", {"request_id": conn.request_id(), "error": error.message()})
           response = [500, {"Content-Type": "text/plain; charset=utf-8", "Connection": "close", "X-Request-ID": conn.request_id()}, "Internal Server Error"]
         end
