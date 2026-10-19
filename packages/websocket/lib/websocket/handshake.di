@@ -88,7 +88,7 @@ def websocket_handshake_response_bytes(request)
 end
 
 # The one call an application handler needs: given
-# context["gremlin_connection"] and the already-parsed request, writes
+# request["gremlin_connection"] and the already-parsed request, writes
 # the 101 response directly to `conn` and returns a fresh
 # WebSocketConnection wrapping it for the framed read/write lifetime of
 # this connection from here on.
@@ -105,5 +105,11 @@ def websocket_accept(conn, request)
     raise ArgumentError.new("websocket_accept called on a request that is not a WebSocket upgrade")
   end
   conn.write(websocket_handshake_response_bytes(request))
+  # A WebSocket outlives the request deadline gremlin_serve(limits: ...) sets; connections without that method (a test double) have none.
+  begin
+    conn.clear_deadline()
+  rescue error: StandardError
+    nil
+  end
   WebSocketConnection.new(conn)
 end
