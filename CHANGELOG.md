@@ -65,7 +65,9 @@ authoritative fine-grained record.
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
 - mjolnir: `Repo#update` found its row with `changeset.get_field(pk)`, which prefers a pending change, so a changeset that permitted `id` and was given another row's id
   overwrote that row; and changing the key failed because the WHERE looked for the new value. It uses the loaded entity's key. `update_all` raises
-  `UnknownFieldError` for a column the schema does not declare. The README states that `insert`/`update` need `RETURNING`.
+  `UnknownFieldError` for a column the schema does not declare. `insert` and `update` failed outright on MySQL (no `RETURNING`) and on MariaDB `UPDATE`;
+  where the Arel visitor reports no `RETURNING`, `Repo` now runs the statement and reads the row back by key, and declared unique constraints become field
+  errors on PostgreSQL and MySQL/MariaDB as well as SQLite. `packages/mjolnir/test_dialects.sh` checks it against live MariaDB 11, MySQL 8.4 and PostgreSQL 16.
 - `PostgreSQL#last_insert_row_id` built its result in a C local while the query helper allocated more objects, so a collection at the wrong moment
   could free the result Array before it was read. The result goes straight into the rooted register now, as for every other query.
 - gremlin: `context` is one Hash for the whole worker and every accepted request overwrote `context["gremlin_connection"]`, so a handler that waited (a
@@ -146,7 +148,7 @@ authoritative fine-grained record.
 - `jobs` 0.1.3: the worker fixes above.
 - `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
-- `mjolnir` 0.2.4: the update and `update_all` fixes above.
+- `mjolnir` 0.2.4: the update, `update_all` and MySQL/MariaDB write fixes above.
 - `gremlin` 0.4.7 and `websocket` 0.1.4: the connection, deadline and cleanup fixes above. The registry launch seed pins both.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.

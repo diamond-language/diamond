@@ -103,7 +103,11 @@ module Mjolnir
       else
         statement = statement.values(values)
       end
-      self.write(changeset, statement.returning(["*"]))
+      if self.supports_returning?(false)
+        self.write(changeset, statement.returning(["*"]))
+      else
+        self.insert_then_read(changeset, statement, values)
+      end
     end
 
     # Writes only the changed fields of a persisted entity. A changeset
@@ -123,12 +127,16 @@ module Mjolnir
       # the submitted value names.
       parts = schema.primary_keys().map() do |key| changeset.original_field(key) end
       id = if schema.composite?() then parts else parts[0] end
-      statement = Arel.update(schema.table()).set(self.stamped(changeset, false))
+      values = self.stamped(changeset, false)
+      statement = Arel.update(schema.table()).set(values)
       schema.key_predicates(id).each() do |predicate|
         statement = statement.where(predicate)
       end
-      statement = statement.returning(["*"])
-      result = self.write(changeset, statement)
+      result = if self.supports_returning?(true)
+        self.write(changeset, statement.returning(["*"]))
+      else
+        self.update_then_read(changeset, statement, parts, values)
+      end
       if result is Ok && result.value() == nil
         raise StaleEntryError.new(schema.table_name(), id)
       end
@@ -240,6 +248,63 @@ module Mjolnir
       changes.merge(stamps)
     end
 
+    # Whether the database can hand the written row back from the statement itself. SQLite and PostgreSQL can for INSERT and UPDATE, MariaDB
+    # only for INSERT (its UPDATE ... RETURNING is a syntax error), MySQL for neither; the Arel visitor in use says which. No visitor means
+    # SQLite.
+    def supports_returning?(for_update: Bool) -> Bool
+      return true if @visitor == nil
+      return false unless @visitor.supports_extension?("returning clauses")
+      if for_update then @visitor.supports_extension?("RETURNING on UPDATE") else true end
+    end
+
+    # INSERT without RETURNING: run it, work out the new row's key (the values it supplied, and the connection's last insert id for a single
+    # generated key), and read the row back by that key.
+    def insert_then_read(changeset: Changeset, statement, values: Hash)
+      schema = changeset.schema()
+      begin
+        statement.execute(@db, @visitor)
+        parts = schema.primary_keys().map() do |key|
+          if values.has_key?(key) then values[key] else nil end
+        end
+        missing = parts.select() do |part| part == nil end.length()
+        if missing > 1
+          raise ArgumentError.new("cannot read back a row of #{schema.table_name()} whose key is generated in more than one column")
+        end
+        if missing == 1
+          generated = @db.last_insert_row_id()
+          parts = parts.map() do |part| if part == nil then generated else part end end
+        end
+        id = if schema.composite?() then parts else parts[0] end
+        Ok.new(self.get(schema, id))
+      rescue error: StandardError
+        self.constraint_failure(changeset, error)
+      end
+    end
+
+    # UPDATE without RETURNING: run it, then read the row back by its key after the update (the new key when the update changed it). An
+    # update that matched nothing leaves Ok(nil), which #update reports as a stale entry. The affected-row count alone cannot say that:
+    # MySQL counts rows changed, so setting a column to the value it already had reports 0 for a row that exists.
+    def update_then_read(changeset: Changeset, statement, original_parts: Array, values: Hash)
+      schema = changeset.schema()
+      begin
+        affected = statement.execute(@db, @visitor)
+        keys = schema.primary_keys()
+        parts = []
+        index = 0
+        while index < keys.length()
+          parts.push(if values.has_key?(keys[index]) then values[keys[index]] else original_parts[index] end)
+          index += 1
+        end
+        if affected == 0 && parts != original_parts
+          return Ok.new(nil)
+        end
+        id = if schema.composite?() then parts else parts[0] end
+        Ok.new(self.get(schema, id))
+      rescue error: StandardError
+        self.constraint_failure(changeset, error)
+      end
+    end
+
     # Runs an INSERT/UPDATE ... RETURNING and wraps the stored row, or
     # turns a failure of a declared constraint into an Err.
     def write(changeset: Changeset, statement)
@@ -247,12 +312,17 @@ module Mjolnir
         rows = statement.to_a(@db, @visitor)
         if rows.empty?() then Ok.new(nil) else Ok.new(changeset.schema().build(rows[0])) end
       rescue error: StandardError
-        failed = self.violated_constraint(changeset, error.message())
-        if failed == nil
-          raise error
-        end
-        Err.new(changeset.add_error(failed["field"], failed["message"]))
+        self.constraint_failure(changeset, error)
       end
+    end
+
+    # A failed write: Err(changeset with the field error) for a declared unique constraint, otherwise the error is raised again.
+    def constraint_failure(changeset: Changeset, error)
+      failed = self.violated_constraint(changeset, error.message())
+      if failed == nil
+        raise error
+      end
+      Err.new(changeset.add_error(failed["field"], failed["message"]))
     end
 
     def violated_constraint(changeset: Changeset, message: String)
@@ -264,7 +334,13 @@ module Mjolnir
         by_column = message.include?("UNIQUE constraint failed: #{reported}")
         named = declared["constraint"]
         by_name = named != nil && message.include?(named)
-        by_column || by_name
+        # PostgreSQL names the columns in the error detail ("Key (a, b)=(1, 2) already exists"); MySQL and MariaDB name the index
+        # ("Duplicate entry '1' for key 'name'", MySQL 8 qualifies it with the table), which defaults to the first column of the constraint.
+        names = if columns.empty?() then [declared["field"]] else columns end
+        by_postgres = message.include?("Key (#{names.join(", ")})=")
+        first = names[0]
+        by_mysql = message.include?("Duplicate entry") && (message.include?("for key '#{first}'") || message.include?("for key '#{table}.#{first}'"))
+        by_column || by_name || by_postgres || by_mysql
       end
     end
   end
