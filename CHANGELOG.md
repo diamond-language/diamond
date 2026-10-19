@@ -13,6 +13,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
+  small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
+  its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
 - `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
   `[1, 2].reject { nil }` keeps both.
 - `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
@@ -73,6 +76,7 @@ authoritative fine-grained record.
 
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.
+- `graphql` 0.2.1: the query depth and size limits above.
 - `graphql` 0.2.0: error masking, strict scalars and the fragment-cycle message above.
 - `network_safety` 0.1.3: the guard fixes above.
 - `http` 0.1.3: the redirect fixes above.

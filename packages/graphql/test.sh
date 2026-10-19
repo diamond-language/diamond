@@ -1130,4 +1130,60 @@ expected=$'expected an Int, got an object\nexpected an Int, got a String\n{echoI
 [[ "$actual" == "$expected" ]]
 count=$((count + 1))
 
+# --- fragments cannot expand a small document into an enormous one (limits are checked with fragments expanded, in linear time) ---
+limits_prelude='
+module R
+  module_function
+  def hello(o, a, c) = "hi"
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), R.hello)
+t.field("a", t)
+t.field("b", t)
+schema = GraphQL::Schema.new()
+schema.query(t)
+def fan_out(levels)
+  parts = ["{ ...F0 }"]
+  i = 0
+  while i < levels
+    parts.push("fragment F#{i} on Query { a { ...F#{i + 1} } b { ...F#{i + 1} } }")
+    i += 1
+  end
+  parts.push("fragment F#{levels} on Query { hello }")
+  parts.join(" ")
+end
+def chain(levels)
+  parts = ["{ ...F0 }"]
+  i = 0
+  while i < levels
+    parts.push("fragment F#{i} on Query { a { ...F#{i + 1} } }")
+    i += 1
+  end
+  parts.push("fragment F#{levels} on Query { hello }")
+  parts.join(" ")
+end
+def too_large(response)
+  errors = response["errors"]
+  return "ok" if errors == nil
+  limits = errors.select() do |error| error["message"].start_with?("query is too large") end
+  if limits.length() == 0 then "ok" else limits.map() do |error| error["message"] end.join(" | ") end
+end
+'
+actual="$(timeout 60 "$diamond" -e "require \"$(pwd)/lib/graphql\"
+$limits_prelude
+puts(too_large(schema.execute(fan_out(40))))
+puts(too_large(schema.execute(chain(30))))
+puts(too_large(schema.execute(chain(10), {}, {}, {})))
+schema.max_query_depth(5)
+puts(too_large(schema.execute(chain(10))))
+puts(too_large(schema.execute(chain(3), {}, {}, {})))
+small = GraphQL::Schema.new()
+small.query(t)
+small.max_query_nodes(3)
+puts(too_large(small.execute(fan_out(3))))
+")"
+expected=$'query is too large: fields are nested more than 20 levels deep, fragments included | query is too large: it selects more than 10000 fields, fragments included\nquery is too large: fields are nested more than 20 levels deep, fragments included\nok\nquery is too large: fields are nested more than 5 levels deep, fragments included\nok\nquery is too large: it selects more than 3 fields, fragments included\nnil'
+[[ "$actual" == "$expected" ]] || { echo "limits: got" >&2; echo "$actual" >&2; exit 1; }
+count=$((count + 1))
+
 echo "$count graphql tests passed"

@@ -55,6 +55,12 @@ module GraphQL
         self.check_fragment_type_conditions(document, type_map, errors)
         self.check_fragment_cycles(document, errors)
 
+        # Fragments let a small document expand into an enormous one, so the size is measured (fragments included) before anything walks it.
+        self.check_query_limits(operations, fragments, schema, errors)
+        if errors.length() > 0 && self.limit_error?(errors)
+          return errors
+        end
+
         index = 0
         while index < operations.length()
           self.validate_operation(operations[index], schema, type_map, fragments, errors)
@@ -230,6 +236,81 @@ module GraphQL
         end
       end
 
+      def self.limit_error?(errors)
+        found = false
+        errors.each() do |message|
+          found = true if message.start_with?("query is too large:")
+        end
+        found
+      end
+
+      # [deepest field nesting, number of fields] of a selection set, with fragment spreads expanded. Memoized per fragment, so a document that
+      # nests fragments 40 deep is measured in 40 steps although it would expand to 2**40 fields. A fragment already being measured (a cycle,
+      # reported separately) counts as empty.
+      def self.measure_selection_set(selection_set, fragments, memo, active)
+        depth = 0
+        nodes = 0
+        index = 0
+        while index < selection_set.length()
+          selection = selection_set[index]
+          part_depth = 0
+          part_nodes = 0
+          if selection is GraphQL::Language::Field
+            if selection.selection_set() == nil
+              part_depth = 1
+              part_nodes = 1
+            else
+              inner = self.measure_selection_set(selection.selection_set(), fragments, memo, active)
+              part_depth = 1 + inner[0]
+              part_nodes = 1 + inner[1]
+            end
+          elsif selection is GraphQL::Language::FragmentSpread
+            inner = self.measure_fragment(selection.name(), fragments, memo, active)
+            part_depth = inner[0]
+            part_nodes = inner[1]
+          elsif selection is GraphQL::Language::InlineFragment
+            inner = self.measure_selection_set(selection.selection_set(), fragments, memo, active)
+            part_depth = inner[0]
+            part_nodes = inner[1]
+          end
+          depth = part_depth if part_depth > depth
+          nodes += part_nodes
+          nodes = 1000000000000 if nodes > 1000000000000
+          index += 1
+        end
+        [depth, nodes]
+      end
+
+      def self.measure_fragment(name, fragments, memo, active)
+        return memo[name] if memo.has_key?(name)
+        fragment = fragments[name]
+        return [0, 0] if fragment == nil || active.include?(name)
+        active.push(name)
+        measured = self.measure_selection_set(fragment.selection_set(), fragments, memo, active)
+        active.pop()
+        memo[name] = measured
+        measured
+      end
+
+      def self.check_query_limits(operations, fragments, schema, errors)
+        memo = {}
+        too_deep = false
+        too_many = false
+        index = 0
+        while index < operations.length()
+          measured = self.measure_selection_set(operations[index].selection_set(), fragments, memo, [])
+          too_deep = true if measured[0] > schema.max_query_depth()
+          too_many = true if measured[1] > schema.max_query_nodes()
+          index += 1
+        end
+        if too_deep
+          errors.push("query is too large: fields are nested more than #{schema.max_query_depth()} levels deep, fragments included")
+        end
+        if too_many
+          errors.push("query is too large: it selects more than #{schema.max_query_nodes()} fields, fragments included")
+        end
+      end
+
       def self.validate_operation(operation, schema, type_map, fragments, errors)
         kind = operation.operation()
         root_type = if kind == "mutation" then schema.mutation_type() elsif kind == "subscription" then nil else schema.query_type() end
@@ -275,7 +356,7 @@ module GraphQL
         while index < selection_set.length()
           selection = selection_set[index]
           if selection is GraphQL::Language::Field
-            self.validate_field(selection, parent_type, query_type, type_map, fragments, declared_variables, errors)
+            self.validate_field(selection, parent_type, query_type, type_map, fragments, declared_variables, errors, visited_fragments)
           elsif selection is GraphQL::Language::FragmentSpread
             self.validate_directives(selection.directives(), declared_variables, errors)
             unless visited_fragments.include?(selection.name())
@@ -311,7 +392,7 @@ module GraphQL
         end
       end
 
-      def self.validate_field(field_node, parent_type, query_type, type_map, fragments, declared_variables, errors)
+      def self.validate_field(field_node, parent_type, query_type, type_map, fragments, declared_variables, errors, visited_fragments)
         if field_node.name() == "__typename"
           return nil
         end
@@ -356,7 +437,7 @@ module GraphQL
           errors.push("field \"#{field_node.name()}\" of composite type \"#{named_field_type.name()}\" must have a sub-selection")
         elsif has_selection
           self.validate_selection_set(field_node.selection_set(), named_field_type, query_type, type_map, fragments,
-            declared_variables, errors, [])
+            declared_variables, errors, visited_fragments)
         end
       end
 

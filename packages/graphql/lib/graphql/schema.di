@@ -9,6 +9,8 @@ module GraphQL
       @query_type = nil
       @mutation_type = nil
       @mask_errors = true
+      @max_query_depth = 20
+      @max_query_nodes = 10000
     end
 
     def query(type)
@@ -29,6 +31,18 @@ module GraphQL
     end
 
     def mask_errors?() = @mask_errors
+
+    # Limits on a query once its fragments are expanded: the deepest field nesting and the number of fields. A document is rejected before it is
+    # validated or executed when it exceeds either.
+    def max_query_depth(limit = nil)
+      @max_query_depth = limit unless limit == nil
+      if limit == nil then @max_query_depth else self end
+    end
+
+    def max_query_nodes(limit = nil)
+      @max_query_nodes = limit unless limit == nil
+      if limit == nil then @max_query_nodes else self end
+    end
 
     def query_type() = @query_type
     def mutation_type() = @mutation_type
