@@ -17,9 +17,7 @@ def facet_output(facet, args)
   result.stdout()
 end
 
-def valid_name?(name)
-  Regexp.new("\\A[a-z][a-z0-9_]*\\z").match?(name)
-end
+def valid_name?(name) = Regexp.new("\\A[a-z][a-z0-9_]*\\z").match?(name)
 
 def visit_cut(name, entries, visiting, visited, ordered)
   raise ArgumentError.new("dependency missing from seed: " + name) unless entries.key?(name)

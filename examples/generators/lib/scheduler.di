@@ -28,9 +28,7 @@ class Scheduler
 
   # Registers a task (it first runs on the next tick). Tasks run in the order
   # they were spawned.
-  def spawn(name: String, &body)
-    @tasks.push(Task.new(name, Fiber.new(body)))
-  end
+  def spawn(name: String, &body) = @tasks.push(Task.new(name, Fiber.new(body)))
 
   # Adds a timestamped line to the trace. Tasks call this too.
   def log(message: String)
@@ -95,10 +93,6 @@ class Scheduler
 end
 
 # Helpers for task bodies, so they read like blocking code.
-def sleep_ticks(ticks: Int)
-  Fiber.yield([:sleep, ticks])
-end
+def sleep_ticks(ticks: Int) = Fiber.yield([:sleep, ticks])
 
-def pass()
-  Fiber.yield(:pass)
-end
+def pass() = Fiber.yield(:pass)

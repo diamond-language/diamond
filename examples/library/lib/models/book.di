@@ -11,9 +11,7 @@ class Book < ActiveRecord::Model
   end
 
   # Columns to write on save.
-  def to_attributes()
-    {"title": @title, "author_id": @author_id, "year": @year, "available": @available}
-  end
+  def to_attributes() = {"title": @title, "author_id": @author_id, "year": @year, "available": @available}
   def repository() = @@repository
 
   def self.repository() = @@repository

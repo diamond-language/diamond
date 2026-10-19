@@ -14,6 +14,4 @@ def remove_tree(path)
 end
 
 # A new temporary directory.
-def make_temp_dir()
-  Process.run(["mktemp", "-d"]).stdout().strip()
-end
+def make_temp_dir() = Process.run(["mktemp", "-d"]).stdout().strip()

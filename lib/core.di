@@ -28,9 +28,7 @@ def array_last_or(values: Array, fallback)
   end
 end
 
-def array_empty(values: Array) -> Bool
-  values.length() == 0
-end
+def array_empty(values: Array) -> Bool = values.length() == 0
 
 def array_include(values: Array, needle) -> Bool
   index = 0
@@ -238,9 +236,7 @@ def hash_fetch(values: Hash, key, fallback = :__diamond_no_fallback__)
   fallback
 end
 
-def hash_empty(values: Hash) -> Bool
-  values.length() == 0
-end
+def hash_empty(values: Hash) -> Bool = values.length() == 0
 
 def hash_each(values: Hash, callback: Callable[2]) -> Hash
   index = 0
@@ -391,14 +387,10 @@ end
 def enumerable_map(values, callback: Callable[1]) -> Array
   result = []
   if values is Hash
-    def transform_pair(key, value)
-      result.push(callback(value))
-    end
+    def transform_pair(key, value) = result.push(callback(value))
     values.each(transform_pair)
   else
-    def transform_item(item)
-      result.push(callback(item))
-    end
+    def transform_item(item) = result.push(callback(item))
     values.each(transform_item)
   end
   result
@@ -553,9 +545,7 @@ def diamond_sort_pick(values: Array, order: Array) -> Array
   result
 end
 
-def enumerable_sort(values: Array) -> Array
-  diamond_sort_pick(values, diamond_sort_order(values))
-end
+def enumerable_sort(values: Array) -> Array = diamond_sort_pick(values, diamond_sort_order(values))
 
 # Calls the block once per element, not once per comparison.
 def enumerable_sort_by(values: Array, callback: Callable[1]) -> Array
@@ -891,9 +881,7 @@ class LazyEnumerator
 
   def to_a() -> Array
     result = []
-    def collect(item)
-      result.push(item)
-    end
+    def collect(item) = result.push(item)
     self.each(collect)
     result
   end
@@ -928,9 +916,7 @@ module Enumerable
   # Array-typed implementation reuses it as-is instead.
   def to_a() -> Array
     result = []
-    def collect(item)
-      result.push(item)
-    end
+    def collect(item) = result.push(item)
     self.each(collect)
     result
   end
@@ -1232,13 +1218,11 @@ def diamond_array_delete(values: Array, target)
   if found then target else nil end
 end
 
-def diamond_array_delete_if(values: Array, callback: Callable[1]) -> Array
+def diamond_array_delete_if(values: Array, callback: Callable[1]) -> Array =
   diamond_array_replace(values, values.reject(callback))
-end
 
-def diamond_array_keep_if(values: Array, callback: Callable[1]) -> Array
+def diamond_array_keep_if(values: Array, callback: Callable[1]) -> Array =
   diamond_array_replace(values, values.select(callback))
-end
 
 def diamond_array_fill(values: Array, item) -> Array
   index = 0
@@ -1645,30 +1629,22 @@ end
 
 # min_by/max_by/sort_by work on [key, value] entries, as in Ruby.
 def diamond_hash_sort_by(values: Hash, callback) -> Array
-  def pair_key(pair)
-    diamond_hash_call_pair(callback, pair[0], pair[1])
-  end
+  def pair_key(pair) = diamond_hash_call_pair(callback, pair[0], pair[1])
   diamond_hash_to_a(values).sort_by(pair_key)
 end
 
 def diamond_hash_min_by(values: Hash, callback)
-  def pair_key(pair)
-    diamond_hash_call_pair(callback, pair[0], pair[1])
-  end
+  def pair_key(pair) = diamond_hash_call_pair(callback, pair[0], pair[1])
   diamond_hash_to_a(values).min_by(pair_key)
 end
 
 def diamond_hash_max_by(values: Hash, callback)
-  def pair_key(pair)
-    diamond_hash_call_pair(callback, pair[0], pair[1])
-  end
+  def pair_key(pair) = diamond_hash_call_pair(callback, pair[0], pair[1])
   diamond_hash_to_a(values).max_by(pair_key)
 end
 
 def diamond_hash_sort(values: Hash) -> Array
-  def entry_key(pair)
-    pair[0]
-  end
+  def entry_key(pair) = pair[0]
   diamond_hash_to_a(values).sort_by(entry_key)
 end
 
@@ -1790,9 +1766,7 @@ def diamond_hash_except(values: Hash, a = :__diamond_absent__, b = :__diamond_ab
 end
 
 def diamond_hash_compact(values: Hash) -> Hash
-  def value_is_nil(value)
-    value == nil
-  end
+  def value_is_nil(value) = value == nil
   diamond_hash_reject(values, value_is_nil)
 end
 
@@ -2334,6 +2308,4 @@ def diamond_string_unpack(data: String, format: String) -> Array
   result
 end
 
-def diamond_string_unpack1(data: String, format: String)
-  diamond_string_unpack(data, format)[0]
-end
+def diamond_string_unpack1(data: String, format: String) = diamond_string_unpack(data, format)[0]

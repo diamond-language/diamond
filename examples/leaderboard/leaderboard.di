@@ -145,9 +145,7 @@ end
 # A nested `def` is a closure value: returning it hands the board a
 # callback it can invoke as `listener(event, details)`.
 def nested_listener()
-  def listener(event, details)
-    puts(describe(event, details))
-  end
+  def listener(event, details) = puts(describe(event, details))
   listener
 end
 

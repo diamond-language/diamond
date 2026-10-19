@@ -96,9 +96,8 @@ class Minitest
     true
   end
 
-  def self.refute(condition: Bool, message: String = "expected condition to be false") -> Bool
+  def self.refute(condition: Bool, message: String = "expected condition to be false") -> Bool =
     Minitest.assert(!condition, message)
-  end
 
   def self.assert_equal(expected, actual, message: String = "") -> Bool
     if expected != actual
@@ -247,9 +246,7 @@ class Minitest
     self
   end
 
-  def total() -> Int
-    @names.length()
-  end
+  def total() -> Int = @names.length()
 
   # Runs every registered test, prints a summary, and returns true only
   # if every test passed (a skip doesn't count against this).

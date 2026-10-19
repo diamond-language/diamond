@@ -12,9 +12,7 @@ class Linear
   end
 
   # x: Var (rows x in_features). Returns Var (rows x out_features).
-  def forward(x)
-    Autograd.add_bias(Autograd.matmul(x, @weight), @bias)
-  end
+  def forward(x) = Autograd.add_bias(Autograd.matmul(x, @weight), @bias)
 
   # 1/sqrt(in_features) uniform scale -- a loose approximation of
   # Xavier/Glorot init, not rigorous; good enough to avoid a

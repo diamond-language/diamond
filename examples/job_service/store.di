@@ -33,7 +33,6 @@ class JobStore
 
   # Moves a job to a terminal `status` (succeeded, cancelled, timed_out,
   # ...), records why, stamps the finish time, and releases the lock.
-  def self.finish(db, id, status, message)
+  def self.finish(db, id, status, message) =
     db.execute("UPDATE jobs SET status = ?, last_error = ?, finished_at = ?, locked_at = NULL WHERE id = ?", [status, message, Time.now().to_i(), id])
-  end
 end

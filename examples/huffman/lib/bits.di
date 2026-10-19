@@ -23,9 +23,7 @@ def pack_u16(value: Int) -> String
   [(value >> 8) & 0xFF, value & 0xFF].map() do |byte| byte.chr() end.join("")
 end
 
-def unpack_u16(bytes: String, at: Int) -> Int
-  bytes.getbyte(at) * 256 + bytes.getbyte(at + 1)
-end
+def unpack_u16(bytes: String, at: Int) -> Int = bytes.getbyte(at) * 256 + bytes.getbyte(at + 1)
 
 # Pads the final byte with 0 bits -- harmless, since a decoder always
 # knows how many *symbols* to expect and stops there, never how many

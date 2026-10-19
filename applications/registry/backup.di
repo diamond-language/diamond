@@ -8,9 +8,7 @@
 
 BLOB_PATTERN = "\\A[0-9a-f]{64}\\z"
 
-def digest(path)
-  Digest.sha256(File.read(path))
-end
+def digest(path) = Digest.sha256(File.read(path))
 
 def open_read_only(path)
   if File.symlink?(path) || !File.file?(path)

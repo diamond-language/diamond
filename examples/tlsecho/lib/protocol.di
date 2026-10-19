@@ -18,9 +18,8 @@
 GUNZIP_LIMIT = 1_048_576
 
 # Makes a reply Hash (see the header for its shape).
-def build_reply(line: String, body: String | Nil = nil, close: Bool = false) -> Hash
+def build_reply(line: String, body: String | Nil = nil, close: Bool = false) -> Hash =
   {"line": line, "body": body, "close": close}
-end
 
 # Turns one request line into a reply. Pure: no I/O, so it can be tested
 # without a connection. `protocol` is the negotiated ALPN protocol and `peer`

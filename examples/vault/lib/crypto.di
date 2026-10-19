@@ -42,9 +42,7 @@ end
 # Compress, then encrypt (GCM authenticates too), then Base64 for JSON.
 # The order matters: encrypted data does not compress, so compression has to
 # come first; Base64 turns the binary result into text a JSON file can hold.
-def seal(key: String, secret: String) -> String
-  Base64.encode(Cipher.encrypt(key, Gzip.compress(secret)))
-end
+def seal(key: String, secret: String) -> String = Base64.encode(Cipher.encrypt(key, Gzip.compress(secret)))
 
 # The inverse of seal, or nil when the key is wrong or the data was
 # tampered with -- GCM's tag check fails either way.

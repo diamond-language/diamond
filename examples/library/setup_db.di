@@ -24,9 +24,8 @@ def add_author(db, name, country)
   db.last_insert_row_id()
 end
 
-def add_book(db, title, author_id, year, available)
+def add_book(db, title, author_id, year, available) =
   db.execute("INSERT INTO books (title, author_id, year, available) VALUES (?, ?, ?, ?)", [title, author_id, year, available])
-end
 
 # Seed data: three authors, then two books each (the second Le Guin and
 # Borges books are unavailable, to make /books/available show a difference).

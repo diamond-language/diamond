@@ -46,9 +46,8 @@ end
 def make_chunk(kind: String, data: String) -> Chunk = Chunk.new(kind, data, Crc32.of(kind + data))
 
 # A chunk as bytes: length, type, data, CRC.
-def encode_chunk(chunk: Chunk) -> String
+def encode_chunk(chunk: Chunk) -> String =
   u32_bytes(chunk.data().length()) + chunk.kind() + chunk.data() + u32_bytes(chunk.crc())
-end
 
 # Splits a PNG into chunks, checking the structure (but NOT the CRCs: see
 # `intact?` and pngmeta.di's load_intact, since `info` wants to report a bad

@@ -24,9 +24,8 @@ def request(method, path, body = "", cookie = nil)
 end
 
 # Same thing when the cookie is always present.
-def request_with_cookie(method, path, body, cookie)
+def request_with_cookie(method, path, body, cookie) =
   {"method": method, "path": path, "body": body, "headers": {"cookie": cookie}}
-end
 
 context = {}
 

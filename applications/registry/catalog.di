@@ -5,9 +5,8 @@ def registry_catalog_file(path)
   bytes
 end
 
-def registry_catalog_page(file)
+def registry_catalog_page(file) =
   [200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'", "X-Content-Type-Options": "nosniff"}, registry_catalog_file(file)]
-end
 
 def registry_cut_name?(name) = Regexp.new("\\A[a-z][a-z0-9_]{0,63}\\z").match?(name)
 

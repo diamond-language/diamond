@@ -18,9 +18,7 @@ end
 
 # A fixed starting inventory: slot => [price in cents, count]. The service
 # key is "1234".
-def new_machine() -> Machine
-  Machine.new({"A1": [75, 2], "B2": [125, 1]}, "1234")
-end
+def new_machine() -> Machine = Machine.new({"A1": [75, 2], "B2": [125, 1]}, "1234")
 
 # Replays a script. The only mutable state is `state`, replaced after every
 # command by the state `step` returns. Returns 0 if every command was valid,

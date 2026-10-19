@@ -17,9 +17,7 @@ end
 
 # Strict number syntax: an optional minus, digits, an optional fractional
 # part. Stricter than to_f, which would accept "12abc" as 12.
-def number?(text: String) -> Bool
-  Regexp.new("^-?[0-9]+(\\.[0-9]+)?$").match(text) != nil
-end
+def number?(text: String) -> Bool = Regexp.new("^-?[0-9]+(\\.[0-9]+)?$").match(text) != nil
 
 # Parses one "name:value|type[|@rate]" line, raising MetricError for any
 # deviation.

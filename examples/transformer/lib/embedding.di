@@ -16,7 +16,5 @@ class Embedding
   # token_ids: a plain Array of Ints, each < vocab_size and < max_seq_len
   # in position (i.e. token_ids.length() <= max_seq_len). Returns a Var
   # (seq_len x d_model).
-  def forward(token_ids)
-    Autograd.embedding(@token_table, @position_table, token_ids)
-  end
+  def forward(token_ids) = Autograd.embedding(@token_table, @position_table, token_ids)
 end
