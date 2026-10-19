@@ -2,8 +2,14 @@
 #
 #   diamond monitor.di BASE_URL [--ca-file FILE] [--timeout SECONDS] [--archive-sha256 DIGEST]
 #
-# Exits 0 when the probe passed and 1 when it failed. The record carries only an error class,
-# never exception text, which can contain URLs or remote-controlled contents.
+# Exits 0 when the probe passed and 1 when it failed. The record carries only an error class
+# (ValueError, OSError or Timeout), never exception text, which can contain URLs or
+# remote-controlled contents.
+#
+# --timeout bounds each socket operation, not the whole probe: a server that sends one byte
+# just inside it keeps a single read going for as long as it likes. The probe therefore runs
+# in a worker thread, and the whole run is cut off after twice --timeout plus 5 seconds (the
+# health check and the archive each get --timeout) with the error class Timeout.
 
 def usage(message)
   warn(message)
@@ -141,15 +147,35 @@ while index < args.length()
 end
 usage("usage: monitor.di BASE_URL [--ca-file FILE] [--timeout SECONDS] [--archive-sha256 DIGEST]") if base == nil
 
-started = Time.monotonic()
-result = {"ok": true}
-begin
-  probe(base, ca_file, timeout, archive)
-rescue e: ArgumentError
-  result = {"ok": false, "error": "ValueError"}
-rescue e: StandardError
-  result = {"ok": false, "error": "OSError"}
+# Runs the probe and reports its outcome as a String on `results`. A top-level def with arguments only, so it can start a Thread.
+def probe_worker(base, ca_file, timeout, archive, results)
+  outcome = "ok"
+  begin
+    probe(base, ca_file, timeout, archive)
+  rescue e: ArgumentError
+    outcome = "ValueError"
+  rescue e: StandardError
+    outcome = "OSError"
+  end
+  results.send(outcome)
 end
+
+started = Time.monotonic()
+results = Channel.new(1)
+worker = Thread.new(probe_worker, base, ca_file, timeout, archive, results)
+deadline = started + timeout * 2 + 5
+outcome = nil
+while outcome == nil
+  if results.size() > 0
+    outcome = results.receive()
+  elsif Time.monotonic() >= deadline
+    # The worker may still be blocked in a read; exiting below ends it with the process.
+    outcome = "Timeout"
+  else
+    results.wait_readable([], deadline)
+  end
+end
+result = if outcome == "ok" then {"ok": true} else {"ok": false, "error": outcome} end
 elapsed = ((Time.monotonic() - started) * 1000).round()
 result["duration_ms"] = elapsed
 puts(JSON.stringify(result))

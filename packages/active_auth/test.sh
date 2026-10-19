@@ -255,4 +255,34 @@ opted_out = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecre
 ')"
 assert_eq "$actual" "true false"
 
+# --- a backup code presented twice at once is accepted once: both requests loaded the row before either consumed it ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+codes = ActiveAuth::BackupCode.generate_for!(db, account.id())
+first_copy = account.backup_codes(db)[0]
+second_copy = account.backup_codes(db)[0]
+first = first_copy.consume_if_match!(db, codes[0])
+second = second_copy.consume_if_match!(db, codes[0])
+"#{first} #{second} #{account.backup_codes(db)[0].used?()}"
+')"
+assert_eq "$actual" "true false true"
+
+# --- a password reset token found twice before either consumes it is consumed once; the second consume raises ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+token, raw = ActiveAuth::PasswordResetToken.issue(db, account.id())
+first_copy = ActiveAuth::PasswordResetToken.from_token(db, raw)
+second_copy = ActiveAuth::PasswordResetToken.from_token(db, raw)
+first_copy.consume!(db)
+begin
+  second_copy.consume!(db)
+  "second consume succeeded"
+rescue error: RuntimeError
+  error.message()
+end
+')"
+assert_eq "$actual" "token already used"
+
 echo "$count active_auth tests passed"
