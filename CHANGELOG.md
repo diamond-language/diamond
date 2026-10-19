@@ -31,6 +31,10 @@ authoritative fine-grained record.
 - Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
   They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
   registry seed, backup, upgrade and monitor tools.
+- active_auth: `to_json` on an `Account`, `Session`, `PasswordResetToken`, `EmailVerificationToken` or `BackupCode` included the password digest, the
+  session token and CSRF token, the reset and verification tokens, and the backup-code digest (the default JSON was the persisted attributes). Each
+  model has an `as_json` without its secret columns. `Session.issue_cookie` sets `Secure` under `DIAMOND_ENV=production` and takes
+  `secure:` to override either way.
 - network_safety: the SSRF guard only recognised canonical dotted quads, so `127.1`, `2130706433`, `0x7f.0.0.1`, `0177.0.0.1`, a trailing-dot
   `127.0.0.1.` or `localhost.`, and `*.localhost` names passed as ordinary hostnames. Numeric spellings that are not a canonical address
   are rejected, trailing dots are ignored when checking, and `.localhost` counts as local.
@@ -63,6 +67,7 @@ authoritative fine-grained record.
 ### Packages
 
 - `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
+- `active_auth` 0.2.2: the JSON shape and `Secure` cookie above.
 - `network_safety` 0.1.3: the guard fixes above.
 - `http` 0.1.3: the redirect fixes above.
 - `arel` 0.34.6: the bind-order fix above.

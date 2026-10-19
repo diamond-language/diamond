@@ -17,6 +17,8 @@ module ActiveAuth
     end
 
     def to_attributes() = {"account_id": @account_id, "token": @token, "expires_at": @expires_at, "used_at": @used_at}
+    # The JSON shape leaves out the secret columns; #to_attributes (used to persist the record) keeps them.
+    def as_json() = {"account_id": @account_id, "expires_at": @expires_at, "used_at": @used_at}
     def repository() = @@repository
     def self.repository() = @@repository
     def self.configure(repository: ActiveRecord::Repository)

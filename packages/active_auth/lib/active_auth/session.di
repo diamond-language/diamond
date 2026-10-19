@@ -48,6 +48,8 @@ module ActiveAuth
 
     def to_attributes() = {"account_id": @account_id, "token": @token, "csrf_token": @csrf_token,
       "user_agent": @user_agent, "ip_address": @ip_address, "expires_at": @expires_at}
+    # The JSON shape leaves out the secret columns; #to_attributes (used to persist the record) keeps them.
+    def as_json() = {"account_id": @account_id, "user_agent": @user_agent, "expires_at": @expires_at}
     def repository() = @@repository
     def self.repository() = @@repository
     def self.configure(repository: ActiveRecord::Repository)
@@ -92,10 +94,13 @@ module ActiveAuth
     #
     #   session, set_cookie = ActiveAuth::Session.issue_cookie(db, account.id(), secret: ENV["SESSION_SECRET"])
     #   [302, {"Location": "/", "Set-Cookie": set_cookie}, "signed in"]
-    def self.issue_cookie(db, account_id, secret: String, user_agent = nil, ip_address = nil, cookie_name: String = Session.default_cookie_name())
+    # The session cookie carries Secure under DIAMOND_ENV=production; pass `secure: false` for an HTTP-only deployment behind no TLS.
+    def self.default_secure?() -> Bool = ENV["DIAMOND_ENV"] == "production"
+
+    def self.issue_cookie(db, account_id, secret: String, user_agent = nil, ip_address = nil, cookie_name: String = Session.default_cookie_name(), secure: Bool = Session.default_secure?())
       session, raw = Session.issue(db, account_id, user_agent, ip_address)
       cookie_value = SignedCookies.sign(raw, secret)
-      set_cookie = cookie_serialize(cookie_name, cookie_value, {"path": "/", "http_only": true, "same_site": "Lax", "max_age": Session.duration_seconds()})
+      set_cookie = cookie_serialize(cookie_name, cookie_value, {"path": "/", "http_only": true, "secure": secure, "same_site": "Lax", "max_age": Session.duration_seconds()})
       [session, set_cookie]
     end
 
