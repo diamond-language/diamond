@@ -25,7 +25,9 @@ for arg in "$@"; do
 done
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
-[[ -x build/diamond ]] || make -s
+# The upgrade check, the backup restore check and the launch verification all run these binaries, so they must match this checkout (make is a no-op when they do).
+make -s
+make -s facet >/dev/null
 host=${REGISTRY_HOST:-root@dilang.tech}
 backups=${REGISTRY_BACKUP_DIR:-$HOME/diamond-registry-backups}
 vm_port=${REGISTRY_VM_PORT:-2222}
@@ -46,10 +48,16 @@ revision=$(git rev-parse HEAD); short=${revision:0:8}
 echo "== is an upgrade needed?"
 verdict=0
 build/diamond tools/registry_needs_upgrade.di --host "$host" || verdict=$?
-if [[ $verdict -ne 20 ]] && ! $force; then
-    echo; echo "Not upgrading (verdict $verdict). Re-run with --force to upgrade anyway."
-    exit 0
-fi
+# 20 = required, 10 = optional, 0 = none. Anything else means the check itself failed (host unreachable, deployed revision unknown, git error), which must not look like "nothing to do".
+case $verdict in
+    20) ;;
+    0|10)
+        if ! $force; then
+            echo; echo "Not upgrading (verdict $verdict). Re-run with --force to upgrade anyway."
+            exit 0
+        fi ;;
+    *) echo "The upgrade check failed (exit $verdict); not deploying." >&2; exit 1 ;;
+esac
 
 echo; echo "== build VM: make sure there is swap (vm.c needs more than the guest's RAM)"
 if $dry; then echo "+ (in the VM) swapon /swapfile, creating a 4G swapfile first if missing"; else
@@ -57,17 +65,32 @@ if $dry; then echo "+ (in the VM) swapon /swapfile, creating a 4G swapfile first
 fi
 
 echo; echo "== verified backup of the live registry"
-backup="$backups/cutbackup-$(date +%F)-pre-$short"
+backup="$backups/cutbackup-$(date +%F-%H%M%S)-pre-$short"
 run mkdir -p -m 700 "$backups"
 run tools/fetch_registry_backup.sh "$backup" --host "$host" \
     --app /opt/diamond-registry/current/app --data /var/lib/diamond-registry
 
 echo; echo "== build the bundle at $short"
 bundle="$backups/registry-bundle-${revision:0:12}"
-run tools/build_registry_vm.sh "$bundle"
+if [[ -f "$bundle/SHA256SUMS" ]]; then
+    echo "reusing the bundle already built for this revision: $bundle"
+else
+    # A bundle directory without SHA256SUMS is what an earlier failed build left behind; the build creates its output exclusively.
+    run rm -rf -- "$bundle"
+    run tools/build_registry_vm.sh "$bundle"
+fi
+
+uploaded=false
+cleanup_uploads() {
+    if $uploaded && ! $dry; then
+        ssh "$host" 'rm -f /root/registry-deployment.tar.gz /root/upgrade.sh' || echo "could not remove the uploads from $host" >&2
+    fi
+}
+trap cleanup_uploads EXIT
 
 echo; echo "== upload and upgrade"
 sha=$(cut -d' ' -f1 "$bundle/SHA256SUMS" 2>/dev/null || echo "<sha256>")
+uploaded=true
 run scp -q "$bundle/registry-deployment.tar.gz" "$host:/root/registry-deployment.tar.gz"
 run scp -q applications/registry/deploy/upgrade.sh "$host:/root/upgrade.sh"
 run ssh "$host" "bash /root/upgrade.sh /root/registry-deployment.tar.gz $sha"

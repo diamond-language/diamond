@@ -13,6 +13,14 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- tools/deploy_registry.sh treated any upgrade-check exit other than 20 as "nothing to do" and exited 0, so an unreachable host or an unknown
+  deployed revision looked like a successful no-op. Only 0 (none) and 10 (optional) stop quietly now; any other exit is an error, even with `--force`.
+  The script also rebuilds `build/diamond` and `build/facet` every run (they were only built when missing, so a pull left it verifying with old tools), names
+  backups with the time of day so a second run on the same day does not collide, reuses a finished bundle and clears a partial one, and removes its
+  uploads from the host when the run fails after uploading. Covered by `make test-deploy-registry`, which `test-integration` runs.
+- applications/registry/deploy/upgrade.sh did not roll back when `systemctl restart` itself failed (the symlink stayed on the broken release with the
+  service down), and a release that failed its health check stayed in `releases/`, so re-running the same bundle stopped at "Release directory
+  already exists". Both cases roll back and move the failed release aside.
 - jobs: a job whose payload was not valid JSON ended `run_forever` and stayed `running` forever; it fails like a raising handler now. A job left
   `running` by a crashed worker is returned to `pending` (or failed) once its lock is older than `lock_timeout_seconds` (default 3600). With several
   workers every one enqueued a due recurring job; advancing the schedule is now an atomic claim, so it fires once.
