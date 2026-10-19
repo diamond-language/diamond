@@ -69,3 +69,7 @@ Both waits are bounded and report captured output on failure. Run it alone:
 ```sh
 DIAMOND_BIN=./build/diamond bash tests/signal_interrupt.sh
 ```
+
+## Pinned actions
+
+The workflows name each action by commit SHA with the tag in a comment (`actions/checkout@<sha> # v7`), so a retagged or compromised release cannot change what runs with the job token. To update one, resolve the new tag (`gh api repos/actions/checkout/git/ref/tags/v7 --jq .object.sha`; for an annotated tag, follow it to its commit) and replace the SHA and the comment together. The workflow token itself is read-only (`permissions: contents: read`).

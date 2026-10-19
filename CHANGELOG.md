@@ -26,6 +26,7 @@ authoritative fine-grained record.
   headers a route had set (a stricter `X-Frame-Options`, a `Content-Security-Policy`); it only fills in missing ones. `StaticFiles` treated the query string as part of the file
   name (cache-busted URLs missed), served dotfiles such as `.env` and `.git/config`, and matched `/assetsX` against the prefix `/assets`. `ContentNegotiation` ranked `q=0` lowest
   instead of refusing it, and sent no `Vary: Accept`. `RateLimit` kept a bucket for every key ever seen; finished windows are dropped past `max_keys` (default 100000).
+- CI: `actions/checkout` and `vmactions/freebsd-vm` are pinned to commit SHAs (the tag stays in a comment) instead of a movable major tag, and `docs/ci.md` says how to update them.
 - applications/registry/monitor.di: `--timeout` bounded each socket operation, but a read keeps going while bytes keep arriving, so a server that trickled a body a byte at a
   time held the probe open for as long as it liked (36 seconds against a 1-second timeout in a test), and the archive time check never got a turn. The probe runs in a
   worker thread and the whole run is cut off after twice `--timeout` plus 5 seconds with the error class `Timeout`. `make test-monitor` (part of `test-integration`) covers it.
