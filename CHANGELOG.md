@@ -71,14 +71,13 @@ authoritative fine-grained record.
 
 ### Packages
 
-- `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
-- `graphql` 0.2.0: error masking and strict scalars above.
-- `active_auth` 0.2.2: the JSON shape and `Secure` cookie above.
+- `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
+- `active_tagging` 0.1.1: the anchored tag-name validator above.
+- `graphql` 0.2.0: error masking, strict scalars and the fragment-cycle message above.
 - `network_safety` 0.1.3: the guard fixes above.
 - `http` 0.1.3: the redirect fixes above.
 - `arel` 0.34.6: the bind-order fix above.
 - `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
-- `graphql` 0.1.8: the fragment-cycle message above.
 - `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
 - `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.
 
