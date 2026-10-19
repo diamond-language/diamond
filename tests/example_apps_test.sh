@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The example applications that build on the repository's own cuts and so are not covered by `make test-examples`: guestbook,
-# project_board, library and chat. Each gets the cuts from packages/ (tools/install_local_cuts.sh, as its README says), then its
+# project_board, library, chat and bookmarks. Each gets the cuts from packages/ (tools/install_local_cuts.sh, as its README says), then its
 # documented setup, then a real check: a smoke test, or for library requests to every documented route. They broke silently when
 # a package changed under them before anything ran them.
 set -euo pipefail
@@ -23,6 +23,9 @@ echo "== project_board"
 
 echo "== chat"
 (cd examples/chat && install_cuts && "$diamond" smoke_test.di 2>&1 | grep -q "chat smoke test passed")
+
+echo "== bookmarks"
+(cd examples/bookmarks && install_cuts && "$diamond" smoke_test.di 2>&1 | grep -q "bookmarks smoke test passed")
 
 echo "== library"
 (

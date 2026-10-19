@@ -1,0 +1,50 @@
+# Runs the bookmark collection in-process: no server and no socket. Run from this directory after
+# `bash ../../tools/install_local_cuts.sh .`:
+#
+#   ../../build/diamond smoke_test.di
+require "./lib/bookmarks"
+
+log_path = "/tmp/bookmarks-smoke-#{SecureRandom.hex(4)}.ndjson"
+log_file = File.open(log_path, "w")
+log = Logger.new("bookmarks", "info", log_file, "json")
+bookmarks = Bookmarks.open("test", log)
+
+def check(condition, message: String)
+  raise "bookmarks smoke test failed: #{message}" unless condition
+end
+
+# Mjolnir: a stored row comes back as a frozen struct; a duplicate is a field error, not an exception.
+first = bookmarks.add("https://example.com/a", "Example A")
+check(first.is_a?(Mjolnir::Ok), "a public URL is stored")
+check(first.value().title() == "Example A", "the title round-trips")
+again = bookmarks.add("https://example.com/a", "Again")
+check(again.is_a?(Mjolnir::Err), "a duplicate URL is refused")
+check(again.error().errors()["url"] == ["has already been taken"], "the duplicate is a url error")
+
+# Network safety: addresses the server must not fetch are refused before they reach the database.
+["http://localhost/admin", "http://127.0.0.1/x", "http://10.0.0.5/", "http://192.168.1.1/"].each() do |url|
+  refused = bookmarks.add(url, "private")
+  check(refused.is_a?(Mjolnir::Err), "#{url} is refused")
+end
+check(bookmarks.count() == 1, "refused URLs are not stored")
+
+# Multipart: a bulk import through an uploaded file.
+boundary = "----smoke"
+body = "--#{boundary}\r\nContent-Disposition: form-data; name=\"list\"; filename=\"list.txt\"\r\nContent-Type: text/plain\r\n\r\n" +
+  "https://example.org/b Example B\nhttp://localhost:3000/x Local\nhttps://example.net/c\n\r\n--#{boundary}--\r\n"
+request = {"method": "POST", "path": "/import", "headers": {"content-type": "multipart/form-data; boundary=#{boundary}"}, "body": body}
+summary = bookmarks.import(request)
+check(summary == {"added": 2, "refused": 1}, "import counts: #{summary}")
+check(bookmarks.import({"headers": {"content-type": "text/plain"}, "body": ""}) == nil, "a non-multipart request is not an import")
+check(bookmarks.all().map() do |b| b.url() end == ["https://example.com/a", "https://example.org/b", "https://example.net/c"], "stored URLs")
+
+# Logger and log_viewer: every event above left one JSON line, and the viewer reads them back.
+log_file.close()
+lines = read_log(log_path)
+File.delete(log_path)
+check(lines.length() == 9, "nine log lines, got #{lines.length()}")
+check(lines.all?() do |line| !line.include?("[unparsed]") end, "every line parses")
+check(lines[0].include?("INFO") && lines[0].include?("bookmark.added"), "first line: #{lines[0]}")
+check(lines.any?() do |line| line.include?("WARN") && line.include?("bookmark.rejected") end, "a rejection is logged")
+
+puts("bookmarks smoke test passed")
