@@ -8,6 +8,7 @@
 #include "compile_buffer.h"
 #include "compiler.h"
 #include "diagnostics.h"
+#include "position.h"
 #include "loader.h"
 
 #include <stdlib.h>
@@ -20,7 +21,8 @@
  * and `selectionRange`; json_free walks and frees each field once, so
  * aliasing the same JsonValue into both would double-free). Returns
  * nullptr only on allocation failure. */
-static JsonValue *build_range(size_t line,size_t column,size_t name_length) {
+static JsonValue *build_range(const char *text,size_t text_length,size_t line,size_t column,
+        size_t name_length) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
     JsonValue *end=json_object();
@@ -29,20 +31,23 @@ static JsonValue *build_range(size_t line,size_t column,size_t name_length) {
         return nullptr;
     }
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
+    /* The lexer's column counts bytes; LSP counts UTF-16 code units. */
+    const size_t byte_column=column>0?column-1:0;
+    const double lsp_character=(double)lsp_character_for(text,text_length,line,byte_column);
+    const double lsp_end=(double)lsp_character_for(text,text_length,line,byte_column+name_length);
     json_object_set(start,"line",json_number(lsp_line));
     json_object_set(start,"character",json_number(lsp_character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+(double)name_length));
+    json_object_set(end,"character",json_number(lsp_end));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     return range;
 }
 
-static bool push_symbol(JsonValue *symbols,const char *name,int kind,
+static bool push_symbol(JsonValue *symbols,const char *text,size_t text_length,const char *name,int kind,
         size_t line,size_t column,size_t name_length) {
-    JsonValue *range=build_range(line,column,name_length);
-    JsonValue *selection_range=build_range(line,column,name_length);
+    JsonValue *range=build_range(text,text_length,line,column,name_length);
+    JsonValue *selection_range=build_range(text,text_length,line,column,name_length);
     JsonValue *entry=json_object();
     if(range==nullptr||selection_range==nullptr||entry==nullptr) {
         json_free(range);json_free(selection_range);json_free(entry);
@@ -139,7 +144,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
                 function->declaration_start,function->declaration_line,
                 function->declaration_column,name_length,&line,&column))
-            ok_so_far=push_symbol(symbols,function->name,12,line,column,name_length);
+            ok_so_far=push_symbol(symbols,text,length,function->name,12,line,column,name_length);
     }
     for(size_t index=0;index<chunk.class_count&&ok_so_far;index++) {
         const DiamondClass *class=chunk.classes[index];
@@ -148,7 +153,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
                 class->declaration_start,class->declaration_line,
                 class->declaration_column,name_length,&line,&column))
-            ok_so_far=push_symbol(symbols,class->name,5,line,column,name_length);
+            ok_so_far=push_symbol(symbols,text,length,class->name,5,line,column,name_length);
     }
     for(size_t index=0;index<chunk.interface_count&&ok_so_far;index++) {
         const DiamondInterface *interface=&chunk.interfaces[index];
@@ -157,7 +162,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
                 interface->declaration_start,interface->declaration_line,
                 interface->declaration_column,name_length,&line,&column))
-            ok_so_far=push_symbol(symbols,interface->name,11,line,column,name_length);
+            ok_so_far=push_symbol(symbols,text,length,interface->name,11,line,column,name_length);
     }
     for(size_t index=0;index<chunk.module_count&&ok_so_far;index++) {
         const DiamondModule *module=&chunk.modules[index];
@@ -166,7 +171,7 @@ JsonValue *document_symbol_compute(const DocumentTable *documents,const char *ur
         if(resolve_own_declaration(combined,&bundle,user_offset,display_name,
                 module->declaration_start,module->declaration_line,
                 module->declaration_column,name_length,&line,&column))
-            ok_so_far=push_symbol(symbols,module->name,2,line,column,name_length);
+            ok_so_far=push_symbol(symbols,text,length,module->name,2,line,column,name_length);
     }
     free(combined);
     free(path);

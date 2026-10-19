@@ -8,6 +8,7 @@
 #include "compile_buffer.h"
 #include "compiler.h"
 #include "diagnostics.h"
+#include "position.h"
 #include "lexer.h"
 #include "loader.h"
 #include "receiver.h"
@@ -33,8 +34,8 @@ static DiamondToken identifier_token_at(const char *source,size_t target_line,
     }
 }
 
-static JsonValue *references_location(const char *uri,size_t line,size_t column,
-        size_t name_length) {
+static JsonValue *references_location(const char *uri,size_t line,size_t character,
+        size_t end_character) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
     JsonValue *end=json_object();
@@ -44,11 +45,10 @@ static JsonValue *references_location(const char *uri,size_t line,size_t column,
         return nullptr;
     }
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
     json_object_set(start,"line",json_number(lsp_line));
-    json_object_set(start,"character",json_number(lsp_character));
+    json_object_set(start,"character",json_number((double)character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+(double)name_length));
+    json_object_set(end,"character",json_number((double)end_character));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(result,"uri",json_string_z(uri));
@@ -105,6 +105,10 @@ typedef struct ReferenceEntry {
     char *uri;
     size_t line;
     size_t column;
+    /* The start and end of the name as LSP counts them (UTF-16 code units, 0-based). Computed during the scan, while the file's text is
+     * still at hand: `column` counts bytes. */
+    size_t character;
+    size_t end_character;
 } ReferenceEntry;
 
 typedef struct ReferenceList {
@@ -125,7 +129,7 @@ static void reference_list_free(ReferenceList *list) {
  * rediscovered once per requiring file scanned, always resolving back
  * (diamond_resolve_diagnostic_location) to the same physical location. */
 static bool reference_list_push(ReferenceList *list,const char *uri,size_t line,
-        size_t column) {
+        size_t column,size_t character,size_t end_character) {
     for(size_t index=0;index<list->count;index++)
         if(list->entries[index].line==line&&list->entries[index].column==column&&
            strcmp(list->entries[index].uri,uri)==0)
@@ -139,7 +143,8 @@ static bool reference_list_push(ReferenceList *list,const char *uri,size_t line,
     char *uri_copy=malloc(strlen(uri)+1);
     if(uri_copy==nullptr)return false;
     strcpy(uri_copy,uri);
-    list->entries[list->count++]=(ReferenceEntry){.uri=uri_copy,.line=line,.column=column};
+    list->entries[list->count++]=(ReferenceEntry){.uri=uri_copy,.line=line,.column=column,
+        .character=character,.end_character=end_character};
     return true;
 }
 
@@ -148,18 +153,14 @@ static bool reference_list_push(ReferenceList *list,const char *uri,size_t line,
  * "reference-shaped" means and why. Not fatal for the whole scan if this
  * one file can't be read or doesn't compile (matches workspace_symbol.c's
  * own scan_file); only a real allocation failure returns false. */
-static bool scan_file_for_references(const DocumentTable *documents,DiamondProgram *scratch,
-        const char *path,const char *name,size_t name_length,bool include_declaration,
-        const char *blocked_name,size_t blocked_length,bool *out_collision,
-        ReferenceList *list) {
-    char *text=read_file_preferring_open(documents,path);
-    if(text==nullptr)return true;
-    const size_t length=strlen(text);
+static bool scan_text_for_references(const DocumentTable *documents,DiamondProgram *scratch,
+        const char *path,const char *text,size_t length,const char *name,size_t name_length,
+        bool include_declaration,const char *blocked_name,size_t blocked_length,
+        bool *out_collision,ReferenceList *list) {
     DiamondSourceBundle bundle;
     size_t user_offset=0;
     char *combined=diamond_lsp_build_compile_buffer(path,text,length,
         document_resolve_source,(void *)documents,&bundle,&user_offset);
-    free(text);
     if(combined==nullptr)return true;
     DiamondDiagnostic diagnostic;
     diamond_program_free(scratch);
@@ -242,13 +243,34 @@ static bool scan_file_for_references(const DocumentTable *documents,DiamondProgr
             path,combined,synthetic,&bundle,user_offset);
         char *reference_uri=diagnostics_path_to_uri(resolved.path);
         if(reference_uri==nullptr) {ok=false;break;}
-        ok=reference_list_push(list,reference_uri,resolved.line,resolved.column);
+        /* The reference may sit in a required file: its column counts bytes of that file's text, not of the one being scanned. */
+        const bool own_file=strcmp(resolved.path,path)==0;
+        char *other_text=own_file?nullptr:read_file_preferring_open(documents,resolved.path);
+        const char *column_text=own_file?text:other_text;
+        const size_t column_length=own_file?length:(other_text!=nullptr?strlen(other_text):0);
+        const size_t byte_column=resolved.column>0?resolved.column-1:0;
+        const size_t character=lsp_character_for(column_text,column_length,resolved.line,byte_column);
+        const size_t end_character=lsp_character_for(column_text,column_length,resolved.line,byte_column+name_length);
+        free(other_text);
+        ok=reference_list_push(list,reference_uri,resolved.line,resolved.column,character,end_character);
         free(reference_uri);
     }
     free(tokens);
     free(combined);
     diamond_source_bundle_free(&bundle);
     return ok;
+}
+
+static bool scan_file_for_references(const DocumentTable *documents,DiamondProgram *scratch,
+        const char *path,const char *name,size_t name_length,bool include_declaration,
+        const char *blocked_name,size_t blocked_length,bool *out_collision,
+        ReferenceList *list) {
+    char *text=read_file_preferring_open(documents,path);
+    if(text==nullptr)return true;
+    const bool result=scan_text_for_references(documents,scratch,path,text,strlen(text),name,
+        name_length,include_declaration,blocked_name,blocked_length,out_collision,list);
+    free(text);
+    return result;
 }
 
 /* Shared by references_compute/rename_compute: everything through
@@ -393,7 +415,8 @@ JsonValue *references_compute(const DocumentTable *documents,const char *workspa
     bool build_ok=true;
     for(size_t index=0;index<list.count&&build_ok;index++) {
         JsonValue *entry=references_location(list.entries[index].uri,
-            list.entries[index].line,list.entries[index].column,name_length);
+            list.entries[index].line,list.entries[index].character,
+            list.entries[index].end_character);
         if(entry==nullptr||!json_array_push(result,entry)) {
             json_free(entry);
             build_ok=false;
@@ -432,7 +455,7 @@ static bool is_valid_new_name(const char *name,size_t length) {
  * factoring out just the "range" object alone would save less
  * duplication than it looks like without also complicating both
  * callers' own object-assembly order. */
-static JsonValue *rename_text_edit(size_t line,size_t column,size_t old_name_length,
+static JsonValue *rename_text_edit(size_t line,size_t character,size_t end_character,
         const char *new_name,size_t new_name_length) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
@@ -443,11 +466,10 @@ static JsonValue *rename_text_edit(size_t line,size_t column,size_t old_name_len
         return nullptr;
     }
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
     json_object_set(start,"line",json_number(lsp_line));
-    json_object_set(start,"character",json_number(lsp_character));
+    json_object_set(start,"character",json_number((double)character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+(double)old_name_length));
+    json_object_set(end,"character",json_number((double)end_character));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(result,"range",range);
@@ -496,7 +518,7 @@ JsonValue *rename_compute(const DocumentTable *documents,const char *workspace_r
             }
             groups[group_count++]=(UriGroup){.uri=entry->uri,.edits=edits};
         }
-        JsonValue *edit=rename_text_edit(entry->line,entry->column,name_length,
+        JsonValue *edit=rename_text_edit(entry->line,entry->character,entry->end_character,
             new_name,new_name_length);
         if(edit==nullptr||!json_array_push(edits,edit)) {json_free(edit);build_ok=false;}
     }

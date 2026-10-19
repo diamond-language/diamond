@@ -11,6 +11,7 @@
 #include "references.h"
 #include "rpc.h"
 #include "workspace_symbol.h"
+#include "position.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -230,7 +231,8 @@ static bool extract_document_position(DocumentTable *documents,const JsonValue *
         return false;
     }
     *line=(size_t)line_value;
-    *character=(size_t)character_value;
+    /* The client counts UTF-16 code units in the line; everything below this counts bytes. */
+    *character=lsp_byte_column_for(*text,*text_length,*line+1,(size_t)character_value);
     return true;
 }
 

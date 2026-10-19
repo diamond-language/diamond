@@ -7,6 +7,9 @@
 
 #include "compiler.h"
 #include "div.h"
+#include "document.h"
+#include "position.h"
+#include "workspace_symbol.h"
 #include "loader.h"
 #include "prelude.h"
 
@@ -72,8 +75,9 @@ char *diagnostics_path_to_uri(const char *path) {
     return uri;
 }
 
-static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_length,
-                                   const char *message) {
+/* `text` is the source the line/column index into (nullptr leaves the byte columns as they are); LSP counts UTF-16 code units. */
+static JsonValue *build_diagnostic(const char *text,size_t text_length,size_t line,size_t column,
+                                   size_t highlight_length,const char *message) {
     JsonValue *entry=json_object();
     if(entry==nullptr)return nullptr;
     JsonValue *range=json_object();
@@ -94,12 +98,14 @@ static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_le
      * underestimate for a span that itself contains a newline, which no
      * diagnostic message in this compiler currently produces. */
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
-    const double highlight_width=highlight_length>0?(double)highlight_length:1;
+    const size_t byte_column=column>0?column-1:0;
+    const size_t byte_width=highlight_length>0?highlight_length:1;
+    const double lsp_character=(double)lsp_character_for(text,text_length,line,byte_column);
+    const double lsp_end=(double)lsp_character_for(text,text_length,line,byte_column+byte_width);
     json_object_set(start,"line",json_number(lsp_line));
     json_object_set(start,"character",json_number(lsp_character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+highlight_width));
+    json_object_set(end,"character",json_number(lsp_end));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(entry,"range",range);
@@ -115,12 +121,16 @@ static JsonValue *build_diagnostic(size_t line,size_t column,size_t highlight_le
  * (the caller already has a real diagnostics array to return either
  * way, so this failing just means no dependency publish this round,
  * not a hard error). */
-static JsonValue *build_dependency_publish(const DiamondResolvedLocation *resolved,
-        size_t highlight_length,const char *message) {
+static JsonValue *build_dependency_publish(const DocumentTable *documents,
+        const DiamondResolvedLocation *resolved,size_t highlight_length,const char *message) {
     char *dependency_uri=diagnostics_path_to_uri(resolved->path);
     if(dependency_uri==nullptr)return nullptr;
-    JsonValue *entry=build_diagnostic(resolved->line,resolved->column,
+    /* The position is in the dependency file, so its columns are counted in that file's text. */
+    char *dependency_text=read_file_preferring_open(documents,resolved->path);
+    const size_t dependency_length=dependency_text!=nullptr?strlen(dependency_text):0;
+    JsonValue *entry=build_diagnostic(dependency_text,dependency_length,resolved->line,resolved->column,
         highlight_length,message);
+    free(dependency_text);
     JsonValue *dependency_diagnostics=json_array();
     JsonValue *params=json_object();
     if(entry==nullptr||dependency_diagnostics==nullptr||params==nullptr||
@@ -209,7 +219,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
         char *generated=div_translate(text,length,&positions,&position_count,
             &error_line,&error_column,&error_message);
         if(generated==nullptr) {
-            JsonValue *entry=build_diagnostic(error_line,error_column,1,error_message);
+            JsonValue *entry=build_diagnostic(text,length,error_line,error_column,1,error_message);
             if(entry==nullptr||!json_array_push(diagnostics,entry)) {
                 json_free(entry);
                 json_free(diagnostics);
@@ -252,7 +262,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
                         (diagnostic.span.column>0?diagnostic.span.column-1:0);
                 }
             }
-            JsonValue *entry=build_diagnostic(template_line,template_column,
+            JsonValue *entry=build_diagnostic(text,length,template_line,template_column,
                 diagnostic.span.length,diagnostic.message);
             if(entry==nullptr||!json_array_push(diagnostics,entry)) {
                 json_free(entry);
@@ -292,7 +302,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
         const bool ok=diamond_compile(combined,scratch,&diagnostic);
         free(combined);
         if(!ok) {
-            JsonValue *entry=build_diagnostic(diagnostic.span.line,diagnostic.span.column,
+            JsonValue *entry=build_diagnostic(text,length,diagnostic.span.line,diagnostic.span.column,
                 diagnostic.span.length,diagnostic.message);
             if(entry==nullptr||!json_array_push(diagnostics,entry)) {
                 json_free(entry);
@@ -329,7 +339,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
          * it at the document's own start rather than reporting nothing,
          * since this is a real problem with *this* document (an
          * unresolvable require), not a downstream file's own error. */
-        JsonValue *entry=build_diagnostic(1,1,1,load_error);
+        JsonValue *entry=build_diagnostic(text,length,1,1,1,load_error);
         if(entry==nullptr||!json_array_push(diagnostics,entry)) {
             json_free(entry);
             json_free(diagnostics);
@@ -369,7 +379,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
          * document's own diagnostics (correctly empty, since its own
          * error is elsewhere) are still real and worth returning. */
         if(strcmp(resolved.path,path)==0) {
-            JsonValue *entry=build_diagnostic(resolved.line,resolved.column,
+            JsonValue *entry=build_diagnostic(text,length,resolved.line,resolved.column,
                 diagnostic.span.length,diagnostic.message);
             if(entry==nullptr||!json_array_push(diagnostics,entry)) {
                 json_free(entry);
@@ -380,7 +390,7 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
                 return nullptr;
             }
         } else if(out_dependency_publish!=nullptr) {
-            *out_dependency_publish=build_dependency_publish(&resolved,
+            *out_dependency_publish=build_dependency_publish(documents,&resolved,
                 diagnostic.span.length,diagnostic.message);
         }
     }

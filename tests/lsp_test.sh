@@ -2457,6 +2457,61 @@ for entry in 'string_members|"abc"' 'array_members|[3, 1, 2]' 'hash_members|{"a"
     count=$((count + 1))
 done
 
+# --- positions count UTF-16 code units, not bytes: after a multi-byte character on the same line every column differs ---
+# Each string holds an e-acute (2 bytes, 1 unit) and an emoji (4 bytes, 2 units), so a byte-counting server is 4 columns off by
+# the end of it. The send helper here counts the body in bytes (bash's ${#body} counts characters in a UTF-8 locale).
+send_utf8() {
+    local body="$1" bytes
+    bytes="$(printf '%s' "$body" | LC_ALL=C wc -c)"
+    printf 'Content-Length: %d\r\n\r\n%s' "$bytes" "$body" >&"${LSP[1]}"
+}
+unicode_uri="file://$work/unicode_positions.di"
+printf 'def greet(name)\n  name\nend\nlabel = "é😀"; greet("a")\nsecond = "é😀"; def later()\n  1\nend\n' > "$work/unicode_positions.di"
+send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$unicode_uri"'","text":"def greet(name)\n  name\nend\nlabel = \"é😀\"; greet(\"a\")\nsecond = \"é😀\"; def later()\n  1\nend\n"}}}'
+read_message >/dev/null
+
+# the cursor is inside `greet` at UTF-16 column 16 (byte column 20); it must find the identifier
+send_utf8 '{"jsonrpc":"2.0","id":3001,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$unicode_uri"'"},"position":{"line":3,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":0,"character":4}'* ]]
+count=$((count + 1))
+send_utf8 '{"jsonrpc":"2.0","id":3002,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$unicode_uri"'"},"position":{"line":3,"character":16}}}'
+response="$(read_message)"
+[[ "$response" == *'def greet(name)'* ]]
+count=$((count + 1))
+
+# `later` is declared after the string on line 4: reported at UTF-16 column 20 (byte column 24)
+send_utf8 '{"jsonrpc":"2.0","id":3003,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"'"$unicode_uri"'"}}}'
+response="$(read_message)"
+[[ "$response" == *'"name":"later"'*'"start":{"line":4,"character":20}'*'"end":{"line":4,"character":25}'* ]]
+count=$((count + 1))
+
+# references and rename put the range of `greet` at UTF-16 columns 15 to 20 on line 3
+send_utf8 '{"jsonrpc":"2.0","id":3004,"method":"textDocument/references","params":{"textDocument":{"uri":"'"$unicode_uri"'"},"position":{"line":3,"character":16},"context":{"includeDeclaration":true}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":3,"character":15},"end":{"line":3,"character":20}'* ]]
+count=$((count + 1))
+send_utf8 '{"jsonrpc":"2.0","id":3005,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$unicode_uri"'"},"position":{"line":3,"character":16},"newName":"welcome"}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":3,"character":15},"end":{"line":3,"character":20}},"newText":"welcome"'* ]]
+count=$((count + 1))
+
+# the formatter's edits after the string are at UTF-16 columns 11 and 12 (byte columns 14 and 15)
+format_uri="file://$work/unicode_format.di"
+send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$format_uri"'","text":"s = \"é😀\";x=1\n"}}}'
+read_message >/dev/null
+send_utf8 '{"jsonrpc":"2.0","id":3006,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$format_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
+response="$(read_message)"
+[[ "$response" == *'"start":{"line":0,"character":11}'* && "$response" == *'"start":{"line":0,"character":12}'* ]]
+count=$((count + 1))
+
+# a syntax error after the string is reported at UTF-16 column 11 (byte column 14)
+error_uri="file://$work/unicode_error.di"
+send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$error_uri"'","text":"s = \"é😀\"; )\n"}}}'
+response="$(read_message)"
+[[ "$response" == *'"severity":1'* && "$response" == *'"start":{"line":0,"character":11}'* ]]
+count=$((count + 1))
+
 # --- shutdown then exit: clean exit code 0 ---
 
 send '{"jsonrpc":"2.0","id":3,"method":"shutdown"}'

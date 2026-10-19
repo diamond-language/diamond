@@ -9,6 +9,9 @@
 #include "analysis_cache.h"
 #include "compiler.h"
 #include "diagnostics.h"
+#include "document.h"
+#include "position.h"
+#include "workspace_symbol.h"
 #include "lexer.h"
 #include "loader.h"
 #include "receiver.h"
@@ -50,7 +53,9 @@ static size_t raw_offset_for(const char *text,size_t length,size_t line,size_t c
     return result;
 }
 
-static JsonValue *location_result(const char *uri,size_t line,size_t column,size_t name_length) {
+/* `text` is the target file's source, used to turn the lexer's byte column into the UTF-16 column LSP expects. */
+static JsonValue *location_result(const char *uri,const char *text,size_t text_length,
+        size_t line,size_t column,size_t name_length) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
     JsonValue *end=json_object();
@@ -60,11 +65,13 @@ static JsonValue *location_result(const char *uri,size_t line,size_t column,size
         return nullptr;
     }
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
+    const size_t byte_column=column>0?column-1:0;
+    const double lsp_character=(double)lsp_character_for(text,text_length,line,byte_column);
+    const double lsp_end=(double)lsp_character_for(text,text_length,line,byte_column+name_length);
     json_object_set(start,"line",json_number(lsp_line));
     json_object_set(start,"character",json_number(lsp_character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+(double)name_length));
+    json_object_set(end,"character",json_number(lsp_end));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(result,"uri",json_string_z(uri));
@@ -237,7 +244,17 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
             }
             result_uri=resolved_uri_owned;
         }
-        locations[index]=location_result(result_uri,resolved.line,resolved.column,match_name_length);
+        /* The location may be in another file (an imported one); its columns are counted in that file's text. */
+        char *target_text=nullptr;
+        size_t target_length=0;
+        const bool same_file=strcmp(resolved.path,display_name)==0;
+        if(!same_file) {
+            target_text=read_file_preferring_open(documents,resolved.path);
+            if(target_text!=nullptr)target_length=strlen(target_text);
+        }
+        locations[index]=location_result(result_uri,same_file?text:target_text,
+            same_file?length:target_length,resolved.line,resolved.column,match_name_length);
+        free(target_text);
         free(resolved_uri_owned);
     }
     free(combined);

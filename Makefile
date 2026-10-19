@@ -661,6 +661,10 @@ $(BUILD_DIR)/analysis_cache_test: tests/analysis_cache_test.c lsp/analysis_cache
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) \
 		lsp/analysis_cache.c lsp/compile_buffer.c $< $(LDFLAGS) $(LDLIBS) -o $@
 
+$(BUILD_DIR)/position_test: tests/position_test.c lsp/position.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/position_test.c $(LDFLAGS) -o $@
+
 $(BUILD_DIR)/json_test: tests/json_test.c lsp/json.c lsp/json.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/json_test.c lsp/json.c $(LDFLAGS) -o $@
@@ -675,9 +679,10 @@ $(BUILD_DIR)/formatting_test: tests/formatting_test.c lsp/formatting.c lsp/forma
 test-formatting: $(BUILD_DIR)/formatting_test
 	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
 
-test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/json_test $(BUILD_DIR)/analysis_cache_test $(BUILD_DIR)/formatting_test
+test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/json_test $(BUILD_DIR)/position_test $(BUILD_DIR)/analysis_cache_test $(BUILD_DIR)/formatting_test
 	$(BUILD_DIR)/receiver_test
 	$(BUILD_DIR)/json_test
+	$(BUILD_DIR)/position_test
 	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
 	bash tests/analysis_cache_test.sh
 	bash tests/v3_editor_test.sh

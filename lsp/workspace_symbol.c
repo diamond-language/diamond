@@ -11,6 +11,7 @@
 #include "compile_buffer.h"
 #include "compiler.h"
 #include "diagnostics.h"
+#include "position.h"
 #include "loader.h"
 
 #include <dirent.h>
@@ -95,8 +96,8 @@ static bool contains_ignore_case(const char *haystack,const char *needle) {
     return false;
 }
 
-static JsonValue *build_location(const char *uri,size_t line,size_t column,
-        size_t name_length) {
+static JsonValue *build_location(const char *uri,const char *text,size_t text_length,
+        size_t line,size_t column,size_t name_length) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
     JsonValue *end=json_object();
@@ -106,11 +107,14 @@ static JsonValue *build_location(const char *uri,size_t line,size_t column,
         return nullptr;
     }
     const double lsp_line=line>0?(double)(line-1):0;
-    const double lsp_character=column>0?(double)(column-1):0;
+    /* The lexer's column counts bytes; LSP counts UTF-16 code units. */
+    const size_t byte_column=column>0?column-1:0;
+    const double lsp_character=(double)lsp_character_for(text,text_length,line,byte_column);
+    const double lsp_end=(double)lsp_character_for(text,text_length,line,byte_column+name_length);
     json_object_set(start,"line",json_number(lsp_line));
     json_object_set(start,"character",json_number(lsp_character));
     json_object_set(end,"line",json_number(lsp_line));
-    json_object_set(end,"character",json_number(lsp_character+(double)name_length));
+    json_object_set(end,"character",json_number(lsp_end));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(location,"uri",json_string_z(uri));
@@ -118,9 +122,9 @@ static JsonValue *build_location(const char *uri,size_t line,size_t column,
     return location;
 }
 
-static bool push_symbol(JsonValue *symbols,const char *name,int kind,const char *uri,
-        size_t line,size_t column,size_t name_length) {
-    JsonValue *location=build_location(uri,line,column,name_length);
+static bool push_symbol(JsonValue *symbols,const char *text,size_t text_length,const char *name,int kind,
+        const char *uri,size_t line,size_t column,size_t name_length) {
+    JsonValue *location=build_location(uri,text,text_length,line,column,name_length);
     JsonValue *entry=json_object();
     if(location==nullptr||entry==nullptr) {
         json_free(location);json_free(entry);
@@ -161,16 +165,12 @@ static bool resolve_own_declaration(const char *combined,const DiamondSourceBund
  * compile, can't be read, or can't be turned into a uri -- see
  * workspace_symbol.h's own comment on why. Only an allocation failure
  * (OOM building the JSON result itself) propagates out as false. */
-static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
-        const char *path,const char *query,JsonValue *symbols) {
-    char *text=read_file_preferring_open(documents,path);
-    if(text==nullptr)return true;
-    const size_t length=strlen(text);
+static bool scan_text(const DocumentTable *documents,DiamondProgram *scratch,
+        const char *path,const char *text,size_t length,const char *query,JsonValue *symbols) {
     DiamondSourceBundle bundle;
     size_t user_offset=0;
     char *combined=diamond_lsp_build_compile_buffer(path,text,length,
         document_resolve_source,(void *)documents,&bundle,&user_offset);
-    free(text);
     if(combined==nullptr)return true;
     DiamondDiagnostic diagnostic;
     diamond_program_free(scratch);
@@ -194,7 +194,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
         if(resolve_own_declaration(combined,&bundle,user_offset,path,
                 function->declaration_start,function->declaration_line,
                 function->declaration_column,name_length,&line,&column))
-            ok=push_symbol(symbols,function->name,12,uri,line,column,name_length);
+            ok=push_symbol(symbols,text,length,function->name,12,uri,line,column,name_length);
     }
     for(size_t index=0;index<chunk.class_count&&ok;index++) {
         const DiamondClass *class=chunk.classes[index];
@@ -204,7 +204,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
         if(resolve_own_declaration(combined,&bundle,user_offset,path,
                 class->declaration_start,class->declaration_line,
                 class->declaration_column,name_length,&line,&column))
-            ok=push_symbol(symbols,class->name,5,uri,line,column,name_length);
+            ok=push_symbol(symbols,text,length,class->name,5,uri,line,column,name_length);
     }
     for(size_t index=0;index<chunk.interface_count&&ok;index++) {
         const DiamondInterface *interface=&chunk.interfaces[index];
@@ -214,7 +214,7 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
         if(resolve_own_declaration(combined,&bundle,user_offset,path,
                 interface->declaration_start,interface->declaration_line,
                 interface->declaration_column,name_length,&line,&column))
-            ok=push_symbol(symbols,interface->name,11,uri,line,column,name_length);
+            ok=push_symbol(symbols,text,length,interface->name,11,uri,line,column,name_length);
     }
     for(size_t index=0;index<chunk.module_count&&ok;index++) {
         const DiamondModule *module=&chunk.modules[index];
@@ -224,12 +224,21 @@ static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
         if(resolve_own_declaration(combined,&bundle,user_offset,path,
                 module->declaration_start,module->declaration_line,
                 module->declaration_column,name_length,&line,&column))
-            ok=push_symbol(symbols,module->name,2,uri,line,column,name_length);
+            ok=push_symbol(symbols,text,length,module->name,2,uri,line,column,name_length);
     }
     free(uri);
     free(combined);
     diamond_source_bundle_free(&bundle);
     return ok;
+}
+
+static bool scan_file(const DocumentTable *documents,DiamondProgram *scratch,
+        const char *path,const char *query,JsonValue *symbols) {
+    char *text=read_file_preferring_open(documents,path);
+    if(text==nullptr)return true;
+    const bool result=scan_text(documents,scratch,path,text,strlen(text),query,symbols);
+    free(text);
+    return result;
 }
 
 JsonValue *workspace_symbol_compute(const DocumentTable *documents,
