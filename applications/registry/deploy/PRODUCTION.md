@@ -98,10 +98,11 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
        diamond-language 1800 "publish:<name>" "<reason>"' > credential.json)
    ```
 
-2. Extract `seed/` from the deployment bundle and keep only the target cut in
-   `inventory.json` plus its archive; `tools/publish_registry_seed.di` verifies
-   the archive against that entry and publishes only it. Never publish the whole
-   seed again: versions are immutable.
+2. Prepare the seed (`build/diamond tools/prepare_registry_seed.di DIR --expect
+   docs/registry-launch-inventory.json`) and trim it to the cuts being published with
+   `tools/trim_seed_to.sh DIR NEW_SEED CUT...`, which checks each archive against its
+   inventory entry; `tools/publish_registry_seed.di` publishes every cut in the seed it
+   is given. Never publish the whole seed again: versions are immutable.
 3. Verify with `tools/verify_registry_launch.di https://cuts.dilang.tech`, delete
    `credential.json`, and revoke the credential
    (`credentials.di revoke <id> "<reason>"`) or let it expire.
@@ -125,6 +126,7 @@ each with its own revoked credential and a passing verification. `mjolnir` 0.2.1
 `5e40bd79a0ecd124f7022a686bc2c6bfc6c711d9398562256dbfa889c71092fc`, credential 26) followed the same way on 2026-10-18, revoked, with a passing verification of all 18 launch cuts.
 
 On 2026-10-19 eleven cuts were published together after a verified laptop snapshot, with one 30-minute credential (credential 27, `publish:<name>` for each of the eleven, revoked afterwards): `arel` 0.34.6 (sha256 `b485d8a5001baac2b790b2a43912cb0bba74b3bfce091d7cc23013291d4af43f`), `active_record` 0.19.5 (sha256 `7db236e823af5a6d73def227a5ba908fe8a985cd0f184b55bcbd9dfacff41946`), `graphql` 0.2.1 (sha256 `d6f62865ff51bcdcfef18d70f5cdb3c2559c49e2bcc2c96648eb403f22c26bf8`), `http` 0.1.3 (sha256 `453d37182c35d0deb17166a7b59c39c8716db7dc054c6fe740c995f2d119fc7e`), `gremlin` 0.4.7 (sha256 `95e2548f5b7f391209fd471dee68c4bba00944aa83fe8d21db31f28c6ee12fd9`), `jobs` 0.1.3 (sha256 `7d0a284a03c4b4d7486f4f866c3befe614c14fabbe3126293a61c2e361146d4f`), `network_safety` 0.1.3 (sha256 `9fb21cae5568472003d2036364dfa988b2c9ce4b436f463d1e9064f75161d923`), `rack` 0.1.3 (sha256 `f2bd03fb212241406c3676d1bb97bb9790a851f473d145c0760b88a38b92ad34`), `redis` 0.1.3 (sha256 `cb0c9486f265926e20d258fdb09710fc576ebc722fa2ad00a841ddc66958490e`), `websocket` 0.1.4 (sha256 `7186d31b7918382b36aba04a5ed711cc66505c962987a9381c65725aeaaffaa7`), `mjolnir` 0.2.4 (sha256 `8df73f569a146e0d1c122f9f012705dbdac1e0c4a10c3d25fa71fe521144a831`). They carry the review fixes: the `graphql` strictness and query limits, the `gremlin` per-request connection, the `rack`, `http`, `websocket`, `redis`, `jobs` and `network_safety` hardening, the `arel` bind-order fix, and the `mjolnir` MySQL/MariaDB writes. `graphql` 0.2.x is a breaking line for `graphsql` 0.1.3, whose range stops at `graphql` 0.1.x, so `tools/verify_registry_launch.di` failed on the mismatch until `graphsql` 0.1.4 (which depends on `graphql ^0.2.0`) followed.
+`graphsql` 0.1.4 (sha256 `7a1d5253251075d2b70deb048b2bb6c09e2b8f468000037e01c0abe01b9a172d`, credential 28, `publish:graphsql`, revoked) followed the same day, after which `tools/verify_registry_launch.di` passed for all 18 launch cuts. The running registry service was not redeployed for any of this and still serves from release `bb35699e`.
 
 ## Host disk and logs
 
