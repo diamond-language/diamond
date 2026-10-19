@@ -166,44 +166,67 @@ grep -q "all unit checks passed" "$unit_out"
 rm -f "$unit_out"
 echo "redis unit checks passed"
 
-# Part 2: every command family plus pub/sub, against a real, live
-# docker.io/library/redis:alpine -- not just this package's own
-# encoder agreeing with its own decoder.
-container_cli="${REDIS_CONTAINER_CLI:-}"
-if [[ -z "$container_cli" ]]; then
-    if command -v podman >/dev/null 2>&1; then
-        container_cli="podman"
-    elif command -v docker >/dev/null 2>&1; then
-        container_cli="docker"
+# Part 2: every command family plus pub/sub, against a real, live Redis
+# -- not just this package's own encoder agreeing with its own decoder.
+# A redis-server on PATH is started directly (what CI has: a container job
+# cannot run a container); otherwise docker.io/library/redis:alpine is run
+# with podman or docker. With neither, this part is skipped, not failed.
+host_port=16399
+container_cli=""
+server_pid=""
+redis_log="$(mktemp)"
+if command -v redis-server >/dev/null 2>&1; then
+    redis-server --port "$host_port" --bind 127.0.0.1 --save "" --appendonly no >"$redis_log" 2>&1 &
+    server_pid=$!
+else
+    container_cli="${REDIS_CONTAINER_CLI:-}"
+    if [[ -z "$container_cli" ]]; then
+        if command -v podman >/dev/null 2>&1; then
+            container_cli="podman"
+        elif command -v docker >/dev/null 2>&1; then
+            container_cli="docker"
+        fi
     fi
-fi
-if [[ -z "$container_cli" ]]; then
-    echo "neither podman nor docker found on PATH -- skipping live Redis interop test" >&2
-    exit 0
+    if [[ -z "$container_cli" ]]; then
+        echo "no redis-server, podman or docker found on PATH -- skipping live Redis interop test" >&2
+        exit 0
+    fi
 fi
 
 container_name="diamond-redis-package-test"
-host_port=16399
-"$container_cli" rm -f "$container_name" >/dev/null 2>&1 || true
-"$container_cli" run --rm -d --name "$container_name" \
-    -p "127.0.0.1:$host_port:6379" \
-    docker.io/library/redis:alpine >/dev/null
 cleanup() {
-    "$container_cli" rm -f "$container_name" >/dev/null 2>&1 || true
+    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true
+    [[ -n "$container_cli" ]] && "$container_cli" rm -f "$container_name" >/dev/null 2>&1 || true
+    rm -f "$redis_log"
 }
 trap cleanup EXIT
+if [[ -n "$container_cli" ]]; then
+    "$container_cli" rm -f "$container_name" >/dev/null 2>&1 || true
+    "$container_cli" run --rm -d --name "$container_name" \
+        -p "127.0.0.1:$host_port:6379" \
+        docker.io/library/redis:alpine >/dev/null
+fi
 
+# A PING over a plain TCP connection answers whether the server is up, whichever way it was started.
+redis_up() {
+    local reply
+    exec 3<>"/dev/tcp/127.0.0.1/$host_port" 2>/dev/null || return 1
+    printf 'PING\r\n' >&3
+    IFS= read -r -t 1 -u 3 reply || reply=""
+    exec 3<&- 3>&-
+    [[ "$reply" == +PONG* ]]
+}
 ready=0
 for _ in $(seq 1 60); do
-    if "$container_cli" exec "$container_name" redis-cli ping >/dev/null 2>&1; then
+    if redis_up; then
         ready=1
         break
     fi
     sleep 0.5
 done
 if [[ "$ready" != "1" ]]; then
-    "$container_cli" logs "$container_name" >&2
-    echo "redis container did not become ready" >&2
+    if [[ -n "$container_cli" ]]; then "$container_cli" logs "$container_name" >&2; else cat "$redis_log" >&2; fi
+    echo "redis did not become ready" >&2
     exit 1
 fi
 
