@@ -1,5 +1,11 @@
 require "./lib/config/environment"
 
+# This drops every table. In production that is only ever done on purpose.
+if PheintEnvironment.name() == "production" && ENV["PHEINT_CONFIRM_RESET"] != "yes"
+  warn("setup_db.di drops all Pheint tables in #{PheintEnvironment.database_path()}; set PHEINT_CONFIRM_RESET=yes to run it in production")
+  exit(2)
+end
+
 db = SQLite3.open(PheintEnvironment.database_path())
 db.execute("PRAGMA foreign_keys = ON")
 db.execute("DROP TABLE IF EXISTS scores")
@@ -27,27 +33,32 @@ db.execute("CREATE INDEX games_owner_id_idx ON games(owner_id)")
 db.execute("CREATE INDEX leaderboards_game_id_idx ON leaderboards(game_id)")
 db.execute("CREATE INDEX scores_player_id_idx ON scores(player_id)")
 
-password_cost = if PheintEnvironment.name() == "test" then 4 else 12 end
-password_digest = BCrypt.hash("diamond123", password_cost)
-db.execute("INSERT INTO accounts (email, password_digest) VALUES (?, ?)",
-  ["demo@pheint.dia", password_digest])
-account_id = db.last_insert_row_id()
-db.execute("INSERT INTO players (account_id, handle) VALUES (?, ?)",
-  [account_id, "demo"])
-player_id = db.last_insert_row_id()
-db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
-  [account_id, "Asteroid Run", "Pilot through an increasingly dense asteroid field."])
-asteroid_game_id = db.last_insert_row_id()
-db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
-  [asteroid_game_id, "All-time high score", true])
-asteroid_board_id = db.last_insert_row_id()
-db.execute("INSERT INTO scores (leaderboard_id, player_id, value) VALUES (?, ?, ?)",
-  [asteroid_board_id, player_id, 128400])
-db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
-  [account_id, "Cipher Sprint", "Solve a sequence of ciphers against the clock."])
-cipher_game_id = db.last_insert_row_id()
-db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
-  [cipher_game_id, "Fastest solvers", false])
+# The demo account has a published password, so it is never created in production.
+seed_demo = PheintEnvironment.name() != "production"
+
+if seed_demo
+  password_cost = if PheintEnvironment.name() == "test" then 4 else 12 end
+  password_digest = BCrypt.hash("diamond123", password_cost)
+  db.execute("INSERT INTO accounts (email, password_digest) VALUES (?, ?)",
+    ["demo@pheint.dia", password_digest])
+  account_id = db.last_insert_row_id()
+  db.execute("INSERT INTO players (account_id, handle) VALUES (?, ?)",
+    [account_id, "demo"])
+  player_id = db.last_insert_row_id()
+  db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
+    [account_id, "Asteroid Run", "Pilot through an increasingly dense asteroid field."])
+  asteroid_game_id = db.last_insert_row_id()
+  db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
+    [asteroid_game_id, "All-time high score", true])
+  asteroid_board_id = db.last_insert_row_id()
+  db.execute("INSERT INTO scores (leaderboard_id, player_id, value) VALUES (?, ?, ?)",
+    [asteroid_board_id, player_id, 128400])
+  db.execute("INSERT INTO games (owner_id, title, description) VALUES (?, ?, ?)",
+    [account_id, "Cipher Sprint", "Solve a sequence of ciphers against the clock."])
+  cipher_game_id = db.last_insert_row_id()
+  db.execute("INSERT INTO leaderboards (game_id, name, higher_is_better) VALUES (?, ?, ?)",
+    [cipher_game_id, "Fastest solvers", false])
+end
 puts(JSON.stringify({
   "timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"),
   "level": "info", "tag": "pheint", "message": "database.initialized",

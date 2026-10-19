@@ -93,12 +93,30 @@ end
 module PheintAccountResolvers
   module_function
   def player(account, args, context) = account.player(context["db"])
+  # An email address is private: only the signed-in account itself sees it, whoever reaches the account (a game's owner included).
+  def email(account, args, context)
+    account_id = account is Hash ? account["id"] : account.id()
+    viewer = context["current_account"]
+    own = viewer != nil && viewer.id() == account_id
+    # signUp/signIn return the account they just authenticated, before it is the request's current account.
+    granted = context["email_visible_account_ids"]
+    own = true if !own && granted != nil && granted.include?(account_id)
+    return nil unless own
+    account is Hash ? account["email"] : account.email()
+  end
 end
 
 module PheintAuthPayloadResolvers
   module_function
   def token(payload, args, context) = payload["token"]
-  def account(payload, args, context) = payload["account"]
+  def account(payload, args, context)
+    account = payload["account"]
+    granted = context["email_visible_account_ids"]
+    granted = [] if granted == nil
+    granted.push(account.id())
+    context["email_visible_account_ids"] = granted
+    account
+  end
 end
 
 module PheintQueryResolvers
@@ -553,7 +571,7 @@ class PheintSchema
 
       account_type = GraphQL::ObjectType.new("Account")
       account_type.field("id", GraphQL::ScalarType.id().non_null())
-      account_type.field("email", GraphQL::ScalarType.string().non_null())
+      account_type.field("email", GraphQL::ScalarType.string(), PheintAccountResolvers.email)
       account_type.field("player", player_type.non_null(), PheintAccountResolvers.player)
 
       score_type = GraphQL::ObjectType.new("Score")

@@ -31,6 +31,10 @@ authoritative fine-grained record.
 - Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
   They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
   registry seed, backup, upgrade and monitor tools.
+- Pheint: `Account.email` was readable by anyone through a game's `owner`, so an anonymous `{ games { owner { email } } }` listed every owner's
+  address. It is `null` for everyone but the signed-in account now, and the field is nullable.
+- Pheint: `setup_db.di` dropped every table and created the demo account (published password) even with `DIAMOND_ENV=production`. It
+  refuses without `PHEINT_CONFIRM_RESET=yes` there and never seeds the demo account.
 - `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
   opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
   `TypeError` instead of silently ignoring the path; a failed pipe setup now stops and reaps the child and closes its pipes.
