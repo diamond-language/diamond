@@ -45,12 +45,22 @@ class StaticFiles
   # same as a file that isn't found, so this doesn't need to distinguish
   # "blocked" from "not ours to serve."
   def self.safe_relative_path(path)
+    # request["path"] is the raw request target, query string included: "/app.css?v=3" names the file app.css.
     relative = path
+    question = relative.index_of("?")
+    relative = relative.slice(0, question) unless question == nil
+    if relative.include?(chr(0))
+      return nil
+    end
     if @@prefix != ""
       if !relative.start_with?(@@prefix)
         return nil
       end
       relative = relative.slice(@@prefix.length(), relative.length() - @@prefix.length())
+      # The prefix ends at a path segment: "/assets" must not match "/assetsX/...".
+      if !@@prefix.end_with?("/") && relative != "" && !relative.start_with?("/")
+        return nil
+      end
     end
     if relative.start_with?("/")
       relative = relative.slice(1, relative.length() - 1)
@@ -59,10 +69,11 @@ class StaticFiles
       return nil
     end
     segments = relative.split("/")
-    has_traversal = segments.any?() do |segment|
-      segment == ".."
+    # ".." is traversal; any other leading dot (.env, .git/config, .htaccess) is a hidden file that a static root should not hand out.
+    hidden = segments.any?() do |segment|
+      segment.start_with?(".")
     end
-    if has_traversal
+    if hidden
       return nil
     end
     relative

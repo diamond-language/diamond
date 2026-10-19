@@ -37,19 +37,34 @@
 # burst up to 2x the limit across a window boundary (near the end of one
 # window, then again right at the start of the next).
 #
-# Buckets are never evicted -- one entry accumulates per distinct key
-# ever seen, for the lifetime of the worker process. Fine for a bounded
-# key space (a fixed set of API keys, session ids capped by concurrent
-# users); an unbounded one (raw client IPs at internet scale, over a
-# long-running process) will grow this Hash without bound. Out of scope
-# here -- add periodic eviction yourself (sweep entries older than
-# `window` on some schedule) if your own key space needs it.
+# Buckets of finished windows are dropped once more than "max_keys" (default
+# 100000) distinct keys are held, so the table is bounded by the keys seen in
+# one window rather than by every key the worker has ever seen.
 class RateLimit
   def self.configure(options)
     @@limit = options["limit"]
     @@window = options["window"]
     @@key = options["key"]
+    max_keys = options["max_keys"]
+    @@max_keys = if max_keys == nil then 100000 else max_keys end
     @@buckets = {}
+  end
+
+  # Once more than `max_keys` distinct keys are held, drop the buckets whose window has ended (they would start a fresh count anyway). A flood of
+  # distinct keys inside one window can still hold that many live buckets, so the table is bounded by the keys seen per window, not forever.
+  def self.tracked_keys()
+    @@buckets.length()
+  end
+
+  def self.sweep(now)
+    return nil if @@buckets.length() <= @@max_keys
+    live = {}
+    @@buckets.keys().each() do |held|
+      kept = @@buckets[held]
+      live[held] = kept if now - kept["start"] < @@window
+    end
+    @@buckets = live
+    nil
   end
 
   def self.call(request, context, forward)
@@ -61,6 +76,7 @@ class RateLimit
     end
     bucket["count"] = bucket["count"] + 1
     @@buckets[key] = bucket
+    RateLimit.sweep(now)
     if bucket["count"] > @@limit
       [429, {"Content-Type": "text/plain", "Retry-After": "#{@@window}"}, "rate limit exceeded"]
     else

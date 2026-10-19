@@ -43,6 +43,11 @@
 # `Access-Control-Allow-Origin`/`-Credentials` onto whatever it returns.
 class Cors
   def self.configure(options = {})
+    # Credentials with the wildcard origin would answer every site's request with Access-Control-Allow-Credentials: true and that site's own
+    # origin, so any page a user visits could read their authenticated responses. Credentials need an explicit list.
+    if options["credentials"] == true && (options["origins"] == nil || options["origins"] == "*")
+      raise ArgumentError.new("Cors credentials: true needs an explicit origins list, not the wildcard")
+    end
     @@origins = options["origins"]
     @@methods = options["methods"]
     @@credentials = options["credentials"]
@@ -54,12 +59,17 @@ class Cors
     if origin == nil
       nil
     elsif origins == "*"
-      if @@credentials == true then origin else "*" end
+      "*"
     elsif origins.include?(origin)
       origin
     else
       nil
     end
+  end
+
+  # With an explicit origin list the Allow-Origin value depends on the request's Origin, so a shared cache must key on it.
+  def self.varies_by_origin?()
+    @@origins != nil && @@origins != "*"
   end
 
   def self.preflight_response(request, allowed)
@@ -79,6 +89,11 @@ class Cors
         headers["Access-Control-Max-Age"] = "#{@@max_age}"
       end
     end
+    # The preflight echoes Access-Control-Request-Headers, so the answer varies by that header as well.
+    if Cors.varies_by_origin?()
+      headers = RackHeaders.add_vary(headers, "Origin")
+    end
+    headers = RackHeaders.add_vary(headers, "Access-Control-Request-Headers")
     [204, headers, ""]
   end
 
@@ -106,6 +121,10 @@ class Cors
         cors_headers["Access-Control-Allow-Credentials"] = "true"
       end
     end
-    [status, headers.merge(cors_headers), body]
+    merged = headers.merge(cors_headers)
+    if Cors.varies_by_origin?()
+      merged = RackHeaders.add_vary(merged, "Origin")
+    end
+    [status, merged, body]
   end
 end

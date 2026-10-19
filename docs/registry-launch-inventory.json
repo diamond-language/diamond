@@ -126,9 +126,9 @@
       "archive": "rack.tar",
       "dependencies": {},
       "name": "rack",
-      "sha256": "2e9832d6507e0ab124fa3f44d0531292c681b6c489400d57de7fd44172f4ce54",
-      "size": 42496,
-      "version": "0.1.2"
+      "sha256": "f2bd03fb212241406c3676d1bb97bb9790a851f473d145c0760b88a38b92ad34",
+      "size": 48640,
+      "version": "0.1.3"
     },
     {
       "archive": "redis.tar",

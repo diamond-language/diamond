@@ -82,6 +82,8 @@ class SecurityHeaders
       security["Strict-Transport-Security"] = if hsts == true then "max-age=31536000; includeSubDomains" else hsts end
     end
 
-    [status, headers.merge(security), body]
+    # A header the handler already set is left alone: a route's own stricter X-Frame-Options or Content-Security-Policy must not be replaced by the
+    # default, and `x-frame-options` and `X-Frame-Options` are one header.
+    [status, RackHeaders.add_missing(headers, security), body]
   end
 end

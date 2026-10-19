@@ -102,3 +102,11 @@ but not by name from inside another `def`, which is why `Pages` is a class.
 `rack_compose` returns a plain Array of steps, `rack_run_chain(chain, index, request,
 context)` runs the step at `index`, and a middleware that calls `forward` more times
 than the chain has steps raises `RuntimeError`.
+
+## Middleware behavior worth knowing
+
+- `Cors.configure({"credentials": true})` needs an explicit `"origins"` list. With the wildcard it would answer every site's request with that site's own origin and `Access-Control-Allow-Credentials: true`, so any page a user visits could read their authenticated responses; the combination raises `ArgumentError`. With a list, every response carries `Vary: Origin`, and a preflight also varies by `Access-Control-Request-Headers`.
+- `SecurityHeaders` only fills in headers the handler did not set, in any spelling; a route's own stricter `X-Frame-Options` or `Content-Security-Policy` is kept.
+- `StaticFiles` ignores the query string (`/app.css?v=3` serves `app.css`), never serves a path with a segment that starts with a dot (`.env`, `.git/config`), and treats the prefix as a path segment (`/assets` does not match `/assetsX/...`).
+- `ContentNegotiation` treats `q=0` as "not acceptable" and adds `Vary: Accept` to a negotiated response.
+- `RateLimit` drops buckets of finished windows once more than `"max_keys"` (default 100000) distinct keys are held.
