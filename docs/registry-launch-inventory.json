@@ -54,12 +54,12 @@
       "archive": "graphsql.tar",
       "dependencies": {
         "active_record": "^0.19.0",
-        "graphql": "^0.1.0"
+        "graphql": "^0.2.0"
       },
       "name": "graphsql",
-      "sha256": "81efb6e3a3b22eba06479838412228d585d62d37f52b36335ce2de450adfb3cf",
+      "sha256": "7a1d5253251075d2b70deb048b2bb6c09e2b8f468000037e01c0abe01b9a172d",
       "size": 30208,
-      "version": "0.1.3"
+      "version": "0.1.4"
     },
     {
       "archive": "http.tar",

@@ -18,6 +18,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- graphsql: it required `graphql ^0.1.0`, which excludes the 0.2 line (stricter scalars, masked errors, query limits), so the two could not be installed together at their new versions. `graphsql` 0.1.4 depends on `graphql ^0.2.0`; its tests pass against it. `examples/chat` pins the published `gremlin` 0.4.7 and `websocket` 0.1.4 and no longer needs a fallback for older `gremlin`.
 - examples: `chat` read the connection from `request["gremlin_connection"]`, which only `gremlin` 0.4.7 sets, while its `facet.lock` pins `gremlin` 0.2.2, so a user following the README would have got a broken chat. It falls back to `context["gremlin_connection"]` and works with both (checked against the locked registry cuts). `guestbook`, `project_board`, `library` and `chat` build on the cuts in `packages/` and were not covered by CI, so they could break silently when a package changed; `tests/example_apps_test.sh` (`make test-example-apps`, part of `test-integration`) installs the current cuts into each, runs its documented setup, and runs its smoke test (or, for `library`, requests every documented route).
 - CI sanitizer job: the one retry of `make test-sanitize` could bury a real intermittent finding behind a green second attempt. It moved into `tools/test_sanitize.sh`, which fails at once when attempt 1 contains an AddressSanitizer, UndefinedBehaviorSanitizer, LeakSanitizer or ThreadSanitizer report, and announces any retry it does make (a GitHub warning and the first failing line). Over every CI run since 2026-08-20 the first attempt failed in only 4 of about 590 sanitizer jobs; the two it masked were harness timing, and no run contained a sanitizer report. The stale environment-facts step (an ASLR hypothesis the data does not support) is removed, and `docs/ci.md` records the history. `make test-sanitize-script` tests the retry rules against fake runners.
 - Language server: positions counted bytes where LSP counts UTF-16 code units, so after a multi-byte character on a line (an accented letter or an emoji in
@@ -141,6 +142,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `graphsql` 0.1.4: depends on `graphql ^0.2.0`. The registry's launch seed pins it.
 - `rack` 0.1.3: the middleware fixes above.
 - `active_discussion` 0.1.1: the schema and concurrency note above.
 - `active_auth` 0.2.3: single-use tokens and backup codes are atomic.

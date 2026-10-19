@@ -123,11 +123,7 @@ end
 def chat_handler(request, context)
   path = request["path"]
   if path == "/ws" && websocket_upgrade_request?(request)
-    # gremlin 0.4.7 puts the connection on the request (its own, so it survives the handler waiting for frames); older ones only on
-    # the worker-wide context, which is the same connection until the first wait.
-    connection = request["gremlin_connection"]
-    connection = context["gremlin_connection"] if connection == nil
-    chat_session(websocket_accept(connection, request))
+    chat_session(websocket_accept(request["gremlin_connection"], request))
     nil
   elsif path == "/" && request["method"] == "GET"
     [200, {"Content-Type": "text/html; charset=utf-8"}, chat_page()]
