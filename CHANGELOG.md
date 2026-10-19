@@ -13,6 +13,8 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Language server: a non-ASCII character sent as raw UTF-8 in a JSON string (the usual way editors send document text) was encoded a
+  second time, so every multi-byte character reached the analysis as garbage. Bytes are copied through now.
 - `obj.public_send(name)` with a method name longer than the maximum string length raised no error and overflowed a heap buffer; it
   raises `TypeError` now.
 - `File.copy(path, nil)` crashed the VM; it raises `TypeError`.
