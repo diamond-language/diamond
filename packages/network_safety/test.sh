@@ -142,4 +142,34 @@ assert_eq "$actual" "rejected"
 actual="$(run_case '"#{network_safety_ipv4_to_int("1.2.3.4")}|#{network_safety_ipv4_to_int("01.2.3.4")}|#{network_safety_ipv4_to_int("1.2.3.256")}|#{network_safety_ipv4_to_int("1.2.3")}|#{network_safety_ipv4_to_int("a.b.c.d")}"')"
 assert_eq "$actual" "16909060|nil|nil|nil|nil"
 
+# --- numeric spellings the OS resolver reads as IPv4, and trailing-dot / .localhost names, are rejected ---
+actual="$(run_case '
+results = []
+["http://127.1/x", "http://2130706433/x", "http://0x7f.0.0.1/x", "http://0177.0.0.1/x", "http://127.0.0.1./x",
+ "http://localhost./x", "http://app.localhost/x", "http://10.0.0.1./x", "http://169.254.169.254/x", "http://0/x"].each() do |url|
+  begin
+    resolve_public_hostname(url)
+    results.push("allowed")
+  rescue error: ArgumentError
+    results.push("rejected")
+  end
+end
+results.join(",")
+')"
+assert_eq "$actual" "rejected,rejected,rejected,rejected,rejected,rejected,rejected,rejected,rejected,rejected"
+
+# --- public names and addresses still pass, including a hostname that starts with a digit ---
+actual="$(run_case '
+results = []
+["http://8.8.8.8/x", "https://1.1.1.1:8443/x", "https://example.com/x", "https://3d.example.org/x", "https://1password.com/x", "https://8.8.8.8./x"].each() do |url|
+  begin
+    results.push(resolve_public_hostname(url)["host"])
+  rescue error: ArgumentError
+    results.push("rejected:#{url}")
+  end
+end
+results.join(",")
+')"
+assert_eq "$actual" "8.8.8.8,1.1.1.1,example.com,3d.example.org,1password.com,8.8.8.8."
+
 echo "$count network_safety tests passed"
