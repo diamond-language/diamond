@@ -28,6 +28,7 @@ def websocket_opcode_pong() = 10
 # chance to reject it. packages/http's own http_max_body_size is the
 # precedent for capping a length field before ever trusting it.
 def websocket_max_frame_size() = 16 * 1024 * 1024
+def websocket_max_message_size() = 16 * 1024 * 1024
 
 # XOR-cycles `key` (always exactly 4 bytes) over `data`, byte by byte --
 # RFC 6455 section 5.3's masking algorithm. Its own inverse: masking and
@@ -142,7 +143,7 @@ def websocket_read_frame_bytes(conn)
   else
     length7
   end
-  if length > websocket_max_frame_size()
+  if length < 0 || length > websocket_max_frame_size()
     raise IOError.new("WebSocket frame payload of #{length} bytes exceeds maximum of #{websocket_max_frame_size()}")
   end
   payload = if masked

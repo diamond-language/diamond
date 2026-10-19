@@ -233,6 +233,36 @@ rescue error: IOError
 end
 check(stray_rejected, "expected a stray continuation frame (no message in progress) to be rejected")
 
+# A message cannot grow without bound by being split into fragments: the total across fragments is capped
+# (here at 100 bytes through the constructor), not just each frame.
+fragment_a = websocket_encode_frame(websocket_opcode_text(), repeat("a", 60), true, false)
+fragment_b = websocket_encode_frame(websocket_opcode_continuation(), repeat("b", 60), true, false)
+fragment_c = websocket_encode_frame(websocket_opcode_continuation(), "end", true, true)
+ws = WebSocketConnection.new(FakeConn.new(fragment_a + fragment_b + fragment_c), 100)
+too_big = false
+begin
+  ws.receive()
+rescue error: IOError
+  too_big = error.message().include?("exceeds the maximum")
+end
+check(too_big, "expected fragments adding up past the message limit to be rejected")
+ws = WebSocketConnection.new(FakeConn.new(fragment_a + websocket_encode_frame(websocket_opcode_continuation(), "end", true, true)), 100)
+check(ws.receive()["data"] == repeat("a", 60) + "end", "expected a fragmented message under the limit to be delivered")
+
+# Control frames must be final and at most 125 bytes (RFC 6455 section 5.5).
+long_ping = websocket_encode_frame(websocket_opcode_ping(), repeat("p", 126), true)
+split_ping = websocket_encode_frame(websocket_opcode_ping(), "x", true, false)
+control_results = []
+[long_ping, split_ping].each() do |bytes|
+  begin
+    WebSocketConnection.new(FakeConn.new(bytes)).receive()
+    control_results.push("accepted")
+  rescue error: IOError
+    control_results.push(error.message().include?("control frame") ? "rejected" : "other: #{error.message()}")
+  end
+end
+check(control_results == ["rejected", "rejected"], "expected oversized and fragmented control frames to be rejected: #{control_results}")
+
 # Peer-initiated close (arrives via #receive): answered with this
 # side's own Close frame, #receive returns nil, and the underlying
 # connection is closed.

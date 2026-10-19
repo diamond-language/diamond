@@ -13,6 +13,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- websocket: a message split into fragments was only limited per frame, so endless non-final fragments grew the buffer without bound; the total is
+  capped at `websocket_max_message_size()` (16 MB, or the second argument to `WebSocketConnection.new`). A control frame (ping, pong, close) over
+  125 bytes or with FIN clear is a protocol error, and a negative 64-bit frame length is rejected.
 - graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
   small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
@@ -74,6 +77,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `websocket` 0.1.3: the message size cap and control-frame checks above.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.
 - `graphql` 0.2.1: the query depth and size limits above.
