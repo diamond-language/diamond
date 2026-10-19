@@ -129,7 +129,7 @@ def producer(ch)
   ch.close()
 end
 
-ch = Channel.new(4)  # capacity: 1..1_000_000
+ch = Channel.new(4)  # capacity: 0..1_000_000 (0 is a handoff, below)
 worker = Thread.new(producer, ch)
 
 loop
@@ -168,6 +168,30 @@ cut instead of managing these low-level readiness hints themselves.
 
 `close()` is idempotent -- closing an already-closed channel is a no-op, not
 an error. `closed?()` and `size()` report status without blocking.
+
+### Rendezvous channels: `Channel.new(0)`
+
+A capacity of 0 makes a handoff. `send(value)` returns only once a receiver has
+taken the value, so the two threads meet and the sender knows the value was
+received, not just queued.
+
+```ruby
+ack = Channel.new(0)
+worker = Thread.new(do_work, ack)
+ack.send(:ready)      # blocks until the worker's receive() has the value
+```
+
+- A blocked `send` that is interrupted (the channel is closed, a deadline or
+  cancellation fires) withdraws its value: it was not delivered. `close()`
+  raises `IOError` in a sender whose value nobody took.
+- `try_send` succeeds only while a blocking `receive` is parked on the channel,
+  and returns without waiting for it to pick the value up. Otherwise it raises
+  `WouldBlockError`. `wait_writable` is likewise ready only while a receiver is
+  parked.
+- `receive`, `try_receive` and `Channel.select` take from a rendezvous channel
+  like any other. `Channel.select_send` raises `TypeError` for one: choosing
+  among channels cannot promise that the receiver has the value.
+- `size()` is always 0; nothing is buffered.
 
 ### Waiting on several channels: `Channel.select`
 

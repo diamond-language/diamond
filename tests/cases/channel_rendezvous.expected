@@ -1,0 +1,14 @@
+try_send with no receiver: would block
+size: 0
+received [1, 2, 3]
+sent all
+sends recorded <= taken: true
+sends recorded <= taken: true
+sends recorded <= taken: true
+parked receiver got hello
+closed while sending
+receive after close: nil
+select: [0, via select]
+select_send refused a rendezvous channel
+done
+nil

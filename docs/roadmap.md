@@ -34,8 +34,9 @@ Current behavior: [classes and modules](classes-and-modules.md).
 
 Current behavior: [threads](threads.md).
 
-- **Rendezvous channels** -- `Channel.new(0)`-style handoff, where `send` returns only
-  once a receiver has taken the value. Needs a concrete use case. An unbounded
+- **`select_send` on rendezvous channels** -- `Channel.new(0)` exists (see threads.md), but
+  `Channel.select_send` refuses it: the send-side select returns once a value is placed,
+  which cannot promise a receiver has it. Needs a concrete use case. An unbounded
   channel is deliberately not planned: the capacity bound is what keeps memory
   predictable and gives `send` backpressure.
 

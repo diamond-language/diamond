@@ -124,6 +124,15 @@ typedef struct DiamondChannel {
     size_t capacity;
     size_t count;
     bool closed;
+    /* Channel.new(0): a handoff. The queue holds one slot, `sent` counts values
+     * placed in it and `taken` values removed, and a blocking send returns only
+     * once taken has caught up with its own value. receivers_waiting counts the
+     * blocking receives parked on the channel, which is all a try_send or a
+     * wait_writable may treat as room. */
+    bool rendezvous;
+    uint64_t sent;
+    uint64_t taken;
+    size_t receivers_waiting;
     atomic_size_t refcount;
 } DiamondChannel;
 
