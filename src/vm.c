@@ -12394,7 +12394,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
         if(wait_status!=DIAMOND_VM_OK)return wait_status;
     }
     errno=0;
-    int client_fd=accept(listener->fd,nullptr,nullptr);
+    int client_fd=diamond_accept(listener->fd);
     /* A blocking accept() can sit here indefinitely with
      * nothing connecting -- exactly when a trapped signal
      * needs to actually interrupt it (see
@@ -12412,7 +12412,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
             dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
         if(signal_status!=DIAMOND_VM_OK)return signal_status;
         errno=0;
-        client_fd=accept(listener->fd,nullptr,nullptr);
+        client_fd=diamond_accept(listener->fd);
     }
     if(client_fd<0) {
         if(listener->nonblocking&&(errno==EAGAIN||errno==EWOULDBLOCK)) {

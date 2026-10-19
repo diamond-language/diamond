@@ -4416,6 +4416,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              (int)path->length,path->chars,strerror(errno));
                     VM_RETURN(DIAMOND_VM_IO_ERROR);
                 }
+                diamond_set_cloexec(fileno(stream));
                 DiamondFileHandle *handle=allocate_file_handle(vm,stream);
                 if(handle==nullptr) {
                     fclose(stream);
@@ -4662,7 +4663,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         break;
                     case DIAMOND_FILE_PATH_DIRSYNC: {
                         VM_SANDBOX_GUARD("Dir.sync", "filesystem");
-                        const int directory=open(path->chars,O_RDONLY|O_DIRECTORY);
+                        const int directory=open(path->chars,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
                         const int saved=directory<0?errno:(fsync(directory)!=0?errno:0);
                         if(directory>=0)close(directory);
                         if(saved!=0) {

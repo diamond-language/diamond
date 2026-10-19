@@ -21,8 +21,43 @@
 #include <poll.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #define DIAMOND_INTERNAL __attribute__((visibility("hidden")))
+
+/* Every descriptor the VM opens is close-on-exec. A child that Process.run or Process.spawn starts on one thread would otherwise inherit the
+ * sockets, files and pipes another thread has open at that moment: a listener keeps its port bound after the owner closed it, and a pipe
+ * write end held by an unrelated child means a reader never sees EOF until that child exits. posix_spawn's own dup2 of the pipe ends onto
+ * the child's stdio clears the flag on those copies only. */
+static inline void diamond_set_cloexec(int fd) {
+    if(fd<0)return;
+    const int flags=fcntl(fd,F_GETFD);
+    if(flags>=0)(void)fcntl(fd,F_SETFD,flags|FD_CLOEXEC);
+}
+
+static inline int diamond_socket(int domain,int type,int protocol) {
+#ifdef SOCK_CLOEXEC
+    return socket(domain,type|SOCK_CLOEXEC,protocol);
+#else
+    const int fd=socket(domain,type,protocol);
+    diamond_set_cloexec(fd);
+    return fd;
+#endif
+}
+
+static inline int diamond_accept(int listening_fd) {
+    const int fd=accept(listening_fd,nullptr,nullptr);
+    diamond_set_cloexec(fd);
+    return fd;
+}
+
+static inline int diamond_pipe(int descriptors[2]) {
+    if(pipe(descriptors)!=0)return -1;
+    diamond_set_cloexec(descriptors[0]);
+    diamond_set_cloexec(descriptors[1]);
+    return 0;
+}
 
 /* Fibers hand-switch the C stack, which ASan needs told about (see vm.c): the macro and the
  * annotation header are shared by vm.c and src/vm_run_chunk.c, which switch fibers on resume and

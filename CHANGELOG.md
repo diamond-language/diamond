@@ -46,6 +46,9 @@ authoritative fine-grained record.
 - graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
   small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
+- A child started by `Process.run` or `Process.spawn` inherited every socket, listener, file and pipe the VM had open, because none were close-on-exec.
+  With threads, a child spawned on one thread held another thread's listener (the port stayed bound after it closed) or pipe write end (a capture never
+  saw EOF until that child exited). Sockets, accepted connections, pipes and files the VM opens are close-on-exec now.
 - `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
   `[1, 2].reject { nil }` keeps both.
 - `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
