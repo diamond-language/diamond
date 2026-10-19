@@ -13,7 +13,7 @@ module ActiveRecord
   #   validator = ActiveRecord::Validators.combine([
   #     ActiveRecord::Validators.presence("name"),
   #     ActiveRecord::Validators.length("name", maximum: 100),
-  #     ActiveRecord::Validators.format("email", Regexp.new("^[^@]+@[^@]+$")),
+  #     ActiveRecord::Validators.format("email", Regexp.new("\\A[^@]+@[^@]+\\z")),
   #   ])
   #   ActiveRecord::Repository.new(Arel.table("authors"), build_author, "id",
   #     nil, validator)

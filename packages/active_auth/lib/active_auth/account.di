@@ -82,10 +82,10 @@ module ActiveAuth
   def build_account_validator(db)
     ActiveRecord::Validators.combine([
       ActiveRecord::Validators.presence("email"),
-      ActiveRecord::Validators.format("email", Regexp.new("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")),
+      ActiveRecord::Validators.format("email", Regexp.new("\\A[^@\\s]+@[^@\\s]+\\.[^@\\s]+\\z")),
       ActiveRecord::Validators.uniqueness(db, Arel.table("accounts"), "email"),
       ActiveRecord::Validators.presence("username"),
-      ActiveRecord::Validators.format("username", Regexp.new("^[a-zA-Z0-9_-]{3,30}$")),
+      ActiveRecord::Validators.format("username", Regexp.new("\\A[a-zA-Z0-9_-]{3,30}\\z")),
       ActiveRecord::Validators.uniqueness(db, Arel.table("accounts"), "username"),
       ActiveRecord::Validators.inclusion("role", ActiveAuth::Account.roles()),
     ])

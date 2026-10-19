@@ -53,6 +53,18 @@ end
 ')"
 assert_eq "$actual" "email has already been taken"
 
+# --- an email with a second line is rejected, not matched line by line ---
+actual="$(run_case '
+db = setup_test_db()
+begin
+  create_test_account(db, "alice@example.com\nBcc: evil@example.com", "alice")
+  "not rejected"
+rescue error: ActiveRecord::ValidationError
+  "rejected"
+end
+')"
+assert_eq "$actual" "rejected"
+
 # --- email verification round-trip ---
 actual="$(run_case '
 db = setup_test_db()

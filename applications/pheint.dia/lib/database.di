@@ -41,7 +41,7 @@ end
 def build_account_validator(db)
   ActiveRecord::Validators.combine([
     ActiveRecord::Validators.presence("email"),
-    ActiveRecord::Validators.format("email", Regexp.new("^[^@ ]+@[^@ ]+\\.[^@ ]+$")),
+    ActiveRecord::Validators.format("email", Regexp.new("\\A[^@ ]+@[^@ ]+\\.[^@ ]+\\z")),
     ActiveRecord::Validators.uniqueness(db, Arel.table("accounts"), "email")
   ])
 end
@@ -50,7 +50,7 @@ def build_player_validator(db)
   ActiveRecord::Validators.combine([
     ActiveRecord::Validators.presence("handle"),
     ActiveRecord::Validators.length("handle", 3, 30),
-    ActiveRecord::Validators.format("handle", Regexp.new("^[A-Za-z0-9_]+$")),
+    ActiveRecord::Validators.format("handle", Regexp.new("\\A[A-Za-z0-9_]+\\z")),
     ActiveRecord::Validators.uniqueness(db, Arel.table("players"), "handle")
   ])
 end

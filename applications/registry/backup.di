@@ -6,7 +6,7 @@
 # The destination is created exclusively: an existing one is never changed or removed. A failed
 # run removes what it created.
 
-BLOB_PATTERN = "^[0-9a-f]{64}$"
+BLOB_PATTERN = "\\A[0-9a-f]{64}\\z"
 
 def digest(path)
   Digest.sha256(File.read(path))

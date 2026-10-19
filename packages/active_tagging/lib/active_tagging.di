@@ -150,6 +150,6 @@ module ActiveTagging
     ActiveRecord::Validators.combine([
       ActiveRecord::Validators.presence("name"),
       ActiveRecord::Validators.length("name", 1, 40),
-      ActiveRecord::Validators.format("name", Regexp.new("^[a-z0-9-]+$")),
+      ActiveRecord::Validators.format("name", Regexp.new("\\A[a-z0-9-]+\\z")),
     ])
 end

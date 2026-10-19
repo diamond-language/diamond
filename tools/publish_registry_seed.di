@@ -78,7 +78,7 @@ def publish(base, seed, credentials)
   names = []
   inventory["cuts"].each() do |cut|
     name = cut["name"]
-    unless Regexp.new("^[a-z][a-z0-9_]*$").match?(name) && !names.include?(name) &&
+    unless Regexp.new("\\A[a-z][a-z0-9_]*\\z").match?(name) && !names.include?(name) &&
            cut["archive"] == name + ".tar"
       raise ArgumentError.new("invalid or duplicate cut identity")
     end

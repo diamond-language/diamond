@@ -28,6 +28,9 @@ authoritative fine-grained record.
 - `ProgramBuilder`: a method called after a `run` that handed the program to the VM (it returned an Instance) crashed; it raises. A
   `run` whose result could not be copied after the program was adopted no longer leaves the program owned twice.
 - A VM torn down while holding `Process.spawn` streams or handles now closes the pipes and reaps an exited child, as the GC sweep does.
+- Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
+  They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
+  registry seed, backup, upgrade and monitor tools.
 - `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
   opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
   `TypeError` instead of silently ignoring the path; a failed pipe setup now stops and reaps the child and closes its pipes.
@@ -45,6 +48,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
 - `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
 - `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
 - `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.
