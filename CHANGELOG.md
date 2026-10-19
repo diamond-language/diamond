@@ -13,6 +13,8 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- redis: an error element inside an Array or Map reply (a failed command in MULTI/EXEC) raised after reading only part of the reply, leaving the rest
+  on the connection to be taken as the answers to later commands. The whole reply is read first and the first error raised.
 - websocket: a message split into fragments was only limited per frame, so endless non-final fragments grew the buffer without bound; the total is
   capped at `websocket_max_message_size()` (16 MB, or the second argument to `WebSocketConnection.new`). A control frame (ping, pong, close) over
   125 bytes or with FIN clear is a protocol error, and a negative 64-bit frame length is rejected.
@@ -77,6 +79,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.

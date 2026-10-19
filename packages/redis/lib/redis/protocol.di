@@ -81,13 +81,22 @@ end
 # the shared shape behind RESP's own Array (`*`), RESP3 Set (`~`), and
 # RESP3 Push (`>`) reply types below, which differ only in what the
 # resulting Array *means*, never in how it's read off the wire.
+# An error element (a failed command inside MULTI/EXEC, say) must not leave the rest of the array unread: the leftover replies would be taken for
+# the answers to the next commands. Every element is read, then the first error is raised.
 def redis_read_n_values(conn, count)
   values = []
+  first_error = nil
   index = 0
   while index < count
-    values.push(redis_read_reply(conn))
+    begin
+      values.push(redis_read_reply(conn))
+    rescue error: RedisError
+      first_error = error if first_error == nil
+      values.push(nil)
+    end
     index += 1
   end
+  raise first_error if first_error != nil
   values
 end
 
@@ -194,13 +203,21 @@ def redis_read_reply(conn)
     # where that shape difference actually matters to a caller.
     count = rest.to_i()
     result = {}
+    first_error = nil
     index = 0
     while index < count
-      key = redis_read_reply(conn)
-      value = redis_read_reply(conn)
+      key = nil
+      value = nil
+      begin
+        key = redis_read_reply(conn)
+        value = redis_read_reply(conn)
+      rescue error: RedisError
+        first_error = error if first_error == nil
+      end
       result[key] = value
       index += 1
     end
+    raise first_error if first_error != nil
     result
   elsif reply_type == "~"
     # RESP3 Set: wire-identical to Array, semantically a set (no
