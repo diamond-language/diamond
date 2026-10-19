@@ -127,7 +127,7 @@ authoritative fine-grained record.
 - `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
 - `mjolnir` 0.2.4: the update and `update_all` fixes above.
-- `gremlin` 0.4.7 and `websocket` 0.1.4: the connection, deadline and cleanup fixes above. The registry launch seed is not regenerated for them yet.
+- `gremlin` 0.4.7 and `websocket` 0.1.4: the connection, deadline and cleanup fixes above. The registry launch seed pins both.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.
 - `graphql` 0.2.1: the query depth and size limits above.
