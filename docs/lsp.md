@@ -11,6 +11,10 @@ server with.
 from scratch in C, with zero external dependencies beyond what the rest of this
 repository already uses.
 
+## Positions
+
+The compiler and lexer count a column in bytes within the line. The protocol counts a position's `character` in UTF-16 code units (the default encoding when a client negotiates none), and the two agree only on ASCII: an `é` is two bytes and one unit, an emoji four bytes and two. `lsp/position.h` converts at the edges. A cursor position from the editor becomes a byte column before anything looks at the source, and every range sent back (locations, symbols, references, rename edits, diagnostics, formatting edits) is converted using the text of the file the range is in, which for a definition, reference or dependency diagnostic in a `require`d file is that file's text, not the open document's.
+
 ## What it does today
 
 Diagnostics, hover/go-to-definition/document-symbols over a narrow,

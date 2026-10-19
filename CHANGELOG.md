@@ -18,6 +18,14 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Language server: positions counted bytes where LSP counts UTF-16 code units, so after a multi-byte character on a line (an accented letter or an emoji in
+  a string or comment) hover and go-to-definition looked at the wrong token, and the ranges returned for definitions, symbols, references, rename, diagnostics and
+  formatting edits were shifted. Cursor positions are converted to bytes on the way in and every range back to UTF-16 using the text of the file it is in.
+- rack: `Cors` with `credentials: true` and the wildcard origin answered every site's request with that site's own origin plus `Access-Control-Allow-Credentials`, so any
+  page could read a user's authenticated responses; the combination raises `ArgumentError` now, and an explicit origin list adds `Vary: Origin`. `SecurityHeaders` overwrote
+  headers a route had set (a stricter `X-Frame-Options`, a `Content-Security-Policy`); it only fills in missing ones. `StaticFiles` treated the query string as part of the file
+  name (cache-busted URLs missed), served dotfiles such as `.env` and `.git/config`, and matched `/assetsX` against the prefix `/assets`. `ContentNegotiation` ranked `q=0` lowest
+  instead of refusing it, and sent no `Vary: Accept`. `RateLimit` kept a bucket for every key ever seen; finished windows are dropped past `max_keys` (default 100000).
 - `make test-integration` (what CI runs) now also runs `test-examples` and the new `test-registry-inventory`. Neither ran in CI, and both were failing: the
   brainfuck example still expected mutual tail calls to overflow the stack (they no longer do), and the registry launch inventory no longer matched the
   archives after the package fixes above. The inventory and `launch-cuts.json` are regenerated for them; nothing is published.
@@ -121,6 +129,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `rack` 0.1.3: the middleware fixes above.
 - `active_record` 0.19.5: a doc comment changed with the anchored validators, which changes the archive. The registry launch seed pins the new `arel`
   0.34.6, `graphql` 0.2.1, `http` 0.1.3, `jobs` 0.1.3, `network_safety` 0.1.3, `redis` 0.1.3, `websocket` 0.1.3 and `active_record` 0.19.5.
 - `jobs` 0.1.3: the worker fixes above.

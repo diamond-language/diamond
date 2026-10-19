@@ -51,6 +51,7 @@
 # isn't a middleware at all (see its own file) -- a response-building
 # helper called from a handler, same category as Dials::Response.
 require "./rack/chain_composition"
+require "./rack/header_support"
 require "./rack/rack_chain"
 require "./rack/security_headers"
 require "./rack/rate_limit"

@@ -6,6 +6,7 @@
 #include "formatting.h"
 
 #include "lexer.h"
+#include "position.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -485,7 +486,9 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
     return depth==0;
 }
 
-static JsonValue *text_edit(size_t line,size_t start_col,size_t end_col,
+/* `start_col`/`end_col` are byte columns within the line whose text is `line_text`; the edit's range is sent in UTF-16 code units, which
+ * is what LSP counts a `character` in. They differ once the line holds a multi-byte character before the edit. */
+static JsonValue *text_edit(const char *line_text,size_t line_length,size_t line,size_t start_col,size_t end_col,
         const char *new_text,size_t new_text_length) {
     JsonValue *range=json_object();
     JsonValue *start=json_object();
@@ -496,9 +499,9 @@ static JsonValue *text_edit(size_t line,size_t start_col,size_t end_col,
         return nullptr;
     }
     json_object_set(start,"line",json_number((double)(line-1)));
-    json_object_set(start,"character",json_number((double)start_col));
+    json_object_set(start,"character",json_number((double)lsp_utf16_from_bytes(line_text,line_length,start_col)));
     json_object_set(end,"line",json_number((double)(line-1)));
-    json_object_set(end,"character",json_number((double)end_col));
+    json_object_set(end,"character",json_number((double)lsp_utf16_from_bytes(line_text,line_length,end_col)));
     json_object_set(range,"start",start);
     json_object_set(range,"end",end);
     json_object_set(result,"range",range);
@@ -633,9 +636,9 @@ static bool inside_string_token(const DiamondToken *tokens,size_t token_count,si
     return false;
 }
 
-static bool push_edit(JsonValue *result,size_t line,size_t start_col,size_t end_col,
-        const char *new_text,size_t new_text_length) {
-    JsonValue *edit=text_edit(line,start_col,end_col,new_text,new_text_length);
+static bool push_edit(JsonValue *result,const char *line_text,size_t line_length,size_t line,
+        size_t start_col,size_t end_col,const char *new_text,size_t new_text_length) {
+    JsonValue *edit=text_edit(line_text,line_length,line,start_col,end_col,new_text,new_text_length);
     if(edit==nullptr)return false;
     if(!json_array_push(result,edit)) {json_free(edit);return false;}
     return true;
@@ -784,7 +787,7 @@ JsonValue *formatting_compute_range(const char *text,size_t length,size_t first_
             (size_t)(depths[index].depth<0?0:depths[index].depth)*2;
 
         if(blank_line) {
-            if(leading>0&&!push_edit(result,line_number,0,leading,"",0))build_ok=false;
+            if(leading>0&&!push_edit(result,source_copy+current.start,current.length,line_number,0,leading,"",0))build_ok=false;
             continue;
         }
 
@@ -792,7 +795,7 @@ JsonValue *formatting_compute_range(const char *text,size_t length,size_t first_
             char *spaces=target_spaces==0?nullptr:malloc(target_spaces);
             if(target_spaces>0&&spaces==nullptr) {build_ok=false;break;}
             if(target_spaces>0)memset(spaces,' ',target_spaces);
-            const bool pushed=push_edit(result,line_number,0,leading,spaces,target_spaces);
+            const bool pushed=push_edit(result,source_copy+current.start,current.length,line_number,0,leading,spaces,target_spaces);
             free(spaces);
             if(!pushed) {build_ok=false;break;}
         }
@@ -807,18 +810,18 @@ JsonValue *formatting_compute_range(const char *text,size_t length,size_t first_
             const size_t gap_length=gap_end-gap_start;
             const size_t column=gap_start-current.start;
             if(want==GAP_NONE&&gap_length>0) {
-                if(!push_edit(result,line_number,column,column+gap_length,"",0)) {
+                if(!push_edit(result,source_copy+current.start,current.length,line_number,column,column+gap_length,"",0)) {
                     build_ok=false;break;
                 }
             } else if(want==GAP_AT_LEAST_ONE&&gap_length==0) {
-                if(!push_edit(result,line_number,column,column," ",1)) {
+                if(!push_edit(result,source_copy+current.start,current.length,line_number,column,column," ",1)) {
                     build_ok=false;break;
                 }
             }
         }
 
         if(build_ok&&!ends_in_string&&trailing_start<current.length&&
-           !push_edit(result,line_number,trailing_start,current.length,"",0))
+           !push_edit(result,source_copy+current.start,current.length,line_number,trailing_start,current.length,"",0))
             build_ok=false;
     }
     free(tokens);free(depths);free(removed);free(lines);free(source_copy);

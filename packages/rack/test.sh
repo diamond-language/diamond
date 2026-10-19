@@ -585,4 +585,111 @@ end
 [[ "$actual" == "200|application/json|{}|200|application/json|{}|406|200|application/json|yes" ]]
 count=$((count + 1))
 
+
+# --- Cors: credentials with the wildcard origin is refused at configuration (it would answer every site's request with that site's own
+# --- origin plus Allow-Credentials); an explicit list adds Vary: Origin to every response, wildcard-without-credentials does not, and a
+# --- preflight varies by Origin and the requested headers ---
+actual="$(run_case '
+def app(request, context)
+  [200, {"Vary": "Accept-Encoding"}, "ok"]
+end
+refused = []
+[{"credentials": true}, {"credentials": true, "origins": "*"}].each() do |options|
+  begin
+    Cors.configure(options)
+    refused.push("accepted")
+  rescue error: ArgumentError
+    refused.push("refused")
+  end
+end
+Cors.configure({"origins": ["https://app.example"], "credentials": true})
+[s1, listed, b1] = Cors.call({"method": "GET", "headers": {"origin": "https://app.example"}}, {}, app)
+[s2, unlisted, b2] = Cors.call({"method": "GET", "headers": {"origin": "https://evil.example"}}, {}, app)
+[s3, preflight, b3] = Cors.call({"method": "OPTIONS", "headers": {"origin": "https://app.example", "access-control-request-method": "POST", "access-control-request-headers": "X-A"}}, {}, app)
+Cors.configure({})
+[s4, wildcard, b4] = Cors.call({"method": "GET", "headers": {"origin": "https://any.example"}}, {}, app)
+"#{refused.join(",")}|#{listed["Vary"]}|#{unlisted["Vary"]}|#{preflight["Vary"]}|#{wildcard["Vary"]}"
+')"
+[[ "$actual" == "refused,refused|Accept-Encoding, Origin|Accept-Encoding, Origin|Origin, Access-Control-Request-Headers|Accept-Encoding" ]]
+count=$((count + 1))
+
+# --- SecurityHeaders: a header the handler set (in any spelling) is kept; the defaults fill in only what is missing ---
+actual="$(run_case '
+def app(request, context)
+  [200, {"x-frame-options": "DENY", "Content-Security-Policy": "default-src none"}, "ok"]
+end
+SecurityHeaders.configure({"content_security_policy": "default-src self"})
+[status, headers, body] = SecurityHeaders.call({"method": "GET", "headers": {}}, {}, app)
+frame_keys = headers.keys().select() do |key| "#{key}".downcase() == "x-frame-options" end
+"#{frame_keys.join(",")}|#{headers["x-frame-options"]}|#{headers["Content-Security-Policy"]}|#{headers["X-Content-Type-Options"]}"
+')"
+[[ "$actual" == "x-frame-options|DENY|default-src none|nosniff" ]]
+count=$((count + 1))
+
+# --- StaticFiles: the query string is not part of the file name, hidden files and directories are never served, the
+# --- prefix ends at a path segment, and a NUL byte names nothing ---
+static_root="$(mktemp -d)"
+mkdir -p "$static_root/css" "$static_root/.git"
+printf 'body { color: red; }' > "$static_root/css/app.css"
+printf "console.log('hi');" > "$static_root/app.js"
+printf 'TOKEN=1' > "$static_root/.env"
+printf '[core]' > "$static_root/.git/config"
+actual="$(run_case "
+def app(request, context)
+  [404, {}, \"app-fallback\"]
+end
+StaticFiles.configure({\"root\": \"$static_root\"})
+results = []
+[\"/app.js?v=3\", \"/css/app.css?x=1&y=2\", \"/.env\", \"/.git/config\", \"/css/../.env\", \"/app.js\" + chr(0) + \"x\"].each() do |path|
+  results.push(StaticFiles.call({\"method\": \"GET\", \"path\": path}, {}, app)[0])
+end
+StaticFiles.configure({\"root\": \"$static_root\", \"prefix\": \"/assets\"})
+[\"/assets/app.js\", \"/assetsX/app.js\", \"/assets\"].each() do |path|
+  results.push(StaticFiles.call({\"method\": \"GET\", \"path\": path}, {}, app)[0])
+end
+results.join(\",\")
+")"
+[[ "$actual" == "200,200,404,404,404,404,200,404,404" ]]
+count=$((count + 1))
+rm -rf "$static_root"
+
+# --- ContentNegotiation: q=0 refuses a format instead of ranking it lowest, and the response varies by Accept ---
+actual="$(run_case '
+def build_json()
+  "{}"
+end
+def build_html()
+  "<p></p>"
+end
+available = ["json", "html"]
+refuse_json = ContentNegotiation.negotiate("application/json;q=0, text/html", available, "json")
+refuse_only = ContentNegotiation.negotiate("text/html;q=0", ["html"], "html")
+ranked = ContentNegotiation.negotiate("text/html;q=0.5, application/json;q=0.9", available, "html")
+[status, headers, body] = ContentNegotiation.respond_to({"path": "/x", "headers": {"accept": "application/json;q=0, text/html"}},
+  status: 200, representations: {"json": build_json, "html": build_html}, default_format: "json")
+[refused_status, refused_headers, refused_body] = ContentNegotiation.respond_to({"path": "/x", "headers": {"accept": "text/html;q=0"}},
+  status: 200, representations: {"html": build_html}, default_format: "html")
+"#{refuse_json}|#{refuse_only}|#{ranked}|#{status}|#{headers["Vary"]}|#{refused_status}"
+')"
+[[ "$actual" == "html|nil|json|200|Accept|406" ]]
+count=$((count + 1))
+
+# --- RateLimit: once more keys than "max_keys" are held, buckets of finished windows are dropped ---
+actual="$(run_case '
+def app(request, context)
+  [200, {}, "ok"]
+end
+def identify(request) = request["who"]
+RateLimit.configure({"limit": 5, "window": 0.05, "key": identify, "max_keys": 3})
+["a", "b", "c", "d", "e"].each() do |who|
+  RateLimit.call({"who": who}, {}, app)
+end
+held = RateLimit.tracked_keys()
+IO.poll([], [], 250)
+RateLimit.call({"who": "z"}, {}, app)
+"#{held}|#{RateLimit.tracked_keys()}"
+')"
+[[ "$actual" == "5|1" ]]
+count=$((count + 1))
+
 echo "$count rack tests passed"

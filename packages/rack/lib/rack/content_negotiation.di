@@ -84,6 +84,7 @@ class ContentNegotiation
     ranges = accept_header.split(",")
     best_format = nil
     best_q = -1.0
+    excluded = []
     ranges.each() do |range|
       parts = range.strip().split(";")
       media_type = parts[0].strip()
@@ -95,12 +96,18 @@ class ContentNegotiation
         end
       end
       format = ContentNegotiation.format_for_media_range(media_type, available_formats)
-      if format != nil && q > best_q
+      if format != nil && q <= 0.0
+        # q=0 means "not acceptable", not "lowest preference".
+        excluded.push(format)
+      elsif format != nil && q > best_q
         best_format = format
         best_q = q
       end
     end
-    if best_format == nil then default_format else best_format end
+    return best_format unless best_format == nil
+    return default_format unless excluded.include?(default_format)
+    # The default was refused; any representation that was not refused is better than sending it anyway.
+    available_formats.find() do |candidate| !excluded.include?(candidate) end
   end
 
   # `representations`: Hash of format name -> zero-arg Callable
@@ -129,6 +136,7 @@ class ContentNegotiation
       return [406, {"Content-Type": "text/plain"}, "not acceptable"]
     end
     headers = {"Content-Type": ContentNegotiation.mime_type_for(format)}.merge(extra_headers)
-    [status, headers, builder()]
+    # The representation depends on the Accept header, so a shared cache must key on it.
+    [status, RackHeaders.add_vary(headers, "Accept"), builder()]
   end
 end
