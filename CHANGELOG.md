@@ -13,6 +13,11 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
+  `[1, 2].reject { nil }` keeps both.
+- `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
+- Int `divmod` went through a Float quotient and was wrong past 2**53 (`Int.max.divmod(10)`); it uses integer arithmetic and raises on a
+  zero divisor. `Math.log10(1000)` and `Math.log2` return whole numbers for exact powers, and `Math.cbrt` handles negatives and exact cubes.
 - Language server: a non-ASCII character sent as raw UTF-8 in a JSON string (the usual way editors send document text) was encoded a
   second time, so every multi-byte character reached the analysis as garbage. Bytes are copied through now.
 - `obj.public_send(name)` with a method name longer than the maximum string length raised no error and overflowed a heap buffer; it
