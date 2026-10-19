@@ -18,6 +18,7 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- CI sanitizer job: the one retry of `make test-sanitize` could bury a real intermittent finding behind a green second attempt. It moved into `tools/test_sanitize.sh`, which fails at once when attempt 1 contains an AddressSanitizer, UndefinedBehaviorSanitizer, LeakSanitizer or ThreadSanitizer report, and announces any retry it does make (a GitHub warning and the first failing line). Over every CI run since 2026-08-20 the first attempt failed in only 4 of about 590 sanitizer jobs; the two it masked were harness timing, and no run contained a sanitizer report. The stale environment-facts step (an ASLR hypothesis the data does not support) is removed, and `docs/ci.md` records the history. `make test-sanitize-script` tests the retry rules against fake runners.
 - Language server: positions counted bytes where LSP counts UTF-16 code units, so after a multi-byte character on a line (an accented letter or an emoji in
   a string or comment) hover and go-to-definition looked at the wrong token, and the ranges returned for definitions, symbols, references, rename, diagnostics and
   formatting edits were shifted. Cursor positions are converted to bytes on the way in and every range back to UTF-16 using the text of the file it is in.
