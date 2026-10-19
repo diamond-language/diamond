@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-registry-inventory test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -626,6 +626,11 @@ test-registry-http: $(TARGET) $(BUILD_DIR)/facet
 test-registry-nginx: $(TARGET) $(BUILD_DIR)/facet
 	$(BUILD_DIR)/diamond packages/registry/nginx_test.di
 
+# The reviewed launch inventory against freshly built archives. A changed package needs its version bumped and its inventory entry
+# regenerated (docs/registry-release-plan.md); this is the part of test-registry-seed that needs no nginx.
+test-registry-inventory: $(TARGET) $(BUILD_DIR)/facet
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/seed_test.sh
+
 test-registry-seed: $(TARGET) $(BUILD_DIR)/facet
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/seed_test.sh
 	REGISTRY_REHEARSE_SEED=1 $(BUILD_DIR)/diamond packages/registry/nginx_test.di
@@ -738,8 +743,10 @@ aot-config-check:
 
 $(AOT_CONFIG): aot-config-check $(AOT_FINGERPRINT_INPUTS)
 	@mkdir -p $(AOT_CACHE_DIR)
-	@printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(AOT_LTO_CFLAGS)' '$(shell $(CC) -dumpversion)' \
-		"$$(tools/aot_fingerprint.sh $(AOT_FINGERPRINT_INPUTS))" > $@.tmp
+	@fingerprint="$$(tools/aot_fingerprint.sh $(AOT_FINGERPRINT_INPUTS))" || { echo "tools/aot_fingerprint.sh failed" >&2; exit 1; }; \
+	[ -n "$$fingerprint" ] || { echo "tools/aot_fingerprint.sh printed nothing" >&2; exit 1; }; \
+	printf '%s\n' '$(CC)' '$(CPPFLAGS)' '$(AOT_CFLAGS)' '$(AOT_LTO_CFLAGS)' '$(shell $(CC) -dumpversion)' \
+		"$$fingerprint" > $@.tmp
 	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
 $(AOT_CACHE_DIR)/%.o: src/%.c $(AOT_CONFIG)
@@ -1058,6 +1065,8 @@ test-integration:
 	$(MAKE) test-registry-package
 	$(MAKE) test-registry-http
 	$(MAKE) test-deploy-registry
+	$(MAKE) test-registry-inventory
+	$(MAKE) test-examples
 	$(MAKE) test-pheint-application
 	$(MAKE) test-lsp
 	$(MAKE) test-dap

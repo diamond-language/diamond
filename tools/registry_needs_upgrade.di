@@ -30,7 +30,8 @@ def fail_with(message)
 end
 
 def git(root, args)
-  result = Process.run(["git", "-C", root] + args)
+  # core.quotepath=off keeps a non-ASCII path whole in `diff --name-only`; git would otherwise print it quoted and escaped, which no prefix test matches.
+  result = Process.run(["git", "-C", root, "-c", "core.quotepath=off"] + args)
   raise ArgumentError.new(result.stderr().strip()) unless result.success?()
   result.stdout()
 end
@@ -95,7 +96,7 @@ end
 # Docs and tests inside a package are not executed by the registry. Some packages keep their
 # tests beside the sources (packages/registry/http_test.di), not in test/.
 def inert?(path)
-  Regexp.new("^packages/[^/]+/(README\\.md|LICENSE|test\\.sh|test/|[^/]+_test\\.(py|di|sh))").match?(path)
+  Regexp.new("\\Apackages/[^/]+/(README\\.md|LICENSE|test\\.sh|test/|[^/]+_test\\.(py|di|sh))").match?(path)
 end
 
 def hits(changed, prefixes)
@@ -118,6 +119,7 @@ while index < ARGV.length()
     deployed = ARGV[index] if arg == "--deployed"
     host = ARGV[index] if arg == "--host"
     target_name = ARGV[index] if arg == "--target"
+    fail_with("#{arg} must not start with a dash") if ARGV[index].start_with?("-")
     index += 1
   else
     fail_with("unexpected argument #{arg}")

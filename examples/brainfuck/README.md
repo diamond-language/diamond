@@ -21,7 +21,7 @@ shape                                 depth   result
 self tail call                       100000   ok
 non-tail: 1 + f(n - 1)               100000   stack overflow
 tail call inside begin/rescue        100000   stack overflow
-mutual tail calls (ping/pong)        100000   stack overflow
+mutual tail calls (ping/pong)        100000   ok
 non-tail, within the limit               80   ok
 ```
 
@@ -47,9 +47,8 @@ limit), and 66 when the file can't be read.
   work of each instruction is pushed into `Machine#apply`, so the recursive
   call stays that simple.
 - **What does not qualify, measured.** `depth.di` runs the same 100,000-deep
-  count four ways. Only the self tail call survives; a non-tail recursion,
-  a tail call inside `begin/rescue`, and mutual recursion between two
-  functions all hit the depth limit. None of those is an error in the
+  count four ways. The self tail call and the mutual (ping/pong) tail calls survive;
+  a non-tail recursion and a tail call inside `begin/rescue` hit the depth limit. None of those is an error in the
   language, just ordinary recursion.
 - **The catch.** A qualifying tail call that never terminates now runs
   forever instead of overflowing the stack, so `execute` keeps an explicit

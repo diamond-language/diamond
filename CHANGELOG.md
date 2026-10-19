@@ -13,6 +13,15 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `make test-integration` (what CI runs) now also runs `test-examples` and the new `test-registry-inventory`. Neither ran in CI, and both were failing: the
+  brainfuck example still expected mutual tail calls to overflow the stack (they no longer do), and the registry launch inventory no longer matched the
+  archives after the package fixes above. The inventory and `launch-cuts.json` are regenerated for them; nothing is published.
+- CI: the workflow token is read-only (`permissions: contents: read`), and the wasi-sdk download fails on an HTTP error and is checked against a pinned
+  SHA-256.
+- `make` stops when `tools/aot_fingerprint.sh` fails; it used to write the AOT config with an empty fingerprint, so the cache never noticed a changed source.
+- `tools/registry_needs_upgrade.di` keeps non-ASCII paths whole when listing changed files, anchors its path patterns with `\A`, and refuses a `--host`,
+  `--deployed` or `--target` value that starts with a dash (it would reach `ssh` or `git` as an option).
+- The registry runbook creates the issued credential file with a private umask on the local side as well, not only on the server.
 - tools/deploy_registry.sh treated any upgrade-check exit other than 20 as "nothing to do" and exited 0, so an unreachable host or an unknown
   deployed revision looked like a successful no-op. Only 0 (none) and 10 (optional) stop quietly now; any other exit is an error, even with `--force`.
   The script also rebuilds `build/diamond` and `build/facet` every run (they were only built when missing, so a pull left it verifying with old tools), names
@@ -90,6 +99,8 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `active_record` 0.19.5: a doc comment changed with the anchored validators, which changes the archive. The registry launch seed pins the new `arel`
+  0.34.6, `graphql` 0.2.1, `http` 0.1.3, `jobs` 0.1.3, `network_safety` 0.1.3, `redis` 0.1.3, `websocket` 0.1.3 and `active_record` 0.19.5.
 - `jobs` 0.1.3: the worker fixes above.
 - `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
