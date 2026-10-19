@@ -46,6 +46,8 @@ authoritative fine-grained record.
 - graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
   small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
+- `PostgreSQL#last_insert_row_id` built its result in a C local while the query helper allocated more objects, so a collection at the wrong moment
+  could free the result Array before it was read. The result goes straight into the rooted register now, as for every other query.
 - gremlin: `context` is one Hash for the whole worker and every accepted request overwrote `context["gremlin_connection"]`, so a handler that waited (a
   WebSocket reading a frame) could find another request's connection there. The connection is also set on `request["gremlin_connection"]`, which is the
   request's own; `websocket_accept(request["gremlin_connection"], request)` is the documented form now. A connection past its `limits` deadline was closed but
