@@ -276,4 +276,10 @@ count=$((count + 1))
 exec {CLEAR_REPL[1]}>&-
 wait "$CLEAR_REPL_PID" 2>/dev/null || true
 
+# Pipelined REPL input must not buffer the line belonging to gets(). Use a
+# separate session because later evaluations replay earlier expressions.
+stdin_response="$(printf 'gets()\nhello stdin\nexit\n' | timeout 10 "$diamond")"
+[[ "$stdin_response" == *$'{> hello stdin\n{> ' ]]
+count=$((count + 1))
+
 echo "$count repl tests passed"

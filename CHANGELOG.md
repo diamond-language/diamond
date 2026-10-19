@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- Native `gets()` and the terminal debugger's input wait can be interrupted by
+  `Supervisor#stop(timeout_ms)` or a sibling restart, including while queued behind
+  another reader. Standard input's inherited flags are unchanged, and a partial
+  line is retained for the next `gets()`. The piped REPL reads without stdio
+  read-ahead so it can share stdin with `gets()`.
 - `gremlin_serve`'s tenth argument, `host`, listens on one address (for example `"127.0.0.1"` behind a reverse proxy) instead of every
   interface.
 

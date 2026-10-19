@@ -114,6 +114,15 @@ trailing newline still returns its content, matching Ruby's `gets`.
 Compiles to a single `DIAMOND_OP_GETS dest` instruction. Recognized with
 the same shadowing precedent as `print`/`puts`.
 
+On native builds, `Supervisor#stop(timeout_ms)` and sibling restarts interrupt
+a worker blocked in `gets()`, including one waiting behind another reader.
+Readers share one serialized stdin stream; an interrupted reader leaves any
+partial line for the next `gets()` to finish. The inherited descriptor's flags
+are unchanged. The terminal debugger uses the same reader. Embedders should not
+mix these reads with buffered C stdio reads on `stdin`, since stdio read-ahead
+is invisible to descriptor readiness checks. WebAssembly keeps its direct
+stdio reader and does not support threads or supervisors.
+
 Line length is not capped — reading grows a buffer across as many
 underlying `fgets` calls as a line needs, the same growable-buffer
 pattern (`StringBuilder`) already used for value formatting elsewhere

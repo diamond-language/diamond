@@ -2027,6 +2027,7 @@ rm -f "$error_file"
 
 # Verify signal delivery during native accept(), with bounded handshakes.
 DIAMOND_BIN="$diamond" bash tests/signal_interrupt.sh
+DIAMOND_BIN="$diamond" bash tests/supervisor_stdin.sh
 bash tests/signal_threads.sh "$diamond"
 
 # An untrapped signal still gets the OS default disposition (kills the

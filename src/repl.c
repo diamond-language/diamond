@@ -621,8 +621,6 @@ int diamond_repl_run(void) {
     buffer_init(&pending);
     ReplBuffer previous_output;
     buffer_init(&previous_output);
-    char *line = nullptr;
-    size_t line_capacity = 0;
     /* Matches try_compile's own load_error[768] -- smaller and a long
      * diamond_load_program error could truncate (still safe, snprintf
      * never overflows, just triggers -Wformat-truncation for a real,
@@ -634,8 +632,9 @@ int diamond_repl_run(void) {
      * killing the process) only makes sense against a real terminal --
      * tests/repl_test.sh deliberately drives this over a bash coproc
      * (a pipe, not a pty) via DIAMOND_FORCE_REPL, so falling back to the
-     * exact prior getline()-based behavior whenever stdin isn't a tty
-     * keeps that suite passing unchanged, not just working around it. */
+     * plain line input whenever stdin isn't a tty preserves that interface.
+     * Read bytes directly there too: stdio read-ahead would hide a following
+     * gets() line from the runtime's readiness poll. */
     const bool interactive = isatty(STDIN_FILENO) != 0;
     struct termios original_termios;
     ReplHistory history = {};
@@ -667,15 +666,16 @@ int diamond_repl_run(void) {
             } else {
                 fputs(prompt, real_stdout);
                 fflush(real_stdout);
-                const ssize_t got = getline(&line, &line_capacity, stdin);
-                if (got < 0) {
-                    line_result = REPL_LINE_EOF;
-                } else {
+                line_result = REPL_LINE_EOF;
+                unsigned char byte;
+                while (read_raw_byte(&byte)) {
                     line_result = REPL_LINE_OK;
-                    if (!buffer_append(&line_buffer, line, (size_t)got)) {
+                    if (!buffer_append(&line_buffer, (const char *)&byte, 1)) {
                         fprintf(stderr, "diamond: out of memory reading input\n");
                         line_result = REPL_LINE_EOF;
+                        break;
                     }
+                    if (byte == '\n') break;
                 }
             }
             if (line_result == REPL_LINE_EOF) {
@@ -918,7 +918,6 @@ int diamond_repl_run(void) {
         tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
         history_free(&history);
     }
-    free(line);
     buffer_free(&session);
     buffer_free(&pending);
     buffer_free(&previous_output);
