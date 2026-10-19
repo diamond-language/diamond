@@ -18,17 +18,13 @@ class Var
 
   # A trainable leaf -- an optimizer will update its .tensor from its
   # .grad (optimizer.di).
-  def self.leaf(tensor)
-    Var.new(tensor, [], true)
-  end
+  def self.leaf(tensor) = Var.new(tensor, [], true)
 
   # A non-trainable input (e.g. this step's token ids' looked-up
   # embedding row before any further op -- the row itself is a leaf
   # elsewhere; this is for values that genuinely never need a gradient,
   # like a fixed mask).
-  def self.constant(tensor)
-    Var.new(tensor, [], false)
-  end
+  def self.constant(tensor) = Var.new(tensor, [], false)
 
   def zero_grad!()
     @grad = Tensor.zeros(@tensor.rows(),@tensor.cols())

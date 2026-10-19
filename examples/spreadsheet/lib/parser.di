@@ -111,7 +111,6 @@ class Parser
     end
   end
 
-  def parse_infix(left: Node, token: Token, power: Int) -> Node
+  def parse_infix(left: Node, token: Token, power: Int) -> Node =
     BinOpNode.new(token.text(), left, self.parse_expr(power))
-  end
 end

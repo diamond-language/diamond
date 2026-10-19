@@ -37,13 +37,9 @@ class EntryBuilder
   # Account names are looked up immediately (an unknown one raises right here,
   # inside the block). A credit is stored as a NEGATIVE amount (`-amount` is
   # Money's unary minus).
-  def debit(name: String, amount: Money)
-    @postings.push(Posting.new(@ledger[name], amount))
-  end
+  def debit(name: String, amount: Money) = @postings.push(Posting.new(@ledger[name], amount))
 
-  def credit(name: String, amount: Money)
-    @postings.push(Posting.new(@ledger[name], -amount))
-  end
+  def credit(name: String, amount: Money) = @postings.push(Posting.new(@ledger[name], -amount))
   def postings() -> Array = @postings
 end
 
@@ -59,9 +55,7 @@ class Ledger
   end
 
   # Registers an account under its name (replacing any account of that name).
-  def open(account: Account) -> Account
-    @accounts[account.name()] = account
-  end
+  def open(account: Account) -> Account = @accounts[account.name()] = account
 
   def accounts() -> Array = @accounts.values()
 

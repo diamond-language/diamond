@@ -31,9 +31,7 @@ class Room
   end
 
   # Adds a member. The caller has already checked the name is free.
-  def self.join(ws, name)
-    Room.members().push({"ws": ws, "name": name})
-  end
+  def self.join(ws, name) = Room.members().push({"ws": ws, "name": name})
 
   # Returns whether `ws` was still a member, so a departure is announced once
   # even when both a failed broadcast and the connection's own fiber notice it.

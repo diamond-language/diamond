@@ -80,9 +80,7 @@ class Connection
     @output.empty?()
   end
 
-  def close()
-    @socket.close()
-  end
+  def close() = @socket.close()
 end
 
 # The server: a single-threaded event loop. Each pass asks the OS which

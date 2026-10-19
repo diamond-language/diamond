@@ -42,9 +42,8 @@ class MinHeap
   private
 
   # Heap order: lower priority first; equal priorities by insertion order.
-  def before?(a: Entry, b: Entry) -> Bool
+  def before?(a: Entry, b: Entry) -> Bool =
     a.priority() < b.priority() || (a.priority() == b.priority() && a.order() < b.order())
-  end
 
   def swap(i: Int, j: Int)
     held = @items[i]

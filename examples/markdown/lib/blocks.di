@@ -84,9 +84,7 @@ class BlockParser
   end
 
   # Entry point: Markdown text to a list of Blocks.
-  def self.parse(text: String) -> Array
-    BlockParser.new(text.split("\n")).blocks()
-  end
+  def self.parse(text: String) -> Array = BlockParser.new(text.split("\n")).blocks()
 
   # Repeatedly take the next block until the lines run out (blank lines
   # yield nil and are dropped).

@@ -25,15 +25,11 @@ class JobService
     @@db = JobStore.open(path)
   end
 
-  def self.close()
-    @@db.close()
-  end
+  def self.close() = @@db.close()
 
   # Builds the [status, headers, body] triple the HTTP server expects,
   # with `value` serialized as JSON.
-  def self.reply(status, value)
-    [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
-  end
+  def self.reply(status, value) = [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
 
   # Reads an optional integer field from the request body. A missing (or
   # null) field takes `fallback`; a non-integer or an out-of-range value
@@ -135,9 +131,7 @@ def main(argv)
   # Turn SIGTERM/SIGINT into a cancellation. The handler is a nested `def`
   # that captures `source`. The handler only flips the flag; the actual
   # teardown happens in the `ensure` below.
-  def stop_service()
-    source.cancel()
-  end
+  def stop_service() = source.cancel()
   Signal.trap("TERM", stop_service)
   Signal.trap("INT", stop_service)
 

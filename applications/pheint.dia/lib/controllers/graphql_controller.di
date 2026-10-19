@@ -1,7 +1,5 @@
 class GraphqlController
-  def self.json_response(status: Int, value)
-    [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
-  end
+  def self.json_response(status: Int, value) = [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
 
   def self.execute(request, context, params)
     begin

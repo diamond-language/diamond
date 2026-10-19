@@ -6,6 +6,4 @@ def build_pheint_router()
   router
 end
 
-def pheint_route(request, context)
-  Dials::RouterHolder.get(build_pheint_router).dispatch(request, context)
-end
+def pheint_route(request, context) = Dials::RouterHolder.get(build_pheint_router).dispatch(request, context)

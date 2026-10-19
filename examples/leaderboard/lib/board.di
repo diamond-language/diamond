@@ -85,9 +85,7 @@ class Leaderboard
 
   # True when this board's combined score beats the other's. Reads the
   # other board's protected `total`, which only a Leaderboard may do.
-  def outscores?(other: Leaderboard) -> Bool
-    self.total() > other.total()
-  end
+  def outscores?(other: Leaderboard) -> Bool = self.total() > other.total()
 
   protected
 

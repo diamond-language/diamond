@@ -95,9 +95,8 @@ end
 
 # Docs and tests inside a package are not executed by the registry. Some packages keep their
 # tests beside the sources (packages/registry/http_test.di), not in test/.
-def inert?(path)
+def inert?(path) =
   Regexp.new("\\Apackages/[^/]+/(README\\.md|LICENSE|test\\.sh|test/|[^/]+_test\\.(py|di|sh))").match?(path)
-end
 
 def hits(changed, prefixes)
   changed.select() do |path|

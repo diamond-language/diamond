@@ -7,9 +7,8 @@
 
 require "./boot"
 
-def web_request(method, path, headers = {}, body = "")
+def web_request(method, path, headers = {}, body = "") =
   {"method": method, "path": path, "headers": headers, "body": body}
-end
 
 # Every response's own Set-Cookie is threaded back in as the next
 # request's Cookie header, exactly like a real browser holding one

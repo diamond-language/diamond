@@ -4,9 +4,7 @@
 class BoardError < StandardError
 end
 
-def other_player(player: Symbol) -> Symbol
-  player == :x ? :o : :x
-end
+def other_player(player: Symbol) -> Symbol = player == :x ? :o : :x
 
 # The eight winning triples of board positions: three rows, three columns,
 # then the two diagonals. board_winner scans these instead of hard-coding
@@ -30,9 +28,7 @@ def board_winner(board: Array) -> Symbol | Nil
   line == nil ? nil : board[line[0]]
 end
 
-def board_full?(board: Array) -> Bool
-  !board.include?(nil)
-end
+def board_full?(board: Array) -> Bool = !board.include?(nil)
 
 def board_cell_char(value: Symbol | Nil) -> String
   if value == nil then "." elsif value == :x then "X" else "O" end

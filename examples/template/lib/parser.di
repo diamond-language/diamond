@@ -17,9 +17,7 @@ end
 
 # A section being built: its name, whether it is `^`, and the nodes so far.
 # The first frame (path nil) is the whole template.
-def template_frame(path: String | Nil, inverted: Bool) -> Hash
-  {"path": path, "inverted": inverted, "body": []}
-end
+def template_frame(path: String | Nil, inverted: Bool) -> Hash = {"path": path, "inverted": inverted, "body": []}
 
 def template_parse(text: String) -> Array
   # `stack` holds the sections currently open, innermost last; everything

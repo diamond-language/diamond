@@ -48,9 +48,7 @@ class NoteStore
     migrate()
   end
 
-  def close()
-    @db.close()
-  end
+  def close() = @db.close()
 
   # How many migrations this database has had applied.
   def version() -> Int = @db.query("PRAGMA user_version")[0]["user_version"]
@@ -119,15 +117,12 @@ class NoteStore
   # The next three return whether a row was actually affected (execute returns
   # the number of rows changed), which is how callers tell "done" from
   # "there was nothing to do".
-  def untag(id: Int, tag: String) -> Bool
+  def untag(id: Int, tag: String) -> Bool =
     @db.execute("DELETE FROM tags WHERE note_id = ? AND name = ?", [id, tag.downcase()]) > 0
-  end
 
   # Deleting a note also deletes its tags (ON DELETE CASCADE) and its search
   # index entry (the notes_ad trigger).
-  def remove(id: Int) -> Bool
-    @db.execute("DELETE FROM notes WHERE id = ?", [id]) > 0
-  end
+  def remove(id: Int) -> Bool = @db.execute("DELETE FROM notes WHERE id = ?", [id]) > 0
 
   # One note, or nil if there is no such id.
   def find(id: Int) -> Note | Nil
@@ -161,13 +156,11 @@ class NoteStore
 
   # Reports: tags by popularity, and notes per month (the first 7 characters
   # of "YYYY-MM-DD" are "YYYY-MM").
-  def tag_counts() -> Array[Hash]
+  def tag_counts() -> Array[Hash] =
     @db.query("SELECT name, COUNT(*) AS count FROM tags GROUP BY name ORDER BY count DESC, name")
-  end
 
-  def monthly_counts() -> Array[Hash]
+  def monthly_counts() -> Array[Hash] =
     @db.query("SELECT substr(created, 1, 7) AS month, COUNT(*) AS count FROM notes GROUP BY month ORDER BY month")
-  end
 
   # Total number of notes.
   def count() -> Int = @db.query("SELECT COUNT(*) AS n FROM notes")[0]["n"]

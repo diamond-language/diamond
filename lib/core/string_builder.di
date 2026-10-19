@@ -14,11 +14,7 @@ class StringBuilder
     self
   end
 
-  def length() -> Int
-    @total_length
-  end
+  def length() -> Int = @total_length
 
-  def to_s() -> String
-    @parts.join("")
-  end
+  def to_s() -> String = @parts.join("")
 end

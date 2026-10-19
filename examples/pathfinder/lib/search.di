@@ -117,9 +117,7 @@ end
 # Dijkstra is the priority search with a heuristic that always says 0 (no
 # guess about the remaining cost).
 def search_dijkstra(grid: Grid, diagonal: Bool) -> Found | Nil
-  def none(cell: Int) -> Int
-    0
-  end
+  def none(cell: Int) -> Int = 0
   search_priority(grid, diagonal, none)
 end
 

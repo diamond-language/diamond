@@ -21,9 +21,8 @@ end
 # Adds the request id, method and path to a log event's own fields, so that
 # every line from one request can be correlated (the request id is assigned
 # in logging_middleware).
-def request_log_fields(request, fields: Hash = {})
+def request_log_fields(request, fields: Hash = {}) =
   fields.merge({"request_id": request["request_id"], "method": request["method"], "path": request["path"]})
-end
 
 # One-line shorthands: log_debug/info/warn(request, context, "event.name",
 # {extra fields}).

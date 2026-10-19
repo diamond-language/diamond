@@ -11,9 +11,7 @@ def chat_max_text() = 500
 # Sends one event to one client as JSON. The "try" version does not block: a
 # client that cannot take the frame immediately would otherwise stall this
 # connection's fiber.
-def chat_send(ws, event)
-  websocket_try_send_text(ws, JSON.stringify(event))
-end
+def chat_send(ws, event) = websocket_try_send_text(ws, JSON.stringify(event))
 
 # A display name is 1-24 characters with no control characters; surrounding
 # spaces are trimmed. Returns nil for anything else.
@@ -134,6 +132,4 @@ end
 
 # Called by the server every 50 ms (see app.di): the only place bot replies
 # are picked up, since the bot thread cannot call into this heap.
-def chat_tick(context)
-  Bot.drain()
-end
+def chat_tick(context) = Bot.drain()

@@ -4,9 +4,7 @@ if PheintEnvironment.name() != "test"
   raise "smoke_test.di requires DIAMOND_ENV=test"
 end
 
-def smoke_request(method, path, body = "")
-  {"method": method, "path": path, "body": body, "headers": {}}
-end
+def smoke_request(method, path, body = "") = {"method": method, "path": path, "body": body, "headers": {}}
 
 def authenticated_graphql(token, query)
   {"method": "POST", "path": "/graphql",

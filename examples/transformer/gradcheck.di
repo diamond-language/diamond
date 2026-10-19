@@ -11,9 +11,7 @@ require "./lib/var"
 require "./lib/autograd"
 
 # A reproducible random Tensor (the seed fixes the values).
-def random_tensor(rows, cols, seed)
-  Tensor.random(rows, cols, seed)
-end
+def random_tensor(rows, cols, seed) = Tensor.random(rows, cols, seed)
 
 # Runs `forward_fn` (a Callable taking no args, closing over whatever
 # Vars it needs) to build a scalar-summed loss, calls backward!, then
