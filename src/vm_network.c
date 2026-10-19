@@ -225,7 +225,7 @@ DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
         int last_errno=0;
         for(struct addrinfo *candidate=results;candidate!=nullptr;
             candidate=candidate->ai_next) {
-            const int candidate_fd=socket(candidate->ai_family,candidate->ai_socktype,
+            const int candidate_fd=diamond_socket(candidate->ai_family,candidate->ai_socktype,
                                  candidate->ai_protocol);
             if(candidate_fd<0) {last_errno=errno;continue;}
             /* Same IPV6_V6ONLY fix as tcp_listen_helper above, same reason:
@@ -249,7 +249,7 @@ DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
             return DIAMOND_VM_IO_ERROR;
         }
     } else {
-        fd=socket(AF_INET,SOCK_DGRAM,0);
+        fd=diamond_socket(AF_INET,SOCK_DGRAM,0);
         if(fd<0) {
             snprintf(vm->error,sizeof vm->error,"cannot open UDP socket: %s",strerror(errno));
             return DIAMOND_VM_IO_ERROR;
@@ -306,7 +306,7 @@ DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
     int last_errno=0;
     for(struct addrinfo *candidate=results;candidate!=nullptr;
         candidate=candidate->ai_next) {
-        const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+        const int fd=diamond_socket(candidate->ai_family,candidate->ai_socktype,
                              candidate->ai_protocol);
         if(fd<0) {last_errno=errno;continue;}
         /* Buffer sizes have to be set before connect for the TCP window to
@@ -634,7 +634,7 @@ DiamondVmStatus tcp_connect_nonblocking_helper(DiamondVm *vm,
         snprintf(vm->error,sizeof vm->error,"connect_nonblocking requires a numeric IPv4 or IPv6 address");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int fd=socket(address_info->ai_family,SOCK_STREAM,0);
+    const int fd=diamond_socket(address_info->ai_family,SOCK_STREAM,0);
     if(fd<0)goto failed;
     const int flags=fcntl(fd,F_GETFL,0);
     if(flags<0||fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0||fcntl(fd,F_SETFD,FD_CLOEXEC)<0)
@@ -717,7 +717,7 @@ DiamondVmStatus tcp_listen_helper(DiamondVm *vm,const char *host,int64_t port,
     int last_errno=0;
     for(struct addrinfo *candidate=results;candidate!=nullptr;
         candidate=candidate->ai_next) {
-        const int fd=socket(candidate->ai_family,candidate->ai_socktype,
+        const int fd=diamond_socket(candidate->ai_family,candidate->ai_socktype,
                              candidate->ai_protocol);
         if(fd<0) {last_errno=errno;continue;}
         const int yes=1;

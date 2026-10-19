@@ -6,7 +6,7 @@
   "div": "0.2.4",
   "graphql": "0.2.1",
   "graphsql": "0.1.3",
-  "gremlin": "0.4.6",
+  "gremlin": "0.4.7",
   "http": "0.1.3",
   "jobs": "0.1.3",
   "log_viewer": "0.1.2",
@@ -16,5 +16,5 @@
   "rack": "0.1.2",
   "redis": "0.1.3",
   "registry": "0.1.2",
-  "websocket": "0.1.3"
+  "websocket": "0.1.4"
 }

@@ -49,14 +49,14 @@ require_cut "logger"
 #
 # ## Escape hatch: taking over the raw connection
 #
-# `context["gremlin_connection"]` (stashed in fresh every request, before
-# `handler` is called) is this request's own live NonblockingConnection --
+# `request["gremlin_connection"]` (set on every request, before `handler` is
+# called) is this request's own live NonblockingConnection --
 # the same one gremlin_worker itself already read the request off of and
 # will otherwise write the response to. A handler that wants to speak a
 # protocol other than one-response-per-request (a WebSocket upgrade: a
 # 101 handshake response, then arbitrary framed reads/writes for as long
 # as that connection stays open) writes directly to
-# context["gremlin_connection"] itself and then returns nil instead of a
+# request["gremlin_connection"] itself and then returns nil instead of a
 # [status, headers, body] value -- nil is the signal that tells
 # handle_connection (packages/gremlin/lib/gremlin/server.di) to skip its
 # own http_write_response call, since the handler already fully handled
@@ -64,6 +64,11 @@ require_cut "logger"
 # handler written before this existed could ever have returned nil (every
 # real response is a 3-element Array), so nothing about ordinary
 # [status, headers, body] handlers changes.
+#
+# `context["gremlin_connection"]` is set too, for handlers written before the
+# request key existed, but `context` is one Hash shared by every connection on
+# the worker: it names the most recently accepted request, so it is only the
+# right connection until the handler first waits (a WebSocket reading a frame).
 #
 # ## Periodic tick
 #

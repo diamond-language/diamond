@@ -4416,6 +4416,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                              (int)path->length,path->chars,strerror(errno));
                     VM_RETURN(DIAMOND_VM_IO_ERROR);
                 }
+                diamond_set_cloexec(fileno(stream));
                 DiamondFileHandle *handle=allocate_file_handle(vm,stream);
                 if(handle==nullptr) {
                     fclose(stream);
@@ -4662,7 +4663,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         break;
                     case DIAMOND_FILE_PATH_DIRSYNC: {
                         VM_SANDBOX_GUARD("Dir.sync", "filesystem");
-                        const int directory=open(path->chars,O_RDONLY|O_DIRECTORY);
+                        const int directory=open(path->chars,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
                         const int saved=directory<0?errno:(fsync(directory)!=0?errno:0);
                         if(directory>=0)close(directory);
                         if(saved!=0) {
@@ -5000,7 +5001,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * count's matching increment belongs: exactly the window
                  * where a future free_thread call is guaranteed to
                  * decrement it back out again. */
-                atomic_fetch_add(&diamond_active_thread_count,1);
+                if(!diamond_reserve_thread_slot()) {
+                    /* Another thread took the last slot since the check above. free_thread decrements the count, so count this one first. */
+                    atomic_fetch_add(&diamond_active_thread_count,1);
+                    free_thread(new_thread);
+                    snprintf(vm->error,sizeof vm->error,
+                        "too many concurrently active threads");
+                    VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                }
                 bool copy_failed=false;
                 /* new_thread->args[] is a plain struct field, not scanned
                  * by child_vm's GC until thread_entry_trampoline's own

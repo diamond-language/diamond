@@ -123,7 +123,7 @@ DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path) {
     if(slash==nullptr) strcpy(parent,".");
     else if(slash==parent) slash[1]='\0';
     else *slash='\0';
-    int fd=open(path->chars,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    int fd=open(path->chars,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     int saved=fd<0?errno:0;
     struct stat status;
     if(saved==0) {
@@ -133,7 +133,7 @@ DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path) {
     }
     if(fd>=0) close(fd);
     if(saved==0) {
-        int directory=open(parent,O_RDONLY|O_DIRECTORY);
+        int directory=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
         if(directory<0) saved=errno;
         else {
             if(fsync(directory)!=0) saved=errno;
@@ -164,7 +164,7 @@ DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,
         snprintf(vm->error,sizeof vm->error,"File.copy paths must be nonempty and contain no NUL");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int source=open(from->chars,O_RDONLY);
+    const int source=open(from->chars,O_RDONLY|O_CLOEXEC);
     if(source<0) {
         snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
                  (int)from->length,from->chars,strerror(errno));
@@ -177,7 +177,7 @@ DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,
         close(source);
         return DIAMOND_VM_IO_ERROR;
     }
-    const int target=open(to->chars,O_WRONLY|O_CREAT|O_EXCL,status.st_mode&0777);
+    const int target=open(to->chars,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,status.st_mode&0777);
     if(target<0) {
         snprintf(vm->error,sizeof vm->error,"cannot create '%.*s': %s",
                  (int)to->length,to->chars,strerror(errno));
@@ -232,6 +232,7 @@ DiamondVmStatus file_read_helper(DiamondVm *vm,const DiamondString *path,
             (int)path->length,path->chars,strerror(errno));
         return DIAMOND_VM_IO_ERROR;
     }
+    diamond_set_cloexec(fileno(file));
     ByteBuffer contents={0};
     char chunk[65536];
     bool ok=true;
@@ -269,6 +270,7 @@ DiamondVmStatus file_write_helper(DiamondVm *vm,const DiamondString *path,
             (int)path->length,path->chars,strerror(errno));
         return DIAMOND_VM_IO_ERROR;
     }
+    diamond_set_cloexec(fileno(file));
     const size_t written=fwrite(data->chars,1,data->length,file);
     const int saved_errno=errno;
     if(fclose(file)!=0||written!=data->length) {
@@ -314,7 +316,7 @@ DiamondVmStatus file_publish_helper(DiamondVm *vm,const DiamondString *path,
     char *temporary=malloc(capacity);
     if(temporary==nullptr) { free(parent); return DIAMOND_VM_OUT_OF_MEMORY; }
     snprintf(temporary,capacity,"%s/.diamond-publish-XXXXXX",parent);
-    int directory=open(parent,O_RDONLY|O_DIRECTORY);
+    int directory=open(parent,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     int saved=directory<0?errno:0;
     int fd=-1;
     bool created=false;
@@ -780,7 +782,7 @@ static DiamondVmStatus process_run_with_options(DiamondVm *vm,
     int stderr_pipe[2]={-1,-1};
     int stdin_pipe[2]={-1,-1};
     const bool feed_stdin=options!=nullptr&&options->stdin_data!=nullptr;
-    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0||(feed_stdin&&pipe(stdin_pipe)!=0)) {
+    if(diamond_pipe(stdout_pipe)!=0||diamond_pipe(stderr_pipe)!=0||(feed_stdin&&diamond_pipe(stdin_pipe)!=0)) {
         const int saved_errno=errno;
         if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
         if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
@@ -1006,7 +1008,7 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
     int stderr_pipe[2]={-1,-1};
     int stdin_pipe[2]={-1,-1};
     const bool pipe_stdin=options!=nullptr&&options->stdin_pipe;
-    if(pipe(stdout_pipe)!=0||pipe(stderr_pipe)!=0||(pipe_stdin&&pipe(stdin_pipe)!=0)) {
+    if(diamond_pipe(stdout_pipe)!=0||diamond_pipe(stderr_pipe)!=0||(pipe_stdin&&diamond_pipe(stdin_pipe)!=0)) {
         const int saved_errno=errno;
         if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
         if(stdout_pipe[1]>=0)close(stdout_pipe[1]);
@@ -1375,7 +1377,7 @@ DiamondVmStatus file_sha256_helper(DiamondVm *vm,const DiamondString *path,
         snprintf(vm->error,sizeof vm->error,"File.sha256 path must be nonempty and contain no NUL");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    const int source=open(path->chars,O_RDONLY);
+    const int source=open(path->chars,O_RDONLY|O_CLOEXEC);
     if(source<0) {
         snprintf(vm->error,sizeof vm->error,"cannot open '%.*s': %s",
                  (int)path->length,path->chars,strerror(errno));

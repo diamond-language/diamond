@@ -1229,6 +1229,18 @@ size_t diamond_live_thread_limit(void) {
     return (size_t)parsed;
 }
 
+/* Takes one slot of the live-thread budget, or fails when none is left. The count is claimed with a compare-and-swap so that threads creating
+ * children at the same moment cannot all pass the check and overshoot the cap, and it is taken *before* the thread starts: a thread that ends
+ * immediately decrements the count, and the parent adding afterwards let it wrap below zero, which made every other creation fail. */
+bool diamond_reserve_thread_slot(void) {
+    size_t current=atomic_load(&diamond_active_thread_count);
+    const size_t limit=diamond_live_thread_limit();
+    do {
+        if(current>=limit)return false;
+    } while(!atomic_compare_exchange_weak(&diamond_active_thread_count,&current,current+1));
+    return true;
+}
+
 /* A configured instruction or wall-clock budget has just been exceeded:
  * run_chunk is about to return the catchable DIAMOND_VM_RESOURCE_LIMIT_ERROR.
  * Disarm both soft budgets (re-tripping on the very next instruction would
@@ -12301,6 +12313,13 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
     }
     args_vm->extra_roots=new_child->args;
     args_vm->extra_root_count=forwarded_argc;
+    if(!diamond_reserve_thread_slot()) {
+        diamond_vm_free(args_vm);free(args_vm);
+        diamond_program_free(program_template);free(program_template);
+        memset(new_child,0,sizeof *new_child);
+        snprintf(vm->error,sizeof vm->error,"too many concurrently active threads");
+        return DIAMOND_VM_THREAD_ERROR;
+    }
     /* The child is counted *before* its thread starts, not
      * after: a started child runs immediately, and a sibling
      * that crashes while this thread is still between
@@ -12323,13 +12342,13 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         pthread_mutex_lock(&target_supervisor->lock);
         target_supervisor->child_count=new_index;
         pthread_mutex_unlock(&target_supervisor->lock);
+        atomic_fetch_sub(&diamond_active_thread_count,1);
         diamond_vm_free(args_vm);free(args_vm);
         diamond_program_free(program_template);free(program_template);
         memset(new_child,0,sizeof *new_child);
         snprintf(vm->error,sizeof vm->error,"failed to create thread");
         return DIAMOND_VM_THREAD_ERROR;
     }
-    atomic_fetch_add(&diamond_active_thread_count,1);
     registers[dest]=DIAMOND_INT((int64_t)new_index);return DIAMOND_VM_OK;
 }
 
@@ -12394,7 +12413,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
         if(wait_status!=DIAMOND_VM_OK)return wait_status;
     }
     errno=0;
-    int client_fd=accept(listener->fd,nullptr,nullptr);
+    int client_fd=diamond_accept(listener->fd);
     /* A blocking accept() can sit here indefinitely with
      * nothing connecting -- exactly when a trapped signal
      * needs to actually interrupt it (see
@@ -12412,7 +12431,7 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
             dispatch_pending_signals(vm,chunk,depth,&signal_invoked);
         if(signal_status!=DIAMOND_VM_OK)return signal_status;
         errno=0;
-        client_fd=accept(listener->fd,nullptr,nullptr);
+        client_fd=diamond_accept(listener->fd);
     }
     if(client_fd<0) {
         if(listener->nonblocking&&(errno==EAGAIN||errno==EWOULDBLOCK)) {

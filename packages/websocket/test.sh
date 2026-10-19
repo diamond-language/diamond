@@ -143,6 +143,26 @@ rescue error: ArgumentError
 end
 check(rejected_non_upgrade, "expected websocket_accept to reject a non-upgrade request")
 
+# A connection that has a request deadline (gremlin_serve with limits) loses it once the WebSocket handshake is done, so the
+# socket is not closed a fixed time after it was accepted.
+class DeadlineConn
+  def initialize()
+    @written = StringBuilder.new()
+    @deadline_cleared = false
+  end
+  def write(value)
+    @written.append(value)
+  end
+  def read(n) = ""
+  def clear_deadline()
+    @deadline_cleared = true
+  end
+  def deadline_cleared?() = @deadline_cleared
+end
+deadline_conn = DeadlineConn.new()
+websocket_accept(deadline_conn, req_ok)
+check(deadline_conn.deadline_cleared?(), "expected the handshake to clear the connection's request deadline")
+
 # Frame round trip at several sizes, crossing both extended-length
 # boundaries (a 126-byte payload selects the 16-bit length form, a
 # 65536-byte payload the 64-bit form).
@@ -400,7 +420,7 @@ require "$package_root/lib/websocket"
 def run()
   def handler(request, context)
     if request["path"] == "/echo" && websocket_upgrade_request?(request)
-      ws = websocket_accept(context["gremlin_connection"], request)
+      ws = websocket_accept(request["gremlin_connection"], request)
       loop do
         message = ws.receive()
         if message == nil

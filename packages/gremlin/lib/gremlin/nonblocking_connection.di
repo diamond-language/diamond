@@ -22,6 +22,12 @@ class NonblockingConnection
   end
 
   def deadline() = @deadline
+
+  # Removes the request deadline. A handler that keeps the connection for as long as it lives (a WebSocket) is not subject to the per-request
+  # timeout, which would otherwise close it a fixed time after it was accepted.
+  def clear_deadline()
+    @deadline = nil
+  end
   def request_id() = @request_id
   def socket() = @socket
   def peer_address() = @peer_address

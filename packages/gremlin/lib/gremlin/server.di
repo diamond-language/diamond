@@ -98,6 +98,9 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
         # long as that WebSocket stays open). Ordinary request handling
         # never needs this at all -- it's here purely for a handler
         # that wants to opt in.
+        # `context` is shared by every connection on this worker, so a handler that yields (a WebSocket waiting for a frame) finds this key
+        # overwritten by whichever request arrived next. `request` is this request's own Hash: read the connection from it.
+        request["gremlin_connection"] = conn
         context["gremlin_connection"] = conn
         if limits != nil then request["request_id"] = conn.request_id() end
         # A handler that raises answers 500 and logs the error; the message
@@ -304,6 +307,15 @@ def gremlin_worker(port, handler, tick_interval = nil, on_tick = nil, limits = n
       if deadline != nil && Time.monotonic() >= deadline
         log.warn("request.timeout", {"request_id": entry["conn"].request_id(), "reason": "deadline_exceeded"})
         entry["conn"].close()
+        # Resume the parked fiber once, as for a connection closed elsewhere: its pending read raises IOError, so the handler's ensure and
+        # cleanup code run instead of the fiber being dropped mid-wait.
+        if entry["fiber"].alive?()
+          begin
+            entry["fiber"].resume()
+          rescue error: StandardError
+            log.info("connection.closed_elsewhere", {"error": error.message()})
+          end
+        end
         return nil
       end
       # +1 only while read_list actually held the listener at index 0

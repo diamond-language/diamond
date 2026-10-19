@@ -152,6 +152,44 @@ def run_tests()
     Minitest.assert(raised)
   end
 
+  suite.test("an update targets the loaded row even when the id is a permitted, changed field") do
+    repo = x_repo()
+    ada = x_author(repo, authors, "Ada")
+    grace = x_author(repo, authors, "Grace")
+    # A form that permits "id" must not let a submitted id aim the UPDATE at another row.
+    retarget = Mjolnir::Changeset.cast(authors, ada, {"id": grace.id(), "name": "Renamed"}, ["id", "name"])
+    outcome = "no error"
+    begin
+      repo.update(retarget)
+    rescue error: StandardError
+      outcome = "raised"
+    end
+    Minitest.assert_equal("Grace", repo.get(authors, grace.id()).name())
+  end
+
+  suite.test("changing the primary key updates the loaded row to the new key") do
+    repo = x_repo()
+    ada = x_author(repo, authors, "Ada")
+    moved = Mjolnir::Changeset.cast(authors, ada, {"id": 41}, ["id"])
+    repo.update!(moved)
+    Minitest.assert_equal("Ada", repo.get(authors, 41).name())
+    Minitest.assert_equal(nil, repo.get(authors, ada.id()))
+  end
+
+  suite.test("update_all only sets declared fields") do
+    repo = x_repo()
+    ada = x_author(repo, authors, "Ada")
+    rejected = false
+    begin
+      repo.update_all(authors.query().where({"id": ada.id()}), {"name": "Changed", "password_digest": "x"})
+    rescue error: Mjolnir::UnknownFieldError
+      rejected = true
+    end
+    Minitest.assert(rejected)
+    Minitest.assert_equal("Ada", repo.get(authors, ada.id()).name())
+    Minitest.assert_equal(1, repo.update_all(authors.query().where({"id": ada.id()}), {"name": "Ada L"}))
+  end
+
   suite.run!()
 end
 

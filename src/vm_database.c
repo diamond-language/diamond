@@ -1035,11 +1035,12 @@ DiamondVmStatus postgres_dispatch_helper(DiamondVm *vm,DiamondPostgresHandle *ta
     if(last_insert_row_id_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         static const char lastval_sql[]="SELECT lastval()";
-        DiamondValue rows=DIAMOND_NIL;
+        /* The query helper allocates repeatedly while it builds its result, so (as with every other caller) the result goes straight into
+         * the rooted register; a C local holding the new Array is invisible to the collector. */
         const DiamondVmStatus query_status=postgres_query_helper(vm,target_db,
-            lastval_sql,sizeof lastval_sql-1,nullptr,0,&rows);
+            lastval_sql,sizeof lastval_sql-1,nullptr,0,&registers[dest]);
         if(query_status!=DIAMOND_VM_OK)return query_status;
-        const DiamondArray *row_array=(const DiamondArray *)rows.as.object;
+        const DiamondArray *row_array=(const DiamondArray *)registers[dest].as.object;
         const DiamondHash *row=(const DiamondHash *)row_array->values[0].as.object;
         registers[dest]=row->entries[0].value;
         return DIAMOND_VM_OK;

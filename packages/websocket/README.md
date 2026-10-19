@@ -22,7 +22,7 @@ require_cut "websocket"
 
 def handler(request, context)
   if request["path"] == "/echo" && websocket_upgrade_request?(request)
-    ws = websocket_accept(context["gremlin_connection"], request)
+    ws = websocket_accept(request["gremlin_connection"], request)
     loop do
       message = ws.receive()
       if message == nil
@@ -41,4 +41,4 @@ gremlin_serve(8080, handler)
 
 ## Notes
 
-Use a server that exposes the live connection in `context["gremlin_connection"]`. After `websocket_accept`, send and receive frames, then return `nil` from the HTTP handler.
+Use a server that exposes the live connection in `request["gremlin_connection"]` (gremlin also sets `context["gremlin_connection"]`, but `context` is shared by every connection on the worker, so it names whichever request arrived last once your handler has waited for a frame). After `websocket_accept`, send and receive frames, then return `nil` from the HTTP handler.

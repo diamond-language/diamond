@@ -123,7 +123,7 @@ end
 def chat_handler(request, context)
   path = request["path"]
   if path == "/ws" && websocket_upgrade_request?(request)
-    chat_session(websocket_accept(context["gremlin_connection"], request))
+    chat_session(websocket_accept(request["gremlin_connection"], request))
     nil
   elsif path == "/" && request["method"] == "GET"
     [200, {"Content-Type": "text/html; charset=utf-8"}, chat_page()]

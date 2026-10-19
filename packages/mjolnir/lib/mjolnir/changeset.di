@@ -85,6 +85,11 @@ module Mjolnir
       if @changes.has_key?(key) then @changes[key] else @data[key] end
     end
 
+    # The value the loaded entity had, ignoring any pending change: what identifies the row an update applies to.
+    def original_field(name)
+      @data["#{name}"]
+    end
+
     # Current values with every change applied.
     def apply_changes() -> Hash = @data.merge(@changes)
 

@@ -10,7 +10,7 @@
 # opt out of gremlin_serve's own Rack-style [status, headers, body]
 # response contract to get at the raw connection at all. See
 # packages/gremlin/lib/gremlin.di's own "Escape hatch: taking over the
-# raw connection" doc comment -- context["gremlin_connection"] plus a
+# raw connection" doc comment -- request["gremlin_connection"] plus a
 # `nil` handler return is exactly the mechanism websocket_accept below
 # relies on. This package itself has no dependency on packages/gremlin
 # or any other transport: anything exposing #read(n)/#write(value)/
@@ -19,7 +19,7 @@
 #
 #   def handler(request, context)
 #     if websocket_upgrade_request?(request)
-#       ws = websocket_accept(context["gremlin_connection"], request)
+#       ws = websocket_accept(request["gremlin_connection"], request)
 #       while (message = ws.receive()) != nil
 #         ws.send_text(message["data"])   # echo
 #       end

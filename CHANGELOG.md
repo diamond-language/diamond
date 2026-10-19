@@ -46,6 +46,23 @@ authoritative fine-grained record.
 - graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
   small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
+- mjolnir: `Repo#update` found its row with `changeset.get_field(pk)`, which prefers a pending change, so a changeset that permitted `id` and was given another row's id
+  overwrote that row; and changing the key failed because the WHERE looked for the new value. It uses the loaded entity's key. `update_all` raises
+  `UnknownFieldError` for a column the schema does not declare. The README states that `insert`/`update` need `RETURNING`.
+- `PostgreSQL#last_insert_row_id` built its result in a C local while the query helper allocated more objects, so a collection at the wrong moment
+  could free the result Array before it was read. The result goes straight into the rooted register now, as for every other query.
+- gremlin: `context` is one Hash for the whole worker and every accepted request overwrote `context["gremlin_connection"]`, so a handler that waited (a
+  WebSocket reading a frame) could find another request's connection there. The connection is also set on `request["gremlin_connection"]`, which is the
+  request's own; `websocket_accept(request["gremlin_connection"], request)` is the documented form now. A connection past its `limits` deadline was closed but
+  its parked handler was dropped without running, so `ensure` blocks never ran; it is resumed once so they do. `websocket_accept` clears the connection's
+  deadline, which would otherwise close a long-lived WebSocket `timeout_seconds` after it was accepted.
+- The live-thread cap (`DIAMOND_MAX_LIVE_THREADS`, 64 by default) was checked and the count raised later, so threads creating children at the same moment
+  could all pass the check and exceed it (with a cap of 6, three racing creators started 4 or 5 children instead of 3 in nearly every run). A supervised
+  child was also counted after its thread started, so one that finished at once drove the count below zero and made other creations fail with "too many
+  concurrently active threads". The slot is now claimed atomically before the thread starts.
+- A child started by `Process.run` or `Process.spawn` inherited every socket, listener, file and pipe the VM had open, because none were close-on-exec.
+  With threads, a child spawned on one thread held another thread's listener (the port stayed bound after it closed) or pipe write end (a capture never
+  saw EOF until that child exited). Sockets, accepted connections, pipes and files the VM opens are close-on-exec now.
 - `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
   `[1, 2].reject { nil }` keeps both.
 - `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
@@ -109,6 +126,8 @@ authoritative fine-grained record.
 - `jobs` 0.1.3: the worker fixes above.
 - `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
+- `mjolnir` 0.2.4: the update and `update_all` fixes above.
+- `gremlin` 0.4.7 and `websocket` 0.1.4: the connection, deadline and cleanup fixes above. The registry launch seed pins both.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.
 - `graphql` 0.2.1: the query depth and size limits above.

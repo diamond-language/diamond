@@ -70,6 +70,86 @@ SRCEOF
 # and Gremlin correctly takes its forced-shutdown path. These servers have
 # threads, not child processes, so signaling the monitored PID alone is enough.
 
+# A handler that waits (a WebSocket reading a frame) must still find *its* connection. context is one Hash for the whole worker, and
+# every accepted request overwrites context["gremlin_connection"]; request["gremlin_connection"] is the request's own.
+port=19431
+out="$(mktemp)"
+interleave_src="$(cat <<SRCEOF
+require "$package_root/lib/gremlin"
+def run()
+  def handler(request, context)
+    conn = request["gremlin_connection"]
+    if request["path"] == "/wait"
+      conn.read(1)
+      [200, {"Content-Type": "text/plain"}, "request=#{request["gremlin_connection"] == conn} context=#{context["gremlin_connection"] == conn}"]
+    else
+      [200, {"Content-Type": "text/plain"}, "other"]
+    end
+  end
+  gremlin_serve($port, handler)
+end
+run()
+SRCEOF
+)"
+timeout --foreground 10 "$diamond" -e "$interleave_src" >"$out" 2>&1 &
+pid=$!
+wait_for_port "$port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+exec 4<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /wait HTTP/1.1\r\nHost: localhost\r\n\r\n' >&4
+sleep 0.3
+exec 5<>"/dev/tcp/127.0.0.1/$port"
+printf 'GET /other HTTP/1.1\r\nHost: localhost\r\n\r\n' >&5
+other_response="$(timeout 3 cat <&5)"
+{ exec 5<&- 5>&-; } 2>/dev/null || true
+[[ "$other_response" == *$'\r\n\r\nother' ]]
+printf 'x' >&4
+waiting_response="$(timeout 3 cat <&4)"
+{ exec 4<&- 4>&-; } 2>/dev/null || true
+[[ "$waiting_response" == *$'\r\n\r\nrequest=true context=false' ]]
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out"
+
+# A connection that outlives its deadline is closed, and the handler parked on it is resumed once so its ensure block runs.
+port=19432
+out="$(mktemp)"
+marker="$(mktemp -u)"
+deadline_src="$(cat <<SRCEOF
+require "$package_root/lib/gremlin"
+def run()
+  def handler(request, context)
+    conn = request["gremlin_connection"]
+    begin
+      conn.read(1)
+    ensure
+      File.write("$marker", "cleaned up")
+    end
+    [200, {"Content-Type": "text/plain"}, "late"]
+  end
+  limits = {"line_bytes": 8192, "header_bytes": 32768, "header_count": 100, "body_bytes": 1048576, "connections": 8, "timeout_seconds": 1}
+  gremlin_serve($port, handler, 1, nil, nil, limits)
+end
+run()
+SRCEOF
+)"
+timeout --foreground 15 "$diamond" -e "$deadline_src" >"$out" 2>&1 &
+pid=$!
+for _ in $(seq 1 100); do
+    if exec 4<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null; then break; fi
+    sleep 0.05
+done
+printf 'GET /hold HTTP/1.1\r\nHost: localhost\r\n\r\n' >&4
+for _ in $(seq 1 60); do
+    [[ -f "$marker" ]] && break
+    sleep 0.1
+done
+{ exec 4<&- 4>&-; } 2>/dev/null || true
+[[ "$(cat "$marker" 2>/dev/null)" == "cleaned up" ]]
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+rm -f "$out" "$marker"
+
 # Basic GET/POST round trip -- proves gremlin_serve's Rack-style handler
 # contract and packages/http's request-parsing/response-writing work
 # unmodified against the non-blocking connection wrapper.
