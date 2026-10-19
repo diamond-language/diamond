@@ -8,6 +8,7 @@ module GraphQL
     def initialize()
       @query_type = nil
       @mutation_type = nil
+      @mask_errors = true
     end
 
     def query(type)
@@ -19,6 +20,15 @@ module GraphQL
       @mutation_type = type
       self
     end
+
+    # An exception a resolver raises other than GraphQL::ExecutionError reaches the client as "Internal server error" (its real message can
+    # hold SQL, file paths or other internals) and is written to stderr; `schema.mask_errors(false)` sends the message instead, for development.
+    def mask_errors(flag)
+      @mask_errors = flag
+      self
+    end
+
+    def mask_errors?() = @mask_errors
 
     def query_type() = @query_type
     def mutation_type() = @mutation_type

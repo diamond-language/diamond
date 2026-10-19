@@ -381,7 +381,12 @@ module GraphQL
       # code); they ride along under the spec's "extensions" key. Any other
       # exception contributes only its message and path.
       def error_entry(e, path)
-        entry = {"message": e.message(), "path": path}
+        message = e.message()
+        if @schema.mask_errors?() && !e.is_a?(GraphQL::ExecutionError) && !e.is_a?(GraphQL::RequestError)
+          warn("graphql: #{e.message()} at #{path.join("/")}")
+          message = "Internal server error"
+        end
+        entry = {"message": message, "path": path}
         if e.is_a?(GraphQL::ExecutionError) && e.extensions().length() > 0
           entry["extensions"] = e.extensions()
         end

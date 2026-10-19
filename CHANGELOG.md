@@ -31,6 +31,11 @@ authoritative fine-grained record.
 - Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
   They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
   registry seed, backup, upgrade and monitor tools.
+- graphql: an unexpected exception from a resolver sent its raw message to the client (SQL, file paths); the README already said it became a generic
+  internal error. It is `Internal server error` now, the cause goes to stderr, and `schema.mask_errors(false)` restores the message for development.
+- graphql: the built-in scalars did no type checking. A client could pass a list or object where an `Int` or `String` was expected, and a resolver
+  returning a Hash or model for a scalar field serialised the whole object (including a password digest). Input must be the scalar's own kind
+  (a request error otherwise) and output must be a String, Int, Float, Boolean or Symbol (an error on that field otherwise).
 - active_auth: `to_json` on an `Account`, `Session`, `PasswordResetToken`, `EmailVerificationToken` or `BackupCode` included the password digest, the
   session token and CSRF token, the reset and verification tokens, and the backup-code digest (the default JSON was the persisted attributes). Each
   model has an `as_json` without its secret columns. `Session.issue_cookie` sets `Secure` under `DIAMOND_ENV=production` and takes
@@ -67,6 +72,7 @@ authoritative fine-grained record.
 ### Packages
 
 - `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
+- `graphql` 0.2.0: error masking and strict scalars above.
 - `active_auth` 0.2.2: the JSON shape and `Secure` cookie above.
 - `network_safety` 0.1.3: the guard fixes above.
 - `http` 0.1.3: the redirect fixes above.
