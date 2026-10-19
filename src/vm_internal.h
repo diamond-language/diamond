@@ -866,6 +866,7 @@ enum { DIAMOND_MAX_THREADS = 64 };
 
 extern DIAMOND_INTERNAL atomic_size_t diamond_active_thread_count;
 DIAMOND_INTERNAL size_t diamond_live_thread_limit(void);
+DIAMOND_INTERNAL bool diamond_reserve_thread_slot(void);
 
 DIAMOND_INTERNAL int create_vm_thread(pthread_t *handle,
         void *(*entry)(void *), void *argument);

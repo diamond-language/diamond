@@ -5001,7 +5001,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * count's matching increment belongs: exactly the window
                  * where a future free_thread call is guaranteed to
                  * decrement it back out again. */
-                atomic_fetch_add(&diamond_active_thread_count,1);
+                if(!diamond_reserve_thread_slot()) {
+                    /* Another thread took the last slot since the check above. free_thread decrements the count, so count this one first. */
+                    atomic_fetch_add(&diamond_active_thread_count,1);
+                    free_thread(new_thread);
+                    snprintf(vm->error,sizeof vm->error,
+                        "too many concurrently active threads");
+                    VM_RETURN(DIAMOND_VM_THREAD_ERROR);
+                }
                 bool copy_failed=false;
                 /* new_thread->args[] is a plain struct field, not scanned
                  * by child_vm's GC until thread_entry_trampoline's own

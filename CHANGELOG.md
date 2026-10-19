@@ -46,6 +46,10 @@ authoritative fine-grained record.
 - graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
   small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
   its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
+- The live-thread cap (`DIAMOND_MAX_LIVE_THREADS`, 64 by default) was checked and the count raised later, so threads creating children at the same moment
+  could all pass the check and exceed it (with a cap of 6, three racing creators started 4 or 5 children instead of 3 in nearly every run). A supervised
+  child was also counted after its thread started, so one that finished at once drove the count below zero and made other creations fail with "too many
+  concurrently active threads". The slot is now claimed atomically before the thread starts.
 - A child started by `Process.run` or `Process.spawn` inherited every socket, listener, file and pipe the VM had open, because none were close-on-exec.
   With threads, a child spawned on one thread held another thread's listener (the port stayed bound after it closed) or pipe write end (a capture never
   saw EOF until that child exited). Sockets, accepted connections, pipes and files the VM opens are close-on-exec now.
