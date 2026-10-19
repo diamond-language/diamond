@@ -80,8 +80,9 @@ module Jobs
         Worker.fail_unhandled!(db, row)
         return true
       end
-      args = JSON.parse(row["payload"])
       begin
+        # Parsed inside the rescue: a payload that is not JSON fails this job (and retries it up to max_attempts) instead of ending the worker.
+        args = JSON.parse(row["payload"])
         handler(args)
         Worker.succeed!(db, row)
       rescue error: StandardError
@@ -96,12 +97,33 @@ module Jobs
     # advancing from `now`, not from the old `next_run_at`, so a
     # worker that was down for a while doesn't fire a burst of
     # catch-up jobs once it comes back.
+    # Advancing the schedule is the claim: the UPDATE only matches while next_run_at is still the value this worker read, so with several
+    # workers ticking at once exactly one of them gets to enqueue. (The claim comes first, so a crash right after it skips one firing rather
+    # than repeating it.)
+    def self.claim_recurring!(db, row, now)
+      claimed = db.query("UPDATE recurring_jobs SET next_run_at = ? WHERE id = ? AND next_run_at = ? RETURNING id",
+        [now + row["every_seconds"], row["id"], row["next_run_at"]])
+      claimed.length() == 1
+    end
+
     def self.tick_recurring(db, now)
       due = db.query("SELECT * FROM recurring_jobs WHERE next_run_at <= ?", [now])
       due.each() do |row|
-        Jobs.enqueue(db, kind: row["kind"], args: JSON.parse(row["payload"]), queue: row["queue"], run_at: now)
-        db.execute("UPDATE recurring_jobs SET next_run_at = ? WHERE id = ?", [now + row["every_seconds"], row["id"]])
+        if Worker.claim_recurring!(db, row, now)
+          Jobs.enqueue(db, kind: row["kind"], args: JSON.parse(row["payload"]), queue: row["queue"], run_at: now)
+        end
       end
+    end
+
+    # A job left `running` by a worker that crashed or was killed would otherwise never run again. One whose lock is older than
+    # `lock_timeout_seconds` counts as a failed attempt: it goes back to pending with its attempt recorded, or to failed once max_attempts
+    # is used up. Pick a timeout longer than your slowest job; a job still running past it may run a second time.
+    def self.reap_stale!(db, lock_timeout_seconds, now)
+      stale = db.query("SELECT * FROM jobs WHERE status = 'running' AND locked_at <= ?", [now - lock_timeout_seconds])
+      stale.each() do |row|
+        Worker.retry_or_fail!(db, row, "worker lock expired after #{lock_timeout_seconds}s")
+      end
+      stale.length()
     end
 
     # Runs until SIGTERM/SIGINT, matching the graceful-shutdown
@@ -115,7 +137,7 @@ module Jobs
       @@stop_requested = true
     end
 
-    def self.run_forever(db, handlers: Hash, queues = nil, poll_interval_seconds = 2)
+    def self.run_forever(db, handlers: Hash, queues = nil, poll_interval_seconds = 2, lock_timeout_seconds = 3600)
       @@stop_requested = false
       def jobs_worker_stop_handler()
         Worker.request_stop()
@@ -123,6 +145,7 @@ module Jobs
       Signal.trap("TERM", jobs_worker_stop_handler)
       Signal.trap("INT", jobs_worker_stop_handler)
       while !@@stop_requested
+        Worker.reap_stale!(db, lock_timeout_seconds, Time.now().to_i())
         worked = Worker.run_once(db, handlers: handlers, queues: queues)
         Worker.tick_recurring(db, Time.now().to_i())
         if !worked

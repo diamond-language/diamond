@@ -84,6 +84,25 @@ check(array_reply == ["foo", 42, nil], "mixed array: #{array_reply}")
 nested_reply = redis_read_reply(FakeConn.new("*2\r\n*2\r\n:1\r\n:2\r\n*1\r\n+ok\r\n"))
 check(nested_reply == [[1, 2], ["ok"]], "nested array: #{nested_reply}")
 
+# An error element inside an array or map is raised only after the whole reply has been read, so the next reply on the
+# connection is still the next command's own.
+desync_cases = [
+  "*3\r\n:1\r\n-ERR boom\r\n:3\r\n:99\r\n",
+  "*2\r\n*2\r\n-ERR inner\r\n:1\r\n:5\r\n:99\r\n",
+  "%2\r\n+a\r\n-ERR boom\r\n+b\r\n:2\r\n:99\r\n"
+]
+desync_cases.each() do |wire|
+  desync_conn = FakeConn.new(wire)
+  desync_raised = false
+  begin
+    redis_read_reply(desync_conn)
+  rescue error: RedisError
+    desync_raised = true
+  end
+  check(desync_raised, "expected an error element to be raised")
+  check(redis_read_reply(desync_conn) == 99, "the reply after an error element was misaligned for #{wire}")
+end
+
 # Error replies raise RedisError with the server's own message, not a
 # generic IOError.
 error_raised = false

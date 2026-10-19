@@ -2,11 +2,11 @@
 #
 # depth.di [N]     recurse N deep (default 100000) in each shape
 #
-# Only a function's own call to itself, as the whole value of a `return`
-# (or as the body's trailing expression), runs in constant stack. Everything
-# else is ordinary recursion, limited to a fixed depth of 95 calls in all,
-# counting the frames the caller already uses. None of the failing shapes
-# is an error in the language; they just hit that limit.
+# A call as the whole value of a `return` (or as the body's trailing expression)
+# runs in constant stack, whether it calls the function itself or another function
+# that calls back (mutual recursion). Everything else is ordinary recursion, limited
+# to a fixed depth of 95 calls in all, counting the frames the caller already uses.
+# None of the failing shapes is an error in the language; they just hit that limit.
 
 # Each function below counts down from n to 0 in a different SHAPE, and
 # `attempt` reports whether it survives n levels of recursion.
@@ -77,9 +77,9 @@ def main(argv) -> Int
   def mutual() = ping(n, 0)
   def small() = count_plain(80)
 
-  # Expected: the self tail call passes at any depth; the three that are not
-  # self tail calls overflow at the large depth; and plain recursion is fine
-  # when it stays within the fixed limit (80 is under it).
+  # Expected: the self tail call and the mutual tail calls pass at any depth; the two
+  # shapes that are not tail calls overflow at the large depth; and plain recursion
+  # is fine when it stays within the fixed limit (80 is under it).
   attempt("self tail call", n, n, tail)
   attempt("non-tail: 1 + f(n - 1)", n, n, plain)
   attempt("tail call inside begin/rescue", n, n, guarded)

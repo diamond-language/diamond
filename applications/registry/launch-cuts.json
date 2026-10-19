@@ -1,20 +1,20 @@
 {
-  "active_record": "0.19.4",
-  "arel": "0.34.5",
+  "active_record": "0.19.5",
+  "arel": "0.34.6",
   "cookies": "0.1.2",
   "database_config": "0.1.2",
   "div": "0.2.4",
-  "graphql": "0.1.7",
+  "graphql": "0.2.1",
   "graphsql": "0.1.3",
   "gremlin": "0.4.6",
-  "http": "0.1.2",
-  "jobs": "0.1.2",
+  "http": "0.1.3",
+  "jobs": "0.1.3",
   "log_viewer": "0.1.2",
   "logger": "0.4.2",
   "multipart": "0.2.2",
-  "network_safety": "0.1.2",
+  "network_safety": "0.1.3",
   "rack": "0.1.2",
-  "redis": "0.1.2",
+  "redis": "0.1.3",
   "registry": "0.1.2",
-  "websocket": "0.1.2"
+  "websocket": "0.1.3"
 }

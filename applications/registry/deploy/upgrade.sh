@@ -2,6 +2,7 @@
 # Upgrade an installed registry to a new bundle by swapping the `current`
 # symlink. Take and verify a backup first. The previous release is kept only
 # until the new one passes its health check; after that, git is the rollback.
+# A release that fails to start or to become healthy is rolled back and set aside.
 # Schema migrations run on startup and must be additive.
 set -euo pipefail
 [[ $EUID == 0 && $# == 2 && "$2" =~ ^[0-9a-f]{64}$ ]] || {
@@ -40,13 +41,16 @@ healthy() {
 }
 ln -sfn "$release" "$base/.current-next"
 mv -T "$base/.current-next" "$base/current"
-systemctl restart diamond-registry
-if ! healthy; then
-    echo "Revision $revision failed its health check; restoring $previous" >&2
+# A restart that fails outright (a release that cannot exec) is rolled back the same way as one that never turns healthy.
+if ! systemctl restart diamond-registry || ! healthy; then
+    echo "Revision $revision failed to start or pass its health check; restoring $previous" >&2
     ln -sfn "$previous" "$base/.current-next"
     mv -T "$base/.current-next" "$base/current"
-    systemctl restart diamond-registry
-    healthy
+    systemctl restart diamond-registry || echo "restarting the previous release failed" >&2
+    healthy || echo "the previous release is not healthy either" >&2
+    # Move the failed release aside: left at $release it would make re-running the same bundle stop at "Release directory already exists".
+    # The next successful upgrade removes it with the other old releases.
+    mv -- "$release" "$release.failed-$(date +%s)"
     exit 1
 fi
 curl -fsS --resolve cuts.dilang.tech:443:127.0.0.1 https://cuts.dilang.tech/health

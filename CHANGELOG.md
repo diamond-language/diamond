@@ -13,6 +13,34 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `make test-integration` (what CI runs) now also runs `test-examples` and the new `test-registry-inventory`. Neither ran in CI, and both were failing: the
+  brainfuck example still expected mutual tail calls to overflow the stack (they no longer do), and the registry launch inventory no longer matched the
+  archives after the package fixes above. The inventory and `launch-cuts.json` are regenerated for them; nothing is published.
+- CI: the workflow token is read-only (`permissions: contents: read`), and the wasi-sdk download fails on an HTTP error and is checked against a pinned
+  SHA-256.
+- `make` stops when `tools/aot_fingerprint.sh` fails; it used to write the AOT config with an empty fingerprint, so the cache never noticed a changed source.
+- `tools/registry_needs_upgrade.di` keeps non-ASCII paths whole when listing changed files, anchors its path patterns with `\A`, and refuses a `--host`,
+  `--deployed` or `--target` value that starts with a dash (it would reach `ssh` or `git` as an option).
+- The registry runbook creates the issued credential file with a private umask on the local side as well, not only on the server.
+- tools/deploy_registry.sh treated any upgrade-check exit other than 20 as "nothing to do" and exited 0, so an unreachable host or an unknown
+  deployed revision looked like a successful no-op. Only 0 (none) and 10 (optional) stop quietly now; any other exit is an error, even with `--force`.
+  The script also rebuilds `build/diamond` and `build/facet` every run (they were only built when missing, so a pull left it verifying with old tools), names
+  backups with the time of day so a second run on the same day does not collide, reuses a finished bundle and clears a partial one, and removes its
+  uploads from the host when the run fails after uploading. Covered by `make test-deploy-registry`, which `test-integration` runs.
+- applications/registry/deploy/upgrade.sh did not roll back when `systemctl restart` itself failed (the symlink stayed on the broken release with the
+  service down), and a release that failed its health check stayed in `releases/`, so re-running the same bundle stopped at "Release directory
+  already exists". Both cases roll back and move the failed release aside.
+- jobs: a job whose payload was not valid JSON ended `run_forever` and stayed `running` forever; it fails like a raising handler now. A job left
+  `running` by a crashed worker is returned to `pending` (or failed) once its lock is older than `lock_timeout_seconds` (default 3600). With several
+  workers every one enqueued a due recurring job; advancing the schedule is now an atomic claim, so it fires once.
+- redis: an error element inside an Array or Map reply (a failed command in MULTI/EXEC) raised after reading only part of the reply, leaving the rest
+  on the connection to be taken as the answers to later commands. The whole reply is read first and the first error raised.
+- websocket: a message split into fragments was only limited per frame, so endless non-final fragments grew the buffer without bound; the total is
+  capped at `websocket_max_message_size()` (16 MB, or the second argument to `WebSocketConnection.new`). A control frame (ping, pong, close) over
+  125 bytes or with FIN clear is a protocol error, and a negative 64-bit frame length is rejected.
+- graphql: a document that chained fragments (`a { ...F1 } b { ...F1 }` 40 deep) made validation visit each fragment once per field that spread it, so one
+  small request pinned a worker for hours. A fragment is validated once per operation now, and a document is rejected before validation or execution when
+  its fragment-expanded depth exceeds `schema.max_query_depth()` (default 20) or its field count exceeds `schema.max_query_nodes()` (default 10,000).
 - `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
   `[1, 2].reject { nil }` keeps both.
 - `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
@@ -71,8 +99,14 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `active_record` 0.19.5: a doc comment changed with the anchored validators, which changes the archive. The registry launch seed pins the new `arel`
+  0.34.6, `graphql` 0.2.1, `http` 0.1.3, `jobs` 0.1.3, `network_safety` 0.1.3, `redis` 0.1.3, `websocket` 0.1.3 and `active_record` 0.19.5.
+- `jobs` 0.1.3: the worker fixes above.
+- `redis` 0.1.3: the reply-alignment fix above.
+- `websocket` 0.1.3: the message size cap and control-frame checks above.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
 - `active_tagging` 0.1.1: the anchored tag-name validator above.
+- `graphql` 0.2.1: the query depth and size limits above.
 - `graphql` 0.2.0: error masking, strict scalars and the fragment-cycle message above.
 - `network_safety` 0.1.3: the guard fixes above.
 - `http` 0.1.3: the redirect fixes above.

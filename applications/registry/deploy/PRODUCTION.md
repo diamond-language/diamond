@@ -91,11 +91,11 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
    scope.
 
    ```sh
-   ssh root@dilang.tech 'cd /opt/diamond-registry/current/app && umask 077 && \
+   # The umask inside the quotes applies on the server; the one around the ssh command is what makes the local file private.
+   (umask 077 && ssh root@dilang.tech 'cd /opt/diamond-registry/current/app && umask 077 && \
      REGISTRY_ROOT=/var/lib/diamond-registry REGISTRY_OPERATOR=<you> \
      runuser -u diamond-registry -- ../bin/diamond credentials.di issue \
-       diamond-language 1800 "publish:<name>" "<reason>"' > credential.json
-   chmod 600 credential.json
+       diamond-language 1800 "publish:<name>" "<reason>"' > credential.json)
    ```
 
 2. Extract `seed/` from the deployment bundle and keep only the target cut in

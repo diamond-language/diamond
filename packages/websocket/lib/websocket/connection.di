@@ -3,9 +3,12 @@
 # here: fragment reassembly and transparent ping/pong/close handling on
 # top of frame.di's own single-frame encode/decode.
 class WebSocketConnection
-  def initialize(conn)
+  # `max_message_size` bounds a whole message, fragments included; websocket_max_frame_size() alone only bounds each frame, so a peer could
+  # send endless non-final fragments and grow the buffer without limit.
+  def initialize(conn, max_message_size = websocket_max_message_size())
     @conn = conn
     @closed = false
+    @max_message_size = max_message_size
   end
 
   def send_text(text)
@@ -69,9 +72,19 @@ class WebSocketConnection
     message_opcode = nil
     buffer = StringBuilder.new()
     fragmenting = false
+    received = 0
     loop do
       frame = websocket_read_frame(@conn)
       opcode = frame["opcode"]
+      if opcode >= 8 && (frame["payload"].length() > 125 || !frame["fin"])
+        raise IOError.new("WebSocket control frame must be final and carry at most 125 bytes (RFC 6455 section 5.5)")
+      end
+      unless opcode >= 8
+        received += frame["payload"].length()
+        if received > @max_message_size
+          raise IOError.new("WebSocket message exceeds the maximum of #{@max_message_size} bytes")
+        end
+      end
       if opcode == websocket_opcode_ping()
         self.send_frame(websocket_opcode_pong(), frame["payload"])
       elsif opcode == websocket_opcode_pong()

@@ -172,6 +172,10 @@ The result is a Hash:
 
 The `context` Hash is yours. Whatever you pass is handed to every resolver, which is the usual place for the database connection and the signed-in user. Two entries are set by the executor for each request: `context["lookahead"]` and `context["dataloader"]`.
 
+### Query limits
+
+Fragments let a small document expand into an enormous one: `fragment F0 on Query { a { ...F1 } b { ...F1 } }` chained 40 deep selects 2^40 fields. The parser caps how deeply a document nests syntactically, but not what its fragments expand to. Before a document is validated or executed, the schema measures it with its fragments expanded (in time proportional to the document, not the expansion) and rejects it when the deepest field nesting exceeds `schema.max_query_depth()` (default 20) or it selects more than `schema.max_query_nodes()` fields (default 10,000). Set them with `schema.max_query_depth(30)` and `schema.max_query_nodes(50000)`.
+
 ### Errors
 
 Raise `GraphQL::ExecutionError.new("message")` from a resolver to return a specific, client-visible message for that field. Any other `StandardError` is reported as a generic internal error, so an implementation detail doesn't leak to the client. The real message is written to stderr; `schema.mask_errors(false)` sends it to the client instead, for development.

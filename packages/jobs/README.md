@@ -109,3 +109,5 @@ the row's `status` becomes `failed` with the error in `last_error`; a successful
 ## Notes
 
 Create the tables before starting workers. Register a handler for each job kind. `run_once` handles one due job; `run_forever` polls continuously. `recurring_jobs` is needed only for recurring work.
+
+A job whose worker died stays `running`. `run_forever` returns such a job to `pending` (or marks it `failed` once `max_attempts` is used up) when its lock is older than `lock_timeout_seconds` (default 3600, the fifth argument; `Jobs::Worker.reap_stale!(db, seconds, now)` does the same by hand). Choose a timeout longer than your slowest job, since one still running past it may run a second time. A payload that is not valid JSON fails its job like a raising handler. With several workers, a recurring job fires once per interval: advancing its schedule is the claim.

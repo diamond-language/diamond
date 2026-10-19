@@ -8,6 +8,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The jobs only build and test, so the token needs no more than read access to the checkout.
+permissions:
+  contents: read
+
 # A newer commit replaces older work for the same PR/branch. Distinct PRs
 # (including forks with identically named branches) remain independent.
 concurrency:
@@ -198,7 +202,9 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils libcrypt-dev bc curl util-linux nodejs ca-certificates openssl
       - name: Install wasi-sdk
         run: |
-          curl -sSL -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          curl -fsSL -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          # Pinned: the toolchain is built into the module, so a replaced release asset must not be unpacked silently.
+          echo "b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4  wasi-sdk.tar.gz" | sha256sum -c -
           mkdir -p /opt/wasi-sdk
           tar xzf wasi-sdk.tar.gz -C /opt/wasi-sdk --strip-components=1
       # The module embeds the compiled prelude, which the host build generates.
