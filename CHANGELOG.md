@@ -53,6 +53,7 @@ authoritative fine-grained record.
 ### Packages
 
 - `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
+- `arel` 0.34.6: the bind-order fix above.
 - `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
 - `graphql` 0.1.8: the fragment-cycle message above.
 - `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.

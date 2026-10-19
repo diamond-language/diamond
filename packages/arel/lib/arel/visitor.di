@@ -130,6 +130,7 @@ module Arel
         right = self.render_expression(expression.right(), params)
         "(#{left} #{expression.operator()} #{right})"
       elsif expression is Membership
+        left = self.render_expression(expression.left(), params)
         if !(expression.values() is Array)
           subquery_sql, subquery_params = expression.values().render_with(self)
           subquery_index = 0
@@ -141,7 +142,7 @@ module Arel
           if expression.negated?()
             operator = "NOT IN"
           end
-          "#{self.render_expression(expression.left(), params)} #{operator} (#{subquery_sql})"
+          "#{left} #{operator} (#{subquery_sql})"
         elsif expression.values().length() == 0
           if expression.negated?()
             "1 = 1"
@@ -160,16 +161,17 @@ module Arel
           if expression.negated?()
             operator = "NOT IN"
           end
-          "#{self.render_expression(expression.left(), params)} #{operator} (#{placeholders.join(", ")})"
+          "#{left} #{operator} (#{placeholders.join(", ")})"
         end
       elsif expression is Between
+        left = self.render_expression(expression.left(), params)
         params.push(expression.lower())
         params.push(expression.upper())
         operator = "BETWEEN"
         if expression.negated?()
           operator = "NOT BETWEEN"
         end
-        "#{self.render_expression(expression.left(), params)} #{operator} ? AND ?"
+        "#{left} #{operator} ? AND ?"
       elsif expression is Collation
         inner = self.render_expression(expression.expression(), params)
         "#{inner} COLLATE #{self.quote_identifier(expression.name())}"

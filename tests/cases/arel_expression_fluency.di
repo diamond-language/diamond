@@ -47,6 +47,24 @@ def run_tests()
     Minitest.assert_equal(8, params[1])
   end
 
+  def test_binds_on_the_left_come_before_membership_values()
+    people = Arel.table("people")
+    lowered = Arel.lower(people.column("name").concat("x"))
+    query = Arel.from(people).where(lowered.in_list(["a", "b"]))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE LOWER((\"people\".\"name\" || ?)) IN (?, ?)", sql)
+    Minitest.assert_equal(["x", "a", "b"], params)
+  end
+
+  def test_binds_on_the_left_come_before_range_bounds()
+    people = Arel.table("people")
+    padded = Arel.function("LENGTH", [people.column("name").concat("!")])
+    query = Arel.from(people).where(padded.between(3, 8))
+    sql, params = query.to_sql()
+    Minitest.assert_equal("SELECT * FROM \"people\" WHERE LENGTH((\"people\".\"name\" || ?)) BETWEEN ? AND ?", sql)
+    Minitest.assert_equal(["!", 3, 8], params)
+  end
+
   def test_function_results_support_ordering()
     people = Arel.table("people")
     lowered = Arel.lower(people.column("name"))
@@ -61,6 +79,8 @@ def run_tests()
   suite.test("function pattern predicates", test_function_results_support_pattern_predicates)
   suite.test("function membership predicates", test_function_results_support_membership_predicates)
   suite.test("function range predicates", test_function_results_support_range_predicates)
+  suite.test("left binds before membership values", test_binds_on_the_left_come_before_membership_values)
+  suite.test("left binds before range bounds", test_binds_on_the_left_come_before_range_bounds)
   suite.test("function ordering", test_function_results_support_ordering)
   suite.run!()
 end
