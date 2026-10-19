@@ -119,7 +119,9 @@ module Mjolnir
         return Ok.new(changeset.entity())
       end
       schema = changeset.schema()
-      parts = schema.primary_keys().map() do |key| changeset.get_field(key) end
+      # The row is found by the loaded entity's key, not by a pending change: a permitted 'id' field would otherwise aim the UPDATE at whatever row
+      # the submitted value names.
+      parts = schema.primary_keys().map() do |key| changeset.original_field(key) end
       id = if schema.composite?() then parts else parts[0] end
       statement = Arel.update(schema.table()).set(self.stamped(changeset, false))
       schema.key_predicates(id).each() do |predicate|
@@ -146,6 +148,12 @@ module Mjolnir
       predicates = query.arel().predicates()
       if predicates.empty?()
         raise ArgumentError.new("update_all needs a condition on #{schema.table_name()}")
+      end
+      # Only declared fields: a column name from outside the schema is an error here, not a statement for the database to reject (or accept).
+      changes.keys().each() do |name|
+        unless schema.field?(name)
+          raise UnknownFieldError.new(schema.table_name(), name)
+        end
       end
       values = changes
       if schema.timestamps?() && !changes.has_key?("updated_at")

@@ -101,6 +101,8 @@ repo.update_all(users.query().where({"role": "guest"}), {"role": "user"})   # ro
 repo.delete_all(users.query().where({"age": 0}))                             # rows removed
 ```
 
+`update!` finds the row by the loaded entity's own primary key, so a permitted `id` field that a form submits cannot aim the UPDATE at another row; changing the key itself updates the loaded row to the new value. `update_all` raises `Mjolnir::UnknownFieldError` for a column the schema does not declare. `insert` and `update` use `RETURNING *`, so the database has to support it (SQLite 3.35 or later, PostgreSQL; MariaDB supports it for `INSERT` only, and MySQL not at all, where Arel raises an unsupported-extension error).
+
 `update_all` and `delete_all` refuse a query with no condition. `insert!` and `update!` return the entity and raise `Mjolnir::InvalidChangesetError` (carrying the changeset) instead of returning `Err`.
 
 ### Associations
