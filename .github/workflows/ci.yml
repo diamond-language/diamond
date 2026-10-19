@@ -127,6 +127,24 @@ jobs:
           make CC=gcc test-gremlin-package
           make CC=gcc test-rack-package
           make CC=gcc test-graphql-package
+          make CC=gcc test-websocket-package
+          make CC=gcc test-redis-package
+          make CC=gcc test-cookies-package
+          make CC=gcc test-multipart-package
+          make CC=gcc test-network-safety-package
+          make CC=gcc test-div-package
+          make CC=gcc test-dials-package
+          make CC=gcc test-graphsql-package
+          make CC=gcc test-mjolnir-package
+          make CC=gcc test-logger-package
+          make CC=gcc test-log-viewer-package
+          make CC=gcc test-active-karma-package
+          make CC=gcc test-active-auth-package
+          make CC=gcc test-active-social-package
+          make CC=gcc test-active-tagging-package
+          make CC=gcc test-active-discussion-package
+          make CC=gcc test-cancellation-package
+          make CC=gcc test-jobs-package
 
   # Keep the expensive instrumented build independent from test-arm64: the
   # first native attempt passed that job's baseline/focused coverage and then
@@ -158,6 +176,34 @@ jobs:
           done
       - name: ASan and UBSan (Ubuntu arm64)
         run: make CC=gcc test-sanitize
+
+  test-arm64-tsan:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies (Ubuntu arm64)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc clang make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc netcat-openbsd openssl curl
+      - name: Exclude x86-64 JIT cases
+        run: |
+          mkdir -p /tmp/excluded-cases
+          for env_file in tests/cases/*.env; do
+            grep -q '^DIAMOND_JIT=' "$env_file" || continue
+            base="${env_file%.env}"
+            for suffix in env di expected expected_contains flags dic; do
+              file="$base.$suffix"
+              if [ -e "$file" ]; then mv "$file" /tmp/excluded-cases/; fi
+            done
+          done
+      - name: ThreadSanitizer (Ubuntu arm64)
+        run: make CC=gcc test-tsan
 
   # Threaded bugs are timing bugs, and the supervisor child-count race hung CI
   # about once in 40 runs of one test. This runs every Thread/Channel/Supervisor
