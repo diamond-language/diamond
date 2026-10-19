@@ -26,6 +26,7 @@ authoritative fine-grained record.
   headers a route had set (a stricter `X-Frame-Options`, a `Content-Security-Policy`); it only fills in missing ones. `StaticFiles` treated the query string as part of the file
   name (cache-busted URLs missed), served dotfiles such as `.env` and `.git/config`, and matched `/assetsX` against the prefix `/assets`. `ContentNegotiation` ranked `q=0` lowest
   instead of refusing it, and sent no `Vary: Accept`. `RateLimit` kept a bucket for every key ever seen; finished windows are dropped past `max_keys` (default 100000).
+- active_discussion: the documented `active_discussion_karma_votes` schema had no uniqueness on a voter's vote for a target, so two simultaneous votes by one voter made two rows. It declares `UNIQUE(target_type, target_id, voter_handle)`, and the README says that two different voters voting at once can still lose a karma change, because votes are applied from the karma each request loaded and the package has no row locking.
 - active_auth: a password reset token or backup code could be used twice by two requests that presented it at the same moment. Both loaded the unused row, both passed the
   `used_at` check, and both wrote. Consuming is now an `UPDATE` that applies only while the row is unused: `BackupCode#consume!` and `consume_if_match!` return
   `true` for the one call that won and `false` otherwise, and `PasswordResetToken#consume!` raises for the loser.
@@ -133,6 +134,7 @@ authoritative fine-grained record.
 ### Packages
 
 - `rack` 0.1.3: the middleware fixes above.
+- `active_discussion` 0.1.1: the schema and concurrency note above.
 - `active_auth` 0.2.3: single-use tokens and backup codes are atomic.
 - `active_record` 0.19.5: a doc comment changed with the anchored validators, which changes the archive. The registry launch seed pins the new `arel`
   0.34.6, `graphql` 0.2.1, `http` 0.1.3, `jobs` 0.1.3, `network_safety` 0.1.3, `redis` 0.1.3, `websocket` 0.1.3 and `active_record` 0.19.5.

@@ -43,7 +43,8 @@ CREATE TABLE active_discussion_signals (
 CREATE TABLE active_discussion_karma_votes (
   id INTEGER PRIMARY KEY,
   target_type TEXT NOT NULL, target_id INTEGER NOT NULL, voter_handle TEXT NOT NULL,
-  value INTEGER NOT NULL, applied_delta INTEGER NOT NULL
+  value INTEGER NOT NULL, applied_delta INTEGER NOT NULL,
+  UNIQUE(target_type, target_id, voter_handle)
 );
 ```
 
@@ -79,3 +80,5 @@ c1.delete!(db)                        # deletes c1 and c2 (its whole subtree)
 ## Notes
 
 Configure the four models with repositories before use. Add indexes for discussion, parent, and signal lookups.
+
+A vote is applied by reading the voter's existing vote and the target's karma, then writing both. Two voters on the same target at the same moment each start from the karma they loaded, so one of the two changes can be lost, and the `UNIQUE(target_type, target_id, voter_handle)` constraint above is what turns a double vote by one voter into an error instead of a second row. The package has no row locking to prevent the first case. If votes on one target arrive concurrently, serialize them in the application (one writer per target, or `BEGIN IMMEDIATE` on SQLite) and recompute `karma` from the stored `applied_delta` values when it matters.
