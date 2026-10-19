@@ -606,6 +606,46 @@ empty = GremlinShutdown.poll([], [], 8000)
 closed = GremlinShutdown.poll([listener], [], 8000)
 puts([Time.monotonic() - started < 2.0, empty[\"readable\"].length(), closed[\"readable\"]].inspect())")"
 [[ "$actual" == *'[true, 0, [false]]'* ]]
+# The tenth argument, `host`, binds the listener to one address instead of every interface (a server behind a reverse proxy
+# should not be reachable directly), for one worker and for several; without it the default is unchanged.
+for spec in "1 127.0.0.1" "2 127.0.0.1" "1 "; do
+    set -- $spec
+    workers="$1"; bind="${2:-}"
+    port=$((19430 + workers))
+    [[ -n "$bind" ]] || port=19440
+    out="$(mktemp)"
+    serve_call="gremlin_serve($port, handler, $workers)"
+    [[ -z "$bind" ]] || serve_call="gremlin_serve($port, handler, $workers, nil, nil, nil, false, nil, 10.0, \"$bind\")"
+    cat >"$out.di" <<SRCEOF
+require "$package_root/lib/gremlin"
+def run()
+  def handler(request, context)
+    [200, {"Content-Type": "text/plain"}, "bound"]
+  end
+  $serve_call
+end
+run()
+SRCEOF
+    timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+    pid=$!
+    wait_for_port "$port"
+    { exec 3<&- 3>&-; } 2>/dev/null || true
+    # Listening sockets from /proc/net/tcp (no `ss` in the CI images): state 0A, address as little-endian hex.
+    # 0100007F is 127.0.0.1 and 00000000 is every interface.
+    if [[ -r /proc/net/tcp ]]; then
+        hex_port="$(printf '%04X' "$port")"
+        listening="$(awk -v suffix=":$hex_port" '$4 == "0A" && substr($2, length($2) - 4) == suffix { print $2 }' /proc/net/tcp)"
+        if [[ -n "$bind" ]]; then
+            [[ "$listening" == *"0100007F:$hex_port"* ]]
+            [[ "$listening" != *"00000000:$hex_port"* ]]
+        else
+            [[ "$listening" == *"00000000:$hex_port"* ]]
+        fi
+    fi
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    rm -f "$out" "$out.di"
+done
 echo "19 gremlin tests passed"
 
 # Token-managed shutdown returns through the owner and bounds stalled clients.

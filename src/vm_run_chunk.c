@@ -4544,6 +4544,21 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     (const DiamondString *)registers[arg2].as.object:nullptr;
                 DiamondValue path_result=DIAMOND_NIL;
                 DiamondVmStatus path_status=DIAMOND_VM_OK;
+                /* The string-only selectors tolerate a NUL; every other one
+                 * hands path->chars to the OS, which would stop at it. */
+                switch((DiamondFilePathFunction)selector) {
+                    case DIAMOND_FILE_PATH_DIRNAME:
+                    case DIAMOND_FILE_PATH_BASENAME:
+                    case DIAMOND_FILE_PATH_EXTNAME:
+                    case DIAMOND_FILE_PATH_ABSOLUTE:
+                        break;
+                    default:
+                        if(memchr(path->chars,'\0',path->length)!=nullptr) {
+                            snprintf(vm->error,sizeof vm->error,
+                                "File path must not contain a NUL byte");
+                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                        }
+                }
                 switch((DiamondFilePathFunction)selector) {
                     case DIAMOND_FILE_PATH_SYNC:
                         VM_SANDBOX_GUARD("File.sync", "filesystem");

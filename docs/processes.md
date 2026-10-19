@@ -32,6 +32,10 @@ file instead of a pipe, for a long-running child nobody is reading from:
   stdout goes (the pipe, or the `"stdout"` file), so the two interleave in
   order. `handle.stderr()` is `nil`.
 
+A relative output path is resolved against the child's `"cwd"` when one is given. Giving `"stderr"` together with
+`"stderr_to_stdout"` raises `TypeError`. Under `DIAMOND_SANDBOX`, the `"stdout"` and `"stderr"` file options need the
+`filesystem` capability as well as `subprocess`.
+
 An unknown key, or a value of the wrong type, raises `TypeError`.
 
 ```ruby

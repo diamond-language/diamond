@@ -649,6 +649,13 @@ static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
                     (int)key->length,key->chars);
                 return DIAMOND_VM_TYPE_ERROR;
             }
+            /* The child opens the file, so this is a filesystem write the
+             * "subprocess" guard on Process.spawn does not cover. */
+            if(getenv("DIAMOND_SANDBOX")!=nullptr&&!sandbox_category_allowed("filesystem")) {
+                snprintf(vm->error,sizeof vm->error,
+                    "sandbox denies %s option '%.*s'",owner,(int)key->length,key->chars);
+                return DIAMOND_VM_SANDBOX_ERROR;
+            }
             if(key->chars[3]=='o')out->stdout_path=path->chars;
             else out->stderr_path=path->chars;
         } else if(for_spawn&&key->length==16&&memcmp(key->chars,"stderr_to_stdout",16)==0) {
@@ -663,6 +670,11 @@ static DiamondVmStatus process_parse_options(DiamondVm *vm,const char *owner,
                 (int)key->length,key->chars);
             return DIAMOND_VM_TYPE_ERROR;
         }
+    }
+    if(out->stderr_to_stdout&&out->stderr_path!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "%s options 'stderr' and 'stderr_to_stdout' cannot both be given",owner);
+        return DIAMOND_VM_TYPE_ERROR;
     }
     return process_build_env(vm,owner,env,out);
 }
@@ -1067,7 +1079,13 @@ static DiamondVmStatus process_spawn_with_options(DiamondVm *vm,
         const int flags=fcntl(read_fds[index],F_GETFL,0);
         if(flags<0||fcntl(read_fds[index],F_SETFL,flags|O_NONBLOCK)<0) {
             const int saved_errno=errno;
-            close(stdout_pipe[0]);close(stderr_pipe[0]);
+            /* The child is already running: stop and reap it, and release
+             * every fd, so a failed spawn leaves nothing behind. */
+            kill(pid,SIGKILL);
+            waitpid(pid,nullptr,0);
+            if(stdout_pipe[0]>=0)close(stdout_pipe[0]);
+            if(stderr_pipe[0]>=0)close(stderr_pipe[0]);
+            if(pipe_stdin)close(stdin_pipe[1]);
             snprintf(vm->error,sizeof vm->error,"Process.spawn: %s",strerror(saved_errno));
             return DIAMOND_VM_IO_ERROR;
         }
