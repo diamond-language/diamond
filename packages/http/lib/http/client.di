@@ -383,6 +383,11 @@ def http_should_follow(status)
   status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 end
 
+# scheme://host:port -- a redirect to another origin (another host, port, or an https -> http downgrade) must not carry credentials.
+def http_origin(parsed)
+  "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}"
+end
+
 def http_next_request_for_redirect(status, method, body, original_host, target_host, headers)
   next_headers = headers
   unless target_host == original_host
@@ -426,9 +431,15 @@ def http_request(method, url, headers = {}, body = "", options = {})
       location
     end
     next_parsed = http_parse_url(next_url)
+    origin = http_origin(parsed)
+    next_origin = http_origin(next_parsed)
     next_request = http_next_request_for_redirect(response["status"], method,
-      prepared["body"], parsed["host"], next_parsed["host"], headers)
+      prepared["body"], origin, next_origin, headers)
     next_options = options.merge({"max_redirects": remaining - 1})
+    # bearer_token / basic_auth live in options and would be added again on the next hop.
+    if origin != next_origin
+      next_options = next_options.merge({"bearer_token": nil, "basic_auth": nil})
+    end
     return http_request(next_request["method"], next_url, next_request["headers"],
       next_request["body"], next_options)
   end
@@ -544,10 +555,19 @@ class HttpSession
     "#{parsed["scheme"]}://#{parsed["host"]}:#{parsed["port"]}"
   end
 
-  def request(method, url, headers = {}, body = "")
+  # redirects_left and drop_credentials carry state across the hops of one redirect chain.
+  def request(method, url, headers = {}, body = "", redirects_left = nil, drop_credentials = false)
+    options = @options
+    if drop_credentials
+      options = @options.merge({"bearer_token": nil, "basic_auth": nil})
+    end
+    if redirects_left == nil
+      redirects_left = @options["max_redirects"]
+      redirects_left = 5 if redirects_left == nil
+    end
     parsed = http_parse_url(url)
     with_cookies = self.http_apply_cookies(headers, parsed["host"])
-    prepared = http_prepare_headers_and_body(with_cookies, body, @options)
+    prepared = http_prepare_headers_and_body(with_cookies, body, options)
     request_headers = prepared["headers"]
     if http_header_lookup(request_headers, "Connection") == nil
       request_headers = request_headers.merge({"Connection": "keep-alive"})
@@ -556,19 +576,19 @@ class HttpSession
     cached = @connections[key]
     response = nil
     if cached == nil
-      conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], @options)
+      conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], options)
       response = http_send(conn, method, parsed, request_headers, prepared["body"])
       @connections[key] = conn
     else
       begin
         response = http_send(cached, method, parsed, request_headers, prepared["body"])
       rescue error: IOError
-        conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], @options)
+        conn = http_connect(parsed["scheme"], parsed["host"], parsed["port"], options)
         response = http_send(conn, method, parsed, request_headers, prepared["body"])
         @connections[key] = conn
       end
     end
-    response["body"] = http_maybe_decompress(response["body"], response["headers"], @options)
+    response["body"] = http_maybe_decompress(response["body"], response["headers"], options)
     self.http_store_cookie(parsed["host"], response["headers"]["set-cookie"])
 
     follow = @options["follow_redirects"]
@@ -579,10 +599,16 @@ class HttpSession
       else
         location
       end
+      if redirects_left <= 0
+        raise IOError.new("too many redirects following #{url}")
+      end
       next_parsed = http_parse_url(next_url)
+      origin = http_origin(parsed)
+      next_origin = http_origin(next_parsed)
       next_request = http_next_request_for_redirect(response["status"], method,
-        prepared["body"], parsed["host"], next_parsed["host"], headers)
-      return self.request(next_request["method"], next_url, next_request["headers"], next_request["body"])
+        prepared["body"], origin, next_origin, headers)
+      return self.request(next_request["method"], next_url, next_request["headers"], next_request["body"],
+        redirects_left - 1, drop_credentials || origin != next_origin)
     end
     response
   end

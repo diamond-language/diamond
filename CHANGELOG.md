@@ -31,6 +31,9 @@ authoritative fine-grained record.
 - Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
   They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
   registry seed, backup, upgrade and monitor tools.
+- http client: a redirect to another origin (another host or port, or an https to http downgrade) still sent `bearer_token` and `basic_auth`,
+  because they live in the options that every hop reuses; they are dropped for the rest of the chain. `HttpSession` followed redirects with
+  no limit; it honours `max_redirects` (default 5) like `http_request`.
 - Pheint: `Account.email` was readable by anyone through a game's `owner`, so an anonymous `{ games { owner { email } } }` listed every owner's
   address. It is `null` for everyone but the signed-in account now, and the field is nullable.
 - Pheint: `setup_db.di` dropped every table and created the demo account (published password) even with `DIAMOND_ENV=production`. It
@@ -57,6 +60,7 @@ authoritative fine-grained record.
 ### Packages
 
 - `active_auth` 0.2.1, `active_tagging` 0.1.1: the anchored validators above.
+- `http` 0.1.3: the redirect fixes above.
 - `arel` 0.34.6: the bind-order fix above.
 - `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
 - `graphql` 0.1.8: the fragment-cycle message above.
