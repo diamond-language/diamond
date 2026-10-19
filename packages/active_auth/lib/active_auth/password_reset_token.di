@@ -59,12 +59,22 @@ module ActiveAuth
     # error (from_token above already excludes used tokens from ever
     # being looked up again), not a normal, expected outcome to model as
     # a false return.
+    # The UPDATE applies only while the row is unused. `from_token` excludes used tokens, but two requests can both find the same unused token
+    # before either consumes it; this makes exactly one of them succeed and raises for the other. Consume before acting on the token (changing the
+    # password), so the request that loses does nothing.
     def consume!(db)
       if self.used?()
         raise RuntimeError.new("token already used")
       end
-      self.used_at = Time.now().to_i()
-      self.save(db)
+      table = Arel.table("password_reset_tokens")
+      now = Time.now().to_i()
+      changed = Arel.update(table).set({"used_at": now}).where(
+        table.column("id").eq(self.id())).where(table.column("used_at").eq(nil)).execute(db)
+      if changed == 0
+        raise RuntimeError.new("token already used")
+      end
+      self.used_at = now
+      changed
     end
   end
 

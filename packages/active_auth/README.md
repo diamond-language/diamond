@@ -109,3 +109,4 @@ here; in a real project, open the connection through your `database_config` sett
   codes (`ActiveAuth::PasswordResetToken`, `EmailVerificationToken`, `BackupCode`). Each is a model
   you configure with a repository and its own table, like `Account` and `Session`.
 - The mailer logs messages; wire up delivery in your application.
+- `PasswordResetToken#consume!` and `BackupCode#consume!` / `#consume_if_match!` are single-use even when several requests present the same token at once: the update applies only while the row is still unused. `BackupCode#consume!` and `#consume_if_match!` return `true` for the one call that consumed the code and `false` for any other, and `PasswordResetToken#consume!` raises `RuntimeError` ("token already used") for the loser. Consume the token first and act on it (change the password, sign in) only if that succeeds.

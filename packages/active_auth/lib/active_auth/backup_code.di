@@ -50,20 +50,26 @@ module ActiveAuth
       BCrypt.verify(BackupCode.normalize_code(raw_code), @code_digest)
     end
 
-    def consume!(db)
-      self.used_at = Time.now().to_i()
-      self.save(db)
+    # Marks the code used with an UPDATE that applies only while the row is still unused, and says whether this call was the one that did.
+    # Of several requests presenting the same code at once exactly one gets true: #match? looks at the copy each of them loaded before
+    # any consumed it, so that check alone cannot stop a second use.
+    def consume!(db) -> Bool
+      table = Arel.table("backup_codes")
+      now = Time.now().to_i()
+      changed = Arel.update(table).set({"used_at": now}).where(
+        table.column("id").eq(self.id())).where(table.column("used_at").eq(nil)).execute(db)
+      if changed == 0
+        return false
+      end
+      self.used_at = now
+      true
     end
 
-    # Checks and consumes in one call, so a caller doesn't have to
-    # remember to call both -- the closest Diamond equivalent to Ruby's
-    # own `with_lock`-wrapped atomic check-and-consume (this codebase has
-    # no cross-request row locking primitive; single-worker-per-request
-    # handling makes the two-step version safe in practice here).
+    # Checks and consumes in one call, so a caller doesn't have to remember to call both. True only when the code matched and this call
+    # consumed it: the consume is a conditional UPDATE, so a second request with the same code loses even if it matched on a stale copy.
     def consume_if_match!(db, raw_code: String) -> Bool
       if self.match?(raw_code)
         self.consume!(db)
-        true
       else
         false
       end
