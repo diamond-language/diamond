@@ -86,9 +86,24 @@ def network_safety_ipv4_blocked?(ip_int)
   network_safety_blocked_ipv4_networks().any?(matches_blocked_network)
 end
 
+# A trailing dot is the same name to a resolver ("localhost." is "localhost", "127.0.0.1." is 127.0.0.1).
+def network_safety_strip_trailing_dots(host)
+  stripped = host
+  while stripped.end_with?(".")
+    stripped = stripped.slice(0, stripped.length() - 1)
+  end
+  stripped
+end
+
 def network_safety_looks_local?(host)
-  lower = host.downcase()
-  lower == "localhost" || lower.end_with?(".local") || lower.end_with?(".internal")
+  lower = network_safety_strip_trailing_dots(host.downcase())
+  lower == "localhost" || lower.end_with?(".localhost") || lower.end_with?(".local") || lower.end_with?(".internal")
+end
+
+# The resolver (inet_aton) also reads 127.1, 2130706433, 0x7f.0.0.1 and 0177.0.0.1 as IPv4 addresses. Anything made only of digits,
+# hex digits, `x` and dots that starts with a digit is treated as such a literal, so it is rejected rather than passed as a hostname.
+def network_safety_numeric_host_form?(host)
+  Regexp.new("\\A[0-9][0-9a-fA-FxX.]*\\z").match?(host)
 end
 
 # The raw "host[:port]" segment straight out of the URL string -- the
@@ -132,9 +147,13 @@ def resolve_public_hostname(url)
   if network_safety_looks_local?(host)
     raise ArgumentError.new("URL host is a local hostname: #{host}")
   end
-  ip_int = network_safety_ipv4_to_int(host)
+  numeric_host = network_safety_strip_trailing_dots(host)
+  ip_int = network_safety_ipv4_to_int(numeric_host)
   if ip_int != nil && network_safety_ipv4_blocked?(ip_int)
     raise ArgumentError.new("URL host is a private/reserved IPv4 address: #{host}")
+  end
+  if ip_int == nil && network_safety_numeric_host_form?(numeric_host)
+    raise ArgumentError.new("URL host is a non-canonical numeric address: #{host}")
   end
   parsed
 end

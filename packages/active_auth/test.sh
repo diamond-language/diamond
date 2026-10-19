@@ -53,6 +53,18 @@ end
 ')"
 assert_eq "$actual" "email has already been taken"
 
+# --- an email with a second line is rejected, not matched line by line ---
+actual="$(run_case '
+db = setup_test_db()
+begin
+  create_test_account(db, "alice@example.com\nBcc: evil@example.com", "alice")
+  "not rejected"
+rescue error: ActiveRecord::ValidationError
+  "rejected"
+end
+')"
+assert_eq "$actual" "rejected"
+
 # --- email verification round-trip ---
 actual="$(run_case '
 db = setup_test_db()
@@ -209,5 +221,38 @@ ActiveAuth::Mailer.send_verification(account, raw)
 "no crash"
 ')"
 assert_eq "$actual" "no crash"
+
+# --- to_json leaves out password digests, session and reset tokens, and backup-code digests ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+session, raw = ActiveAuth::Session.issue(db, account.id())
+reset = ActiveAuth::PasswordResetToken.issue(db, account.id())
+verification = ActiveAuth::EmailVerificationToken.issue(db, account.id())
+codes = ActiveAuth::BackupCode.generate_for!(db, account.id())
+secrets = [account.password_digest(), session.token(), session.csrf_token(), raw]
+documents = [account.to_json(), session.to_json()]
+leaked = documents.select() do |document| secrets.any?() do |secret| secret != nil && document.include?(secret) end end
+"#{leaked.length()} #{account.to_json().include?("alice@example.com")} #{account.to_json().include?("password_digest")} #{session.to_json().include?("csrf_token")}"
+')"
+assert_eq "$actual" "0 true false false"
+
+# --- the session cookie is Secure under DIAMOND_ENV=production, and secure: overrides either way ---
+actual="$(run_case '
+db = setup_test_db()
+account = create_test_account(db)
+plain = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret")[1]
+forced = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret", secure: true)[1]
+"#{plain.include?("Secure")} #{forced.include?("Secure")}"
+')"
+assert_eq "$actual" "false true"
+actual="$(DIAMOND_ENV=production run_case '
+db = setup_test_db()
+account = create_test_account(db)
+production = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret")[1]
+opted_out = ActiveAuth::Session.issue_cookie(db, account.id(), secret: "topsecret", secure: false)[1]
+"#{production.include?("Secure")} #{opted_out.include?("Secure")}"
+')"
+assert_eq "$actual" "true false"
 
 echo "$count active_auth tests passed"

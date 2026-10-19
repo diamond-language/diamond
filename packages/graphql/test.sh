@@ -1007,6 +1007,22 @@ assert_contains "$actual" '{data: {hello: hi}}'
 assert_contains "$actual" 'cycle through "A", "B", "C"'
 count=$((count + 1))
 
+# --- a fragment that only leads into a cycle is not named as part of it ---
+actual="$(run_case '
+module R
+  module_function
+  def hello(o, a, c) = "hi"
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("hello", GraphQL::ScalarType.string(), R.hello)
+schema = GraphQL::Schema.new()
+schema.query(t)
+puts(schema.execute("{ ...A ...C } fragment A on Query { ...B } fragment B on Query { ...A } fragment C on Query { ...A }"))
+')"
+assert_contains "$actual" 'cycle through "A", "B")'
+[[ "$actual" != *'"C"'* ]]
+count=$((count + 1))
+
 # --- a thousand fragments chained end to end is not a stack overflow ---
 actual="$(run_case '
 t = GraphQL::ObjectType.new("Query")
@@ -1049,6 +1065,69 @@ puts(GraphQL::Language::Parser.max_nesting())
 ')"
 [[ "$(grep -c 'nested more than 20 levels deep' <<<"$actual")" == "4" ]]
 assert_contains "$actual" 'parsed'
+count=$((count + 1))
+
+# --- a resolver's unexpected exception is masked; ExecutionError messages and the opt-out are not ---
+actual="$(run_case '
+module R
+  module_function
+  def leaky(o, a, c)
+    raise StandardError.new("no such table: secrets in /var/lib/app/db.sqlite")
+  end
+  def polite(o, a, c)
+    raise GraphQL::ExecutionError.new("not allowed")
+  end
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("leaky", GraphQL::ScalarType.string(), R.leaky)
+t.field("polite", GraphQL::ScalarType.string(), R.polite)
+schema = GraphQL::Schema.new()
+schema.query(t)
+masked = schema.execute("{ leaky polite }")
+schema.mask_errors(false)
+open = schema.execute("{ leaky }")
+puts(masked["errors"].map() do |error| error["message"] end.join("|"))
+puts(open["errors"][0]["message"])
+' 2>/dev/null)"
+assert_contains "$actual" 'Internal server error|not allowed'
+assert_contains "$actual" 'no such table: secrets in /var/lib/app/db.sqlite'
+[[ "$(grep -c 'secrets' <<<"$(head -1 <<<"$actual")")" == "0" ]]
+count=$((count + 1))
+
+# --- built-in scalars refuse a value of the wrong kind on input and a list/object/record on output ---
+actual="$(run_case '
+module R
+  module_function
+  def echo_int(o, a, c) = a["n"]
+  def echo_string(o, a, c) = a["s"]
+  def echo_id(o, a, c) = a["i"]
+  def leaks_hash(o, a, c) = {"password_digest": "x"}
+  def leaks_list(o, a, c) = [1, 2]
+  def fine_int(o, a, c) = 7
+end
+t = GraphQL::ObjectType.new("Query")
+t.field("echoInt", GraphQL::ScalarType.int(), R.echo_int, [GraphQL::Argument.new("n", GraphQL::ScalarType.int())])
+t.field("echoString", GraphQL::ScalarType.string(), R.echo_string, [GraphQL::Argument.new("s", GraphQL::ScalarType.string())])
+t.field("echoId", GraphQL::ScalarType.id(), R.echo_id, [GraphQL::Argument.new("i", GraphQL::ScalarType.id())])
+t.field("leaksHash", GraphQL::ScalarType.string(), R.leaks_hash)
+t.field("leaksList", GraphQL::ScalarType.int(), R.leaks_list)
+t.field("fineInt", GraphQL::ScalarType.int(), R.fine_int)
+schema = GraphQL::Schema.new()
+schema.query(t)
+def summary(response)
+  if response["errors"] != nil then response["errors"][0]["message"] else response["data"].to_s() end
+end
+puts(summary(schema.execute("query($n: Int) { echoInt(n: $n) }", {"n": {"$ne": nil}})))
+puts(summary(schema.execute("query($n: Int) { echoInt(n: $n) }", {"n": "5"})))
+puts(summary(schema.execute("query($n: Int) { echoInt(n: $n) }", {"n": 5})))
+puts(summary(schema.execute("query($s: String) { echoString(s: $s) }", {"s": [1]})))
+puts(summary(schema.execute("{ echoInt(n: 3) echoString(s: \"ok\") echoId(i: 4) }")))
+puts(summary(schema.execute("{ leaksHash }")))
+puts(summary(schema.execute("{ leaksList }")))
+puts(summary(schema.execute("{ fineInt }")))
+')"
+expected=$'expected an Int, got an object\nexpected an Int, got a String\n{echoInt: 5}\nexpected a String, got a list\n{echoInt: 3, echoString: ok, echoId: 4}\na resolver returned an object for a scalar field\na resolver returned a list for a scalar field\n{fineInt: 7}\nnil'
+[[ "$actual" == "$expected" ]]
 count=$((count + 1))
 
 echo "$count graphql tests passed"

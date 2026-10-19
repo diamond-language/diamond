@@ -372,14 +372,14 @@ def enumerable_all(values, callback: Callable[1]) -> Bool
   result = true
   if values is Hash
     def check_pair(key, value)
-      if callback(value) == false
+      if !callback(value)
         result = false
       end
     end
     values.each(check_pair)
   else
     def check_item(item)
-      if callback(item) == false
+      if !callback(item)
         result = false
       end
     end
@@ -437,7 +437,7 @@ def array_reject(values: Array, callback: Callable[1]) -> Array
   index = 0
   while index < values.length()
     item = values[index]
-    if callback(item) == false
+    if !callback(item)
       result.push(item)
     end
     index += 1
@@ -729,6 +729,7 @@ end
 # `size` is a positive Int, same as Ruby's own ArgumentError-on-`<= 0`
 # contract -- not separately validated here.
 def array_each_slice(values: Array, size: Int) -> Array
+  raise ArgumentError.new("slice size must be positive") if size <= 0
   result = []
   index = 0
   while index < values.length()
@@ -1980,6 +1981,12 @@ def diamond_numeric_fdiv(value, other) -> Float = value.to_f() / other.to_f()
 
 # [quotient, remainder], rounding the quotient down as Ruby does.
 def diamond_numeric_divmod(value, other) -> Array
+  if value is Int && other is Int
+    # Integer arithmetic: a Float quotient is wrong past 2**53, and `%` raises on a zero divisor.
+    remainder = value % other
+    return [(value - remainder) / other, remainder]
+  end
+  raise ZeroDivisionError.new("divided by 0") if other == 0
   quotient = (value.to_f() / other.to_f()).floor()
   [quotient, value - quotient * other]
 end
@@ -2008,6 +2015,7 @@ end
 
 # The digits, least significant first, as in Ruby.
 def diamond_integer_digits(value: Int, base: Int = 10) -> Array[Int]
+  raise ArgumentError.new("invalid radix #{base}") if base < 2
   raise ArgumentError.new("digits of a negative number") if value < 0
   return [0] if value == 0
   result = []
@@ -2036,16 +2044,28 @@ def diamond_math_log(x) = log(x)
 def diamond_math_tanh(x) = tanh(x)
 def diamond_math_pow(x, y) = pow(x, y)
 
+# A logarithm that is a whole number when x is an exact power of the base (log(1000) / log(10) is 2.9999999999999996).
+def diamond_math_exact_log(quotient, base, x) -> Float
+  return quotient if quotient != quotient || quotient - quotient != 0.0
+  nearest = quotient.round().to_f()
+  diamond_math_pow(base, nearest) == x.to_f() ? nearest : quotient
+end
+
 module Math
   def self.sqrt(x) -> Float = diamond_math_sqrt(x)
-  def self.cbrt(x) -> Float = diamond_math_pow(x.to_f(), 1.0 / 3.0)
+  def self.cbrt(x) -> Float
+    magnitude = diamond_math_pow(x.to_f().abs(), 1.0 / 3.0)
+    nearest = magnitude.round().to_f()
+    magnitude = nearest if nearest * nearest * nearest == x.to_f().abs()
+    x < 0 ? -magnitude : magnitude
+  end
   def self.sin(x) -> Float = diamond_math_sin(x)
   def self.cos(x) -> Float = diamond_math_cos(x)
   def self.tan(x) -> Float = diamond_math_tan(x)
   def self.exp(x) -> Float = diamond_math_exp(x)
   def self.log(x) -> Float = diamond_math_log(x)
-  def self.log2(x) -> Float = diamond_math_log(x) / diamond_math_log(2.0)
-  def self.log10(x) -> Float = diamond_math_log(x) / diamond_math_log(10.0)
+  def self.log2(x) -> Float = diamond_math_exact_log(diamond_math_log(x) / diamond_math_log(2.0), 2.0, x)
+  def self.log10(x) -> Float = diamond_math_exact_log(diamond_math_log(x) / diamond_math_log(10.0), 10.0, x)
   def self.tanh(x) -> Float = diamond_math_tanh(x)
   def self.hypot(x, y) -> Float = diamond_math_sqrt(x * x + y * y)
   def self.pi() -> Float = 3.141592653589793

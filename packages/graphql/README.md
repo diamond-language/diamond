@@ -104,6 +104,8 @@ Types are plain values built with chained calls; there are no class-body macros.
 
 `GraphQL::ScalarType.string()`, `.int()`, `.float()`, `.boolean()`, `.id()`. Each call returns a new instance.
 
+The built-in scalars are strict. On input, a String takes a String, an Int an Int, a Float an Int or Float, a Boolean true or false and an ID a String or Int; anything else (a list or object where a number is expected, say) is a request error. On output, a resolver may return a String, Int, Float, Boolean or Symbol; a list, a Hash or a model object for a scalar field is an error on that field rather than a serialised object.
+
 `type.non_null()` wraps a type as `T!`. `type.list()` or `GraphQL::ListType.of(type)` wraps it as `[T]`. They compose, so `[T!]!` is `GraphQL::ListType.of(t.non_null()).non_null()`.
 
 A custom scalar is `GraphQL::ScalarType.new(name, coerce_input, coerce_result)`. Both are required `Callable[1]`s. `coerce_input` turns a literal or variable into the value resolvers receive, and `coerce_result` turns a resolver's return value into the value placed in the response.
@@ -172,7 +174,7 @@ The `context` Hash is yours. Whatever you pass is handed to every resolver, whic
 
 ### Errors
 
-Raise `GraphQL::ExecutionError.new("message")` from a resolver to return a specific, client-visible message for that field. Any other `StandardError` is reported as a generic internal error, so an implementation detail doesn't leak to the client.
+Raise `GraphQL::ExecutionError.new("message")` from a resolver to return a specific, client-visible message for that field. Any other `StandardError` is reported as a generic internal error, so an implementation detail doesn't leak to the client. The real message is written to stderr; `schema.mask_errors(false)` sends it to the client instead, for development.
 
 ```ruby
 def sign_in(object, args, context)

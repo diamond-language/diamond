@@ -581,4 +581,84 @@ wait "$reuse_pid" 2>/dev/null || true
 [[ "$reuse_response" == $'resp0\nresp1\n{}' ]]
 rm -f "$reuse_out"
 
-echo "16 http package tests passed"
+# Client: a redirect to another origin drops bearer_token/basic_auth (they live in options, so the
+# Authorization-header strip alone did not), a same-origin redirect keeps them, and a redirect loop
+# stops at max_redirects for both http_request and HttpSession.
+origin_a_port=19330
+origin_b_port=19331
+origin_a_out="$(mktemp)"
+origin_b_out="$(mktemp)"
+origin_a_src="$(cat <<'HTTPEOF'
+require "./lib/http"
+def run()
+  def handler(request)
+    path = request["path"]
+    auth = request["headers"]["authorization"]
+    if path == "/cross"
+      [302, {"Location": "http://127.0.0.1:ORIGIN_B/landing"}, ""]
+    elsif path == "/same"
+      [302, {"Location": "/same-landing"}, ""]
+    elsif path == "/same-landing"
+      [200, {}, "a-saw:#{auth}"]
+    elsif path == "/loop"
+      [302, {"Location": "/loop"}, ""]
+    else
+      [404, {}, "nf"]
+    end
+  end
+  http_serve(ORIGIN_A, handler)
+end
+run()
+HTTPEOF
+)"
+origin_b_src="$(cat <<'HTTPEOF'
+require "./lib/http"
+def run()
+  def handler(request)
+    [200, {}, "b-saw:#{request["headers"]["authorization"]}"]
+  end
+  http_serve(ORIGIN_B, handler)
+end
+run()
+HTTPEOF
+)"
+origin_a_src="${origin_a_src//ORIGIN_B/$origin_b_port}"
+origin_a_src="${origin_a_src//ORIGIN_A/$origin_a_port}"
+origin_b_src="${origin_b_src//ORIGIN_B/$origin_b_port}"
+timeout 20 "$diamond" -e "$origin_a_src" >"$origin_a_out" 2>&1 &
+origin_a_pid=$!
+timeout 20 "$diamond" -e "$origin_b_src" >"$origin_b_out" 2>&1 &
+origin_b_pid=$!
+wait_for_port "$origin_a_port"
+wait_for_port "$origin_b_port"
+{ exec 3<&- 3>&-; } 2>/dev/null || true
+origin_response="$(timeout 15 "$diamond" -e "$(cat <<CLIENTEOF
+require "./lib/http"
+options = {"follow_redirects": true, "bearer_token": "secret"}
+puts(http_get("http://127.0.0.1:$origin_a_port/cross", {}, options)["body"])
+puts(http_get("http://127.0.0.1:$origin_a_port/same", {}, options)["body"])
+session = HttpSession.new(options)
+puts(session.get("http://127.0.0.1:$origin_a_port/cross")["body"])
+session.close()
+begin
+  http_get("http://127.0.0.1:$origin_a_port/loop", {}, {"follow_redirects": true, "max_redirects": 3})
+  puts("plain: no error")
+rescue e: IOError
+  puts("plain: IOError")
+end
+loop_session = HttpSession.new({"follow_redirects": true, "max_redirects": 3})
+begin
+  loop_session.get("http://127.0.0.1:$origin_a_port/loop")
+  puts("session: no error")
+rescue e: IOError
+  puts("session: IOError")
+end
+loop_session.close()
+CLIENTEOF
+)" 2>&1)"
+kill "$origin_a_pid" "$origin_b_pid" 2>/dev/null || true
+wait "$origin_a_pid" "$origin_b_pid" 2>/dev/null || true
+[[ "$origin_response" == $'b-saw:nil\na-saw:Bearer secret\nb-saw:nil\nplain: IOError\nsession: IOError\n{}' ]]
+rm -f "$origin_a_out" "$origin_b_out"
+
+echo "17 http package tests passed"

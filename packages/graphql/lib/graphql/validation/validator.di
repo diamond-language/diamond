@@ -187,6 +187,27 @@ module GraphQL
         end
         if resolved < spreads.length()
           stuck = spreads.keys().select() do |name| waiting[name] > 0 end
+          # Fragments that only lead into a cycle are not on it: peel those nothing stuck spreads, repeatedly.
+          users = {}
+          stuck.each() do |name| users[name] = 0 end
+          stuck.each() do |name|
+            spreads[name].each() do |other|
+              if users.has_key?(other) then users[other] += 1 end
+            end
+          end
+          peel = stuck.select() do |name| users[name] == 0 end
+          peeled = {}
+          while !peel.empty?()
+            name = peel.pop()
+            peeled[name] = true
+            spreads[name].each() do |other|
+              if users.has_key?(other) && !peeled.has_key?(other)
+                users[other] -= 1
+                if users[other] == 0 then peel.push(other) end
+              end
+            end
+          end
+          stuck = stuck.select() do |name| !peeled.has_key?(name) end
           errors.push("fragments cannot spread themselves, directly or through others (cycle through #{stuck.map() do |name| "\"#{name}\"" end.join(", ")})")
         end
       end

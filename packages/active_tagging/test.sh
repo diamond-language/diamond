@@ -136,4 +136,15 @@ ActiveTagging::Tag.where({"name": "shared-tag"}).count(db)
 ')"
 assert_eq "$actual" "1"
 
+# --- a name with a second line is rejected, not matched line by line ---
+actual="$(run_case '
+begin
+  ActiveTagging::Tag.new({"name": "ok\nNot Normalized!"}).save(db)
+  "no error"
+rescue error: ActiveRecord::ValidationError
+  "#{error.errors()}"
+end
+')"
+assert_eq "$actual" "[name is invalid]"
+
 echo "$count active_tagging tests passed"

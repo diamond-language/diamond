@@ -183,6 +183,21 @@ static bool parse_hex4(Parser *parser,unsigned *out) {
  * (including surrogate pairs, since LSP text sent by real editors can
  * contain any Unicode character in string values) need this rather than
  * passing the raw 16-bit units through. */
+static bool append_bytes(char **chars,size_t *length,size_t *capacity,
+                         const unsigned char *bytes,size_t count) {
+    if(*length+count+1>*capacity) {
+        size_t grown_capacity=*capacity==0?32:*capacity;
+        while(grown_capacity<*length+count+1)grown_capacity*=2;
+        char *grown=realloc(*chars,grown_capacity);
+        if(grown==nullptr)return false;
+        *chars=grown;
+        *capacity=grown_capacity;
+    }
+    memcpy(*chars+*length,bytes,count);
+    *length+=count;
+    return true;
+}
+
 static bool append_utf8(char **chars,size_t *length,size_t *capacity,unsigned code_point) {
     unsigned char bytes[4];
     size_t count;
@@ -205,17 +220,7 @@ static bool append_utf8(char **chars,size_t *length,size_t *capacity,unsigned co
         bytes[3]=(unsigned char)(0x80|(code_point&0x3F));
         count=4;
     }
-    if(*length+count+1>*capacity) {
-        size_t grown_capacity=*capacity==0?32:*capacity;
-        while(grown_capacity<*length+count+1)grown_capacity*=2;
-        char *grown=realloc(*chars,grown_capacity);
-        if(grown==nullptr)return false;
-        *chars=grown;
-        *capacity=grown_capacity;
-    }
-    memcpy(*chars+*length,bytes,count);
-    *length+=count;
-    return true;
+    return append_bytes(chars,length,capacity,bytes,count);
 }
 
 static JsonValue *parse_string(Parser *parser) {
@@ -284,7 +289,10 @@ static JsonValue *parse_string(Parser *parser) {
             }
             continue;
         }
-        if(!append_utf8(&chars,&length,&capacity,(unsigned char)c)) {
+        /* A byte of the document, already UTF-8: copy it through. Treating it as a code point would encode
+         * every byte of a multi-byte character a second time. */
+        const unsigned char raw=(unsigned char)c;
+        if(!append_bytes(&chars,&length,&capacity,&raw,1)) {
             parser->error="out of memory";
             free(chars);
             return nullptr;

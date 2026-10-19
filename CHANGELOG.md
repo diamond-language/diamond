@@ -13,11 +13,52 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `all?` and `reject` treated a block result of `nil` as true; only `false` and `nil` are falsy, so `[1].all? { nil }` is false and
+  `[1, 2].reject { nil }` keeps both.
+- `each_slice(0)` looped forever and `digits(1)` never ended; both raise `ArgumentError` (`digits` for any radix below 2).
+- Int `divmod` went through a Float quotient and was wrong past 2**53 (`Int.max.divmod(10)`); it uses integer arithmetic and raises on a
+  zero divisor. `Math.log10(1000)` and `Math.log2` return whole numbers for exact powers, and `Math.cbrt` handles negatives and exact cubes.
+- Language server: a non-ASCII character sent as raw UTF-8 in a JSON string (the usual way editors send document text) was encoded a
+  second time, so every multi-byte character reached the analysis as garbage. Bytes are copied through now.
+- `obj.public_send(name)` with a method name longer than the maximum string length raised no error and overflowed a heap buffer; it
+  raises `TypeError` now.
+- `File.copy(path, nil)` crashed the VM; it raises `TypeError`.
+- `Tensor#softmax_backward`, `gelu_backward`, `layernorm_forward` and `layernorm_backward` read past the end of a Tensor whose shape did
+  not match the receiver's; they raise `TypeError` on a mismatch.
+- `ProgramBuilder`: a method called after a `run` that handed the program to the VM (it returned an Instance) crashed; it raises. A
+  `run` whose result could not be copied after the program was adopted no longer leaves the program owned twice.
+- A VM torn down while holding `Process.spawn` streams or handles now closes the pipes and reaps an exited child, as the GC sweep does.
+- Format validators that used `^...$` accepted a value whose second line matched (`"abc\nanything"`), because the engine anchors per line.
+  They use `\A...\z` now: `active_auth` email and username, `active_tagging` tag names, the Pheint email and handle, and the
+  registry seed, backup, upgrade and monitor tools.
+- graphql: an unexpected exception from a resolver sent its raw message to the client (SQL, file paths); the README already said it became a generic
+  internal error. It is `Internal server error` now, the cause goes to stderr, and `schema.mask_errors(false)` restores the message for development.
+- graphql: the built-in scalars did no type checking. A client could pass a list or object where an `Int` or `String` was expected, and a resolver
+  returning a Hash or model for a scalar field serialised the whole object (including a password digest). Input must be the scalar's own kind
+  (a request error otherwise) and output must be a String, Int, Float, Boolean or Symbol (an error on that field otherwise).
+- active_auth: `to_json` on an `Account`, `Session`, `PasswordResetToken`, `EmailVerificationToken` or `BackupCode` included the password digest, the
+  session token and CSRF token, the reset and verification tokens, and the backup-code digest (the default JSON was the persisted attributes). Each
+  model has an `as_json` without its secret columns. `Session.issue_cookie` sets `Secure` under `DIAMOND_ENV=production` and takes
+  `secure:` to override either way.
+- network_safety: the SSRF guard only recognised canonical dotted quads, so `127.1`, `2130706433`, `0x7f.0.0.1`, `0177.0.0.1`, a trailing-dot
+  `127.0.0.1.` or `localhost.`, and `*.localhost` names passed as ordinary hostnames. Numeric spellings that are not a canonical address
+  are rejected, trailing dots are ignored when checking, and `.localhost` counts as local.
+- http client: a redirect to another origin (another host or port, or an https to http downgrade) still sent `bearer_token` and `basic_auth`,
+  because they live in the options that every hop reuses; they are dropped for the rest of the chain. `HttpSession` followed redirects with
+  no limit; it honours `max_redirects` (default 5) like `http_request`.
+- Pheint: `Account.email` was readable by anyone through a game's `owner`, so an anonymous `{ games { owner { email } } }` listed every owner's
+  address. It is `null` for everyone but the signed-in account now, and the field is nullable.
+- Pheint: `setup_db.di` dropped every table and created the demo account (published password) even with `DIAMOND_ENV=production`. It
+  refuses without `PHEINT_CONFIRM_RESET=yes` there and never seeds the demo account.
 - `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
   opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
   `TypeError` instead of silently ignoring the path; a failed pipe setup now stops and reaps the child and closes its pipes.
 - `File.size`, `mode`, `file?`, `symlink?`, `exist?`, `directory?` and `Dir.mkdir`, `Dir.delete`, `Dir.sync` raise `TypeError` for a path
   with an embedded NUL byte instead of acting on the part before it.
+- `__dir__` and `__FILE__` inside a string interpolation are substituted correctly when the interpolation holds a string containing a
+  brace (`"#{h["}"]} ... __dir__"` used to rewrite the literal text after it).
+- The registry `backup.di` removes a partial destination on any failure, and a failed cleanup no longer replaces the original error.
+- GraphQL: a fragment-cycle validation error names only the fragments that are on the cycle, not ones that merely spread into it.
 - A request that drove a handler into a call-stack overflow (`SystemStackError`, which is not a `StandardError`) killed the whole
   Gremlin worker; it now answers `500 Internal Server Error` like any other handler failure. Found with a deeply nested GraphQL
   query (a 30-level selection crashed a Pheint worker).
@@ -30,6 +71,12 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
+- `active_tagging` 0.1.1: the anchored tag-name validator above.
+- `graphql` 0.2.0: error masking, strict scalars and the fragment-cycle message above.
+- `network_safety` 0.1.3: the guard fixes above.
+- `http` 0.1.3: the redirect fixes above.
+- `arel` 0.34.6: the bind-order fix above.
 - `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
 - `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
 - `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.

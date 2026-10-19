@@ -65,6 +65,11 @@ The game domain is:
 
 The seed creates `demo@pheint.dia` / `@demo`, two games (`Asteroid Run` and
 `Cipher Sprint`), leaderboards for both, and an initial Asteroid Run score.
+`setup_db.di` drops and recreates every table. With `DIAMOND_ENV=production` it refuses to run unless `PHEINT_CONFIRM_RESET=yes` is set,
+and it never creates the demo account there.
+
+An account's `email` is visible only to that account (it is `null` for anyone else, including on a game's `owner`).
+
 The development-only demo password is `diamond123`; test uses the same fixture
 at a reduced bcrypt cost, while non-test seeds use cost 12.
 
@@ -152,7 +157,7 @@ query Games {
     id
     title
     description
-    owner { id email player { handle } }
+    owner { id player { handle } }
     leaderboards {
       id
       name

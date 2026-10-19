@@ -238,6 +238,9 @@ if games_response["errors"] != nil || games_response["data"]["games"].length() !
   raise "GraphQL games query failed"
 end
 graphql_game = games_response["data"]["games"][0]
+if graphql_game["owner"]["email"] != nil
+  raise "an anonymous games query read the owner's email"
+end
 if graphql_game["owner"]["player"]["handle"] != "demo" ||
    graphql_game["leaderboards"][0]["scores"][1]["value"] != 128400 ||
    graphql_game["leaderboards"][0]["scores"][1]["player"]["handle"] != "demo"

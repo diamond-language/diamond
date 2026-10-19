@@ -129,7 +129,7 @@ while index < args.length()
     index += 1
     usage("--archive-sha256 needs a value") if index >= args.length()
     archive = args[index]
-    unless archive.length() == 64 && Regexp.new("^[0-9a-f]{64}$").match?(archive)
+    unless archive.length() == 64 && Regexp.new("\\A[0-9a-f]{64}\\z").match?(archive)
       usage("archive digest must be 64 lowercase hex characters")
     end
   elsif base == nil && !arg.start_with?("--")

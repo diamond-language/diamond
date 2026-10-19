@@ -86,7 +86,7 @@ def deployed_revision(host)
     fail_with("cannot read the deployed revision from #{host}: #{target.stderr().strip()}")
   end
   revision = File.basename(target.stdout().strip())
-  unless Regexp.new("^[0-9a-f]{40}$").match?(revision)
+  unless Regexp.new("\\A[0-9a-f]{40}\\z").match?(revision)
     fail_with("unexpected deployed revision #{revision.inspect()}")
   end
   revision

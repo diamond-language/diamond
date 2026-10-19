@@ -155,6 +155,10 @@ DiamondVmStatus file_sync_helper(DiamondVm *vm,const DiamondString *path) {
  * the partial destination. */
 DiamondVmStatus file_copy_helper(DiamondVm *vm,const DiamondString *from,
                                  const DiamondString *to) {
+    if(from==nullptr||to==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"File.copy expects two String paths");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     if(memchr(from->chars,'\0',from->length)!=nullptr||
        memchr(to->chars,'\0',to->length)!=nullptr||from->length==0||to->length==0) {
         snprintf(vm->error,sizeof vm->error,"File.copy paths must be nonempty and contain no NUL");

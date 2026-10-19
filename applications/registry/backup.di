@@ -6,7 +6,7 @@
 # The destination is created exclusively: an existing one is never changed or removed. A failed
 # run removes what it created.
 
-BLOB_PATTERN = "^[0-9a-f]{64}$"
+BLOB_PATTERN = "\\A[0-9a-f]{64}\\z"
 
 def digest(path)
   Digest.sha256(File.read(path))
@@ -83,6 +83,7 @@ def transfer(action, source, target)
   target = File.expand_path(target)
   parent = File.dirname(target)
   Dir.mkdir(target, 0o700)
+  finished = false
   begin
     Dir.mkdir(target + "/blobs", 0o700)
     blobs = nil
@@ -129,9 +130,16 @@ def transfer(action, source, target)
     end
     Dir.sync(target)
     Dir.sync(parent)
-  rescue e: StandardError
-    remove_tree(target)
-    raise e
+    finished = true
+  ensure
+    # Whatever ended the run, remove what it created; a failed cleanup must not replace the original error.
+    unless finished
+      begin
+        remove_tree(target)
+      rescue cleanup_error: StandardError
+        warn("cleanup of #{target} failed: #{cleanup_error.message()}")
+      end
+    end
   end
 end
 

@@ -18,7 +18,7 @@ def facet_output(facet, args)
 end
 
 def valid_name?(name)
-  Regexp.new("^[a-z][a-z0-9_]*$").match?(name)
+  Regexp.new("\\A[a-z][a-z0-9_]*\\z").match?(name)
 end
 
 def visit_cut(name, entries, visiting, visited, ordered)
