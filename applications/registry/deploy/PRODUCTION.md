@@ -121,6 +121,8 @@ each with its own revoked credential and a passing verification. `mjolnir` 0.2.1
 `3f845a09c545c320840703faa38c3e7b19863a57d6b00d2b2a950c5c6af21987`, credential 23) followed the same way, each credential revoked and each followed by a passing verification. `graphql` 0.1.7 (parser nesting cap, fragments on introspection types, fragment-cycle validation, sha256
 `e8109c37cbbec5ecf5eb31ec2358b47bbfea60a8266bf6ab501bbc09bd770933`, credential 24) and `gremlin` 0.4.5 (a handler's stack overflow answers 500, sha256
 `536c6072f05b1e41aefc95dc6f921d391f55abd5ca7e546d675f6d549e2ee3bf`, credential 25) followed the same way on 2026-10-18, both credentials revoked, with a passing verification of all 18 launch cuts.
+`gremlin` 0.4.6 (the `host` argument that binds a listener to one address, sha256
+`5e40bd79a0ecd124f7022a686bc2c6bfc6c711d9398562256dbfa889c71092fc`, credential 26) followed the same way on 2026-10-18, revoked, with a passing verification of all 18 launch cuts.
 
 ## Host disk and logs
 
