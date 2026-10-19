@@ -900,7 +900,7 @@ test-deploy-registry:
 test-monitor: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/monitor_test.sh
 
-# guestbook, project_board, chat and library against the cuts in packages/ (the rest of the examples are test-examples).
+# guestbook, project_board, chat, library and bookmarks against the cuts in packages/ (the rest of the examples are test-examples).
 test-example-apps: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/example_apps_test.sh
 
