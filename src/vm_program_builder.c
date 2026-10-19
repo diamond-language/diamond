@@ -146,6 +146,11 @@ static void program_builder_recompute_shapes(DiamondClass *class) {
 DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
         DiamondProgramBuilder *builder, DiamondValue *result) {
     DiamondProgram *built=builder->program;
+    if(built==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder#run: the program was handed to the VM by an earlier run");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
     /* Mirrors diamond_compile's own post-compile-pass finalization
      * (src/compiler.c, end of run_compile_pass's caller) -- every
      * declare_interface/declare_interface_method call earlier left this
@@ -198,6 +203,8 @@ DiamondVmStatus program_builder_run_helper(DiamondVm *vm,
     DiamondValue copied_result=DIAMOND_NIL;
     const DiamondChunk *adopted_owner=nullptr;
     if(!copy_value_into_vm(vm,run_result,built,nullptr,nullptr,&adopted_owner,&copied_result)) {
+        /* A partial copy may already have adopted the program into `vm`; it owns it then. */
+        if(adopted_owner!=nullptr)builder->program=nullptr;
         diamond_vm_free(run_vm);
         free(run_vm);
         snprintf(vm->error,sizeof vm->error,"ProgramBuilder#%s",
@@ -230,6 +237,11 @@ DiamondVmStatus program_builder_invoke_helper(DiamondVm *vm,
         DiamondValue *registers, uint16_t base, uint8_t argc, size_t depth,
         DiamondValue *result) {
     DiamondProgram *built=builder->program;
+    if(built==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "ProgramBuilder: the program was handed to the VM by an earlier run");
+        return DIAMOND_VM_PROGRAM_ERROR;
+    }
     const bool declare_function_method=
         method_name->length==sizeof("declare_function")-1&&
         memcmp(method_name->chars,"declare_function",

@@ -13,6 +13,14 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- `obj.public_send(name)` with a method name longer than the maximum string length raised no error and overflowed a heap buffer; it
+  raises `TypeError` now.
+- `File.copy(path, nil)` crashed the VM; it raises `TypeError`.
+- `Tensor#softmax_backward`, `gelu_backward`, `layernorm_forward` and `layernorm_backward` read past the end of a Tensor whose shape did
+  not match the receiver's; they raise `TypeError` on a mismatch.
+- `ProgramBuilder`: a method called after a `run` that handed the program to the VM (it returned an Instance) crashed; it raises. A
+  `run` whose result could not be copied after the program was adopted no longer leaves the program owned twice.
+- A VM torn down while holding `Process.spawn` streams or handles now closes the pipes and reaps an exited child, as the GC sweep does.
 - `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
   opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
   `TypeError` instead of silently ignoring the path; a failed pipe setup now stops and reaps the child and closes its pipes.

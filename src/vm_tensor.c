@@ -524,9 +524,16 @@ static void tensor_add_columns_inplace_helper(DiamondTensor *dest,size_t start,
  * `inv_std`, exactly the two things the standard LayerNorm backward
  * formula needs and that recomputing from scratch during backward
  * would otherwise cost a second full pass over x for. */
+static DiamondVmStatus tensor_shape_error(DiamondVm *vm,const char *method,const char *what) {
+    snprintf(vm->error,sizeof vm->error,"Tensor#%s shape mismatch: %s",method,what);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 static DiamondVmStatus tensor_softmax_backward_helper(DiamondVm *vm,
         const DiamondTensor *softmax_output,const DiamondTensor *grad_output,
         DiamondValue *out) {
+    if(grad_output->rows!=softmax_output->rows||grad_output->cols!=softmax_output->cols)
+        return tensor_shape_error(vm,"softmax_backward","the gradient must match the softmax output");
     DiamondTensor *result=allocate_tensor(vm,softmax_output->rows,softmax_output->cols);
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out=DIAMOND_OBJECT(result);
@@ -544,6 +551,8 @@ static DiamondVmStatus tensor_softmax_backward_helper(DiamondVm *vm,
 
 static DiamondVmStatus tensor_gelu_backward_helper(DiamondVm *vm,
         const DiamondTensor *x,const DiamondTensor *grad_output,DiamondValue *out) {
+    if(grad_output->rows!=x->rows||grad_output->cols!=x->cols)
+        return tensor_shape_error(vm,"gelu_backward","the gradient must match the input");
     DiamondTensor *result=allocate_tensor(vm,x->rows,x->cols);
     if(result==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out=DIAMOND_OBJECT(result);
@@ -568,6 +577,8 @@ static DiamondVmStatus tensor_gelu_backward_helper(DiamondVm *vm,
 static DiamondVmStatus tensor_layernorm_forward_helper(DiamondVm *vm,const DiamondTensor *x,
         const DiamondTensor *gamma,const DiamondTensor *beta,double eps,DiamondValue *out) {
     const size_t rows=x->rows,cols=x->cols;
+    if(gamma->rows*gamma->cols!=cols||beta->rows*beta->cols!=cols)
+        return tensor_shape_error(vm,"layernorm_forward","gamma and beta need one value per column");
     DiamondArray *results=allocate_array(vm,nullptr,0);
     if(results==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out=DIAMOND_OBJECT(results);
@@ -614,6 +625,12 @@ static DiamondVmStatus tensor_layernorm_backward_helper(DiamondVm *vm,
         const DiamondTensor *gamma,const DiamondTensor *grad_output,
         const DiamondTensor *normalized,const DiamondTensor *inv_std,DiamondValue *out) {
     const size_t rows=normalized->rows,cols=normalized->cols;
+    if(gamma->rows*gamma->cols!=cols)
+        return tensor_shape_error(vm,"layernorm_backward","gamma needs one value per column");
+    if(grad_output->rows!=rows||grad_output->cols!=cols)
+        return tensor_shape_error(vm,"layernorm_backward","the gradient must match the normalized input");
+    if(inv_std->rows*inv_std->cols!=rows)
+        return tensor_shape_error(vm,"layernorm_backward","inv_std needs one value per row");
     DiamondArray *results=allocate_array(vm,nullptr,0);
     if(results==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     *out=DIAMOND_OBJECT(results);

@@ -1703,6 +1703,17 @@ static void free_object_list(const DiamondVm *vm,DiamondObject *object) {
             if(tls_handle->fd>=0)close(tls_handle->fd);
             if(tls_handle->received_session!=nullptr)
                 SSL_SESSION_free(tls_handle->received_session);
+        } else if(object->kind==DIAMOND_OBJECT_PROCESS_STREAM) {
+            const int fd=((DiamondProcessStream *)object)->fd;
+            if(fd>=0)close(fd);
+        } else if(object->kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
+            /* Same non-blocking reap as the GC sweep: an exited child is collected, a running one is left. */
+            DiamondProcessHandle *handle=(DiamondProcessHandle *)object;
+            if(!handle->reaped) {
+                pid_t reap_result=0;
+                do {reap_result=waitpid(handle->pid,nullptr,WNOHANG);}
+                while(reap_result<0&&errno==EINTR);
+            }
         } else if(object->kind==DIAMOND_OBJECT_REGEXP) {
             reginold_regex_free(((DiamondRegexp *)object)->handle);
             free(((DiamondRegexp *)object)->source);
@@ -10660,6 +10671,11 @@ DiamondVmStatus public_send_helper(DiamondVm *vm,
     const char *name_chars=symbol_name?
         ((const DiamondSymbol *)name_value.as.object)->chars:
         ((const DiamondString *)name_value.as.object)->chars;
+    if(name_length>DIAMOND_MAX_STRING_LENGTH) {
+        snprintf(vm->error,sizeof vm->error,
+            "public_send method name is too long (maximum %d)",DIAMOND_MAX_STRING_LENGTH);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
     DiamondArray *forwarded=allocate_array(vm,arguments+1,argument_count-1);
     if(forwarded==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
     const size_t protected_count=vm->gc_protected_count;

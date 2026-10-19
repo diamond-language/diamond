@@ -1,0 +1,58 @@
+# A ProgramBuilder whose program was adopted by a run that returned Instances raises on reuse instead of crashing.
+b = ProgramBuilder.new()
+class_index = b.declare_class("Box", -1)
+
+fn = b.declare_function("get", 1, 1)
+k = b.add_constant(fn, 7)
+b.emit_byte(fn, 0)
+b.emit_byte(fn, 0)
+b.emit_byte(fn, 1)
+b.emit_byte(fn, 0)
+b.emit_byte(fn, k)
+b.emit_byte(fn, 57)
+b.emit_byte(fn, 0)
+b.emit_byte(fn, 1)
+b.set_register_count(fn, 2)
+b.declare_method(class_index, "get", fn, 0, 0, false)
+
+# Entry: build two Box instances into r0/r1, then wrap them into an
+# array literal in r2 (ARRAY dest, base, count) and return it.
+b.emit_byte(-1, 39)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, class_index)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 2)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 39)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 1)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, class_index)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 2)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 51)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 2)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 2)
+b.emit_byte(-1, 57)
+b.emit_byte(-1, 0)
+b.emit_byte(-1, 2)
+b.set_register_count(-1, 3)
+
+boxes = b.run()
+total = boxes[0].get() + boxes[1].get()
+
+# The run handed the program to the VM, so the builder no longer has one to run or change.
+outcome = "no error"
+begin
+  b.run()
+rescue e: StandardError
+  outcome = "raised"
+end
+[total, outcome]
