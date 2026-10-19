@@ -119,4 +119,45 @@ advanced_from_now = next_run_at > Time.now().to_i() + 100
 ')"
 assert_eq "$actual" "true true true"
 
+# --- a job whose payload is not JSON fails like any other failing job; it does not end the worker ---
+actual="$(run_case '
+id = Jobs.enqueue(db, kind: "noop", args: {}, max_attempts: 2)
+db.execute("UPDATE jobs SET payload = ? WHERE id = ?", ["not json {", id])
+def noop_handler(args)
+end
+handlers = {"noop": noop_handler}
+first = Jobs::Worker.run_once(db, handlers: handlers)
+row = db.query("SELECT status, attempts FROM jobs WHERE id = ?", [id])[0]
+"#{first} #{row["status"]} #{row["attempts"]}"
+')"
+assert_eq "$actual" "true pending 1"
+
+# --- a job left running by a dead worker is retried once its lock expires, and fails when its attempts run out ---
+actual="$(run_case '
+now = Time.now().to_i()
+fresh = Jobs.enqueue(db, kind: "noop", args: {})
+stale = Jobs.enqueue(db, kind: "noop", args: {})
+last = Jobs.enqueue(db, kind: "noop", args: {}, max_attempts: 1)
+db.execute("UPDATE jobs SET status = ?, locked_at = ? WHERE id = ?", ["running", now - 10, fresh])
+db.execute("UPDATE jobs SET status = ?, locked_at = ? WHERE id = ?", ["running", now - 7200, stale])
+db.execute("UPDATE jobs SET status = ?, locked_at = ? WHERE id = ?", ["running", now - 7200, last])
+reaped = Jobs::Worker.reap_stale!(db, 3600, now)
+status_of = db.query("SELECT id, status, attempts FROM jobs ORDER BY id")
+"#{reaped} #{status_of.map() do |r| "#{r["status"]}/#{r["attempts"]}" end.join(",")}"
+')"
+assert_eq "$actual" "2 running/0,pending/1,failed/1"
+
+# --- a recurring job is claimed by exactly one of several workers that read it as due ---
+actual="$(run_case '
+Jobs.schedule_recurring(db, name: "heartbeat", kind: "heartbeat", every_seconds: 60)
+now = Time.now().to_i() + 61
+due = db.query("SELECT * FROM recurring_jobs WHERE next_run_at <= ?", [now])
+first_worker = Jobs::Worker.claim_recurring!(db, due[0], now)
+second_worker = Jobs::Worker.claim_recurring!(db, due[0], now)
+Jobs::Worker.tick_recurring(db, now)
+enqueued = db.query("SELECT COUNT(*) AS c FROM jobs")[0]["c"]
+"#{first_worker} #{second_worker} #{enqueued}"
+')"
+assert_eq "$actual" "true false 0"
+
 echo "$count jobs tests passed"

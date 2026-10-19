@@ -13,6 +13,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- jobs: a job whose payload was not valid JSON ended `run_forever` and stayed `running` forever; it fails like a raising handler now. A job left
+  `running` by a crashed worker is returned to `pending` (or failed) once its lock is older than `lock_timeout_seconds` (default 3600). With several
+  workers every one enqueued a due recurring job; advancing the schedule is now an atomic claim, so it fires once.
 - redis: an error element inside an Array or Map reply (a failed command in MULTI/EXEC) raised after reading only part of the reply, leaving the rest
   on the connection to be taken as the answers to later commands. The whole reply is read first and the first error raised.
 - websocket: a message split into fragments was only limited per frame, so endless non-final fragments grew the buffer without bound; the total is
@@ -79,6 +82,7 @@ authoritative fine-grained record.
 
 ### Packages
 
+- `jobs` 0.1.3: the worker fixes above.
 - `redis` 0.1.3: the reply-alignment fix above.
 - `websocket` 0.1.3: the message size cap and control-frame checks above.
 - `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
