@@ -314,12 +314,14 @@ DiamondVmStatus cancellable_wait_helper(DiamondVm *vm,DiamondChannel *target,
         registration->link.next=channel->waiters;
         channel->waiters=&registration->link;
         if(select_drained!=nullptr)
-            ready=ready||(writable?channel->count<channel->capacity&&!channel->closed:
+            ready=ready||(writable?channel->count<channel->capacity&&!channel->closed&&
+                    (!channel->rendezvous||channel->receivers_waiting>0):
                     channel->count>0) ||
                 (channel->closed&&!select_drained[i-target_count]);
         else
             ready=ready||channel->closed ||
-                (i<target_count&&(writable?channel->count<channel->capacity:channel->count>0));
+                (i<target_count&&(writable?channel->count<channel->capacity&&
+                    (!channel->rendezvous||channel->receivers_waiting>0):channel->count>0));
         pthread_mutex_unlock(&channel->lock);
     }
     /* Trapped signals are dispatched at VM instruction boundaries. Only
@@ -11852,7 +11854,7 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
     if(size_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         pthread_mutex_lock(&target_channel->lock);
-        const size_t current_size=target_channel->count;
+        const size_t current_size=target_channel->rendezvous?0:target_channel->count;
         pthread_mutex_unlock(&target_channel->lock);
         registers[dest]=DIAMOND_INT((int64_t)current_size);return DIAMOND_VM_OK;
     }
@@ -11860,7 +11862,9 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
         const DiamondValue value_to_send=registers[base];
         pthread_mutex_lock(&target_channel->lock);
-        while(target_channel->count==target_channel->capacity&&
+        while((target_channel->count==target_channel->capacity||
+               (try_send_method&&target_channel->rendezvous&&
+                target_channel->receivers_waiting==0))&&
               !target_channel->closed) {
             if(try_send_method) {
                 pthread_mutex_unlock(&target_channel->lock);
@@ -11903,10 +11907,31 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
             return DIAMOND_VM_TYPE_ERROR;
         }
         target_channel->queue[target_channel->count++]=copied;
+        const uint64_t sequence=++target_channel->sent;
         target_channel->private_vm->extra_root_count=
             target_channel->count;
         notify_channel_waiters(target_channel);
         pthread_cond_signal(&target_channel->not_empty);
+        /* A handoff is complete only when a receiver has taken the value. The
+         * single slot means the value is still the queue's only entry until
+         * then, so giving up (closed, cancelled, out of budget) withdraws it. */
+        DiamondVmStatus handoff_status=DIAMOND_VM_OK;
+        while(target_channel->rendezvous&&!try_send_method&&
+              target_channel->taken<sequence&&!target_channel->closed&&
+              handoff_status==DIAMOND_VM_OK)
+            handoff_status=channel_wait_bounded(vm,
+                &target_channel->not_full,&target_channel->lock);
+        if(target_channel->rendezvous&&!try_send_method&&target_channel->taken<sequence) {
+            target_channel->count=0;
+            target_channel->sent--;
+            target_channel->private_vm->extra_root_count=0;
+            pthread_cond_broadcast(&target_channel->not_full);
+            notify_channel_waiters(target_channel);
+            pthread_mutex_unlock(&target_channel->lock);
+            if(handoff_status!=DIAMOND_VM_OK)return handoff_status;
+            snprintf(vm->error,sizeof vm->error,"channel is closed");
+            return DIAMOND_VM_IO_ERROR;
+        }
         pthread_mutex_unlock(&target_channel->lock);
         registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
@@ -11923,8 +11948,11 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
                 "channel receive would block");
             return DIAMOND_VM_WOULD_BLOCK;
         }
+        target_channel->receivers_waiting++;
+        if(target_channel->rendezvous)notify_channel_waiters(target_channel);
         const DiamondVmStatus wait_status=channel_wait_bounded(vm,
             &target_channel->not_empty,&target_channel->lock);
+        target_channel->receivers_waiting--;
         if(wait_status!=DIAMOND_VM_OK) {
             pthread_mutex_unlock(&target_channel->lock);
             return wait_status;
@@ -11960,10 +11988,12 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
     memmove(target_channel->queue,target_channel->queue+1,
         (target_channel->count-1)*sizeof *target_channel->queue);
     target_channel->count--;
+    target_channel->taken++;
     target_channel->private_vm->extra_root_count=
         target_channel->count;
     notify_channel_waiters(target_channel);
-    pthread_cond_signal(&target_channel->not_full);
+    if(target_channel->rendezvous)pthread_cond_broadcast(&target_channel->not_full);
+    else pthread_cond_signal(&target_channel->not_full);
     pthread_mutex_unlock(&target_channel->lock);
     registers[dest]=copied;return DIAMOND_VM_OK;
 }

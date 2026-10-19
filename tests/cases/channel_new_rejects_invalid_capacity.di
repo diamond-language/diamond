@@ -1,1 +1,1 @@
-Channel.new(0)
+Channel.new(-1)

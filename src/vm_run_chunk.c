@@ -5065,14 +5065,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t dest=0,capacity_reg=0;
                 READ_SHORT(dest);READ_SHORT(capacity_reg);
                 if(registers[capacity_reg].kind!=DIAMOND_VALUE_INT||
-                   registers[capacity_reg].as.integer<1||
+                   registers[capacity_reg].as.integer<0||
                    registers[capacity_reg].as.integer>1000000) {
                     snprintf(vm->error,sizeof vm->error,
                         "Channel.new's argument must be an Int capacity between "
-                        "1 and 1,000,000");
+                        "0 (a rendezvous channel) and 1,000,000");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
-                const size_t capacity=(size_t)registers[capacity_reg].as.integer;
+                const bool rendezvous=registers[capacity_reg].as.integer==0;
+                const size_t capacity=rendezvous?1:(size_t)registers[capacity_reg].as.integer;
                 /* Same clone_program_from_chunk call DIAMOND_OP_THREAD_NEW
                  * above already uses -- see DiamondChannel's own comment for
                  * why the channel needs its own permanent copy of these
@@ -5100,7 +5101,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 *new_channel=(DiamondChannel){.private_vm=private_vm,
                     .private_program=private_program,.queue=queue,
-                    .capacity=capacity};
+                    .capacity=capacity,.rendezvous=rendezvous};
                 atomic_init(&new_channel->refcount,1);
                 pthread_mutex_init(&new_channel->lock,nullptr);
                 pthread_cond_init(&new_channel->not_empty,nullptr);
@@ -5183,9 +5184,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         memmove(candidate->queue,candidate->queue+1,
                             (candidate->count-1)*sizeof *candidate->queue);
                         candidate->count--;
+                        candidate->taken++;
                         candidate->private_vm->extra_root_count=candidate->count;
                         notify_channel_waiters(candidate);
-                        pthread_cond_signal(&candidate->not_full);
+                        if(candidate->rendezvous)pthread_cond_broadcast(&candidate->not_full);
+                        else pthread_cond_signal(&candidate->not_full);
                         pthread_mutex_unlock(&candidate->lock);
                         /* Root the value in dest before allocating the result
                          * pair, which may trigger a collection. */
@@ -5252,6 +5255,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     snprintf(vm->error,sizeof vm->error,
                         "Channel.select_send's deadline must be a finite monotonic Float or nil");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                }
+                for(size_t i=0;i<candidates->count;i++) {
+                    if(((DiamondChannelHandle *)candidates->values[i].as.object)->channel->rendezvous) {
+                        snprintf(vm->error,sizeof vm->error,
+                            "Channel.select_send does not accept a rendezvous channel (Channel.new(0)); "
+                            "use send or try_send");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
                 }
                 bool *skipped=calloc(candidates->count,sizeof *skipped);
                 if(skipped==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);

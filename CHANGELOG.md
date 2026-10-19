@@ -8,6 +8,8 @@ authoritative fine-grained record.
 
 ### Added
 
+- `Channel.new(0)` makes a rendezvous channel: `send` returns only once a receiver has taken the value. `try_send` succeeds only while a
+  receiver is parked, and `Channel.select_send` refuses one. See docs/threads.md.
 - Native `gets()` and the terminal debugger's input wait can be interrupted by
   `Supervisor#stop(timeout_ms)` or a sibling restart, including while queued behind
   another reader. Standard input's inherited flags are unchanged, and a partial
