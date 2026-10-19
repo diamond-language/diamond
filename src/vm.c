@@ -8261,7 +8261,7 @@ static bool stream_would_block(FILE *stream,StreamNonblocking state) {
  * it's correct regardless of where an fgets chunk boundary falls
  * relative to the line ending. *saw_any is false only when zero bytes
  * were read before EOF. */
-DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
+static DiamondVmStatus read_line_direct(DiamondVm *vm,FILE *stream,StringBuilder *builder,
                                  bool *saw_any) {
     char chunk_buffer[256];
     *saw_any=false;
@@ -8305,6 +8305,72 @@ DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
         builder->chars[builder->length]='\0';
     }
     return DIAMOND_VM_OK;
+}
+
+#ifndef __wasi__
+/* stdin may share its open-file description with the shell, so never change
+ * its flags. Read one byte after readiness, under a process-wide lock: no
+ * other gets can drain the ready byte, and no stdio read-ahead can hide input
+ * from poll. The REPL also reads without stdio buffering. Keep a partial line
+ * across interruption so the next gets can finish it. No helper outlives the
+ * call or holds stdin's stdio lock while the process is exiting. */
+static struct {
+    pthread_mutex_t lock;
+    StringBuilder line;
+} stdin_reader={.lock=PTHREAD_MUTEX_INITIALIZER};
+#endif
+
+DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
+        bool *saw_any) {
+#ifdef __wasi__
+    return read_line_direct(vm,stream,builder,saw_any);
+#else
+    if(stream!=stdin)return read_line_direct(vm,stream,builder,saw_any);
+    *saw_any=false;
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    int lock_error;
+    while((lock_error=pthread_mutex_trylock(&stdin_reader.lock))==EBUSY) {
+        (void)poll_interruptible(vm,nullptr,0,DIAMOND_INTERRUPT_SLICE_MS,&status);
+        if(status!=DIAMOND_VM_OK)return status;
+    }
+    if(lock_error!=0) {
+        snprintf(vm->error,sizeof vm->error,"stdin reader: %s",strerror(lock_error));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    for(;;) {
+        if(vm_interrupt_requested(vm)) {status=DIAMOND_VM_INTERRUPTED;break;}
+        struct pollfd interest={.fd=STDIN_FILENO,.events=POLLIN};
+        const int ready=poll_interruptible(vm,&interest,1,-1,&status);
+        if(status!=DIAMOND_VM_OK)break;
+        if(ready<0) {
+            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            status=DIAMOND_VM_IO_ERROR;break;
+        }
+        if(ready==0)continue;
+        if(vm_interrupt_requested(vm)) {status=DIAMOND_VM_INTERRUPTED;break;}
+        char byte;
+        const ssize_t got=read(STDIN_FILENO,&byte,1);
+        if(got<0) {
+            if(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK)continue;
+            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            status=DIAMOND_VM_IO_ERROR;break;
+        }
+        if(got==0||byte=='\n') {
+            *saw_any=got>0||stdin_reader.line.length>0;
+            if(got>0&&stdin_reader.line.length>0&&
+               stdin_reader.line.chars[stdin_reader.line.length-1]=='\r')
+                stdin_reader.line.chars[--stdin_reader.line.length]='\0';
+            *builder=stdin_reader.line;
+            stdin_reader.line=(StringBuilder){};
+            break;
+        }
+        if(!builder_append(&stdin_reader.line,&byte,1)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+    }
+    pthread_mutex_unlock(&stdin_reader.lock);
+    return status;
+#endif
 }
 
 static bool builder_inspect_instance(StringBuilder *builder,DiamondValue value);
@@ -10591,9 +10657,11 @@ DiamondVmStatus debugger_helper(DiamondVm *vm,const DiamondChunk *chunk,
     }
     fprintf(stdout,"(press Enter to continue)\n");
     fflush(stdout);
-    int character=0;
-    while((character=getchar())!=EOF&&character!='\n') {}
-    return DIAMOND_VM_OK;
+    StringBuilder input={};
+    bool saw_any=false;
+    const DiamondVmStatus status=read_line(vm,stdin,&input,&saw_any);
+    free(input.chars);
+    return status;
 }
 
 /* Stable public names for every parameter-bearing native receiver method.

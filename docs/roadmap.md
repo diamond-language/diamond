@@ -8,6 +8,11 @@ done yet; when something lands, delete it (see "Completion policy").
 Diamond is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
+Current focus is closing concrete concurrency gaps. Tooling is in adequate shape,
+and broader reliability work waits for usage beyond the current two users; existing
+verification remains required. Package development prioritizes Mjolnir, with
+ActiveRecord in the background. Further JIT work is optional and measurement-driven.
+
 ## Candidate work
 
 These are possible next steps, not commitments. Start with a measured need or
@@ -38,11 +43,6 @@ Current behavior: [threads](threads.md).
 
 Current behavior: [threads](threads.md).
 
-- **Interrupting the last blocked workers** -- the host-name lookup inside `MySQL.open` and a
-  read from the process's own standard input are still only stopped between instructions by
-  `Supervisor#stop(timeout_ms)`. Standard input may be shared with the parent, so making it
-  non-blocking needs a different technique than the owned-descriptor one. Implicit
-  cancellation checkpoints are open (see [cancellation](cancellation.md)).
 - **Cross-thread-transferable supervisor handles** -- a `Supervisor` cannot cross a
   `Thread.new`/`Channel` boundary, and a supervised child cannot reference its parent
   by design. Needs a concrete use case.
@@ -96,8 +96,8 @@ Results and test commands belong in the topic guides and test scripts.
 
 New package work should be driven by a concrete application or interoperability need.
 
-- Deepen ActiveRecord and Arel only where applications expose a missing query,
-  association, migration, or dialect feature.
+- Grow Mjolnir from application needs; deepen ActiveRecord and Arel only where
+  applications expose a missing query, association, migration, or dialect feature.
 - Finish the ORM return-annotation audit. Extensible Arel query/node returns need a
   protocol before they can be narrowed, and `Relation#first`, `Repository#find` and the
   `Model` finders return a mapper-produced value or `nil`, which no `-> Type` can express

@@ -333,11 +333,15 @@ killed) and a SQLite, PostgreSQL or MySQL/MariaDB query (cancelled with `sqlite3
 within about that long. A thread the interrupted worker started is interrupted
 too, instead of being waited for.
 
-`MySQL.open`'s connect and handshake are interrupted too, and so is a read from a pipe or
-device the worker opened itself (a named pipe, say). What is still not interrupted: the
-host-name lookup inside `MySQL.open`, and a read from the process's own standard input,
-which may be shared with the parent. Such a worker is stopped once the call returns, and
-`stop(timeout_ms)` then still waits for it. Code running in the opt-in JIT is
+`MySQL.open`'s host-name lookup, connect and handshake are interrupted too: the
+connector runs on a helper thread, and an abandoned attempt cleans itself up when
+the connector returns. Reads from a pipe or device the worker opened itself (a
+named pipe, say) are interrupted, as is `gets()` on standard input. Native stdin
+reads serialize access and wait for each byte without changing the inherited
+descriptor's flags. If an interrupted reader consumed part of a line, the next
+`gets()` finishes that line. A worker waiting behind another stdin reader can
+also be interrupted. No input helper is left running after the worker stops.
+Code running in the opt-in JIT is
 interrupted at the next loop iteration (a backward jump or a function's own tail call), so a
 compiled function with no loop and no blocking call runs to its end. Use [cancellation](cancellation.md)
 tokens for those waits.
