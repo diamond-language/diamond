@@ -8713,17 +8713,23 @@ static int32_t joined_collection_argument(Compiler *compiler,
     return joined;
 }
 
-/* These native Array transforms copy/subset the source elements. Carry an
+/* These Array transforms copy/subset/reorder the source elements, so a callback
+ * (`select`, `reject`, `sort_by`) cannot change the element graph. Carry an
  * inferred factory graph to the editor without narrowing checked contracts.
- * Callback transforms need their own result inference; methods returning the
- * receiver itself also need alias tracking before joining this path. */
+ * Callbacks that produce new elements need their own result inference; methods
+ * returning the receiver itself also need alias tracking before joining this
+ * path. */
 static void publish_array_transform_tooling_type(Compiler *compiler,
         uint16_t result,uint16_t receiver,DiamondSpan name) {
     if(!name_equals(compiler,"reverse",name,false)&&
        !name_equals(compiler,"uniq",name,false)&&
        !name_equals(compiler,"compact",name,false)&&
        !name_equals(compiler,"take",name,false)&&
-       !name_equals(compiler,"drop",name,false))return;
+       !name_equals(compiler,"drop",name,false)&&
+       !name_equals(compiler,"sort",name,false)&&
+       !name_equals(compiler,"sort_by",name,false)&&
+       !name_equals(compiler,"select",name,false)&&
+       !name_equals(compiler,"reject",name,false))return;
     const int32_t elements=joined_collection_argument(compiler,
         compiler->tooling_type_sets[receiver],DIAMOND_TYPE_ARRAY,false);
     if(elements>=0)compiler->tooling_type_sets[result]=collection_type_set(
@@ -9470,6 +9476,8 @@ static uint16_t snapshot_block_call_receiver(Compiler *compiler,
     if(receiver==0&&compiler->in_method)return receiver;
     const uint16_t snapshot=allocate_register(compiler);
     emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,receiver,0,2);
+    /* The copy still holds the receiver's editor-only element graph. */
+    compiler->tooling_type_sets[snapshot]=compiler->tooling_type_sets[receiver];
     return snapshot;
 }
 
