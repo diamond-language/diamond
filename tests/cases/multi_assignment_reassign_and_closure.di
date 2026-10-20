@@ -7,9 +7,7 @@ def make_pair_setter()
   def set(pair)
     x, y = pair
   end
-  def get()
-    [x, y]
-  end
+  def get() = [x, y]
   set([3, 4])
   get()
 end

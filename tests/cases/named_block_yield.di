@@ -12,9 +12,7 @@ def invoke_empty(&block)
 end
 
 def lexical_boundary(&handler)
-  def probe()
-    block_given?()
-  end
+  def probe() = block_given?()
   puts(probe())
   yield(2)
 end

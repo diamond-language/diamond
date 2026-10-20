@@ -23,9 +23,7 @@ class Owner
   def initialize(name)
     @name = name
   end
-  def owner_name()
-    @name
-  end
+  def owner_name() = @name
 end
 
 class Billing
@@ -51,9 +49,7 @@ class Account
 end
 
 class FreeAccount < Account
-  def charge(amount)
-    "free: " + super(amount)
-  end
+  def charge(amount) = "free: " + super(amount)
 end
 
 class Logger

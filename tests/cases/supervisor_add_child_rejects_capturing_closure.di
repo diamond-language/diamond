@@ -1,8 +1,6 @@
 x = 5
 def make_capturer(x)
-  def inner()
-    x
-  end
+  def inner() = x
   inner
 end
 sup = Supervisor.new()

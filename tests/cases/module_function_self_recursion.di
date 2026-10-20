@@ -49,17 +49,11 @@ module Utils
 end
 
 def run_tests()
-  def test_self_recursive_qualified_call()
-    Minitest.assert_equal(120, Factorial.compute(5))
-  end
+  def test_self_recursive_qualified_call() = Minitest.assert_equal(120, Factorial.compute(5))
 
-  def test_self_recursive_qualified_call_two_base_cases()
-    Minitest.assert_equal(55, Fibonacci.at(10))
-  end
+  def test_self_recursive_qualified_call_two_base_cases() = Minitest.assert_equal(55, Fibonacci.at(10))
 
-  def test_sibling_call_to_earlier_defined_method_still_works()
-    Minitest.assert_equal(20, Utils.quadruple(5))
-  end
+  def test_sibling_call_to_earlier_defined_method_still_works() = Minitest.assert_equal(20, Utils.quadruple(5))
 
   suite = Minitest.new()
   suite.test("module_function method calling itself via a qualified call",

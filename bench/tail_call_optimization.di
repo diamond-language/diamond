@@ -14,7 +14,5 @@ def sum_recursive(n, acc)
   return sum_recursive(n - 1, acc + n)
 end
 
-def run()
-  sum_recursive(3000000, 0)
-end
+def run() = sum_recursive(3000000, 0)
 run()

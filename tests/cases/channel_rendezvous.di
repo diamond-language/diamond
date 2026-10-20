@@ -1,7 +1,5 @@
 # No sleep builtin: park on a never-ready channel until a deadline.
-def pause(seconds)
-  Channel.new(1).wait_readable([], Time.monotonic() + seconds)
-end
+def pause(seconds) = Channel.new(1).wait_readable([], Time.monotonic() + seconds)
 
 # Channel.new(0): send returns only once a receiver has taken the value.
 ch = Channel.new(0)

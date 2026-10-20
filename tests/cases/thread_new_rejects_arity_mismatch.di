@@ -1,4 +1,2 @@
-def worker(x, y)
-  x + y
-end
+def worker(x, y) = x + y
 Thread.new(worker, 1)

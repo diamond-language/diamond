@@ -20,9 +20,7 @@
 # inside diamond_jit_dup's own Hash-copy work either way; this tier
 # removes bytecode dispatch overhead around that call, not the copy
 # itself.
-def make_copy(h)
-  h.dup()
-end
+def make_copy(h) = h.dup()
 
 def run()
   h = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}

@@ -25,9 +25,7 @@ def x_repo()
   Mjolnir::Repo.new(db)
 end
 
-def x_author(repo, authors, name)
-  repo.insert!(Mjolnir::Changeset.cast(authors, nil, {"name": name}, ["name"]))
-end
+def x_author(repo, authors, name) = repo.insert!(Mjolnir::Changeset.cast(authors, nil, {"name": name}, ["name"]))
 
 def x_book(repo, books, author, title)
   attrs = {"title": title, "author_id": if author == nil then nil else author.id() end}

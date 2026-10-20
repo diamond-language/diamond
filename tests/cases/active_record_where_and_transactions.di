@@ -12,9 +12,7 @@ class LibraryBook
 end
 
 def run_tests()
-  def map_book(row)
-    LibraryBook.new(row["id"], row["title"], row["author_id"], row["available"])
-  end
+  def map_book(row) = LibraryBook.new(row["id"], row["title"], row["author_id"], row["available"])
 
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER, available INTEGER)")

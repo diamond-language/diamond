@@ -1,15 +1,11 @@
 class Tools
-  def self.collect(prefix, *rest)
-    prefix + ":" + rest.join(",")
-  end
+  def self.collect(prefix, *rest) = prefix + ":" + rest.join(",")
 
   def self.identity[T](value: T) -> T
     value
   end
 
-  def self.subtract(left, right)
-    left - right
-  end
+  def self.subtract(left, right) = left - right
 
   def self.typed_collect[T](first: T, *rest)
     [first].concat(rest)
@@ -17,9 +13,7 @@ class Tools
 end
 
 module Words
-  def self.collect(prefix, *rest)
-    prefix + ":" + rest.join("-")
-  end
+  def self.collect(prefix, *rest) = prefix + ":" + rest.join("-")
 end
 
 collect = Tools.collect

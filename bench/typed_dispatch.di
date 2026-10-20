@@ -5,9 +5,7 @@
 # return type (checked at the call boundary); `wrap` is a generic
 # method instantiated with an explicit type argument every call.
 class Typed
-  def process(value: Int) -> Int
-    value * 2
-  end
+  def process(value: Int) -> Int = value * 2
   def wrap[T](value: T) -> Array[T]
     [value]
   end

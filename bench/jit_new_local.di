@@ -34,7 +34,5 @@ def run_loop(iterations) -> Int
   total
 end
 
-def run()
-  run_loop(3000000)
-end
+def run() = run_loop(3000000)
 run()

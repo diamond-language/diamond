@@ -40,9 +40,7 @@ def body_checksum(bytes: Array, from: Int) -> Int
 end
 
 # A small LCG: every product stays below 2^63, so it is plain Int arithmetic.
-def next_random(state: Int) -> Int
-  (state * 1103515245 + 12345) % 2147483648
-end
+def next_random(state: Int) -> Int = (state * 1103515245 + 12345) % 2147483648
 
 diamond = ARGV[0]
 program = ARGV[1]

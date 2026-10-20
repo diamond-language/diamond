@@ -1,40 +1,28 @@
 require "../../lib/minitest"
 
 def run_tests()
-  def make_log()
-    []
-  end
+  def make_log() = []
 
   log = make_log()
 
   def make_setup(log)
-    def setup_hook()
-      log.push("setup")
-    end
+    def setup_hook() = log.push("setup")
     setup_hook
   end
 
   def make_teardown(log)
-    def teardown_hook()
-      log.push("teardown")
-    end
+    def teardown_hook() = log.push("teardown")
     teardown_hook
   end
 
   def test_normal(log)
-    def inner()
-      log.push("test")
-    end
+    def inner() = log.push("test")
     inner
   end
 
-  def test_skipped()
-    Minitest.skip("not ready yet")
-  end
+  def test_skipped() = Minitest.skip("not ready yet")
 
-  def test_fails_but_teardown_still_runs()
-    Minitest.assert_equal(1, 2)
-  end
+  def test_fails_but_teardown_still_runs() = Minitest.assert_equal(1, 2)
 
   suite = Minitest.new()
   suite.setup(make_setup(log))

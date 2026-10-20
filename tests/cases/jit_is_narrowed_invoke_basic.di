@@ -8,21 +8,15 @@
 # parameter_is_single_class nor register_new_class_if_sole_writer can
 # ever prove anything about it on their own).
 class Widget
-  def double() -> Int
-    21
-  end
+  def double() -> Int = 21
 end
 
 class Derived
-  def helper() -> Widget
-    Widget.new()
-  end
+  def helper() -> Widget = Widget.new()
 end
 
 class OtherBase
-  def helper() -> Widget
-    Widget.new()
-  end
+  def helper() -> Widget = Widget.new()
 end
 
 def run(x: Derived | OtherBase) -> Int

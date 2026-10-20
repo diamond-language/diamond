@@ -8,9 +8,7 @@
 # dispatch_polymorphic_no_index.di's time to get a cleaner read on
 # what the polymorphic cache itself costs.
 class A
-  def value()
-    1
-  end
+  def value() = 1
 end
 
 def run()

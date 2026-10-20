@@ -3,20 +3,14 @@ class Animal
     @name = name
   end
 
-  def name() -> String
-    @name
-  end
+  def name() -> String = @name
 end
 
 class Dog < Animal
 end
 
-def identity(animal: Animal) -> Animal
-  animal
-end
+def identity(animal: Animal) -> Animal = animal
 
-def answer(value: Int) -> Int
-  value + 2
-end
+def answer(value: Int) -> Int = value + 2
 
 identity(Dog.new("Ruby")).name() + ": " + "42"

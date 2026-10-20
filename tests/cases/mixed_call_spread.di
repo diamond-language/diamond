@@ -1,6 +1,4 @@
-def merge_values(*values)
-  values.join("-")
-end
+def merge_values(*values) = values.join("-")
 
 middle = [2, 3]
 puts(merge_values(1, *middle, 4))

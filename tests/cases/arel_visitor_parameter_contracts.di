@@ -2,9 +2,8 @@ require "../../lib/minitest"
 require "../../packages/arel/lib/arel"
 
 # Keep the caller dynamic so entry guards receive values not known statically.
-def render_checked_pagination(visitor, limit, offset, params, bind)
+def render_checked_pagination(visitor, limit, offset, params, bind) =
   visitor.render_pagination(limit, offset, params, bind)
-end
 
 def pagination_visitors()
   [Arel::SQLiteVisitor.new(), Arel::PostgreSQLVisitor.new(),

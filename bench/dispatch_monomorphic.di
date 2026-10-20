@@ -1,9 +1,7 @@
 # Monomorphic dynamic dispatch -- a single receiver class at one call
 # site, the case Diamond's inline caches are designed to specialize.
 class Counter
-  def value()
-    42
-  end
+  def value() = 42
 end
 
 def run()

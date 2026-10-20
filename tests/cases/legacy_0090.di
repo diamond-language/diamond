@@ -1,18 +1,12 @@
 class Alpha
-  def value()
-    1
-  end
+  def value() = 1
 end
 
 class Beta
-  def value()
-    2
-  end
+  def value() = 2
 end
 
-def read(object)
-  object.value()
-end
+def read(object) = object.value()
 
 alpha = Alpha.new()
 beta = Beta.new()

@@ -67,9 +67,7 @@ check(failures, "in expression", (nested["outer"]["inner"][2] + 1) * 2 == 62)
 check(failures, "in condition", (if nested["outer"]["missing"] == nil then "none" else "some" end) == "none")
 
 # A typed Hash parameter carries its element type through the literal read.
-def total(scores: Hash[String, Int]) -> Int
-  scores["a"] + scores["b"]
-end
+def total(scores: Hash[String, Int]) -> Int = scores["a"] + scores["b"]
 check(failures, "typed hash", total({"a": 3, "b": 4}) == 7)
 
 # Other receivers get the key as a real String and keep their own behavior.
@@ -87,9 +85,7 @@ lookup = Lookup.new()
 check(failures, "instance override", lookup["name"] == "got name")
 check(failures, "override sees a String", lookup.seen()[0] == "name" && lookup.seen()[0].length() == 4)
 
-def read_literal(receiver)
-  receiver["x"]
-end
+def read_literal(receiver) = receiver["x"]
 
 def read_variable(receiver)
   key = "x"

@@ -2,24 +2,16 @@
 # call site, the case that stresses inline cache misses/rewrites
 # instead of the monomorphic fast path.
 class A
-  def value()
-    1
-  end
+  def value() = 1
 end
 class B
-  def value()
-    2
-  end
+  def value() = 2
 end
 class C
-  def value()
-    3
-  end
+  def value() = 3
 end
 class D
-  def value()
-    4
-  end
+  def value() = 4
 end
 
 def run()

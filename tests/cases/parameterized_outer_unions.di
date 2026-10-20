@@ -1,10 +1,6 @@
-def accept(values: Array[Int] | Array[String]) -> Int
-  values.length()
-end
+def accept(values: Array[Int] | Array[String]) -> Int = values.length()
 
-def accept_nested(values: Array[Array[Int] | Array[String]]) -> Int
-  values.length()
-end
+def accept_nested(values: Array[Array[Int] | Array[String]]) -> Int = values.length()
 
 puts(accept([1, 2]))
 puts(accept(["one"]))

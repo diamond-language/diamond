@@ -2,9 +2,7 @@ def deep()
   raise RuntimeError.new("boom")
 end
 
-def middle()
-  deep()
-end
+def middle() = deep()
 
 begin
   middle()

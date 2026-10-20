@@ -1,9 +1,7 @@
 require "../../lib/minitest"
 
 def run_tests()
-  def test_fails()
-    Minitest.assert_equal(1, 2)
-  end
+  def test_fails() = Minitest.assert_equal(1, 2)
 
   suite = Minitest.new()
   suite.test("fails", test_fails)

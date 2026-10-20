@@ -16,9 +16,7 @@ class Box
   def bump(i)
     @items[i] += 100
   end
-  def items()
-    @items
-  end
+  def items() = @items
 end
 
 class Counter
@@ -28,9 +26,7 @@ class Counter
   def self.bump(i)
     @@totals[i] += 1
   end
-  def self.totals()
-    @@totals
-  end
+  def self.totals() = @@totals
 end
 
 def make_bumper()

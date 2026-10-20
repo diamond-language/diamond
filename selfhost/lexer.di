@@ -311,9 +311,7 @@ class Lexer
     end
   end
 
-  def at_end?()
-    @current >= @source.length()
-  end
+  def at_end?() = @current >= @source.length()
 
   def advance()
     code = self.code_at(@current)
@@ -333,13 +331,10 @@ class Lexer
     true
   end
 
-  def identifier_start?(code)
+  def identifier_start?(code) =
     (code >= "a".ord() && code <= "z".ord()) || (code >= "A".ord() && code <= "Z".ord()) || code == "_".ord()
-  end
 
-  def identifier_part?(code)
-    self.identifier_start?(code) || (code >= "0".ord() && code <= "9".ord())
-  end
+  def identifier_part?(code) = self.identifier_start?(code) || (code >= "0".ord() && code <= "9".ord())
 
   def text_equals?(text)
     return false if @current - @start != text.length()
@@ -412,9 +407,7 @@ class Lexer
     :identifier
   end
 
-  def make_token(kind)
-    Token.new(kind, @start, @current - @start, @token_line, @token_column)
-  end
+  def make_token(kind) = Token.new(kind, @start, @current - @start, @token_line, @token_column)
 
   # Scans zero or more additional digits (and digit-separator underscores)
   # starting at @current. Returns false the moment an underscore isn't

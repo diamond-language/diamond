@@ -74,9 +74,7 @@ module Harness
       raise "expected #{expected.inspect()}, the program printed #{actual.inspect()}" if actual != expected
     end
 
-    def send(text: String)
-      @handle.stdin().write(text)
-    end
+    def send(text: String) = @handle.stdin().write(text)
 
     def terminate() = @handle.terminate()
     def kill() = @handle.kill()
@@ -224,9 +222,7 @@ module Harness
     Dir.entries(path).length()
   end
 
-  def self.sleep_ms(milliseconds: Int)
-    IO.poll([], [], milliseconds)
-  end
+  def self.sleep_ms(milliseconds: Int) = IO.poll([], [], milliseconds)
 
   # Polls `probe` (a block) until it is truthy, up to `timeout_ms`.
   def self.wait_for(timeout_ms: Int, message: String, &block)
@@ -317,9 +313,7 @@ module Harness
   end
 
   # A new temporary directory.
-  def self.make_temp_dir()
-    Process.run(["mktemp", "-d"]).stdout().strip()
-  end
+  def self.make_temp_dir() = Process.run(["mktemp", "-d"]).stdout().strip()
 
   # [0, 1, ..., count - 1].
   def self.sequence(count: Int)

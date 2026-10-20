@@ -1,9 +1,8 @@
 require "../../lib/minitest"
 require "../../packages/arel/lib/arel"
 
-def copy_checked(query, predicates, orderings, limit, offset, projections)
+def copy_checked(query, predicates, orderings, limit, offset, projections) =
   query.copy(predicates, orderings, limit, offset, projections)
-end
 
 def run_tests()
   def test_nullable_limits_and_plain_collections()

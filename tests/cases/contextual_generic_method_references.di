@@ -1,20 +1,10 @@
-def apply_int(callback: Callable[[Int], Int]) -> Int
-  callback(41)
-end
+def apply_int(callback: Callable[[Int], Int]) -> Int = callback(41)
 
 def identity[T](value: T) -> T = value
-def apply_all(callbacks: Array[Callable[[Int], Int]]) -> Int
-  callbacks[0](42)
-end
-def apply_map(callbacks: Hash[String, Callable[[Int], Int]]) -> Int
-  callbacks["chosen"](42)
-end
-def apply_nested_map(callbacks: Array[Hash[String, Callable[[Int], Int]]]) -> Int
-  callbacks[0]["chosen"](42)
-end
-def apply_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
-  first(20) + second(22)
-end
+def apply_all(callbacks: Array[Callable[[Int], Int]]) -> Int = callbacks[0](42)
+def apply_map(callbacks: Hash[String, Callable[[Int], Int]]) -> Int = callbacks["chosen"](42)
+def apply_nested_map(callbacks: Array[Hash[String, Callable[[Int], Int]]]) -> Int = callbacks[0]["chosen"](42)
+def apply_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int = first(20) + second(22)
 def apply_mixed_spread(first: Callable[[Int], Int],
                        second: Callable[[String], String]) -> Int
   second("diamond")
@@ -31,12 +21,8 @@ class ContextualReferenceBox
   def accept(callback: Callable[[Int], Int]) -> Int = callback(40)
   def self.identity[T](value: T) -> T = value
   def self.accept(callback: Callable[[Int], Int]) -> Int = callback(39)
-  def accept_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
-    first(20) + second(22)
-  end
-  def self.accept_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int
-    first(20) + second(22)
-  end
+  def accept_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int = first(20) + second(22)
+  def self.accept_spread(first: Callable[[Int], Int], second: Callable[[Int], Int]) -> Int = first(20) + second(22)
   def accept_mixed_spread(first: Callable[[Int], Int],
                           second: Callable[[String], String]) -> Int
     second("diamond")

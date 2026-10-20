@@ -1,6 +1,4 @@
-def late()
-  LATER
-end
+def late() = LATER
 
 worker = Thread.new(late)
 LATER = 1

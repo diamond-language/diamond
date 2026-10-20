@@ -3,9 +3,7 @@ class Payload
     @value = value
   end
 
-  def value()
-    @value
-  end
+  def value() = @value
 end
 
 def build()

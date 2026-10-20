@@ -6,9 +6,7 @@ class Widget
     @locked = true
     "custom freeze"
   end
-  def frozen?()
-    @locked
-  end
+  def frozen?() = @locked
 end
 w = Widget.new()
 puts(w.freeze())

@@ -3,9 +3,7 @@ class ContextBuilder
     @value = yield(prefix)
   end
 
-  def value() -> String
-    @value
-  end
+  def value() -> String = @value
 end
 
 class InheritedContextBuilder < ContextBuilder

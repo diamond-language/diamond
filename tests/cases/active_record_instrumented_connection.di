@@ -3,9 +3,7 @@ require "../../lib/minitest"
 
 def run_tests()
   events = []
-  def collect(event)
-    events << event
-  end
+  def collect(event) = events << event
 
   raw = SQLite3.open(":memory:")
   db = ActiveRecord::InstrumentedConnection.new(raw, collect)

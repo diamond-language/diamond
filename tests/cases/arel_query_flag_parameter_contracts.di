@@ -1,9 +1,8 @@
 require "../../lib/minitest"
 require "../../packages/arel/lib/arel"
 
-def query_with_flags(quoted, bind, distinct)
+def query_with_flags(quoted, bind, distinct) =
   Arel::Query.new("people", [], [], nil, nil, [], quoted, bind, nil, distinct)
-end
 
 def run_tests()
   def test_boolean_flags_and_default()

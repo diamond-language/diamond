@@ -1,7 +1,5 @@
 def make_adder(amount)
-  def add(value)
-    amount + value
-  end
+  def add(value) = amount + value
   add
 end
 

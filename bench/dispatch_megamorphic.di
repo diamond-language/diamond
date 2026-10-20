@@ -6,34 +6,22 @@
 # describes, as a control against dispatch_polymorphic_no_index.di's
 # genuinely-4-wide (fits-in-cache) case.
 class A
-  def value()
-    1
-  end
+  def value() = 1
 end
 class B
-  def value()
-    2
-  end
+  def value() = 2
 end
 class C
-  def value()
-    3
-  end
+  def value() = 3
 end
 class D
-  def value()
-    4
-  end
+  def value() = 4
 end
 class E
-  def value()
-    5
-  end
+  def value() = 5
 end
 class F
-  def value()
-    6
-  end
+  def value() = 6
 end
 
 def run()

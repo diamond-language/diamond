@@ -15,9 +15,7 @@ class ReaderHolder < ReaderBase
   end
 end
 
-def needs_int(value: Int)
-  value
-end
+def needs_int(value: Int) = value
 
 checked = begin
   needs_int(ReaderHolder.new().value())

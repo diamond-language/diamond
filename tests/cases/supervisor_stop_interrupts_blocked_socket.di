@@ -11,9 +11,7 @@ def reader()
   peer.read(10)
 end
 
-def datagram()
-  UDPSocket.bind(19733).receive(10)
-end
+def datagram() = UDPSocket.bind(19733).receive(10)
 
 sup = Supervisor.new()
 sup.add_child(acceptor)

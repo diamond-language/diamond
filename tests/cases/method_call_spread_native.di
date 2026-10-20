@@ -1,10 +1,6 @@
-def double(value)
-  value * 2
-end
+def double(value) = value * 2
 
-def array_large(values: Array, minimum)
-  values.length() >= minimum
-end
+def array_large(values: Array, minimum) = values.length() >= minimum
 
 puts([1, 2].join(*[","]))
 puts("hello".slice(*[1, 3]))

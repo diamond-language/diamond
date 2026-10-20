@@ -5,9 +5,7 @@ class Message
     @text = [left, middle, right].join(":")
   end
 
-  def self.combine(left, right)
-    left + right
-  end
+  def self.combine(left, right) = left + right
 
   def self.typed_pair[T](first: T, second: T)
     [first, second]
@@ -15,9 +13,7 @@ class Message
 end
 
 module Words
-  def self.combine(left, right)
-    left + ":" + right
-  end
+  def self.combine(left, right) = left + ":" + right
 end
 
 puts(Message.new(right: "r", left: "l", middle: "m").text())

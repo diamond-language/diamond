@@ -1,11 +1,7 @@
 # IO.poll with no timeout, and a sleep built on it, are interrupted.
-def forever()
-  IO.poll([], [], -1)
-end
+def forever() = IO.poll([], [], -1)
 
-def long_sleep()
-  IO.poll([], [], 60000)
-end
+def long_sleep() = IO.poll([], [], 60000)
 
 sup = Supervisor.new()
 sup.add_child(forever)

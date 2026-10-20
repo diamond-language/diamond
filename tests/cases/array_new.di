@@ -21,15 +21,11 @@ shared[0].push(1)
 puts(shared.to_s())
 
 # A length computed at run time, with the fill given as an expression.
-def grid_row(width: Int) -> Array
-  Array.new(width, width * 2)
-end
+def grid_row(width: Int) -> Array = Array.new(width, width * 2)
 puts(grid_row(3).to_s())
 
 # The length must be an Int, not an Array * String join.
-def sized(count)
-  Array.new(count)
-end
+def sized(count) = Array.new(count)
 begin
   sized("a")
 rescue error: TypeError

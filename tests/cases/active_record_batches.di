@@ -26,9 +26,7 @@ def run_tests()
   # find_each: one record per callback call, every row visited exactly
   # once, in ascending id order, regardless of batch_size.
   seen_ids = []
-  def collect_id(author)
-    seen_ids.push(author.id())
-  end
+  def collect_id(author) = seen_ids.push(author.id())
   repository.find_each(db, collect_id, 7)
   Minitest.assert_equal(25, seen_ids.length())
   Minitest.assert_equal(1, seen_ids[0])
@@ -37,9 +35,7 @@ def run_tests()
   # find_in_batches: one Array of at most batch_size mapped records per
   # callback call -- 25 rows at batch_size 10 means batches of 10, 10, 5.
   batch_sizes = []
-  def collect_batch_size(batch)
-    batch_sizes.push(batch.length())
-  end
+  def collect_batch_size(batch) = batch_sizes.push(batch.length())
   repository.find_in_batches(db, collect_batch_size, 10)
   Minitest.assert_equal(3, batch_sizes.length())
   Minitest.assert_equal(10, batch_sizes[0])
@@ -50,9 +46,7 @@ def run_tests()
   # empty batch.
   db.execute("DELETE FROM authors")
   empty_calls = []
-  def record_call(batch)
-    empty_calls.push(true)
-  end
+  def record_call(batch) = empty_calls.push(true)
   repository.find_in_batches(db, record_call, 10)
   Minitest.assert_equal(0, empty_calls.length())
 

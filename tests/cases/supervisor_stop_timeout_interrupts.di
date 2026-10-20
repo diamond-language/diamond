@@ -7,9 +7,7 @@ def spin()
   end
 end
 
-def quick()
-  1 + 1
-end
+def quick() = 1 + 1
 
 sup = Supervisor.new()
 sup.add_child(spin)

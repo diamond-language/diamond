@@ -1,7 +1,5 @@
 class BlockTarget
-  def transform(value, callback: Callable[1])
-    callback(value)
-  end
+  def transform(value, callback: Callable[1]) = callback(value)
 end
 
 class BlockProxy

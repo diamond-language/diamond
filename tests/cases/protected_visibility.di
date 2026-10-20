@@ -5,27 +5,19 @@ class Vault
 
   protected
 
-  def code()
-    @code
-  end
+  def code() = @code
 
   public
 
-  def same_code?(other)
-    self.code() == other.code()
-  end
+  def same_code?(other) = self.code() == other.code()
 end
 
 class DerivedVault < Vault
-  def read_peer(other)
-    other.code()
-  end
+  def read_peer(other) = other.code()
 end
 
 class Intruder
-  def read(vault)
-    vault.code()
-  end
+  def read(vault) = vault.code()
 end
 
 left = Vault.new(7)
@@ -48,15 +40,11 @@ rescue error: TypeError
 end
 
 class NamedVisibility
-  def token()
-    42
-  end
+  def token() = 42
 
   protected token
 
-  def read(other)
-    other.token()
-  end
+  def read(other) = other.token()
 end
 
 named = NamedVisibility.new()

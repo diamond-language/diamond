@@ -1,10 +1,6 @@
-def array_second(values: Array)
-  values[1]
-end
+def array_second(values: Array) = values[1]
 
-def array_large(values: Array, minimum)
-  values.length() >= minimum
-end
+def array_large(values: Array, minimum) = values.length() >= minimum
 
 def hash_invert_pairs(values: Hash)
   result = {}

@@ -24,9 +24,8 @@ end
 
 def build_seen(row) = Seen.new(row["game_id"], row["player_id"], row["hits"])
 
-def board_changeset(boards, attrs)
+def board_changeset(boards, attrs) =
   Mjolnir::Changeset.cast(boards, nil, attrs, ["game_id", "slug", "label"]).unique_constraint("slug", columns: ["game_id", "slug"])
-end
 
 def fresh_repo()
   db = SQLite3.open(":memory:")

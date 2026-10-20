@@ -1,7 +1,5 @@
 class Formatter
-  def join3(left, middle, right)
-    left + ":" + middle + ":" + right
-  end
+  def join3(left, middle, right) = left + ":" + middle + ":" + right
 
   def total(prefix, *values)
     sum = 0
@@ -33,9 +31,7 @@ end
 puts(Empty.new().answer(*empty))
 
 class Vault
-  def reveal(arguments)
-    self.secret(*arguments)
-  end
+  def reveal(arguments) = self.secret(*arguments)
 
   private
 
@@ -46,15 +42,11 @@ end
 puts(Vault.new().reveal([9]))
 
 class Peer
-  def forward(other, arguments)
-    other.protected_join(*arguments)
-  end
+  def forward(other, arguments) = other.protected_join(*arguments)
 
   protected
 
-  def protected_join(left, right)
-    left + right
-  end
+  def protected_join(left, right) = left + right
 end
 puts(Peer.new().forward(Peer.new(), ["peer", "-ok"]))
 nil

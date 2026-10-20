@@ -1,7 +1,5 @@
 class Loud
-  def to_s()
-    "LOUD"
-  end
+  def to_s() = "LOUD"
 end
 
 puts("Name: %s, Age: %d".format(["Alice", 30]))

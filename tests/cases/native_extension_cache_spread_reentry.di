@@ -13,15 +13,9 @@
 # methods, across Array/Hash/String receivers, enough times to catch any
 # reintroduced collision (a fresh cache slot only gets exercised as such
 # on a repeat visit).
-def flag(v)
-  v > 2
-end
-def doubler(v)
-  v * 2
-end
-def array_large(values: Array, minimum)
-  values.length() >= minimum
-end
+def flag(v) = v > 2
+def doubler(v) = v * 2
+def array_large(values: Array, minimum) = values.length() >= minimum
 
 results = []
 100.times() do |i|

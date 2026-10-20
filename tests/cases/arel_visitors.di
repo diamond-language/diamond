@@ -4,9 +4,7 @@ require "../../packages/arel/lib/arel"
 class TestArelVisitor < Arel::SQLiteVisitor
   def quote_identifier(name: String) -> String = "[#{name}]"
   def render_compound(query) -> Array = ["custom compound", []]
-  def render_source(query, params: Array) -> String
-    "test_source"
-  end
+  def render_source(query, params: Array) -> String = "test_source"
 end
 
 class NestedTestArelVisitor < Arel::SQLiteVisitor

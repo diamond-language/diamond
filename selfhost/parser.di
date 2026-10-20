@@ -345,9 +345,7 @@ class Parser
     self.fail("unexpected character") if @current.kind() == :error
   end
 
-  def error_message()
-    @error_message
-  end
+  def error_message() = @error_message
 
   # Parses and emits the whole program into function -1 (the
   # ProgramBuilder's entry function), finishing with a RETURN of the top-level sequence's result.
@@ -369,9 +367,7 @@ class Parser
 
   private
 
-  def fail(message)
-    self.fail_at(@current.start(), @current.line(), @current.column(), message)
-  end
+  def fail(message) = self.fail_at(@current.start(), @current.line(), @current.column(), message)
 
   # Like fail, but reporting a previously-saved token's position instead
   # of wherever @current has since advanced to -- needed for the handful
@@ -403,13 +399,10 @@ class Parser
     end
   end
 
-  def at_block_end?()
+  def at_block_end?() =
     @current.kind() == :eof || @current.kind() == :else || @current.kind() == :elsif || @current.kind() == :when || @current.kind() == :rescue || @current.kind() == :ensure || @current.kind() == :end
-  end
 
-  def token_text(token)
-    @source.slice(token.start(), token.length())
-  end
+  def token_text(token) = @source.slice(token.start(), token.length())
 
   # --- emission, mirroring compiler.c's emit_byte/emit_opcode/
   # emit_instruction/allocate_register/add_constant/add_string ---
@@ -477,13 +470,9 @@ class Parser
     register
   end
 
-  def add_constant(value)
-    @builder.add_constant(@current_function_index, value)
-  end
+  def add_constant(value) = @builder.add_constant(@current_function_index, value)
 
-  def add_string(text)
-    @builder.add_string(@current_function_index, text)
-  end
+  def add_string(text) = @builder.add_string(@current_function_index, text)
 
   # JUMP: [opcode][hi][lo]. JUMP_IF_FALSE/JUMP_IF_TRUE:
   # [opcode][condition hi][condition lo][hi][lo]. `operand` is the offset
@@ -1635,9 +1624,7 @@ class Parser
     nil
   end
 
-  def set_type_fact(reg, type_id)
-    @type_facts.push([reg, type_id])
-  end
+  def set_type_fact(reg, type_id) = @type_facts.push([reg, type_id])
 
   def copy_type_facts()
     copy = []
@@ -4276,9 +4263,7 @@ class Parser
     destination
   end
 
-  def parse_expression()
-    self.parse_ternary()
-  end
+  def parse_expression() = self.parse_ternary()
 
   def parse_precedence(precedence)
     left = self.parse_prefix()
@@ -4995,21 +4980,13 @@ class Parser
     destination
   end
 
-  def parse_chr_call()
-    self.parse_scalar_conversion_call(Opcode::CHR, Type::STRING)
-  end
+  def parse_chr_call() = self.parse_scalar_conversion_call(Opcode::CHR, Type::STRING)
 
-  def parse_to_float_call()
-    self.parse_scalar_conversion_call(Opcode::TO_FLOAT, Type::FLOAT)
-  end
+  def parse_to_float_call() = self.parse_scalar_conversion_call(Opcode::TO_FLOAT, Type::FLOAT)
 
-  def parse_to_int_call()
-    self.parse_scalar_conversion_call(Opcode::TO_INT, Type::INT)
-  end
+  def parse_to_int_call() = self.parse_scalar_conversion_call(Opcode::TO_INT, Type::INT)
 
-  def parse_to_sym_call()
-    self.parse_scalar_conversion_call(Opcode::TO_SYMBOL, Type::SYMBOL)
-  end
+  def parse_to_sym_call() = self.parse_scalar_conversion_call(Opcode::TO_SYMBOL, Type::SYMBOL)
 
   def parse_json_stringify_call()
     self.advance_token()

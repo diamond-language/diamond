@@ -16,27 +16,21 @@ end
 
 class Adder
   def self.add_factory()
-    def add(a, b)
-      a + b
-    end
+    def add(a, b) = a + b
     add
   end
 end
 
 class Other
   def self.other_factory()
-    def other_method()
-      "wrong class"
-    end
+    def other_method() = "wrong class"
     other_method
   end
 end
 
 class Capturing
   def self.capturing_factory(x)
-    def captured()
-      x
-    end
+    def captured() = x
     captured
   end
 end

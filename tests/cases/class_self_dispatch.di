@@ -7,87 +7,55 @@
 require "../../lib/minitest"
 
 class Model
-  def self.table_name()
-    "model_default"
-  end
-  def self.describe()
-    self.table_name()
-  end
-  def self.missing()
-    self.does_not_exist()
-  end
+  def self.table_name() = "model_default"
+  def self.describe() = self.table_name()
+  def self.missing() = self.does_not_exist()
 end
 
 class Author < Model
-  def self.table_name()
-    "authors"
-  end
+  def self.table_name() = "authors"
 end
 
 class Book < Model
 end
 
 class Grandparent
-  def self.value()
-    "grandparent"
-  end
-  def self.describe()
-    self.value()
-  end
+  def self.value() = "grandparent"
+  def self.describe() = self.value()
 end
 class Parent < Grandparent
 end
 class Child < Parent
-  def self.value()
-    "child"
-  end
+  def self.value() = "child"
 end
 
 class Calc
-  def self.add(a, b)
-    a + b
-  end
-  def self.compute(x, y)
-    self.add(x, y) * 2
-  end
+  def self.add(a, b) = a + b
+  def self.compute(x, y) = self.add(x, y) * 2
 end
 class BigCalc < Calc
-  def self.add(a, b)
-    a + b + 100
-  end
+  def self.add(a, b) = a + b + 100
 end
 
 class Arity
   def self.needs_two(a, b) = a + b
-  def self.bad_call()
-    self.needs_two(1)
-  end
+  def self.bad_call() = self.needs_two(1)
 end
 
 class Widget
-  def self.identity()
-    self
-  end
+  def self.identity() = self
 end
 
 module Utility
-  def self.helper()
-    "helper called"
-  end
+  def self.helper() = "helper called"
 end
 
 def run_tests()
-  def test_inherited_method_reaches_subclass_override()
-    Minitest.assert_equal("authors", Author.describe())
-  end
+  def test_inherited_method_reaches_subclass_override() = Minitest.assert_equal("authors", Author.describe())
 
-  def test_inherited_method_falls_back_to_ancestor()
-    Minitest.assert_equal("model_default", Book.describe())
-  end
+  def test_inherited_method_falls_back_to_ancestor() = Minitest.assert_equal("model_default", Book.describe())
 
-  def test_called_directly_on_the_defining_class()
-    Minitest.assert_equal("model_default", Model.describe())
-  end
+  def test_called_directly_on_the_defining_class() = Minitest.assert_equal("model_default", Model.describe())
 
   def test_walks_multiple_ancestor_levels()
     Minitest.assert_equal("child", Child.describe())
@@ -125,13 +93,9 @@ def run_tests()
     Minitest.assert_equal(true, message)
   end
 
-  def test_bare_self_is_a_usable_class_value()
-    Minitest.assert_equal(true, Widget.identity() == Widget.identity())
-  end
+  def test_bare_self_is_a_usable_class_value() = Minitest.assert_equal(true, Widget.identity() == Widget.identity())
 
-  def test_module_namespace_singletons_are_unaffected()
-    Minitest.assert_equal("helper called", Utility.helper())
-  end
+  def test_module_namespace_singletons_are_unaffected() = Minitest.assert_equal("helper called", Utility.helper())
 
   suite = Minitest.new()
   suite.test("inherited method reaches subclass override",

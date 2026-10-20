@@ -1,15 +1,11 @@
 class C
   def self.run(v)
-    def doubler(x)
-      x * 2
-    end
+    def doubler(x) = x * 2
     doubler(v)
   end
 
   def self.make_adder(n)
-    def add(x)
-      x + n
-    end
+    def add(x) = x + n
     add
   end
 end

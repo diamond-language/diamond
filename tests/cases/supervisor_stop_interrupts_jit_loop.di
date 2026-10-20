@@ -14,13 +14,9 @@ def tail_spin(n)
   return tail_spin(n + 1)
 end
 
-def spin_child()
-  spin()
-end
+def spin_child() = spin()
 
-def tail_child()
-  tail_spin(0)
-end
+def tail_child() = tail_spin(0)
 
 sup = Supervisor.new()
 sup.add_child(spin_child)

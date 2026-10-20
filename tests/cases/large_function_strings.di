@@ -1,6 +1,4 @@
-def accept(value)
-  value
-end
+def accept(value) = value
 
 def string_heavy()
   marker = "s0"

@@ -6,9 +6,7 @@ def receive(*values, &block)
   end
 end
 
-def forward(*values, &block)
-  receive(*values, &block)
-end
+def forward(*values, &block) = receive(*values, &block)
 
 class ForwardTarget
   def receive(*values, &block)
@@ -20,13 +18,9 @@ class ForwardTarget
   end
 end
 
-def forward_method(target, *values, &block)
-  target.receive(*values, &block)
-end
+def forward_method(target, *values, &block) = target.receive(*values, &block)
 
-def forward_callable(callback: Callable, *values, &block)
-  callback(*values, &block)
-end
+def forward_callable(callback: Callable, *values, &block) = callback(*values, &block)
 
 def callable_receive(*values, &block)
   puts(values)

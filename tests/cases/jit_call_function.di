@@ -9,9 +9,7 @@ def fib(n)
   end
 end
 
-def label(prefix, n, suffix = "!")
-  prefix + n.to_s() + suffix
-end
+def label(prefix, n, suffix = "!") = prefix + n.to_s() + suffix
 
 def build(count)
   items = []

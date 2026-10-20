@@ -14,15 +14,9 @@ require "../../lib/minitest"
 require "../../packages/dials/lib/dials"
 
 class Calculator
-  def self.zero_args()
-    "no args"
-  end
-  def self.double(a)
-    a * 2
-  end
-  def self.add(a, b)
-    a + b
-  end
+  def self.zero_args() = "no args"
+  def self.double(a) = a * 2
+  def self.add(a, b) = a + b
 end
 
 module Greeting
@@ -33,9 +27,7 @@ module Greeting
 end
 
 class DoubleController
-  def self.show(request, context, params)
-    Dials::Response.text(200, params["n"].to_i() * 2)
-  end
+  def self.show(request, context, params) = Dials::Response.text(200, params["n"].to_i() * 2)
 end
 
 def call_zero(f: Callable[0]) = f()
@@ -43,21 +35,13 @@ def call_one(f: Callable[1], a) = f(a)
 def call_two(f: Callable[2], a, b) = f(a, b)
 
 def run_tests()
-  def test_zero_arg_class_method_reference()
-    Minitest.assert_equal("no args", call_zero(Calculator.zero_args))
-  end
+  def test_zero_arg_class_method_reference() = Minitest.assert_equal("no args", call_zero(Calculator.zero_args))
 
-  def test_one_arg_class_method_reference()
-    Minitest.assert_equal(10, call_one(Calculator.double, 5))
-  end
+  def test_one_arg_class_method_reference() = Minitest.assert_equal(10, call_one(Calculator.double, 5))
 
-  def test_two_arg_class_method_reference()
-    Minitest.assert_equal(7, call_two(Calculator.add, 3, 4))
-  end
+  def test_two_arg_class_method_reference() = Minitest.assert_equal(7, call_two(Calculator.add, 3, 4))
 
-  def test_module_singleton_function_reference()
-    Minitest.assert_equal("ADA!", call_one(Greeting.shout, "ada"))
-  end
+  def test_module_singleton_function_reference() = Minitest.assert_equal("ADA!", call_one(Greeting.shout, "ada"))
 
   def test_two_reference_sites_to_the_same_method_are_independent()
     f1 = Calculator.double
@@ -67,9 +51,7 @@ def run_tests()
     Minitest.assert_equal(60, f1(30))
   end
 
-  def test_callable_n_type_checks_a_reference()
-    Minitest.assert_equal(7, call_two(Calculator.add, 3, 4))
-  end
+  def test_callable_n_type_checks_a_reference() = Minitest.assert_equal(7, call_two(Calculator.add, 3, 4))
 
   def test_dials_router_accepts_a_bare_reference_directly()
     router = Dials::Router.new()

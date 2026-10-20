@@ -3,9 +3,7 @@ class Greeting
     @name = name
   end
 
-  def render(prefix)
-    prefix + @name
-  end
+  def render(prefix) = prefix + @name
 end
 
 greeting = Greeting.new("diamond")

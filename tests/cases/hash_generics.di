@@ -1,6 +1,4 @@
-def checked(values: Hash[String, Int | Nil]) -> Hash[String, Int | Nil]
-  values
-end
+def checked(values: Hash[String, Int | Nil]) -> Hash[String, Int | Nil] = values
 
 values = {"answer": 40, "optional": nil}
 checked(values)
@@ -22,9 +20,7 @@ end
 values["optional"] = 2
 
 inner = [1]
-def nested(values: Hash[String, Array[Int]])
-  values
-end
+def nested(values: Hash[String, Array[Int]]) = values
 nested({"inner": inner})
 nested_guard = begin
   inner[0] = "bad"

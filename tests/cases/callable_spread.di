@@ -1,6 +1,4 @@
-def multiply(left, right)
-  left * right
-end
+def multiply(left, right) = left * right
 
 callable = multiply
 puts(callable(*[6, 7]))

@@ -7,13 +7,9 @@ class NestedTargets
     [@name, [@x, @y]] = value
   end
 
-  def values()
-    [@name, @x, @y]
-  end
+  def values() = [@name, @x, @y]
 
-  def self.values()
-    [@@head, @@left, @@right]
-  end
+  def self.values() = [@@head, @@left, @@right]
 end
 
 [first, [second, third]] = [1, [2, 3]]

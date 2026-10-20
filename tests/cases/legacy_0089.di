@@ -1,12 +1,8 @@
 class Counter
-  def value()
-    42
-  end
+  def value() = 42
 end
 
-def read(object)
-  object.value()
-end
+def read(object) = object.value()
 
 counter = Counter.new()
 index = 0

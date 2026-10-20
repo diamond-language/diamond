@@ -13,9 +13,7 @@ class LibraryAccount
 end
 
 def run_tests()
-  def map_account(row)
-    LibraryAccount.new(row["id"], row["balance"], row["lock_version"])
-  end
+  def map_account(row) = LibraryAccount.new(row["id"], row["balance"], row["lock_version"])
 
   db = SQLite3.open(":memory:")
   db.execute(

@@ -31,9 +31,7 @@ class KeywordBlockConstructor
     @value = yield(left, right)
   end
 
-  def value()
-    @value
-  end
+  def value() = @value
 end
 
 configured = KeywordBlockConstructor.new(right: 9, left: 8) do |left, right|

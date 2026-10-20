@@ -3,9 +3,7 @@ class Greeter
     "hello #{name}#{punctuation}"
   end
 
-  def collect(prefix, *values)
-    prefix + values.join("-")
-  end
+  def collect(prefix, *values) = prefix + values.join("-")
 
   protected
 

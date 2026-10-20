@@ -9,9 +9,7 @@ end
 puts(depth(3000))
 
 def make_worker()
-  def worker()
-    depth(3000)
-  end
+  def worker() = depth(3000)
   worker
 end
 

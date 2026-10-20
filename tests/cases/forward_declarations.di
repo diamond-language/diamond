@@ -95,21 +95,14 @@ class Widget
 end
 
 def run_tests()
-  def test_construction_forward_reference()
-    Minitest.assert_equal("ping", Pong.new().make_ping().marker())
-  end
+  def test_construction_forward_reference() = Minitest.assert_equal("ping", Pong.new().make_ping().marker())
 
-  def test_construction_forward_reference_inside_a_module()
+  def test_construction_forward_reference_inside_a_module() =
     Minitest.assert_equal(42, Nested::First.new().make_second().value())
-  end
 
-  def test_singleton_call_forward_reference()
-    Minitest.assert_equal(99, ThisSide.call_other())
-  end
+  def test_singleton_call_forward_reference() = Minitest.assert_equal(99, ThisSide.call_other())
 
-  def test_type_annotation_forward_reference()
-    Minitest.assert_equal("later", wrap(LaterAnnotated.new()).tag())
-  end
+  def test_type_annotation_forward_reference() = Minitest.assert_equal("later", wrap(LaterAnnotated.new()).tag())
 
   def test_interface_satisfaction_with_a_parameterized_method()
     w = Widget.new("old")

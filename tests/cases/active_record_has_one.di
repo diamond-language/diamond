@@ -19,12 +19,8 @@ class LibraryProfile
 end
 
 def run_tests()
-  def map_author(row)
-    LibraryAuthor.new(row["id"], row["name"])
-  end
-  def map_profile(row)
-    LibraryProfile.new(row["id"], row["author_id"], row["bio"])
-  end
+  def map_author(row) = LibraryAuthor.new(row["id"], row["name"])
+  def map_profile(row) = LibraryProfile.new(row["id"], row["author_id"], row["bio"])
 
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")

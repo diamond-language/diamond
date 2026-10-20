@@ -1,6 +1,4 @@
-def handler()
-  nil
-end
+def handler() = nil
 begin
   Signal.trap("INT", handler)
   "trapped"

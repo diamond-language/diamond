@@ -14,9 +14,7 @@ class Box
   end
   def value() = @v
   def dup_self() = self.dup()
-  def freeze_self()
-    self.freeze()
-  end
+  def freeze_self() = self.freeze()
   def frozen_self() = self.frozen?()
   def respond_self() = self.respond_to?(:value)
   def public_send_self() = self.public_send(:value)

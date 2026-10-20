@@ -3,9 +3,7 @@ class Box
     @value = value
   end
 
-  def value() -> Int
-    @value
-  end
+  def value() -> Int = @value
 
   def <(other: Box) -> Bool
     @value < other.value()

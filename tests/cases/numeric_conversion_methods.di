@@ -1,6 +1,4 @@
-def typed_round(x: Float) -> Int
-  x.round() + 1
-end
+def typed_round(x: Float) -> Int = x.round() + 1
 big = 2 * 9223372036854775807
 nan_error = begin
   (0.0 / 0.0).floor()

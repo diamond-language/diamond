@@ -7,19 +7,13 @@
 require "../../packages/active_record/lib/active_record"
 require "../../lib/minitest"
 
-def create_authors_up(db)
-  db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")
-end
-def create_authors_down(db)
-  db.execute("DROP TABLE authors")
-end
+def create_authors_up(db) = db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)")
+def create_authors_down(db) = db.execute("DROP TABLE authors")
 def create_authors_migration() = {
   "version": "20260101000001", "up": create_authors_up, "down": create_authors_down
 }
 
-def create_books_up(db)
-  db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT)")
-end
+def create_books_up(db) = db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT)")
 # Deliberately no "down" entry -- exercises the "irreversible migration"
 # error path below.
 def create_books_migration() = {"version": "20260101000002", "up": create_books_up}
@@ -71,9 +65,7 @@ def run_tests()
 
   def test_run_rolls_back_the_failed_migration_only()
     db = SQLite3.open(":memory:")
-    def broken_up(db)
-      db.execute("CREATE TABLE nope (")
-    end
+    def broken_up(db) = db.execute("CREATE TABLE nope (")
     def broken_migration() = {"version": "20260101000003", "up": broken_up}
     caught = false
     begin

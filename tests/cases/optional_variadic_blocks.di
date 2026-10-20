@@ -3,13 +3,9 @@ def inspect_tail(*values, &block)
   puts(block == nil)
 end
 
-def ordinary_callable(value)
-  value
-end
+def ordinary_callable(value) = value
 
-def summarize_tail(*values, &block)
-  [values.length(), block == nil]
-end
+def summarize_tail(*values, &block) = [values.length(), block == nil]
 
 inspect_tail(1, 2, 3)
 inspect_tail(4, 5) do

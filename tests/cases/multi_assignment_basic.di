@@ -1,6 +1,4 @@
-def pair()
-  [1, 2]
-end
+def pair() = [1, 2]
 
 a, b = pair()
 x, y, z = [10, 20, 30]

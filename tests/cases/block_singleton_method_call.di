@@ -2,13 +2,9 @@
 # parse_singleton_call's own trailing-DIAMOND_TOKEN_DO handling rather than
 # parse_invoke's (instance methods) or parse_call's (direct calls).
 class Runner
-  def self.run(callback)
-    callback()
-  end
+  def self.run(callback) = callback()
 
-  def self.run_with(x, callback)
-    callback(x)
-  end
+  def self.run_with(x, callback) = callback(x)
 end
 
 a = Runner.run() do

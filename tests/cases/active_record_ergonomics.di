@@ -49,9 +49,8 @@ def run_tests()
     Minitest.assert_equal("Ada", found.name())
   end
 
-  def test_find_by_returns_nil_when_nothing_matches(db)
+  def test_find_by_returns_nil_when_nothing_matches(db) =
     Minitest.assert_equal(true, Author.find_by(db, {"name": "Nobody"}) == nil)
-  end
 
   def test_bang_methods_behave_like_their_plain_counterparts(db)
     ada = Author.find_by(db, {"name": "Ada"})

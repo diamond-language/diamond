@@ -12,9 +12,7 @@ class LibraryAuthor
 end
 
 def run_tests()
-  def map_author(row)
-    LibraryAuthor.new(row["id"], row["name"], row["country"])
-  end
+  def map_author(row) = LibraryAuthor.new(row["id"], row["name"], row["country"])
 
   def test_tracks_changes_without_mutating_the_original()
     original = {"name": "Ada", "country": "UK"}

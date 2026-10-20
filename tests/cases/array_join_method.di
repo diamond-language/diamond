@@ -1,7 +1,5 @@
 class Loud
-  def to_s()
-    "LOUD"
-  end
+  def to_s() = "LOUD"
 end
 
 puts([1, 2, 3].join(", "))
