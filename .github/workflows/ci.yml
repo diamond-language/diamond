@@ -261,22 +261,25 @@ jobs:
         run: make MINIMAL=1 test-minimal
 
   # The SQL the database packages generate, run against real MariaDB, MySQL and PostgreSQL servers. The scripts start throwaway
-  # containers with `podman`; the runner has docker, so `podman` is pointed at it. This job runs on the runner itself (no job
-  # container) because it needs the docker daemon; its gcc 13 predates -std=c23, hence gcc-14.
+  # containers with `podman`; here `podman` is the docker client talking to the runner's daemon through its socket, and the job
+  # container shares the host network so the published database ports are reachable on 127.0.0.1.
   test-database-dialects:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    container:
+      image: ubuntu:26.04
+      options: --init --network host -v /var/run/docker.sock:/var/run/docker.sock
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-14 make git ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl
-          sudo ln -s "$(command -v docker)" /usr/local/bin/podman
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl docker.io
+          ln -s "$(command -v docker)" /usr/local/bin/podman
       - name: Live database dialect tests
-        run: make CC=gcc-14 test-database-dialects
+        run: make test-database-dialects
 
   test-stress-threads:
     runs-on: ubuntu-latest
