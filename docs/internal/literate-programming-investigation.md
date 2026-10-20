@@ -98,3 +98,20 @@ The owner wants a way to *read and learn* the implementation. They have 25 years
 Chapter 3, the lexer: write it, build the weave script, add the CI check, and read the result as the audience. If a Ruby programmer can follow it without opening the source files, the format works. Only then continue with the later chapters. `lsp/position.h` stays a candidate for a very short first chapter on UTF-16 versus bytes.
 
 Questions 2 and 3 of the original list no longer apply: nothing is tangled, so cuts are unchanged and the front end needs no line directive.
+
+## Update (2026-10-20): full WEB, tangled sources, line directive approved
+
+The owner answered the open questions: published cuts carry the **tangled source**; the woven documentation is published separately (GitHub already renders `web/*.md`; a built site can come later); and a `#line N "file"` directive in the Diamond front end is **approved**. So this is the full design (tangle and weave), with the reading-and-teaching goal deciding what gets written first. The weave-only "guided tour" above is superseded, except that its Ruby-first, C-for-a-Ruby-programmer prose style stays.
+
+Implemented on this branch:
+
+- `tools/tangle.awk` (portable awk, so it needs nothing built first): chunks in Markdown fences (` ```c <<name>>= `), `<<name>>` references on their own line with indentation carried over, appended definitions, `file: path` roots, `#line` directives and a banner for C, and errors for undefined, self-including and unused chunks.
+- Generated files are **committed**, so `make` is unchanged and nothing has to be tangled to build. `make tangle` regenerates; `make test-tangle` (part of `test-integration`) fails when a generated file differs from its web.
+- Pilot: `web/lsp-position.md` tangles to `lsp/position.h`; the code is identical to the previous header and the 381 language-server tests pass.
+
+Still to do, in order:
+
+1. Judge the pilot chapter as a reader. Then convert the next modules (`src/lexer.c` is the natural second one).
+2. Weave: cross-reference and identifier index output, HTML build, publishing target.
+3. `#line N "file"` in the Diamond front end (lexer, bytecode line tables, language server, debugger), then the packages: `facet` publishes tangled `.di`, with a reproducible tangle so the registry inventory digests are stable.
+4. Update `AGENTS.md` for each converted file (done for `lsp/position.h`).

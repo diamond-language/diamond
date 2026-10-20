@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-tangle tangle test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -624,6 +624,14 @@ test-registry-inventory: $(TARGET) $(BUILD_DIR)/facet
 test-registry-seed: $(TARGET) $(BUILD_DIR)/facet
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/seed_test.sh
 	REGISTRY_REHEARSE_SEED=1 $(BUILD_DIR)/diamond packages/registry/nginx_test.di
+
+# Literate sources: web/*.md are Markdown documents that tangle (tools/tangle.awk) into the source files they name. The generated
+# files are committed, so the build needs no tangling; test-tangle fails when one differs from its web.
+tangle:
+	awk -f tools/tangle.awk -v out=. web/*.md
+
+test-tangle:
+	bash tests/tangle_test.sh
 
 test-pheint-application: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash applications/pheint.dia/test.sh
@@ -1071,6 +1079,7 @@ test-integration:
 	$(MAKE) test-example-apps
 	$(MAKE) test-sanitize-script
 	$(MAKE) test-registry-inventory
+	$(MAKE) test-tangle
 	$(MAKE) test-examples
 	$(MAKE) test-pheint-application
 	$(MAKE) test-lsp
