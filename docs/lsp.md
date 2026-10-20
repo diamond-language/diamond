@@ -174,7 +174,8 @@ search over a real (if scoped) lexical symbol table:
     with a known element graph take their result elements from the `do` block's
     own inferred result (`pets.map() do |pet| build_pet() end`); a block whose
     result is unknown, declared, or varies by early `return`/`next` leaves the
-    result unresolved. A block on a native collection method
+    result unresolved. A bare unannotated function name works the same way
+    (`pets.map(make_pet)`) through its inferred result. A block on a native collection method
     (`each`, `map`, `select`, ...) over an Array or Hash whose element graph is
     editor-only types its parameters from that graph, as tooling facts only:
     `pets.each() do |pet| pet.bark() end` completes, and `map() do |pet| pet end`

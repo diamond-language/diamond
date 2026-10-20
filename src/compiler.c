@@ -1459,6 +1459,9 @@ static void publish_call_return_type(Compiler *compiler,uint16_t reg,
     publish_known_type_set(compiler,reg,return_set);
 }
 
+static void publish_block_tooling_callable(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *block,uint16_t return_set);
+
 static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
         const DiamondFunction *target) {
     compiler->known_types[reg]=DIAMOND_TYPE_CALLABLE;
@@ -1497,6 +1500,13 @@ static void publish_function_callable_type(Compiler *compiler,uint16_t reg,
     DiamondTypeSet *set=&compiler->function->type_sets[set_index];
     set->count=1;set->inferred=true;set->members[0]=callable;
     compiler->known_type_sets[reg]=(int32_t)set_index;
+    /* An unannotated function still has an inferred result graph: describe it
+     * to the editor so `map(make_pet)` can relay it. */
+    if(target->return_type_set==DIAMOND_NO_TYPE_SET&&
+       target->inferred_return_type_set!=DIAMOND_NO_TYPE_SET&&
+       target->inferred_return_type_set<target->type_set_count)
+        publish_block_tooling_callable(compiler,reg,target,
+            target->inferred_return_type_set);
 }
 
 static unsigned hex_digit_value(char digit) {
