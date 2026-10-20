@@ -627,7 +627,8 @@ test-registry-seed: $(TARGET) $(BUILD_DIR)/facet
 
 # The same SQL against live MariaDB, MySQL and PostgreSQL servers in throwaway containers (podman, or docker through a `podman` on
 # PATH; each script skips when there is none). CI runs it in its own job; the default `make test` stays hermetic.
-test-database-dialects: $(TARGET)
+test-database-dialects:
+	$(MAKE) debug
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/arel/test_mariadb_dialect.sh
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/arel/test_mysql_dialect.sh
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/arel/test_postgres_dialect.sh
