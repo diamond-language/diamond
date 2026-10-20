@@ -8767,6 +8767,54 @@ static void publish_nested_array_result(Compiler *compiler,uint16_t reg,
         inner,-1);
 }
 
+/* Describes a block's result graph on its closure register for the editor
+ * only, so `map`/`flat_map` can relay it. Checked facts are untouched. */
+static void publish_block_tooling_callable(Compiler *compiler,uint16_t reg,
+        const DiamondFunction *block,uint16_t return_set) {
+    const uint16_t cloned=clone_type_set_into_current(compiler,block->type_sets,
+        block->type_set_count,return_set);
+    if(cloned==DIAMOND_NO_TYPE_SET||!reserve_type_sets(compiler,1))return;
+    DiamondTypeMember callable={.id=DIAMOND_TYPE_CALLABLE,
+        .argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=cloned,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        callable.callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    const size_t set_index=compiler->function->type_set_count++;
+    DiamondTypeSet *set=&compiler->function->type_sets[set_index];
+    set->count=1;set->inferred=true;set->members[0]=callable;
+    compiler->tooling_type_sets[reg]=(int32_t)set_index;
+}
+
+/* `map` and `flat_map` over an Array with a known element graph: the result
+ * elements are whatever the callback returns. Editor-only, like the copying
+ * transforms above; an unknown callback result leaves the result unresolved. */
+static void publish_array_map_tooling_type(Compiler *compiler,uint16_t result,
+        uint16_t receiver,DiamondSpan name,const uint16_t *arguments,
+        size_t argument_count) {
+    const bool flat=name_equals(compiler,"flat_map",name,false);
+    if(argument_count!=1||(!flat&&!name_equals(compiler,"map",name,false)))return;
+    const int32_t source=compiler->tooling_type_sets[receiver]>=0?
+        compiler->tooling_type_sets[receiver]:compiler->known_type_sets[receiver];
+    if(joined_collection_argument(compiler,source,DIAMOND_TYPE_ARRAY,false)<0)
+        return;
+    const int32_t callable=compiler->tooling_type_sets[arguments[0]];
+    if(callable<0)return;
+    int32_t mapped=-1;
+    {
+        const DiamondTypeSet set=compiler->function->type_sets[(size_t)callable];
+        if(set.count!=1||set.members[0].id!=DIAMOND_TYPE_CALLABLE||
+           set.members[0].callable_return_set==DIAMOND_NO_TYPE_SET)return;
+        mapped=(int32_t)set.members[0].callable_return_set;
+    }
+    const int32_t elements=flat?joined_collection_argument(compiler,mapped,
+        DIAMOND_TYPE_ARRAY,false):mapped;
+    if(elements>=0)compiler->tooling_type_sets[result]=collection_type_set(
+        compiler,DIAMOND_TYPE_ARRAY,elements,-1);
+}
+
 static void publish_collection_argument_return_type(Compiler *compiler,
         uint16_t reg,int32_t receiver_set_index,DiamondSpan name,
         const uint16_t *arguments,size_t argument_count) {
@@ -9814,6 +9862,7 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
         receiver_set_index,name,(uint8_t)count);
     publish_collection_argument_return_type(compiler,result,receiver_set_index,
         name,args,count);
+    publish_array_map_tooling_type(compiler,result,receiver,name,args,count);
     publish_array_push_return_type(compiler,result,mutation_receiver,name,args,
         count);
     return result;
@@ -14464,6 +14513,33 @@ static uint16_t compile_block(Compiler *compiler) {
         compiler->known_types[body_result]=merged_type;
         compiler->known_type_sets[body_result]=merged_set;
     }
+    /* The block's editor-only result graph, indexed in the block's own table;
+     * it is cloned into the caller's table once that is current again. */
+    int32_t block_tooling_return=-1;
+    if(!compiler->failed&&declared_return_set==DIAMOND_NO_TYPE_SET&&
+       !compiler->return_flow_seen&&!compiler->method_has_block_return)
+        block_tooling_return=compiler->tooling_type_sets[body_result]>=0?
+            compiler->tooling_type_sets[body_result]:
+            compiler->known_type_sets[body_result];
+    if(block_tooling_return<0&&!compiler->failed&&
+       declared_return_set==DIAMOND_NO_TYPE_SET&&!compiler->return_flow_seen&&
+       !compiler->method_has_block_return&&
+       compiler->known_types[body_result]!=TYPE_UNKNOWN&&
+       reserve_type_sets(compiler,1)) {
+        DiamondTypeSet *set=&function->type_sets[function->type_set_count];
+        set->count=1;set->inferred=true;
+        set->members[0]=(DiamondTypeMember){
+            .id=compiler->known_types[body_result],
+            .argument_set=DIAMOND_NO_TYPE_SET,
+            .second_argument_set=DIAMOND_NO_TYPE_SET,
+            .callable_arity=UINT8_MAX,
+            .callable_return_set=DIAMOND_NO_TYPE_SET,
+            .callable_parameters_typed=false};
+        for(size_t parameter=0;parameter<16;parameter++)
+            set->members[0].callable_parameter_sets[parameter]=
+                DIAMOND_NO_TYPE_SET;
+        block_tooling_return=(int32_t)function->type_set_count++;
+    }
     if(!compiler->failed) {
         if(declared_return_set!=DIAMOND_NO_TYPE_SET) {
             emit_type_check(compiler,body_result,declared_return_set,
@@ -14609,6 +14685,10 @@ static uint16_t compile_block(Compiler *compiler) {
     emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
     for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
     compiler->known_types[result]=TYPE_UNKNOWN;
+    if(block_tooling_return>=0&&!compiler->failed&&
+       (size_t)block_tooling_return<function->type_set_count)
+        publish_block_tooling_callable(compiler,result,function,
+            (uint16_t)block_tooling_return);
     return result;
 }
 

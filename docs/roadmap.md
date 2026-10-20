@@ -74,9 +74,8 @@ Current behavior: [language server](lsp.md). The language server recompiles comp
 documents and loses precision across some dependency and dynamic-flow boundaries.
 
 - Improve receiver facts across imported files where they still lose precision:
-  element graphs through callback-dependent collection transforms that build new
-  elements (`map`, `flat_map`), methods
-  whose result varies, unrepresentable dynamic results, and nullable `Hash`
+  element graphs through `map`/`flat_map` with a named callable or a block whose
+  parameter is the element, methods whose result varies, unrepresentable dynamic results, and nullable `Hash`
   indexing remain unresolved.
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.

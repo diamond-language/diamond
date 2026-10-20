@@ -168,10 +168,14 @@ search over a real (if scoped) lexical symbol table:
     its own outer collection identity: replacing an element in the source does
     not discard the copy's graph, while tracked writes or pushes to the copy
     invalidate its graph and those of its aliases. These facts remain editor-only;
-    unknown source elements and transforms whose callback builds new elements
-    (`map`, `flat_map`) stay unresolved. A filter or sort callback cannot change
-    the element graph, so `select`, `reject`, and `sort_by` keep it, including
-    when written with a `do` block.
+    unknown source elements stay unresolved. A filter or sort callback cannot
+    change the element graph, so `select`, `reject`, and `sort_by` keep it,
+    including when written with a `do` block. `map` and `flat_map` over an Array
+    with a known element graph take their result elements from the `do` block's
+    own inferred result (`pets.map() do |pet| build_pet() end`); a block whose
+    result is unknown, declared, or varies by early `return`/`next` leaves the
+    result unresolved. Block parameters are not typed from the graph, so
+    `map() do |pet| pet end` stays unresolved.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:
