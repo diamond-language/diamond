@@ -1779,9 +1779,14 @@ def diamond_string_hex(text: String) -> Int = text.to_i(16)
 def diamond_string_oct(text: String) -> Int = text.to_i(8)
 def diamond_string_to_sym(text: String) -> Symbol = to_sym(text)
 # A String pattern is compiled to a Regexp, as in Ruby. Without this branch
-# `pattern.match?(text)` would dispatch right back here (a String receiver),
-# recursing until the call stack overflowed.
-def diamond_string_match(text: String, pattern) -> Bool
+# `pattern.match(text)` would dispatch right back here (a String receiver),
+# recursing until the call stack overflowed. `match` returns what Regexp#match
+# does; `match?` is the Bool form.
+def diamond_string_match(text: String, pattern) -> Array | Nil
+  pattern = Regexp.new(pattern) if pattern is String
+  pattern.match(text)
+end
+def diamond_string_match?(text: String, pattern) -> Bool
   pattern = Regexp.new(pattern) if pattern is String
   pattern.match?(text)
 end

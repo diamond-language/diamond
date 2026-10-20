@@ -1,0 +1,5 @@
+puts("abc".match?(Regexp.new("b")))
+puts("abc".match?("z"))
+puts("id:42-99".match(Regexp.new("(\\d+)-(\\d+)")).inspect())
+puts("abc".match("z").inspect())
+puts("abc".match(/(a)(x)?/).inspect())

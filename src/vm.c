@@ -6312,12 +6312,12 @@ static const DiamondFunction *find_top_level_function(
 
 /* Source-level extension protocol for native collections. `items.foo(x)`
  * probes array_foo(items,x), then enumerable_foo(items,x); Hash uses the
- * corresponding hash_ prefix. A trailing predicate '?' is omitted from the
- * bridge name. Native methods handled directly by the VM still win first. */
-static const DiamondFunction *find_collection_extension(
+ * corresponding hash_ prefix. A predicate `items.foo?(x)` probes the exact
+ * name first (array_foo?), then falls back to the bridge name without the
+ * '?' (array_foo). Native methods handled directly by the VM still win first. */
+static const DiamondFunction *find_collection_extension_exact(
         const DiamondChunk *chunk,DiamondObjectKind kind,
         const char *name,size_t length) {
-    if(length>0&&name[length-1]=='?')length--;
     char bridge[DIAMOND_MAX_FUNCTION_NAME];
     const char *prefix=kind==DIAMOND_OBJECT_ARRAY?"array_":"hash_";
     int written=snprintf(bridge,sizeof bridge,"%s%.*s",prefix,(int)length,name);
@@ -6351,16 +6351,23 @@ static const DiamondFunction *find_collection_extension(
     return find_top_level_function(chunk,bridge,(size_t)written);
 }
 
+static const DiamondFunction *find_collection_extension(
+        const DiamondChunk *chunk,DiamondObjectKind kind,
+        const char *name,size_t length) {
+    const DiamondFunction *found=find_collection_extension_exact(chunk,kind,name,length);
+    if(found==nullptr&&length>1&&name[length-1]=='?')
+        found=find_collection_extension_exact(chunk,kind,name,length-1);
+    return found;
+}
+
 /* The same extension protocol for String, Int, and Float: `"s".foo(x)`
  * probes string_foo(s, x); `5.foo(x)` probes integer_foo, then
  * numeric_foo; a Float probes float_foo, then numeric_foo -- each first
  * as a program's own function, then as the prelude's diamond_ version.
  * `**` maps to the name `pow`, since a function name can't contain
  * symbols. */
-static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
+static const DiamondFunction *find_value_extension_exact(const DiamondChunk *chunk,
         const char *const *prefixes,size_t prefix_count,const char *name,size_t length) {
-    if(length==2&&memcmp(name,"**",2)==0) {name="pow";length=3;}
-    if(length>0&&name[length-1]=='?')length--;
     for(size_t pass=0;pass<2;pass++)
         for(size_t index=0;index<prefix_count;index++) {
             char bridge[DIAMOND_MAX_FUNCTION_NAME];
@@ -6371,6 +6378,17 @@ static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
             if(found!=nullptr)return found;
         }
     return nullptr;
+}
+
+/* A predicate `"s".foo?(x)` probes the exact name (string_foo?) first, then
+ * falls back to the name without the '?' (string_foo). */
+static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
+        const char *const *prefixes,size_t prefix_count,const char *name,size_t length) {
+    if(length==2&&memcmp(name,"**",2)==0) {name="pow";length=3;}
+    const DiamondFunction *found=find_value_extension_exact(chunk,prefixes,prefix_count,name,length);
+    if(found==nullptr&&length>1&&name[length-1]=='?')
+        found=find_value_extension_exact(chunk,prefixes,prefix_count,name,length-1);
+    return found;
 }
 
 /* Tags for DiamondExtensionCache's `kind` field at the three
