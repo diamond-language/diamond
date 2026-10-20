@@ -272,6 +272,28 @@ jobs:
       - name: Live database dialect tests
         run: bash tools/ci_database_dialects.sh
 
+  # The registry behind a real nginx with TLS: the proxy drill (preserved request IDs and base paths, size and rate limits, log
+  # redaction) and the rehearsal that publishes and reinstalls the whole launch seed through it. Slow by design (the seed is
+  # published at the registry's own write-rate limit), so it is its own job.
+  test-registry-nginx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ubuntu:26.04
+      options: --init
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git diffutils findutils ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl openssl util-linux nginx
+      - name: Registry seed and nginx drill
+        run: |
+          make test-registry-seed
+          make test-registry-nginx
+
   test-stress-threads:
     runs-on: ubuntu-latest
     timeout-minutes: 40
