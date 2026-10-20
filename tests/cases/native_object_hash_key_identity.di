@@ -15,9 +15,7 @@
 # use, instead of falling through to the String-cast default.
 require "../../lib/minitest"
 
-def compute_for_thread_identity_test()
-  1 + 1
-end
+def compute_for_thread_identity_test() = 1 + 1
 
 def run_tests()
   def test_distinct_connections_hash_and_compare_by_identity()

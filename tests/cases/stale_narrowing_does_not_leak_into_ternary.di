@@ -2,7 +2,5 @@
 # `@s?` below parses as the condition of a ternary, lands in the same register, and
 # applied the old function's type sets to the top-level function: a segfault in
 # the compiler instead of the "instance variable" error.
-def s(v: Int | String)
-  v is String
-end
+def s(v: Int | String) = v is String
 puts(@s?)

@@ -28,17 +28,13 @@ class DestructureTargets
     {"instance": @instance_value} = value
   end
 
-  def instance_value()
-    @instance_value
-  end
+  def instance_value() = @instance_value
 
   def self.assign_class(value)
     {"class": @@class_value} = value
   end
 
-  def self.class_value()
-    @@class_value
-  end
+  def self.class_value() = @@class_value
 end
 
 targets = DestructureTargets.new()

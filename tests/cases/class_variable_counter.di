@@ -5,9 +5,7 @@ class Counter
   def initialize()
     @@count = @@count + 1
   end
-  def self.count()
-    @@count
-  end
+  def self.count() = @@count
 end
 Counter.reset()
 Counter.new()

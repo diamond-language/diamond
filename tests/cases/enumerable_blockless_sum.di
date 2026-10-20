@@ -5,9 +5,7 @@ class SumBag
   def initialize(values)
     @values = values
   end
-  def each(callback)
-    @values.each(callback)
-  end
+  def each(callback) = @values.each(callback)
 end
 
 results = [SumBag.new([]).sum(), SumBag.new([1, 2, 3]).sum(),

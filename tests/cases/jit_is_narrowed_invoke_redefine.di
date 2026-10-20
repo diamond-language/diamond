@@ -5,21 +5,15 @@
 # `run` correctly never becomes eligible once ANY redefine_method call
 # exists anywhere in the program.
 class Widget
-  def double() -> Int
-    21
-  end
+  def double() -> Int = 21
 end
 
 class Derived
-  def helper() -> Widget
-    Widget.new()
-  end
+  def helper() -> Widget = Widget.new()
 end
 
 class OtherBase
-  def helper() -> Widget
-    Widget.new()
-  end
+  def helper() -> Widget = Widget.new()
 end
 
 class Unrelated

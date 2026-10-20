@@ -12,9 +12,7 @@ class LibraryAuthor
 end
 
 def run_tests()
-  def map_author(row)
-    LibraryAuthor.new(row["id"], row["name"], row["country"])
-  end
+  def map_author(row) = LibraryAuthor.new(row["id"], row["name"], row["country"])
 
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")

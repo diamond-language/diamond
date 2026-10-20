@@ -1,8 +1,6 @@
 # A worker parked in Channel#receive (or #send on a full channel) holds the
 # join until stop(timeout_ms) interrupts it.
-def receiver()
-  Channel.new(1).receive()
-end
+def receiver() = Channel.new(1).receive()
 
 def sender()
   full = Channel.new(1)
@@ -10,9 +8,7 @@ def sender()
   full.send(2)
 end
 
-def waiter()
-  Channel.new(1).wait_readable([], nil)
-end
+def waiter() = Channel.new(1).wait_readable([], nil)
 
 sup = Supervisor.new()
 sup.add_child(receiver)

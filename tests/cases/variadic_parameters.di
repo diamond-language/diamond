@@ -17,9 +17,7 @@ def sum(*nums)
   total
 end
 
-def two_required(a, b, *rest)
-  a + b + rest.length()
-end
+def two_required(a, b, *rest) = a + b + rest.length()
 
 # "16 args at one call site" was once the real ceiling here (every call-
 # argument-parsing path in the compiler capped at 16 argument expressions
@@ -29,9 +27,7 @@ end
 # across every call shape. Kept here as a smaller, still-meaningful case:
 # sum's own register_count is far smaller than 16, so this still exercises
 # run_chunk's own register-range bounds fix (src/vm.c).
-def sixteen_args_total()
-  sum(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)
-end
+def sixteen_args_total() = sum(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)
 
 class Greeter
   def initialize(prefix)
@@ -74,30 +70,19 @@ class Greeter
   end
 end
 
-def apply_callable2(callback: Callable[2], a, b)
-  callback(a, b)
-end
+def apply_callable2(callback: Callable[2], a, b) = callback(a, b)
 
-def apply_callable5(callback: Callable[5], a, b, c, d, e)
-  callback(a, b, c, d, e)
-end
+def apply_callable5(callback: Callable[5], a, b, c, d, e) = callback(a, b, c, d, e)
 
 def run_tests()
-  def test_zero_trailing_args_collect_an_empty_array()
-    Minitest.assert_equal(0, sum())
-  end
+  def test_zero_trailing_args_collect_an_empty_array() = Minitest.assert_equal(0, sum())
 
-  def test_a_few_trailing_args_collect_correctly()
-    Minitest.assert_equal(6, sum(1, 2, 3))
-  end
+  def test_a_few_trailing_args_collect_correctly() = Minitest.assert_equal(6, sum(1, 2, 3))
 
-  def test_sixteen_args_at_one_call_site()
-    Minitest.assert_equal(136, sixteen_args_total())
-  end
+  def test_sixteen_args_at_one_call_site() = Minitest.assert_equal(136, sixteen_args_total())
 
-  def test_fixed_parameters_still_bind_normally()
+  def test_fixed_parameters_still_bind_normally() =
     Minitest.assert_equal("hi Dr Prof Ada", Greeter.new("hi").greet("Ada", "Dr", "Prof"))
-  end
 
   def test_instance_method_variadic()
     # Two spaces, not one: titles.join(" ") on an empty Array is "",
@@ -105,21 +90,17 @@ def run_tests()
     Minitest.assert_equal("hi  Ada", Greeter.new("hi").greet("Ada"))
   end
 
-  def test_self_singleton_method_variadic()
+  def test_self_singleton_method_variadic() =
     Minitest.assert_equal("announcing: Captain Ahab", Greeter.announce("Ahab", "Captain"))
-  end
 
-  def test_closure_with_declared_parameters_variadic()
+  def test_closure_with_declared_parameters_variadic() =
     Minitest.assert_equal("x:2", Greeter.new("").closure_variadic("x", 1, 2))
-  end
 
-  def test_callable_n_matches_a_variadic_closure_at_required_arity()
+  def test_callable_n_matches_a_variadic_closure_at_required_arity() =
     Minitest.assert_equal(3, apply_callable2(two_required, 1, 2))
-  end
 
-  def test_callable_n_matches_a_variadic_closure_above_required_arity()
+  def test_callable_n_matches_a_variadic_closure_above_required_arity() =
     Minitest.assert_equal(15, apply_callable5(sum, 1, 2, 3, 4, 5))
-  end
 
   def test_redefine_method_accepts_a_matching_variadic_replacement()
     g = Greeter.new("")
@@ -129,9 +110,7 @@ def run_tests()
   end
 
   def test_redefine_method_rejects_variadic_mismatch()
-    def mismatched_redefine()
-      Greeter.redefine_method("bar", Greeter.mismatched_bar_factory())
-    end
+    def mismatched_redefine() = Greeter.redefine_method("bar", Greeter.mismatched_bar_factory())
     Minitest.assert_raises[ArgumentError](mismatched_redefine)
   end
 

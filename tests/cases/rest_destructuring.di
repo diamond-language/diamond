@@ -7,13 +7,9 @@ class RestTargets
     [@head, [@second, *@tail]] = value
   end
 
-  def values()
-    [@head, @second, @tail]
-  end
+  def values() = [@head, @second, @tail]
 
-  def self.values()
-    [@@head, @@tail]
-  end
+  def self.values() = [@@head, @@tail]
 end
 
 [head, *tail] = [1, 2, 3]

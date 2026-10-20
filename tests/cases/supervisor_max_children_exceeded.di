@@ -1,6 +1,4 @@
-def noop()
-  1
-end
+def noop() = 1
 sup = Supervisor.new()
 count = 0
 while count < 32

@@ -67,9 +67,8 @@ def w_authors() = Mjolnir::Schema.new("authors", {"id": :int, "name": :string, "
 def w_notes() = Mjolnir::Schema.new("notes", {"id": :int, "body": :string}, build_w_note)
 def w_seen() = Mjolnir::Schema.new("seen", {"game_id": :int, "player_id": :int, "hits": :int}, build_w_seen, primary_key: ["game_id", "player_id"])
 
-def w_author(repo, name, email = nil)
+def w_author(repo, name, email = nil) =
   repo.insert!(Mjolnir::Changeset.cast(w_authors(), nil, {"name": name, "email": email}, ["name", "email"]))
-end
 
 def run_tests()
   suite = Minitest.new()

@@ -1,6 +1,4 @@
-def noop()
-  1
-end
+def noop() = 1
 
 def error_name(options)
   begin

@@ -1,5 +1,3 @@
-def identity(value)
-  value
-end
+def identity(value) = value
 
 identity(1

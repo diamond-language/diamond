@@ -1,7 +1,5 @@
 # No sleep builtin: park on a never-ready channel until a deadline.
-def nap(seconds)
-  Channel.new(1).wait_readable([], Time.monotonic() + seconds)
-end
+def nap(seconds) = Channel.new(1).wait_readable([], Time.monotonic() + seconds)
 
 def late_receiver(ch)
   nap(0.05)

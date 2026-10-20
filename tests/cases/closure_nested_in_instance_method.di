@@ -1,8 +1,6 @@
 class Box
   def make_adder(n)
-    def add(x)
-      x + n
-    end
+    def add(x) = x + n
     add
   end
 end

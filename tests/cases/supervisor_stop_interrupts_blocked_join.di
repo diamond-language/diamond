@@ -1,11 +1,7 @@
 # A supervised worker joining a thread that never returns is interrupted.
-def hang()
-  Channel.new(1).receive()
-end
+def hang() = Channel.new(1).receive()
 
-def joiner()
-  Thread.new(hang).join()
-end
+def joiner() = Thread.new(hang).join()
 
 sup = Supervisor.new()
 sup.add_child(joiner)

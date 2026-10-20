@@ -21,16 +21,12 @@ class SaveLog
   def initialize()
     @entries = []
   end
-  def push(entry)
-    @entries.push(entry)
-  end
+  def push(entry) = @entries.push(entry)
   def entries() = @entries
 end
 
 def run_tests()
-  def map_author(row)
-    LibraryAuthor.new(row["id"], row["name"], row["country"])
-  end
+  def map_author(row) = LibraryAuthor.new(row["id"], row["name"], row["country"])
 
   def validate_author(attributes, exclude_id)
     errors = []

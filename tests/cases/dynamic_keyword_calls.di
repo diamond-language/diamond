@@ -1,16 +1,12 @@
 class Formatter
-  def render(left, middle, right = "default")
-    [left, middle, right].join(":")
-  end
+  def render(left, middle, right = "default") = [left, middle, right].join(":")
 
   def pair[T](first: T, second: T)
     [first, second]
   end
 end
 
-def subtract(left, right)
-  left - right
-end
+def subtract(left, right) = left - right
 
 formatter = Formatter.new()
 puts(formatter.render(right: "r", left: "l", middle: "m"))

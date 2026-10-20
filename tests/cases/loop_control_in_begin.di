@@ -2,9 +2,7 @@
 # bodies run, once each and in order, and the handler stack stays consistent afterwards.
 log = []
 
-def trace(log, label)
-  log.push(label)
-end
+def trace(log, label) = log.push(label)
 
 def next_in_begin(log)
   i = 0

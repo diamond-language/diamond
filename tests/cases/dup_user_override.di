@@ -4,9 +4,7 @@ class Special
   def initialize(x)
     @x = x
   end
-  def dup()
-    Special.new(999)
-  end
+  def dup() = Special.new(999)
   def x() = @x
 end
 Special.new(1).dup().x()

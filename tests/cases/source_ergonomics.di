@@ -4,9 +4,7 @@ class Pair
     @values = [left, right,] # trailing array comma
   end
 
-  def sum()
-    @values[0] + @values[1]
-  end
+  def sum() = @values[0] + @values[1]
 end
 
 pair = Pair.new(20, 22,); ignored = 1_000_000

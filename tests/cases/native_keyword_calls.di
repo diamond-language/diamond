@@ -1,6 +1,4 @@
-def double(value)
-  value * 2
-end
+def double(value) = value * 2
 
 puts([1, 2].join(separator: ","))
 puts("hello".slice(start: 1, length: 3))

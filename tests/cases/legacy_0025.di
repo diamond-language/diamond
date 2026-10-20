@@ -1,14 +1,10 @@
-def checked(values: Array[Int | Nil]) -> Array[Int | Nil]
-  values
-end
+def checked(values: Array[Int | Nil]) -> Array[Int | Nil] = values
 
 class Element
 end
 class ChildElement < Element
 end
-def nominal(values: Array[Element])
-  values
-end
+def nominal(values: Array[Element]) = values
 nominal([ChildElement.new()])
 
 values = [40, nil]
@@ -21,9 +17,7 @@ rescue error: TypeError
 end
 
 inner = [1]
-def nested(values: Array[Array[Int]])
-  values
-end
+def nested(values: Array[Array[Int]]) = values
 nested([inner])
 nested_guard = begin
   inner[0] = "bad"

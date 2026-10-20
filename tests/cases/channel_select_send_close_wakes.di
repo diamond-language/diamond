@@ -1,6 +1,4 @@
-def nap(seconds)
-  Channel.new(1).wait_readable([], Time.monotonic() + seconds)
-end
+def nap(seconds) = Channel.new(1).wait_readable([], Time.monotonic() + seconds)
 
 def late_closer(ch)
   nap(0.05)

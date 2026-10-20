@@ -1,6 +1,4 @@
-def string_shout(text)
-  text.upcase()
-end
+def string_shout(text) = text.upcase()
 
 [
   "abc".respond_to?(:length), "abc".respond_to?("upcase"), "abc".respond_to?(:shout),

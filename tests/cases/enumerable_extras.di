@@ -1,15 +1,9 @@
 def main()
-  def is_even(x: Int) -> Bool
-    mod(x, 2) == 0
-  end
+  def is_even(x: Int) -> Bool = mod(x, 2) == 0
 
-  def gt2(x: Int) -> Bool
-    x > 2
-  end
+  def gt2(x: Int) -> Bool = x > 2
 
-  def negate(x: Int) -> Int
-    -x
-  end
+  def negate(x: Int) -> Int = -x
 
   def report_pair(value: Int, index: Int)
     puts("#{index}=#{value}")

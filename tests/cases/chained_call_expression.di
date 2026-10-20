@@ -41,9 +41,7 @@ def run_tests()
     Minitest.assert_equal(42, box.make_doubler()(21))
   end
 
-  def test_call_directly_on_top_level_calls_own_result()
-    Minitest.assert_equal(15, make_adder(5)(10))
-  end
+  def test_call_directly_on_top_level_calls_own_result() = Minitest.assert_equal(15, make_adder(5)(10))
 
   def test_ordinary_local_variable_call_still_works()
     f = make_adder(1)
@@ -55,9 +53,7 @@ def run_tests()
     Minitest.assert_equal(12, choose(false)(10))
   end
 
-  def test_call_on_a_parenthesized_expressions_own_result()
-    Minitest.assert_equal(15, (make_adder(5))(10))
-  end
+  def test_call_on_a_parenthesized_expressions_own_result() = Minitest.assert_equal(15, (make_adder(5))(10))
 
   def test_call_after_array_index()
     callables = [make_adder(100)]

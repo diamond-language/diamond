@@ -19,9 +19,7 @@ class LibraryBook
 end
 
 def run_tests()
-  def map_author(row)
-    LibraryAuthor.new(row["id"], row["name"], row["country"])
-  end
+  def map_author(row) = LibraryAuthor.new(row["id"], row["name"], row["country"])
 
   db = SQLite3.open(":memory:")
   db.execute("CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT, country TEXT)")
@@ -36,9 +34,7 @@ def run_tests()
   Minitest.assert_equal(1, repository.delete(db, 2))
   Minitest.assert_equal(1, repository.all(db).length())
 
-  def map_book(row)
-    LibraryBook.new(row["title"])
-  end
+  def map_book(row) = LibraryBook.new(row["title"])
   db.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER)")
   db.execute("INSERT INTO books (title, author_id) VALUES ('Book A', 1), ('Book B', 2)")
   books = ActiveRecord::Repository.new(Arel.table("books"), map_book)

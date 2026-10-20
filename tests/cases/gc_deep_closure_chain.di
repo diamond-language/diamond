@@ -1,9 +1,7 @@
 # A chain of closures, each capturing the previous one, is 150000 deep: GC
 # marking walks closure -> captured cell -> closure iteratively, not recursively.
 def link(prev)
-  def get()
-    prev
-  end
+  def get() = prev
   get
 end
 

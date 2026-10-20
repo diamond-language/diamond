@@ -1,5 +1,3 @@
-def wrong_array() -> Array[Int]
-  "text"
-end
+def wrong_array() -> Array[Int] = "text"
 
 wrong_array()

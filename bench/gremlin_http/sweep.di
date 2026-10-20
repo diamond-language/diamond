@@ -56,9 +56,7 @@ def read_freqs(cpus: Array)
 end
 
 # The number in a /proc status line such as "VmRSS:\t  1234 kB".
-def status_number(line: String)
-  line[line.index(":") + 1..-1].strip().split(" ")[0].to_i()
-end
+def status_number(line: String) = line[line.index(":") + 1..-1].strip().split(" ")[0].to_i()
 
 # CPU ticks (user, system and per thread) and the summed voluntary / involuntary context
 # switches of a process.
@@ -117,9 +115,7 @@ def stdev(values: Array)
   (squares / (values.length() - 1)).sqrt()
 end
 
-def pad(value, width: Int)
-  value.to_s().rjust(width, " ")
-end
+def pad(value, width: Int) = value.to_s().rjust(width, " ")
 
 class Sweep
   def initialize(diamond: String, root: String, project: String, options: Hash)

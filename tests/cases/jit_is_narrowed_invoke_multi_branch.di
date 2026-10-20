@@ -7,21 +7,15 @@
 # per-call-site fact instead. Each of A/B/C's own method is independently
 # resolved and dispatched correctly.
 class A
-  def value() -> Int
-    1
-  end
+  def value() -> Int = 1
 end
 
 class B
-  def value() -> Int
-    2
-  end
+  def value() -> Int = 2
 end
 
 class C
-  def value() -> Int
-    3
-  end
+  def value() -> Int = 3
 end
 
 def render(x: A | B | C) -> Int

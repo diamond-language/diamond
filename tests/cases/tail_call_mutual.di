@@ -24,21 +24,13 @@ def a(n, total)
   return total if n == 0
   b(n - 1, total + 1, 2)
 end
-def b(n, total, step)
-  c(n, total + step)
-end
-def c(n, total)
-  a(n, total)
-end
+def b(n, total, step) = c(n, total + step)
+def c(n, total) = a(n, total)
 puts(a(300000, 0))
 
 # wrapper, not a cycle
-def wrap(x)
-  inner(x + 1)
-end
-def inner(x)
-  x * 2
-end
+def wrap(x) = inner(x + 1)
+def inner(x) = x * 2
 puts(wrap(4))
 
 # big register file in one function of the cycle
@@ -47,9 +39,7 @@ def big(n)
   return v5 if n >= 200000
   small(n + 1)
 end
-def small(n)
-  big(n)
-end
+def small(n) = big(n)
 puts(big(0))
 
 def fat(n)
@@ -58,18 +48,14 @@ def fat(n)
   return xs.length() + ys.length() + n if n >= 100000
   lean(n + 1)
 end
-def lean(n)
-  fat(n)
-end
+def lean(n) = fat(n)
 puts(fat(0))
 
 def morph_a(x, n)
   return x if n == 0
   morph_b(x.to_s(), n - 1)
 end
-def morph_b(x, n)
-  morph_a(x.length(), n - 1)
-end
+def morph_b(x, n) = morph_a(x.length(), n - 1)
 puts(morph_a(5, 200000))
 
 def gen_a[T](x: T, n: Int) -> String
@@ -96,9 +82,7 @@ def da(n, acc = 100)
   return acc if n == 0
   db(n - 1)
 end
-def db(n, acc = 7)
-  da(n, acc + 1)
-end
+def db(n, acc = 7) = da(n, acc + 1)
 puts(da(5, 0))
 
 # a lambda caller falls back to an ordinary call
@@ -106,9 +90,7 @@ def ping(n)
   return n if n <= 0
   pong(n - 1)
 end
-def pong(n)
-  ping(n - 1)
-end
+def pong(n) = ping(n - 1)
 r = [11, 12].map() do |k|
   ping(k)
 end
@@ -120,9 +102,7 @@ def boom_a(n)
   raise ArgumentError.new("bottom") if n == 0
   boom_b(n - 1)
 end
-def boom_b(n)
-  boom_a(n)
-end
+def boom_b(n) = boom_a(n)
 begin
   boom_a(100000)
 rescue error: ArgumentError

@@ -4,9 +4,7 @@ class ValidationError < StandardError
     @field = field
   end
 
-  def field()
-    @field
-  end
+  def field() = @field
 end
 
 begin

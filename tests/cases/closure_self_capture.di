@@ -131,9 +131,7 @@ class ScaleWidget
   end
 end
 
-def apply_callable(callback: Callable[1], value)
-  callback(value)
-end
+def apply_callable(callback: Callable[1], value) = callback(value)
 
 puts(ScaleWidget.new(3).scale(7))              # 21, direct call
 puts(apply_callable(ScaleWidget.new(3).scaler(), 7))  # 21, via Callable[1]

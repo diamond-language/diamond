@@ -6,8 +6,6 @@ def factorial(n)
   end
 end
 
-def add(a, b)
-  a + b
-end
+def add(a, b) = a + b
 
 add(factorial(5), -78)

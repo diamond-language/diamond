@@ -1,9 +1,7 @@
 # DIAMOND_MAX_LIVE_THREADS=6: three spawner threads then race to start children. Their own slots leave room for
 # exactly three children, however the creations interleave; checking the cap and counting the thread later let
 # simultaneous creators all pass the check and overshoot it.
-def idle(hold)
-  hold.receive()
-end
+def idle(hold) = hold.receive()
 
 def spawner(go, results, hold)
   go.receive()

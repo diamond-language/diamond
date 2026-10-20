@@ -36,7 +36,5 @@ class Holder
   end
 end
 
-def run()
-  Holder.new(Box.new(21)).run_loop(3000000)
-end
+def run() = Holder.new(Box.new(21)).run_loop(3000000)
 run()

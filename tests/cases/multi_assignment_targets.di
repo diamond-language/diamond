@@ -2,9 +2,7 @@ class Counter
   def self.set_bounds(arr)
     @@lo, @@hi = arr
   end
-  def self.bounds()
-    [@@lo, @@hi]
-  end
+  def self.bounds() = [@@lo, @@hi]
 
   def initialize()
     @x = 0
@@ -13,9 +11,7 @@ class Counter
   def set_from(arr)
     @x, @y = arr
   end
-  def coords()
-    [@x, @y]
-  end
+  def coords() = [@x, @y]
 end
 
 Counter.set_bounds([1, 10])

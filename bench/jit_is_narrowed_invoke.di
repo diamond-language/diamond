@@ -31,7 +31,5 @@ def run_loop(box: Box | Nil, iterations) -> Int
   total
 end
 
-def run()
-  run_loop(Box.new(21), 3000000)
-end
+def run() = run_loop(Box.new(21), 3000000)
 puts(run())

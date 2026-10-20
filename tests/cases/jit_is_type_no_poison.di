@@ -11,15 +11,11 @@
 # compiled functions (make, double) before this phase's fix, 3
 # (make, double, run) after.
 class Widget
-  def double() -> Int
-    21
-  end
+  def double() -> Int = 21
 end
 
 class Factory
-  def make() -> Widget
-    Widget.new()
-  end
+  def make() -> Widget = Widget.new()
   def run(x: Int | String) -> Int
     unrelated = 0
     if x is Int

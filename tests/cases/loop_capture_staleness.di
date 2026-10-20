@@ -11,9 +11,7 @@
 # start, so all of this already goes through the existing box-aware
 # codegen. See docs/roadmap.md's "Open design decisions" section.
 
-def call_it(cb)
-  cb()
-end
+def call_it(cb) = cb()
 
 # The original case: a pre-existing local referenced in the while
 # condition itself.
@@ -21,9 +19,7 @@ def while_condition_case()
   i = 0
   results = []
   while i < 3
-    def show()
-      i
-    end
+    def show() = i
     results.push(show())
     i += 1
   end
@@ -38,9 +34,7 @@ def loop_break_case()
   results = []
   loop do
     break if i >= 3
-    def show()
-      i
-    end
+    def show() = i
     results.push(show())
     i += 1
   end
@@ -53,9 +47,7 @@ def fresh_local_case()
   results = []
   while results.length() < 3
     x = results.length() * 10
-    def show()
-      x
-    end
+    def show() = x
     results.push(show())
   end
   results
@@ -68,9 +60,7 @@ def loop_control_case()
   results = []
   redo_done = false
   while i < 5
-    def show()
-      i
-    end
+    def show() = i
     i += 1
     if i == 2
       next
@@ -94,9 +84,7 @@ def inner_captures_case()
   while outer < 2
     inner = 0
     while inner < 2
-      def show()
-        outer * 10 + inner
-      end
+      def show() = outer * 10 + inner
       results.push(show())
       inner += 1
     end
@@ -112,9 +100,7 @@ def outer_captures_case()
   results = []
   outer = 0
   while outer < 2
-    def show()
-      outer
-    end
+    def show() = outer
     inner = 0
     while inner < 2
       results.push(show() * 10 + inner)
@@ -139,9 +125,7 @@ def rescue_binding_case(n)
     begin
       raise "boom"
     rescue e
-      def grab_it()
-        e
-      end
+      def grab_it() = e
       results.push(grab_it())
     end
     i += 1
@@ -158,12 +142,8 @@ def def_as_local_capture_case(n)
   results = []
   i = 0
   while i < n
-    def show()
-      i
-    end
-    def call_show()
-      show()
-    end
+    def show() = i
+    def call_show() = show()
     results.push(call_show())
     i += 1
   end

@@ -31,7 +31,5 @@ def run_loop(f: Factory, box: Widget, iterations) -> Int
   total
 end
 
-def run()
-  run_loop(Factory.new(), Widget.new(21), 3000000)
-end
+def run() = run_loop(Factory.new(), Widget.new(21), 3000000)
 run()

@@ -2,9 +2,7 @@ class Box
   def set(value)
     @value = value
   end
-  def value()
-    @value
-  end
+  def value() = @value
 end
 
 box = Box.new()

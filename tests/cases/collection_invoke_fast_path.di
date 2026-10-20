@@ -30,42 +30,26 @@ def run_tests()
     Minitest.assert_equal(5, "hello".length())
   end
 
-  def push_to_a_frozen_array()
-    [1].freeze.push(2)
-  end
+  def push_to_a_frozen_array() = [1].freeze.push(2)
 
-  def test_push_to_a_frozen_array_still_fails()
-    Minitest.assert_raises[StandardError](push_to_a_frozen_array)
-  end
+  def test_push_to_a_frozen_array_still_fails() = Minitest.assert_raises[StandardError](push_to_a_frozen_array)
 
-  def push_two_arguments()
-    [1].push(2, 3)
-  end
+  def push_two_arguments() = [1].push(2, 3)
 
-  def test_push_arity_is_still_checked()
-    Minitest.assert_raises[StandardError](push_two_arguments)
-  end
+  def test_push_arity_is_still_checked() = Minitest.assert_raises[StandardError](push_two_arguments)
 
-  def length_with_an_argument()
-    [1].length(1)
-  end
+  def length_with_an_argument() = [1].length(1)
 
-  def test_length_arity_is_still_checked()
-    Minitest.assert_raises[StandardError](length_with_an_argument)
-  end
+  def test_length_arity_is_still_checked() = Minitest.assert_raises[StandardError](length_with_an_argument)
 
-  def push_a_string_to_ints(values: Array[Int])
-    values.push("x")
-  end
+  def push_a_string_to_ints(values: Array[Int]) = values.push("x")
 
   def push_an_int_to_ints(values: Array[Int])
     values.push(2)
     values.length()
   end
 
-  def push_string_into_typed()
-    push_a_string_to_ints([1])
-  end
+  def push_string_into_typed() = push_a_string_to_ints([1])
 
   def test_typed_array_constraint_is_still_checked()
     Minitest.assert_equal(2, push_an_int_to_ints([1]))

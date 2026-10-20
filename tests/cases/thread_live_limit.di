@@ -1,7 +1,5 @@
 # DIAMOND_MAX_LIVE_THREADS=2 lowers the live-thread cap below the built-in 64.
-def waiter(channel)
-  channel.receive()
-end
+def waiter(channel) = channel.receive()
 channel = Channel.new(4)
 first = Thread.new(waiter, channel)
 second = Thread.new(waiter, channel)

@@ -1,6 +1,4 @@
-def inner(n)
-  n * 2
-end
+def inner(n) = n * 2
 def outer(n)
   t = Thread.new(inner, n)
   t.join()

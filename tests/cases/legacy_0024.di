@@ -12,9 +12,7 @@ def choose(flag: Bool) -> Int | String
   end
 end
 
-def accept(value: Int | String | Parent) -> Int | String | Parent
-  value
-end
+def accept(value: Int | String | Parent) -> Int | String | Parent = value
 
 accept(Child.new())
 choose(false)

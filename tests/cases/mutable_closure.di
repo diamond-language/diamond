@@ -3,9 +3,7 @@ def make_pair()
   def increment()
     value = value + 1
   end
-  def read()
-    value
-  end
+  def read() = value
   [increment, read]
 end
 

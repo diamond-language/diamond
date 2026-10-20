@@ -1,6 +1,4 @@
-def require_conversion(callback: Callable[[Int], String]) -> String
-  callback(1)
-end
+def require_conversion(callback: Callable[[Int], String]) -> String = callback(1)
 
 class ConflictingReference
   def self.identity[T](value: T) -> T = value

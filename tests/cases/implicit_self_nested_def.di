@@ -3,9 +3,7 @@
 class A
   def helper(x: Int) -> Int = x + 1
   def run() -> Int
-    def inner(v: Int) -> Int
-      helper(v)
-    end
+    def inner(v: Int) -> Int = helper(v)
     inner(5)
   end
 end

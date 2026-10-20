@@ -1,6 +1,4 @@
-def double(value)
-  value * 2
-end
+def double(value) = value * 2
 
 h = {"a": 1, "b": 2}
 puts(h.fetch("a", 0))

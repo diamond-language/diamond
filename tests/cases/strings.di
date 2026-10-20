@@ -1,6 +1,4 @@
-def surround(value, left, right)
-  left + value + right
-end
+def surround(value, left, right) = left + value + right
 
 text = ""
 x = 0

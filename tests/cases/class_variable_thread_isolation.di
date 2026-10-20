@@ -2,9 +2,7 @@ class Shared
   def self.set(v)
     @@x = v
   end
-  def self.get()
-    @@x
-  end
+  def self.get() = @@x
 end
 def worker()
   Shared.set("child")

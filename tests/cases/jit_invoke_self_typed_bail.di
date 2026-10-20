@@ -9,9 +9,7 @@
 # WOULD become eligible -- staying uncompiled is the actual assertion.
 class Box
   def wrap[T](value: T) -> Array[T] = [value]
-  def wrap_self_typed()
-    self.wrap[Int](7)
-  end
+  def wrap_self_typed() = self.wrap[Int](7)
 end
 
 b = Box.new()

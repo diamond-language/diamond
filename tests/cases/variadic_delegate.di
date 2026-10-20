@@ -1,7 +1,5 @@
 class Target
-  def render(*parts)
-    parts.join("-")
-  end
+  def render(*parts) = parts.join("-")
 end
 
 class Wrapper

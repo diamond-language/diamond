@@ -1,7 +1,5 @@
 class VariadicBlockTarget
-  def transform(first, second, third, callback: Callable[1])
-    callback(first + second + third)
-  end
+  def transform(first, second, third, callback: Callable[1]) = callback(first + second + third)
 end
 
 class VariadicBlockProxy

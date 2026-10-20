@@ -5,9 +5,7 @@ class ArrayDefaultBox
   def items() -> Array = @items
 end
 
-def pack(child: Array, label: String) -> Array
-  [child, label, []]
-end
+def pack(child: Array, label: String) -> Array = [child, label, []]
 
 def run()
   total = 0

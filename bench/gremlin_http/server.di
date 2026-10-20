@@ -25,9 +25,7 @@ def mixed(request, context)
   [200, {"Content-Type": "application/json"}, body]
 end
 
-def hello(request, context)
-  [200, {"Content-Type": "text/plain"}, "hello"]
-end
+def hello(request, context) = [200, {"Content-Type": "text/plain"}, "hello"]
 
 def cpu(request, context)
   sum = 0

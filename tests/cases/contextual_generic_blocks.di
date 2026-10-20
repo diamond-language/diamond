@@ -61,9 +61,7 @@ class GenericBlockBox
     @value = yield(value)
   end
 
-  def value()
-    @value
-  end
+  def value() = @value
 end
 
 puts(GenericBlockOps.apply[String]("singleton") do |value|

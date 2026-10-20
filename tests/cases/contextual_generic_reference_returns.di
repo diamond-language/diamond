@@ -21,21 +21,13 @@ def explicit_bound_reference(box: ReturnReferenceBox) -> Callable[[Int], Int]
   return box.identity
 end
 
-def implicit_top_reference() -> Callable[[Int], Int]
-  identity
-end
+def implicit_top_reference() -> Callable[[Int], Int] = identity
 
-def implicit_singleton_reference() -> Callable[[Int], Int]
-  ReturnReferenceBox.identity
-end
+def implicit_singleton_reference() -> Callable[[Int], Int] = ReturnReferenceBox.identity
 
-def implicit_bound_reference(box: ReturnReferenceBox) -> Callable[[Int], Int]
-  box.identity
-end
+def implicit_bound_reference(box: ReturnReferenceBox) -> Callable[[Int], Int] = box.identity
 
-def nested_references() -> Array[Hash[String, Callable[[Int], Int]]]
-  [{"identity": ReturnReferenceBox.identity}]
-end
+def nested_references() -> Array[Hash[String, Callable[[Int], Int]]] = [{"identity": ReturnReferenceBox.identity}]
 
 box = ReturnReferenceBox.new()
 puts(top_reference()(42))

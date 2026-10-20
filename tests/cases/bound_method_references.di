@@ -1,11 +1,7 @@
 class Calculator
-  def add(first, second)
-    first + second
-  end
+  def add(first, second) = first + second
 
-  def collect(head, *rest)
-    head + ":" + rest.join(",")
-  end
+  def collect(head, *rest) = head + ":" + rest.join(",")
 
   def identity[T](value: T) -> T
     value
@@ -21,9 +17,7 @@ class Prefix
     @value = value
   end
 
-  def apply(value)
-    @value + value
-  end
+  def apply(value) = @value + value
 end
 
 calculator = Calculator.new()

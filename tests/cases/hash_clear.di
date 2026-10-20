@@ -1,8 +1,6 @@
 # Hash#clear removes every pair, returns the same (now empty) Hash, and leaves
 # it fully usable afterwards.
-def clear_typed(h: Hash) -> Hash
-  h.clear()
-end
+def clear_typed(h: Hash) -> Hash = h.clear()
 
 a = {"k": 1}
 puts(clear_typed(a).length())

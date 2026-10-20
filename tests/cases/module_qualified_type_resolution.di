@@ -71,13 +71,9 @@ module Errors
 end
 
 def run_tests()
-  def test_bare_sibling_inheritance_still_works()
-    Minitest.assert_equal("X", Shapes::Sibling.new("x").loud())
-  end
+  def test_bare_sibling_inheritance_still_works() = Minitest.assert_equal("X", Shapes::Sibling.new("x").loud())
 
-  def test_qualified_external_inheritance()
-    Minitest.assert_equal("HI", External.new("hi").loud())
-  end
+  def test_qualified_external_inheritance() = Minitest.assert_equal("HI", External.new("hi").loud())
 
   def test_bare_is_check_inside_module()
     value = Shapes::Sibling.new("y")
@@ -118,9 +114,8 @@ def run_tests()
     Minitest.assert_equal("not a shapes table", Shapes.wrap(Table.new("t2")))
   end
 
-  def test_bare_type_annotation_prefers_own_module_over_collision()
+  def test_bare_type_annotation_prefers_own_module_over_collision() =
     Minitest.assert_equal("described: t3", Shapes.describe(Shapes::Table.new("t3")))
-  end
 
   suite = Minitest.new()
   suite.test("bare sibling inheritance", test_bare_sibling_inheritance_still_works)

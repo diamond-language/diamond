@@ -7,9 +7,7 @@ class Configured
     end
   end
 
-  def value()
-    @value
-  end
+  def value() = @value
 end
 
 plain = Configured.new(3)

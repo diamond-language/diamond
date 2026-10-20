@@ -5,9 +5,7 @@ class RecordingVisitor
   def initialize()
     @nodes = []
   end
-  def visit(node)
-    @nodes.push(Arel.inspect(node))
-  end
+  def visit(node) = @nodes.push(Arel.inspect(node))
   def nodes() = @nodes
 end
 

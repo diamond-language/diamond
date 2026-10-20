@@ -1,6 +1,4 @@
-def recurse_forever(n)
-  1 + recurse_forever(n + 1)
-end
+def recurse_forever(n) = 1 + recurse_forever(n + 1)
 
 def infinite_recursion(ch)
   ch.send(1)

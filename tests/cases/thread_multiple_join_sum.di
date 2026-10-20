@@ -1,6 +1,4 @@
-def square(n)
-  n * n
-end
+def square(n) = n * n
 t1 = Thread.new(square, 3)
 t2 = Thread.new(square, 4)
 t3 = Thread.new(square, 5)

@@ -36,9 +36,7 @@ puts(opaque_entries[:opaque])
 def captured_mutation()
   captured = []
   captured_entries = {}
-  def expose_captured()
-    [captured, captured_entries]
-  end
+  def expose_captured() = [captured, captured_entries]
   captured.push(42)
   captured.push(value: "captured")
   captured_entries["answer"] = 42

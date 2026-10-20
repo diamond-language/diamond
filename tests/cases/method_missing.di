@@ -31,9 +31,7 @@ puts(g.another(1, 2, 3))
 # Wrong arity on method_missing itself -> ArgumentError, same as any
 # other mis-arity call.
 class WrongArity
-  def method_missing(name)
-    "oops"
-  end
+  def method_missing(name) = "oops"
 end
 
 w = WrongArity.new()

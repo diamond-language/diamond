@@ -3,9 +3,7 @@ class BaseMessage
     @name = name
   end
 
-  def render(prefix)
-    prefix + @name
-  end
+  def render(prefix) = prefix + @name
 end
 
 class DecoratedMessage < BaseMessage

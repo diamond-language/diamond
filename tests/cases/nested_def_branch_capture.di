@@ -11,9 +11,7 @@
 
 def read_case(condition, value)
   if condition
-    def noop_read()
-      1
-    end
+    def noop_read() = 1
   else
     value
   end
@@ -21,9 +19,7 @@ end
 
 def call_case(condition, fn)
   if condition
-    def noop_call()
-      1
-    end
+    def noop_call() = 1
   else
     fn()
   end
@@ -31,9 +27,7 @@ end
 
 def index_case(condition, arr)
   if condition
-    def noop_index()
-      1
-    end
+    def noop_index() = 1
   else
     arr[0] = 99
     arr
@@ -42,18 +36,14 @@ end
 
 def write_case(condition, value)
   if condition
-    def noop_write()
-      1
-    end
+    def noop_write() = 1
   else
     value = value + 1
     value
   end
 end
 
-def call_fn()
-  42
-end
+def call_fn() = 42
 
 [
   read_case(false, "hello"),

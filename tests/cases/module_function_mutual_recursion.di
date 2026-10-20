@@ -71,17 +71,11 @@ module Widgets
 end
 
 def run_tests()
-  def test_module_function_mutual_recursion_even()
-    Minitest.assert_equal(true, Parity.is_even(10))
-  end
+  def test_module_function_mutual_recursion_even() = Minitest.assert_equal(true, Parity.is_even(10))
 
-  def test_module_function_mutual_recursion_odd()
-    Minitest.assert_equal(true, Parity.is_odd(7))
-  end
+  def test_module_function_mutual_recursion_odd() = Minitest.assert_equal(true, Parity.is_odd(7))
 
-  def test_def_self_mutual_recursion()
-    Minitest.assert_equal(true, ParitySelf.is_even(10))
-  end
+  def test_def_self_mutual_recursion() = Minitest.assert_equal(true, ParitySelf.is_even(10))
 
   def test_def_self_ordinary_external_call_unaffected()
     Minitest.assert_equal("table:authors", Widgets.table("authors"))

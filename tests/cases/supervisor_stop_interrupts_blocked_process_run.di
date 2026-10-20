@@ -1,7 +1,5 @@
 # Process.run waiting on a child is interrupted, and the child is killed.
-def run_sleep()
-  Process.run(["sleep", "60"])
-end
+def run_sleep() = Process.run(["sleep", "60"])
 
 sup = Supervisor.new()
 sup.add_child(run_sleep)

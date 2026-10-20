@@ -5,8 +5,6 @@ LOOKUP = {"a": 1}
 PATTERN = Regexp.new("^[a-z]+$")
 TOTAL = LIMIT * 2 + SIZES.length()
 
-def describe()
-  [LIMIT, NAME, SIZES, LOOKUP, PATTERN.match?("abc"), PATTERN.match?("ABC"), TOTAL].inspect()
-end
+def describe() = [LIMIT, NAME, SIZES, LOOKUP, PATTERN.match?("abc"), PATTERN.match?("ABC"), TOTAL].inspect()
 
 Thread.new(describe).join()
