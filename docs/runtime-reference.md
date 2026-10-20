@@ -173,12 +173,10 @@ optional group (`(a)|(b)` matched against `"b"` gives
 `["b", nil, "b"]`) — or `nil` if the pattern didn't match at all.
 `.match?(string)` is the same search without allocating capture data, for
 a plain yes/no check. An invalid pattern raises a rescuable `RegexpError`
-at `Regexp.new` time.
+at `Regexp.new` time. `/pattern/imx` literals are equivalent (see the
+[Collections guide](collections.md)).
 
-This is deliberately a small first cut: no `/pattern/` literal syntax yet
-(`/` already means division; telling a leading regex apart from division
-needs the same kind of disambiguation Symbol's `:` got, not yet done for
-`/`), no `"x".match(re)`/`=~` String integration, and no richer
+This is deliberately a small first cut: no `=~` operator and no richer
 `MatchData` object (`pre_match`, named captures) — the plain-`Array`
 result covers the common case. `String#split`/`#sub`/`#gsub`/`#scan` do
 accept a `Regexp` (`"a,b,c".split(re)`, `"abc123".sub(re, "X")`,
