@@ -684,6 +684,25 @@ done
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$transform_array_uri"'"}}}'
 read_message >/dev/null
 
+# Callback-dependent filters and sorts keep the source element graph.
+filter_array_uri="file://$work/filter_array.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$filter_array_uri"'","text":"require \"receiver_dependency\"\ndef filter_pets(value)\n  kept = build_imported_pets().select() do |pet| true end\n  kept[0].bark()\n  dropped = build_imported_pets().reject() do |pet| false end\n  dropped[0].bark()\n  ordered = build_imported_pets().sort_by() do |pet| 1 end\n  ordered[0].bark()\n  plain = build_imported_pets().sort()\n  plain[0].bark()\n  unknown = [build_imported_pet(), value].select() do |pet| true end\n  unknown[0].bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '750 3 10' '751 5 13' '752 7 13' '753 9 11'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$filter_array_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":754,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$filter_array_uri"'"},"position":{"line":11,"character":13}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$filter_array_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"

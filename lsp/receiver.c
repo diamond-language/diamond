@@ -548,7 +548,11 @@ static bool resolve_array_base_graph(const DiamondProgram *program,
                 (length==4&&memcmp(name,"uniq",4)==0)||
                 (length==7&&memcmp(name,"compact",7)==0)||
                 (length==4&&memcmp(name,"take",4)==0)||
-                (length==4&&memcmp(name,"drop",4)==0);
+                (length==4&&memcmp(name,"drop",4)==0)||
+                (length==4&&memcmp(name,"sort",4)==0)||
+                (length==7&&memcmp(name,"sort_by",7)==0)||
+                (length==6&&memcmp(name,"select",6)==0)||
+                (length==6&&memcmp(name,"reject",6)==0);
             if(!transform||call.has_explicit_bindings||call.callee_index<start+2||
                tokens[call.callee_index-1].kind!=DIAMOND_TOKEN_DOT||
                !resolve_array_base_graph(program,chunk,source,tokens,start,
