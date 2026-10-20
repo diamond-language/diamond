@@ -260,6 +260,24 @@ jobs:
       - name: Build and check the minimal configuration
         run: make MINIMAL=1 test-minimal
 
+  # The SQL the database packages generate, run against real MariaDB, MySQL and PostgreSQL servers. The scripts start throwaway
+  # containers with `podman`; the runner has docker, so `podman` is pointed at it. This job runs on the runner itself (no job
+  # container) because it needs the docker daemon.
+  test-database-dialects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make git ripgrep libssl-dev libsqlite3-dev libpq-dev zlib1g-dev libmariadb-dev libcrypt-dev bc curl
+          sudo ln -s "$(command -v docker)" /usr/local/bin/podman
+      - name: Live database dialect tests
+        run: make test-database-dialects
+
   test-stress-threads:
     runs-on: ubuntu-latest
     timeout-minutes: 40

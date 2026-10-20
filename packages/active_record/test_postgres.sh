@@ -13,7 +13,9 @@ set -euo pipefail
 #   (or DIAMOND_BIN=../../build/diamond bash test_postgres.sh)
 
 diamond="${DIAMOND_BIN:-diamond}"
-cd "$(dirname "$0")"
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/../.." && pwd)"
+cd "$here"
 
 if ! command -v podman >/dev/null 2>&1; then
     echo "podman not found -- skipping active_record PostgreSQL conformance test" >&2
@@ -23,8 +25,10 @@ fi
 container_name="diamond-ar-postgres-test"
 port=55435
 
+test_project="$(mktemp -d)"
 cleanup() {
     podman stop "$container_name" >/dev/null 2>&1 || true
+    rm -rf "$test_project"
 }
 trap cleanup EXIT
 
@@ -50,4 +54,6 @@ fi
 
 export DIAMOND_PG_TEST_CONNINFO="host=127.0.0.1 port=${port} dbname=diamond_ar_test user=postgres password=diamondtest"
 
-"$diamond" test_postgres.di
+# The test requires the arel and active_record cuts, so run it from a project that has them installed.
+"$root/tools/install_local_cuts.sh" "$test_project" >/dev/null
+(cd "$test_project" && "$diamond" "$here/test_postgres.di")
