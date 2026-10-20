@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compiler_source="src/compiler.c"
+compiler_source="src/compiler_names.c"
+compiler_header="src/compiler_internal.h"
 vm_source="src/vm.c"
 
 mapfile -t relay_entries < <(
@@ -32,7 +33,7 @@ for method in "${relay_names[@]}"; do
 done
 
 mapfile -t enum_relays < <(
-  sed -n '/typedef enum CollectionRelay {/,/} CollectionRelay;/p' "$compiler_source" |
+  sed -n '/typedef enum CollectionRelay {/,/} CollectionRelay;/p' "$compiler_header" |
     grep -oE 'COLLECTION_RELAY_[A-Z_]+' |
     grep -v '^COLLECTION_RELAY_NONE$' |
     sort -u
