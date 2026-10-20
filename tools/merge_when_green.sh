@@ -19,7 +19,9 @@ done
 
 summary="$(gh pr checks "$pr" 2>&1 | awk -F'\t' '{print $2}' | sort | uniq -c | tr '\n' ' ' || true)"
 echo "checks: $summary"
-if gh pr checks "$pr" 2>&1 | grep -qiE 'fail|pending'; then
+final="$(gh pr checks "$pr" 2>&1 || true)"
+# Not `gh ... | grep -q`: grep exits at the first match, gh then dies of SIGPIPE, and pipefail turns the whole test false -- a failed check let the merge through.
+if grep -qiE 'fail|pending' <<<"$final"; then
     echo "NOT MERGED: checks are not all green" >&2
     exit 1
 fi
