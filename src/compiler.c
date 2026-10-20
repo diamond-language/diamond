@@ -287,6 +287,9 @@ typedef struct Compiler {
     uint16_t contextual_block_types[16];
     int32_t contextual_block_type_sets[16];
     int32_t contextual_block_return_set;
+    /* The contextual parameter sets come from an editor-only element graph:
+     * publish them as tooling facts, never as checked ones. */
+    bool contextual_block_tooling_only;
     int32_t expected_expression_type_set;
     bool positional_spread_literal;
     size_t positional_spread_first;
@@ -9165,17 +9168,22 @@ static bool prepare_native_collection_block(Compiler *compiler,
 static uint16_t compile_instance_contextual_block(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_index,
         const uint16_t *type_arguments,size_t type_argument_count,
-        int32_t receiver_set,DiamondSpan name) {
+        int32_t receiver_set,int32_t tooling_receiver_set,DiamondSpan name) {
     if(target!=nullptr)return compile_contextual_typed_block(compiler,target,
         parameter_index,type_arguments,type_argument_count);
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
-    (void)prepare_native_collection_block(compiler,receiver_set,name);
+    compiler->contextual_block_tooling_only=false;
+    if(!prepare_native_collection_block(compiler,receiver_set,name)&&
+       receiver_set<0&&tooling_receiver_set>=0&&
+       prepare_native_collection_block(compiler,tooling_receiver_set,name))
+        compiler->contextual_block_tooling_only=true;
     const uint16_t block=compile_block(compiler);
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
+    compiler->contextual_block_tooling_only=false;
     return block;
 }
 
@@ -9719,7 +9727,8 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
             block=compile_instance_contextual_block(compiler,contextual_target,
                 contextual_target==nullptr||contextual_target->arity<=1?0:
                     contextual_target->arity-2,resolved_arguments,
-                resolved_count,receiver_set_index,name);
+                resolved_count,receiver_set_index,
+                compiler->tooling_type_sets[receiver],name);
             has_block=true;
         }
         const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
@@ -9767,7 +9776,8 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
                 contextual_target,
                     contextual_target==nullptr||contextual_target->arity<=1?0:
                     contextual_target->arity-2,resolved_arguments,
-                resolved_count,receiver_set_index,name);
+                resolved_count,receiver_set_index,
+                compiler->tooling_type_sets[receiver],name);
             if(contextual_target!=nullptr) {
                 const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
                     nullptr,nullptr,0,type_arguments,type_argument_count,true,
@@ -9840,7 +9850,8 @@ static uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
             contextual_target,
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 contextual_target->arity-2,resolved_arguments,
-            resolved_count,receiver_set_index,name);
+            resolved_count,receiver_set_index,
+                compiler->tooling_type_sets[receiver],name);
         const size_t block_slot=
             contextual_target==nullptr||contextual_target->arity<=1?0:
                 (size_t)contextual_target->arity-2;
@@ -14144,6 +14155,8 @@ static uint16_t compile_block(Compiler *compiler) {
         contextual_type_sets[index]=compiler->contextual_block_type_sets[index];
     }
     const int32_t contextual_return_set=compiler->contextual_block_return_set;
+    const bool contextual_tooling_only=compiler->contextual_block_tooling_only;
+    compiler->contextual_block_tooling_only=false;
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
@@ -14360,7 +14373,17 @@ static uint16_t compile_block(Compiler *compiler) {
                     fail(compiler,compiler->current.span,"too many local variables");break;
                 }
                 const uint16_t parameter=allocate_register(compiler);
-                if(has_contextual_types&&parameter_count<contextual_arity&&
+                if(contextual_tooling_only&&has_contextual_types&&
+                   parameter_count<contextual_arity&&
+                   contextual_type_sets[parameter_count]>=0&&
+                   (size_t)contextual_type_sets[parameter_count]<
+                       outer_function->type_set_count) {
+                    const uint16_t cloned=clone_type_set_into_current(compiler,
+                        outer_function->type_sets,outer_function->type_set_count,
+                        (uint16_t)contextual_type_sets[parameter_count]);
+                    if(cloned!=DIAMOND_NO_TYPE_SET)
+                        compiler->tooling_type_sets[parameter]=(int32_t)cloned;
+                } else if(has_contextual_types&&parameter_count<contextual_arity&&
                    contextual_type_sets[parameter_count]>=0&&
                    (size_t)contextual_type_sets[parameter_count]<
                        outer_function->type_set_count) {
@@ -14372,7 +14395,8 @@ static uint16_t compile_block(Compiler *compiler) {
                         function->parameter_type_sets[parameter_count]=cloned;
                     }
                 }
-                if(has_contextual_types&&parameter_count<contextual_arity&&
+                if(!contextual_tooling_only&&has_contextual_types&&
+                   parameter_count<contextual_arity&&
                    contextual_types[parameter_count]!=TYPE_UNKNOWN) {
                     compiler->known_types[parameter]=
                         contextual_types[parameter_count];

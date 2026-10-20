@@ -722,6 +722,25 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$map_array_uri"'"}}}'
 read_message >/dev/null
 
+# Block parameters take the receiver's inferred element graph.
+block_param_uri="file://$work/block_param.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_param_uri"'","text":"require \"receiver_dependency\"\ndef block_params(value)\n  build_imported_pets().each() do |pet|\n    pet.bark()\n  end\n  same = build_imported_pets().map() do |pet| pet end\n  same[0].bark()\n  [build_imported_pet(), value].each() do |pet|\n    pet.bark()\n  end\nend"}}}'
+read_message >/dev/null
+
+for request in '770 3 8' '771 6 10'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$block_param_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":772,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$block_param_uri"'"},"position":{"line":8,"character":8}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$block_param_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
