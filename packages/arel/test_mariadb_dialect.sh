@@ -35,7 +35,7 @@ podman run --rm -d --name "$container_name" \
 
 ready=0
 for _ in $(seq 1 30); do
-    if podman exec "$container_name" mariadb -uroot -pdiamondtest -e "SELECT 1" >/dev/null 2>&1; then
+    if podman exec "$container_name" mariadb -h127.0.0.1 -uroot -pdiamondtest -e "SELECT 1" >/dev/null 2>&1; then
         ready=1
         break
     fi
