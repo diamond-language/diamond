@@ -9,8 +9,12 @@ set -euo pipefail
 #   (or DIAMOND_BIN=../../build/diamond bash test_dialects.sh)
 
 diamond="${DIAMOND_BIN:-diamond}"
-cd "$(dirname "$0")/../.."
-test_file="tests/cases/mjolnir_dialect_writes.di"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+test_file="$root/tests/cases/mjolnir_dialect_writes.di"
+# The test requires the mjolnir and arel cuts, so run it from a project that has them installed.
+test_project="$(mktemp -d)"
+"$root/tools/install_local_cuts.sh" "$test_project" >/dev/null
+cd "$test_project"
 
 if ! command -v podman >/dev/null 2>&1; then
     echo "podman not found -- skipping the live Mjolnir dialect tests" >&2
@@ -21,7 +25,7 @@ wanted=("$@")
 [[ ${#wanted[@]} -gt 0 ]] || wanted=(mariadb mysql postgres)
 container="diamond-mjolnir-dialect-test"
 cleanup() { podman stop "$container" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
+trap 'cleanup; cd /; rm -rf "$test_project"' EXIT
 
 wait_for() { # command...
     for _ in $(seq 1 60); do
