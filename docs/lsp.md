@@ -174,8 +174,12 @@ search over a real (if scoped) lexical symbol table:
     with a known element graph take their result elements from the `do` block's
     own inferred result (`pets.map() do |pet| build_pet() end`); a block whose
     result is unknown, declared, or varies by early `return`/`next` leaves the
-    result unresolved. Block parameters are not typed from the graph, so
-    `map() do |pet| pet end` stays unresolved.
+    result unresolved. A block on a native collection method
+    (`each`, `map`, `select`, ...) over an Array or Hash whose element graph is
+    editor-only types its parameters from that graph, as tooling facts only:
+    `pets.each() do |pet| pet.bark() end` completes, and `map() do |pet| pet end`
+    keeps the graph. The checked block-parameter facts are used instead whenever
+    the receiver has any.
     A union receiver may supply the array-valued method when every candidate
     has the same non-generic structural return graph.
     Call results can be receivers recursively:
