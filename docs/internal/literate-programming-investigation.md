@@ -1,6 +1,6 @@
 # Investigation: Knuth-style literate programming for Diamond
 
-Status: investigation only (branch `lp`). Nothing here changes the build. Written 2026-10-20 against `main` at the time the branch was cut.
+Status: investigation, with a decision recorded at the end (branch `lp`). Nothing here changes the build. Written 2026-10-20 against `main` at the time the branch was cut.
 
 ## What "Knuth-style" would mean here
 
@@ -67,3 +67,34 @@ Do not convert the codebase. Convert **one self-contained module** and measure:
 1. Is the goal reading and teaching (a woven book of the implementation), or maintainability of the source itself? The first can be reached with weave alone over lightly annotated sources; the second needs tangle and the bootstrap work above.
 2. Should published cuts carry the document, the tangled source, or both?
 3. Are you willing to add `#line N "file"` to the Diamond front end, which touches the compiler, bytecode line tables, LSP and DAP?
+
+## Decision (2026-10-20): reading and teaching
+
+The owner wants a way to *read and learn* the implementation. They have 25 years of programming experience, Ruby as the daily language for most of it, PHP before 2003, and C only recently. That makes the goal a **woven book**, not tangled source, and it removes most of the obstacles above:
+
+- No tangle, so no bootstrap problem (obstacle 1), no `#line N "file"` in the Diamond front end (obstacle 2), no change to how cuts are published or pinned (obstacle 3), and no change to the editor, language server or review workflow (obstacles 4 and 5). The sources stay exactly where and as they are.
+- Exposition order is still the point, so the book is written in the order that teaches, and it *includes the real code* instead of copying it.
+
+### Revised design: a guided tour that cannot drift
+
+- Chapters are Markdown under `docs/book/`. A chapter embeds code with a directive naming a file and a marker or line range, for example `{{code src/lexer.c next_token}}`. A small weave script (shell or C, no new dependencies) replaces each directive with the current text of that region, adds the file path and line numbers, and writes plain Markdown (and optionally HTML) with an index of the identifiers it showed.
+- Markers are one-line comments in the source (`/* book: next_token */ ... /* book: end */`), so a function can move without breaking its chapter. A CI check fails when a directive names a marker that no longer exists, which is the same stale-output idea as the registry inventory check.
+- Each chapter is written for this reader: it explains the idea in terms of Ruby first (what the equivalent Ruby object, block or method call would be), then shows the C, and calls out the C-specific things a Ruby programmer will not have seen: pointers and ownership (who frees), `struct` layout, `size_t` and integer conversions, `static`, header and translation-unit boundaries, `const`, macros, the preprocessor, and how undefined behaviour shows up. A short "C for a Ruby programmer" appendix collects these once and the chapters link to it.
+- The existing design documents (`design.md`, `jit-design.md`, `gc-generational-design.md`, `concurrency-internals.md`, `vm-source-layout.md`) are the source of the narrative for the later chapters and are linked rather than duplicated.
+
+### Suggested chapter order (pipeline order, small to large)
+
+1. A program's life: `main.c` to `run_source.c`, and how the pieces connect (`vm-source-layout.md`).
+2. Values and objects: `value.h`, `object.h`, how a Diamond `Int`, `String` and `Array` are laid out.
+3. The lexer (`lexer.c`): the smallest complete stage; the best pilot.
+4. The compiler (`compiler.c`, in slices: expressions, calls, classes, blocks, `case`/`when`).
+5. The VM loop (`vm_run_chunk.c`) and calls (`vm.c`).
+6. Memory: allocation, the garbage collector and its rooting rule.
+7. Threads, channels and the rendezvous change as a worked example of a feature added end to end.
+8. The JIT; the language server and debugger.
+
+### Pilot
+
+Chapter 3, the lexer: write it, build the weave script, add the CI check, and read the result as the audience. If a Ruby programmer can follow it without opening the source files, the format works. Only then continue with the later chapters. `lsp/position.h` stays a candidate for a very short first chapter on UTF-16 versus bytes.
+
+Questions 2 and 3 of the original list no longer apply: nothing is tangled, so cuts are unchanged and the front end needs no line directive.
