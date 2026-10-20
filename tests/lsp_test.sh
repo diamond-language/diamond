@@ -741,6 +741,25 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$block_param_uri"'"}}}'
 read_message >/dev/null
 
+# map and flat_map with a named function relay its inferred result graph.
+named_callable_uri="file://$work/named_callable.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$named_callable_uri"'","text":"require \"receiver_dependency\"\ndef make_pet(pet) = build_imported_pet()\ndef make_pets(pet) = build_imported_pets()\ndef unknown_result(pet, value) = value\ndef named_callables(value)\n  made = build_imported_pets().map(make_pet)\n  made[0].bark()\n  flat = build_imported_pets().flat_map(make_pets)\n  flat[0].bark()\n  other = build_imported_pets().map(unknown_result)\n  other[0].bark()\nend"}}}'
+read_message >/dev/null
+
+for request in '780 6 10' '781 8 10'; do
+  set -- $request
+  send '{"jsonrpc":"2.0","id":'"$1"',"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$named_callable_uri"'"},"position":{"line":'"$2"',"character":'"$3"'}}}'
+  response="$(read_message)"
+  [[ "$response" == *'"label":"bark","kind":3'* ]]
+  count=$((count + 1))
+done
+send '{"jsonrpc":"2.0","id":782,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$named_callable_uri"'"},"position":{"line":10,"character":11}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$named_callable_uri"'"}}}'
+read_message >/dev/null
+
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
 receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
