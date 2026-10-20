@@ -17,7 +17,7 @@ for _ in $(seq 1 120); do
     sleep 30
 done
 
-summary="$(gh pr checks "$pr" 2>&1 | awk -F'\t' '{print $2}' | sort | uniq -c | tr '\n' ' ')"
+summary="$(gh pr checks "$pr" 2>&1 | awk -F'\t' '{print $2}' | sort | uniq -c | tr '\n' ' ' || true)"
 echo "checks: $summary"
 if gh pr checks "$pr" 2>&1 | grep -qiE 'fail|pending'; then
     echo "NOT MERGED: checks are not all green" >&2
