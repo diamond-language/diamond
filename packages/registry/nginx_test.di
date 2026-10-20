@@ -97,7 +97,10 @@ class Drill
       check(template.include?(pair[0]), "the nginx template no longer contains #{pair[0].inspect()}")
       template = template.split(pair[0]).join(pair[1])
     end
-    File.write(@config, "daemon off;\nworker_processes 1;\npid " + @work + "/nginx.pid;\n" +
+    # nginx started as root runs its workers as an unprivileged user that cannot enter the private work directory (which
+    # holds the certificate, the body buffers and the logs), so a request body past the in-memory buffer is a 500.
+    run_as_root = run(["id", "-u"], nil, nil).stdout().strip() == "0"
+    File.write(@config, (run_as_root ? "user root;\n" : "") + "daemon off;\nworker_processes 1;\npid " + @work + "/nginx.pid;\n" +
       "error_log " + @work + "/startup.log;\nevents { worker_connections 256; }\nhttp {\n" +
       "client_body_temp_path " + @work + "/body;\nproxy_temp_path " + @work + "/proxy;\n" + template + "\n}\n")
     run([@nginx_path, "-t", "-p", @work, "-c", @config], nil, nil)
@@ -190,7 +193,7 @@ class Drill
         break if status != 429
         Harness.sleep_ms(10100)
       end
-      check(status == 201, "#{cut["name"]} was published with status #{status}")
+      check(status == 201, "#{cut["name"]} was published with status #{status}: #{payload}\n#{self.logs()}")
       published = JSON.parse(payload)
       ["name", "version", "sha256", "size"].each() do |key|
         check(published[key] == cut[key], "published #{key} differs for #{cut["name"]}")
