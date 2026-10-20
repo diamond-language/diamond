@@ -54,7 +54,7 @@ for dialect in "${wanted[@]}"; do
             port=33072
             podman run --rm -d --name "$container" -e POSTGRES_PASSWORD=diamondtest -e POSTGRES_DB=diamond_mjolnir_test \
                 -p "127.0.0.1:${port}:5432" docker.io/library/postgres:16-alpine >/dev/null
-            wait_for podman exec "$container" pg_isready -U postgres -d diamond_mjolnir_test \
+            wait_for podman exec "$container" psql -h 127.0.0.1 -U postgres -d diamond_mjolnir_test -c "SELECT 1" \
                 || { echo "postgres did not become ready" >&2; exit 1; }
             sleep 2
             export DIAMOND_PG_TEST_CONNINFO="host=127.0.0.1 port=${port} dbname=diamond_mjolnir_test user=postgres password=diamondtest"
