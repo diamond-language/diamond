@@ -174,10 +174,8 @@ optional group (`(a)|(b)` matched against `"b"` gives
 `.match?(string)` is the same search without allocating capture data, for
 a plain yes/no check. An invalid pattern raises a rescuable `RegexpError`
 at `Regexp.new` time. `/pattern/imx` literals are equivalent (see the
-[Collections guide](collections.md)). `"text".match(re)` and
-`"text".match?(re)` are the same call and return a `Bool` (the prelude drops a method name's
-trailing `?` when it looks up `diamond_string_match`, so the two cannot differ); use
-`re.match("text")` for the capture `Array`.
+[Collections guide](collections.md)). `"text".match(re)` and `"text".match?(re)` (a `String` pattern is compiled first)
+behave like `re.match("text")` and `re.match?("text")`.
 
 This is deliberately a small first cut: no `=~` operator and no richer
 `MatchData` object (`pre_match`, named captures) — the plain-`Array`
