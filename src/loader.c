@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdckdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -27,13 +28,12 @@ typedef struct Loader {
 } Loader;
 
 static bool append(Loader *loader,const char *text,size_t length) {
-    if(length>SIZE_MAX-loader->length-1)return false;
-    if(loader->length+length+1>loader->capacity) {
+    size_t needed;
+    if(ckd_add(&needed,loader->length,length)||ckd_add(&needed,needed,1))return false;
+    if(needed>loader->capacity) {
         size_t capacity=loader->capacity==0?4096:loader->capacity;
-        while(capacity<loader->length+length+1) {
-            if(capacity>SIZE_MAX/2)return false;
-            capacity*=2;
-        }
+        while(capacity<needed)
+            if(ckd_mul(&capacity,capacity,2))return false;
         char *grown=realloc(loader->buffer,capacity);
         if(grown==nullptr)return false;
         loader->buffer=grown;loader->capacity=capacity;
@@ -182,9 +182,15 @@ typedef struct PathRewrite {
 
 static void rewrite_append(PathRewrite *rewrite,const char *text,size_t length) {
     if(rewrite->failed)return;
-    if(rewrite->length+length+1>rewrite->capacity) {
+    size_t needed;
+    if(ckd_add(&needed,rewrite->length,length)||ckd_add(&needed,needed,1)) {
+        rewrite->failed=true;return;
+    }
+    if(needed>rewrite->capacity) {
         size_t capacity=rewrite->capacity==0?4096:rewrite->capacity;
-        while(capacity<rewrite->length+length+1)capacity*=2;
+        while(capacity<needed) {
+            if(ckd_mul(&capacity,capacity,2)) {rewrite->failed=true;return;}
+        }
         char *grown=realloc(rewrite->text,capacity);
         if(grown==nullptr) {rewrite->failed=true;return;}
         rewrite->text=grown;rewrite->capacity=capacity;
