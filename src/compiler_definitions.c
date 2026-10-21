@@ -819,6 +819,576 @@ static void definition_scope_restore(Compiler *compiler,DefinitionScope *scope,
 }
 
 
+/* Enters the finished def into the table of the class or module it was written in: an instance
+ * method, a class or module singleton (claiming a signature a pre-scan found ahead of the def), or
+ * a module method that module_function mode also exports. A def outside any such scope is not
+ * registered. */
+static void register_definition_method(Compiler *compiler,DiamondFunction *function,
+        size_t function_index,DiamondSpan name,bool module_singleton,bool at_top_level,
+        bool module_function_singleton_registered_early) {
+    const size_t copy_length=strlen(function->name);
+    if(compiler->current_class>=0&&!module_singleton&&
+       !compiler->failed&&at_top_level) {
+        DiamondClass *class = compiler->program->classes[(size_t)compiler->current_class];
+        bool duplicate=false;
+        size_t duplicate_index=0;
+        for(size_t existing=0;existing<class->method_count;existing++)
+            if(!class->methods[existing].included&&
+               strcmp(class->methods[existing].name,function->name)==0) {
+                duplicate=true;duplicate_index=existing;
+            }
+        /* A struct's own generated == or to_s may be replaced by a
+         * hand-written one in its body (never initialize or a field
+         * reader): the generated entry is overwritten in place, so
+         * dispatch finds the user's method under the same name. */
+        bool replacing_generated=false;
+        if(duplicate&&compiler->struct_replaceable_class==compiler->current_class) {
+            if(compiler->struct_replaceable_eq&&strcmp(function->name,"==")==0) {
+                compiler->struct_replaceable_eq=false;replacing_generated=true;
+            } else if(compiler->struct_replaceable_to_s&&
+                      strcmp(function->name,"to_s")==0) {
+                compiler->struct_replaceable_to_s=false;replacing_generated=true;
+            }
+        }
+        if(replacing_generated) {
+            /* Drop the generated entry and let the ordinary append below
+             * add the user's method, so it sits where any hand-written
+             * method would: dispatch prefers the latest match by name, and
+             * an `include Comparable` earlier in the body has already
+             * appended its own derived == after the generated one. */
+            for(size_t shift=duplicate_index+1;shift<class->method_count;shift++)
+                class->methods[shift-1]=class->methods[shift];
+            class->method_count--;
+            duplicate=false;
+        }
+        if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
+            fail(compiler, name, "duplicate or excessive method definition");
+        } else {
+            DiamondMethod *method = &class->methods[class->method_count++];
+            for (size_t i=0;i<copy_length;i++) method->name[i]=function->name[i];
+            method->name[copy_length]='\0';
+            method->function_index=(uint16_t)function_index;
+            method->arity=(uint8_t)(function->arity-1);
+            method->required_arity=(uint8_t)(function->required_arity-1);
+            method->has_variadic=function->has_variadic;
+            method->included=false;
+            method->is_private=compiler->methods_private;
+            method->is_protected=compiler->methods_protected;
+        }
+    } else if(compiler->current_class>=0&&module_singleton&&
+              !compiler->failed&&at_top_level) {
+        DiamondClass *class=
+            compiler->program->classes[(size_t)compiler->current_class];
+        DiamondMethod *prescanned=nullptr;
+        bool duplicate=false;
+        for(size_t existing=0;existing<class->singleton_method_count;existing++) {
+            DiamondMethod *method=&class->singleton_methods[existing];
+            if(strcmp(method->name,function->name)!=0)continue;
+            if(method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION||
+               method->function_index==function_index)
+                prescanned=method;
+            else duplicate=true;
+        }
+        if(duplicate||(prescanned==nullptr&&class->singleton_method_count==DIAMOND_MAX_METHODS))
+            fail(compiler,name,"duplicate or excessive class singleton method");
+        else {
+            DiamondMethod *method=prescanned!=nullptr?prescanned:
+                &class->singleton_methods[class->singleton_method_count++];
+            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+            method->name[copy_length]='\0';method->function_index=(uint16_t)function_index;
+            /* Class-owned (unlike module) singleton methods now reserve
+             * register 0 for an implicit `self` -- function->arity/
+             * required_arity already include that slot (compile_definition's
+             * direct_class_singleton_member branch), so the method table's
+             * own arity (what external callers are checked against, see
+             * parse_singleton_call) must subtract it back out, the same
+             * way an ordinary instance method's entry does just above.
+             * needs_receiver tells parse_singleton_call's call site to
+             * reserve and fill that slot instead of leaving it zero-inited. */
+            method->arity=(uint8_t)(function->arity-1);
+            method->required_arity=(uint8_t)(function->required_arity-1);
+            method->has_variadic=function->has_variadic;
+            method->needs_receiver=true;
+            if(prescanned!=nullptr)
+                resolve_pending_singleton_fixups(compiler,method,function_index);
+        }
+    } else if(compiler->current_module>=0&&!module_singleton&&
+              !compiler->failed&&at_top_level) {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        for(size_t existing=0;existing<module->method_count;existing++)
+            if(!module->methods[existing].included&&
+               strcmp(module->methods[existing].name,function->name)==0) {
+                fail(compiler,name,"duplicate module method");break;
+            }
+        if(!compiler->failed) {
+            if(module->method_count==DIAMOND_MAX_METHODS)
+                fail(compiler,name,"too many module methods");
+            else {
+                DiamondMethod *method=&module->methods[module->method_count++];
+                for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+                method->name[copy_length]='\0';
+                method->function_index=(uint16_t)function_index;
+                method->arity=(uint8_t)(function->arity-1);
+                method->required_arity=(uint8_t)(function->required_arity-1);
+                method->has_variadic=function->has_variadic;
+                method->included=false;
+                method->is_private=compiler->methods_private;
+                method->is_protected=compiler->methods_protected;
+                if(compiler->module_function_mode) {
+                    if(function->uses_instance_state)
+                        fail(compiler,name,
+                            "stateful method cannot use module_function mode");
+                    else if(module_function_singleton_registered_early) {
+                        /* Already added to singleton_methods[] above,
+                         * before the body compiled -- just the private-
+                         * marking side effect remains to do here. */
+                        method->is_private=true;method->is_protected=false;
+                    }
+                    else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
+                        fail(compiler,name,"too many module singleton functions");
+                    else {
+                        method->is_private=true;method->is_protected=false;
+                        DiamondMethod exported=*method;
+                        exported.is_private=false;exported.is_protected=false;
+                        exported.needs_receiver=true;
+                        module->singleton_methods[
+                            module->singleton_method_count++]=exported;
+                    }
+                }
+            }
+        }
+    } else if(compiler->current_module>=0&&module_singleton&&
+              !compiler->failed&&at_top_level) {
+        DiamondModule *module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        /* Same positional claiming as compile_definition's own
+         * module_function early-registration (see that site's comment,
+         * and DiamondModule's next_singleton_claim field, for the full
+         * rationale): a discovery pass that reached this point at all
+         * already ran the duplicate check below and would have failed
+         * compilation on a genuine `def self.x` repeated within the
+         * same module, so the real pass re-visiting an as-yet-unclaimed
+         * carried-over entry can safely skip straight to refreshing it
+         * in place, in source order, with no risk of masking a real
+         * duplicate. */
+        /* See compile_definition's own module_function early-registration
+         * comment on prescan_singleton_signatures/resolve_pending_
+         * singleton_fixups -- identical name-based claiming for a `def
+         * self.x` signature that scan already found. */
+        size_t prescanned=module->singleton_method_count;
+        if(compiler->discovery_pass)
+            for(size_t index=0;index<module->singleton_method_count;index++)
+                if(module->singleton_methods[index].function_index==
+                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
+                   strncmp(module->singleton_methods[index].name,
+                           function->name,copy_length)==0&&
+                   module->singleton_methods[index].name[copy_length]=='\0') {
+                    prescanned=index;break;
+                }
+        const bool claiming=!compiler->discovery_pass&&
+            module->next_singleton_claim<module->singleton_method_count;
+        bool duplicate=false;
+        if(prescanned==module->singleton_method_count&&!claiming)
+            for(size_t existing=0;existing<module->singleton_method_count;existing++)
+                if(strcmp(module->singleton_methods[existing].name,
+                          function->name)==0)duplicate=true;
+        if(prescanned==module->singleton_method_count&&!claiming&&
+           (duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
+            fail(compiler,name,"duplicate or excessive module singleton function");
+        else {
+            DiamondMethod *method=prescanned<module->singleton_method_count?
+                &module->singleton_methods[prescanned]:
+                (claiming?
+                    &module->singleton_methods[module->next_singleton_claim++]:
+                    &module->singleton_methods[module->singleton_method_count++]);
+            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
+            method->name[copy_length]='\0';
+            method->function_index=(uint16_t)function_index;
+            method->arity=function->arity;
+            method->required_arity=function->required_arity;
+            method->has_variadic=function->has_variadic;
+            if(prescanned<module->singleton_method_count)
+                resolve_pending_singleton_fixups(compiler,method,function_index);
+        }
+    }
+}
+
+/* Parses a def's parameter list, from just after the `(` up to the `)`: declares each parameter's
+ * register and local, its type check and default, a trailing `*rest` and `&block`, and fills in the
+ * function's arity, parameter names and type sets. */
+static void parse_definition_parameters(Compiler *compiler,DiamondFunction *function,
+        DiamondSpan name,bool captures_self) {
+    size_t parameter_count=0;
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        parameter_count=1;DiamondLexer lookahead=compiler->lexer;
+        DiamondToken token=compiler->current;size_t nesting=0;
+        while(token.kind!=DIAMOND_TOKEN_EOF) {
+            if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+               token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
+            else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
+                if(nesting==0)break;
+                nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
+                      token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
+                if(nesting>0)nesting--;
+            } else if(token.kind==DIAMOND_TOKEN_COMMA&&nesting==0)parameter_count++;
+            token=diamond_lexer_next(&lookahead);
+        }
+    }
+    if(parameter_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
+        fail(compiler,name,"functions cannot declare more than 32 parameters");
+        parameter_count=DIAMOND_MAX_DECLARED_PARAMETERS;
+    }
+    const uint16_t parameter_base=compiler->next_register;
+    for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
+    size_t declared_parameter_count=0;bool saw_default=false;
+    bool has_block_parameter=false;
+    uint16_t variadic_parameter=0,variadic_fixed_count=0;
+    int block_parameter_type=-1;DiamondSpan block_parameter_type_span={};
+    skip_newlines(compiler);
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        do {
+            /* `*name` -- a trailing variadic parameter, bare name only
+             * (no type annotation, no default -- neither makes sense for
+             * a collected Array), and must be the last parameter (no
+             * comma may follow it). See docs/design.md's "Splat/variadic
+             * parameters" section. */
+            bool is_variadic=false;
+            bool is_block_parameter=false;
+            if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
+                if(has_block_parameter) {
+                    fail(compiler,compiler->current.span,
+                         "a function can only declare one block parameter");break;
+                }
+                is_block_parameter=true;has_block_parameter=true;
+                advance_token(compiler);
+            }
+            if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+                if(function->has_variadic) {
+                    fail(compiler,compiler->current.span,
+                         "a function can only declare one variadic parameter");
+                    break;
+                }
+                is_variadic=true;
+                advance_token(compiler);
+            }
+            if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler, compiler->current.span, "expected parameter name");
+                break;
+            }
+            if (function->arity == UINT8_MAX) {
+                fail(compiler, compiler->current.span, "too many parameters");
+                break;
+            }
+            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+                fail(compiler,compiler->current.span,"too many local variables");break;
+            }
+            const uint16_t parameter=(uint16_t)(parameter_base+declared_parameter_count);
+            if(is_block_parameter) {
+                compiler->has_current_block=true;
+                compiler->current_block_register=parameter;
+            }
+            compiler->locals[compiler->local_count++]=(Local){
+                .name=compiler->current.span,.reg=parameter};
+            if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS) {
+                const DiamondSpan parameter_name_span=compiler->current.span;
+                size_t parameter_name_length=parameter_name_span.length;
+                if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
+                    parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
+                for(size_t index=0;index<parameter_name_length;index++)
+                    function->parameter_names[declared_parameter_count][index]=
+                        compiler->source[parameter_name_span.start+index];
+                function->parameter_names[declared_parameter_count][parameter_name_length]='\0';
+            }
+            function->arity++;
+            advance_token(compiler);
+            if(is_variadic) {
+                if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
+                    fail(compiler,compiler->current.span,
+                         "a variadic parameter cannot have a type annotation");
+                    break;
+                }
+                if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                    fail(compiler,compiler->current.span,
+                         "a variadic parameter cannot have a default value");
+                    break;
+                }
+                function->has_variadic=true;
+                /* A captures_self closure (`closure name() ... end`) is
+                 * the one shape where this doesn't reduce to plain
+                 * `arity-1`: it reserves register 0 for a materialized
+                 * self, exactly like a real method, but (unlike a real
+                 * method) its own arity/required_arity are never inflated
+                 * to account for that slot -- call_closure_helper's own
+                 * needs_self_slot padding (src/vm.c) still shifts the
+                 * *runtime* argument_count/arguments by +1 for it
+                 * regardless, so the fixed_count operand here must add
+                 * that slot back to line up with what DIAMOND_OP_
+                 * COLLECT_VARIADIC actually sees at runtime -- confirmed
+                 * directly (a self-capturing variadic closure's collected
+                 * array was off by one, silently including its own first
+                 * real parameter, before this fix). Every other owner
+                 * shape (an ordinary method, whose arity already started
+                 * at 1 for its own real implicit receiver; a plain
+                 * top-level function or non-capturing nested def, which
+                 * has no implicit slot and no runtime padding either)
+                 * already has arity counted consistently with its own
+                 * runtime layout, so only this one shape needs the
+                 * adjustment. */
+                const uint8_t fixed_count=captures_self?
+                    function->arity:(uint8_t)(function->arity-1);
+                variadic_parameter=parameter;variadic_fixed_count=fixed_count;
+                declared_parameter_count++;
+                skip_newlines(compiler);
+                if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                    advance_token(compiler);skip_newlines(compiler);
+                    if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND)
+                        fail(compiler,compiler->current.span,
+                            "only a block parameter may follow a variadic parameter");
+                    else continue;
+                }
+                break;
+            }
+            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                fail(compiler,compiler->current.span,
+                     "a block parameter cannot have a default value");break;
+            }
+            int parameter_type=-1;DiamondSpan parameter_type_span={};
+            if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
+                advance_token(compiler);
+                parameter_type_span=compiler->current.span;
+                const int type = parse_type_annotation(compiler);
+                parameter_type=type;
+                if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS)
+                    function->parameter_type_sets[declared_parameter_count]=
+                        (uint16_t)type;
+                if(is_block_parameter) {
+                    block_parameter_type=type;
+                    block_parameter_type_span=parameter_type_span;
+                    compiler->current_block_type_set=(uint16_t)type;
+                }
+            }
+            if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+                saw_default=true;advance_token(compiler);
+                const uint16_t provided=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
+                                 (uint8_t)(function->arity-1),0,2);
+                const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,provided);
+                const uint16_t fallback=parse_expression(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,parameter,fallback,0,2);
+                patch_jump(compiler,skip,compiler->function->code_count);
+            } else if(saw_default&&!is_block_parameter) {
+                fail(compiler,compiler->previous.span,
+                     "required parameter cannot follow a default parameter");
+            } else if(!is_block_parameter)
+                function->required_arity++;
+            if(parameter_type>=0&&!is_block_parameter) {
+                emit_type_check(compiler,parameter,(uint16_t)parameter_type,
+                                parameter_type_span);
+                compiler->known_type_sets[parameter]=(int32_t)parameter_type;
+                const DiamondTypeSet *parameter_set=
+                    &function->type_sets[(size_t)parameter_type];
+                if(parameter_set->count==1)
+                    compiler->known_types[parameter]=parameter_set->members[0].id;
+            }
+            record_scope_type_fact(compiler,parameter,
+                                   compiler->locals[compiler->local_count-1].name.start);
+            declared_parameter_count++;
+            skip_newlines(compiler);
+            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+                fail(compiler,compiler->current.span,
+                     "a block parameter must be the last parameter");break;
+            }
+            if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
+            advance_token(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
+        } while (!compiler->failed);
+    }
+    if(function->has_variadic&&!compiler->failed)
+        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
+            variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
+    function->has_block_parameter=has_block_parameter;
+    if(block_parameter_type>=0&&!compiler->failed) {
+        const uint16_t absent=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+        const uint16_t missing=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+            compiler->current_block_register,absent,3);
+        const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,missing);
+        emit_type_check(compiler,compiler->current_block_register,
+            (uint16_t)block_parameter_type,block_parameter_type_span);
+        patch_jump(compiler,skip,compiler->function->code_count);
+    }
+    if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler, compiler->current.span, "expected ')' after parameters");
+    }
+}
+
+/* A module_function-mode method's exported (qualified-call-reachable) singleton descriptor is
+ * registered before its body compiles, so a qualified call to itself inside that body resolves. True
+ * when it was registered here, so the registration after the body does not add it a second time. */
+static bool register_module_function_early(Compiler *compiler,DiamondFunction *function,
+        size_t function_index,DiamondSpan name,bool module_singleton,bool at_top_level) {
+    const size_t copy_length=strlen(function->name);
+    bool module_function_singleton_registered_early=false;
+    if(!compiler->failed && compiler->current_module>=0 && !module_singleton &&
+       at_top_level && compiler->module_function_mode) {
+        DiamondModule *early_module=
+            &compiler->program->modules[(size_t)compiler->current_module];
+        /* Deliberately NOT checking function->uses_instance_state here,
+         * unlike the later (already-existing) registration site that
+         * also checks it -- this flag only becomes accurate once the
+         * body has actually been compiled (it's set while compiling an
+         * `@ivar` access, which hasn't happened yet at this point in the
+         * def), so checking it now would just always read false
+         * regardless of what the body turns out to contain. The later
+         * site still runs this check for real, after the body compiles;
+         * if it turns out this method IS stateful, `fail` there marks
+         * the whole compilation failed the same as always, and it not
+         * mattering that a descriptor was already speculatively written
+         * into singleton_methods[] below -- a failed compilation never
+         * produces a runnable program either way. */
+        /* A sibling module_function method defined *later* in the same
+         * module/file still needs to be callable (qualified) from a
+         * method compiled earlier -- e.g. mutually recursive is_even/
+         * is_odd. diamond_compile's own discovery pass already visits
+         * every def in the module in source order and reaches this same
+         * early-registration code, so every sibling's descriptor exists
+         * in discovery->modules[...].singleton_methods[] by the time
+         * discovery finishes; that whole DiamondModule (a plain,
+         * pointer-free embedded struct) gets bulk-memcpy'd into the real
+         * pass's own program->modules before it starts (see
+         * diamond_compile), so those descriptors -- forward references
+         * included -- would already be usable, IF compile_module's own
+         * module-reopen reset didn't unconditionally wipe
+         * singleton_methods back to empty first (a plain "declared_by_
+         * discovery means stale, zero it" rule that's correct for
+         * module->methods[]/fields[] but not for this table -- see
+         * compile_module's own comment on why it stopped doing that).
+         * function_index carries over correctly unchanged: discovery and
+         * the real pass reserve functions in identical source order (see
+         * diamond_compile's own "Reserve every compiler-created function
+         * at its discovery-pass index" comment), so a discovery-pass
+         * function_index already names the right real-pass slot even
+         * before that slot's body is recompiled.
+         *
+         * Claimed *positionally*, exactly like Compiler's own
+         * next_function_claim, not by name: the real pass visits this
+         * module's declarations in the same source order discovery did,
+         * so early_module->next_singleton_claim (reset once, when
+         * compile_module first re-touches this module) always names the
+         * matching discovery-pass entry to refresh -- arity/required_
+         * arity/has_variadic/name can't actually differ pass-to-pass for
+         * the same source, but overwriting them is free and keeps this
+         * from silently trusting stale data if that ever changes. Once
+         * every discovery-carried-over entry has been claimed, any
+         * further registration is a genuinely new entry (append), same
+         * as it always was. */
+        /* A prescan_singleton_signatures placeholder (this exact
+         * pass, discovery only -- see that function's own comment) is
+         * claimed by NAME, ahead of (and independent from) positional
+         * next_singleton_claim claiming: it's how an *earlier*-compiled
+         * sibling within this same discovery walk already got a
+         * resolvable qualified call to THIS def, via a pending fixup
+         * (emit_pending_singleton_function_index) that only this exact
+         * moment -- this def's real function_index finally existing --
+         * can resolve. */
+        size_t prescanned=early_module->singleton_method_count;
+        if(compiler->discovery_pass)
+            for(size_t index=0;index<early_module->singleton_method_count;index++)
+                if(early_module->singleton_methods[index].function_index==
+                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
+                   strncmp(early_module->singleton_methods[index].name,
+                           function->name,copy_length)==0&&
+                   early_module->singleton_methods[index].name[copy_length]=='\0') {
+                    prescanned=index;break;
+                }
+        const bool early_claiming=!compiler->discovery_pass&&
+            early_module->next_singleton_claim<early_module->singleton_method_count;
+        if(prescanned==early_module->singleton_method_count&&!early_claiming&&
+           early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
+            fail(compiler,name,"too many module singleton functions");
+        } else {
+            DiamondMethod exported={0};
+            for(size_t i=0;i<copy_length;i++)exported.name[i]=function->name[i];
+            exported.name[copy_length]='\0';
+            exported.function_index=(uint16_t)function_index;
+            /* function->arity/required_arity both carry an implicit +1
+             * here for the module-mixing receiver slot every direct
+             * module instance method reserves in register 0 (see this
+             * function's own direct_module_member seeding, well above
+             * the parameter loop) -- subtracted back out, exactly like
+             * the later (already-existing) registration site does when
+             * copying function's arity into module->methods[]'s own
+             * entry, so a qualified call's own arity check isn't off by
+             * one. */
+            exported.arity=(uint8_t)(function->arity-1);
+            exported.required_arity=(uint8_t)(function->required_arity-1);
+            exported.has_variadic=function->has_variadic;
+            exported.included=false;
+            exported.is_private=false;exported.is_protected=false;
+            exported.needs_receiver=true;
+            if(prescanned<early_module->singleton_method_count) {
+                early_module->singleton_methods[prescanned]=exported;
+                resolve_pending_singleton_fixups(compiler,
+                    &early_module->singleton_methods[prescanned],function_index);
+            } else if(early_claiming)
+                early_module->singleton_methods[
+                    early_module->next_singleton_claim++]=exported;
+            else
+                early_module->singleton_methods[
+                    early_module->singleton_method_count++]=exported;
+            module_function_singleton_registered_early=true;
+        }
+    }
+    return module_function_singleton_registered_early;
+}
+
+/* Gives a nested def a local for each enclosing local it can see that its own parameters do not
+ * shadow, read from the capture cell, and carries the enclosing register's type facts across.
+ * `captured_fact_registers[i]` records the cell register for enclosing local i so that
+ * definition_scope_restore can hand the facts the body ends with back to the enclosing scope-> */
+static void bind_captured_cells(Compiler *compiler,const DefinitionScope *scope,
+        uint16_t *captured_fact_registers) {
+    for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+        if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
+        if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+            fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
+        }
+        const uint16_t cell=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
+        compiler->locals[compiler->local_count++]=(Local){
+            .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
+            .alias_identity=compiler->enclosing_locals[i].alias_identity};
+        captured_fact_registers[i]=cell;
+        const uint16_t source=compiler->enclosing_locals[i].reg;
+        if(source<scope->next_register) {
+            compiler->known_types[cell]=scope->known_types[source];
+            const int32_t source_set=scope->known_type_sets[source];
+            if(source_set>=0&&
+               (size_t)source_set<scope->function->type_set_count) {
+                const uint16_t cloned=clone_type_set_into_current(compiler,
+                    scope->function->type_sets,scope->function->type_set_count,
+                    (uint16_t)source_set);
+                if(cloned!=DIAMOND_NO_TYPE_SET)
+                    compiler->known_type_sets[cell]=(int32_t)cloned;
+            }
+            const int32_t tooling_set=scope->tooling_type_sets[source];
+            if(tooling_set>=0&&
+               (size_t)tooling_set<scope->function->type_set_count) {
+                const uint16_t cloned=clone_type_set_into_current(compiler,
+                    scope->function->type_sets,scope->function->type_set_count,
+                    (uint16_t)tooling_set);
+                if(cloned!=DIAMOND_NO_TYPE_SET)
+                    compiler->tooling_type_sets[cell]=(int32_t)cloned;
+            }
+        }
+    }
+}
+
 uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     if(captures_self && !compiler->in_method) {
@@ -1221,377 +1791,13 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler->in_method = true;
     }
 
-    size_t parameter_count=0;
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        parameter_count=1;DiamondLexer lookahead=compiler->lexer;
-        DiamondToken token=compiler->current;size_t nesting=0;
-        while(token.kind!=DIAMOND_TOKEN_EOF) {
-            if(token.kind==DIAMOND_TOKEN_LEFT_PAREN||
-               token.kind==DIAMOND_TOKEN_LEFT_BRACKET||
-               token.kind==DIAMOND_TOKEN_LEFT_BRACE)nesting++;
-            else if(token.kind==DIAMOND_TOKEN_RIGHT_PAREN) {
-                if(nesting==0)break;
-                nesting--;
-            } else if(token.kind==DIAMOND_TOKEN_RIGHT_BRACKET||
-                      token.kind==DIAMOND_TOKEN_RIGHT_BRACE) {
-                if(nesting>0)nesting--;
-            } else if(token.kind==DIAMOND_TOKEN_COMMA&&nesting==0)parameter_count++;
-            token=diamond_lexer_next(&lookahead);
-        }
-    }
-    if(parameter_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
-        fail(compiler,name,"functions cannot declare more than 32 parameters");
-        parameter_count=DIAMOND_MAX_DECLARED_PARAMETERS;
-    }
-    const uint16_t parameter_base=compiler->next_register;
-    for(size_t index=0;index<parameter_count;index++)(void)allocate_register(compiler);
-    size_t declared_parameter_count=0;bool saw_default=false;
-    bool has_block_parameter=false;
-    uint16_t variadic_parameter=0,variadic_fixed_count=0;
-    int block_parameter_type=-1;DiamondSpan block_parameter_type_span={};
-    skip_newlines(compiler);
-    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
-        do {
-            /* `*name` -- a trailing variadic parameter, bare name only
-             * (no type annotation, no default -- neither makes sense for
-             * a collected Array), and must be the last parameter (no
-             * comma may follow it). See docs/design.md's "Splat/variadic
-             * parameters" section. */
-            bool is_variadic=false;
-            bool is_block_parameter=false;
-            if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
-                if(has_block_parameter) {
-                    fail(compiler,compiler->current.span,
-                         "a function can only declare one block parameter");break;
-                }
-                is_block_parameter=true;has_block_parameter=true;
-                advance_token(compiler);
-            }
-            if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-                if(function->has_variadic) {
-                    fail(compiler,compiler->current.span,
-                         "a function can only declare one variadic parameter");
-                    break;
-                }
-                is_variadic=true;
-                advance_token(compiler);
-            }
-            if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER) {
-                fail(compiler, compiler->current.span, "expected parameter name");
-                break;
-            }
-            if (function->arity == UINT8_MAX) {
-                fail(compiler, compiler->current.span, "too many parameters");
-                break;
-            }
-            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
-                fail(compiler,compiler->current.span,"too many local variables");break;
-            }
-            const uint16_t parameter=(uint16_t)(parameter_base+declared_parameter_count);
-            if(is_block_parameter) {
-                compiler->has_current_block=true;
-                compiler->current_block_register=parameter;
-            }
-            compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->current.span,.reg=parameter};
-            if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS) {
-                const DiamondSpan parameter_name_span=compiler->current.span;
-                size_t parameter_name_length=parameter_name_span.length;
-                if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
-                    parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
-                for(size_t index=0;index<parameter_name_length;index++)
-                    function->parameter_names[declared_parameter_count][index]=
-                        compiler->source[parameter_name_span.start+index];
-                function->parameter_names[declared_parameter_count][parameter_name_length]='\0';
-            }
-            function->arity++;
-            advance_token(compiler);
-            if(is_variadic) {
-                if(compiler->current.kind==DIAMOND_TOKEN_COLON) {
-                    fail(compiler,compiler->current.span,
-                         "a variadic parameter cannot have a type annotation");
-                    break;
-                }
-                if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
-                    fail(compiler,compiler->current.span,
-                         "a variadic parameter cannot have a default value");
-                    break;
-                }
-                function->has_variadic=true;
-                /* A captures_self closure (`closure name() ... end`) is
-                 * the one shape where this doesn't reduce to plain
-                 * `arity-1`: it reserves register 0 for a materialized
-                 * self, exactly like a real method, but (unlike a real
-                 * method) its own arity/required_arity are never inflated
-                 * to account for that slot -- call_closure_helper's own
-                 * needs_self_slot padding (src/vm.c) still shifts the
-                 * *runtime* argument_count/arguments by +1 for it
-                 * regardless, so the fixed_count operand here must add
-                 * that slot back to line up with what DIAMOND_OP_
-                 * COLLECT_VARIADIC actually sees at runtime -- confirmed
-                 * directly (a self-capturing variadic closure's collected
-                 * array was off by one, silently including its own first
-                 * real parameter, before this fix). Every other owner
-                 * shape (an ordinary method, whose arity already started
-                 * at 1 for its own real implicit receiver; a plain
-                 * top-level function or non-capturing nested def, which
-                 * has no implicit slot and no runtime padding either)
-                 * already has arity counted consistently with its own
-                 * runtime layout, so only this one shape needs the
-                 * adjustment. */
-                const uint8_t fixed_count=captures_self?
-                    function->arity:(uint8_t)(function->arity-1);
-                variadic_parameter=parameter;variadic_fixed_count=fixed_count;
-                declared_parameter_count++;
-                skip_newlines(compiler);
-                if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-                    advance_token(compiler);skip_newlines(compiler);
-                    if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND)
-                        fail(compiler,compiler->current.span,
-                            "only a block parameter may follow a variadic parameter");
-                    else continue;
-                }
-                break;
-            }
-            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
-                fail(compiler,compiler->current.span,
-                     "a block parameter cannot have a default value");break;
-            }
-            int parameter_type=-1;DiamondSpan parameter_type_span={};
-            if (compiler->current.kind == DIAMOND_TOKEN_COLON) {
-                advance_token(compiler);
-                parameter_type_span=compiler->current.span;
-                const int type = parse_type_annotation(compiler);
-                parameter_type=type;
-                if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS)
-                    function->parameter_type_sets[declared_parameter_count]=
-                        (uint16_t)type;
-                if(is_block_parameter) {
-                    block_parameter_type=type;
-                    block_parameter_type_span=parameter_type_span;
-                    compiler->current_block_type_set=(uint16_t)type;
-                }
-            }
-            if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
-                saw_default=true;advance_token(compiler);
-                const uint16_t provided=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_ARGUMENT_PROVIDED,provided,
-                                 (uint8_t)(function->arity-1),0,2);
-                const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,provided);
-                const uint16_t fallback=parse_expression(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,parameter,fallback,0,2);
-                patch_jump(compiler,skip,compiler->function->code_count);
-            } else if(saw_default&&!is_block_parameter) {
-                fail(compiler,compiler->previous.span,
-                     "required parameter cannot follow a default parameter");
-            } else if(!is_block_parameter)
-                function->required_arity++;
-            if(parameter_type>=0&&!is_block_parameter) {
-                emit_type_check(compiler,parameter,(uint16_t)parameter_type,
-                                parameter_type_span);
-                compiler->known_type_sets[parameter]=(int32_t)parameter_type;
-                const DiamondTypeSet *parameter_set=
-                    &function->type_sets[(size_t)parameter_type];
-                if(parameter_set->count==1)
-                    compiler->known_types[parameter]=parameter_set->members[0].id;
-            }
-            record_scope_type_fact(compiler,parameter,
-                                   compiler->locals[compiler->local_count-1].name.start);
-            declared_parameter_count++;
-            skip_newlines(compiler);
-            if(is_block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-                fail(compiler,compiler->current.span,
-                     "a block parameter must be the last parameter");break;
-            }
-            if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
-        } while (!compiler->failed);
-    }
-    if(function->has_variadic&&!compiler->failed)
-        emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
-            variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
-    function->has_block_parameter=has_block_parameter;
-    if(block_parameter_type>=0&&!compiler->failed) {
-        const uint16_t absent=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
-        const uint16_t missing=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
-            compiler->current_block_register,absent,3);
-        const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,missing);
-        emit_type_check(compiler,compiler->current_block_register,
-            (uint16_t)block_parameter_type,block_parameter_type_span);
-        patch_jump(compiler,skip,compiler->function->code_count);
-    }
-    if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler, compiler->current.span, "expected ')' after parameters");
-    }
-    /* A module_function-mode method's exported (qualified-call-reachable)
-     * singleton descriptor used to only get registered *after* this
-     * whole def's body finished compiling (see the module_function_mode
-     * block below, further down) -- so a self-referencing qualified call
-     * inside that same body (`ModuleName.method(...)` calling itself,
-     * directly or through a sibling also defined via module_function)
-     * could never find its own not-yet-registered descriptor: "undefined
-     * module singleton function" at compile time, confirmed as a real,
-     * previously-undiscovered gap, not a documented cut, building
-     * packages/graphql. Fixed by registering it *here* instead --
-     * function->name/arity/required_arity/has_variadic are all already
-     * final at this exact point (the parameter list, and only the
-     * parameter list, is what determines them), well before body
-     * compilation starts -- so a recursive qualified call inside the
-     * body can resolve normally. The module_function_mode block further
-     * down still runs (marking module->methods[]'s own instance-style
-     * entry private, same as always), it just skips re-adding to
-     * module->singleton_methods[] a second time when this flag is set. */
-    bool module_function_singleton_registered_early=false;
-    if(!compiler->failed && compiler->current_module>=0 && !module_singleton &&
-       at_top_level && compiler->module_function_mode) {
-        DiamondModule *early_module=
-            &compiler->program->modules[(size_t)compiler->current_module];
-        /* Deliberately NOT checking function->uses_instance_state here,
-         * unlike the later (already-existing) registration site that
-         * also checks it -- this flag only becomes accurate once the
-         * body has actually been compiled (it's set while compiling an
-         * `@ivar` access, which hasn't happened yet at this point in the
-         * def), so checking it now would just always read false
-         * regardless of what the body turns out to contain. The later
-         * site still runs this check for real, after the body compiles;
-         * if it turns out this method IS stateful, `fail` there marks
-         * the whole compilation failed the same as always, and it not
-         * mattering that a descriptor was already speculatively written
-         * into singleton_methods[] below -- a failed compilation never
-         * produces a runnable program either way. */
-        /* A sibling module_function method defined *later* in the same
-         * module/file still needs to be callable (qualified) from a
-         * method compiled earlier -- e.g. mutually recursive is_even/
-         * is_odd. diamond_compile's own discovery pass already visits
-         * every def in the module in source order and reaches this same
-         * early-registration code, so every sibling's descriptor exists
-         * in discovery->modules[...].singleton_methods[] by the time
-         * discovery finishes; that whole DiamondModule (a plain,
-         * pointer-free embedded struct) gets bulk-memcpy'd into the real
-         * pass's own program->modules before it starts (see
-         * diamond_compile), so those descriptors -- forward references
-         * included -- would already be usable, IF compile_module's own
-         * module-reopen reset didn't unconditionally wipe
-         * singleton_methods back to empty first (a plain "declared_by_
-         * discovery means stale, zero it" rule that's correct for
-         * module->methods[]/fields[] but not for this table -- see
-         * compile_module's own comment on why it stopped doing that).
-         * function_index carries over correctly unchanged: discovery and
-         * the real pass reserve functions in identical source order (see
-         * diamond_compile's own "Reserve every compiler-created function
-         * at its discovery-pass index" comment), so a discovery-pass
-         * function_index already names the right real-pass slot even
-         * before that slot's body is recompiled.
-         *
-         * Claimed *positionally*, exactly like Compiler's own
-         * next_function_claim, not by name: the real pass visits this
-         * module's declarations in the same source order discovery did,
-         * so early_module->next_singleton_claim (reset once, when
-         * compile_module first re-touches this module) always names the
-         * matching discovery-pass entry to refresh -- arity/required_
-         * arity/has_variadic/name can't actually differ pass-to-pass for
-         * the same source, but overwriting them is free and keeps this
-         * from silently trusting stale data if that ever changes. Once
-         * every discovery-carried-over entry has been claimed, any
-         * further registration is a genuinely new entry (append), same
-         * as it always was. */
-        /* A prescan_singleton_signatures placeholder (this exact
-         * pass, discovery only -- see that function's own comment) is
-         * claimed by NAME, ahead of (and independent from) positional
-         * next_singleton_claim claiming: it's how an *earlier*-compiled
-         * sibling within this same discovery walk already got a
-         * resolvable qualified call to THIS def, via a pending fixup
-         * (emit_pending_singleton_function_index) that only this exact
-         * moment -- this def's real function_index finally existing --
-         * can resolve. */
-        size_t prescanned=early_module->singleton_method_count;
-        if(compiler->discovery_pass)
-            for(size_t index=0;index<early_module->singleton_method_count;index++)
-                if(early_module->singleton_methods[index].function_index==
-                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
-                   strncmp(early_module->singleton_methods[index].name,
-                           function->name,copy_length)==0&&
-                   early_module->singleton_methods[index].name[copy_length]=='\0') {
-                    prescanned=index;break;
-                }
-        const bool early_claiming=!compiler->discovery_pass&&
-            early_module->next_singleton_claim<early_module->singleton_method_count;
-        if(prescanned==early_module->singleton_method_count&&!early_claiming&&
-           early_module->singleton_method_count==DIAMOND_MAX_METHODS) {
-            fail(compiler,name,"too many module singleton functions");
-        } else {
-            DiamondMethod exported={0};
-            for(size_t i=0;i<copy_length;i++)exported.name[i]=function->name[i];
-            exported.name[copy_length]='\0';
-            exported.function_index=(uint16_t)function_index;
-            /* function->arity/required_arity both carry an implicit +1
-             * here for the module-mixing receiver slot every direct
-             * module instance method reserves in register 0 (see this
-             * function's own direct_module_member seeding, well above
-             * the parameter loop) -- subtracted back out, exactly like
-             * the later (already-existing) registration site does when
-             * copying function's arity into module->methods[]'s own
-             * entry, so a qualified call's own arity check isn't off by
-             * one. */
-            exported.arity=(uint8_t)(function->arity-1);
-            exported.required_arity=(uint8_t)(function->required_arity-1);
-            exported.has_variadic=function->has_variadic;
-            exported.included=false;
-            exported.is_private=false;exported.is_protected=false;
-            exported.needs_receiver=true;
-            if(prescanned<early_module->singleton_method_count) {
-                early_module->singleton_methods[prescanned]=exported;
-                resolve_pending_singleton_fixups(compiler,
-                    &early_module->singleton_methods[prescanned],function_index);
-            } else if(early_claiming)
-                early_module->singleton_methods[
-                    early_module->next_singleton_claim++]=exported;
-            else
-                early_module->singleton_methods[
-                    early_module->singleton_method_count++]=exported;
-            module_function_singleton_registered_early=true;
-        }
-    }
-    if(!compiler->failed && !at_top_level) {
-        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
-            if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
-            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
-                fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
-            }
-            const uint16_t cell=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
-            compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
-                .alias_identity=compiler->enclosing_locals[i].alias_identity};
-            captured_fact_registers[i]=cell;
-            const uint16_t source=compiler->enclosing_locals[i].reg;
-            if(source<scope.next_register) {
-                compiler->known_types[cell]=scope.known_types[source];
-                const int32_t source_set=scope.known_type_sets[source];
-                if(source_set>=0&&
-                   (size_t)source_set<scope.function->type_set_count) {
-                    const uint16_t cloned=clone_type_set_into_current(compiler,
-                        scope.function->type_sets,scope.function->type_set_count,
-                        (uint16_t)source_set);
-                    if(cloned!=DIAMOND_NO_TYPE_SET)
-                        compiler->known_type_sets[cell]=(int32_t)cloned;
-                }
-                const int32_t tooling_set=scope.tooling_type_sets[source];
-                if(tooling_set>=0&&
-                   (size_t)tooling_set<scope.function->type_set_count) {
-                    const uint16_t cloned=clone_type_set_into_current(compiler,
-                        scope.function->type_sets,scope.function->type_set_count,
-                        (uint16_t)tooling_set);
-                    if(cloned!=DIAMOND_NO_TYPE_SET)
-                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
-                }
-            }
-        }
-    }
+    parse_definition_parameters(compiler,function,name,captures_self);
+    /* Registered before the body compiles so a qualified call to itself inside it resolves; the
+     * registration after the body then skips adding it a second time. */
+    const bool module_function_singleton_registered_early=register_module_function_early(
+        compiler,function,function_index,name,module_singleton,at_top_level);
+    if(!compiler->failed && !at_top_level)
+        bind_captured_cells(compiler,&scope,captured_fact_registers);
     int return_type = -1;
     DiamondSpan return_type_span = {};
     if (!compiler->failed) advance_token(compiler);
@@ -1755,191 +1961,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         function->body_end=body_end;
     }
     definition_scope_restore(compiler,&scope,function,captured_fact_registers);
-    if(compiler->current_class>=0&&!module_singleton&&
-       !compiler->failed&&at_top_level) {
-        DiamondClass *class = compiler->program->classes[(size_t)compiler->current_class];
-        bool duplicate=false;
-        size_t duplicate_index=0;
-        for(size_t existing=0;existing<class->method_count;existing++)
-            if(!class->methods[existing].included&&
-               strcmp(class->methods[existing].name,function->name)==0) {
-                duplicate=true;duplicate_index=existing;
-            }
-        /* A struct's own generated == or to_s may be replaced by a
-         * hand-written one in its body (never initialize or a field
-         * reader): the generated entry is overwritten in place, so
-         * dispatch finds the user's method under the same name. */
-        bool replacing_generated=false;
-        if(duplicate&&compiler->struct_replaceable_class==compiler->current_class) {
-            if(compiler->struct_replaceable_eq&&strcmp(function->name,"==")==0) {
-                compiler->struct_replaceable_eq=false;replacing_generated=true;
-            } else if(compiler->struct_replaceable_to_s&&
-                      strcmp(function->name,"to_s")==0) {
-                compiler->struct_replaceable_to_s=false;replacing_generated=true;
-            }
-        }
-        if(replacing_generated) {
-            /* Drop the generated entry and let the ordinary append below
-             * add the user's method, so it sits where any hand-written
-             * method would: dispatch prefers the latest match by name, and
-             * an `include Comparable` earlier in the body has already
-             * appended its own derived == after the generated one. */
-            for(size_t shift=duplicate_index+1;shift<class->method_count;shift++)
-                class->methods[shift-1]=class->methods[shift];
-            class->method_count--;
-            duplicate=false;
-        }
-        if(class->method_count==DIAMOND_MAX_METHODS||duplicate) {
-            fail(compiler, name, "duplicate or excessive method definition");
-        } else {
-            DiamondMethod *method = &class->methods[class->method_count++];
-            for (size_t i=0;i<copy_length;i++) method->name[i]=function->name[i];
-            method->name[copy_length]='\0';
-            method->function_index=(uint16_t)function_index;
-            method->arity=(uint8_t)(function->arity-1);
-            method->required_arity=(uint8_t)(function->required_arity-1);
-            method->has_variadic=function->has_variadic;
-            method->included=false;
-            method->is_private=compiler->methods_private;
-            method->is_protected=compiler->methods_protected;
-        }
-    } else if(compiler->current_class>=0&&module_singleton&&
-              !compiler->failed&&at_top_level) {
-        DiamondClass *class=
-            compiler->program->classes[(size_t)compiler->current_class];
-        DiamondMethod *prescanned=nullptr;
-        bool duplicate=false;
-        for(size_t existing=0;existing<class->singleton_method_count;existing++) {
-            DiamondMethod *method=&class->singleton_methods[existing];
-            if(strcmp(method->name,function->name)!=0)continue;
-            if(method->function_index==DIAMOND_UNRESOLVED_SINGLETON_FUNCTION||
-               method->function_index==function_index)
-                prescanned=method;
-            else duplicate=true;
-        }
-        if(duplicate||(prescanned==nullptr&&class->singleton_method_count==DIAMOND_MAX_METHODS))
-            fail(compiler,name,"duplicate or excessive class singleton method");
-        else {
-            DiamondMethod *method=prescanned!=nullptr?prescanned:
-                &class->singleton_methods[class->singleton_method_count++];
-            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
-            method->name[copy_length]='\0';method->function_index=(uint16_t)function_index;
-            /* Class-owned (unlike module) singleton methods now reserve
-             * register 0 for an implicit `self` -- function->arity/
-             * required_arity already include that slot (compile_definition's
-             * direct_class_singleton_member branch), so the method table's
-             * own arity (what external callers are checked against, see
-             * parse_singleton_call) must subtract it back out, the same
-             * way an ordinary instance method's entry does just above.
-             * needs_receiver tells parse_singleton_call's call site to
-             * reserve and fill that slot instead of leaving it zero-inited. */
-            method->arity=(uint8_t)(function->arity-1);
-            method->required_arity=(uint8_t)(function->required_arity-1);
-            method->has_variadic=function->has_variadic;
-            method->needs_receiver=true;
-            if(prescanned!=nullptr)
-                resolve_pending_singleton_fixups(compiler,method,function_index);
-        }
-    } else if(compiler->current_module>=0&&!module_singleton&&
-              !compiler->failed&&at_top_level) {
-        DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
-        for(size_t existing=0;existing<module->method_count;existing++)
-            if(!module->methods[existing].included&&
-               strcmp(module->methods[existing].name,function->name)==0) {
-                fail(compiler,name,"duplicate module method");break;
-            }
-        if(!compiler->failed) {
-            if(module->method_count==DIAMOND_MAX_METHODS)
-                fail(compiler,name,"too many module methods");
-            else {
-                DiamondMethod *method=&module->methods[module->method_count++];
-                for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
-                method->name[copy_length]='\0';
-                method->function_index=(uint16_t)function_index;
-                method->arity=(uint8_t)(function->arity-1);
-                method->required_arity=(uint8_t)(function->required_arity-1);
-                method->has_variadic=function->has_variadic;
-                method->included=false;
-                method->is_private=compiler->methods_private;
-                method->is_protected=compiler->methods_protected;
-                if(compiler->module_function_mode) {
-                    if(function->uses_instance_state)
-                        fail(compiler,name,
-                            "stateful method cannot use module_function mode");
-                    else if(module_function_singleton_registered_early) {
-                        /* Already added to singleton_methods[] above,
-                         * before the body compiled -- just the private-
-                         * marking side effect remains to do here. */
-                        method->is_private=true;method->is_protected=false;
-                    }
-                    else if(module->singleton_method_count==DIAMOND_MAX_METHODS)
-                        fail(compiler,name,"too many module singleton functions");
-                    else {
-                        method->is_private=true;method->is_protected=false;
-                        DiamondMethod exported=*method;
-                        exported.is_private=false;exported.is_protected=false;
-                        exported.needs_receiver=true;
-                        module->singleton_methods[
-                            module->singleton_method_count++]=exported;
-                    }
-                }
-            }
-        }
-    } else if(compiler->current_module>=0&&module_singleton&&
-              !compiler->failed&&at_top_level) {
-        DiamondModule *module=
-            &compiler->program->modules[(size_t)compiler->current_module];
-        /* Same positional claiming as compile_definition's own
-         * module_function early-registration (see that site's comment,
-         * and DiamondModule's next_singleton_claim field, for the full
-         * rationale): a discovery pass that reached this point at all
-         * already ran the duplicate check below and would have failed
-         * compilation on a genuine `def self.x` repeated within the
-         * same module, so the real pass re-visiting an as-yet-unclaimed
-         * carried-over entry can safely skip straight to refreshing it
-         * in place, in source order, with no risk of masking a real
-         * duplicate. */
-        /* See compile_definition's own module_function early-registration
-         * comment on prescan_singleton_signatures/resolve_pending_
-         * singleton_fixups -- identical name-based claiming for a `def
-         * self.x` signature that scan already found. */
-        size_t prescanned=module->singleton_method_count;
-        if(compiler->discovery_pass)
-            for(size_t index=0;index<module->singleton_method_count;index++)
-                if(module->singleton_methods[index].function_index==
-                       DIAMOND_UNRESOLVED_SINGLETON_FUNCTION&&
-                   strncmp(module->singleton_methods[index].name,
-                           function->name,copy_length)==0&&
-                   module->singleton_methods[index].name[copy_length]=='\0') {
-                    prescanned=index;break;
-                }
-        const bool claiming=!compiler->discovery_pass&&
-            module->next_singleton_claim<module->singleton_method_count;
-        bool duplicate=false;
-        if(prescanned==module->singleton_method_count&&!claiming)
-            for(size_t existing=0;existing<module->singleton_method_count;existing++)
-                if(strcmp(module->singleton_methods[existing].name,
-                          function->name)==0)duplicate=true;
-        if(prescanned==module->singleton_method_count&&!claiming&&
-           (duplicate||module->singleton_method_count==DIAMOND_MAX_METHODS))
-            fail(compiler,name,"duplicate or excessive module singleton function");
-        else {
-            DiamondMethod *method=prescanned<module->singleton_method_count?
-                &module->singleton_methods[prescanned]:
-                (claiming?
-                    &module->singleton_methods[module->next_singleton_claim++]:
-                    &module->singleton_methods[module->singleton_method_count++]);
-            for(size_t i=0;i<copy_length;i++)method->name[i]=function->name[i];
-            method->name[copy_length]='\0';
-            method->function_index=(uint16_t)function_index;
-            method->arity=function->arity;
-            method->required_arity=function->required_arity;
-            method->has_variadic=function->has_variadic;
-            if(prescanned<module->singleton_method_count)
-                resolve_pending_singleton_fixups(compiler,method,function_index);
-        }
-    }
+    register_definition_method(compiler,function,function_index,name,module_singleton,
+        at_top_level,module_function_singleton_registered_early);
     /* A class/module member def's "value" is never read: both call sites
      * that reach this point with at_top_level true and current_class/
      * current_module set (compile_class's and compile_module's own
