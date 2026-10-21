@@ -16,238 +16,255 @@
 #include <string.h>
 #include <time.h>
 
+/* What compile_definition and compile_block save of the enclosing function's compile state before
+ * they compile a nested def's or block's own, and put back afterwards. The known-type arrays use the inline-then-heap
+ * fallback of parse_if's before_types/then_types: a fixed `index<256` bound does not overflow, but
+ * silently under-saves and under-restores whenever the enclosing scope already has more than 256
+ * live registers, leaving entries [256, next_register) holding whatever the nested def's own
+ * (register-index-0-based) body wrote into those slots. */
+typedef struct EnclosingScope {
+    DiamondFunction *function;
+    Local locals[DIAMOND_MAX_LOCALS];
+    size_t local_count;
+    uint16_t next_register;
+    DiamondSpan method;
+    bool in_method;
+    bool in_singleton_method;
+    bool in_function;
+    bool in_block;
+    size_t begin_depth;
+    bool has_current_block;
+    uint16_t current_block_register;
+    uint16_t current_block_type_set;
+    int return_type;
+    DiamondSpan return_type_span;
+    /* See return_flow_seen's own comment (the Compiler struct): reset before compiling this def's
+     * own body, restored after, so a nested def's own returns never leak into an enclosing one's
+     * inference or vice versa. */
+    bool return_flow_seen;
+    uint16_t return_flow_type;
+    int32_t return_flow_set;
+    uint16_t return_tooling_type;
+    int32_t return_tooling_set;
+    int exception;
+    size_t retry_target;
+    LoopContext *loop;
+    Local enclosing_locals[DIAMOND_MAX_LOCALS];
+    size_t enclosing_local_count;
+    uint16_t capture_registers[DIAMOND_MAX_CAPTURES];
+    size_t capture_count;
+    uint16_t inline_known_types[256];
+    int32_t inline_known_type_sets[256];
+    int32_t inline_tooling_type_sets[256];
+    uint16_t *known_types;
+    int32_t *known_type_sets;
+    int32_t *tooling_type_sets;
+    uint16_t *heap_known_types;
+    int32_t *heap_known_type_sets;
+    int32_t *heap_tooling_type_sets;
+} EnclosingScope;
+
+/* False (after reporting the error) when the register facts cannot be saved. */
+static bool enclosing_scope_save(Compiler *compiler,EnclosingScope *scope) {
+    scope->function=compiler->function;
+    scope->local_count=compiler->local_count;
+    for(size_t index=0;index<scope->local_count;index++)
+        scope->locals[index]=compiler->locals[index];
+    scope->next_register=compiler->next_register;
+    scope->method=compiler->current_method;
+    scope->in_method=compiler->in_method;
+    scope->in_singleton_method=compiler->in_singleton_method;
+    scope->in_function=compiler->in_function;
+    scope->in_block=compiler->in_block;
+    scope->begin_depth=compiler->begin_depth;
+    scope->has_current_block=compiler->has_current_block;
+    scope->current_block_register=compiler->current_block_register;
+    scope->current_block_type_set=compiler->current_block_type_set;
+    scope->return_type=compiler->current_return_type;
+    scope->return_type_span=compiler->current_return_type_span;
+    scope->return_flow_seen=compiler->return_flow_seen;
+    scope->return_flow_type=compiler->return_flow_type;
+    scope->return_flow_set=compiler->return_flow_set;
+    scope->return_tooling_type=compiler->return_tooling_type;
+    scope->return_tooling_set=compiler->return_tooling_set;
+    compiler->return_flow_seen=false;
+    scope->exception=compiler->current_exception;
+    scope->retry_target=compiler->current_retry_target;
+    scope->loop=compiler->current_loop;
+    scope->enclosing_local_count=compiler->enclosing_local_count;
+    for(size_t i=0;i<scope->enclosing_local_count;i++)
+        scope->enclosing_locals[i]=compiler->enclosing_locals[i];
+    scope->capture_count=compiler->capture_count;
+    for(size_t i=0;i<scope->capture_count;i++)
+        scope->capture_registers[i]=compiler->capture_registers[i];
+    scope->known_types=scope->inline_known_types;
+    scope->known_type_sets=scope->inline_known_type_sets;
+    scope->tooling_type_sets=scope->inline_tooling_type_sets;
+    scope->heap_known_types=nullptr;
+    scope->heap_known_type_sets=nullptr;
+    scope->heap_tooling_type_sets=nullptr;
+    if(scope->next_register>256) {
+        scope->heap_known_types=malloc((size_t)scope->next_register*sizeof(uint16_t));
+        scope->heap_known_type_sets=
+            malloc((size_t)scope->next_register*sizeof(int32_t));
+        scope->heap_tooling_type_sets=
+            malloc((size_t)scope->next_register*sizeof(int32_t));
+        if(scope->heap_known_types==nullptr||scope->heap_known_type_sets==nullptr||
+           scope->heap_tooling_type_sets==nullptr) {
+            fail(compiler,compiler->previous.span,
+                 "out of memory compiling function definition");
+            free(scope->heap_known_types);free(scope->heap_known_type_sets);
+            free(scope->heap_tooling_type_sets);
+            return false;
+        }
+        scope->known_types=scope->heap_known_types;
+        scope->known_type_sets=scope->heap_known_type_sets;
+        scope->tooling_type_sets=scope->heap_tooling_type_sets;
+    }
+    for(size_t index=0;index<scope->next_register;index++) {
+        scope->known_types[index]=compiler->known_types[index];
+        scope->known_type_sets[index]=compiler->known_type_sets[index];
+        scope->tooling_type_sets[index]=compiler->tooling_type_sets[index];
+    }
+    return true;
+}
+
+/* Puts back what enclosing_scope_save took. A local the nested def or block captured keeps the type facts its body ended with (`captured_fact_registers`
+ * names the cell register per enclosing local, or DIAMOND_NO_TYPE_SET). Releases the heap arrays. */
+static void enclosing_scope_restore(Compiler *compiler,EnclosingScope *scope,
+        const DiamondFunction *function,const uint16_t *captured_fact_registers) {
+    uint16_t definition_captured_fact_types[DIAMOND_MAX_LOCALS];
+    int32_t definition_captured_fact_sets[DIAMOND_MAX_LOCALS];
+    int32_t definition_captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
+    for(size_t index=0;index<scope->local_count;index++) {
+        const uint16_t reg=captured_fact_registers[index];
+        definition_captured_fact_types[index]=
+            reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:compiler->known_types[reg];
+        definition_captured_fact_sets[index]=
+            reg==DIAMOND_NO_TYPE_SET?-1:compiler->known_type_sets[reg];
+        definition_captured_fact_tooling_sets[index]=
+            reg==DIAMOND_NO_TYPE_SET?-1:compiler->tooling_type_sets[reg];
+    }
+    compiler->function = scope->function;
+    compiler->begin_depth=scope->begin_depth;
+    compiler->local_count = scope->local_count;
+    for (size_t index = 0; index < scope->local_count; index++) {
+        compiler->locals[index] = scope->locals[index];
+    }
+    compiler->next_register = scope->next_register;
+    compiler->last_instruction_offset=SIZE_MAX;
+    compiler->current_method = scope->method;
+    compiler->in_method = scope->in_method;
+    compiler->in_singleton_method = scope->in_singleton_method;
+    compiler->in_function=scope->in_function;
+    compiler->in_block=scope->in_block;
+    compiler->has_current_block=scope->has_current_block;
+    compiler->current_block_register=scope->current_block_register;
+    compiler->current_block_type_set=scope->current_block_type_set;
+    compiler->current_return_type=scope->return_type;
+    compiler->current_return_type_span=scope->return_type_span;
+    compiler->return_flow_seen=scope->return_flow_seen;
+    compiler->return_flow_type=scope->return_flow_type;
+    compiler->return_flow_set=scope->return_flow_set;
+    compiler->return_tooling_type=scope->return_tooling_type;
+    compiler->return_tooling_set=scope->return_tooling_set;
+    compiler->current_exception=scope->exception;
+    compiler->current_retry_target=scope->retry_target;
+    compiler->current_loop=scope->loop;
+    compiler->enclosing_local_count=scope->enclosing_local_count;
+    for(size_t i=0;i<scope->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=scope->enclosing_locals[i];
+    compiler->capture_count=scope->capture_count;
+    for(size_t i=0;i<scope->capture_count;i++)
+        compiler->capture_registers[i]=scope->capture_registers[i];
+    for(size_t index=0;index<scope->next_register;index++)
+        {compiler->known_types[index]=scope->known_types[index];
+         compiler->known_type_sets[index]=scope->known_type_sets[index];
+         compiler->tooling_type_sets[index]=scope->tooling_type_sets[index];}
+    for(size_t index=0;index<scope->local_count;index++) {
+        if(captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
+        const uint16_t source=scope->locals[index].reg;
+        if(source>=scope->next_register)continue;
+        compiler->known_types[source]=definition_captured_fact_types[index];
+        const int32_t inner_set=definition_captured_fact_sets[index];
+        compiler->known_type_sets[source]=-1;
+        if(inner_set>=0&&(size_t)inner_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->known_type_sets[source]=(int32_t)cloned;
+        }
+        const int32_t inner_tooling_set=
+            definition_captured_fact_tooling_sets[index];
+        compiler->tooling_type_sets[source]=-1;
+        if(inner_tooling_set>=0&&
+           (size_t)inner_tooling_set<function->type_set_count) {
+            const uint16_t cloned=clone_type_set_into_current(compiler,
+                function->type_sets,function->type_set_count,
+                (uint16_t)inner_tooling_set);
+            if(cloned!=DIAMOND_NO_TYPE_SET)
+                compiler->tooling_type_sets[source]=(int32_t)cloned;
+        }
+        record_scope_type_fact(compiler,source,compiler->current.span.start);
+    }
+    free(scope->heap_known_types);free(scope->heap_known_type_sets);
+    free(scope->heap_tooling_type_sets);
+}
+
 /* Blocks and `def`: closure and method compilation, signatures, and return-flow inference. */
 
-/* `do |param, param, ...| BODY end` attached right after a call's closing
- * `).
- * Deliberately a separate, much smaller function rather than a refactor
- * of compile_definition (below): that function carries a lot of ceremony
- * that doesn't apply to an anonymous block (operator-method names,
- * module-singleton `self.` binding, class/module member registration,
- * return-type annotations, docstrings, default parameter values, the
- * endless `def foo() = expr` form) and has several hard-won, comment-
- * documented correctness fixes (e.g. the redefine_method patch-factory
- * nested_in_singleton_method exception below) not worth risking by
- * routing an unrelated caller through it. What *is* reused is the
- * underlying mechanism: a block is compiled into a real new
- * DiamondFunction slot and produces a real, capturing DIAMOND_OP_CLOSURE
- * value -- the exact same runtime shape a nested `def` already produces
- * -- so this function mirrors only the subset of compile_definition that
- * builds that shape (save/restore outer compiler state, bind parameters
- * as locals, eagerly materialize every enclosing local as a directly
- * accessible local via GET_CAPTURE_CELL, compile the body, then BOX_LOCAL
- * + CLOSURE). No new DiamondOpCode. Caller has already confirmed
- * compiler->current.kind == DIAMOND_TOKEN_DO and not yet consumed it. */
-uint16_t compile_block(Compiler *compiler) {
-    const bool has_contextual_types=compiler->has_contextual_block_types;
-    const uint8_t contextual_arity=compiler->contextual_block_arity;
-    uint16_t contextual_types[16];
-    int32_t contextual_type_sets[16];
-    for(size_t index=0;index<contextual_arity;index++) {
-        contextual_types[index]=compiler->contextual_block_types[index];
-        contextual_type_sets[index]=compiler->contextual_block_type_sets[index];
-    }
-    const int32_t contextual_return_set=compiler->contextual_block_return_set;
-    const bool contextual_tooling_only=compiler->contextual_block_tooling_only;
-    compiler->contextual_block_tooling_only=false;
-    compiler->has_contextual_block_types=false;
-    compiler->contextual_block_arity=0;
-    compiler->contextual_block_return_set=-1;
-    advance_token(compiler);
-    if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
-        fail(compiler, compiler->current.span, "too many functions");
-        return 0;
-    }
-    size_t function_index=0;
-    DiamondFunction *function=compiler_add_function(compiler,&function_index);
-    if(function==nullptr) {
-        fail(compiler,compiler->current.span,"out of memory");
-        return 0;
-    }
-    function->return_type_set=DIAMOND_NO_TYPE_SET;
-    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
-    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
-        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
-    /* UINT8_MAX-2, compile_definition's own "self via capture" sentinel
-     * (see its own extensive comment on this exact value), when this
-     * block is written somewhere `self` already exists -- materialized
-     * into its own register 0 below, the same way a `closure name()
-     * ... end` (captures_self) already does; call_closure_helper
-     * (src/vm.c) already shifts real arguments to register 1+ for any
-     * owner_class!=DIAMOND_OWNER_NONE callable, so reusing that exact sentinel
-     * here needs no further runtime changes at all. compiler->in_method
-     * is deliberately left untouched anywhere in this function (still
-     * whatever the enclosing function had) -- that's already why `self`
-     * was never a *compile-time* error inside a block written in a
-     * method; only *which* value ended up in register 0 was wrong
-     * before this fix (the block's own first real parameter, since
-     * nothing reserved register 0 for self at all). */
-    function->owner_class=compiler->in_method?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
-    function->nested=true;
-    static const char block_name[]="<block>";
-    for(size_t index=0;index<sizeof(block_name);index++)
-        function->name[index]=block_name[index];
-    function->declaration_line=(uint32_t)compiler->previous.span.line;
-    function->declaration_column=(uint32_t)compiler->previous.span.column;
-    function->declaration_start=compiler->previous.span.start;
-
-    DiamondFunction *outer_function = compiler->function;
-    Local outer_locals[DIAMOND_MAX_LOCALS];
-    const size_t outer_local_count = compiler->local_count;
-    for (size_t index = 0; index < outer_local_count; index++) {
-        outer_locals[index] = compiler->locals[index];
-    }
-    const uint16_t outer_next_register = compiler->next_register;
-    const DiamondSpan outer_method = compiler->current_method;
-    const bool outer_in_method = compiler->in_method;
-    const bool outer_in_singleton_method = compiler->in_singleton_method;
-    const bool outer_in_function=compiler->in_function;
-    const bool outer_in_block=compiler->in_block;
-    const size_t outer_begin_depth=compiler->begin_depth;
-    const bool outer_has_current_block=compiler->has_current_block;
-    const uint16_t outer_current_block_register=
-        compiler->current_block_register;
-    const uint16_t outer_current_block_type_set=
-        compiler->current_block_type_set;
-    const int outer_return_type=compiler->current_return_type;
-    const DiamondSpan outer_return_type_span=compiler->current_return_type_span;
-    /* See return_flow_seen's own comment (the Compiler struct): a
-     * `return` inside this block's own body belongs to the block, not
-     * whatever function is being compiled around it -- reset before
-     * compiling the block's body, restore the outer function's own
-     * accumulated state after, the same save/reset/restore every other
-     * per-function field on this list already gets. */
-    const bool outer_return_flow_seen=compiler->return_flow_seen;
-    const uint16_t outer_return_flow_type=compiler->return_flow_type;
-    const int32_t outer_return_flow_set=compiler->return_flow_set;
-    const uint16_t outer_return_tooling_type=compiler->return_tooling_type;
-    const int32_t outer_return_tooling_set=compiler->return_tooling_set;
-    compiler->return_flow_seen=false;
-    const bool outer_block_has_break=compiler->block_has_break;
-    compiler->block_has_break=false;
-    const int outer_exception=compiler->current_exception;
-    const size_t outer_retry_target=compiler->current_retry_target;
-    LoopContext *outer_loop=compiler->current_loop;
-    Local outer_enclosing_locals[DIAMOND_MAX_LOCALS];
-    const size_t outer_enclosing_local_count=compiler->enclosing_local_count;
-    for(size_t i=0;i<outer_enclosing_local_count;i++)
-        outer_enclosing_locals[i]=compiler->enclosing_locals[i];
-    uint16_t outer_capture_registers[DIAMOND_MAX_CAPTURES];
-    const size_t outer_capture_count=compiler->capture_count;
-    for(size_t i=0;i<outer_capture_count;i++)
-        outer_capture_registers[i]=compiler->capture_registers[i];
-    /* Same inline-then-heap fallback as parse_if/compile_definition's own
-     * (see either's comment) -- necessary here too, for the same reason:
-     * a block can appear after arbitrarily many registers have already
-     * been allocated in the enclosing function body. */
-    uint16_t inline_outer_known_types[256];int32_t inline_outer_known_type_sets[256];
-    int32_t inline_outer_tooling_type_sets[256];
-    uint16_t *outer_known_types=inline_outer_known_types;
-    int32_t *outer_known_type_sets=inline_outer_known_type_sets;
-    int32_t *outer_tooling_type_sets=inline_outer_tooling_type_sets;
-    uint16_t *heap_outer_known_types=nullptr;int32_t *heap_outer_known_type_sets=nullptr;
-    int32_t *heap_outer_tooling_type_sets=nullptr;
-    if(outer_next_register>256) {
-        heap_outer_known_types=malloc((size_t)outer_next_register*sizeof(uint16_t));
-        heap_outer_known_type_sets=
-            malloc((size_t)outer_next_register*sizeof(int32_t));
-        heap_outer_tooling_type_sets=
-            malloc((size_t)outer_next_register*sizeof(int32_t));
-        if(heap_outer_known_types==nullptr||heap_outer_known_type_sets==nullptr||
-           heap_outer_tooling_type_sets==nullptr) {
-            fail(compiler,compiler->previous.span,"out of memory compiling block");
-            free(heap_outer_known_types);free(heap_outer_known_type_sets);
-            free(heap_outer_tooling_type_sets);
-            return 0;
+/* Gives a nested def a local for each enclosing local it can see that its own parameters do not
+ * shadow, read from the capture cell, and carries the enclosing register's type facts across.
+ * `captured_fact_registers[i]` records the cell register for enclosing local i so that
+ * enclosing_scope_restore can hand the facts the body ends with back to the enclosing scope. */
+static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
+        uint16_t *captured_fact_registers) {
+    for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+        if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
+        if(compiler->local_count==DIAMOND_MAX_LOCALS) {
+            fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
         }
-        outer_known_types=heap_outer_known_types;
-        outer_known_type_sets=heap_outer_known_type_sets;
-        outer_tooling_type_sets=heap_outer_tooling_type_sets;
-    }
-    for(size_t index=0;index<outer_next_register;index++)
-        {outer_known_types[index]=compiler->known_types[index];
-         outer_known_type_sets[index]=compiler->known_type_sets[index];
-         outer_tooling_type_sets[index]=compiler->tooling_type_sets[index];}
-    uint16_t captured_fact_registers[DIAMOND_MAX_LOCALS];
-    for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
-        captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
-
-    /* Copy self into a fresh register of the *enclosing* function and box
-     * that copy, exactly mirroring compile_definition's own captures_self
-     * handling (see its own comment for why a copy, not boxing register 0
-     * itself in place: every self/@ivar access elsewhere in the enclosing
-     * method hardcodes literal register 0 unconditionally, so boxing it
-     * directly would corrupt every one of those). Still in the enclosing
-     * function's own compiler state here -- compiler->function hasn't
-     * switched yet. */
-    uint16_t self_copy_register=0;
-    if(compiler->in_method) {
-        self_copy_register=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
-        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
-    }
-
-    compiler->function = function;
-    compiler->begin_depth=0;
-    uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
-    if(contextual_return_set>=0&&
-       (size_t)contextual_return_set<outer_function->type_set_count)
-        declared_return_set=clone_type_set_into_current(compiler,
-            outer_function->type_sets,outer_function->type_set_count,
-            (uint16_t)contextual_return_set);
-    /* A `return`/`next` in this block returns from the block, so it's
-     * checked against the block's own expected result -- never the
-     * enclosing function's `-> Type`, whose set index belongs to that
-     * function's type-set table, not this one. */
-    compiler->current_return_type=declared_return_set==DIAMOND_NO_TYPE_SET?
-        -1:(int)declared_return_set;
-    compiler->has_current_block=false;
-    compiler->current_block_register=0;
-    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
-    compiler->current_loop=nullptr;
-    compiler->current_exception=-1;
-    compiler->current_retry_target=SIZE_MAX;
-    compiler->local_count = 0;
-    compiler->next_register = 0;
-    compiler->last_instruction_offset=SIZE_MAX;
-    compiler->enclosing_local_count=outer_local_count;
-    for(size_t i=0;i<compiler->enclosing_local_count;i++)
-        compiler->enclosing_locals[i]=outer_locals[i];
-    compiler->capture_count=0;
-    if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
-        fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
-    } else {
-        compiler->capture_count=compiler->enclosing_local_count;
-        for(size_t i=0;i<compiler->capture_count;i++)
-            compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
-    }
-    /* Materialize the captured self (see self_copy_register above) into
-     * this block's own register 0 -- guaranteed to land there since
-     * next_register was just reset to 0 above and nothing else has
-     * allocated from it yet, exactly mirroring compile_definition's own
-     * captures_self materialization (see its own comment). Every self/
-     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
-     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
-     * register 0 unconditionally, so this is what makes all of those work
-     * unmodified inside a block body too. */
-    if(function->owner_class==DIAMOND_OWNER_CAPTURED_SELF) {
-        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
-            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
-        } else {
-            const size_t self_capture_index=compiler->capture_count;
-            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
-            const uint16_t self_register=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
-                             (uint8_t)self_capture_index,0,2);
+        const uint16_t cell=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
+        compiler->locals[compiler->local_count++]=(Local){
+            .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
+            .alias_identity=compiler->enclosing_locals[i].alias_identity};
+        captured_fact_registers[i]=cell;
+        const uint16_t source=compiler->enclosing_locals[i].reg;
+        if(source<scope->next_register) {
+            compiler->known_types[cell]=scope->known_types[source];
+            const int32_t source_set=scope->known_type_sets[source];
+            if(source_set>=0&&
+               (size_t)source_set<scope->function->type_set_count) {
+                const uint16_t cloned=clone_type_set_into_current(compiler,
+                    scope->function->type_sets,scope->function->type_set_count,
+                    (uint16_t)source_set);
+                if(cloned!=DIAMOND_NO_TYPE_SET)
+                    compiler->known_type_sets[cell]=(int32_t)cloned;
+            }
+            const int32_t tooling_set=scope->tooling_type_sets[source];
+            if(tooling_set>=0&&
+               (size_t)tooling_set<scope->function->type_set_count) {
+                const uint16_t cloned=clone_type_set_into_current(compiler,
+                    scope->function->type_sets,scope->function->type_set_count,
+                    (uint16_t)tooling_set);
+                if(cloned!=DIAMOND_NO_TYPE_SET)
+                    compiler->tooling_type_sets[cell]=(int32_t)cloned;
+            }
         }
     }
+}
 
-    /* `|x, y|` -- bare identifiers only, no type annotations, no default
-     * values (deliberate v1 scope cut, see this feature's own design
-     * doc). Absent entirely (`do ... end`) means a genuine zero-arity
-     * block -- correct as-is, not a gap: calling it with an argument
-     * raises the same "wrong number of arguments" any arity mismatch
-     * already does, no Ruby-style silent leniency to replicate. */
+/* Parses a block's `|x, y|` parameters, if it has any: bare identifiers, each given the type the
+ * call site's contextual signature supplies (`contextual_*`; `outer_function` owns the type sets
+ * those indices name). No type annotations or default values (a deliberate v1 scope cut, see this
+ * feature's design doc). A block without `|...|` is a genuine zero-arity block, not a gap: calling it
+ * with an argument raises the usual "wrong number of arguments", with no Ruby-style leniency. */
+static void parse_block_parameters(Compiler *compiler,DiamondFunction *function,
+        const DiamondFunction *outer_function,bool has_contextual_types,uint8_t contextual_arity,
+        const uint16_t *contextual_types,const int32_t *contextual_type_sets,
+        bool contextual_tooling_only) {
     if(!compiler->failed&&compiler->current.kind==DIAMOND_TOKEN_PIPE) {
         advance_token(compiler);
         skip_newlines(compiler);
@@ -344,48 +361,168 @@ uint16_t compile_block(Compiler *compiler) {
             advance_token(compiler);
         }
     }
+}
+
+/* `do |param, param, ...| BODY end` attached right after a call's closing
+ * `).
+ * Deliberately a separate, much smaller function rather than a refactor
+ * of compile_definition (below): that function carries a lot of ceremony
+ * that doesn't apply to an anonymous block (operator-method names,
+ * module-singleton `self.` binding, class/module member registration,
+ * return-type annotations, docstrings, default parameter values, the
+ * endless `def foo() = expr` form) and has several hard-won, comment-
+ * documented correctness fixes (e.g. the redefine_method patch-factory
+ * nested_in_singleton_method exception below) not worth risking by
+ * routing an unrelated caller through it. What *is* reused is the
+ * underlying mechanism: a block is compiled into a real new
+ * DiamondFunction slot and produces a real, capturing DIAMOND_OP_CLOSURE
+ * value -- the exact same runtime shape a nested `def` already produces
+ * -- so this function mirrors only the subset of compile_definition that
+ * builds that shape (save/restore outer compiler state, bind parameters
+ * as locals, eagerly materialize every enclosing local as a directly
+ * accessible local via GET_CAPTURE_CELL, compile the body, then BOX_LOCAL
+ * + CLOSURE). No new DiamondOpCode. Caller has already confirmed
+ * compiler->current.kind == DIAMOND_TOKEN_DO and not yet consumed it. */
+uint16_t compile_block(Compiler *compiler) {
+    const bool has_contextual_types=compiler->has_contextual_block_types;
+    const uint8_t contextual_arity=compiler->contextual_block_arity;
+    uint16_t contextual_types[16];
+    int32_t contextual_type_sets[16];
+    for(size_t index=0;index<contextual_arity;index++) {
+        contextual_types[index]=compiler->contextual_block_types[index];
+        contextual_type_sets[index]=compiler->contextual_block_type_sets[index];
+    }
+    const int32_t contextual_return_set=compiler->contextual_block_return_set;
+    const bool contextual_tooling_only=compiler->contextual_block_tooling_only;
+    compiler->contextual_block_tooling_only=false;
+    compiler->has_contextual_block_types=false;
+    compiler->contextual_block_arity=0;
+    compiler->contextual_block_return_set=-1;
+    advance_token(compiler);
+    if (compiler->program->function_count == DIAMOND_MAX_FUNCTIONS) {
+        fail(compiler, compiler->current.span, "too many functions");
+        return 0;
+    }
+    size_t function_index=0;
+    DiamondFunction *function=compiler_add_function(compiler,&function_index);
+    if(function==nullptr) {
+        fail(compiler,compiler->current.span,"out of memory");
+        return 0;
+    }
+    function->return_type_set=DIAMOND_NO_TYPE_SET;
+    function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+    for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
+        function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
+    /* UINT8_MAX-2, compile_definition's own "self via capture" sentinel
+     * (see its own extensive comment on this exact value), when this
+     * block is written somewhere `self` already exists -- materialized
+     * into its own register 0 below, the same way a `closure name()
+     * ... end` (captures_self) already does; call_closure_helper
+     * (src/vm.c) already shifts real arguments to register 1+ for any
+     * owner_class!=DIAMOND_OWNER_NONE callable, so reusing that exact sentinel
+     * here needs no further runtime changes at all. compiler->in_method
+     * is deliberately left untouched anywhere in this function (still
+     * whatever the enclosing function had) -- that's already why `self`
+     * was never a *compile-time* error inside a block written in a
+     * method; only *which* value ended up in register 0 was wrong
+     * before this fix (the block's own first real parameter, since
+     * nothing reserved register 0 for self at all). */
+    function->owner_class=compiler->in_method?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
+    function->nested=true;
+    static const char block_name[]="<block>";
+    for(size_t index=0;index<sizeof(block_name);index++)
+        function->name[index]=block_name[index];
+    function->declaration_line=(uint32_t)compiler->previous.span.line;
+    function->declaration_column=(uint32_t)compiler->previous.span.column;
+    function->declaration_start=compiler->previous.span.start;
+
+    EnclosingScope scope;
+    if(!enclosing_scope_save(compiler,&scope))return 0;
+    const bool outer_block_has_break=compiler->block_has_break;
+    compiler->block_has_break=false;
+    uint16_t captured_fact_registers[DIAMOND_MAX_LOCALS];
+    for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
+        captured_fact_registers[index]=DIAMOND_NO_TYPE_SET;
+
+    /* Copy self into a fresh register of the *enclosing* function and box
+     * that copy, exactly mirroring compile_definition's own captures_self
+     * handling (see its own comment for why a copy, not boxing register 0
+     * itself in place: every self/@ivar access elsewhere in the enclosing
+     * method hardcodes literal register 0 unconditionally, so boxing it
+     * directly would corrupt every one of those). Still in the enclosing
+     * function's own compiler state here -- compiler->function hasn't
+     * switched yet. */
+    uint16_t self_copy_register=0;
+    if(compiler->in_method) {
+        self_copy_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
+    }
+
+    compiler->function = function;
+    compiler->begin_depth=0;
+    uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
+    if(contextual_return_set>=0&&
+       (size_t)contextual_return_set<scope.function->type_set_count)
+        declared_return_set=clone_type_set_into_current(compiler,
+            scope.function->type_sets,scope.function->type_set_count,
+            (uint16_t)contextual_return_set);
+    /* A `return`/`next` in this block returns from the block, so it's
+     * checked against the block's own expected result -- never the
+     * enclosing function's `-> Type`, whose set index belongs to that
+     * function's type-set table, not this one. */
+    compiler->current_return_type=declared_return_set==DIAMOND_NO_TYPE_SET?
+        -1:(int)declared_return_set;
+    compiler->has_current_block=false;
+    compiler->current_block_register=0;
+    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
+    compiler->current_loop=nullptr;
+    compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
+    compiler->local_count = 0;
+    compiler->next_register = 0;
+    compiler->last_instruction_offset=SIZE_MAX;
+    compiler->enclosing_local_count=scope.local_count;
+    for(size_t i=0;i<compiler->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=scope.locals[i];
+    compiler->capture_count=0;
+    if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
+        fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+    } else {
+        compiler->capture_count=compiler->enclosing_local_count;
+        for(size_t i=0;i<compiler->capture_count;i++)
+            compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+    }
+    /* Materialize the captured self (see self_copy_register above) into
+     * this block's own register 0 -- guaranteed to land there since
+     * next_register was just reset to 0 above and nothing else has
+     * allocated from it yet, exactly mirroring compile_definition's own
+     * captures_self materialization (see its own comment). Every self/
+     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
+     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
+     * register 0 unconditionally, so this is what makes all of those work
+     * unmodified inside a block body too. */
+    if(function->owner_class==DIAMOND_OWNER_CAPTURED_SELF) {
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
+            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
+    }
+
+    parse_block_parameters(compiler,function,scope.function,has_contextual_types,contextual_arity,
+        contextual_types,contextual_type_sets,contextual_tooling_only);
 
     /* Eager capture materialization: every enclosing local not shadowed
      * by a block parameter of the same name becomes a directly-accessible
      * local right away, same as compile_definition's own nested-def
      * handling below. */
-    if(!compiler->failed) {
-        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
-            if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
-            if(compiler->local_count==DIAMOND_MAX_LOCALS) {
-                fail(compiler,compiler->enclosing_locals[i].name,
-                     "too many lexical bindings");break;
-            }
-            const uint16_t cell=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
-            compiler->locals[compiler->local_count++]=(Local){
-                .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
-                .alias_identity=compiler->enclosing_locals[i].alias_identity};
-            captured_fact_registers[i]=cell;
-            const uint16_t source=compiler->enclosing_locals[i].reg;
-            if(source<outer_next_register) {
-                compiler->known_types[cell]=outer_known_types[source];
-                const int32_t source_set=outer_known_type_sets[source];
-                if(source_set>=0&&
-                   (size_t)source_set<outer_function->type_set_count) {
-                    const uint16_t cloned=clone_type_set_into_current(compiler,
-                        outer_function->type_sets,outer_function->type_set_count,
-                        (uint16_t)source_set);
-                    if(cloned!=DIAMOND_NO_TYPE_SET)
-                        compiler->known_type_sets[cell]=(int32_t)cloned;
-                }
-                const int32_t tooling_set=outer_tooling_type_sets[source];
-                if(tooling_set>=0&&
-                   (size_t)tooling_set<outer_function->type_set_count) {
-                    const uint16_t cloned=clone_type_set_into_current(compiler,
-                        outer_function->type_sets,outer_function->type_set_count,
-                        (uint16_t)tooling_set);
-                    if(cloned!=DIAMOND_NO_TYPE_SET)
-                        compiler->tooling_type_sets[cell]=(int32_t)cloned;
-                }
-            }
-        }
-    }
+    if(!compiler->failed)
+        bind_captured_cells(compiler,&scope,captured_fact_registers);
 
     /* `yield` inside this block still means the enclosing method's own
      * &block, as in Ruby: `def any?(&test) = items.find() do |x| yield(x)
@@ -393,21 +530,21 @@ uint16_t compile_block(Compiler *compiler) {
      * above like every other, so point this block's current block at its
      * captured cell -- unless a block parameter of the same name shadows it
      * (find_local then resolves to the parameter, which isn't captured). */
-    if(!compiler->failed&&outer_has_current_block) {
+    if(!compiler->failed&&scope.has_current_block) {
         for(size_t i=0;i<compiler->enclosing_local_count;i++) {
-            if(compiler->enclosing_locals[i].reg!=outer_current_block_register)
+            if(compiler->enclosing_locals[i].reg!=scope.current_block_register)
                 continue;
             const int inner=find_local(compiler,compiler->enclosing_locals[i].name);
             if(inner>=0&&compiler->locals[(size_t)inner].captured) {
                 compiler->has_current_block=true;
                 compiler->current_block_register=
                     compiler->locals[(size_t)inner].reg;
-                if(outer_current_block_type_set!=DIAMOND_NO_TYPE_SET&&
-                   outer_current_block_type_set<outer_function->type_set_count)
+                if(scope.current_block_type_set!=DIAMOND_NO_TYPE_SET&&
+                   scope.current_block_type_set<scope.function->type_set_count)
                     compiler->current_block_type_set=clone_type_set_into_current(
-                        compiler,outer_function->type_sets,
-                        outer_function->type_set_count,
-                        outer_current_block_type_set);
+                        compiler,scope.function->type_sets,
+                        scope.function->type_set_count,
+                        scope.current_block_type_set);
             }
             break;
         }
@@ -501,90 +638,15 @@ uint16_t compile_block(Compiler *compiler) {
         function->body_end=body_end;
     }
 
-    uint16_t captured_fact_types[DIAMOND_MAX_LOCALS];
-    int32_t captured_fact_sets[DIAMOND_MAX_LOCALS];
-    int32_t captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
-    for(size_t index=0;index<outer_local_count;index++) {
-        const uint16_t reg=captured_fact_registers[index];
-        captured_fact_types[index]=reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:
-            compiler->known_types[reg];
-        captured_fact_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
-            compiler->known_type_sets[reg];
-        captured_fact_tooling_sets[index]=reg==DIAMOND_NO_TYPE_SET?-1:
-            compiler->tooling_type_sets[reg];
-    }
-    compiler->function = outer_function;
-    compiler->begin_depth=outer_begin_depth;
-    compiler->local_count = outer_local_count;
-    for (size_t index = 0; index < outer_local_count; index++) {
-        compiler->locals[index] = outer_locals[index];
-    }
-    compiler->next_register = outer_next_register;
-    compiler->last_instruction_offset=SIZE_MAX;
-    compiler->current_method = outer_method;
-    compiler->in_method = outer_in_method;
-    compiler->in_singleton_method = outer_in_singleton_method;
-    compiler->in_function=outer_in_function;
-    compiler->in_block=outer_in_block;
+    enclosing_scope_restore(compiler,&scope,function,captured_fact_registers);
     if(compiler->block_has_break) {
-        /* The break lands in outer_function's frame, so outer_function
-         * stays out of the JIT; the call's result type is unknown. */
-        outer_function->nonlocal_landing=true;
+        /* The break lands in the enclosing function's frame, so that function stays out of the
+         * JIT; the call's result type is unknown. */
+        scope.function->nonlocal_landing=true;
         compiler->block_break_pending=true;
         compiler->pending_block_call=function;
     }
     compiler->block_has_break=outer_block_has_break;
-    compiler->has_current_block=outer_has_current_block;
-    compiler->current_block_register=outer_current_block_register;
-    compiler->current_block_type_set=outer_current_block_type_set;
-    compiler->current_return_type=outer_return_type;
-    compiler->current_return_type_span=outer_return_type_span;
-    compiler->return_flow_seen=outer_return_flow_seen;
-    compiler->return_flow_type=outer_return_flow_type;
-    compiler->return_flow_set=outer_return_flow_set;
-    compiler->return_tooling_type=outer_return_tooling_type;
-    compiler->return_tooling_set=outer_return_tooling_set;
-    compiler->current_exception=outer_exception;
-    compiler->current_retry_target=outer_retry_target;
-    compiler->current_loop=outer_loop;
-    compiler->enclosing_local_count=outer_enclosing_local_count;
-    for(size_t i=0;i<outer_enclosing_local_count;i++)
-        compiler->enclosing_locals[i]=outer_enclosing_locals[i];
-    compiler->capture_count=outer_capture_count;
-    for(size_t i=0;i<outer_capture_count;i++)
-        compiler->capture_registers[i]=outer_capture_registers[i];
-    for(size_t index=0;index<outer_next_register;index++)
-        {compiler->known_types[index]=outer_known_types[index];
-         compiler->known_type_sets[index]=outer_known_type_sets[index];
-         compiler->tooling_type_sets[index]=outer_tooling_type_sets[index];}
-    for(size_t index=0;index<outer_local_count;index++) {
-        if(captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
-        const uint16_t source=outer_locals[index].reg;
-        if(source>=outer_next_register)continue;
-        compiler->known_types[source]=captured_fact_types[index];
-        const int32_t inner_set=captured_fact_sets[index];
-        compiler->known_type_sets[source]=-1;
-        if(inner_set>=0&&(size_t)inner_set<function->type_set_count) {
-            const uint16_t cloned=clone_type_set_into_current(compiler,
-                function->type_sets,function->type_set_count,
-                (uint16_t)inner_set);
-            if(cloned!=DIAMOND_NO_TYPE_SET)
-                compiler->known_type_sets[source]=(int32_t)cloned;
-        }
-        const int32_t inner_tooling_set=captured_fact_tooling_sets[index];
-        compiler->tooling_type_sets[source]=-1;
-        if(inner_tooling_set>=0&&
-           (size_t)inner_tooling_set<function->type_set_count) {
-            const uint16_t cloned=clone_type_set_into_current(compiler,
-                function->type_sets,function->type_set_count,
-                (uint16_t)inner_tooling_set);
-            if(cloned!=DIAMOND_NO_TYPE_SET)
-                compiler->tooling_type_sets[source]=(int32_t)cloned;
-        }
-        record_scope_type_fact(compiler,source,compiler->current.span.start);
-    }
-    free(heap_outer_known_types);free(heap_outer_known_type_sets);
-    free(heap_outer_tooling_type_sets);
 
     /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
      * now that compiler->function/locals have been restored -- same
@@ -608,216 +670,6 @@ uint16_t compile_block(Compiler *compiler) {
             (uint16_t)block_tooling_return);
     return result;
 }
-
-/* What compile_definition saves of the enclosing function's compile state before it compiles a
- * nested def's own, and puts back afterwards. The known-type arrays use the inline-then-heap
- * fallback of parse_if's before_types/then_types: a fixed `index<256` bound does not overflow, but
- * silently under-saves and under-restores whenever the enclosing scope already has more than 256
- * live registers, leaving entries [256, next_register) holding whatever the nested def's own
- * (register-index-0-based) body wrote into those slots. */
-typedef struct DefinitionScope {
-    DiamondFunction *definition;
-    DiamondSpan definition_name;
-    DiamondFunction *function;
-    Local locals[DIAMOND_MAX_LOCALS];
-    size_t local_count;
-    uint16_t next_register;
-    DiamondSpan method;
-    bool in_method;
-    bool in_singleton_method;
-    bool in_function;
-    bool in_block;
-    size_t begin_depth;
-    bool has_current_block;
-    uint16_t current_block_register;
-    uint16_t current_block_type_set;
-    int return_type;
-    DiamondSpan return_type_span;
-    /* See return_flow_seen's own comment (the Compiler struct): reset before compiling this def's
-     * own body, restored after, so a nested def's own returns never leak into an enclosing one's
-     * inference or vice versa. */
-    bool return_flow_seen;
-    uint16_t return_flow_type;
-    int32_t return_flow_set;
-    uint16_t return_tooling_type;
-    int32_t return_tooling_set;
-    int exception;
-    size_t retry_target;
-    LoopContext *loop;
-    Local enclosing_locals[DIAMOND_MAX_LOCALS];
-    size_t enclosing_local_count;
-    uint16_t capture_registers[DIAMOND_MAX_CAPTURES];
-    size_t capture_count;
-    DiamondFunction *method_function;
-    int method_return_type;
-    DiamondSpan method_return_type_span;
-    bool method_has_block_return;
-    uint16_t inline_known_types[256];
-    int32_t inline_known_type_sets[256];
-    int32_t inline_tooling_type_sets[256];
-    uint16_t *known_types;
-    int32_t *known_type_sets;
-    int32_t *tooling_type_sets;
-    uint16_t *heap_known_types;
-    int32_t *heap_known_type_sets;
-    int32_t *heap_tooling_type_sets;
-} DefinitionScope;
-
-/* False (after reporting the error) when the register facts cannot be saved. */
-static bool definition_scope_save(Compiler *compiler,DefinitionScope *scope) {
-    scope->function=compiler->function;
-    scope->local_count=compiler->local_count;
-    for(size_t index=0;index<scope->local_count;index++)
-        scope->locals[index]=compiler->locals[index];
-    scope->next_register=compiler->next_register;
-    scope->method=compiler->current_method;
-    scope->in_method=compiler->in_method;
-    scope->in_singleton_method=compiler->in_singleton_method;
-    scope->in_function=compiler->in_function;
-    scope->in_block=compiler->in_block;
-    scope->begin_depth=compiler->begin_depth;
-    scope->has_current_block=compiler->has_current_block;
-    scope->current_block_register=compiler->current_block_register;
-    scope->current_block_type_set=compiler->current_block_type_set;
-    scope->return_type=compiler->current_return_type;
-    scope->return_type_span=compiler->current_return_type_span;
-    scope->return_flow_seen=compiler->return_flow_seen;
-    scope->return_flow_type=compiler->return_flow_type;
-    scope->return_flow_set=compiler->return_flow_set;
-    scope->return_tooling_type=compiler->return_tooling_type;
-    scope->return_tooling_set=compiler->return_tooling_set;
-    compiler->return_flow_seen=false;
-    scope->exception=compiler->current_exception;
-    scope->retry_target=compiler->current_retry_target;
-    scope->loop=compiler->current_loop;
-    scope->enclosing_local_count=compiler->enclosing_local_count;
-    for(size_t i=0;i<scope->enclosing_local_count;i++)
-        scope->enclosing_locals[i]=compiler->enclosing_locals[i];
-    scope->capture_count=compiler->capture_count;
-    for(size_t i=0;i<scope->capture_count;i++)
-        scope->capture_registers[i]=compiler->capture_registers[i];
-    scope->known_types=scope->inline_known_types;
-    scope->known_type_sets=scope->inline_known_type_sets;
-    scope->tooling_type_sets=scope->inline_tooling_type_sets;
-    scope->heap_known_types=nullptr;
-    scope->heap_known_type_sets=nullptr;
-    scope->heap_tooling_type_sets=nullptr;
-    if(scope->next_register>256) {
-        scope->heap_known_types=malloc((size_t)scope->next_register*sizeof(uint16_t));
-        scope->heap_known_type_sets=
-            malloc((size_t)scope->next_register*sizeof(int32_t));
-        scope->heap_tooling_type_sets=
-            malloc((size_t)scope->next_register*sizeof(int32_t));
-        if(scope->heap_known_types==nullptr||scope->heap_known_type_sets==nullptr||
-           scope->heap_tooling_type_sets==nullptr) {
-            fail(compiler,compiler->previous.span,
-                 "out of memory compiling function definition");
-            free(scope->heap_known_types);free(scope->heap_known_type_sets);
-            free(scope->heap_tooling_type_sets);
-            return false;
-        }
-        scope->known_types=scope->heap_known_types;
-        scope->known_type_sets=scope->heap_known_type_sets;
-        scope->tooling_type_sets=scope->heap_tooling_type_sets;
-    }
-    for(size_t index=0;index<scope->next_register;index++) {
-        scope->known_types[index]=compiler->known_types[index];
-        scope->known_type_sets[index]=compiler->known_type_sets[index];
-        scope->tooling_type_sets[index]=compiler->tooling_type_sets[index];
-    }
-    return true;
-}
-
-/* Puts back what definition_scope_save took and what the method-return tracking changed. A local
- * the nested def captured keeps the type facts its body ended with (`captured_fact_registers`
- * names the cell register per enclosing local, or DIAMOND_NO_TYPE_SET). Releases the heap arrays. */
-static void definition_scope_restore(Compiler *compiler,DefinitionScope *scope,
-        const DiamondFunction *function,const uint16_t *captured_fact_registers) {
-    uint16_t definition_captured_fact_types[DIAMOND_MAX_LOCALS];
-    int32_t definition_captured_fact_sets[DIAMOND_MAX_LOCALS];
-    int32_t definition_captured_fact_tooling_sets[DIAMOND_MAX_LOCALS];
-    for(size_t index=0;index<scope->local_count;index++) {
-        const uint16_t reg=captured_fact_registers[index];
-        definition_captured_fact_types[index]=
-            reg==DIAMOND_NO_TYPE_SET?TYPE_UNKNOWN:compiler->known_types[reg];
-        definition_captured_fact_sets[index]=
-            reg==DIAMOND_NO_TYPE_SET?-1:compiler->known_type_sets[reg];
-        definition_captured_fact_tooling_sets[index]=
-            reg==DIAMOND_NO_TYPE_SET?-1:compiler->tooling_type_sets[reg];
-    }
-    compiler->function = scope->function;
-    compiler->begin_depth=scope->begin_depth;
-    compiler->local_count = scope->local_count;
-    for (size_t index = 0; index < scope->local_count; index++) {
-        compiler->locals[index] = scope->locals[index];
-    }
-    compiler->next_register = scope->next_register;
-    compiler->last_instruction_offset=SIZE_MAX;
-    compiler->current_method = scope->method;
-    compiler->in_method = scope->in_method;
-    compiler->in_singleton_method = scope->in_singleton_method;
-    compiler->in_function=scope->in_function;
-    compiler->in_block=scope->in_block;
-    compiler->current_definition=scope->definition;
-    compiler->current_definition_name=scope->definition_name;
-    compiler->has_current_block=scope->has_current_block;
-    compiler->current_block_register=scope->current_block_register;
-    compiler->current_block_type_set=scope->current_block_type_set;
-    compiler->method_function=scope->method_function;
-    compiler->method_return_type=scope->method_return_type;
-    compiler->method_return_type_span=scope->method_return_type_span;
-    compiler->method_has_block_return=scope->method_has_block_return;
-    compiler->current_return_type=scope->return_type;
-    compiler->current_return_type_span=scope->return_type_span;
-    compiler->return_flow_seen=scope->return_flow_seen;
-    compiler->return_flow_type=scope->return_flow_type;
-    compiler->return_flow_set=scope->return_flow_set;
-    compiler->return_tooling_type=scope->return_tooling_type;
-    compiler->return_tooling_set=scope->return_tooling_set;
-    compiler->current_exception=scope->exception;
-    compiler->current_retry_target=scope->retry_target;
-    compiler->current_loop=scope->loop;
-    compiler->enclosing_local_count=scope->enclosing_local_count;
-    for(size_t i=0;i<scope->enclosing_local_count;i++)
-        compiler->enclosing_locals[i]=scope->enclosing_locals[i];
-    compiler->capture_count=scope->capture_count;
-    for(size_t i=0;i<scope->capture_count;i++)
-        compiler->capture_registers[i]=scope->capture_registers[i];
-    for(size_t index=0;index<scope->next_register;index++)
-        {compiler->known_types[index]=scope->known_types[index];
-         compiler->known_type_sets[index]=scope->known_type_sets[index];
-         compiler->tooling_type_sets[index]=scope->tooling_type_sets[index];}
-    for(size_t index=0;index<scope->local_count;index++) {
-        if(captured_fact_registers[index]==DIAMOND_NO_TYPE_SET)continue;
-        const uint16_t source=scope->locals[index].reg;
-        if(source>=scope->next_register)continue;
-        compiler->known_types[source]=definition_captured_fact_types[index];
-        const int32_t inner_set=definition_captured_fact_sets[index];
-        compiler->known_type_sets[source]=-1;
-        if(inner_set>=0&&(size_t)inner_set<function->type_set_count) {
-            const uint16_t cloned=clone_type_set_into_current(compiler,
-                function->type_sets,function->type_set_count,
-                (uint16_t)inner_set);
-            if(cloned!=DIAMOND_NO_TYPE_SET)
-                compiler->known_type_sets[source]=(int32_t)cloned;
-        }
-        const int32_t inner_tooling_set=
-            definition_captured_fact_tooling_sets[index];
-        compiler->tooling_type_sets[source]=-1;
-        if(inner_tooling_set>=0&&
-           (size_t)inner_tooling_set<function->type_set_count) {
-            const uint16_t cloned=clone_type_set_into_current(compiler,
-                function->type_sets,function->type_set_count,
-                (uint16_t)inner_tooling_set);
-            if(cloned!=DIAMOND_NO_TYPE_SET)
-                compiler->tooling_type_sets[source]=(int32_t)cloned;
-        }
-        record_scope_type_fact(compiler,source,compiler->current.span.start);
-    }
-    free(scope->heap_known_types);free(scope->heap_known_type_sets);
-    free(scope->heap_tooling_type_sets);
-}
-
 
 /* Enters the finished def into the table of the class or module it was written in: an instance
  * method, a class or module singleton (claiming a signature a pre-scan found ahead of the def), or
@@ -1347,48 +1199,6 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
     return module_function_singleton_registered_early;
 }
 
-/* Gives a nested def a local for each enclosing local it can see that its own parameters do not
- * shadow, read from the capture cell, and carries the enclosing register's type facts across.
- * `captured_fact_registers[i]` records the cell register for enclosing local i so that
- * definition_scope_restore can hand the facts the body ends with back to the enclosing scope-> */
-static void bind_captured_cells(Compiler *compiler,const DefinitionScope *scope,
-        uint16_t *captured_fact_registers) {
-    for(size_t i=0;i<compiler->enclosing_local_count;i++) {
-        if(find_local(compiler,compiler->enclosing_locals[i].name)>=0)continue;
-        if(compiler->local_count==DIAMOND_MAX_LOCALS) {
-            fail(compiler,compiler->enclosing_locals[i].name,"too many lexical bindings");break;
-        }
-        const uint16_t cell=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE_CELL,cell,(uint8_t)i,0,2);
-        compiler->locals[compiler->local_count++]=(Local){
-            .name=compiler->enclosing_locals[i].name,.reg=cell,.captured=true,
-            .alias_identity=compiler->enclosing_locals[i].alias_identity};
-        captured_fact_registers[i]=cell;
-        const uint16_t source=compiler->enclosing_locals[i].reg;
-        if(source<scope->next_register) {
-            compiler->known_types[cell]=scope->known_types[source];
-            const int32_t source_set=scope->known_type_sets[source];
-            if(source_set>=0&&
-               (size_t)source_set<scope->function->type_set_count) {
-                const uint16_t cloned=clone_type_set_into_current(compiler,
-                    scope->function->type_sets,scope->function->type_set_count,
-                    (uint16_t)source_set);
-                if(cloned!=DIAMOND_NO_TYPE_SET)
-                    compiler->known_type_sets[cell]=(int32_t)cloned;
-            }
-            const int32_t tooling_set=scope->tooling_type_sets[source];
-            if(tooling_set>=0&&
-               (size_t)tooling_set<scope->function->type_set_count) {
-                const uint16_t cloned=clone_type_set_into_current(compiler,
-                    scope->function->type_sets,scope->function->type_set_count,
-                    (uint16_t)tooling_set);
-                if(cloned!=DIAMOND_NO_TYPE_SET)
-                    compiler->tooling_type_sets[cell]=(int32_t)cloned;
-            }
-        }
-    }
-}
-
 uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     if(captures_self && !compiler->in_method) {
@@ -1662,12 +1472,12 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         self_local=(int)compiler->local_count;
         compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=self_register};
     }
-    DefinitionScope scope;
-    scope.definition=compiler->current_definition;
-    scope.definition_name=compiler->current_definition_name;
+    EnclosingScope scope;
+    DiamondFunction *const outer_definition=compiler->current_definition;
+    const DiamondSpan outer_definition_name=compiler->current_definition_name;
     compiler->current_definition=at_top_level?nullptr:function;
     compiler->current_definition_name=name;
-    if(!definition_scope_save(compiler,&scope))return 0;
+    if(!enclosing_scope_save(compiler,&scope))return 0;
 
     uint16_t captured_fact_registers[DIAMOND_MAX_LOCALS];
     for(size_t index=0;index<DIAMOND_MAX_LOCALS;index++)
@@ -1811,10 +1621,10 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->in_block=false;
     compiler->current_return_type=return_type;
     compiler->current_return_type_span=return_type_span;
-    scope.method_function=compiler->method_function;
-    scope.method_return_type=compiler->method_return_type;
-    scope.method_return_type_span=compiler->method_return_type_span;
-    scope.method_has_block_return=compiler->method_has_block_return;
+    DiamondFunction *const outer_method_function=compiler->method_function;
+    const int outer_method_return_type=compiler->method_return_type;
+    const DiamondSpan outer_method_return_type_span=compiler->method_return_type_span;
+    const bool outer_method_has_block_return=compiler->method_has_block_return;
     compiler->method_function=function;
     compiler->method_return_type=return_type;
     compiler->method_return_type_span=return_type_span;
@@ -1960,7 +1770,13 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         record_scope_locals(compiler,0,compiler->local_count,body_end);
         function->body_end=body_end;
     }
-    definition_scope_restore(compiler,&scope,function,captured_fact_registers);
+    enclosing_scope_restore(compiler,&scope,function,captured_fact_registers);
+    compiler->current_definition=outer_definition;
+    compiler->current_definition_name=outer_definition_name;
+    compiler->method_function=outer_method_function;
+    compiler->method_return_type=outer_method_return_type;
+    compiler->method_return_type_span=outer_method_return_type_span;
+    compiler->method_has_block_return=outer_method_has_block_return;
     register_definition_method(compiler,function,function_index,name,module_singleton,
         at_top_level,module_function_singleton_registered_early);
     /* A class/module member def's "value" is never read: both call sites
