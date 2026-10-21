@@ -2175,6 +2175,14 @@ void diamond_vm_set_exit_on_threaded_failure(bool enabled);
  * program would have drained. Exiting is what exit() already does. */
 void diamond_vm_exit_if_threads_running(int status);
 
+/* Extension functions for a built-in receiver are looked up by method name under a type prefix
+ * (`items.foo?(x)` probes array_foo?, then array_foo). The stem is the name without a trailing
+ * '?', the second spelling to try; it equals `length` for a name that has none. The VM's lookups and
+ * the language server's must agree on this order, so both use it. */
+static inline size_t diamond_method_stem_length(const char *name,size_t length) {
+    return length>1&&name[length-1]=='?'?length-1:length;
+}
+
 /* Names of the methods the VM implements natively for a built-in receiver type
  * (DIAMOND_TYPE_STRING/ARRAY/HASH/INT/FLOAT), for editor completion. Writes
  * the list's address to `*names` and returns its length; 0 for any other type. */

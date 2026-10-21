@@ -6355,8 +6355,9 @@ static const DiamondFunction *find_collection_extension(
         const DiamondChunk *chunk,DiamondObjectKind kind,
         const char *name,size_t length) {
     const DiamondFunction *found=find_collection_extension_exact(chunk,kind,name,length);
-    if(found==nullptr&&length>1&&name[length-1]=='?')
-        found=find_collection_extension_exact(chunk,kind,name,length-1);
+    const size_t stem=diamond_method_stem_length(name,length);
+    if(found==nullptr&&stem!=length)
+        found=find_collection_extension_exact(chunk,kind,name,stem);
     return found;
 }
 
@@ -6386,8 +6387,9 @@ static const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
         const char *const *prefixes,size_t prefix_count,const char *name,size_t length) {
     if(length==2&&memcmp(name,"**",2)==0) {name="pow";length=3;}
     const DiamondFunction *found=find_value_extension_exact(chunk,prefixes,prefix_count,name,length);
-    if(found==nullptr&&length>1&&name[length-1]=='?')
-        found=find_value_extension_exact(chunk,prefixes,prefix_count,name,length-1);
+    const size_t stem=diamond_method_stem_length(name,length);
+    if(found==nullptr&&stem!=length)
+        found=find_value_extension_exact(chunk,prefixes,prefix_count,name,stem);
     return found;
 }
 
