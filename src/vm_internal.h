@@ -264,7 +264,7 @@ typedef struct StringBuilder {
 
 /* Allocation and shared primitives that stay in vm.c (the garbage collector lives there). */
 DIAMOND_INTERNAL DiamondString *allocate_string(DiamondVm *vm, const char *chars, size_t length);
-DIAMOND_INTERNAL bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
+[[nodiscard]] DIAMOND_INTERNAL bool copy_value_into_vm(DiamondVm *dest_vm, DiamondValue value,
                                          DiamondProgram *source_program,
                                          DiamondClass *const *rebase_source_classes,
                                          DiamondClass *const *rebase_dest_classes,
@@ -297,7 +297,7 @@ DIAMOND_INTERNAL void tensor_random_helper(DiamondTensor *tensor,int64_t seed);
 
 /* Shared primitives that stay in vm.c (needed by tensor code) */
 DIAMOND_INTERNAL DiamondArray *allocate_array(DiamondVm *vm,const DiamondValue *values, size_t count);
-DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
+[[nodiscard]] DIAMOND_INTERNAL bool array_push(DiamondVm *vm,DiamondArray *array,DiamondValue value);
 DIAMOND_INTERNAL bool numeric_as_double(DiamondValue value, double *out);
 
 /* vm_regexp.c: entry points called from run_chunk and the rest of vm.c */
@@ -309,24 +309,24 @@ DIAMOND_INTERNAL DiamondVmStatus regexp_scan_helper(DiamondVm *vm,const DiamondR
 DIAMOND_INTERNAL DiamondVmStatus regexp_split_helper(DiamondVm *vm,const DiamondRegexp *regexp, const DiamondString *subject,DiamondValue *registers,uint16_t dest);
 
 /* Shared primitives that stay in vm.c (needed by vm_regexp.c) */
-DIAMOND_INTERNAL bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count);
+[[nodiscard]] DIAMOND_INTERNAL bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count);
 DIAMOND_INTERNAL DiamondVmStatus call_closure_helper(DiamondVm *vm,const DiamondChunk *chunk, const DiamondFunction *fn,const DiamondClosure *called, const DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth, DiamondValue *result);
-DIAMOND_INTERNAL bool gc_protect(DiamondVm *vm, DiamondValue value);
+[[nodiscard]] DIAMOND_INTERNAL bool gc_protect(DiamondVm *vm, DiamondValue value);
 DIAMOND_INTERNAL DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value, DiamondValue *out);
 
 /* vm_json.c: entry points called from run_chunk and the rest of vm.c */
-DIAMOND_INTERNAL bool debug_json_append_escaped_string(GrowBuffer *buffer, const char *chars,size_t length);
+[[nodiscard]] DIAMOND_INTERNAL bool debug_json_append_escaped_string(GrowBuffer *buffer, const char *chars,size_t length);
 DIAMOND_INTERNAL DiamondVmStatus json_parse_document(DiamondVm *vm,const char *source, size_t length,DiamondValue *out);
 DIAMOND_INTERNAL DiamondVmStatus json_stringify_document(DiamondVm *vm,const DiamondChunk *chunk, size_t depth,DiamondValue value,DiamondValue options,DiamondValue *result);
 
 /* Shared primitives that stay in vm.c (needed by vm_json.c) */
 DIAMOND_INTERNAL DiamondHash *allocate_hash(DiamondVm *vm);
-DIAMOND_INTERNAL bool builder_append(StringBuilder *builder,const char *chars,size_t length);
-DIAMOND_INTERNAL bool builder_format_value(StringBuilder *builder,DiamondValue value);
-DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length);
+[[nodiscard]] DIAMOND_INTERNAL bool builder_append(StringBuilder *builder,const char *chars,size_t length);
+[[nodiscard]] DIAMOND_INTERNAL bool builder_format_value(StringBuilder *builder,DiamondValue value);
+[[nodiscard]] DIAMOND_INTERNAL bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length);
 #define GROW_BUFFER_APPEND_LITERAL(buffer_,literal_) \
     grow_buffer_append((buffer_),(literal_),sizeof(literal_)-1)
-DIAMOND_INTERNAL bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key, DiamondValue value);
+[[nodiscard]] DIAMOND_INTERNAL bool hash_set(DiamondVm *vm,DiamondHash *hash,DiamondValue key, DiamondValue value);
 
 /* vm_time.c: entry points called from run_chunk and the rest of vm.c */
 DIAMOND_INTERNAL DiamondVmStatus time_at_helper(DiamondVm *vm,DiamondValue epoch_value, DiamondValue *out_result);
