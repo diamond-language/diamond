@@ -1093,25 +1093,31 @@ static bool builtin_method_result(const DiamondChunk *chunk,uint16_t receiver,
         const char *method,size_t length,uint16_t *result) {
     if(diamond_native_method_return_type(receiver,method,length,result)&&
        is_builtin_value_type(*result))return true;
-    if(length>0&&method[length-1]=='?')length--;
     size_t prefix_count;
     const char *const *prefixes=receiver_builtin_prefixes(receiver,&prefix_count);
-    char bridge[DIAMOND_MAX_FUNCTION_NAME];
-    for(size_t pass=0;pass<2;pass++)
-        for(size_t prefix=0;prefix<prefix_count;prefix++) {
-            if(receiver==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0) {
-                char plain[DIAMOND_MAX_FUNCTION_NAME];
-                if(length>=sizeof plain)continue;
-                memcpy(plain,method,length);plain[length]='\0';
-                if(!receiver_hash_uses_enumerable(plain))continue;
+    const size_t stem=diamond_method_stem_length(method,length);
+    /* The VM tries the exact name first, then a predicate's stem: `match?` and `match` can be
+     * different functions. */
+    for(size_t spelling=0;spelling<2;spelling++) {
+        const size_t name_length=spelling==0?length:stem;
+        if(spelling==1&&stem==length)break;
+        char bridge[DIAMOND_MAX_FUNCTION_NAME];
+        for(size_t pass=0;pass<2;pass++)
+            for(size_t prefix=0;prefix<prefix_count;prefix++) {
+                if(receiver==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0) {
+                    char plain[DIAMOND_MAX_FUNCTION_NAME];
+                    if(name_length>=sizeof plain)continue;
+                    memcpy(plain,method,name_length);plain[name_length]='\0';
+                    if(!receiver_hash_uses_enumerable(plain))continue;
+                }
+                const int written=snprintf(bridge,sizeof bridge,"%s%s%.*s",
+                    pass==0?"":"diamond_",prefixes[prefix],(int)name_length,method);
+                if(written<=0||(size_t)written>=sizeof bridge)continue;
+                const DiamondFunction *function=find_plain_function(chunk,bridge,(size_t)written);
+                if(function!=nullptr)
+                    return function_builtin_return(function,result);
             }
-            const int written=snprintf(bridge,sizeof bridge,"%s%s%.*s",
-                pass==0?"":"diamond_",prefixes[prefix],(int)length,method);
-            if(written<=0||(size_t)written>=sizeof bridge)continue;
-            const DiamondFunction *function=find_plain_function(chunk,bridge,(size_t)written);
-            if(function!=nullptr)
-                return function_builtin_return(function,result);
-        }
+    }
     return false;
 }
 

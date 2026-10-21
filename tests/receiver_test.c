@@ -72,6 +72,23 @@ static int check_receiver_pair(const DiamondProgram *program,const DiamondChunk 
     return 1;
 }
 
+/* A built-in receiver's method result. A predicate call tries the extension function written
+ * with the `?` first, then the one without it; a name without a `?` never reaches the other. */
+static int check_builtin(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *combined,const char *needle,bool expect_found,uint16_t expected) {
+    const char *position=strstr(combined,needle);
+    if(position==nullptr) {
+        fprintf(stderr,"receiver test expression not found: %s\n",needle);
+        return 1;
+    }
+    uint16_t type=0;
+    const bool found=receiver_resolve_builtin_type(program,chunk,combined,
+        (size_t)(position-combined)+strlen(needle),&type);
+    if(found==expect_found&&(!found||type==expected))return 0;
+    fprintf(stderr,"unexpected built-in type for %s: found=%d type=%u\n",needle,found,type);
+    return 1;
+}
+
 int main(void) {
     static const char source[] =
         "class Pet\n"
@@ -506,6 +523,16 @@ int main(void) {
         "  Qualified::Inner::Deep.new().dive()\n"
         "  Qualified.make_inner().dive()\n"
         "  Qualified.unknown(1).spin()\n"
+        "end\n"
+        "def greeting() -> String = \"abc\"\n"
+        "def string_twin?(text) -> Int = 1\n"
+        "def string_twin(text) -> String = \"twin\"\n"
+        "def string_lonely?(text) -> Int = 1\n"
+        "def predicate_twins()\n"
+        "  greeting().twin?().to_s()\n"
+        "  greeting().twin().to_s()\n"
+        "  greeting().lonely?().to_s()\n"
+        "  greeting().lonely().to_s()\n"
         "end\n";
 
     char *combined=diamond_lsp_build_compile_buffer(nullptr,source,sizeof source-1,
@@ -723,6 +750,10 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"forward_unknown_early(true, nil).",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"forward_generic_wrapper().","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ForwardAnnotated.new().wrapped().","Pet",false);
+    failed|=check_builtin(program,&chunk,combined,"greeting().twin?().",true,DIAMOND_TYPE_INT);
+    failed|=check_builtin(program,&chunk,combined,"greeting().twin().",true,DIAMOND_TYPE_STRING);
+    failed|=check_builtin(program,&chunk,combined,"greeting().lonely?().",true,DIAMOND_TYPE_INT);
+    failed|=check_builtin(program,&chunk,combined,"greeting().lonely().",false,0);
     diamond_program_free(program);
     free(program);free(combined);
     return failed?1:0;

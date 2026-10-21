@@ -101,21 +101,17 @@ static bool push_class_methods(JsonValue *items,const DiamondChunk *chunk,
  * the VM dispatches by name -- `items.foo` calls array_foo, then
  * enumerable_foo; strings use string_, Int integer_/numeric_, Float
  * float_/numeric_ (find_collection_extension/find_value_extension in
- * src/vm.c), each also tried under a `diamond_` prefix. A trailing `?` is
- * dropped from the bridge name, so a Bool-returning function is offered with
- * the `?` it is written with. */
+ * src/vm.c), each also tried under a `diamond_` prefix. A predicate call tries
+ * its exact name, then the name without the `?`, so a Bool-returning function
+ * written without the `?` is offered with one. */
 typedef struct MemberNames {
     char **names;
     size_t count;
 } MemberNames;
 
 static bool member_seen(const MemberNames *seen,const char *name) {
-    const size_t length=strlen(name)-(name[strlen(name)-1]=='?');
-    for(size_t index=0;index<seen->count;index++) {
-        const char *other=seen->names[index];
-        const size_t other_length=strlen(other)-(other[strlen(other)-1]=='?');
-        if(length==other_length&&memcmp(name,other,length)==0)return true;
-    }
+    for(size_t index=0;index<seen->count;index++)
+        if(strcmp(name,seen->names[index])==0)return true;
     return false;
 }
 
@@ -163,7 +159,9 @@ static bool push_builtin_members(JsonValue *items,const DiamondChunk *chunk,
             if(type==DIAMOND_TYPE_HASH&&strcmp(prefixes[prefix],"enumerable_")==0&&
                !receiver_hash_uses_enumerable(member))continue;
             char label[DIAMOND_MAX_FUNCTION_NAME+2];
-            snprintf(label,sizeof label,"%s%s",member,function_returns_bool(function)?"?":"");
+            const size_t member_length=strlen(member);
+            const bool predicate=function_returns_bool(function)&&member[member_length-1]!='?';
+            snprintf(label,sizeof label,"%s%s",member,predicate?"?":"");
             okay=push_member(items,&seen,label);
         }
     }
