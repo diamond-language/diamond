@@ -13106,6 +13106,740 @@ static DiamondVmStatus builtin_respond_to(const DiamondChunk *chunk,DiamondValue
     return DIAMOND_VM_OK;
 }
 
+/* String receivers of collection_invoke_helper: the native String methods, then the
+ * prelude's string_ extensions. Kept out of that function so its frame, which every
+ * Array and Hash method call pays for, does not carry this block's locals. */
+__attribute__((noinline))
+static DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    const bool index_of_method=method_name->length==8&&
+        memcmp(method_name->chars,"index_of",8)==0;
+    const bool slice_method=method_name->length==5&&
+        memcmp(method_name->chars,"slice",5)==0;
+    const bool to_i_method=method_name->length==4&&
+        memcmp(method_name->chars,"to_i",4)==0;
+    const bool to_f_method=method_name->length==4&&
+        memcmp(method_name->chars,"to_f",4)==0;
+    const bool downcase_method=method_name->length==8&&
+        memcmp(method_name->chars,"downcase",8)==0;
+    const bool upcase_method=method_name->length==6&&
+        memcmp(method_name->chars,"upcase",6)==0;
+    const bool reverse_method=method_name->length==7&&
+        memcmp(method_name->chars,"reverse",7)==0;
+    const bool strip_method=method_name->length==5&&
+        memcmp(method_name->chars,"strip",5)==0;
+    const bool split_method=method_name->length==5&&
+        memcmp(method_name->chars,"split",5)==0;
+    const bool ord_method=method_name->length==3&&
+        memcmp(method_name->chars,"ord",3)==0;
+    const bool repeat_method=method_name->length==6&&
+        memcmp(method_name->chars,"repeat",6)==0;
+    const bool gsub_method=method_name->length==4&&
+        memcmp(method_name->chars,"gsub",4)==0;
+    const bool sub_method=method_name->length==3&&
+        memcmp(method_name->chars,"sub",3)==0;
+    const bool scan_method=method_name->length==4&&
+        memcmp(method_name->chars,"scan",4)==0;
+    const bool start_with_method=method_name->length==11&&
+        memcmp(method_name->chars,"start_with?",11)==0;
+    const bool end_with_method=method_name->length==9&&
+        memcmp(method_name->chars,"end_with?",9)==0;
+    const bool includes_method=method_name->length==8&&
+        memcmp(method_name->chars,"include?",8)==0;
+    const bool capitalize_method=method_name->length==10&&
+        memcmp(method_name->chars,"capitalize",10)==0;
+    const bool chars_method=method_name->length==5&&
+        memcmp(method_name->chars,"chars",5)==0;
+    const bool bytes_method=method_name->length==5&&
+        memcmp(method_name->chars,"bytes",5)==0;
+    const bool chomp_method=method_name->length==5&&
+        memcmp(method_name->chars,"chomp",5)==0;
+    const bool ljust_method=method_name->length==5&&
+        memcmp(method_name->chars,"ljust",5)==0;
+    const bool rjust_method=method_name->length==5&&
+        memcmp(method_name->chars,"rjust",5)==0;
+    const bool tr_method=method_name->length==2&&
+        memcmp(method_name->chars,"tr",2)==0;
+    const bool format_method=method_name->length==6&&
+        memcmp(method_name->chars,"format",6)==0;
+    const bool parse_json_method=method_name->length==10&&
+        memcmp(method_name->chars,"parse_json",10)==0;
+    const DiamondString *source=
+        (const DiamondString *)registers[recv].as.object;
+    /* Same name and meaning as Array#empty?/Hash#empty?. */
+    if(method_name->length==6&&
+       memcmp(method_name->chars,"empty?",6)==0) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        registers[dest]=DIAMOND_BOOL(source->length==0);return DIAMOND_VM_OK;
+    }
+    if(parse_json_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        const size_t protect_mark=vm->gc_protected_count;
+        DiamondValue parsed=DIAMOND_NIL;
+        const DiamondVmStatus parse_status=json_parse_document(
+            vm,source->chars,source->length,&parsed);
+        gc_unprotect(vm,protect_mark);
+        if(parse_status!=DIAMOND_VM_OK)return parse_status;
+        registers[dest]=parsed;return DIAMOND_VM_OK;
+    }
+    if(gsub_method||sub_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s pattern argument must be a Regexp",
+                gsub_method?"gsub":"sub");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(registers[(size_t)base+1].kind==DIAMOND_VALUE_OBJECT&&
+           registers[(size_t)base+1].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
+            DiamondValue replace_result=DIAMOND_NIL;
+            const DiamondVmStatus replace_status=
+                regexp_replace_block_helper(vm,chunk,depth,
+                (const DiamondRegexp *)registers[base].as.object,source,
+                (const DiamondClosure *)registers[(size_t)base+1].as.object,
+                gsub_method,&replace_result);
+            if(replace_status!=DIAMOND_VM_OK)return replace_status;
+            registers[dest]=replace_result;return DIAMOND_VM_OK;
+        }
+        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s replacement must be a String or a block",
+                gsub_method?"gsub":"sub");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        DiamondValue replace_result=DIAMOND_NIL;
+        const DiamondVmStatus replace_status=regexp_replace_helper(vm,
+            (const DiamondRegexp *)registers[base].as.object,source,
+            (const DiamondString *)registers[(size_t)base+1].as.object,
+            gsub_method,&replace_result);
+        if(replace_status!=DIAMOND_VM_OK)return replace_status;
+        registers[dest]=replace_result;return DIAMOND_VM_OK;
+    }
+    if(scan_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#scan argument must be a Regexp");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondVmStatus scan_status=regexp_scan_helper(vm,
+            (const DiamondRegexp *)registers[base].as.object,source,
+            registers,dest);
+        if(scan_status!=DIAMOND_VM_OK)return scan_status;
+        return DIAMOND_VM_OK;
+    }
+    if(repeat_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#repeat argument must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t count=registers[base].as.integer;
+        if(count<0) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#repeat argument must be a non-negative Int");
+            return DIAMOND_VM_INTEGER_OVERFLOW;
+        }
+        size_t total_length=0;
+        if(ckd_mul(&total_length,source->length,(size_t)count)) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#repeat result is too large");
+            return DIAMOND_VM_INTEGER_OVERFLOW;
+        }
+        char *buffer=malloc(total_length+1);
+        if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t copy=0;copy<(size_t)count;copy++)
+            memcpy(buffer+copy*source->length,source->chars,
+                   source->length);
+        DiamondString *repeated=
+            allocate_string(vm,buffer,total_length);
+        free(buffer);
+        if(repeated==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(repeated);return DIAMOND_VM_OK;
+    }
+    /* getbyte(i): the byte at i (0-255), counting from
+     * the end when negative, or nil past either end --
+     * byte access without copying the String, as in
+     * Ruby. */
+    if(method_name->length==7&&
+       memcmp(method_name->chars,"getbyte",7)==0) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#getbyte index must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        int64_t at=registers[base].as.integer;
+        if(at<0)at+=(int64_t)source->length;
+        registers[dest]=at<0||(uint64_t)at>=source->length?DIAMOND_NIL:
+            DIAMOND_INT((unsigned char)source->chars[at]);
+        return DIAMOND_VM_OK;
+    }
+    if(ord_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(source->length==0) {
+            snprintf(vm->error,sizeof vm->error,
+                "cannot take ord of an empty String");
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        registers[dest]=
+            DIAMOND_INT((unsigned char)source->chars[0]);
+        return DIAMOND_VM_OK;
+    }
+    /* split() on whitespace, and split(separator, limit):
+     * in the prelude (diamond_string_split_extended). */
+    if(split_method&&argc!=1) {
+        const DiamondFunction *extended=find_top_level_function(
+            chunk,"diamond_string_split_extended",29);
+        if(extended==nullptr)return DIAMOND_VM_ARITY_ERROR;
+        DiamondValue split_result=DIAMOND_NIL;
+        const DiamondVmStatus split_status=forward_to_top_level_helper(vm,
+            chunk,extended,registers,recv,base,argc,depth,&split_result);
+        if(split_status!=DIAMOND_VM_OK)return split_status;
+        registers[dest]=split_result;return DIAMOND_VM_OK;
+    }
+    if(split_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+           registers[base].as.object->kind==DIAMOND_OBJECT_REGEXP) {
+            const DiamondVmStatus split_status=regexp_split_helper(vm,
+                (const DiamondRegexp *)registers[base].as.object,
+                source,registers,dest);
+            if(split_status!=DIAMOND_VM_OK)return split_status;
+            return DIAMOND_VM_OK;
+        }
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#split argument must be a String or Regexp");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *separator=
+            (const DiamondString *)registers[base].as.object;
+        DiamondArray *pieces=allocate_array(vm,nullptr,0);
+        if(pieces==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        /* Root the result array in registers[dest] before any
+         * further allocation (each piece below) can trigger a
+         * GC collection - registers are the VM's root set. */
+        registers[dest]=DIAMOND_OBJECT(pieces);
+        if(separator->length==0) {
+            for(size_t index=0;index<source->length;index++) {
+                DiamondString *piece=
+                    allocate_string(vm,source->chars+index,1);
+                if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+                if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                    return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+        } else {
+            size_t start=0,cursor=0;
+            while(cursor+separator->length<=source->length) {
+                if(memcmp(source->chars+cursor,separator->chars,
+                          separator->length)==0) {
+                    DiamondString *piece=allocate_string(vm,
+                        source->chars+start,cursor-start);
+                    if(piece==nullptr)
+                        return DIAMOND_VM_OUT_OF_MEMORY;
+                    if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                        return DIAMOND_VM_OUT_OF_MEMORY;
+                    cursor+=separator->length;start=cursor;
+                } else {
+                    cursor++;
+                }
+            }
+            DiamondString *piece=allocate_string(vm,
+                source->chars+start,source->length-start);
+            if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        return DIAMOND_VM_OK;
+    }
+    /* lstrip/rstrip trim one side only, the same ASCII
+     * whitespace strip removes. */
+    const bool lstrip_method=method_name->length==6&&
+        memcmp(method_name->chars,"lstrip",6)==0;
+    const bool rstrip_method=method_name->length==6&&
+        memcmp(method_name->chars,"rstrip",6)==0;
+    if(strip_method||lstrip_method||rstrip_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        size_t start=0;
+        if(!rstrip_method)
+            while(start<source->length&&
+                  isspace((unsigned char)source->chars[start]))start++;
+        size_t end=source->length;
+        if(!lstrip_method)
+            while(end>start&&
+                  isspace((unsigned char)source->chars[end-1]))end--;
+        DiamondString *stripped=
+            allocate_string(vm,source->chars+start,end-start);
+        if(stripped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(stripped);return DIAMOND_VM_OK;
+    }
+    if(reverse_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondString *reversed=
+            allocate_string(vm,source->chars,source->length);
+        if(reversed==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<reversed->length/2;index++) {
+            const char swap=reversed->chars[index];
+            reversed->chars[index]=
+                reversed->chars[reversed->length-1-index];
+            reversed->chars[reversed->length-1-index]=swap;
+        }
+        registers[dest]=DIAMOND_OBJECT(reversed);return DIAMOND_VM_OK;
+    }
+    if(downcase_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondString *lowered=
+            allocate_string(vm,source->chars,source->length);
+        if(lowered==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<lowered->length;index++)
+            lowered->chars[index]=
+                (char)tolower((unsigned char)lowered->chars[index]);
+        registers[dest]=DIAMOND_OBJECT(lowered);return DIAMOND_VM_OK;
+    }
+    if(upcase_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondString *raised=
+            allocate_string(vm,source->chars,source->length);
+        if(raised==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<raised->length;index++)
+            raised->chars[index]=
+                (char)toupper((unsigned char)raised->chars[index]);
+        registers[dest]=DIAMOND_OBJECT(raised);return DIAMOND_VM_OK;
+    }
+    /* to_i(base): digits in base 2..36 (either case, `_`
+     * separators allowed) after an optional sign, up to
+     * the first character that isn't one -- 0 if there
+     * are none, as with to_i(). */
+    if(to_i_method&&argc==1) {
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[base].as.integer<2||registers[base].as.integer>36) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#to_i base must be an Int from 2 to 36");
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        const int64_t radix=registers[base].as.integer;
+        size_t position=0;bool negative=false;
+        while(position<source->length&&
+              (source->chars[position]==' '||source->chars[position]=='\t'))
+            position++;
+        if(position<source->length&&
+           (source->chars[position]=='-'||source->chars[position]=='+')) {
+            negative=source->chars[position]=='-';position++;
+        }
+        int64_t value=0;bool overflowed=false;
+        const size_t digits_start=position;
+        for(;position<source->length;position++) {
+            const char c=source->chars[position];
+            if(c=='_')continue;
+            const int digit=c>='0'&&c<='9'?c-'0':
+                c>='a'&&c<='z'?c-'a'+10:c>='A'&&c<='Z'?c-'A'+10:99;
+            if(digit>=radix)break;
+            if(!overflowed&&
+               (ckd_mul(&value,value,radix)||ckd_add(&value,value,(int64_t)digit)))
+                overflowed=true;
+        }
+        if(overflowed) {
+            /* Past 64 bits: parse the digits again into a bignum. */
+            char *clean=malloc(position-digits_start+1);
+            if(clean==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            size_t clean_length=0;
+            for(size_t index=digits_start;index<position;index++)
+                if(source->chars[index]!='_')clean[clean_length++]=source->chars[index];
+            const DiamondValue big=diamond_bignum_from_radix_digits(vm,clean,
+                clean_length,(int)radix,negative);
+            free(clean);
+            if(big.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+            registers[dest]=big;return DIAMOND_VM_OK;
+        }
+        registers[dest]=DIAMOND_INT(negative?-value:value);return DIAMOND_VM_OK;
+    }
+    if(to_i_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        size_t position=0;bool negative=false;
+        if(position<source->length&&
+           (source->chars[position]=='-'||source->chars[position]=='+')) {
+            negative=source->chars[position]=='-';position++;
+        }
+        const size_t digit_start=position;
+        int64_t value=0;bool saw_digit=false;bool overflowed=false;
+        while(position<source->length&&
+              source->chars[position]>='0'&&source->chars[position]<='9') {
+            saw_digit=true;
+            if(!overflowed) {
+                int64_t widened=0;
+                if(ckd_mul(&widened,value,(int64_t)10)||
+                   ckd_add(&value,widened,
+                           (int64_t)(source->chars[position]-'0')))
+                    overflowed=true;
+            }
+            position++;
+        }
+        if(!saw_digit) {
+            registers[dest]=DIAMOND_INT(0);
+            return DIAMOND_VM_OK;
+        }
+        if(overflowed) {
+            /* Wider than int64_t: promote instead of
+             * raising, matching every other overflow
+             * site now that Int auto-promotes. */
+            const DiamondValue bignum_result=
+                diamond_bignum_from_decimal_digits(vm,
+                    source->chars+digit_start,
+                    position-digit_start,negative);
+            if(bignum_result.kind==DIAMOND_VALUE_NIL)
+                return DIAMOND_VM_OUT_OF_MEMORY;
+            registers[dest]=bignum_result;
+            return DIAMOND_VM_OK;
+        }
+        registers[dest]=DIAMOND_INT(negative?-value:value);
+        return DIAMOND_VM_OK;
+    }
+    if(to_f_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        /* No leading-whitespace skip, matching to_i's
+         * convention -- strtod's own grammar would
+         * otherwise skip it. Overflow is allowed to
+         * become Infinity (unlike to_i, which must
+         * reject out-of-range values): Float already
+         * has a well-defined way to represent "too
+         * large", Int does not. */
+        double value=0.0;
+        if(source->length>0) {
+            const char first=source->chars[0];
+            if((first>='0'&&first<='9')||
+               first=='+'||first=='-'||first=='.') {
+                char *end=nullptr;
+                const double parsed=strtod(source->chars,&end);
+                if(end!=source->chars)value=parsed;
+            }
+        }
+        registers[dest]=DIAMOND_FLOAT(value);
+        return DIAMOND_VM_OK;
+    }
+    if(index_of_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#index_of argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *needle=
+            (const DiamondString *)registers[base].as.object;
+        registers[dest]=DIAMOND_NIL;
+        if(needle->length==0) {
+            registers[dest]=DIAMOND_INT(0);
+        } else if(needle->length<=source->length) {
+            for(size_t start=0;
+                start+needle->length<=source->length;start++) {
+                if(memcmp(source->chars+start,needle->chars,
+                          needle->length)==0) {
+                    registers[dest]=DIAMOND_INT((int64_t)start);return DIAMOND_VM_OK;
+                }
+            }
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(slice_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#slice arguments must be Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t start=registers[base].as.integer;
+        const int64_t requested_length=
+            registers[(size_t)base+1].as.integer;
+        if(start<0||(uint64_t)start>source->length||
+           requested_length<0) {
+            snprintf(vm->error,sizeof vm->error,
+                "index %" PRId64 " out of bounds for String of length %zu",
+                start,source->length);
+            return DIAMOND_VM_INDEX_ERROR;
+        }
+        const size_t available=source->length-(size_t)start;
+        const size_t take=(size_t)requested_length<available?
+            (size_t)requested_length:available;
+        DiamondString *sliced=
+            allocate_string(vm,source->chars+(size_t)start,take);
+        if(sliced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(sliced);return DIAMOND_VM_OK;
+    }
+    if(start_with_method||end_with_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s argument must be a String",
+                start_with_method?"start_with?":"end_with?");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *needle=
+            (const DiamondString *)registers[base].as.object;
+        const bool matches=needle->length<=source->length&&
+            memcmp(start_with_method?source->chars:
+                   source->chars+source->length-needle->length,
+                   needle->chars,needle->length)==0;
+        registers[dest]=DIAMOND_BOOL(matches);return DIAMOND_VM_OK;
+    }
+    if(includes_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#include? argument must be a String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *needle=
+            (const DiamondString *)registers[base].as.object;
+        bool found=needle->length==0;
+        for(size_t start=0;
+            !found&&needle->length>0&&
+            start+needle->length<=source->length;start++) {
+            if(memcmp(source->chars+start,needle->chars,
+                      needle->length)==0)found=true;
+        }
+        registers[dest]=DIAMOND_BOOL(found);return DIAMOND_VM_OK;
+    }
+    if(capitalize_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondString *capitalized=
+            allocate_string(vm,source->chars,source->length);
+        if(capitalized==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<capitalized->length;index++)
+            capitalized->chars[index]=
+                (char)tolower((unsigned char)capitalized->chars[index]);
+        if(capitalized->length>0)
+            capitalized->chars[0]=
+                (char)toupper((unsigned char)capitalized->chars[0]);
+        registers[dest]=DIAMOND_OBJECT(capitalized);return DIAMOND_VM_OK;
+    }
+    if(chars_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondArray *pieces=allocate_array(vm,nullptr,0);
+        if(pieces==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(pieces);
+        for(size_t index=0;index<source->length;index++) {
+            DiamondString *piece=
+                allocate_string(vm,source->chars+index,1);
+            if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(bytes_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        DiamondArray *values=allocate_array(vm,nullptr,0);
+        if(values==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(values);
+        for(size_t index=0;index<source->length;index++) {
+            const DiamondValue byte_value=
+                DIAMOND_INT((unsigned char)source->chars[index]);
+            if(!array_push(vm,values,byte_value))
+                return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        return DIAMOND_VM_OK;
+    }
+    if(chomp_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        size_t end=source->length;
+        if(end>=2&&source->chars[end-2]=='\r'&&
+           source->chars[end-1]=='\n')
+            end-=2;
+        else if(end>=1&&(source->chars[end-1]=='\n'||
+                          source->chars[end-1]=='\r'))
+            end-=1;
+        DiamondString *chomped=
+            allocate_string(vm,source->chars,end);
+        if(chomped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(chomped);return DIAMOND_VM_OK;
+    }
+    if(ljust_method||rjust_method) {
+        /* The padding defaults to one space, as in Ruby. */
+        if(argc!=2&&argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s width argument must be an Int",
+                ljust_method?"ljust":"rjust");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(argc==2&&(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=
+               DIAMOND_OBJECT_STRING)) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s padding argument must be a String",
+                ljust_method?"ljust":"rjust");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t width=registers[base].as.integer;
+        if(width<0) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s width argument must be a non-negative Int",
+                ljust_method?"ljust":"rjust");
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        DiamondString *default_pad=nullptr;
+        if(argc==1) {
+            default_pad=allocate_string(vm," ",1);
+            if(default_pad==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        const DiamondString *pad=argc==1?default_pad:(const DiamondString *)
+            registers[(size_t)base+1].as.object;
+        if((uint64_t)width<=source->length) {
+            DiamondString *unchanged=
+                allocate_string(vm,source->chars,source->length);
+            if(unchanged==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+            registers[dest]=DIAMOND_OBJECT(unchanged);return DIAMOND_VM_OK;
+        }
+        if(pad->length==0) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#%s padding string must not be empty",
+                ljust_method?"ljust":"rjust");
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        const size_t pad_needed=(size_t)width-source->length;
+        char *buffer=malloc((size_t)width+1);
+        if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(ljust_method) {
+            memcpy(buffer,source->chars,source->length);
+            for(size_t index=0;index<pad_needed;index++)
+                buffer[source->length+index]=
+                    pad->chars[index%pad->length];
+        } else {
+            for(size_t index=0;index<pad_needed;index++)
+                buffer[index]=pad->chars[index%pad->length];
+            memcpy(buffer+pad_needed,source->chars,source->length);
+        }
+        DiamondString *justified=
+            allocate_string(vm,buffer,(size_t)width);
+        free(buffer);
+        if(justified==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(justified);return DIAMOND_VM_OK;
+    }
+    if(tr_method) {
+        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
+           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+           registers[(size_t)base+1].as.object->kind!=
+               DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#tr arguments must be Strings");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *from_spec=(const DiamondString *)
+            registers[base].as.object;
+        const DiamondString *to_spec=(const DiamondString *)
+            registers[(size_t)base+1].as.object;
+        if(from_spec->length==0) {
+            snprintf(vm->error,sizeof vm->error,
+                "String#tr from-string must not be empty");
+            return DIAMOND_VM_ARITY_ERROR;
+        }
+        bool from_negate=false;
+        ByteBuffer from_buffer={0};
+        DiamondVmStatus tr_status=
+            tr_expand_spec(from_spec,true,&from_negate,&from_buffer);
+        if(tr_status!=DIAMOND_VM_OK)return tr_status;
+        bool to_negate_ignored=false;
+        ByteBuffer to_buffer={0};
+        tr_status=
+            tr_expand_spec(to_spec,false,&to_negate_ignored,&to_buffer);
+        if(tr_status!=DIAMOND_VM_OK) {
+            free(from_buffer.data);
+            return tr_status;
+        }
+        bool member[256]={false};
+        for(size_t index=0;index<from_buffer.length;index++)
+            member[(unsigned char)from_buffer.data[index]]=true;
+        int map[256];
+        for(int code=0;code<256;code++)map[code]=-1;
+        if(!from_negate) {
+            for(size_t index=0;index<from_buffer.length;index++) {
+                const unsigned char key=
+                    (unsigned char)from_buffer.data[index];
+                const size_t to_index=index<to_buffer.length?
+                    index:to_buffer.length-1;
+                map[key]=to_buffer.length==0?-2:
+                    (int)(unsigned char)to_buffer.data[to_index];
+            }
+        }
+        const int negate_replacement=to_buffer.length==0?-2:
+            (int)(unsigned char)to_buffer.data[to_buffer.length-1];
+        ByteBuffer result_buffer={0};
+        bool ok=true;
+        for(size_t index=0;index<source->length&&ok;index++) {
+            const unsigned char byte=
+                (unsigned char)source->chars[index];
+            const int replacement=from_negate?
+                (member[byte]?-1:negate_replacement):map[byte];
+            if(replacement==-1)
+                ok=byte_buffer_append(&result_buffer,
+                    &source->chars[index],1);
+            else if(replacement!=-2) {
+                const char byte_out=(char)(unsigned char)replacement;
+                ok=byte_buffer_append(&result_buffer,&byte_out,1);
+            }
+        }
+        free(from_buffer.data);free(to_buffer.data);
+        if(!ok) {
+            free(result_buffer.data);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        DiamondString *translated=allocate_string(vm,
+            result_buffer.data!=nullptr?result_buffer.data:"",
+            result_buffer.length);
+        free(result_buffer.data);
+        if(translated==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(translated);return DIAMOND_VM_OK;
+    }
+    if(format_method) {
+        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+        DiamondValue formatted=DIAMOND_NIL;
+        const DiamondVmStatus format_status=string_format_helper(
+            vm,chunk,depth,source,registers[base],&formatted);
+        if(format_status!=DIAMOND_VM_OK)return format_status;
+        registers[dest]=formatted;return DIAMOND_VM_OK;
+    }
+    /* Not chunk->code+instruction_offset (an ordinary call site's
+     * own would be stable, but the native-spread synthetic re-entry
+     * just above builds its own tiny bytecode buffer fresh on the C
+     * stack every time -- a different logical call site, same reused
+     * stack address, which collided two unrelated method names onto
+     * one cache entry and returned the wrong function). method_name
+     * itself is a pointer into the calling function's own permanent,
+     * never-reallocated string-constant table (fn->strings, set at
+     * compile time), stable and correctly distinct per method name
+     * regardless of which of the several dispatch paths reaches it. */
+    const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+    const DiamondFunction *extension=nullptr;
+    if(!cached_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_STRING,&extension)) {
+        static const char *const string_prefixes[]={"string_"};
+        extension=find_value_extension(chunk,
+            string_prefixes,1,method_name->chars,method_name->length);
+        store_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_STRING,extension);
+    }
+    if(extension!=nullptr) {
+        DiamondValue call_result=DIAMOND_NIL;
+        const DiamondVmStatus status=forward_to_top_level_helper(vm,
+            chunk,extension,registers,recv,base,argc,depth,&call_result);
+        if(status!=DIAMOND_VM_OK)return status;
+        registers[dest]=call_result;return DIAMOND_VM_OK;
+    }
+    snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+        (int)method_name->length,method_name->chars,"String");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
 DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
     if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
         return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
@@ -13445,735 +14179,8 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         const DiamondHashEntry entry=hash->entries[(size_t)index];
         registers[dest]=key_method?entry.key:entry.value;return DIAMOND_VM_OK;
     }
-    if(receiver_kind==DIAMOND_OBJECT_STRING) {
-        const bool index_of_method=method_name->length==8&&
-            memcmp(method_name->chars,"index_of",8)==0;
-        const bool slice_method=method_name->length==5&&
-            memcmp(method_name->chars,"slice",5)==0;
-        const bool to_i_method=method_name->length==4&&
-            memcmp(method_name->chars,"to_i",4)==0;
-        const bool to_f_method=method_name->length==4&&
-            memcmp(method_name->chars,"to_f",4)==0;
-        const bool downcase_method=method_name->length==8&&
-            memcmp(method_name->chars,"downcase",8)==0;
-        const bool upcase_method=method_name->length==6&&
-            memcmp(method_name->chars,"upcase",6)==0;
-        const bool reverse_method=method_name->length==7&&
-            memcmp(method_name->chars,"reverse",7)==0;
-        const bool strip_method=method_name->length==5&&
-            memcmp(method_name->chars,"strip",5)==0;
-        const bool split_method=method_name->length==5&&
-            memcmp(method_name->chars,"split",5)==0;
-        const bool ord_method=method_name->length==3&&
-            memcmp(method_name->chars,"ord",3)==0;
-        const bool repeat_method=method_name->length==6&&
-            memcmp(method_name->chars,"repeat",6)==0;
-        const bool gsub_method=method_name->length==4&&
-            memcmp(method_name->chars,"gsub",4)==0;
-        const bool sub_method=method_name->length==3&&
-            memcmp(method_name->chars,"sub",3)==0;
-        const bool scan_method=method_name->length==4&&
-            memcmp(method_name->chars,"scan",4)==0;
-        const bool start_with_method=method_name->length==11&&
-            memcmp(method_name->chars,"start_with?",11)==0;
-        const bool end_with_method=method_name->length==9&&
-            memcmp(method_name->chars,"end_with?",9)==0;
-        const bool includes_method=method_name->length==8&&
-            memcmp(method_name->chars,"include?",8)==0;
-        const bool capitalize_method=method_name->length==10&&
-            memcmp(method_name->chars,"capitalize",10)==0;
-        const bool chars_method=method_name->length==5&&
-            memcmp(method_name->chars,"chars",5)==0;
-        const bool bytes_method=method_name->length==5&&
-            memcmp(method_name->chars,"bytes",5)==0;
-        const bool chomp_method=method_name->length==5&&
-            memcmp(method_name->chars,"chomp",5)==0;
-        const bool ljust_method=method_name->length==5&&
-            memcmp(method_name->chars,"ljust",5)==0;
-        const bool rjust_method=method_name->length==5&&
-            memcmp(method_name->chars,"rjust",5)==0;
-        const bool tr_method=method_name->length==2&&
-            memcmp(method_name->chars,"tr",2)==0;
-        const bool format_method=method_name->length==6&&
-            memcmp(method_name->chars,"format",6)==0;
-        const bool parse_json_method=method_name->length==10&&
-            memcmp(method_name->chars,"parse_json",10)==0;
-        const DiamondString *source=
-            (const DiamondString *)registers[recv].as.object;
-        /* Same name and meaning as Array#empty?/Hash#empty?. */
-        if(method_name->length==6&&
-           memcmp(method_name->chars,"empty?",6)==0) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            registers[dest]=DIAMOND_BOOL(source->length==0);return DIAMOND_VM_OK;
-        }
-        if(parse_json_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            const size_t protect_mark=vm->gc_protected_count;
-            DiamondValue parsed=DIAMOND_NIL;
-            const DiamondVmStatus parse_status=json_parse_document(
-                vm,source->chars,source->length,&parsed);
-            gc_unprotect(vm,protect_mark);
-            if(parse_status!=DIAMOND_VM_OK)return parse_status;
-            registers[dest]=parsed;return DIAMOND_VM_OK;
-        }
-        if(gsub_method||sub_method) {
-            if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s pattern argument must be a Regexp",
-                    gsub_method?"gsub":"sub");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            if(registers[(size_t)base+1].kind==DIAMOND_VALUE_OBJECT&&
-               registers[(size_t)base+1].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
-                DiamondValue replace_result=DIAMOND_NIL;
-                const DiamondVmStatus replace_status=
-                    regexp_replace_block_helper(vm,chunk,depth,
-                    (const DiamondRegexp *)registers[base].as.object,source,
-                    (const DiamondClosure *)registers[(size_t)base+1].as.object,
-                    gsub_method,&replace_result);
-                if(replace_status!=DIAMOND_VM_OK)return replace_status;
-                registers[dest]=replace_result;return DIAMOND_VM_OK;
-            }
-            if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-               registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s replacement must be a String or a block",
-                    gsub_method?"gsub":"sub");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            DiamondValue replace_result=DIAMOND_NIL;
-            const DiamondVmStatus replace_status=regexp_replace_helper(vm,
-                (const DiamondRegexp *)registers[base].as.object,source,
-                (const DiamondString *)registers[(size_t)base+1].as.object,
-                gsub_method,&replace_result);
-            if(replace_status!=DIAMOND_VM_OK)return replace_status;
-            registers[dest]=replace_result;return DIAMOND_VM_OK;
-        }
-        if(scan_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_REGEXP) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#scan argument must be a Regexp");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondVmStatus scan_status=regexp_scan_helper(vm,
-                (const DiamondRegexp *)registers[base].as.object,source,
-                registers,dest);
-            if(scan_status!=DIAMOND_VM_OK)return scan_status;
-            return DIAMOND_VM_OK;
-        }
-        if(repeat_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#repeat argument must be an Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const int64_t count=registers[base].as.integer;
-            if(count<0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#repeat argument must be a non-negative Int");
-                return DIAMOND_VM_INTEGER_OVERFLOW;
-            }
-            size_t total_length=0;
-            if(ckd_mul(&total_length,source->length,(size_t)count)) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#repeat result is too large");
-                return DIAMOND_VM_INTEGER_OVERFLOW;
-            }
-            char *buffer=malloc(total_length+1);
-            if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            for(size_t copy=0;copy<(size_t)count;copy++)
-                memcpy(buffer+copy*source->length,source->chars,
-                       source->length);
-            DiamondString *repeated=
-                allocate_string(vm,buffer,total_length);
-            free(buffer);
-            if(repeated==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(repeated);return DIAMOND_VM_OK;
-        }
-        /* getbyte(i): the byte at i (0-255), counting from
-         * the end when negative, or nil past either end --
-         * byte access without copying the String, as in
-         * Ruby. */
-        if(method_name->length==7&&
-           memcmp(method_name->chars,"getbyte",7)==0) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#getbyte index must be an Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            int64_t at=registers[base].as.integer;
-            if(at<0)at+=(int64_t)source->length;
-            registers[dest]=at<0||(uint64_t)at>=source->length?DIAMOND_NIL:
-                DIAMOND_INT((unsigned char)source->chars[at]);
-            return DIAMOND_VM_OK;
-        }
-        if(ord_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            if(source->length==0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "cannot take ord of an empty String");
-                return DIAMOND_VM_INDEX_ERROR;
-            }
-            registers[dest]=
-                DIAMOND_INT((unsigned char)source->chars[0]);
-            return DIAMOND_VM_OK;
-        }
-        /* split() on whitespace, and split(separator, limit):
-         * in the prelude (diamond_string_split_extended). */
-        if(split_method&&argc!=1) {
-            const DiamondFunction *extended=find_top_level_function(
-                chunk,"diamond_string_split_extended",29);
-            if(extended==nullptr)return DIAMOND_VM_ARITY_ERROR;
-            DiamondValue split_result=DIAMOND_NIL;
-            const DiamondVmStatus split_status=forward_to_top_level_helper(vm,
-                chunk,extended,registers,recv,base,argc,depth,&split_result);
-            if(split_status!=DIAMOND_VM_OK)return split_status;
-            registers[dest]=split_result;return DIAMOND_VM_OK;
-        }
-        if(split_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
-               registers[base].as.object->kind==DIAMOND_OBJECT_REGEXP) {
-                const DiamondVmStatus split_status=regexp_split_helper(vm,
-                    (const DiamondRegexp *)registers[base].as.object,
-                    source,registers,dest);
-                if(split_status!=DIAMOND_VM_OK)return split_status;
-                return DIAMOND_VM_OK;
-            }
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#split argument must be a String or Regexp");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *separator=
-                (const DiamondString *)registers[base].as.object;
-            DiamondArray *pieces=allocate_array(vm,nullptr,0);
-            if(pieces==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            /* Root the result array in registers[dest] before any
-             * further allocation (each piece below) can trigger a
-             * GC collection - registers are the VM's root set. */
-            registers[dest]=DIAMOND_OBJECT(pieces);
-            if(separator->length==0) {
-                for(size_t index=0;index<source->length;index++) {
-                    DiamondString *piece=
-                        allocate_string(vm,source->chars+index,1);
-                    if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-                    if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
-                        return DIAMOND_VM_OUT_OF_MEMORY;
-                }
-            } else {
-                size_t start=0,cursor=0;
-                while(cursor+separator->length<=source->length) {
-                    if(memcmp(source->chars+cursor,separator->chars,
-                              separator->length)==0) {
-                        DiamondString *piece=allocate_string(vm,
-                            source->chars+start,cursor-start);
-                        if(piece==nullptr)
-                            return DIAMOND_VM_OUT_OF_MEMORY;
-                        if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
-                            return DIAMOND_VM_OUT_OF_MEMORY;
-                        cursor+=separator->length;start=cursor;
-                    } else {
-                        cursor++;
-                    }
-                }
-                DiamondString *piece=allocate_string(vm,
-                    source->chars+start,source->length-start);
-                if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-                if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
-                    return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            return DIAMOND_VM_OK;
-        }
-        /* lstrip/rstrip trim one side only, the same ASCII
-         * whitespace strip removes. */
-        const bool lstrip_method=method_name->length==6&&
-            memcmp(method_name->chars,"lstrip",6)==0;
-        const bool rstrip_method=method_name->length==6&&
-            memcmp(method_name->chars,"rstrip",6)==0;
-        if(strip_method||lstrip_method||rstrip_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            size_t start=0;
-            if(!rstrip_method)
-                while(start<source->length&&
-                      isspace((unsigned char)source->chars[start]))start++;
-            size_t end=source->length;
-            if(!lstrip_method)
-                while(end>start&&
-                      isspace((unsigned char)source->chars[end-1]))end--;
-            DiamondString *stripped=
-                allocate_string(vm,source->chars+start,end-start);
-            if(stripped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(stripped);return DIAMOND_VM_OK;
-        }
-        if(reverse_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondString *reversed=
-                allocate_string(vm,source->chars,source->length);
-            if(reversed==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            for(size_t index=0;index<reversed->length/2;index++) {
-                const char swap=reversed->chars[index];
-                reversed->chars[index]=
-                    reversed->chars[reversed->length-1-index];
-                reversed->chars[reversed->length-1-index]=swap;
-            }
-            registers[dest]=DIAMOND_OBJECT(reversed);return DIAMOND_VM_OK;
-        }
-        if(downcase_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondString *lowered=
-                allocate_string(vm,source->chars,source->length);
-            if(lowered==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            for(size_t index=0;index<lowered->length;index++)
-                lowered->chars[index]=
-                    (char)tolower((unsigned char)lowered->chars[index]);
-            registers[dest]=DIAMOND_OBJECT(lowered);return DIAMOND_VM_OK;
-        }
-        if(upcase_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondString *raised=
-                allocate_string(vm,source->chars,source->length);
-            if(raised==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            for(size_t index=0;index<raised->length;index++)
-                raised->chars[index]=
-                    (char)toupper((unsigned char)raised->chars[index]);
-            registers[dest]=DIAMOND_OBJECT(raised);return DIAMOND_VM_OK;
-        }
-        /* to_i(base): digits in base 2..36 (either case, `_`
-         * separators allowed) after an optional sign, up to
-         * the first character that isn't one -- 0 if there
-         * are none, as with to_i(). */
-        if(to_i_method&&argc==1) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT||
-               registers[base].as.integer<2||registers[base].as.integer>36) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#to_i base must be an Int from 2 to 36");
-                return DIAMOND_VM_ARITY_ERROR;
-            }
-            const int64_t radix=registers[base].as.integer;
-            size_t position=0;bool negative=false;
-            while(position<source->length&&
-                  (source->chars[position]==' '||source->chars[position]=='\t'))
-                position++;
-            if(position<source->length&&
-               (source->chars[position]=='-'||source->chars[position]=='+')) {
-                negative=source->chars[position]=='-';position++;
-            }
-            int64_t value=0;bool overflowed=false;
-            const size_t digits_start=position;
-            for(;position<source->length;position++) {
-                const char c=source->chars[position];
-                if(c=='_')continue;
-                const int digit=c>='0'&&c<='9'?c-'0':
-                    c>='a'&&c<='z'?c-'a'+10:c>='A'&&c<='Z'?c-'A'+10:99;
-                if(digit>=radix)break;
-                if(!overflowed&&
-                   (ckd_mul(&value,value,radix)||ckd_add(&value,value,(int64_t)digit)))
-                    overflowed=true;
-            }
-            if(overflowed) {
-                /* Past 64 bits: parse the digits again into a bignum. */
-                char *clean=malloc(position-digits_start+1);
-                if(clean==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-                size_t clean_length=0;
-                for(size_t index=digits_start;index<position;index++)
-                    if(source->chars[index]!='_')clean[clean_length++]=source->chars[index];
-                const DiamondValue big=diamond_bignum_from_radix_digits(vm,clean,
-                    clean_length,(int)radix,negative);
-                free(clean);
-                if(big.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
-                registers[dest]=big;return DIAMOND_VM_OK;
-            }
-            registers[dest]=DIAMOND_INT(negative?-value:value);return DIAMOND_VM_OK;
-        }
-        if(to_i_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            size_t position=0;bool negative=false;
-            if(position<source->length&&
-               (source->chars[position]=='-'||source->chars[position]=='+')) {
-                negative=source->chars[position]=='-';position++;
-            }
-            const size_t digit_start=position;
-            int64_t value=0;bool saw_digit=false;bool overflowed=false;
-            while(position<source->length&&
-                  source->chars[position]>='0'&&source->chars[position]<='9') {
-                saw_digit=true;
-                if(!overflowed) {
-                    int64_t widened=0;
-                    if(ckd_mul(&widened,value,(int64_t)10)||
-                       ckd_add(&value,widened,
-                               (int64_t)(source->chars[position]-'0')))
-                        overflowed=true;
-                }
-                position++;
-            }
-            if(!saw_digit) {
-                registers[dest]=DIAMOND_INT(0);
-                return DIAMOND_VM_OK;
-            }
-            if(overflowed) {
-                /* Wider than int64_t: promote instead of
-                 * raising, matching every other overflow
-                 * site now that Int auto-promotes. */
-                const DiamondValue bignum_result=
-                    diamond_bignum_from_decimal_digits(vm,
-                        source->chars+digit_start,
-                        position-digit_start,negative);
-                if(bignum_result.kind==DIAMOND_VALUE_NIL)
-                    return DIAMOND_VM_OUT_OF_MEMORY;
-                registers[dest]=bignum_result;
-                return DIAMOND_VM_OK;
-            }
-            registers[dest]=DIAMOND_INT(negative?-value:value);
-            return DIAMOND_VM_OK;
-        }
-        if(to_f_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            /* No leading-whitespace skip, matching to_i's
-             * convention -- strtod's own grammar would
-             * otherwise skip it. Overflow is allowed to
-             * become Infinity (unlike to_i, which must
-             * reject out-of-range values): Float already
-             * has a well-defined way to represent "too
-             * large", Int does not. */
-            double value=0.0;
-            if(source->length>0) {
-                const char first=source->chars[0];
-                if((first>='0'&&first<='9')||
-                   first=='+'||first=='-'||first=='.') {
-                    char *end=nullptr;
-                    const double parsed=strtod(source->chars,&end);
-                    if(end!=source->chars)value=parsed;
-                }
-            }
-            registers[dest]=DIAMOND_FLOAT(value);
-            return DIAMOND_VM_OK;
-        }
-        if(index_of_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#index_of argument must be a String");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *needle=
-                (const DiamondString *)registers[base].as.object;
-            registers[dest]=DIAMOND_NIL;
-            if(needle->length==0) {
-                registers[dest]=DIAMOND_INT(0);
-            } else if(needle->length<=source->length) {
-                for(size_t start=0;
-                    start+needle->length<=source->length;start++) {
-                    if(memcmp(source->chars+start,needle->chars,
-                              needle->length)==0) {
-                        registers[dest]=DIAMOND_INT((int64_t)start);return DIAMOND_VM_OK;
-                    }
-                }
-            }
-            return DIAMOND_VM_OK;
-        }
-        if(slice_method) {
-            if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_INT||
-               registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#slice arguments must be Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const int64_t start=registers[base].as.integer;
-            const int64_t requested_length=
-                registers[(size_t)base+1].as.integer;
-            if(start<0||(uint64_t)start>source->length||
-               requested_length<0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "index %" PRId64 " out of bounds for String of length %zu",
-                    start,source->length);
-                return DIAMOND_VM_INDEX_ERROR;
-            }
-            const size_t available=source->length-(size_t)start;
-            const size_t take=(size_t)requested_length<available?
-                (size_t)requested_length:available;
-            DiamondString *sliced=
-                allocate_string(vm,source->chars+(size_t)start,take);
-            if(sliced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(sliced);return DIAMOND_VM_OK;
-        }
-        if(start_with_method||end_with_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s argument must be a String",
-                    start_with_method?"start_with?":"end_with?");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *needle=
-                (const DiamondString *)registers[base].as.object;
-            const bool matches=needle->length<=source->length&&
-                memcmp(start_with_method?source->chars:
-                       source->chars+source->length-needle->length,
-                       needle->chars,needle->length)==0;
-            registers[dest]=DIAMOND_BOOL(matches);return DIAMOND_VM_OK;
-        }
-        if(includes_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#include? argument must be a String");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *needle=
-                (const DiamondString *)registers[base].as.object;
-            bool found=needle->length==0;
-            for(size_t start=0;
-                !found&&needle->length>0&&
-                start+needle->length<=source->length;start++) {
-                if(memcmp(source->chars+start,needle->chars,
-                          needle->length)==0)found=true;
-            }
-            registers[dest]=DIAMOND_BOOL(found);return DIAMOND_VM_OK;
-        }
-        if(capitalize_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondString *capitalized=
-                allocate_string(vm,source->chars,source->length);
-            if(capitalized==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            for(size_t index=0;index<capitalized->length;index++)
-                capitalized->chars[index]=
-                    (char)tolower((unsigned char)capitalized->chars[index]);
-            if(capitalized->length>0)
-                capitalized->chars[0]=
-                    (char)toupper((unsigned char)capitalized->chars[0]);
-            registers[dest]=DIAMOND_OBJECT(capitalized);return DIAMOND_VM_OK;
-        }
-        if(chars_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondArray *pieces=allocate_array(vm,nullptr,0);
-            if(pieces==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(pieces);
-            for(size_t index=0;index<source->length;index++) {
-                DiamondString *piece=
-                    allocate_string(vm,source->chars+index,1);
-                if(piece==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-                if(!array_push(vm,pieces,DIAMOND_OBJECT(piece)))
-                    return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            return DIAMOND_VM_OK;
-        }
-        if(bytes_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            DiamondArray *values=allocate_array(vm,nullptr,0);
-            if(values==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(values);
-            for(size_t index=0;index<source->length;index++) {
-                const DiamondValue byte_value=
-                    DIAMOND_INT((unsigned char)source->chars[index]);
-                if(!array_push(vm,values,byte_value))
-                    return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            return DIAMOND_VM_OK;
-        }
-        if(chomp_method) {
-            if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-            size_t end=source->length;
-            if(end>=2&&source->chars[end-2]=='\r'&&
-               source->chars[end-1]=='\n')
-                end-=2;
-            else if(end>=1&&(source->chars[end-1]=='\n'||
-                              source->chars[end-1]=='\r'))
-                end-=1;
-            DiamondString *chomped=
-                allocate_string(vm,source->chars,end);
-            if(chomped==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(chomped);return DIAMOND_VM_OK;
-        }
-        if(ljust_method||rjust_method) {
-            /* The padding defaults to one space, as in Ruby. */
-            if(argc!=2&&argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s width argument must be an Int",
-                    ljust_method?"ljust":"rjust");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            if(argc==2&&(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-               registers[(size_t)base+1].as.object->kind!=
-                   DIAMOND_OBJECT_STRING)) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s padding argument must be a String",
-                    ljust_method?"ljust":"rjust");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const int64_t width=registers[base].as.integer;
-            if(width<0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s width argument must be a non-negative Int",
-                    ljust_method?"ljust":"rjust");
-                return DIAMOND_VM_ARITY_ERROR;
-            }
-            DiamondString *default_pad=nullptr;
-            if(argc==1) {
-                default_pad=allocate_string(vm," ",1);
-                if(default_pad==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            const DiamondString *pad=argc==1?default_pad:(const DiamondString *)
-                registers[(size_t)base+1].as.object;
-            if((uint64_t)width<=source->length) {
-                DiamondString *unchanged=
-                    allocate_string(vm,source->chars,source->length);
-                if(unchanged==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-                registers[dest]=DIAMOND_OBJECT(unchanged);return DIAMOND_VM_OK;
-            }
-            if(pad->length==0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#%s padding string must not be empty",
-                    ljust_method?"ljust":"rjust");
-                return DIAMOND_VM_ARITY_ERROR;
-            }
-            const size_t pad_needed=(size_t)width-source->length;
-            char *buffer=malloc((size_t)width+1);
-            if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            if(ljust_method) {
-                memcpy(buffer,source->chars,source->length);
-                for(size_t index=0;index<pad_needed;index++)
-                    buffer[source->length+index]=
-                        pad->chars[index%pad->length];
-            } else {
-                for(size_t index=0;index<pad_needed;index++)
-                    buffer[index]=pad->chars[index%pad->length];
-                memcpy(buffer+pad_needed,source->chars,source->length);
-            }
-            DiamondString *justified=
-                allocate_string(vm,buffer,(size_t)width);
-            free(buffer);
-            if(justified==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(justified);return DIAMOND_VM_OK;
-        }
-        if(tr_method) {
-            if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-            if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-               registers[base].as.object->kind!=DIAMOND_OBJECT_STRING||
-               registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-               registers[(size_t)base+1].as.object->kind!=
-                   DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#tr arguments must be Strings");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *from_spec=(const DiamondString *)
-                registers[base].as.object;
-            const DiamondString *to_spec=(const DiamondString *)
-                registers[(size_t)base+1].as.object;
-            if(from_spec->length==0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "String#tr from-string must not be empty");
-                return DIAMOND_VM_ARITY_ERROR;
-            }
-            bool from_negate=false;
-            ByteBuffer from_buffer={0};
-            DiamondVmStatus tr_status=
-                tr_expand_spec(from_spec,true,&from_negate,&from_buffer);
-            if(tr_status!=DIAMOND_VM_OK)return tr_status;
-            bool to_negate_ignored=false;
-            ByteBuffer to_buffer={0};
-            tr_status=
-                tr_expand_spec(to_spec,false,&to_negate_ignored,&to_buffer);
-            if(tr_status!=DIAMOND_VM_OK) {
-                free(from_buffer.data);
-                return tr_status;
-            }
-            bool member[256]={false};
-            for(size_t index=0;index<from_buffer.length;index++)
-                member[(unsigned char)from_buffer.data[index]]=true;
-            int map[256];
-            for(int code=0;code<256;code++)map[code]=-1;
-            if(!from_negate) {
-                for(size_t index=0;index<from_buffer.length;index++) {
-                    const unsigned char key=
-                        (unsigned char)from_buffer.data[index];
-                    const size_t to_index=index<to_buffer.length?
-                        index:to_buffer.length-1;
-                    map[key]=to_buffer.length==0?-2:
-                        (int)(unsigned char)to_buffer.data[to_index];
-                }
-            }
-            const int negate_replacement=to_buffer.length==0?-2:
-                (int)(unsigned char)to_buffer.data[to_buffer.length-1];
-            ByteBuffer result_buffer={0};
-            bool ok=true;
-            for(size_t index=0;index<source->length&&ok;index++) {
-                const unsigned char byte=
-                    (unsigned char)source->chars[index];
-                const int replacement=from_negate?
-                    (member[byte]?-1:negate_replacement):map[byte];
-                if(replacement==-1)
-                    ok=byte_buffer_append(&result_buffer,
-                        &source->chars[index],1);
-                else if(replacement!=-2) {
-                    const char byte_out=(char)(unsigned char)replacement;
-                    ok=byte_buffer_append(&result_buffer,&byte_out,1);
-                }
-            }
-            free(from_buffer.data);free(to_buffer.data);
-            if(!ok) {
-                free(result_buffer.data);
-                return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            DiamondString *translated=allocate_string(vm,
-                result_buffer.data!=nullptr?result_buffer.data:"",
-                result_buffer.length);
-            free(result_buffer.data);
-            if(translated==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(translated);return DIAMOND_VM_OK;
-        }
-        if(format_method) {
-            if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-            DiamondValue formatted=DIAMOND_NIL;
-            const DiamondVmStatus format_status=string_format_helper(
-                vm,chunk,depth,source,registers[base],&formatted);
-            if(format_status!=DIAMOND_VM_OK)return format_status;
-            registers[dest]=formatted;return DIAMOND_VM_OK;
-        }
-        /* Not chunk->code+instruction_offset (an ordinary call site's
-         * own would be stable, but the native-spread synthetic re-entry
-         * just above builds its own tiny bytecode buffer fresh on the C
-         * stack every time -- a different logical call site, same reused
-         * stack address, which collided two unrelated method names onto
-         * one cache entry and returned the wrong function). method_name
-         * itself is a pointer into the calling function's own permanent,
-         * never-reallocated string-constant table (fn->strings, set at
-         * compile time), stable and correctly distinct per method name
-         * regardless of which of the several dispatch paths reaches it. */
-        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
-        const DiamondFunction *extension=nullptr;
-        if(!cached_extension_lookup(vm,extension_site,
-                DIAMOND_EXTENSION_KIND_STRING,&extension)) {
-            static const char *const string_prefixes[]={"string_"};
-            extension=find_value_extension(chunk,
-                string_prefixes,1,method_name->chars,method_name->length);
-            store_extension_lookup(vm,extension_site,
-                DIAMOND_EXTENSION_KIND_STRING,extension);
-        }
-        if(extension!=nullptr) {
-            DiamondValue call_result=DIAMOND_NIL;
-            const DiamondVmStatus status=forward_to_top_level_helper(vm,
-                chunk,extension,registers,recv,base,argc,depth,&call_result);
-            if(status!=DIAMOND_VM_OK)return status;
-            registers[dest]=call_result;return DIAMOND_VM_OK;
-        }
-        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
-            (int)method_name->length,method_name->chars,"String");
-        return DIAMOND_VM_TYPE_ERROR;
-    }
+    if(receiver_kind==DIAMOND_OBJECT_STRING)
+        return string_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
     if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
         return DIAMOND_VM_TYPE_ERROR;
     DiamondArray *array=(DiamondArray *)registers[recv].as.object;
