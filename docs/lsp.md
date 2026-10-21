@@ -7,6 +7,11 @@ LSP's standard `Content-Length`-framed JSON-RPC over stdio, the transport
 every mainstream editor already knows how to launch a custom language
 server with.
 
+Incoming message bodies are limited to 64 MiB. A frame must have exactly one
+`Content-Length` header containing an unsigned decimal byte count; malformed,
+duplicate, and oversized lengths are rejected. The DAP adapter and VM debug
+control channel use the same limit and length validation.
+
 `lsp/` — the JSON parser, the RPC framing, the protocol handling — is written
 from scratch in C, with zero external dependencies beyond what the rest of this
 repository already uses.

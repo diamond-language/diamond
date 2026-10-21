@@ -8,6 +8,7 @@
 #define _GNU_SOURCE
 
 #include "vm.h"
+#include "message_length.h"
 #include "jit.h"
 #include "bignum.h"
 #include "compiler.h"
@@ -7316,11 +7317,13 @@ static int resolve_array_range(DiamondVm *vm,const DiamondChunk *chunk,
                  original_start,container,array_count);
         return 0;
     }
-    const int64_t inclusive_end=exclusive?end-1:end;
     const size_t available=array_count-(size_t)start;
-    const size_t requested=inclusive_end<start?0:(size_t)(inclusive_end-start+1);
+    /* Subtract only ordered, nonnegative bounds, then clamp before narrowing
+     * to size_t. Avoid both INT64_MIN-1 and INT64_MAX+1. */
+    const uint64_t requested=end<start?0:
+        (uint64_t)end-(uint64_t)start+(exclusive?0u:1u);
     *out_start=(size_t)start;
-    *out_length=requested<available?requested:available;
+    *out_length=requested<available?(size_t)requested:available;
     return 1;
 }
 
@@ -10457,7 +10460,8 @@ bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
     *kind=DIAMOND_DEBUG_COMMAND_NONE;
     step_target[0]='\0';
     *line_count=0;
-    long content_length=-1;
+    size_t content_length=0;
+    bool have_content_length=false;
     char line[256];
     while(true) {
         if(!debug_pipe_read_header_line(fd,line,sizeof line))return false;
@@ -10466,11 +10470,12 @@ bool debug_pipe_read_command(int fd,DiamondDebugCommandKind *kind,
         static constexpr size_t prefix_length=sizeof(prefix)-1;
         if(strncmp(line,prefix,prefix_length)==0) {
             const char *value=line+prefix_length;
-            while(*value==' ')value++;
-            content_length=strtol(value,nullptr,10);
+            if(have_content_length||!diamond_parse_message_length(value,&content_length))
+                return false;
+            have_content_length=true;
         }
     }
-    if(content_length<0)return false;
+    if(!have_content_length)return false;
     char body[16384];
     const size_t body_capacity=sizeof body-1;
     const size_t body_length=

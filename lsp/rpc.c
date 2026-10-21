@@ -1,4 +1,5 @@
 #include "rpc.h"
+#include "message_length.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +27,8 @@ static int read_header_line(FILE *stream,char *buffer,size_t capacity) {
 
 JsonValue *rpc_read_message(FILE *stream,const char **error) {
     if(error!=nullptr)*error=nullptr;
-    long content_length=-1;
+    size_t content_length=0;
+    bool have_content_length=false;
     char line[256];
     while(true) {
         const int status=read_header_line(stream,line,sizeof line);
@@ -40,11 +42,14 @@ JsonValue *rpc_read_message(FILE *stream,const char **error) {
         static constexpr size_t prefix_length=sizeof(prefix)-1;
         if(strncmp(line,prefix,prefix_length)==0) {
             const char *value=line+prefix_length;
-            while(*value==' ')value++;
-            content_length=strtol(value,nullptr,10);
+            if(have_content_length||!diamond_parse_message_length(value,&content_length)) {
+                if(error!=nullptr)*error="invalid Content-Length header";
+                return nullptr;
+            }
+            have_content_length=true;
         }
     }
-    if(content_length<0) {
+    if(!have_content_length) {
         if(error!=nullptr)*error="missing Content-Length header";
         return nullptr;
     }
