@@ -1,3 +1,6 @@
+/* WASI exposes timegm and tm_gmtoff through the GNU feature set. */
+#define _GNU_SOURCE
+
 #include "vm_internal.h"
 
 #include <inttypes.h>
