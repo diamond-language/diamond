@@ -79,12 +79,10 @@
  * than just producing a huge-but-correct allocation request. */
 DiamondTensor *allocate_tensor(DiamondVm *vm,size_t rows,size_t cols) {
     if (!maybe_collect(vm)) return nullptr;
-    if(rows!=0&&cols>SIZE_MAX/rows)return nullptr;
-    const size_t element_count=rows*cols;
-    if(element_count!=0&&sizeof(double)>SIZE_MAX/element_count)return nullptr;
-    const size_t payload_size=element_count*sizeof(double);
-    if(payload_size>SIZE_MAX-sizeof(DiamondTensor))return nullptr;
-    const size_t size=sizeof(DiamondTensor)+payload_size;
+    size_t element_count,payload_size,size;
+    if(ckd_mul(&element_count,rows,cols)||
+        ckd_mul(&payload_size,element_count,sizeof(double))||
+        ckd_add(&size,sizeof(DiamondTensor),payload_size))return nullptr;
     DiamondTensor *tensor=malloc(size);
     if(tensor==nullptr)return nullptr;
     tensor->object=(DiamondObject){.next=vm->young_objects,.kind=DIAMOND_OBJECT_TENSOR};

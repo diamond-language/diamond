@@ -3502,9 +3502,12 @@ static bool is_valid_method_name(const char *chars,size_t length) {
 }
 
 bool grow_buffer_append(GrowBuffer *buffer,const char *text,size_t text_length) {
-    if(buffer->length+text_length+1>buffer->capacity) {
+    size_t needed;
+    if(ckd_add(&needed,buffer->length,text_length)||ckd_add(&needed,needed,1))return false;
+    if(needed>buffer->capacity) {
         size_t new_capacity=buffer->capacity==0?256:buffer->capacity;
-        while(new_capacity<buffer->length+text_length+1)new_capacity*=2;
+        while(new_capacity<needed)
+            if(ckd_mul(&new_capacity,new_capacity,2))return false;
         char *new_data=realloc(buffer->data,new_capacity);
         if(new_data==nullptr)return false;
         buffer->data=new_data;buffer->capacity=new_capacity;
@@ -3738,13 +3741,12 @@ bool methods_have_own_named(const DiamondMethod *methods,size_t count,
 
 bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count) {
     if(count==0)return true;
-    if(count>SIZE_MAX-buffer->length)return false;
-    if(buffer->length+count>buffer->capacity) {
+    size_t needed;
+    if(ckd_add(&needed,buffer->length,count))return false;
+    if(needed>buffer->capacity) {
         size_t capacity=buffer->capacity==0?256:buffer->capacity;
-        while(capacity<buffer->length+count) {
-            if(capacity>SIZE_MAX/2)return false;
-            capacity*=2;
-        }
+        while(capacity<needed)
+            if(ckd_mul(&capacity,capacity,2))return false;
         char *grown=realloc(buffer->data,capacity);
         if(grown==nullptr)return false;
         buffer->data=grown;buffer->capacity=capacity;
@@ -3830,10 +3832,11 @@ static DiamondVmStatus tr_expand_spec(const DiamondString *spec,
  * copy_value_into_vm's call sites). */
 bool gc_protect(DiamondVm *vm, DiamondValue value) {
     if(vm->gc_protected_count>=vm->gc_protected_capacity) {
-        const size_t capacity=
-            vm->gc_protected_capacity==0?8:vm->gc_protected_capacity*2;
+        size_t capacity=8,bytes;
+        if((vm->gc_protected_capacity!=0&&ckd_mul(&capacity,vm->gc_protected_capacity,2))||
+            ckd_mul(&bytes,capacity,sizeof *vm->gc_protected))return false;
         DiamondValue *grown=
-            realloc(vm->gc_protected,capacity*sizeof(DiamondValue));
+            realloc(vm->gc_protected,bytes);
         if(grown==nullptr)return false;
         vm->gc_protected=grown;vm->gc_protected_capacity=capacity;
     }
@@ -8046,9 +8049,12 @@ void format_operator_type_error(DiamondVm *vm,DiamondValue left_value,
 }
 
 bool builder_append(StringBuilder *builder,const char *chars,size_t length) {
-    if(builder->length+length+1>builder->capacity) {
+    size_t needed;
+    if(ckd_add(&needed,builder->length,length)||ckd_add(&needed,needed,1))return false;
+    if(needed>builder->capacity) {
         size_t capacity=builder->capacity==0?64:builder->capacity;
-        while(capacity<builder->length+length+1)capacity*=2;
+        while(capacity<needed)
+            if(ckd_mul(&capacity,capacity,2))return false;
         char *grown=realloc(builder->chars,capacity);
         if(grown==nullptr)return false;
         builder->chars=grown;builder->capacity=capacity;

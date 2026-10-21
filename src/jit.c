@@ -40,6 +40,7 @@
 #include "jit.h"
 
 #include <stdlib.h>
+#include <stdckdint.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -144,9 +145,19 @@ typedef struct JitCompiler {
 
 static void jit_buf_ensure(JitBuffer *buf, size_t extra) {
     if (buf->failed) return;
-    if (buf->length + extra <= buf->capacity) return;
-    size_t new_capacity = buf->capacity == 0 ? 256 : buf->capacity * 2;
-    while (new_capacity < buf->length + extra) new_capacity *= 2;
+    size_t needed;
+    if (ckd_add(&needed, buf->length, extra)) {
+        buf->failed = true;
+        return;
+    }
+    if (needed <= buf->capacity) return;
+    size_t new_capacity = buf->capacity == 0 ? 256 : buf->capacity;
+    while (new_capacity < needed) {
+        if (ckd_mul(&new_capacity, new_capacity, 2)) {
+            buf->failed = true;
+            return;
+        }
+    }
     uint8_t *grown = realloc(buf->code, new_capacity);
     if (grown == nullptr) {
         buf->failed = true;
@@ -585,8 +596,13 @@ static void patch_rel32_to_here(JitBuffer *buf, size_t field_offset) {
 static void record_global_patch(JitCompiler *jc, size_t rel32_offset, size_t bytecode_target) {
     if (jc->buf.dry_run) return;
     if (jc->patch_count >= jc->patch_capacity) {
-        size_t new_capacity = jc->patch_capacity == 0 ? 16 : jc->patch_capacity * 2;
-        JitPatch *grown = realloc(jc->patches, new_capacity * sizeof(JitPatch));
+        size_t new_capacity = 16, bytes;
+        if ((jc->patch_capacity != 0 && ckd_mul(&new_capacity, jc->patch_capacity, 2)) ||
+            ckd_mul(&bytes, new_capacity, sizeof *jc->patches)) {
+            jc->bailed = true;
+            return;
+        }
+        JitPatch *grown = realloc(jc->patches, bytes);
         if (grown == nullptr) {
             jc->bailed = true;
             return;
