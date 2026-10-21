@@ -665,14 +665,14 @@ $(BUILD_DIR)/position_test: tests/position_test.c lsp/position.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/position_test.c $(LDFLAGS) -o $@
 
-$(BUILD_DIR)/json_test: tests/json_test.c lsp/json.c lsp/json.h
+$(BUILD_DIR)/json_test: tests/json_test.c lsp/json.c lsp/json.h lsp/rpc.c lsp/rpc.h src/message_length.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/json_test.c lsp/json.c $(LDFLAGS) -o $@
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/json_test.c lsp/json.c lsp/rpc.c $(LDFLAGS) -lm -o $@
 
 $(BUILD_DIR)/formatting_test: tests/formatting_test.c lsp/formatting.c lsp/formatting.h lsp/json.c src/lexer.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/formatting_test.c \
-		lsp/formatting.c lsp/json.c src/lexer.c $(LDFLAGS) -o $@
+		lsp/formatting.c lsp/json.c src/lexer.c $(LDFLAGS) -lm -o $@
 
 # Spacing, blank-line and range rules, plus whitespace-only and idempotence
 # invariants over every Diamond source in the tree.
@@ -703,7 +703,12 @@ $(BUILD_DIR)/diamond-dap: $(DAP_SOURCES) $(DAP_JSON_SOURCES) $(API_DBG_OBJECTS) 
 
 dap: $(BUILD_DIR)/diamond-dap
 
-test-dap: $(BUILD_DIR)/diamond-dap $(TARGET)
+$(BUILD_DIR)/debug_frame_test: tests/debug_frame_test.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
+
+test-dap: $(BUILD_DIR)/diamond-dap $(BUILD_DIR)/debug_frame_test $(TARGET)
+	$(BUILD_DIR)/debug_frame_test
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/dap_test.sh
 
 # `diamond build` (src/main.c's own "build" subcommand) invokes this to

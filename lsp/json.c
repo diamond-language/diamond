@@ -1,5 +1,6 @@
 #include "json.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -330,18 +331,33 @@ static JsonValue *parse_number(Parser *parser) {
     while(!parser_at_end(parser)&&parser->source[parser->offset]>='0'&&
           parser->source[parser->offset]<='9')
         parser->offset++;
+    const size_t digits_start=start+(parser->source[start]=='-'?1u:0u);
+    if(parser->source[digits_start]=='0'&&parser->offset-digits_start>1) {
+        parser->error="invalid number";
+        return nullptr;
+    }
     if(parser_peek(parser)=='.') {
         parser->offset++;
+        const size_t digits=parser->offset;
         while(!parser_at_end(parser)&&parser->source[parser->offset]>='0'&&
               parser->source[parser->offset]<='9')
             parser->offset++;
+        if(parser->offset==digits) {
+            parser->error="invalid number";
+            return nullptr;
+        }
     }
     if(parser_peek(parser)=='e'||parser_peek(parser)=='E') {
         parser->offset++;
         if(parser_peek(parser)=='+'||parser_peek(parser)=='-')parser->offset++;
+        const size_t digits=parser->offset;
         while(!parser_at_end(parser)&&parser->source[parser->offset]>='0'&&
               parser->source[parser->offset]<='9')
             parser->offset++;
+        if(parser->offset==digits) {
+            parser->error="invalid number";
+            return nullptr;
+        }
     }
     char buffer[64];
     const size_t token_length=parser->offset-start;
@@ -351,7 +367,13 @@ static JsonValue *parse_number(Parser *parser) {
     }
     memcpy(buffer,parser->source+start,token_length);
     buffer[token_length]='\0';
-    return json_number(strtod(buffer,nullptr));
+    char *end=nullptr;
+    const double number=strtod(buffer,&end);
+    if(end!=buffer+token_length||!isfinite(number)) {
+        parser->error="number out of range";
+        return nullptr;
+    }
+    return json_number(number);
 }
 
 static bool match_literal(Parser *parser,const char *literal) {
