@@ -667,12 +667,12 @@ $(BUILD_DIR)/position_test: tests/position_test.c lsp/position.h
 
 $(BUILD_DIR)/json_test: tests/json_test.c lsp/json.c lsp/json.h lsp/rpc.c lsp/rpc.h src/message_length.h
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/json_test.c lsp/json.c lsp/rpc.c $(LDFLAGS) -o $@
+	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/json_test.c lsp/json.c lsp/rpc.c $(LDFLAGS) -lm -o $@
 
 $(BUILD_DIR)/formatting_test: tests/formatting_test.c lsp/formatting.c lsp/formatting.h lsp/json.c src/lexer.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -Ilsp $(CFLAGS_COMMON) $(CFLAGS_DEBUG) tests/formatting_test.c \
-		lsp/formatting.c lsp/json.c src/lexer.c $(LDFLAGS) -o $@
+		lsp/formatting.c lsp/json.c src/lexer.c $(LDFLAGS) -lm -o $@
 
 # Spacing, blank-line and range rules, plus whitespace-only and idempotence
 # invariants over every Diamond source in the tree.
