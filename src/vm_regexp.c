@@ -1,73 +1,9 @@
-#define _DEFAULT_SOURCE
-#define _XOPEN_SOURCE 700
-#define __BSD_VISIBLE 1
-#define _DARWIN_C_SOURCE
-/* _GNU_SOURCE (a superset of _DEFAULT_SOURCE): only for pthread_getattr_np,
- * used to learn a thread's own native stack bounds for the ASan
- * fiber-switch annotations below. */
-#define _GNU_SOURCE
-
-#include "vm.h"
-#include "jit.h"
-#include "bignum.h"
-#include "compiler.h"
-#include "disassemble.h"
-#include "loader.h"
-#include "prelude.h"
 #include "vm_internal.h"
 
-/* <crypt.h> exists on glibc (libxcrypt) and musl (see BCrypt.hash's own
- * comment below for what musl's version lacks), declaring crypt_r/
- * struct crypt_data/CRYPT_GENSALT_* -- but not on FreeBSD, which declares
- * plain crypt()/crypt_r() directly in <unistd.h> (already included below)
- * instead, with no separate header at all. __has_include, not an
- * __APPLE__/__FreeBSD__-style OS check (see docs/portability.md's own
- * "What hasn't been found" on why this codebase avoids those): this is a
- * feature test, and the same reasoning applies wherever else a libc omits
- * this header. */
-#if __has_include(<crypt.h>)
-#include <crypt.h>
-#endif
-#include <ctype.h>
-#include <dirent.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <limits.h>
-#include <math.h>
-#include <stdckdint.h>
-#include <inttypes.h>
+#include <reginold.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include "tls_crypto.h"
-#include <poll.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdatomic.h>
-#include <spawn.h>
-#ifndef DIAMOND_NO_SQLITE
-#include <sqlite3.h>
-#endif
-#ifndef DIAMOND_NO_POSTGRES
-#include <libpq-fe.h>
-#endif
-#ifndef DIAMOND_NO_MYSQL
-#include <mysql.h>
-#endif
-#ifndef DIAMOND_NO_ZLIB
-#include <zlib.h>
-#endif
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <time.h>
-#include <unistd.h>
-
-#include "vm_internal.h"
 
 DiamondRegexp *allocate_regexp_handle(DiamondVm *vm,reginold_regex *compiled,
         const char *source,size_t source_length,unsigned int options) {

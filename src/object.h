@@ -10,9 +10,9 @@
 
 #include "value.h"
 
-/* Forward-declared, not included: only vm.c ever calls an actual OpenSSL
- * function, so keeping <openssl/ssl.h> out of this header (included by
- * nearly every other .c file in the project) avoids dragging OpenSSL's
+/* Forward-declared, not included: native TLS and crypto implementations
+ * include OpenSSL directly. Keeping <openssl/ssl.h> out of this header
+ * (included by nearly every other .c file in the project) avoids dragging OpenSSL's
  * own transitive includes into everything. `ssl_st`/`ssl_ctx_st` are
  * OpenSSL's own opaque struct tags (see <openssl/types.h>), matched here
  * exactly so this typedef and OpenSSL's are the same type. */
@@ -26,8 +26,8 @@ typedef struct ssl_session_st SSL_SESSION;
  * (DiamondClosure.foreign_chunk below), never dereferenced. */
 typedef struct DiamondChunk DiamondChunk;
 
-/* Forward-declared for the same reason SSL/SSL_CTX are above: only vm.c
- * calls real sqlite3 functions, so <sqlite3.h> stays out of this header.
+/* Forward-declared for the same reason SSL/SSL_CTX are above: database
+ * implementations include <sqlite3.h> when calling real sqlite3 functions.
  * Matches sqlite3.h's own `typedef struct sqlite3 sqlite3;` exactly. */
 typedef struct sqlite3 sqlite3;
 
@@ -36,14 +36,14 @@ typedef struct sqlite3 sqlite3;
  * `typedef struct sqlite3_stmt sqlite3_stmt;` exactly. */
 typedef struct sqlite3_stmt sqlite3_stmt;
 
-/* Forward-declared for the same reason sqlite3 is above: only vm.c calls
- * real libpq functions, so <libpq-fe.h> stays out of this header. Matches
+/* Forward-declared for the same reason sqlite3 is above: database
+ * implementations include <libpq-fe.h> when calling real libpq functions. Matches
  * libpq-fe.h's own `typedef struct pg_conn PGconn;` exactly. */
 typedef struct pg_conn PGconn;
 
-/* Forward-declared for the same reason PGconn is above: only vm.c calls
- * real MariaDB Connector/C (libmysqlclient-API-compatible) functions, so
- * <mysql.h> stays out of this header. Matches mysql.h's own
+/* Forward-declared for the same reason PGconn is above: database
+ * implementations include <mysql.h> when calling real MariaDB Connector/C
+ * functions. Matches mysql.h's own
  * `typedef struct st_mysql MYSQL;` exactly. */
 typedef struct st_mysql MYSQL;
 
