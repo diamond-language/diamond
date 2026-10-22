@@ -12,6 +12,14 @@ ref. Separate PRs run independently; a newer manual run on the same ref cancels
 the earlier one. Keep `cancel-in-progress: true` and avoid `always()` on test
 jobs, which can keep cancelled work alive.
 
+`tools/merge_when_green.sh PR BRANCH` accepts only explicit `SUCCESS` check
+states, with at least 29 checks by default (`MIN_CHECKS` overrides this when
+the workflow changes). Queued or running checks wait; cancelled, skipped,
+neutral, failed or unknown states stop the merge. API errors and incomplete
+reports also stop it. The script rechecks the states and count immediately
+before merging, after verifying that the branch still contains current `main`.
+Its fake-command regression tests run as part of `make test`.
+
 Cancellation is asynchronous: most jobs stop within seconds of a newer push, but a
 job on a slow runner (FreeBSD has been the usual one) can take up to the five minutes
 GitHub allows.
