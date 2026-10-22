@@ -75,6 +75,7 @@ exception, below). 123 `*_helper` functions
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
 | `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
+| `vm_crypto.c` | BCrypt, SecureRandom, SHA-256/SHA-1 digests and HMAC, AES-GCM and Base64 (Gzip stays in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
 the program is still owned by the builder and dispatches by method name. The 35
