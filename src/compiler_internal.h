@@ -832,6 +832,8 @@ DIAMOND_INTERNAL int32_t type_set_with_nil(Compiler *compiler,uint16_t source_in
 DIAMOND_INTERNAL void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index);
 DIAMOND_INTERNAL void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
                                   size_t count);
+DIAMOND_INTERNAL void apply_scope_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
+        size_t count);
 DIAMOND_INTERNAL void merge_flow_types(Compiler *compiler,uint16_t left_type,int32_t left_set,
         uint16_t right_type,int32_t right_set,uint16_t *result_type,int32_t *result_set);
 DIAMOND_INTERNAL int32_t merge_tooling_type_sets(const Compiler *compiler,int32_t left,

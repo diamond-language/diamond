@@ -75,8 +75,9 @@ documents and loses precision across some dependency and dynamic-flow boundaries
 
 - Improve receiver facts across imported files where they still lose precision:
   union methods now retain differing representable Array element graphs through
-  direct indexing and copying transforms; unrepresentable dynamic results and
-  nullable `Hash` indexing remain unresolved.
+  direct indexing and copying transforms. Declared Hash lookup locals now retain
+  compiler-proven nil guards for editor queries; direct nullable indexing,
+  inferred Hash results, and unrepresentable dynamic results remain unresolved.
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.
 - Keep editor results conservative when a receiver cannot be proven.

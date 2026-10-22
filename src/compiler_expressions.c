@@ -260,6 +260,16 @@ void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
         apply_type_set_fact(compiler,facts[index].reg,facts[index].type_set);
 }
 
+/* Export guards only at control-flow boundaries whose restoration is also
+ * recorded. Other users (notably ternaries) keep their existing checked facts. */
+void apply_scope_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
+        size_t count) {
+    apply_narrowing_facts(compiler,facts,count);
+    for(size_t index=0;index<count;index++)
+        if(register_is_local(compiler,facts[index].reg))
+            record_scope_type_fact(compiler,facts[index].reg,compiler->current.span.start);
+}
+
 static void append_narrowing_facts(NarrowingFact *destination,size_t *destination_count,
                                    const NarrowingFact *source,size_t source_count) {
     for(size_t index=0;index<source_count&&

@@ -119,7 +119,7 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
     for(size_t index=0;index<flow_local_count;index++)
         before_alias[index]=compiler->locals[index].alias_identity;
     if(narrowing.valid)
-        apply_narrowing_facts(compiler,
+        apply_scope_narrowing_facts(compiler,
             inverted?narrowing.when_false:narrowing.when_true,
             inverted?narrowing.when_false_count:narrowing.when_true_count);
     const uint16_t then_result = compile_sequence(compiler);
@@ -154,11 +154,16 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
         compiler->known_types[index]=before_types[index];
         compiler->known_type_sets[index]=before_sets[index];
         compiler->tooling_type_sets[index]=before_tooling[index];
+        if(register_is_local(compiler,(uint16_t)index)&&
+           (then_types[index]!=before_types[index]||
+            then_sets[index]!=before_sets[index]||
+            then_tooling[index]!=before_tooling[index]))
+            record_scope_type_fact(compiler,(uint16_t)index,compiler->current.span.start);
     }
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=before_alias[index];
     if(narrowing.valid)
-        apply_narrowing_facts(compiler,
+        apply_scope_narrowing_facts(compiler,
             inverted?narrowing.when_true:narrowing.when_false,
             inverted?narrowing.when_true_count:narrowing.when_false_count);
 

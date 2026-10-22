@@ -798,9 +798,10 @@ static size_t resolve_name(const DiamondProgram *program,const DiamondChunk *chu
     if(known_type_set<0||(size_t)known_type_set>=owner->type_set_count)return 0;
     const DiamondTypeSet *set=&owner->type_sets[(size_t)known_type_set];
     size_t count=0;
-    for(size_t index=0;index<set->count;index++)
-        if(decode_class_type(chunk,set->members[index].id,&class_index))
-            count=append_class(classes,count,capacity,class_index);
+    for(size_t index=0;index<set->count;index++) {
+        if(!decode_class_type(chunk,set->members[index].id,&class_index))return 0;
+        count=append_class(classes,count,capacity,class_index);
+    }
     return count;
 }
 

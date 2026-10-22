@@ -2694,10 +2694,10 @@ uint16_t compile_sequence(Compiler *compiler) {
              * `raise ... unless x is String`: past it, x is a String. */
             if(statement_exits&&postfix_narrowing.valid) {
                 if(postfix==DIAMOND_TOKEN_IF)
-                    apply_narrowing_facts(compiler,postfix_narrowing.when_false,
+                    apply_scope_narrowing_facts(compiler,postfix_narrowing.when_false,
                         postfix_narrowing.when_false_count);
                 else
-                    apply_narrowing_facts(compiler,postfix_narrowing.when_true,
+                    apply_scope_narrowing_facts(compiler,postfix_narrowing.when_true,
                         postfix_narrowing.when_true_count);
             }
         }

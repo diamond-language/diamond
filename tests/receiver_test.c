@@ -26,9 +26,10 @@ static DiamondProgram *round_trip(const DiamondProgram *program) {
     return restored;
 }
 
-static int check_receiver(const DiamondProgram *program,const DiamondChunk *chunk,
-        const char *combined,const char *needle,const char *expected,bool singleton) {
-    const char *position=strstr(combined,needle);
+static int check_receiver_after(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *combined,const char *after,const char *needle,const char *expected,bool singleton) {
+    const char *anchor=after==nullptr?combined:strstr(combined,after);
+    const char *position=anchor==nullptr?nullptr:strstr(anchor,needle);
     if(position==nullptr) {
         fprintf(stderr,"receiver test expression not found: %s\n",needle);
         return 1;
@@ -52,6 +53,11 @@ static int check_receiver(const DiamondProgram *program,const DiamondChunk *chun
         return 1;
     }
     return 0;
+}
+
+static int check_receiver(const DiamondProgram *program,const DiamondChunk *chunk,
+        const char *combined,const char *needle,const char *expected,bool singleton) {
+    return check_receiver_after(program,chunk,combined,nullptr,needle,expected,singleton);
 }
 
 static int check_receiver_pair(const DiamondProgram *program,const DiamondChunk *chunk,
@@ -546,6 +552,77 @@ int main(void) {
         "  Qualified.make_inner().dive()\n"
         "  Qualified.unknown(1).spin()\n"
         "end\n"
+        "def guarded_hash(pets: Hash[String, Pet], flag)\n"
+        "  pet = pets[\"one\"]\n"
+        "  # before_guard\n"
+        "  pet.bark()\n"
+        "  if pet != nil\n"
+        "    # non_nil_branch\n"
+        "    pet.bark()\n"
+        "  else\n"
+        "    # nil_branch\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "  # after_guard\n"
+        "  pet.bark()\n"
+        "  if pet != nil && flag\n"
+        "    # conjunctive_branch\n"
+        "    pet.bark()\n"
+        "  else\n"
+        "    # uncertain_else\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "  unless pet == nil\n"
+        "    # unless_branch\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "  if pet == nil\n"
+        "    0\n"
+        "  else\n"
+        "    # inverted_else\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "  if pet != nil || flag\n"
+        "    # uncertain_or\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "  if pet != nil\n"
+        "    pet = nil\n"
+        "    # reassigned_branch\n"
+        "    pet.bark()\n"
+        "  end\n"
+        "end\n"
+        "def early_hash(pets: Hash[String, Pet])\n"
+        "  early_pet = pets[\"one\"]\n"
+        "  return if early_pet == nil\n"
+        "  # after_early_return\n"
+        "  early_pet.bark()\n"
+        "end\n"
+        "def guarded_union_hash(pets: Hash[String, Pet | Leaf])\n"
+        "  union_pet = pets[\"one\"]\n"
+        "  if union_pet != nil\n"
+        "    union_pet.bark()\n"
+        "  end\n"
+        "end\n"
+        "def guarded_mixed_hash(pets: Hash[String, Pet | Int])\n"
+        "  mixed_pet = pets[\"one\"]\n"
+        "  if mixed_pet != nil\n"
+        "    mixed_pet.bark()\n"
+        "  end\n"
+        "end\n"
+        "def nested_hash_guard(pets: Hash[String, Pet], flag)\n"
+        "  nested_pet = pets[\"one\"]\n"
+        "  if nested_pet != nil\n"
+        "    if flag\n"
+        "      nested_pet = nil\n"
+        "    else\n"
+        "      # restored_nested_else\n"
+        "      nested_pet.bark()\n"
+        "    end\n"
+        "    # uncertain_nested_join\n"
+        "    nested_pet.bark()\n"
+        "  end\n"
+        "end\n"
         "def greeting() -> String = \"abc\"\n"
         "def string_twin?(text) -> Int = 1\n"
         "def string_twin(text) -> String = \"twin\"\n"
@@ -732,6 +809,34 @@ int main(void) {
         "conflicting_factory(true).only()[0].",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,
         "conflicting_factory(true).different_depth()[0][0].",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# before_guard\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# non_nil_branch\n",
+        "pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# nil_branch\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# after_guard\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# conjunctive_branch\n",
+        "pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# uncertain_else\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# unless_branch\n",
+        "pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inverted_else\n",
+        "pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# uncertain_or\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# reassigned_branch\n",
+        "pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# after_early_return\n",
+        "early_pet.","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"union_pet.","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"mixed_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# restored_nested_else\n",
+        "nested_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# uncertain_nested_join\n",
+        "nested_pet.",nullptr,false);
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
@@ -761,6 +866,8 @@ int main(void) {
             "holders.pet().","Pet","Leaf");
         failed|=check_receiver_pair(restored,&restored_chunk,combined,
             "conflicting_factory(true).nested()[0][0].","Pet","Leaf");
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# non_nil_branch\n",
+            "pet.","Pet",false);
         diamond_program_free(restored);free(restored);
     }
     failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);
