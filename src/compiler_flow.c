@@ -43,6 +43,32 @@ static bool consume_loop_start(Compiler *compiler) {
     return true;
 }
 
+static int32_t guarded_tooling_set(const NarrowingFact *facts,size_t count,
+        uint16_t reg,int32_t before) {
+    for(size_t index=0;index<count;index++) {
+        if(facts[index].reg!=reg)continue;
+        if(facts[index].tooling_only)before=facts[index].type_set;
+        else if(facts[index].has_tooling)before=facts[index].tooling_type_set;
+    }
+    return before;
+}
+
+/* Rejoin two unchanged views of the same nullable editor fact. A write or an
+ * unknown path still uses the ordinary conservative tooling merge. */
+static int32_t merge_guarded_tooling(Compiler *compiler,const Narrowing *narrowing,
+        bool inverted,uint16_t reg,int32_t before,int32_t yes,int32_t no) {
+    const int32_t merged=merge_tooling_type_sets(compiler,yes,no);
+    if(merged>=0||before<0||!narrowing->valid)return merged;
+    int32_t expected_yes=guarded_tooling_set(narrowing->when_true,
+        narrowing->when_true_count,reg,before);
+    int32_t expected_no=guarded_tooling_set(narrowing->when_false,
+        narrowing->when_false_count,reg,before);
+    if(inverted) {const int32_t swap=expected_yes;expected_yes=expected_no;expected_no=swap;}
+    if(merge_tooling_type_sets(compiler,yes,expected_yes)>=0&&
+       merge_tooling_type_sets(compiler,no,expected_no)>=0)return before;
+    return merged;
+}
+
 uint16_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint16_t condition = parse_expression(compiler);
@@ -199,8 +225,8 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
             false_type,false_set,&compiler->known_types[index],
             &compiler->known_type_sets[index]);
         const int32_t false_tooling=compiler->tooling_type_sets[index];
-        compiler->tooling_type_sets[index]=merge_tooling_type_sets(compiler,
-            then_tooling[index],false_tooling);
+        compiler->tooling_type_sets[index]=merge_guarded_tooling(compiler,&narrowing,
+            inverted,(uint16_t)index,before_tooling[index],then_tooling[index],false_tooling);
         if(register_is_local(compiler,(uint16_t)index))
             record_scope_type_fact(compiler,(uint16_t)index,
                 compiler->current.span.start);

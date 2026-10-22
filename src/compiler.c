@@ -782,6 +782,19 @@ void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
         DIAMOND_TYPE_ARRAY,joined,-1);
 }
 
+void publish_hash_literal_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *keys,const uint16_t *values,size_t count) {
+    bool have_tooling=false;
+    for(size_t index=0;index<count;index++)
+        if(compiler->tooling_type_sets[keys[index]]>=0||
+           compiler->tooling_type_sets[values[index]]>=0) {have_tooling=true;break;}
+    if(!have_tooling)return;
+    const int32_t key_set=joined_tooling_value_type_set(compiler,keys,count);
+    const int32_t value_set=joined_tooling_value_type_set(compiler,values,count);
+    compiler->tooling_type_sets[reg]=collection_type_set(compiler,
+        DIAMOND_TYPE_HASH,key_set,value_set);
+}
+
 void publish_array_spread_tooling_type(Compiler *compiler,uint16_t reg,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
         const uint16_t *suffix,size_t suffix_count) {
