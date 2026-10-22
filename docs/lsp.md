@@ -186,8 +186,14 @@ search over a real (if scoped) lexical symbol table:
     `pets.each() do |pet| pet.bark() end` completes, and `map() do |pet| pet end`
     keeps the graph. The checked block-parameter facts are used instead whenever
     the receiver has any.
-    A union receiver may supply the array-valued method when every candidate
-    has the same non-generic structural return graph.
+    A union receiver may supply the array-valued method even when its candidates
+    return different element graphs. For example, if imported factories return
+    `Array[Pet]` and `Array[Leaf]`, `factory.pets()[0].` offers methods from both
+    `Pet` and `Leaf`. Nested indexing and the native Array transforms above keep
+    each candidate's graph, and generic methods substitute their own bindings
+    before combining the element classes. Every candidate must support the full
+    indexing chain: a missing method, unknown result, nullable result, or
+    incompatible nesting leaves it unresolved.
     Call results can be receivers recursively:
     `Branch.new().leaf().ping()`, a top-level `make_branch().leaf()`, and a
     singleton factory such as `Factory.build().leaf()` resolve through each

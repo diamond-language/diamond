@@ -779,8 +779,7 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'"}}}'
 read_message >/dev/null
 
-# Every arm of a union receiver may feed indexing when its method has the same
-# structural array return graph.
+# Every arm of a union receiver contributes its own array element graph.
 receiver_union_array_uri="file://$work/receiver_union_array.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'","text":"require \"receiver_dependency\"\ndef union_array_receiver()\n  factory = build_union_array_receiver(true)\n  factory.pets()[0].bark()\nend\n\ndef conflicting_union_array_receiver()\n  factory = build_conflicting_union_array_receiver(true)\n  factory.pets()[0].bark()\nend"}}}'
 read_message >/dev/null
@@ -792,12 +791,106 @@ count=$((count + 1))
 
 send '{"jsonrpc":"2.0","id":186,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"},"position":{"line":8,"character":20}}}'
 response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"}}}'
+read_message >/dev/null
+
+# Imported alternatives keep separate owners and generic substitutions. Unknown,
+# nullable, scalar, and missing method alternatives invalidate the whole result.
+cat > "$work/varying_arrays.di" <<'EOF'
+require "receiver_dependency"
+class ArrayChoiceLeft
+  def nested() = [[ImportedPet.new()]]
+  def pick[T, U](first: T, second: U) -> Array[T] = [first]
+  def uncertain(value) = [ImportedPet.new()]
+  def nil_items() = [ImportedPet.new()]
+  def scalar_items() = [ImportedPet.new()]
+  def pets_only() = [ImportedPet.new()]
+end
+class ArrayChoiceRight
+  def nested() = [[ImportedLeaf.new()]]
+  def pick[T, U](first: T, second: U) -> Array[U] = [second]
+  def uncertain(value) = value
+  def nil_items() = nil
+  def scalar_items() = 1
+end
+def imported_choice(flag) = flag ? ArrayChoiceLeft.new() : ArrayChoiceRight.new()
+EOF
+varying_arrays_uri="file://$work/varying_arrays_main.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'","text":"require \"varying_arrays\"\ndef inspect_choice(flag, value)\n  factory = imported_choice(flag)\n  factory.nested()[0][0].bark()\n  factory.nested().reverse().take(1)[0][0].ping()\n  factory.pick(ImportedPet.new(), ImportedLeaf.new())[0].bark()\n  factory.pick[ImportedPet, ImportedLeaf](ImportedPet.new(), ImportedLeaf.new())[0].ping()\n  factory.uncertain(value)[0].bark()\n  factory.nil_items()[0].bark()\n  factory.scalar_items()[0].bark()\n  factory.pets_only()[0].bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","id":1003,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":3,"character":25}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1004,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":4,"character":43}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1005,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":5,"character":57}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1006,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":6,"character":84}}}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" == *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1007,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":7,"character":30}}}'
+response="$(read_message)"
 [[ "$response" != *'"label":"bark","kind":3'* ]]
 count=$((count + 1))
 [[ "$response" != *'"label":"ping","kind":3'* ]]
 count=$((count + 1))
 
-send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'"}}}'
+send '{"jsonrpc":"2.0","id":1008,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":8,"character":25}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1009,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":9,"character":28}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1010,"method":"textDocument/completion","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":10,"character":25}}}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+[[ "$response" != *'"label":"ping","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1023,"method":"textDocument/hover","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":3,"character":26}}}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","id":1024,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"},"position":{"line":4,"character":44}}}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'"}}}'
 read_message >/dev/null
 
 # Case joins apply the same rule across every when/else path.

@@ -32,7 +32,9 @@ bool receiver_has_explicit_receiver(const char *source,size_t stop_offset);
  * `Array[T]`/`Array[Pet | Leaf]` and
  * `Hash[String, T]`/`Hash[String, Pet | Leaf]`.
  * Union receivers can supply an indexed method result when every candidate has
- * an equivalent non-generic structural array return.
+ * a structural array return that reaches known class elements after indexing.
+ * Each candidate uses its own return graph and generic bindings; differing
+ * element classes are combined, including through native Array transforms.
  * A module-qualified class name (`A::B`, any depth) is a literal class name, and
  * `Module.function(...)` resolves through the module's singleton methods.
  * Nullable Hash indexing remains unresolved. `Class.new()` is intrinsically an instance of
