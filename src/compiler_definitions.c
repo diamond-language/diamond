@@ -1199,21 +1199,19 @@ static bool register_module_function_early(Compiler *compiler,DiamondFunction *f
     return module_function_singleton_registered_early;
 }
 
-uint16_t compile_definition(Compiler *compiler, bool captures_self) {
-    const bool at_top_level = compiler->function == &compiler->program->entry;
-    if(captures_self && !compiler->in_method) {
-        fail(compiler,compiler->current.span,
-             "closure requires an enclosing method -- no 'self' is available here");
-        return 0;
-    }
-    advance_token(compiler);
-    bool module_singleton=false;
+/* Parses what follows `def`: an optional `self.` (a class or module singleton), then the name,
+ * which is an identifier, an operator (`+`, `==`, `<=>` ...) or the two-token `[]`/`[]=`. Fills in
+ * the name's span and the two flags; false once an error has been reported. Leaves the current
+ * token on the name, or, for `[]`/`[]=`, past it (those tokens are all consumed here). */
+static bool parse_definition_name(Compiler *compiler,DiamondSpan *name,bool *module_singleton,
+        bool *is_index_operator) {
+    *module_singleton=false;
     if(compiler->current.kind==DIAMOND_TOKEN_SELF&&
        (compiler->current_module>=0||compiler->current_class>=0)) {
-        module_singleton=true;advance_token(compiler);
+        *module_singleton=true;advance_token(compiler);
         if(compiler->current.kind!=DIAMOND_TOKEN_DOT) {
             fail(compiler,compiler->current.span,"expected '.' after 'self'");
-            return 0;
+            return false;
         }
         advance_token(compiler);
     }
@@ -1250,7 +1248,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * other operator name here being a single, ungappable token; `def [
      * ](i)` or `def [] =(i, v)` fall through to the ordinary "expected
      * function name" error below, same as any other malformed name. */
-    bool is_index_operator=false;
+    *is_index_operator=false;
     DiamondSpan index_operator_name={};
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         const DiamondSpan left=compiler->current.span;
@@ -1258,7 +1256,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         const DiamondToken right=diamond_lexer_next(&lookahead);
         if(right.kind==DIAMOND_TOKEN_RIGHT_BRACKET&&
            right.span.start==left.start+left.length) {
-            is_index_operator=true;
+            *is_index_operator=true;
             advance_token(compiler);
             advance_token(compiler);
             size_t total_length=right.span.start+right.span.length-left.start;
@@ -1274,7 +1272,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     }
     if (compiler->current.kind != DIAMOND_TOKEN_IDENTIFIER && !operator_name) {
         fail(compiler, compiler->current.span, "expected function name after 'def'");
-        return 0;
+        return false;
     }
     /* A module's own operator method is inert until some class `include`s
      * it (a bare module isn't itself an instantiable receiver), but once
@@ -1288,16 +1286,176 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * already has with `each`. */
     if (operator_name &&
         !((compiler->current_class>=0||compiler->current_module>=0) &&
-          !module_singleton)) {
+          !*module_singleton)) {
         fail(compiler, compiler->current.span,
              "operator methods can only be defined inside a class or module");
+        return false;
+    }
+    *name = *is_index_operator?index_operator_name:compiler->current.span;
+    if (name->length >= DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler, *name, "function name is too long");
+        return false;
+    }
+    return true;
+}
+
+/* Parses `[T, U]` after a def's name, the generic type parameters (at most eight). */
+static void parse_generic_type_parameters(Compiler *compiler,DiamondFunction *function) {
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
+        advance_token(compiler);
+        skip_newlines(compiler);
+        while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+               function->type_variable_count==8) {
+                fail(compiler,compiler->current.span,"expected generic type parameter");break;
+            }
+            for(size_t existing=0;existing<function->type_variable_count;existing++)
+                if(name_equals(compiler,function->type_variables[existing],
+                               compiler->current.span,false)) {
+                    fail(compiler,compiler->current.span,
+                         "duplicate generic type parameter");break;
+                }
+            if(compiler->failed)break;
+            char *type_variable=
+                function->type_variables[function->type_variable_count++];
+            if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,compiler->current.span,"generic type name is too long");break;
+            }
+            for(size_t index=0;index<compiler->current.span.length;index++)
+                type_variable[index]=compiler->source[compiler->current.span.start+index];
+            type_variable[compiler->current.span.length]='\0';advance_token(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+            advance_token(compiler);
+            skip_newlines(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET)
+            fail(compiler,compiler->current.span,
+                 "expected ']' after generic type parameters");
+        else advance_token(compiler);
+    }
+}
+
+/* Compiles a def's body, up to but not past its `end`: either the endless form (`= expr`, with an
+ * optional postfix `if`/`unless`, the expression possibly on the next line) or a block of statements.
+ * Returns whether it was the endless form; `*body_diverges` is set when the statements always raise or
+ * return, so that `*body_result` never produced anything real. */
+static bool compile_definition_body(Compiler *compiler,int return_type,uint16_t *body_result,
+        bool *body_diverges) {
+    const bool endless=!compiler->failed&&
+        compiler->current.kind==DIAMOND_TOKEN_EQUAL;
+    *body_result=0;
+    *body_diverges=false;
+    if(endless) {
+        advance_token(compiler);
+        /* The body may start on the next line: `def f(x) =` / `  x + 1`. */
+        skip_newlines(compiler);
+        const DiamondTokenKind postfix=postfix_modifier_ahead(compiler,nullptr);
+        const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
+                               postfix==DIAMOND_TOKEN_UNLESS;
+        const uint16_t postfix_result=has_postfix?allocate_register(compiler):0;
+        const size_t condition_jump=has_postfix
+            ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
+        const size_t body_start=compiler->function->code_count;
+        *body_result=return_type>=0?
+            parse_with_expected_set(compiler,(uint16_t)return_type):
+            parse_expression(compiler);
+        if(has_postfix) {
+            if(compiler->current.kind!=postfix) {
+                fail(compiler,compiler->current.span,"expected postfix condition");
+            } else {
+                advance_token(compiler);
+                emit_instruction(compiler,DIAMOND_OP_MOVE,postfix_result,
+                                 *body_result,0,2);
+                const size_t body_exit=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+                const size_t condition_start=compiler->function->code_count;
+                const uint16_t condition=parse_expression(compiler);
+                const size_t body_jump=emit_jump(
+                    compiler,postfix==DIAMOND_TOKEN_IF
+                        ? DIAMOND_OP_JUMP_IF_TRUE:DIAMOND_OP_JUMP_IF_FALSE,
+                    condition);
+                emit_instruction(compiler,DIAMOND_OP_NIL,postfix_result,0,0,1);
+                patch_jump(compiler,condition_jump,condition_start);
+                patch_jump(compiler,body_exit,compiler->function->code_count);
+                patch_jump(compiler,body_jump,body_start);
+                *body_result=postfix_result;
+            }
+        }
+    } else {
+        if(!compiler->failed)(void)consume_block_start(compiler);
+        *body_result=compiler->failed?0:compile_sequence(compiler);
+        *body_diverges=!compiler->failed&&compiler->sequence_diverges;
+    }
+    return endless;
+}
+
+/* A def with no `-> Type`: best-effort inference for the language server's call-chain resolution
+ * (inferred_return_type_set, not return_type_set itself -- see that field's own comment in vm.h for
+ * why they are kept separate). Includes advisory call-result facts; unlike compile_block's checked
+ * return inference, these never form a runtime contract. Combines two independent sources of what
+ * the function can return: the body's own trailing value (skipped when it always raises or returns
+ * early) and every explicit `return value` compile_return accumulated (return_flow_seen). Either
+ * alone is used as-is; both together are unioned with merge_flow_types, the control-flow-join
+ * primitive an if/case expression's per-branch merge uses. A function using return statements across
+ * separate branches would otherwise have no single inferable type. */
+static void infer_definition_return(Compiler *compiler,DiamondFunction *function,
+        uint16_t body_result,bool body_diverges) {
+    uint16_t inferred_type=TYPE_UNKNOWN;int32_t inferred_set=-1;
+    bool have_inference=false;
+    if(!body_diverges&&!compiler->method_has_block_return) {
+        inferred_type=compiler->known_types[body_result];
+        inferred_set=compiler->tooling_type_sets[body_result]>=0?
+            compiler->tooling_type_sets[body_result]:
+            compiler->known_type_sets[body_result];
+        /* A reachable unknown tail still participates in the join;
+         * dropping it would publish only the known early returns. */
+        have_inference=true;
+    }
+    if(compiler->return_flow_seen&&!compiler->method_has_block_return) {
+        if(have_inference)
+            merge_flow_types(compiler,inferred_type,inferred_set,
+                compiler->return_tooling_type,compiler->return_tooling_set,
+                &inferred_type,&inferred_set);
+        else {
+            inferred_type=compiler->return_tooling_type;
+            inferred_set=compiler->return_tooling_set;
+        }
+        have_inference=true;
+    }
+    if(have_inference) {
+        if(inferred_set>=0) {
+            function->inferred_return_type_set=(uint16_t)inferred_set;
+        } else if(inferred_type!=TYPE_UNKNOWN&&
+                  reserve_type_sets(compiler,1)) {
+            const size_t return_set=function->type_set_count++;
+            DiamondTypeSet *set=&function->type_sets[return_set];
+            set->count=1;set->inferred=true;
+            set->members[0]=(DiamondTypeMember){
+                .id=inferred_type,
+                .argument_set=DIAMOND_NO_TYPE_SET,
+                .second_argument_set=DIAMOND_NO_TYPE_SET,
+                .callable_arity=UINT8_MAX,
+                .callable_return_set=DIAMOND_NO_TYPE_SET,
+                .callable_parameters_typed=false};
+            for(size_t parameter=0;parameter<16;parameter++)
+                set->members[0].callable_parameter_sets[parameter]=
+                    DIAMOND_NO_TYPE_SET;
+            function->inferred_return_type_set=(uint16_t)return_set;
+        }
+    }
+}
+
+uint16_t compile_definition(Compiler *compiler, bool captures_self) {
+    const bool at_top_level = compiler->function == &compiler->program->entry;
+    if(captures_self && !compiler->in_method) {
+        fail(compiler,compiler->current.span,
+             "closure requires an enclosing method -- no 'self' is available here");
         return 0;
     }
-    const DiamondSpan name = is_index_operator?index_operator_name:compiler->current.span;
-    if (name.length >= DIAMOND_MAX_FUNCTION_NAME) {
-        fail(compiler, name, "function name is too long");
-        return 0;
-    }
+    advance_token(compiler);
+    bool module_singleton,is_index_operator;
+    DiamondSpan name;
+    if(!parse_definition_name(compiler,&name,&module_singleton,&is_index_operator))return 0;
     const bool genuine_top_level=at_top_level&&compiler->current_class<0&&
         compiler->current_module<0&&!module_singleton;
     const bool claiming_discovered=!compiler->discovery_pass&&
@@ -1420,39 +1578,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             function->name[copy_length]='\0';advance_token(compiler);
         }
     }
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-        advance_token(compiler);
-        skip_newlines(compiler);
-        while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-               function->type_variable_count==8) {
-                fail(compiler,compiler->current.span,"expected generic type parameter");break;
-            }
-            for(size_t existing=0;existing<function->type_variable_count;existing++)
-                if(name_equals(compiler,function->type_variables[existing],
-                               compiler->current.span,false)) {
-                    fail(compiler,compiler->current.span,
-                         "duplicate generic type parameter");break;
-                }
-            if(compiler->failed)break;
-            char *type_variable=
-                function->type_variables[function->type_variable_count++];
-            if(compiler->current.span.length>=DIAMOND_MAX_FUNCTION_NAME) {
-                fail(compiler,compiler->current.span,"generic type name is too long");break;
-            }
-            for(size_t index=0;index<compiler->current.span.length;index++)
-                type_variable[index]=compiler->source[compiler->current.span.start+index];
-            type_variable[compiler->current.span.length]='\0';advance_token(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET)
-            fail(compiler,compiler->current.span,
-                 "expected ']' after generic type parameters");
-        else advance_token(compiler);
-    }
+    parse_generic_type_parameters(compiler,function);
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after function name");
         return 0;
@@ -1629,127 +1755,15 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     compiler->method_return_type=return_type;
     compiler->method_return_type_span=return_type_span;
     compiler->method_has_block_return=false;
-    const bool endless=!compiler->failed&&
-        compiler->current.kind==DIAMOND_TOKEN_EQUAL;
-    uint16_t body_result=0;
-    bool body_diverges=false;
-    if(endless) {
-        advance_token(compiler);
-        /* The body may start on the next line: `def f(x) =` / `  x + 1`. */
-        skip_newlines(compiler);
-        const DiamondTokenKind postfix=postfix_modifier_ahead(compiler,nullptr);
-        const bool has_postfix=postfix==DIAMOND_TOKEN_IF||
-                               postfix==DIAMOND_TOKEN_UNLESS;
-        const uint16_t postfix_result=has_postfix?allocate_register(compiler):0;
-        const size_t condition_jump=has_postfix
-            ? emit_jump(compiler,DIAMOND_OP_JUMP,0):SIZE_MAX;
-        const size_t body_start=compiler->function->code_count;
-        body_result=return_type>=0?
-            parse_with_expected_set(compiler,(uint16_t)return_type):
-            parse_expression(compiler);
-        if(has_postfix) {
-            if(compiler->current.kind!=postfix) {
-                fail(compiler,compiler->current.span,"expected postfix condition");
-            } else {
-                advance_token(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,postfix_result,
-                                 body_result,0,2);
-                const size_t body_exit=emit_jump(compiler,DIAMOND_OP_JUMP,0);
-                const size_t condition_start=compiler->function->code_count;
-                const uint16_t condition=parse_expression(compiler);
-                const size_t body_jump=emit_jump(
-                    compiler,postfix==DIAMOND_TOKEN_IF
-                        ? DIAMOND_OP_JUMP_IF_TRUE:DIAMOND_OP_JUMP_IF_FALSE,
-                    condition);
-                emit_instruction(compiler,DIAMOND_OP_NIL,postfix_result,0,0,1);
-                patch_jump(compiler,condition_jump,condition_start);
-                patch_jump(compiler,body_exit,compiler->function->code_count);
-                patch_jump(compiler,body_jump,body_start);
-                body_result=postfix_result;
-            }
-        }
-    } else {
-        if(!compiler->failed)(void)consume_block_start(compiler);
-        body_result=compiler->failed?0:compile_sequence(compiler);
-        body_diverges=!compiler->failed&&compiler->sequence_diverges;
-    }
+    uint16_t body_result;
+    bool body_diverges;
+    const bool endless=compile_definition_body(compiler,return_type,&body_result,&body_diverges);
     if (!compiler->failed) {
         if (return_type >= 0 && !body_diverges) {
             emit_type_check(compiler,body_result,(uint16_t)return_type,
                             return_type_span);
         } else if(return_type<0) {
-            /* No explicit `-> Type`: best-effort inference for lsp/
-             * receiver.c's call-chain resolution only (inferred_return_
-             * type_set, not return_type_set itself -- see that field's
-             * own comment in vm.h for why they're kept separate).
-             * Includes advisory call-result facts; unlike compile_block's
-             * checked return inference, these never form a runtime contract.
-             * Combines two
-             * independent sources of "what this function can actually
-             * return": the body's own trailing value (skipped when it
-             * always raises/returns early -- body_diverges means
-             * body_result never actually produced anything real) and
-             * every explicit `return value` compile_return has
-             * accumulated along the way (return_flow_seen -- a function
-             * using return statements across more than one branch had no
-             * single inferable type before this, even though each
-             * individual return's own value has a perfectly well-known
-             * type at compile time; see return_flow_seen's own comment,
-             * the Compiler struct). Either source alone is used as-is;
-             * both together get unioned via merge_flow_types, the same
-             * control-flow-join primitive an if/case expression's own
-             * per-branch merge already uses (e.g. an unannotated
-             * function with a bare `if`/`case` as its own last statement
-             * already got this for free -- merge_flow_types already
-             * writes the merged set onto that expression's own
-             * destination register unconditionally, so body_result
-             * already carries it by the time this reads it; the real
-             * gap this closes is a function using return statements
-             * across separate branches instead, which body_result alone
-             * can never see). */
-            uint16_t inferred_type=TYPE_UNKNOWN;int32_t inferred_set=-1;
-            bool have_inference=false;
-            if(!body_diverges&&!compiler->method_has_block_return) {
-                inferred_type=compiler->known_types[body_result];
-                inferred_set=compiler->tooling_type_sets[body_result]>=0?
-                    compiler->tooling_type_sets[body_result]:
-                    compiler->known_type_sets[body_result];
-                /* A reachable unknown tail still participates in the join;
-                 * dropping it would publish only the known early returns. */
-                have_inference=true;
-            }
-            if(compiler->return_flow_seen&&!compiler->method_has_block_return) {
-                if(have_inference)
-                    merge_flow_types(compiler,inferred_type,inferred_set,
-                        compiler->return_tooling_type,compiler->return_tooling_set,
-                        &inferred_type,&inferred_set);
-                else {
-                    inferred_type=compiler->return_tooling_type;
-                    inferred_set=compiler->return_tooling_set;
-                }
-                have_inference=true;
-            }
-            if(have_inference) {
-                if(inferred_set>=0) {
-                    function->inferred_return_type_set=(uint16_t)inferred_set;
-                } else if(inferred_type!=TYPE_UNKNOWN&&
-                          reserve_type_sets(compiler,1)) {
-                    const size_t return_set=function->type_set_count++;
-                    DiamondTypeSet *set=&function->type_sets[return_set];
-                    set->count=1;set->inferred=true;
-                    set->members[0]=(DiamondTypeMember){
-                        .id=inferred_type,
-                        .argument_set=DIAMOND_NO_TYPE_SET,
-                        .second_argument_set=DIAMOND_NO_TYPE_SET,
-                        .callable_arity=UINT8_MAX,
-                        .callable_return_set=DIAMOND_NO_TYPE_SET,
-                        .callable_parameters_typed=false};
-                    for(size_t parameter=0;parameter<16;parameter++)
-                        set->members[0].callable_parameter_sets[parameter]=
-                            DIAMOND_NO_TYPE_SET;
-                    function->inferred_return_type_set=(uint16_t)return_set;
-                }
-            }
+            infer_definition_return(compiler,function,body_result,body_diverges);
         }
         maybe_rewrite_self_tail_call(compiler,body_result);
         emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);

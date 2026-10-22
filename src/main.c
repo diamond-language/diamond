@@ -150,8 +150,8 @@ static bool write_compiled_program_to_temp(const DiamondProgram *program,
         unlink(path_out);
         return false;
     }
-    const bool ok = diamond_program_write_compiled(program, file);
-    fclose(file);
+    bool ok = diamond_program_write_compiled(program, file);
+    if (fclose(file) != 0) ok = false;
     if (!ok) {
         fprintf(stderr, "diamond: failed to serialize compiled program\n");
         unlink(path_out);
@@ -182,7 +182,8 @@ static bool write_embed_data_file(const char *bin_path, const char *embed_path) 
         "size_t diamond_aot_program_size(void) "
             "{ return sizeof(DIAMOND_AOT_PROGRAM_BYTES); }\n",
         bin_path);
-    const bool ok = written >= 0 && fclose(file) == 0;
+    const int closed = fclose(file);
+    const bool ok = written >= 0 && closed == 0;
     if (!ok) fprintf(stderr, "diamond: error writing '%s'\n", embed_path);
     return ok;
 }

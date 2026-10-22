@@ -912,4 +912,56 @@ DIAMOND_INTERNAL bool diamond_compile_impl(const char *source, DiamondProgram *p
 DIAMOND_INTERNAL bool diamond_compile(const char *source, DiamondProgram *program,
                      DiamondDiagnostic *diagnostic);
 
+DIAMOND_INTERNAL bool type_members_satisfy_across(const Compiler *compiler,
+    const DiamondTypeSet *known_sets,DiamondTypeMember known,
+    const DiamondTypeSet *expected_sets,DiamondTypeMember expected);
+DIAMOND_INTERNAL bool type_sets_satisfy_across(const Compiler *compiler,
+    const DiamondTypeSet *known_sets,uint16_t known_index,
+    const DiamondTypeSet *expected_sets,uint16_t expected_index);
+DIAMOND_INTERNAL void check_call_argument_types(Compiler *compiler,const DiamondFunction *callee,
+        const uint16_t *arguments,size_t count,size_t parameter_offset,
+        DiamondSpan span);
+DIAMOND_INTERNAL bool grow_type_sets(DiamondFunction *function,size_t additional);
+DIAMOND_INTERNAL void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *values,size_t count);
+DIAMOND_INTERNAL void publish_array_spread_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *prefix,size_t prefix_count,uint16_t spread,
+        const uint16_t *suffix,size_t suffix_count);
+DIAMOND_INTERNAL void publish_callable_return_type(Compiler *compiler,uint16_t reg,
+        int32_t callable_set_index);
+DIAMOND_INTERNAL uint16_t add_string_range_mode(Compiler *compiler,size_t start,size_t length,
+                                DiamondSpan span,bool raw);
+DIAMOND_INTERNAL Precedence token_precedence(DiamondTokenKind kind);
+DIAMOND_INTERNAL bool power_operator_ahead(const Compiler *compiler);
+DIAMOND_INTERNAL Precedence infix_precedence(const Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_integer(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_float(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_symbol(Compiler *compiler);
+DIAMOND_INTERNAL int load_constant_receiver(Compiler *compiler,DiamondSpan name);
+DIAMOND_INTERNAL void note_self_reference(Compiler *compiler,DiamondSpan name);
+DIAMOND_INTERNAL uint16_t parse_array_literal(Compiler *compiler,
+        const DiamondFunction *expected_function,size_t first_parameter,
+        size_t parameter_count);
+DIAMOND_INTERNAL bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right);
+DIAMOND_INTERNAL bool type_sets_equal_unordered(DiamondTypeSet left,DiamondTypeSet right);
+DIAMOND_INTERNAL void set_index_provenance(Compiler *compiler,uint16_t destination,
+        uint16_t source_receiver);
+DIAMOND_INTERNAL void finish_loop_flow(Compiler *compiler,LoopContext *loop,
+        size_t effective_start);
+DIAMOND_INTERNAL void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
+        uint16_t receiver);
+DIAMOND_INTERNAL void mark_locals_captured(Compiler *compiler);
+DIAMOND_INTERNAL bool statement_may_capture(const Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_while(Compiler *compiler,bool inverted);
+DIAMOND_INTERNAL uint16_t parse_postfix_while(Compiler *compiler,bool inverted,DiamondLexer after_modifier);
+DIAMOND_INTERNAL uint16_t parse_loop(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t parse_precedence(Compiler *compiler, Precedence precedence);
+DIAMOND_INTERNAL bool compound_assignment_ahead(const Compiler *compiler);
+DIAMOND_INTERNAL bool index_compound_assignment_ahead(const Compiler *compiler);
+DIAMOND_INTERNAL bool multi_assignment_ahead(const Compiler *compiler);
+DIAMOND_INTERNAL uint16_t compile_index_assignment(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t compile_index_compound_assignment(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t compile_compound_assignment(Compiler *compiler);
+DIAMOND_INTERNAL uint16_t compile_expression_statement(Compiler *compiler,bool has_postfix);
+
 #endif

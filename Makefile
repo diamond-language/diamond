@@ -455,9 +455,14 @@ $(BUILD_DIR)/buffer_growth_test: tests/buffer_growth_test.c src/jit.c src/loader
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) \
 		$(filter-out $(DBG_OBJ_DIR)/jit.o $(DBG_OBJ_DIR)/loader.o,$(API_DBG_OBJECTS)) $< $(LDLIBS) -o $@
 
-test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test
+$(BUILD_DIR)/aot_write_test: tests/aot_write_test.c src/main.c $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) $< $(LDLIBS) -o $@
+
+test-api: $(BUILD_DIR)/api_invalidation $(BUILD_DIR)/buffer_growth_test $(BUILD_DIR)/aot_write_test
 	$(BUILD_DIR)/api_invalidation
 	$(BUILD_DIR)/buffer_growth_test
+	$(BUILD_DIR)/aot_write_test
 
 # tools/semver.c is deliberately standalone -- no Diamond compiler/VM
 # dependency at all (see its own header comment), so this doesn't link
