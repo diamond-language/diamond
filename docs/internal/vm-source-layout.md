@@ -1,7 +1,7 @@
 # VM source layout
 
 `src/vm.c` is the interpreter, the garbage collector and the native service layer. It grew to over
-26,000 lines; `vm.c` itself is now about 13,000 and `run_chunk` has its own file. This note records how it is organised, what has been split out and why, and the
+26,000 lines; `vm.c` itself is now about 14,000 and `run_chunk` has its own file. This note records how it is organised, what has been split out and why, and the
 measurements that decide what is worth splitting next.
 
 ## Where the compile time is
@@ -74,12 +74,18 @@ exception, below). 123 `*_helper` functions
 | `vm_process_io.c` | process spawning and file natives |
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
+| `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
 the program is still owned by the builder and dispatches by method name. The 35
 method implementations are separate static helpers in the same file, each taking
 only the state it uses. Arity checks, type validation, mutations and results stay
 together in each implementation; unknown-method errors stay in the dispatcher.
+
+The debugger helpers use the existing internal declarations for stringification,
+input, buffers and frames; moving them adds no shared VM interfaces. Exception
+backtrace capture stays in `vm.c` because it is part of raising an exception,
+independent of an attached debugger.
 
 What a file needs from `vm.c` is declared in `src/vm_internal.h`. It is not the embedding API, and its
 symbols are hidden. Each cluster needed only 3 to 9 shared primitives (`allocate_string`,
