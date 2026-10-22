@@ -215,6 +215,13 @@ int main(void) {
         "  def pets()\n"
         "    [Pet.new()]\n"
         "  end\n"
+        "  def nested() = [[Pet.new()]]\n"
+        "  def pick[T, U](first: T, second: U) -> Array[T] = [first]\n"
+        "  def unsafe(value) = [Pet.new()]\n"
+        "  def mixed() = [Pet.new()]\n"
+        "  def nullable() = [Pet.new()]\n"
+        "  def different_depth() = [[Pet.new()]]\n"
+        "  def only() = [Pet.new()]\n"
         "end\n"
         "class PetFactoryRight\n"
         "  def pets()\n"
@@ -225,6 +232,12 @@ int main(void) {
         "  def pets()\n"
         "    [Leaf.new()]\n"
         "  end\n"
+        "  def nested() = [[Leaf.new()]]\n"
+        "  def pick[T, U](first: T, second: U) -> Array[U] = [second]\n"
+        "  def unsafe(value) = value\n"
+        "  def mixed() = 42\n"
+        "  def nullable() = nil\n"
+        "  def different_depth() = [Leaf.new()]\n"
         "end\n"
         "def matching_factory(flag)\n"
         "  flag ? PetFactoryLeft.new() : PetFactoryRight.new()\n"
@@ -392,6 +405,15 @@ int main(void) {
         "  identity[Array[Pet | Leaf]]([Pet.new()])[0].bark()\n"
         "  matching_factory(true).pets()[0].bark()\n"
         "  conflicting_factory(true).pets()[0].bark()\n"
+        "  conflicting_factory(true).pets().reverse().take(1)[0].bark()\n"
+        "  conflicting_factory(true).nested()[0][0].bark()\n"
+        "  conflicting_factory(true).pick(Pet.new(), Leaf.new())[0].bark()\n"
+        "  conflicting_factory(true).pick[Pet, Leaf](Pet.new(), Leaf.new())[0].bark()\n"
+        "  conflicting_factory(true).unsafe(nil)[0].bark()\n"
+        "  conflicting_factory(true).mixed()[0].bark()\n"
+        "  conflicting_factory(true).nullable()[0].bark()\n"
+        "  conflicting_factory(true).only()[0].bark()\n"
+        "  conflicting_factory(true).different_depth()[0][0].bark()\n"
         "end\n"
         "def inspect_reader_unions(holders: PetHolder | LeafHolder, uncertain: PetHolder | MutableChild)\n"
         "  holders.pet().bark()\n"
@@ -585,8 +607,8 @@ int main(void) {
         "hash_value(map).","Pet","Leaf");
     failed|=check_receiver(program,&chunk,combined,
         "matching_factory(true).pets()[0].","Pet",false);
-    failed|=check_receiver(program,&chunk,combined,
-        "conflicting_factory(true).pets()[0].",nullptr,false);
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "conflicting_factory(true).pets()[0].","Pet","Leaf");
     failed|=check_receiver_pair(program,&chunk,combined,"holders.pet().","Pet","Leaf");
     failed|=check_receiver_pair(program,&chunk,combined,"union_pet.","Pet","Leaf");
     failed|=check_receiver(program,&chunk,combined,"uncertain.pet().",nullptr,false);
@@ -692,6 +714,24 @@ int main(void) {
         }
     }
     if(!found_transform_local)failed=1;
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "conflicting_factory(true).pets().reverse().take(1)[0].","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "conflicting_factory(true).nested()[0][0].","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "conflicting_factory(true).pick(Pet.new(), Leaf.new())[0].","Pet","Leaf");
+    failed|=check_receiver_pair(program,&chunk,combined,
+        "conflicting_factory(true).pick[Pet, Leaf](Pet.new(), Leaf.new())[0].","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,
+        "conflicting_factory(true).unsafe(nil)[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "conflicting_factory(true).mixed()[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "conflicting_factory(true).nullable()[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "conflicting_factory(true).only()[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,
+        "conflicting_factory(true).different_depth()[0][0].",nullptr,false);
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
@@ -719,6 +759,8 @@ int main(void) {
             "EarlyChild.new().pet().",nullptr,false);
         failed|=check_receiver_pair(restored,&restored_chunk,combined,
             "holders.pet().","Pet","Leaf");
+        failed|=check_receiver_pair(restored,&restored_chunk,combined,
+            "conflicting_factory(true).nested()[0][0].","Pet","Leaf");
         diamond_program_free(restored);free(restored);
     }
     failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);
