@@ -152,7 +152,17 @@ search over a real (if scoped) lexical symbol table:
     through matching parameterized shapes such as `Array[T]` versus a local
     `Array[Pet | Leaf]`, or `Hash[String, T]` versus
     `Hash[String, Pet | Leaf]`. Direct `Hash[K, V]`
-    indexing remains unresolved because its real result is `V | Nil`.
+    indexing remains unresolved because its real result is `V | Nil`. Saving a
+    declared Hash lookup in a local preserves that nullable type. Existing nil
+    comparisons now expose the compiler's branch-local proof to the editor:
+    after `pet = pets["name"]`, `if pet != nil` or `unless pet == nil` enables
+    completion, hover, and definition for `pet` inside the non-nil branch.
+    The non-nil `else` of `if pet == nil` and continuation after
+    `return if pet == nil` work too. Compound guards follow the compiler's
+    existing conjunction/disjunction rules. Nil and uncertain branches, joins,
+    and reassignment restore their own facts; a nullable or mixed primitive/class
+    local does not silently drop the unresolved alternatives. A bare truthiness
+    condition does not currently publish a narrowing fact.
     Indexing an inferred Array call result, directly or through a local, also
     preserves its element graph when assigned to another local, including
     repeated indexing through nested Arrays. These facts stay editor-only;

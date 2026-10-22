@@ -549,6 +549,95 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$receiver_index_uri"'"}}}'
 read_message >/dev/null
 
+# A declared imported Hash lookup remains nullable until a local nil guard
+# proves otherwise. Scope facts must restore the nil/uncertain branches too.
+cat > "$work/guarded_hash_dependency.di" <<'EOF'
+require "receiver_dependency"
+def declared_pet_hash() -> Hash[String, ImportedPet] = {"one": ImportedPet.new()}
+EOF
+guarded_hash_uri="file://$work/guarded_hash_main.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'","text":"require \"guarded_hash_dependency\"\ndef inspect_hash(flag)\n  pet = declared_pet_hash()[\"one\"]\n  pet.bark()\n  if pet != nil\n    pet.bark()\n  else\n    pet.bark()\n  end\n  pet.bark()\n  if pet != nil && flag\n    pet.bark()\n  else\n    pet.bark()\n  end\n  unless pet == nil\n    pet.bark()\n  end\n  if pet == nil\n    0\n  else\n    pet.bark()\n  end\n  return if pet == nil\n  pet.bark()\n  pet = nil\n  pet.bark()\nend"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":3,"character":6}},"id":1103}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":5,"character":8}},"id":1105}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":7,"character":8}},"id":1107}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":9,"character":6}},"id":1109}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":11,"character":8}},"id":1111}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":13,"character":8}},"id":1113}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":16,"character":8}},"id":1116}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":21,"character":8}},"id":1121}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":24,"character":6}},"id":1124}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":26,"character":6}},"id":1126}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":5,"character":9}},"id":4776}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/definition","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":5,"character":9}},"id":5016}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":3,"character":3}},"id":5291}'
+response="$(read_message)"
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":5,"character":5}},"id":5528}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"},"position":{"line":7,"character":5}},"id":5802}'
+response="$(read_message)"
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'"}}}'
+read_message >/dev/null
+
 # Indexed inferred call results retain advisory class facts after assignment.
 assigned_index_uri="file://$work/assigned_index.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$assigned_index_uri"'","text":"require \"receiver_dependency\"\ndef assigned_indexed_receiver()\n  pets = build_imported_pets()\n  pet = pets[0]\n  pet.bark()\n  direct_pet = build_imported_pets()[0]\n  direct_pet.bark()\nend\n\ndef imported_nested_pets()\n  [[ImportedPet.new()]]\nend\n\ndef assigned_nested_receiver()\n  nested_pet = imported_nested_pets()[0][0]\n  nested_pet.bark()\nend\n\ndef imported_pet_hash()\n  {\"one\": ImportedPet.new()}\nend\n\ndef assigned_nullable_receiver()\n  nullable_pet = imported_pet_hash()[\"one\"]\n  nullable_pet.bark()\nend\n\ndef opaque_pets(value)\n  [value]\nend\n\ndef assigned_unknown_receiver(value)\n  unknown_pet = opaque_pets(value)[0]\n  unknown_pet.bark()\nend"}}}'

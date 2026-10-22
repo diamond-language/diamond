@@ -43,7 +43,9 @@ bool receiver_has_explicit_receiver(const char *source,size_t stop_offset);
  * explicit bindings when each binding is a class union, optionally nested in
  * `Array`, or infer a class-union binding from a bare type-variable parameter.
  * Every class-kind
- * union member is returned as a candidate. Unknown/conflicting ivars and unannotated call returns
+ * union member is returned as a candidate only when all members are classes;
+ * nullable or mixed primitive/class locals remain unresolved until a recorded
+ * guard narrows them. Unknown/conflicting ivars and unannotated call returns
  * deliberately return 0 so callers fall back to their existing behavior.
  *
  * `source` is the raw, un-prelude-bundled open-document text (matching
