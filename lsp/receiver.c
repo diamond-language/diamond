@@ -115,6 +115,29 @@ static void local_type_at_offset(const DiamondFunction *owner,
             *tooling_type_set=fact->tooling_type_set;
         }
     }
+    /* A truthiness guard refines only the editor graph. Prefer that view
+     * when it refines the checked alternatives; a checked `is` proof may
+     * instead be narrower than an older tooling graph. */
+    if(*tooling_type_set>=0&&(size_t)*tooling_type_set<owner->type_set_count) {
+        const DiamondTypeSet *tooling=&owner->type_sets[*tooling_type_set];
+        bool refines=*known_type_set<0||
+            (size_t)*known_type_set<owner->type_set_count;
+        for(size_t index=0;refines&&index<tooling->count;index++) {
+            const uint16_t id=tooling->members[index].id;
+            bool matches=*known_type==DIAMOND_TYPE_NONE||*known_type==id;
+            if(*known_type_set>=0) {
+                matches=false;
+                const DiamondTypeSet *checked=&owner->type_sets[*known_type_set];
+                for(size_t member=0;member<checked->count;member++)
+                    if(checked->members[member].id==id)matches=true;
+            }
+            if(!matches) {refines=false;break;}
+        }
+        if(refines&&tooling->count>0) {
+            *known_type_set=*tooling_type_set;
+            *known_type=tooling->count==1?tooling->members[0].id:DIAMOND_TYPE_NONE;
+        }
+    }
 }
 
 bool receiver_name_is_local(const DiamondProgram *program,

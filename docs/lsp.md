@@ -162,8 +162,13 @@ search over a real (if scoped) lexical symbol table:
     `return if pet == nil` work too. Compound guards follow the compiler's
     existing conjunction/disjunction rules. Nil and uncertain branches, joins,
     and reassignment restore their own facts; a nullable or mixed primitive/class
-    local does not silently drop the unresolved alternatives. A bare truthiness
-    condition does not currently publish a narrowing fact. An imported factory
+    local does not silently drop the unresolved alternatives. Truthiness guards
+    (`if pet`, `unless pet`, negation, and `return unless pet`) also publish
+    editor-only branch facts. Nil is removed from the truthy view; Bool stays
+    in both views because it includes true and false. The falsey view retains
+    only Nil and Bool, so a mixed `Pet | Bool | Nil` does not resolve as Pet
+    inside `if pet`. These guards do not alter checked compiler types or return
+    checks. An imported factory
     such as `def make_pets() = {"name": Pet.new()}` needs no return annotation:
     `pet = make_pets()["name"]` retains `Pet | Nil` for the editor, and the
     explicit nil guard resolves its non-nil receiver. Hash literals can also
