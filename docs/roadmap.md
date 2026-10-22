@@ -79,7 +79,9 @@ documents and loses precision across some dependency and dynamic-flow boundaries
   compiler-proven nil guards for editor queries. Representable inferred Hash
   results now carry nullable value graphs through wrappers and explicit guards
   as editor-only facts. Truthiness guards also refine editor receivers while
-  preserving Bool alternatives and checked compiler behavior. Direct nullable
+  preserving Bool alternatives and checked compiler behavior. Short-circuit
+  right operands now receive scoped editor proofs, with restoration afterward
+  and conservative invalidation after tracked writes. Direct nullable
   indexing and unrepresentable dynamic results remain unresolved.
 - Explore incremental compilation only after the compiler has a reusable unit boundary
   that makes incremental synchronization worthwhile.

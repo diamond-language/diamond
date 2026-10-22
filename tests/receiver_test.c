@@ -72,7 +72,8 @@ static int check_receiver_after(const DiamondProgram *program,const DiamondChunk
         DIAMOND_MAX_UNION_TYPES,&actual_singleton);
     if(expected==nullptr) {
         if(count==0)return 0;
-        fprintf(stderr,"expected no receiver for %s, got %zu\n",needle,count);
+        fprintf(stderr,"expected no receiver for %s after %s, got %zu\n",
+            needle,after==nullptr?"<start>":after,count);
         return 1;
     }
     if(count!=1||classes[0]>=chunk->class_count||
@@ -127,6 +128,7 @@ static int check_builtin(const DiamondProgram *program,const DiamondChunk *chunk
 }
 
 int main(void) {
+#define REPEAT_16(text) text text text text text text text text text text text text text text text text
     static const char source[] =
         "class Pet\n"
         "  def bark()\n"
@@ -870,6 +872,105 @@ int main(void) {
         "    double_truth.bark()\n"
         "  end\n"
         "end\n"
+        "def short_circuit_guards(flag)\n"
+        "  sc_pet = inferred_pet_hash()[\"one\"]\n"
+        "  # sc_and\n"
+        "  sc_pet && sc_pet.bark()\n"
+        "  # sc_after_and\n"
+        "  sc_pet.bark()\n"
+        "  # sc_nil_or\n"
+        "  sc_pet == nil || sc_pet.bark()\n"
+        "  # sc_non_nil_and\n"
+        "  sc_pet != nil && sc_pet.bark()\n"
+        "  # sc_not_or\n"
+        "  !sc_pet || sc_pet.bark()\n"
+        "  # sc_false_and\n"
+        "  sc_pet == nil && sc_pet.bark()\n"
+        "  # sc_true_or\n"
+        "  sc_pet || sc_pet.bark()\n"
+        "  # sc_chain\n"
+        "  sc_pet && flag && sc_pet.bark()\n"
+        "  # sc_uncertain_chain\n"
+        "  (sc_pet || flag) && sc_pet.bark()\n"
+        "  # sc_nested\n"
+        "  sc_pet && (flag && sc_pet.bark())\n"
+        "  # sc_after_nested\n"
+        "  sc_pet.bark()\n"
+        "  if sc_pet && sc_pet.bark()\n"
+        "    # sc_if_body\n"
+        "    sc_pet.bark()\n"
+        "  end\n"
+        "  # sc_after_if\n"
+        "  sc_pet.bark()\n"
+        "  sc_pet && (if flag\n"
+        "    # sc_nested_if_yes\n"
+        "    sc_pet.bark()\n"
+        "  else\n"
+        "    # sc_nested_if_no\n"
+        "    sc_pet.bark()\n"
+        "  end)\n"
+        "  # sc_after_nested_if\n"
+        "  sc_pet.bark()\n"
+        "end\n"
+        "def short_circuit_checked(value: Pet | Leaf | Nil)\n"
+        "  # sc_checked_nil\n"
+        "  value != nil && value.bark()\n"
+        "  # sc_checked_is\n"
+        "  value is Pet && value.bark()\n"
+        "  # sc_checked_duplicate\n"
+        "  value != nil && value is Pet && value.bark()\n"
+        "  # sc_checked_after\n"
+        "  value.bark()\n"
+        "end\n"
+        "def short_circuit_bool(value: Pet | Bool | Nil)\n"
+        "  # sc_bool_true\n"
+        "  value && value.bark()\n"
+        "  # sc_bool_false\n"
+        "  value || value.bark()\n"
+        "end\n"
+        "def short_circuit_alias(flag, value)\n"
+        "  sc_items = inferred_nested_hash()[\"list\"]\n"
+        "  sc_items && (if flag\n"
+        "    alias_sc_items = sc_items\n"
+        "    # sc_items_yes\n"
+        "    sc_items[0].bark()\n"
+        "    alias_sc_items[0] = value\n"
+        "    # sc_items_changed\n"
+        "    sc_items[0].bark()\n"
+        "  else\n"
+        "    true\n"
+        "  end)\n"
+        "  # sc_items_after\n"
+        "  sc_items[0].bark()\n"
+        "  sc_items = inferred_nested_hash()[\"list\"]\n"
+        "  if sc_items && (if flag\n"
+        "    alias_sc_items = sc_items\n"
+        "    alias_sc_items[0] = value\n"
+        "  else\n"
+        "    true\n"
+        "  end)\n"
+        "    # sc_mutated_proof\n"
+        "    sc_items[0].bark()\n"
+        "  end\n"
+        "end\n"
+        "def short_circuit_return_contract() -> Pet\n"
+        "  result = inferred_pet_hash()[\"one\"]\n"
+        "  result && result.bark()\n"
+        "  result\n"
+        "end\n"
+        "def short_circuit_capacity(flag)\n"
+        "  cap_pet = inferred_pet_hash()[\"one\"]\n"
+        "  temp = nil\n"
+        "  cap_pet && (if flag\n"
+        REPEAT_16(REPEAT_16("    temp = cap_pet\n"))
+        "    # sc_capacity_inside\n"
+        "    cap_pet.bark()\n"
+        "  else\n"
+        "    true\n"
+        "  end)\n"
+        "  # sc_capacity_after\n"
+        "  cap_pet.bark()\n"
+        "end\n"
         "def greeting() -> String = \"abc\"\n"
         "def string_twin?(text) -> Int = 1\n"
         "def string_twin(text) -> String = \"twin\"\n"
@@ -880,6 +981,8 @@ int main(void) {
         "  greeting().lonely?().to_s()\n"
         "  greeting().lonely().to_s()\n"
         "end\n";
+
+#undef REPEAT_16
 
     char *combined=diamond_lsp_build_compile_buffer(nullptr,source,sizeof source-1,
         nullptr,nullptr,nullptr,nullptr);
@@ -1200,6 +1303,97 @@ int main(void) {
     failed|=check_receiver_after(program,&chunk,combined,"# truth_array_changed\n",
         "truth_items[0].",nullptr,false);
     failed|=check_receiver(program,&chunk,combined,"double_truth.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_and\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_after_and\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_nil_or\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_non_nil_and\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_not_or\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_false_and\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_true_or\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_chain\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_uncertain_chain\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_nested\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_after_nested\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_if_body\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_after_if\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_nested_if_yes\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_nested_if_no\n",
+        "sc_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_after_nested_if\n",
+        "sc_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_checked_is\n",
+        "value.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_checked_duplicate\n",
+        "value.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_checked_after\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_bool_true\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_bool_false\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_items_yes\n",
+        "sc_items[0].","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_items_changed\n",
+        "sc_items[0].",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_items_after\n",
+        "sc_items[0].",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_mutated_proof\n",
+        "sc_items[0].",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_capacity_inside\n",
+        "cap_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# sc_capacity_after\n",
+        "cap_pet.",nullptr,false);
+    failed|=check_return_contract(&chunk,"short_circuit_return_contract");
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        const bool checked=strcmp(function->name,"short_circuit_checked")==0;
+        if(!checked&&strcmp(function->name,"short_circuit_guards")!=0)continue;
+        for(size_t local=0;local<function->scope_local_count;local++) {
+            const DiamondScopeLocal *entry=&function->scope_locals[local];
+            if(strcmp(entry->name,checked?"value":"sc_pet")!=0)continue;
+            for(size_t fact_index=0;fact_index<function->scope_type_fact_count;fact_index++) {
+                const DiamondScopeTypeFact *fact=&function->scope_type_facts[fact_index];
+                if(fact->reg!=entry->reg)continue;
+                bool unchanged=fact->known_type==DIAMOND_TYPE_NONE;
+                if(checked) {
+                    unchanged&=fact->known_type_set>=0;
+                    if(fact->known_type_set>=0)
+                        unchanged&=function->type_sets[fact->known_type_set].count==3;
+                } else unchanged&=fact->known_type_set<0;
+                if(!unchanged) {
+                    fprintf(stderr,"short-circuit editor proof changed checked facts\n");
+                    failed=1;
+                }
+            }
+        }
+    }
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(strcmp(function->name,"short_circuit_capacity")==0&&
+           function->scope_type_fact_count!=DIAMOND_MAX_SCOPE_TYPE_FACTS) {
+            fprintf(stderr,"short-circuit capacity test did not fill the scope table\n");
+            failed=1;
+        }
+        for(size_t fact=0;fact<function->scope_type_fact_count;fact++) {
+            if(function->scope_type_facts[fact].effective_start==SIZE_MAX) {
+                fprintf(stderr,"unfilled short-circuit restoration record\n");failed=1;
+            }
+        }
+    }
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
@@ -1236,6 +1430,12 @@ int main(void) {
         failed|=check_receiver_after(restored,&restored_chunk,combined,"# truth_yes\n",
             "truth_pet.","Pet",false);
         failed|=check_receiver(restored,&restored_chunk,combined,"early_truth.","Pet",false);
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# sc_and\n",
+            "sc_pet.","Pet",false);
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# sc_after_and\n",
+            "sc_pet.",nullptr,false);
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# sc_capacity_after\n",
+            "cap_pet.",nullptr,false);
         diamond_program_free(restored);free(restored);
     }
     failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);

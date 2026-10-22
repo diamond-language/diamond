@@ -177,6 +177,12 @@ search over a real (if scoped) lexical symbol table:
     types or remove runtime return checks. Unchanged non-nil/nil branch views
     rejoin the original nullable editor graph, so repeated guards still work;
     reassignment, unknown paths, and tracked alias writes discard stale graphs.
+    Short-circuit expressions also publish editor-only facts while compiling
+    the right operand: `pet && pet.bark()` uses the truthy view, and
+    `pet == nil || pet.bark()` uses the non-nil view. Nested expressions follow
+    the same rules. The surrounding facts are restored afterward; tracked
+    writes discard invalidated graphs instead of restoring stale proofs.
+    Checked compiler types and return checks are unchanged.
     Indexing an inferred Array call result, directly or through a local, also
     preserves its element graph when assigned to another local, including
     repeated indexing through nested Arrays. These facts stay editor-only;

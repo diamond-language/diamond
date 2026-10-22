@@ -925,6 +925,179 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$truthiness_uri"'"}}}'
 read_message >/dev/null
 
+# Short-circuit RHS queries inherit only the proof needed to reach them.
+short_circuit_uri="file://$work/short_circuit.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$short_circuit_uri"'","text":"require \"inferred_hash_dependency\"\ndef short_circuit(flag)\n  pet = inferred_pet_hash()[\"name\"]\n  pet && pet.bark() # and_yes\n  pet.bark() # after_and\n  pet == nil || pet.bark() # nil_or\n  pet != nil && pet.bark() # non_nil_and\n  !pet || pet.bark() # not_or\n  pet == nil && pet.bark() # nil_and\n  pet || pet.bark() # or_no\n  pet && flag && pet.bark() # chain\n  (pet || flag) && pet.bark() # uncertain\n  pet && (flag && pet.bark()) # nested\n  pet.bark() # after_nested\n  if pet && pet.bark() # condition\n    pet.bark() # body\n  end\n  pet.bark() # after_if\n  pet && (if flag\n    pet.bark() # nested_if_yes\n  else\n    pet.bark() # nested_if_no\n  end)\n  pet.bark() # after_nested_if\nend\ndef checked_short_circuit(pet: ImportedPet | ImportedLeaf | Nil)\n  pet is ImportedPet && pet.bark() # checked_is\n  pet.bark() # checked_after\nend\ndef bool_short_circuit(pet: ImportedPet | Bool | Nil)\n  pet && pet.bark() # bool_yes\n  pet || pet.bark() # bool_no\n  pet.bark() # bool_after\nend\n"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":3,"character":13}},"id":2300}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":4,"character":6}},"id":2301}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":5,"character":20}},"id":2302}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":6,"character":20}},"id":2303}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":7,"character":14}},"id":2304}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":8,"character":20}},"id":2305}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":9,"character":13}},"id":2306}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":10,"character":21}},"id":2307}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":11,"character":23}},"id":2308}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":12,"character":22}},"id":2309}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":13,"character":6}},"id":2310}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":14,"character":16}},"id":2311}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":15,"character":8}},"id":2312}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":17,"character":6}},"id":2313}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":19,"character":8}},"id":2314}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":21,"character":8}},"id":2315}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":23,"character":6}},"id":2316}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":26,"character":28}},"id":2317}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":27,"character":6}},"id":2318}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":30,"character":13}},"id":2319}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":31,"character":13}},"id":2320}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":32,"character":6}},"id":2321}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":3,"character":10}},"id":2322}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":4,"character":3}},"id":2323}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":5,"character":17}},"id":2324}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":8,"character":17}},"id":2325}'
+response="$(read_message)"
+[[ "$response" == *'Nil'* ]]
+[[ "$response" != *'ImportedPet'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":30,"character":10}},"id":2326}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Bool'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":31,"character":10}},"id":2327}'
+response="$(read_message)"
+[[ "$response" == *'Bool'* ]]
+[[ "$response" == *'Nil'* ]]
+[[ "$response" != *'ImportedPet'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":32,"character":3}},"id":2328}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Bool'* ]]
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":3,"character":14}},"id":2329}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/definition","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"},"position":{"line":5,"character":21}},"id":2330}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$short_circuit_uri"'"}}}'
+read_message >/dev/null
+
 # Indexed inferred call results retain advisory class facts after assignment.
 assigned_index_uri="file://$work/assigned_index.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$assigned_index_uri"'","text":"require \"receiver_dependency\"\ndef assigned_indexed_receiver()\n  pets = build_imported_pets()\n  pet = pets[0]\n  pet.bark()\n  direct_pet = build_imported_pets()[0]\n  direct_pet.bark()\nend\n\ndef imported_nested_pets()\n  [[ImportedPet.new()]]\nend\n\ndef assigned_nested_receiver()\n  nested_pet = imported_nested_pets()[0][0]\n  nested_pet.bark()\nend\n\ndef imported_pet_hash()\n  {\"one\": ImportedPet.new()}\nend\n\ndef assigned_nullable_receiver()\n  nullable_pet = imported_pet_hash()[\"one\"]\n  nullable_pet.bark()\nend\n\ndef opaque_pets(value)\n  [value]\nend\n\ndef assigned_unknown_receiver(value)\n  unknown_pet = opaque_pets(value)[0]\n  unknown_pet.bark()\nend"}}}'
