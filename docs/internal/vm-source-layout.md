@@ -75,6 +75,12 @@ exception, below). 123 `*_helper` functions
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
 
+Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
+the program is still owned by the builder and dispatches by method name. The 35
+method implementations are separate static helpers in the same file, each taking
+only the state it uses. Arity checks, type validation, mutations and results stay
+together in each implementation; unknown-method errors stay in the dispatcher.
+
 What a file needs from `vm.c` is declared in `src/vm_internal.h`. It is not the embedding API, and its
 symbols are hidden. Each cluster needed only 3 to 9 shared primitives (`allocate_string`,
 `allocate_array`, `allocate_hash`, `array_push`, `builder_append`, ...).
