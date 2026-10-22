@@ -327,6 +327,7 @@ $(BUILD_DIR)/lsp-%.o: lsp/%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 test: debug
+	bash tests/merge_when_green_test.sh
 	bash tests/run.sh
 
 test-release: release
