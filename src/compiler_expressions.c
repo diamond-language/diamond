@@ -329,6 +329,85 @@ static void append_narrowing_facts(NarrowingFact *destination,size_t *destinatio
     }
 }
 
+typedef struct ScopedToolingGuard {
+    uint16_t reg;
+    int32_t before,guarded;
+    size_t restoration;
+} ScopedToolingGuard;
+
+/* Reserve a restoration record before exposing a temporary editor proof. The
+ * bounded scope table may fill while the RHS is being compiled. */
+static size_t begin_rhs_tooling(Compiler *compiler,const NarrowingFact *facts,
+        size_t count,ScopedToolingGuard *guards) {
+    size_t guard_count=0;
+    DiamondFunction *function=compiler->function;
+    for(size_t index=0;index<count;index++) {
+        const NarrowingFact fact=facts[index];
+        if(!register_is_local(compiler,fact.reg))continue;
+        const int32_t set=fact.has_tooling?fact.tooling_type_set:fact.type_set;
+        size_t slot=0;
+        while(slot<guard_count&&guards[slot].reg!=fact.reg)slot++;
+        if(slot==guard_count) {
+            if(function->scope_type_fact_count+2>DIAMOND_MAX_SCOPE_TYPE_FACTS)continue;
+            guards[guard_count++]=(ScopedToolingGuard){.reg=fact.reg,
+                .before=compiler->tooling_type_sets[fact.reg]};
+            compiler->tooling_type_sets[fact.reg]=set;
+            record_scope_type_fact(compiler,fact.reg,compiler->current.span.start);
+            guards[slot].restoration=function->scope_type_fact_count++;
+            function->scope_type_facts[guards[slot].restoration]=
+                (DiamondScopeTypeFact){.effective_start=SIZE_MAX};
+        } else {
+            compiler->tooling_type_sets[fact.reg]=set;
+            function->scope_type_facts[guards[slot].restoration-1].tooling_type_set=set;
+        }
+        guards[slot].guarded=set;
+    }
+    return guard_count;
+}
+
+static void discard_tooling_proof(Narrowing *narrowing,uint16_t reg) {
+    for(size_t side=0;side<2;side++) {
+        NarrowingFact *facts=side==0?narrowing->when_true:narrowing->when_false;
+        size_t *count=side==0?&narrowing->when_true_count:&narrowing->when_false_count;
+        size_t kept=0;
+        for(size_t index=0;index<*count;index++) {
+            NarrowingFact fact=facts[index];
+            if(fact.reg==reg) {
+                if(fact.tooling_only)continue;
+                fact.has_tooling=false;
+            }
+            facts[kept++]=fact;
+        }
+        *count=kept;
+    }
+    narrowing->valid=narrowing->when_true_count>0||narrowing->when_false_count>0;
+}
+
+static void end_rhs_tooling(Compiler *compiler,const ScopedToolingGuard *guards,
+        size_t count,Narrowing *left,Narrowing *right) {
+    DiamondFunction *function=compiler->function;
+    /* Remove reserved records in reverse order, appending the actual restores
+     * after nested RHS facts so equal-offset records keep their usual order. */
+    while(count>0) {
+        const ScopedToolingGuard guard=guards[--count];
+        const int32_t after=compiler->tooling_type_sets[guard.reg];
+        if(merge_tooling_type_sets(compiler,after,guard.guarded)>=0)
+            compiler->tooling_type_sets[guard.reg]=guard.before;
+        else {
+            compiler->tooling_type_sets[guard.reg]=
+                merge_tooling_type_sets(compiler,guard.before,after);
+            discard_tooling_proof(left,guard.reg);
+            discard_tooling_proof(right,guard.reg);
+        }
+        memmove(function->scope_type_facts+guard.restoration,
+            function->scope_type_facts+guard.restoration+1,
+            (function->scope_type_fact_count-guard.restoration-1)*
+                sizeof *function->scope_type_facts);
+        function->scope_type_fact_count--;
+        record_scope_type_fact(compiler,guard.reg,compiler->current.span.start);
+    }
+}
+
 bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right) {
     if(left.id!=right.id||left.argument_set!=right.argument_set||
        left.second_argument_set!=right.second_argument_set||
@@ -1191,14 +1270,20 @@ uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
            operator==DIAMOND_TOKEN_OR_OR||operator==DIAMOND_TOKEN_OR) {
             const bool is_and=operator==DIAMOND_TOKEN_AND_AND||
                 operator==DIAMOND_TOKEN_AND;
-            const Narrowing left_narrowing=condition_narrowing(compiler,left);
+            Narrowing left_narrowing=condition_narrowing(compiler,left);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
             const size_t end_jump=emit_jump(compiler,
                 is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
+            ScopedToolingGuard guards[DIAMOND_MAX_NARROWING_FACTS];
+            const size_t guard_count=begin_rhs_tooling(compiler,
+                is_and?left_narrowing.when_true:left_narrowing.when_false,
+                is_and?left_narrowing.when_true_count:left_narrowing.when_false_count,
+                guards);
             const uint16_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));
-            const Narrowing right_narrowing=condition_narrowing(compiler,right);
+            Narrowing right_narrowing=condition_narrowing(compiler,right);
+            end_rhs_tooling(compiler,guards,guard_count,&left_narrowing,&right_narrowing);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
             patch_jump(compiler,end_jump,compiler->function->code_count);
             if(compiler->known_types[left]==compiler->known_types[right])

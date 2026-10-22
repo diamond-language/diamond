@@ -29,10 +29,12 @@ db.execute("CREATE TABLE tags (note_id INTEGER NOT NULL REFERENCES notes(id) ON 
 db.execute("INSERT INTO notes (title, body, created) VALUES (?, ?, ?)", ["Old", "Written before search existed.", "2026-01-02"])
 db.execute("PRAGMA user_version = 1")
 db.close()' "$work/old.db" > /dev/null
-"$work/notes" --db "$work/old.db" search existed | grep -q "Old"
-"$diamond" -e 'puts(SQLite3.open(ARGV[0]).query("PRAGMA user_version")[0]["user_version"])' "$work/old.db" | grep -qx 2
+# Drain producers completely: early-closing consumers can make a successful
+# command report a broken pipe while printing the rest of its output.
+"$work/notes" --db "$work/old.db" search existed | grep "Old" > /dev/null
+"$diamond" -e 'puts(SQLite3.open(ARGV[0]).query("PRAGMA user_version")[0]["user_version"])' "$work/old.db" | grep -x 2 > /dev/null
 
 # A return or break out of a transaction block rolls it back.
-"$diamond" testdata/transaction_exits.di | head -4 | tr '\n' ' ' | grep -qx 'left early broke out 0 1 '
+"$diamond" testdata/transaction_exits.di | sed -n '1,4p' | tr '\n' ' ' | grep -qx 'left early broke out 0 1 '
 
 echo "notes smoke test passed"
