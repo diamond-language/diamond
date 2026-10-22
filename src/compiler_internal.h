@@ -95,6 +95,11 @@ enum { DIAMOND_MAX_NARROWING_FACTS = 8 };
 typedef struct NarrowingFact {
     uint16_t reg;
     int32_t type_set;
+    /* A companion editor graph shares the same proof slot as a checked fact.
+     * Tooling-only proofs are never applied to checked compiler types. */
+    int32_t tooling_type_set;
+    bool tooling_only;
+    bool has_tooling;
 } NarrowingFact;
 
 /* A pending narrowing, keyed by the register holding the boolean
@@ -926,6 +931,8 @@ DIAMOND_INTERNAL void check_call_argument_types(Compiler *compiler,const Diamond
 DIAMOND_INTERNAL bool grow_type_sets(DiamondFunction *function,size_t additional);
 DIAMOND_INTERNAL void publish_array_literal_tooling_type(Compiler *compiler,uint16_t reg,
         const uint16_t *values,size_t count);
+DIAMOND_INTERNAL void publish_hash_literal_tooling_type(Compiler *compiler,uint16_t reg,
+        const uint16_t *keys,const uint16_t *values,size_t count);
 DIAMOND_INTERNAL void publish_array_spread_tooling_type(Compiler *compiler,uint16_t reg,
         const uint16_t *prefix,size_t prefix_count,uint16_t spread,
         const uint16_t *suffix,size_t suffix_count);

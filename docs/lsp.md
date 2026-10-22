@@ -153,7 +153,8 @@ search over a real (if scoped) lexical symbol table:
     `Array[Pet | Leaf]`, or `Hash[String, T]` versus
     `Hash[String, Pet | Leaf]`. Direct `Hash[K, V]`
     indexing remains unresolved because its real result is `V | Nil`. Saving a
-    declared Hash lookup in a local preserves that nullable type. Existing nil
+    declared or structurally inferred Hash lookup in a local preserves that
+    nullable type. Existing nil
     comparisons now expose the compiler's branch-local proof to the editor:
     after `pet = pets["name"]`, `if pet != nil` or `unless pet == nil` enables
     completion, hover, and definition for `pet` inside the non-nil branch.
@@ -162,11 +163,20 @@ search over a real (if scoped) lexical symbol table:
     existing conjunction/disjunction rules. Nil and uncertain branches, joins,
     and reassignment restore their own facts; a nullable or mixed primitive/class
     local does not silently drop the unresolved alternatives. A bare truthiness
-    condition does not currently publish a narrowing fact.
+    condition does not currently publish a narrowing fact. An imported factory
+    such as `def make_pets() = {"name": Pet.new()}` needs no return annotation:
+    `pet = make_pets()["name"]` retains `Pet | Nil` for the editor, and the
+    explicit nil guard resolves its non-nil receiver. Hash literals can also
+    combine known values and inferred factory values. Unknown key or value
+    graphs stay unresolved. These inferred facts never become checked compiler
+    types or remove runtime return checks. Unchanged non-nil/nil branch views
+    rejoin the original nullable editor graph, so repeated guards still work;
+    reassignment, unknown paths, and tracked alias writes discard stale graphs.
     Indexing an inferred Array call result, directly or through a local, also
     preserves its element graph when assigned to another local, including
     repeated indexing through nested Arrays. These facts stay editor-only;
-    unknown element graphs and inferred Hash indexing remain unresolved.
+    unknown element graphs and directly chained nullable Hash indexing remain
+    unresolved.
     Array literals also carry inferred factory element graphs, including nested
     literals and mixtures of known and inferred class results. Locals and
     unannotated returns retain the richer editor graph alongside the compiler's

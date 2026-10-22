@@ -188,6 +188,7 @@ static uint16_t parse_hash(Compiler *compiler) {
     record_collection_type_set(compiler,destination,DIAMOND_TYPE_HASH,
         joined_value_type_set(compiler,keys,count),
         joined_value_type_set(compiler,values,count));
+    publish_hash_literal_tooling_type(compiler,destination,keys,values,count);
     return destination;
 }
 
@@ -257,7 +258,8 @@ void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index) {
 void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
                                   size_t count) {
     for(size_t index=0;index<count;index++)
-        apply_type_set_fact(compiler,facts[index].reg,facts[index].type_set);
+        if(!facts[index].tooling_only)
+            apply_type_set_fact(compiler,facts[index].reg,facts[index].type_set);
 }
 
 /* Export guards only at control-flow boundaries whose restoration is also
@@ -265,16 +267,32 @@ void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
 void apply_scope_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
         size_t count) {
     apply_narrowing_facts(compiler,facts,count);
-    for(size_t index=0;index<count;index++)
+    for(size_t index=0;index<count;index++) {
+        if(facts[index].tooling_only)
+            compiler->tooling_type_sets[facts[index].reg]=facts[index].type_set;
+        else if(facts[index].has_tooling)
+            compiler->tooling_type_sets[facts[index].reg]=facts[index].tooling_type_set;
         if(register_is_local(compiler,facts[index].reg))
             record_scope_type_fact(compiler,facts[index].reg,compiler->current.span.start);
+    }
 }
 
 static void append_narrowing_facts(NarrowingFact *destination,size_t *destination_count,
                                    const NarrowingFact *source,size_t source_count) {
-    for(size_t index=0;index<source_count&&
-        *destination_count<DIAMOND_MAX_NARROWING_FACTS;index++)
+    for(size_t index=0;index<source_count;index++) {
+        if(*destination_count==DIAMOND_MAX_NARROWING_FACTS) {
+            if(source[index].tooling_only)continue;
+            size_t discard=0;
+            while(discard<*destination_count&&!destination[discard].tooling_only)
+                discard++;
+            if(discard==*destination_count)continue;
+            /* Editor proofs may not displace checked proofs or change their order. */
+            memmove(destination+discard,destination+discard+1,
+                (*destination_count-discard-1)*sizeof *destination);
+            (*destination_count)--;
+        }
         destination[(*destination_count)++]=source[index];
+    }
 }
 
 bool type_members_equal(DiamondTypeMember left,DiamondTypeMember right) {
@@ -517,6 +535,10 @@ void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
     const int32_t tooling_element=joined_collection_argument(compiler,
         compiler->tooling_type_sets[receiver],DIAMOND_TYPE_ARRAY,false);
     if(tooling_element>=0)compiler->tooling_type_sets[destination]=tooling_element;
+    const int32_t tooling_value=joined_collection_argument(compiler,
+        compiler->tooling_type_sets[receiver],DIAMOND_TYPE_HASH,true);
+    if(tooling_value>=0)compiler->tooling_type_sets[destination]=
+        type_set_with_nil(compiler,(uint16_t)tooling_value);
     int32_t receiver_set=compiler->known_type_sets[receiver];
     const bool tooling_only=receiver_set<0;
     if(tooling_only)receiver_set=compiler->tooling_type_sets[receiver];
@@ -547,8 +569,6 @@ void publish_indexed_result_type(Compiler *compiler,uint16_t destination,
                 (int32_t)indexed_sets[member_index]);
         if(indexed<0)compatible=false;
     }
-    /* Keep inferred Hash indexing unresolved: its value may be Nil. */
-    if(tooling_only&&collection_type!=DIAMOND_TYPE_ARRAY)return;
     if(compatible&&collection_type==DIAMOND_TYPE_HASH)
         indexed=type_set_with_nil(compiler,(uint16_t)indexed);
     if(compatible&&indexed>=0) {
@@ -925,23 +945,35 @@ uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
             if(compiler->known_types[left]==DIAMOND_TYPE_NIL) {
                 narrowed=right;nil_value=left;
             }
-            if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL&&
-               compiler->known_type_sets[narrowed]>=0) {
-                int32_t non_nil=-1,nil_only=-1;
-                if(split_nil_type_set(compiler,
-                   (uint16_t)compiler->known_type_sets[narrowed],
-                   &non_nil,&nil_only)) {
-                    const int32_t when_true=operator==DIAMOND_TOKEN_BANG_EQUAL
-                        ?non_nil:nil_only;
-                    const int32_t when_false=operator==DIAMOND_TOKEN_BANG_EQUAL
-                        ?nil_only:non_nil;
-                    compiler->narrowing=(Narrowing){.valid=true,
-                        .condition=destination,
-                        .when_true={{.reg=narrowed,.type_set=when_true}},
-                        .when_true_count=1,
-                        .when_false={{.reg=narrowed,.type_set=when_false}},
-                        .when_false_count=1};
+            if(compiler->known_types[nil_value]==DIAMOND_TYPE_NIL) {
+                Narrowing narrowing={.condition=destination};
+                NarrowingFact yes={.reg=narrowed},no={.reg=narrowed};
+                bool have_fact=false;
+                for(size_t source=0;source<2;source++) {
+                    const int32_t set=source==0?compiler->known_type_sets[narrowed]:
+                        compiler->tooling_type_sets[narrowed];
+                    if(set<0)continue;
+                    int32_t non_nil=-1,nil_only=-1;
+                    if(!split_nil_type_set(compiler,(uint16_t)set,
+                            &non_nil,&nil_only))continue;
+                    const bool unequal=operator==DIAMOND_TOKEN_BANG_EQUAL;
+                    if(source==0||!have_fact) {
+                        yes.type_set=unequal?non_nil:nil_only;
+                        no.type_set=unequal?nil_only:non_nil;
+                        yes.tooling_only=no.tooling_only=source!=0;
+                    } else {
+                        yes.has_tooling=no.has_tooling=true;
+                        yes.tooling_type_set=unequal?non_nil:nil_only;
+                        no.tooling_type_set=unequal?nil_only:non_nil;
+                    }
+                    have_fact=true;
                 }
+                if(have_fact) {
+                    narrowing.when_true[0]=yes;narrowing.when_true_count=1;
+                    narrowing.when_false[0]=no;narrowing.when_false_count=1;
+                }
+                narrowing.valid=have_fact;
+                if(narrowing.valid)compiler->narrowing=narrowing;
             }
         }
     } else if(compiler->known_types[left]==DIAMOND_TYPE_INT &&

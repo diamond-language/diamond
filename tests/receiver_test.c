@@ -1,5 +1,6 @@
 #include "compile_buffer.h"
 #include "compiled_prelude.h"
+#include "disassemble.h"
 #include "receiver.h"
 
 #include <stdio.h>
@@ -24,6 +25,36 @@ static DiamondProgram *round_trip(const DiamondProgram *program) {
         free(restored);return nullptr;
     }
     return restored;
+}
+
+/* An editor-only guard must not elide the checked return contract. */
+static int check_return_contract(const DiamondChunk *chunk,const char *name) {
+    FILE *file=tmpfile();
+    if(file==nullptr)return 1;
+    if(!diamond_disassemble(file,"receiver-test",chunk)) {fclose(file);return 1;}
+    const long length=ftell(file);
+    if(length<0) {fclose(file);return 1;}
+    char *text=malloc((size_t)length+1);
+    if(text==nullptr) {fclose(file);return 1;}
+    rewind(file);
+    const size_t read=fread(text,1,(size_t)length,file);
+    fclose(file);text[read]='\0';
+    char header[128];snprintf(header,sizeof header,"== %s ==\n",name);
+    const char *body=strstr(text,header);
+    size_t checks=0;
+    if(body!=nullptr) {
+        body+=strlen(header);
+        const char *end=strstr(body,"\n== ");
+        for(const char *cursor=body;(cursor=strstr(cursor,"CHECK_TYPE"))!=nullptr;cursor++) {
+            if(end!=nullptr&&cursor>=end)break;
+            checks++;
+        }
+    }
+    const bool found=body!=nullptr;
+    free(text);
+    if(read==(size_t)length&&found&&checks==1)return 0;
+    fprintf(stderr,"%s lost its checked return contract: %zu checks\n",name,checks);
+    return 1;
 }
 
 static int check_receiver_after(const DiamondProgram *program,const DiamondChunk *chunk,
@@ -623,6 +654,105 @@ int main(void) {
         "    nested_pet.bark()\n"
         "  end\n"
         "end\n"
+        "def inferred_pet_hash() = {\"one\": Pet.new()}\n"
+        "def indirect_pet_hash() = {\"one\": literal_pet_factory()}\n"
+        "def inferred_hash_wrapper() = inferred_pet_hash()\n"
+        "def inferred_unknown_hash(value) = {\"one\": value}\n"
+        "def inferred_union_hash() = {\"one\": Pet.new(), \"two\": Leaf.new()}\n"
+        "def inferred_hash_guards(flag, value)\n"
+        "  inferred_pet = inferred_hash_wrapper()[\"one\"]\n"
+        "  # inferred_before_guard\n"
+        "  inferred_pet.bark()\n"
+        "  if inferred_pet != nil\n"
+        "    # inferred_non_nil\n"
+        "    inferred_pet.bark()\n"
+        "  else\n"
+        "    # inferred_nil\n"
+        "    inferred_pet.bark()\n"
+        "  end\n"
+        "  # inferred_after_guard\n"
+        "  inferred_pet.bark()\n"
+        "  if inferred_pet != nil && flag\n"
+        "    # inferred_repeat_guard\n"
+        "    inferred_pet.bark()\n"
+        "  else\n"
+        "    # inferred_uncertain_else\n"
+        "    inferred_pet.bark()\n"
+        "  end\n"
+        "  unless inferred_pet == nil\n"
+        "    # inferred_repeat_unless\n"
+        "    inferred_pet.bark()\n"
+        "  end\n"
+        "  indirect_pet = indirect_pet_hash()[\"one\"]\n"
+        "  unless indirect_pet == nil\n"
+        "    indirect_pet.bark()\n"
+        "  end\n"
+        "  inferred_pair = inferred_union_hash()[\"one\"]\n"
+        "  if inferred_pair != nil\n"
+        "    inferred_pair.bark()\n"
+        "  end\n"
+        "  unknown_hash_pet = inferred_unknown_hash(value)[\"one\"]\n"
+        "  if unknown_hash_pet != nil\n"
+        "    unknown_hash_pet.bark()\n"
+        "  end\n"
+        "  changing_hash = inferred_pet_hash()\n"
+        "  alias_hash = changing_hash\n"
+        "  changing_hash[\"one\"] = value\n"
+        "  changed_hash_pet = alias_hash[\"one\"]\n"
+        "  if changed_hash_pet != nil\n"
+        "    changed_hash_pet.bark()\n"
+        "  end\n"
+        "end\n"
+        "def inferred_hash_early()\n"
+        "  early_inferred = inferred_pet_hash()[\"one\"]\n"
+        "  return if early_inferred == nil\n"
+        "  early_inferred.bark()\n"
+        "end\n"
+        "def inferred_hash_return_contract() -> Pet\n"
+        "  result = inferred_pet_hash()[\"one\"]\n"
+        "  return Pet.new() if result == nil\n"
+        "  result\n"
+        "end\n"
+        "def inferred_hash_branch_contract() -> Pet\n"
+        "  result = inferred_pet_hash()[\"one\"]\n"
+        "  if result != nil\n"
+        "    result\n"
+        "  else\n"
+        "    Pet.new()\n"
+        "  end\n"
+        "end\n"
+        "def inferred_nested_hash() = {\"list\": [Pet.new()]}\n"
+        "def inferred_nested_hash_guard()\n"
+        "  nested_hash_items = inferred_nested_hash()[\"list\"]\n"
+        "  if nested_hash_items != nil\n"
+        "    nested_hash_items[0].bark()\n"
+        "  end\n"
+        "  literal_hash = {\"list\": [literal_pet_factory()]}\n"
+        "  literal_hash_items = literal_hash[\"list\"]\n"
+        "  if literal_hash_items != nil\n"
+        "    literal_hash_items[0].bark()\n"
+        "  end\n"
+        "end\n"
+        "def inferred_hash_ternary()\n"
+        "  ternary_hash_pet = inferred_pet_hash()[\"one\"]\n"
+        "  choice = ternary_hash_pet != nil ? ternary_hash_pet : Pet.new()\n"
+        "  ternary_hash_pet.bark()\n"
+        "end\n"
+        "def inferred_hash_checked_guard_budget(value: String | Nil) -> String\n"
+        "  pet0 = inferred_pet_hash()[\"one\"]\n"
+        "  pet1 = inferred_pet_hash()[\"one\"]\n"
+        "  pet2 = inferred_pet_hash()[\"one\"]\n"
+        "  pet3 = inferred_pet_hash()[\"one\"]\n"
+        "  pet4 = inferred_pet_hash()[\"one\"]\n"
+        "  pet5 = inferred_pet_hash()[\"one\"]\n"
+        "  pet6 = inferred_pet_hash()[\"one\"]\n"
+        "  pet7 = inferred_pet_hash()[\"one\"]\n"
+        "  if pet0 != nil && pet1 != nil && pet2 != nil && pet3 != nil && pet4 != nil && pet5 != nil && pet6 != nil && pet7 != nil && value != nil\n"
+        "    value\n"
+        "  else\n"
+        "    \"fallback\"\n"
+        "  end\n"
+        "end\n"
         "def greeting() -> String = \"abc\"\n"
         "def string_twin?(text) -> Int = 1\n"
         "def string_twin(text) -> String = \"twin\"\n"
@@ -837,6 +967,50 @@ int main(void) {
         "nested_pet.","Pet",false);
     failed|=check_receiver_after(program,&chunk,combined,"# uncertain_nested_join\n",
         "nested_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_before_guard\n",
+        "inferred_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_non_nil\n",
+        "inferred_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_nil\n",
+        "inferred_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_after_guard\n",
+        "inferred_pet.",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"indirect_pet.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"unknown_hash_pet.",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"changed_hash_pet.",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"early_inferred.","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"inferred_pair.","Pet","Leaf");
+    failed|=check_return_contract(&chunk,"inferred_hash_checked_guard_budget");
+    failed|=check_return_contract(&chunk,"inferred_hash_return_contract");
+    failed|=check_return_contract(&chunk,"inferred_hash_branch_contract");
+    bool found_inferred_hash_fact=false;
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(strcmp(function->name,"inferred_hash_guards")!=0)continue;
+        for(size_t local=0;local<function->scope_local_count;local++) {
+            const DiamondScopeLocal *entry=&function->scope_locals[local];
+            if(strcmp(entry->name,"inferred_pet")!=0)continue;
+            for(size_t fact_index=0;fact_index<function->scope_type_fact_count;fact_index++) {
+                const DiamondScopeTypeFact *fact=&function->scope_type_facts[fact_index];
+                if(fact->reg!=entry->reg)continue;
+                if(fact->tooling_type_set>=0)found_inferred_hash_fact=true;
+                if(fact->known_type!=DIAMOND_TYPE_NONE||fact->known_type_set>=0) {
+                    fprintf(stderr,"inferred Hash guard entered checked facts\n");
+                    failed=1;
+                }
+            }
+        }
+    }
+    if(!found_inferred_hash_fact)failed=1;
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_guard\n",
+        "inferred_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_unless\n",
+        "inferred_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# inferred_uncertain_else\n",
+        "inferred_pet.",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"nested_hash_items[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"literal_hash_items[0].","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"ternary_hash_pet.",nullptr,false);
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
@@ -868,6 +1042,8 @@ int main(void) {
             "conflicting_factory(true).nested()[0][0].","Pet","Leaf");
         failed|=check_receiver_after(restored,&restored_chunk,combined,"# non_nil_branch\n",
             "pet.","Pet",false);
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# inferred_non_nil\n",
+            "inferred_pet.","Pet",false);
         diamond_program_free(restored);free(restored);
     }
     failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);
