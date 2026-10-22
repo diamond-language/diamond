@@ -72,8 +72,7 @@ static int32_t merge_guarded_tooling(Compiler *compiler,const Narrowing *narrowi
 uint16_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint16_t condition = parse_expression(compiler);
-    const Narrowing narrowing=compiler->narrowing.condition==condition
-        ? compiler->narrowing:(Narrowing){};
+    const Narrowing narrowing=condition_narrowing(compiler,condition);
     compiler->narrowing=(Narrowing){};
     if (!consume_conditional_start(compiler)) return 0;
 

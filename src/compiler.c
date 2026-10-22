@@ -2687,9 +2687,7 @@ uint16_t compile_sequence(Compiler *compiler) {
             const size_t condition_start = compiler->function->code_count;
             compiler->narrowing=(Narrowing){};
             const uint16_t condition = parse_expression(compiler);
-            const Narrowing postfix_narrowing=
-                compiler->narrowing.valid&&compiler->narrowing.condition==condition?
-                    compiler->narrowing:(Narrowing){};
+            const Narrowing postfix_narrowing=condition_narrowing(compiler,condition);
             compiler->narrowing=(Narrowing){};
             const size_t body_jump = emit_jump(
                 compiler,

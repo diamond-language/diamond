@@ -753,6 +753,123 @@ int main(void) {
         "    \"fallback\"\n"
         "  end\n"
         "end\n"
+        "def truthiness_guards(pets: Hash[String, Pet], flag, value)\n"
+        "  truth_pet = inferred_hash_wrapper()[\"one\"]\n"
+        "  # truth_before\n"
+        "  truth_pet.bark()\n"
+        "  if truth_pet\n"
+        "    # truth_yes\n"
+        "    truth_pet.bark()\n"
+        "  else\n"
+        "    # truth_no\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "  # truth_join\n"
+        "  truth_pet.bark()\n"
+        "  unless truth_pet\n"
+        "    # truth_unless_no\n"
+        "    truth_pet.bark()\n"
+        "  else\n"
+        "    # truth_unless_yes\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "  if !truth_pet\n"
+        "    # truth_not_no\n"
+        "    truth_pet.bark()\n"
+        "  else\n"
+        "    # truth_not_yes\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "  if truth_pet && flag\n"
+        "    # truth_and_yes\n"
+        "    truth_pet.bark()\n"
+        "  else\n"
+        "    # truth_and_no\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "  unless truth_pet || flag\n"
+        "    # truth_or_no\n"
+        "    truth_pet.bark()\n"
+        "  else\n"
+        "    # truth_or_unknown\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "  declared_truth = pets[\"one\"]\n"
+        "  if declared_truth\n"
+        "    declared_truth.bark()\n"
+        "  end\n"
+        "  if truth_pet\n"
+        "    truth_pet = value\n"
+        "    # truth_reassigned\n"
+        "    truth_pet.bark()\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_early()\n"
+        "  early_truth = inferred_pet_hash()[\"one\"]\n"
+        "  return unless early_truth\n"
+        "  early_truth.bark()\n"
+        "end\n"
+        "def truthiness_negated_early()\n"
+        "  negated_truth = inferred_pet_hash()[\"one\"]\n"
+        "  return if not negated_truth\n"
+        "  negated_truth.bark()\n"
+        "end\n"
+        "def truthiness_contract() -> Pet\n"
+        "  truth_result = inferred_pet_hash()[\"one\"]\n"
+        "  return Pet.new() unless truth_result\n"
+        "  truth_result\n"
+        "end\n"
+        "def truthiness_bool(value: Pet | Bool | Nil)\n"
+        "  if value\n"
+        "    # truth_bool_yes\n"
+        "    value.bark()\n"
+        "  else\n"
+        "    # truth_bool_no\n"
+        "    value.bark()\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_mixed(value: Pet | Int | Nil)\n"
+        "  if value\n"
+        "    # truth_mixed_yes\n"
+        "    value.bark()\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_union(value: Pet | Leaf | Nil)\n"
+        "  if value\n"
+        "    truth_union = value\n"
+        "    truth_union.bark()\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_nested(value: Pet | Leaf | Nil)\n"
+        "  if value\n"
+        "    if value is Pet\n"
+        "      # truth_checked_is\n"
+        "      value.bark()\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_ternary()\n"
+        "  truth_ternary = inferred_pet_hash()[\"one\"]\n"
+        "  choice = truth_ternary ? truth_ternary : Pet.new()\n"
+        "  truth_ternary.bark()\n"
+        "end\n"
+        "def truthiness_alias(value)\n"
+        "  truth_items = inferred_nested_hash()[\"list\"]\n"
+        "  if truth_items\n"
+        "    # truth_array_yes\n"
+        "    truth_items[0].bark()\n"
+        "    alias_items = truth_items\n"
+        "    alias_items[0] = value\n"
+        "    # truth_array_changed\n"
+        "    truth_items[0].bark()\n"
+        "  end\n"
+        "end\n"
+        "def truthiness_double_not()\n"
+        "  double_truth = inferred_pet_hash()[\"one\"]\n"
+        "  if !!double_truth\n"
+        "    double_truth.bark()\n"
+        "  end\n"
+        "end\n"
         "def greeting() -> String = \"abc\"\n"
         "def string_twin?(text) -> Int = 1\n"
         "def string_twin(text) -> String = \"twin\"\n"
@@ -1002,6 +1119,33 @@ int main(void) {
         }
     }
     if(!found_inferred_hash_fact)failed=1;
+    bool found_truthiness_fact=false;
+    for(size_t index=0;index<chunk.function_count;index++) {
+        const DiamondFunction *function=chunk.functions[index];
+        if(strcmp(function->name,"truthiness_guards")!=0)continue;
+        for(size_t local=0;local<function->scope_local_count;local++) {
+            const DiamondScopeLocal *entry=&function->scope_locals[local];
+            const bool inferred=strcmp(entry->name,"truth_pet")==0;
+            if(!inferred&&strcmp(entry->name,"declared_truth")!=0)continue;
+            for(size_t fact_index=0;fact_index<function->scope_type_fact_count;fact_index++) {
+                const DiamondScopeTypeFact *fact=&function->scope_type_facts[fact_index];
+                if(fact->reg!=entry->reg)continue;
+                if(fact->tooling_type_set>=0)found_truthiness_fact=true;
+                bool checked_unchanged=fact->known_type==DIAMOND_TYPE_NONE;
+                if(inferred)checked_unchanged&=fact->known_type_set<0;
+                else {
+                    checked_unchanged&=fact->known_type_set>=0;
+                    if(fact->known_type_set>=0)
+                        checked_unchanged&=function->type_sets[fact->known_type_set].count==2;
+                }
+                if(!checked_unchanged) {
+                    fprintf(stderr,"truthiness guard changed checked facts\n");
+                    failed=1;
+                }
+            }
+        }
+    }
+    if(!found_truthiness_fact)failed=1;
     failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_guard\n",
         "inferred_pet.","Pet",false);
     failed|=check_receiver_after(program,&chunk,combined,"# inferred_repeat_unless\n",
@@ -1011,6 +1155,51 @@ int main(void) {
     failed|=check_receiver(program,&chunk,combined,"nested_hash_items[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"literal_hash_items[0].","Pet",false);
     failed|=check_receiver(program,&chunk,combined,"ternary_hash_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_before\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_yes\n",
+        "truth_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_no\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_join\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_unless_no\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_unless_yes\n",
+        "truth_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_not_no\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_not_yes\n",
+        "truth_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_and_yes\n",
+        "truth_pet.","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_and_no\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_or_no\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_or_unknown\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_reassigned\n",
+        "truth_pet.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_bool_yes\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_bool_no\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_mixed_yes\n",
+        "value.",nullptr,false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_checked_is\n",
+        "value.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"declared_truth.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"early_truth.","Pet",false);
+    failed|=check_receiver(program,&chunk,combined,"negated_truth.","Pet",false);
+    failed|=check_receiver_pair(program,&chunk,combined,"truth_union.","Pet","Leaf");
+    failed|=check_receiver(program,&chunk,combined,"truth_ternary.",nullptr,false);
+    failed|=check_return_contract(&chunk,"truthiness_contract");
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_array_yes\n",
+        "truth_items[0].","Pet",false);
+    failed|=check_receiver_after(program,&chunk,combined,"# truth_array_changed\n",
+        "truth_items[0].",nullptr,false);
+    failed|=check_receiver(program,&chunk,combined,"double_truth.","Pet",false);
     DiamondProgram *restored=round_trip(program);
     if(restored==nullptr) {
         fprintf(stderr,"receiver program serialization failed\n");failed=1;
@@ -1044,6 +1233,9 @@ int main(void) {
             "pet.","Pet",false);
         failed|=check_receiver_after(restored,&restored_chunk,combined,"# inferred_non_nil\n",
             "inferred_pet.","Pet",false);
+        failed|=check_receiver_after(restored,&restored_chunk,combined,"# truth_yes\n",
+            "truth_pet.","Pet",false);
+        failed|=check_receiver(restored,&restored_chunk,combined,"early_truth.","Pet",false);
         diamond_program_free(restored);free(restored);
     }
     failed|=check_receiver(program,&chunk,combined,"wrap_pet().","Pet",false);

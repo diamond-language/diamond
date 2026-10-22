@@ -255,6 +255,40 @@ void apply_type_set_fact(Compiler *compiler,uint16_t reg,int32_t set_index) {
     compiler->known_types[reg]=set->count==1?set->members[0].id:TYPE_UNKNOWN;
 }
 
+/* Bool includes both true and false, so it belongs to both views. These
+ * proofs describe editor receivers only, never checked compiler types. */
+Narrowing condition_narrowing(Compiler *compiler,uint16_t condition) {
+    if(compiler->narrowing.valid&&compiler->narrowing.condition==condition)
+        return compiler->narrowing;
+    Narrowing result={.condition=condition};
+    if(!register_is_local(compiler,condition))return result;
+    int32_t source_index=compiler->tooling_type_sets[condition];
+    if(source_index<0)source_index=compiler->known_type_sets[condition];
+    if(source_index<0)return result;
+    const DiamondTypeSet source=compiler->function->type_sets[source_index];
+    DiamondTypeSet yes={},no={};
+    for(size_t index=0;index<source.count;index++) {
+        const DiamondTypeMember member=source.members[index];
+        if(member.id!=DIAMOND_TYPE_NIL)yes.members[yes.count++]=member;
+        if(member.id==DIAMOND_TYPE_NIL||member.id==DIAMOND_TYPE_BOOL)
+            no.members[no.count++]=member;
+    }
+    if(yes.count==0||no.count==0||
+       (yes.count==source.count&&no.count==source.count)||
+       !grow_type_sets(compiler->function,2))return result;
+    const int32_t yes_index=(int32_t)compiler->function->type_set_count;
+    compiler->function->type_sets[compiler->function->type_set_count++]=yes;
+    const int32_t no_index=(int32_t)compiler->function->type_set_count;
+    compiler->function->type_sets[compiler->function->type_set_count++]=no;
+    result.when_true[0]=(NarrowingFact){.reg=condition,.type_set=yes_index,
+        .tooling_only=true};
+    result.when_false[0]=(NarrowingFact){.reg=condition,.type_set=no_index,
+        .tooling_only=true};
+    result.when_true_count=result.when_false_count=1;
+    result.valid=true;
+    return result;
+}
+
 void apply_narrowing_facts(Compiler *compiler,const NarrowingFact *facts,
                                   size_t count) {
     for(size_t index=0;index<count;index++)
@@ -826,9 +860,31 @@ uint16_t parse_prefix(Compiler *compiler) {
         case DIAMOND_TOKEN_BANG:
         case DIAMOND_TOKEN_NOT: {
             const uint16_t operand=parse_precedence(compiler,PREC_PREFIX);
+            const Narrowing operand_narrowing=condition_narrowing(compiler,operand);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_NOT,destination,operand,0,2);
             compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+            /* Negation carries editor proofs without extending checked narrowing. */
+            Narrowing inverted={.condition=destination};
+            for(size_t side=0;side<2;side++) {
+                const NarrowingFact *facts=side==0?operand_narrowing.when_false:
+                    operand_narrowing.when_true;
+                const size_t count=side==0?operand_narrowing.when_false_count:
+                    operand_narrowing.when_true_count;
+                NarrowingFact *target=side==0?inverted.when_true:inverted.when_false;
+                size_t *target_count=side==0?&inverted.when_true_count:
+                    &inverted.when_false_count;
+                for(size_t index=0;index<count;index++) {
+                    NarrowingFact fact=facts[index];
+                    if(!fact.tooling_only) {
+                        if(fact.has_tooling)fact.type_set=fact.tooling_type_set;
+                        fact.tooling_only=true;fact.has_tooling=false;
+                    }
+                    target[(*target_count)++]=fact;
+                }
+            }
+            inverted.valid=inverted.when_true_count>0||inverted.when_false_count>0;
+            compiler->narrowing=inverted;
             return destination;
         }
         case DIAMOND_TOKEN_AMPERSAND:
@@ -1135,16 +1191,14 @@ uint16_t parse_precedence(Compiler *compiler, Precedence precedence) {
            operator==DIAMOND_TOKEN_OR_OR||operator==DIAMOND_TOKEN_OR) {
             const bool is_and=operator==DIAMOND_TOKEN_AND_AND||
                 operator==DIAMOND_TOKEN_AND;
-            const Narrowing left_narrowing=compiler->narrowing.condition==left
-                ?compiler->narrowing:(Narrowing){};
+            const Narrowing left_narrowing=condition_narrowing(compiler,left);
             const uint16_t destination=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,left,0,2);
             const size_t end_jump=emit_jump(compiler,
                 is_and?DIAMOND_OP_JUMP_IF_FALSE:DIAMOND_OP_JUMP_IF_TRUE,left);
             const uint16_t right=parse_precedence(
                 compiler,(Precedence)(operator_precedence+1));
-            const Narrowing right_narrowing=compiler->narrowing.condition==right
-                ?compiler->narrowing:(Narrowing){};
+            const Narrowing right_narrowing=condition_narrowing(compiler,right);
             emit_instruction(compiler,DIAMOND_OP_MOVE,destination,right,0,2);
             patch_jump(compiler,end_jump,compiler->function->code_count);
             if(compiler->known_types[left]==compiler->known_types[right])

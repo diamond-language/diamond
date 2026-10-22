@@ -756,6 +756,175 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$inferred_hash_uri"'"}}}'
 read_message >/dev/null
 
+# Truthiness guards refine editor facts and retain Bool in both views.
+truthiness_uri="file://$work/truthiness.di"
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$truthiness_uri"'","text":"require \"inferred_hash_dependency\"\ndef inspect_truthiness(pets: Hash[String, ImportedPet], flag, value)\n  pet = inferred_hash_wrapper()[\"name\"]\n  pet.bark() # before\n  if pet\n    pet.bark() # yes\n  else\n    pet.bark() # no\n  end\n  pet.bark() # join\n  unless pet\n    pet.bark() # unless_no\n  else\n    pet.bark() # unless_yes\n  end\n  if !pet\n    pet.bark() # not_no\n  else\n    pet.bark() # not_yes\n  end\n  if pet && flag\n    pet.bark() # and_yes\n  else\n    pet.bark() # and_unknown\n  end\n  unless pet || flag\n    pet.bark() # or_no\n  else\n    pet.bark() # or_unknown\n  end\n  declared = pets[\"name\"]\n  if declared\n    declared.bark() # declared_yes\n  end\n  if pet\n    pet = value\n    pet.bark() # reassigned\n  end\nend\ndef truthiness_early()\n  pet = inferred_pet_hash()[\"name\"]\n  return unless pet\n  pet.bark() # early_yes\nend\ndef truthiness_negated_early()\n  pet = inferred_pet_hash()[\"name\"]\n  return if !pet\n  pet.bark() # early_not_yes\nend\ndef truthiness_boolean(pet: ImportedPet | Bool | Nil)\n  if pet\n    pet.bark() # bool_yes\n  else\n    pet.bark() # bool_no\n  end\n  pet.bark() # bool_join\nend\ndef truthiness_checked(pet: ImportedPet | ImportedLeaf | Nil)\n  if pet\n    if pet is ImportedPet\n      pet.bark() # checked_is\n    end\n  end\nend\n"}}}'
+read_message >/dev/null
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":3,"character":6}},"id":2200}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":5,"character":8}},"id":2201}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":7,"character":8}},"id":2202}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":9,"character":6}},"id":2203}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":11,"character":8}},"id":2204}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":13,"character":8}},"id":2205}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":16,"character":8}},"id":2206}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":18,"character":8}},"id":2207}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":21,"character":8}},"id":2208}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":23,"character":8}},"id":2209}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":26,"character":8}},"id":2210}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":28,"character":8}},"id":2211}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":32,"character":13}},"id":2212}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":36,"character":8}},"id":2213}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":42,"character":6}},"id":2214}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":47,"character":6}},"id":2215}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":51,"character":8}},"id":2216}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":53,"character":8}},"id":2217}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":55,"character":6}},"id":2218}'
+response="$(read_message)"
+[[ "$response" != *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/completion","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":60,"character":10}},"id":2219}'
+response="$(read_message)"
+[[ "$response" == *'"label":"bark","kind":3'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":3,"character":3}},"id":2220}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":5,"character":5}},"id":2221}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":7,"character":5}},"id":2222}'
+response="$(read_message)"
+[[ "$response" == *'Nil'* ]]
+[[ "$response" != *'ImportedPet'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":9,"character":3}},"id":2223}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":32,"character":5}},"id":2224}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":51,"character":5}},"id":2225}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Bool'* ]]
+[[ "$response" != *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":53,"character":5}},"id":2226}'
+response="$(read_message)"
+[[ "$response" == *'Bool'* ]]
+[[ "$response" == *'Nil'* ]]
+[[ "$response" != *'ImportedPet'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":55,"character":3}},"id":2227}'
+response="$(read_message)"
+[[ "$response" == *'ImportedPet'* ]]
+[[ "$response" == *'Bool'* ]]
+[[ "$response" == *'Nil'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":5,"character":9}},"id":2228}'
+response="$(read_message)"
+[[ "$response" == *'bark()'* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/definition","params":{"textDocument":{"uri":"'"$truthiness_uri"'"},"position":{"line":5,"character":9}},"id":2229}'
+response="$(read_message)"
+[[ "$response" == *"\"uri\":\"$receiver_dependency_uri\""* ]]
+count=$((count + 1))
+
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$truthiness_uri"'"}}}'
+read_message >/dev/null
+
 # Indexed inferred call results retain advisory class facts after assignment.
 assigned_index_uri="file://$work/assigned_index.di"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$assigned_index_uri"'","text":"require \"receiver_dependency\"\ndef assigned_indexed_receiver()\n  pets = build_imported_pets()\n  pet = pets[0]\n  pet.bark()\n  direct_pet = build_imported_pets()[0]\n  direct_pet.bark()\nend\n\ndef imported_nested_pets()\n  [[ImportedPet.new()]]\nend\n\ndef assigned_nested_receiver()\n  nested_pet = imported_nested_pets()[0][0]\n  nested_pet.bark()\nend\n\ndef imported_pet_hash()\n  {\"one\": ImportedPet.new()}\nend\n\ndef assigned_nullable_receiver()\n  nullable_pet = imported_pet_hash()[\"one\"]\n  nullable_pet.bark()\nend\n\ndef opaque_pets(value)\n  [value]\nend\n\ndef assigned_unknown_receiver(value)\n  unknown_pet = opaque_pets(value)[0]\n  unknown_pet.bark()\nend"}}}'
