@@ -602,7 +602,13 @@ static bool run_capturing_stdout(FILE *capture, int real_stdout_fd,
         DiamondProgram *program, DiamondValue *result, DiamondVm *result_vm,
         const char **run_error, char *error_message, size_t error_size) {
     rewind(capture);
-    if (ftruncate(fileno(capture), 0) != 0) {
+    /* The run writes through fd 1, which shares this file's kernel offset;
+     * rewind() alone may only move capture's stdio buffer position and leave
+     * that offset at the previous run's end, so set it explicitly. Without
+     * this, every round after the first wrote past a hole of NUL bytes and
+     * its output read back as an empty string. */
+    if (ftruncate(fileno(capture), 0) != 0 ||
+        lseek(fileno(capture), 0, SEEK_SET) != 0) {
         fprintf(stderr, "diamond: cannot reset output capture\n");
     }
     /* dup2 onto STDOUT_FILENO, not a direct `stdout = capture`

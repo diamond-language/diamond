@@ -97,6 +97,24 @@ response="$(read_until_prompt)"
 [[ "$response" != *"hello"* ]]
 count=$((count + 1))
 
+# --- a later round's own output still shows, including after a print
+# with no trailing newline (each round's capture must start empty) ---
+
+printf 'puts("again")\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'again\nnil\n{> ' ]]
+count=$((count + 1))
+
+printf 'print("a")\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'anil\n{> ' ]]
+count=$((count + 1))
+
+printf 'puts("b")\n' >&"${REPL[1]}"
+response="$(read_until_prompt)"
+[[ "$response" == $'b\nnil\n{> ' ]]
+count=$((count + 1))
+
 # --- multi-line function definitions, then calling the defined function ---
 
 printf 'def add(a, b)\n' >&"${REPL[1]}"
