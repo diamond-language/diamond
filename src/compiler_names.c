@@ -1926,6 +1926,217 @@ uint16_t parse_invoke(Compiler *compiler, uint16_t receiver) {
                               receiver_set_index,name);
 }
 
+/* The receiver side of an instance call, as parse_invoke_named resolved it:
+ * the receiver register, the register a mutating call (push) updates, the
+ * receiver's type set, the method name, and the signatures used for argument
+ * and return-type inference (either may be nullptr). */
+typedef struct {
+    uint16_t receiver;
+    uint16_t mutation_receiver;
+    int32_t receiver_set_index;
+    DiamondSpan name;
+    const DiamondFunction *contextual_target;
+    const DiamondFunction *return_target;
+} InvokeSite;
+
+/* `value.class()`: the current token is the '('. */
+static uint16_t parse_class_name_call(Compiler *compiler,uint16_t receiver) {
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,"class() takes no arguments");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_CLASS_NAME,destination,receiver,0,2);
+    compiler->known_types[destination]=DIAMOND_TYPE_STRING;
+    return destination;
+}
+
+/* `value.is_a?(Type)`: the type name resolves at compile time; the current
+ * token is the '('. */
+static uint16_t parse_is_a_call(Compiler *compiler,uint16_t receiver) {
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected a type name");
+        return 0;
+    }
+    const DiamondSpan type_span=compiler->current.span;
+    char type_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!consume_qualified_name(compiler,type_name,sizeof type_name)) {
+        fail(compiler,type_span,"type name is too long");
+        return 0;
+    }
+    const uint16_t resolved_type=(uint16_t)resolve_type_name(
+        compiler,type_name,type_span);
+    skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected ')' after is_a? type");
+        return 0;
+    }
+    advance_token(compiler);
+    const uint16_t destination=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,receiver,
+                     resolved_type,3);
+    compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+    return destination;
+}
+
+/* `.name[Type, ...]`: the current token is the '['. */
+static bool parse_invoke_type_arguments(Compiler *compiler,uint16_t *type_arguments,
+        size_t *type_argument_count_out) {
+    size_t type_argument_count=0;
+    advance_token(compiler);
+    skip_newlines(compiler);
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+          !compiler->failed) {
+        if(type_argument_count==8) {
+            fail(compiler,compiler->current.span,"too many generic arguments");
+            return false;
+        }
+        type_arguments[type_argument_count++]=
+            (uint16_t)parse_type_annotation(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+        fail(compiler,compiler->current.span,
+             "expected ']' after generic arguments");return false;
+    }
+    advance_token(compiler);
+    *type_argument_count_out=type_argument_count;
+    return true;
+}
+
+/* An instance call whose arguments include a keyword argument: the current
+ * token is the first argument. */
+static uint16_t parse_invoke_keyword_call(Compiler *compiler,const InvokeSite *site,bool writer_name,
+        const uint16_t *type_arguments,size_t type_argument_count) {
+    uint16_t receiver=site->receiver;
+    const uint16_t mutation_receiver=site->mutation_receiver;
+    const int32_t receiver_set_index=site->receiver_set_index;
+    const DiamondSpan name=site->name;
+    const DiamondFunction *contextual_target=site->contextual_target;
+    const DiamondFunction *return_target=site->return_target;
+    if(writer_name) {fail(compiler,compiler->current.span,
+        "keyword method calls do not support writers");return 0;}
+    DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t keyword_count=0;
+    const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+        keyword_names,keyword_values,&keyword_count,contextual_target);
+    uint16_t inferred_arguments[8];
+    if(type_argument_count==0) {
+        const size_t block_count=
+            compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
+        const size_t parameter_count=contextual_target==nullptr?0:
+            contextual_target->arity>block_count?
+                contextual_target->arity-block_count:0;
+        infer_contextual_spread_arguments(compiler,contextual_target,
+            positional,parameter_count,inferred_arguments);
+        infer_contextual_keyword_arguments(compiler,contextual_target,
+            keyword_names,keyword_values,keyword_count,inferred_arguments);
+    }
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:contextual_target==nullptr?0:
+            contextual_target->type_variable_count;
+    bool has_block=false;uint16_t block=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        receiver=snapshot_block_call_receiver(compiler,receiver);
+        for(size_t index=0;index<keyword_count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                keyword_values[index],0,2);
+            keyword_values[index]=snapshot;
+        }
+        block=compile_instance_contextual_block(compiler,contextual_target,
+            contextual_target==nullptr||contextual_target->arity<=1?0:
+                contextual_target->arity-2,resolved_arguments,
+            resolved_count,receiver_set_index,
+            compiler->tooling_type_sets[receiver],name);
+        has_block=true;
+    }
+    const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
+        keyword_names,keyword_values,keyword_count,type_arguments,
+        type_argument_count,has_block,block);
+    publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
+        return_target,resolved_arguments,resolved_count);
+    publish_collection_keyword_return_type(compiler,result,
+        receiver_set_index,name,keyword_names,keyword_values,keyword_count);
+    const int push=find_keyword_argument(compiler,"value",keyword_names,
+        keyword_count);
+    if(push>=0)publish_array_push_return_type(compiler,result,
+        mutation_receiver,name,&keyword_values[(size_t)push],1);
+    return result;
+}
+
+/* An instance call whose arguments include a spread: the current token is
+ * the first argument. */
+static uint16_t parse_invoke_spread_call(Compiler *compiler,const InvokeSite *site,bool writer_name,
+        const uint16_t *type_arguments,size_t type_argument_count) {
+    uint16_t receiver=site->receiver;
+    const int32_t receiver_set_index=site->receiver_set_index;
+    const DiamondSpan name=site->name;
+    const DiamondFunction *contextual_target=site->contextual_target;
+    const DiamondFunction *return_target=site->return_target;
+    if(writer_name) {
+        fail(compiler,compiler->current.span,
+            "spread method calls do not support writers");
+        return 0;
+    }
+    uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+        nullptr,nullptr,nullptr,contextual_target,
+        contextual_target==nullptr||contextual_target->arity==0?0:
+            contextual_target->arity-1);
+    uint16_t inferred_arguments[8];
+    const size_t spread_parameter_count=contextual_target==nullptr?0:
+        contextual_target->arity>(compiler->current.kind==DIAMOND_TOKEN_DO?
+            2u:1u)?contextual_target->arity-
+            (compiler->current.kind==DIAMOND_TOKEN_DO?2u:1u):0;
+    const size_t inferred_count=type_argument_count==0?
+        infer_contextual_spread_arguments(compiler,contextual_target,
+            spread,spread_parameter_count,inferred_arguments):0;
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:inferred_count;
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        receiver=snapshot_block_call_receiver(compiler,receiver);
+        const uint16_t spread_snapshot=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+            spread,0,2);
+        spread=spread_snapshot;
+        const uint16_t block=compile_instance_contextual_block(compiler,
+            contextual_target,
+                contextual_target==nullptr||contextual_target->arity<=1?0:
+                contextual_target->arity-2,resolved_arguments,
+            resolved_count,receiver_set_index,
+            compiler->tooling_type_sets[receiver],name);
+        if(contextual_target!=nullptr) {
+            const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
+                nullptr,nullptr,0,type_arguments,type_argument_count,true,
+                block);
+            publish_instance_return_type(compiler,result,receiver,
+                receiver_set_index,name,return_target,resolved_arguments,
+                resolved_count);
+            return result;
+        }
+        spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
+            &block,1,false);
+    }
+    const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
+        spread,type_arguments,type_argument_count);
+    publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
+        return_target,resolved_arguments,resolved_count);
+    return result;
+}
+
 /* parse_invoke after `.name` has been consumed -- also reached from
  * parse_call for a bare `name(...)` inside a method, with self as the
  * receiver. */
@@ -1965,46 +2176,11 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
      * could take a type name as its argument at all. */
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"class",name,false)) {
-        advance_token(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,"class() takes no arguments");
-            return 0;
-        }
-        advance_token(compiler);
-        const uint16_t destination=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_CLASS_NAME,destination,receiver,0,2);
-        compiler->known_types[destination]=DIAMOND_TYPE_STRING;
-        return destination;
+        return parse_class_name_call(compiler,receiver);
     }
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
        name_equals(compiler,"is_a?",name,false)) {
-        advance_token(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,"expected a type name");
-            return 0;
-        }
-        const DiamondSpan type_span=compiler->current.span;
-        char type_name[DIAMOND_MAX_FUNCTION_NAME];
-        if(!consume_qualified_name(compiler,type_name,sizeof type_name)) {
-            fail(compiler,type_span,"type name is too long");
-            return 0;
-        }
-        const uint16_t resolved_type=(uint16_t)resolve_type_name(
-            compiler,type_name,type_span);
-        skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                 "expected ')' after is_a? type");
-            return 0;
-        }
-        advance_token(compiler);
-        const uint16_t destination=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_IS_TYPE,destination,receiver,
-                         resolved_type,3);
-        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
-        return destination;
+        return parse_is_a_call(compiler,receiver);
     }
     bool writer_name=false;
     if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
@@ -2013,26 +2189,8 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
     uint16_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET &&
        (!writer_name||writer_generic_arguments_ahead(compiler))) {
-        advance_token(compiler);
-        skip_newlines(compiler);
-        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
-              !compiler->failed) {
-            if(type_argument_count==8) {
-                fail(compiler,compiler->current.span,"too many generic arguments");
-                return 0;
-            }
-            type_arguments[type_argument_count++]=
-                (uint16_t)parse_type_annotation(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            fail(compiler,compiler->current.span,
-                 "expected ']' after generic arguments");return 0;
-        }
-        advance_token(compiler);
+        if(!parse_invoke_type_arguments(compiler,type_arguments,&type_argument_count))
+            return 0;
     }
     /* `recv.attr = value` -- sugar for `recv.attr=(value)`. Only a plain
      * assignment is supported (mirrors compile_assignment's own RHS): one
@@ -2051,111 +2209,15 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    if(call_arguments_have_keyword(compiler)) {
-        if(writer_name) {fail(compiler,compiler->current.span,
-            "keyword method calls do not support writers");return 0;}
-        DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
-        size_t keyword_count=0;
-        const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-            keyword_names,keyword_values,&keyword_count,contextual_target);
-        uint16_t inferred_arguments[8];
-        if(type_argument_count==0) {
-            const size_t block_count=
-                compiler->current.kind==DIAMOND_TOKEN_DO?1u:0u;
-            const size_t parameter_count=contextual_target==nullptr?0:
-                contextual_target->arity>block_count?
-                    contextual_target->arity-block_count:0;
-            infer_contextual_spread_arguments(compiler,contextual_target,
-                positional,parameter_count,inferred_arguments);
-            infer_contextual_keyword_arguments(compiler,contextual_target,
-                keyword_names,keyword_values,keyword_count,inferred_arguments);
-        }
-        const uint16_t *resolved_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t resolved_count=type_argument_count>0?
-            type_argument_count:contextual_target==nullptr?0:
-                contextual_target->type_variable_count;
-        bool has_block=false;uint16_t block=0;
-        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            receiver=snapshot_block_call_receiver(compiler,receiver);
-            for(size_t index=0;index<keyword_count;index++) {
-                const uint16_t snapshot=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
-                    keyword_values[index],0,2);
-                keyword_values[index]=snapshot;
-            }
-            block=compile_instance_contextual_block(compiler,contextual_target,
-                contextual_target==nullptr||contextual_target->arity<=1?0:
-                    contextual_target->arity-2,resolved_arguments,
-                resolved_count,receiver_set_index,
-                compiler->tooling_type_sets[receiver],name);
-            has_block=true;
-        }
-        const uint16_t result=emit_invoke_keywords(compiler,receiver,name,positional,
-            keyword_names,keyword_values,keyword_count,type_arguments,
-            type_argument_count,has_block,block);
-        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
-            return_target,resolved_arguments,resolved_count);
-        publish_collection_keyword_return_type(compiler,result,
-            receiver_set_index,name,keyword_names,keyword_values,keyword_count);
-        const int push=find_keyword_argument(compiler,"value",keyword_names,
-            keyword_count);
-        if(push>=0)publish_array_push_return_type(compiler,result,
-            mutation_receiver,name,&keyword_values[(size_t)push],1);
-        return result;
-    }
-    if(call_arguments_have_spread(compiler)) {
-        if(writer_name) {
-            fail(compiler,compiler->current.span,
-                "spread method calls do not support writers");
-            return 0;
-        }
-        uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-            nullptr,nullptr,nullptr,contextual_target,
-            contextual_target==nullptr||contextual_target->arity==0?0:
-                contextual_target->arity-1);
-        uint16_t inferred_arguments[8];
-        const size_t spread_parameter_count=contextual_target==nullptr?0:
-            contextual_target->arity>(compiler->current.kind==DIAMOND_TOKEN_DO?
-                2u:1u)?contextual_target->arity-
-                (compiler->current.kind==DIAMOND_TOKEN_DO?2u:1u):0;
-        const size_t inferred_count=type_argument_count==0?
-            infer_contextual_spread_arguments(compiler,contextual_target,
-                spread,spread_parameter_count,inferred_arguments):0;
-        const uint16_t *resolved_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t resolved_count=type_argument_count>0?
-            type_argument_count:inferred_count;
-        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            receiver=snapshot_block_call_receiver(compiler,receiver);
-            const uint16_t spread_snapshot=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
-                spread,0,2);
-            spread=spread_snapshot;
-            const uint16_t block=compile_instance_contextual_block(compiler,
-                contextual_target,
-                    contextual_target==nullptr||contextual_target->arity<=1?0:
-                    contextual_target->arity-2,resolved_arguments,
-                resolved_count,receiver_set_index,
-                compiler->tooling_type_sets[receiver],name);
-            if(contextual_target!=nullptr) {
-                const uint16_t result=emit_invoke_keywords(compiler,receiver,name,spread,
-                    nullptr,nullptr,0,type_arguments,type_argument_count,true,
-                    block);
-                publish_instance_return_type(compiler,result,receiver,
-                    receiver_set_index,name,return_target,resolved_arguments,
-                    resolved_count);
-                return result;
-            }
-            spread=emit_build_spread_arguments(compiler,nullptr,0,spread,
-                &block,1,false);
-        }
-        const uint16_t result=emit_invoke_typed_spread(compiler,receiver,name,
-            spread,type_arguments,type_argument_count);
-        publish_instance_return_type(compiler,result,receiver,receiver_set_index,name,
-            return_target,resolved_arguments,resolved_count);
-        return result;
-    }
+    const InvokeSite site={.receiver=receiver,.mutation_receiver=mutation_receiver,
+        .receiver_set_index=receiver_set_index,.name=name,
+        .contextual_target=contextual_target,.return_target=return_target};
+    if(call_arguments_have_keyword(compiler))
+        return parse_invoke_keyword_call(compiler,&site,writer_name,type_arguments,
+            type_argument_count);
+    if(call_arguments_have_spread(compiler))
+        return parse_invoke_spread_call(compiler,&site,writer_name,type_arguments,
+            type_argument_count);
     uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
     while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
         if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
