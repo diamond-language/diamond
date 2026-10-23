@@ -36,6 +36,10 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- The Gremlin test harness preserves stderr after its connection retry, so later
+  runtime errors and the shell failure diagnostic remain visible. The isolated
+  shutdown failure investigated in [the CI memo](docs/internal/gremlin-shutdown-flake.md)
+  has not been reproduced; this fixes missing diagnostics, not its unknown cause.
 - `case` exhaustiveness: an object pattern (`when Ok{value: v}`) on a class declared after roughly 240 others, prelude and cuts included, did not count as covering that class, so a complete `case` over a sealed hierarchy or union was rejected as not exhaustive. The class's type id was truncated to 8 bits when recorded; a bare `when Ok` was unaffected.
 - `UDPSocket#receive(0)` interrupted by a trapped signal retried the receive with a zero-length buffer, which on FreeBSD leaves the sender address unset, so the call failed with "cannot resolve sender address". The retry now uses the same one-byte minimum as the first attempt.
 - REPL: anything a statement printed (`puts`, `print`) showed only in the first round of a session; every later round's output was lost, though its value still printed. Each round replays the session into a capture file, and the capture was not rewound at the file-descriptor level, so later output landed after a run of NUL bytes and read back as empty.
@@ -187,7 +191,7 @@ record**. The deterministic launch inventory selects 18 cuts. The withdrawn
 | `div` | 0.2.4 | 0.3.0 |
 | `graphql` | 0.2.1 | 0.3.0 |
 | `graphsql` | 0.1.4 | 0.2.0 |
-| `gremlin` | 0.4.7 | 0.5.0 |
+| `gremlin` | 0.4.7 | 0.5.1 |
 | `http` | 0.1.3 | 0.2.0 |
 | `jobs` | 0.1.3 | 0.2.0 |
 | `log_viewer` | 0.1.2 | 0.2.0 |

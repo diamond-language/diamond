@@ -15,10 +15,19 @@ library compatibility with Ruby is explicitly out of scope.
 
 ## Implementation
 
-Diamond is implemented in C23 and currently targets Linux with GCC 16. It uses
+Diamond is implemented in C23, requiring GCC 15+ or Clang 19+ with `#embed`.
+Linux is the primary development target; validated FreeBSD, macOS, musl, and
+arm64 coverage is described in [portability](../portability.md). It uses
 a register bytecode VM with 256 registers per call frame. Bytecode instructions
 have one-byte opcodes and explicitly decoded operands; jumps contain absolute
 16-bit bytecode offsets.
+
+The frontend is split across `src/compiler_*.c`, with internal declarations in
+`src/compiler_internal.h`. In particular, call emission is in `compiler_calls.c`,
+member lookup/invocation parsing in `compiler_names.c`, definitions in
+`compiler_definitions.c`, class/module bodies in `compiler_classes.c`, and loop
+parsing in `compiler_flow.c`. Older rationale below sometimes names the former
+single `compiler.c`; those source-location references predate the split.
 
 Runtime values use an explicit tagged union. Immediate values are `nil`,
 booleans, signed 64-bit integers, and IEEE-754 double-precision floats.

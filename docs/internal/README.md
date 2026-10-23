@@ -18,6 +18,8 @@ start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
   and its deoptimization and GC-root contracts.
 - [gremlin scaling investigation](gremlin-scaling-investigation.md) -- plan for
   explaining why `gremlin_serve` throughput plateaus around 8 threads.
+- [Gremlin shutdown flake](gremlin-shutdown-flake.md) -- the isolated CI failure,
+  reproduction coverage, and the confirmed stderr diagnostic gap.
 - [Lifting the class limit](class-limit-design.md) -- the completed migration from 180 to 1,024 classes
   (16-bit type ids and class operands, with dynamic class storage).
 - [Fuzzing](fuzzing.md) -- building and running the fuzzing harness, including the

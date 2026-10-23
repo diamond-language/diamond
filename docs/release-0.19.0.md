@@ -72,8 +72,10 @@ The isolated Gremlin shutdown failure from CI run `39928947356`, job
 `120332146315`, is accepted for this release by the owner. Its cause is unknown;
 the diagnostic rerun and subsequent full CI passed. Keep its investigation
 separate from the release gate and preserve the original evidence rather than
-weakening assertions. Follow-up should compare the failed job's full telemetry
-with its rerun and target the compiled shutdown transition after `silent`.
+weakening assertions. The [investigation memo](internal/gremlin-shutdown-flake.md)
+records the matching image/package telemetry, unsuccessful reproduction probes,
+and the confirmed stderr redirection bug. That diagnostic bug is fixed; the
+underlying flake remains unexplained.
 
 After the release PR is green and merged: finalize the release date, tag the
 verified commit, publish the release notes, and deploy the matching marketing
