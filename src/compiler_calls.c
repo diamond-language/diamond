@@ -1044,49 +1044,253 @@ static bool self_has_singleton_method(const Compiler *compiler,DiamondSpan name)
     return false;
 }
 
+/* `name(...)` where name is a local holding a callable. */
+static uint16_t parse_local_callable_call(Compiler *compiler, int callable_local) {
+    uint16_t callable=compiler->locals[(size_t)callable_local].reg;
+    if(compiler->locals[(size_t)callable_local].captured) {
+        /* See parse_identifier's own BOX_LOCAL re-emission for why this
+         * defensive re-box is needed: `captured` doesn't imply this
+         * control-flow path actually ran the boxing site. */
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,callable,0,0,1);
+        const uint16_t loaded=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
+        /* Keep the local's type facts, as parse_identifier's own
+         * captured read does, so a trailing block still gets its
+         * Callable parameter types. */
+        compiler->known_types[loaded]=compiler->known_types[callable];
+        compiler->known_type_sets[loaded]=compiler->known_type_sets[callable];
+        compiler->tooling_type_sets[loaded]=compiler->tooling_type_sets[callable];
+        callable=loaded;
+    }
+    return parse_closure_call_arguments(compiler, callable);
+}
+
+/* `block_given?()`: the current token is the '('. */
+static uint16_t parse_block_given_call(Compiler *compiler) {
+    advance_token(compiler);skip_newlines(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+            "block_given? does not accept arguments");return 0;
+    }
+    advance_token(compiler);
+    const uint16_t destination=allocate_register(compiler);
+    if(!compiler->has_current_block) {
+        emit_instruction(compiler,DIAMOND_OP_BOOL,destination,false,0,2);
+    } else {
+        const uint16_t block=load_current_block(compiler);
+        const uint16_t absent=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+        const uint16_t missing=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+            block,absent,3);
+        emit_instruction(compiler,DIAMOND_OP_NOT,destination,missing,0,2);
+    }
+    compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
+    return destination;
+}
+
+/* A call to a name that is not a function. Discovery tolerates it (the
+ * function may be declared later); otherwise it is an error, with a hint when
+ * a module function of that name exists. */
+static uint16_t parse_unknown_function_call(Compiler *compiler, DiamondSpan name) {
+    note_self_reference(compiler,name);
+    if(compiler->discovery_pass)
+        return parse_discovery_unknown_call(compiler);
+    /* A module function of that name is reached through its module. */
+    for(size_t module=0;module<compiler->program->module_count;module++) {
+        const DiamondModule *owner=&compiler->program->modules[module];
+        for(size_t index=0;index<owner->singleton_method_count;index++) {
+            if(!name_equals(compiler,owner->singleton_methods[index].name,name,false))
+                continue;
+            char message[sizeof compiler->diagnostic->message];
+            snprintf(message,sizeof message,
+                "undefined function; did you mean %s.%.*s(...)?",owner->name,
+                (int)name.length,compiler->source+name.start);
+            fail(compiler,name,message);
+            return 0;
+        }
+    }
+    fail(compiler, name, "undefined function");
+    return 0;
+}
+
+/* Explicit generic arguments, `name[Type, ...](...)`: the current token is
+ * the '['. */
+static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction *function,
+        DiamondSpan name, uint16_t *type_arguments, size_t *type_argument_count_out) {
+    size_t type_argument_count=0;
+    advance_token(compiler);
+    skip_newlines(compiler);
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
+          !compiler->failed) {
+        if(type_argument_count==8) {
+            fail(compiler,compiler->current.span,"too many generic arguments");
+            return false;
+        }
+        type_arguments[type_argument_count++]=
+            (uint16_t)parse_type_annotation(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
+        fail(compiler,compiler->current.span,
+             "expected ']' after generic arguments");return false;
+    }
+    advance_token(compiler);
+    if(type_argument_count!=function->type_variable_count) {
+        fail(compiler,name,"wrong number of generic arguments");return false;
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected '(' after generic arguments");return false;
+    }
+    *type_argument_count_out=type_argument_count;
+    return true;
+}
+
+/* A function call whose arguments include a spread: the current token is the
+ * first argument. */
+static uint16_t parse_spread_function_call(Compiler *compiler, const DiamondFunction *function,
+        int function_index, const uint16_t *type_arguments, size_t type_argument_count) {
+    uint8_t keyword_slots[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t keyword_count=0;
+    uint16_t array_register=parse_spread_argument_array(compiler,
+        function,keyword_slots,keyword_registers,&keyword_count,
+        function,function->arity);
+    uint16_t inferred_arguments[8];
+    const size_t spread_parameter_count=
+        compiler->current.kind==DIAMOND_TOKEN_DO?
+            (function->arity==0?0:function->arity-1):function->arity;
+    const size_t inferred_count=type_argument_count==0?
+        infer_contextual_spread_arguments(compiler,function,
+            array_register,spread_parameter_count,
+            inferred_arguments):0;
+    if(type_argument_count==0)
+        for(size_t index=0;index<keyword_count;index++)
+            infer_contextual_argument(compiler,function,
+                keyword_slots[index],keyword_registers[index],
+                inferred_arguments);
+    const uint16_t *resolved_arguments=type_argument_count>0?
+        type_arguments:inferred_arguments;
+    const size_t resolved_count=type_argument_count>0?
+        type_argument_count:inferred_count;
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        const uint16_t spread_snapshot=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+            array_register,0,2);
+        array_register=spread_snapshot;
+        for(size_t index=0;index<keyword_count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                keyword_registers[index],0,2);
+            keyword_registers[index]=snapshot;
+        }
+        const uint16_t block=compile_contextual_typed_block(compiler,
+            function,function->arity==0?0:function->arity-1,
+            resolved_arguments,resolved_count);
+        if(keyword_count>0) {
+            if(keyword_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
+                fail(compiler,compiler->previous.span,
+                    "too many keyword arguments");return 0;
+            }
+            keyword_slots[keyword_count]=(uint8_t)(function->arity-1);
+            keyword_registers[keyword_count]=block;
+            keyword_count++;
+        } else array_register=emit_build_spread_arguments(compiler,
+            nullptr,0,array_register,&block,1,false);
+    }
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,keyword_count==0?
+        (type_argument_count==0?DIAMOND_OP_CALL_SPREAD:
+         DIAMOND_OP_CALL_TYPED_SPREAD):
+        (type_argument_count==0?DIAMOND_OP_CALL_KEYWORD_SPREAD:
+         DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD));
+    emit_register(compiler,destination);
+    emit_function_index(compiler,(size_t)function_index);
+    emit_register(compiler,array_register);
+    if(keyword_count>0) {
+        emit_byte(compiler,(uint8_t)keyword_count);
+        for(size_t index=0;index<keyword_count;index++) {
+            emit_byte(compiler,keyword_slots[index]);
+            emit_register(compiler,keyword_registers[index]);
+        }
+    }
+    if(type_argument_count>0) {
+        emit_byte(compiler,(uint8_t)type_argument_count);
+        for(size_t index=0;index<type_argument_count;index++)
+            emit_register(compiler,type_arguments[index]);
+    }
+    publish_call_return_type(compiler,destination,function,
+        resolved_arguments,resolved_count);
+    return destination;
+}
+
+/* Parses a call's positional and keyword arguments, through the closing
+ * ')', into the parameter slots they fill. */
+static bool parse_call_slot_arguments(Compiler *compiler, const DiamondFunction *function,
+        DiamondSpan name, uint16_t *slot_registers, bool *slot_filled) {
+    size_t next_positional_slot=0;
+    bool seen_keyword=false;
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        do {
+            DiamondLexer keyword_lookahead=compiler->lexer;
+            const bool is_keyword=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+                diamond_lexer_next(&keyword_lookahead).kind==DIAMOND_TOKEN_COLON;
+            size_t slot;
+            if(is_keyword) {
+                const DiamondSpan keyword_name=compiler->current.span;
+                advance_token(compiler); /* consume the name */
+                advance_token(compiler); /* consume ':' */
+                slot=SIZE_MAX;
+                for(size_t index=0;index<function->arity&&index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
+                    if(name_equals(compiler,function->parameter_names[index],
+                                  keyword_name,false)) {slot=index;break;}
+                if(slot==SIZE_MAX) {
+                    fail(compiler,keyword_name,"no parameter with this name");
+                    return false;
+                }
+                seen_keyword=true;
+            } else {
+                if(seen_keyword) {
+                    fail(compiler,compiler->current.span,
+                         "positional argument cannot follow a keyword argument");
+                    return false;
+                }
+                if(next_positional_slot==DIAMOND_MAX_ARGUMENTS) {
+                    fail(compiler,compiler->current.span,"too many call arguments");
+                    return false;
+                }
+                slot=next_positional_slot++;
+            }
+            if(slot_filled[slot]) {
+                fail(compiler,name,"multiple values for the same argument");
+                return false;
+            }
+            slot_registers[slot]=parse_expected_argument(compiler,function,slot);
+            slot_filled[slot]=true;
+            skip_newlines(compiler);
+            if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
+            advance_token(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
+        } while (!compiler->failed);
+    }
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler, compiler->current.span, "expected ')' after arguments");
+        return false;
+    }
+    advance_token(compiler);
+    return true;
+}
+
 uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
-    if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
-        uint16_t callable=compiler->locals[(size_t)callable_local].reg;
-        if(compiler->locals[(size_t)callable_local].captured) {
-            /* See parse_identifier's own BOX_LOCAL re-emission for why this
-             * defensive re-box is needed: `captured` doesn't imply this
-             * control-flow path actually ran the boxing site. */
-            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,callable,0,0,1);
-            const uint16_t loaded=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CELL,loaded,callable,0,2);
-            /* Keep the local's type facts, as parse_identifier's own
-             * captured read does, so a trailing block still gets its
-             * Callable parameter types. */
-            compiler->known_types[loaded]=compiler->known_types[callable];
-            compiler->known_type_sets[loaded]=compiler->known_type_sets[callable];
-            compiler->tooling_type_sets[loaded]=compiler->tooling_type_sets[callable];
-            callable=loaded;
-        }
-        return parse_closure_call_arguments(compiler, callable);
-    }
-    if(name_equals(compiler,"block_given?",name,false)) {
-        advance_token(compiler);skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler,compiler->current.span,
-                "block_given? does not accept arguments");return 0;
-        }
-        advance_token(compiler);
-        const uint16_t destination=allocate_register(compiler);
-        if(!compiler->has_current_block) {
-            emit_instruction(compiler,DIAMOND_OP_BOOL,destination,false,0,2);
-        } else {
-            const uint16_t block=load_current_block(compiler);
-            const uint16_t absent=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
-            const uint16_t missing=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
-                block,absent,3);
-            emit_instruction(compiler,DIAMOND_OP_NOT,destination,missing,0,2);
-        }
-        compiler->known_types[destination]=DIAMOND_TYPE_BOOL;
-        return destination;
-    }
+    if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
+        return parse_local_callable_call(compiler,callable_local);
+    if(name_equals(compiler,"block_given?",name,false))
+        return parse_block_given_call(compiler);
     const int function_index = find_function(compiler, name);
     /* `name(...)` inside an instance method (or a block or closure that
      * has its self in register 0 -- a plain nested def doesn't), with no
@@ -1112,135 +1316,21 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * of a program that defines its own `p`. */
     if(function_index<0&&!compiler->discovery_pass&&name_equals(compiler,"p",name,false))
         return parse_p_call(compiler);
-    if (function_index < 0) {
-        note_self_reference(compiler,name);
-        if(compiler->discovery_pass)
-            return parse_discovery_unknown_call(compiler);
-        /* A module function of that name is reached through its module. */
-        for(size_t module=0;module<compiler->program->module_count;module++) {
-            const DiamondModule *owner=&compiler->program->modules[module];
-            for(size_t index=0;index<owner->singleton_method_count;index++) {
-                if(!name_equals(compiler,owner->singleton_methods[index].name,name,false))
-                    continue;
-                char message[sizeof compiler->diagnostic->message];
-                snprintf(message,sizeof message,
-                    "undefined function; did you mean %s.%.*s(...)?",owner->name,
-                    (int)name.length,compiler->source+name.start);
-                fail(compiler,name,message);
-                return 0;
-            }
-        }
-        fail(compiler, name, "undefined function");
-        return 0;
-    }
+    if (function_index < 0)
+        return parse_unknown_function_call(compiler,name);
     const DiamondFunction *function =
         compiler->program->functions[(size_t)function_index];
     uint16_t type_arguments[8];
     size_t type_argument_count=0;
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-        advance_token(compiler);
-        skip_newlines(compiler);
-        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
-              !compiler->failed) {
-            if(type_argument_count==8) {
-                fail(compiler,compiler->current.span,"too many generic arguments");
-                return 0;
-            }
-            type_arguments[type_argument_count++]=
-                (uint16_t)parse_type_annotation(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-            fail(compiler,compiler->current.span,
-                 "expected ']' after generic arguments");return 0;
-        }
-        advance_token(compiler);
-        if(type_argument_count!=function->type_variable_count) {
-            fail(compiler,name,"wrong number of generic arguments");return 0;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-            fail(compiler,compiler->current.span,
-                 "expected '(' after generic arguments");return 0;
-        }
-    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
+       !parse_call_type_arguments(compiler,function,name,type_arguments,
+           &type_argument_count))
+        return 0;
     advance_token(compiler);
     skip_newlines(compiler);
-    if(call_arguments_have_spread(compiler)) {
-        uint8_t keyword_slots[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_registers[DIAMOND_MAX_DECLARED_PARAMETERS];
-        size_t keyword_count=0;
-        uint16_t array_register=parse_spread_argument_array(compiler,
-            function,keyword_slots,keyword_registers,&keyword_count,
-            function,function->arity);
-        uint16_t inferred_arguments[8];
-        const size_t spread_parameter_count=
-            compiler->current.kind==DIAMOND_TOKEN_DO?
-                (function->arity==0?0:function->arity-1):function->arity;
-        const size_t inferred_count=type_argument_count==0?
-            infer_contextual_spread_arguments(compiler,function,
-                array_register,spread_parameter_count,
-                inferred_arguments):0;
-        if(type_argument_count==0)
-            for(size_t index=0;index<keyword_count;index++)
-                infer_contextual_argument(compiler,function,
-                    keyword_slots[index],keyword_registers[index],
-                    inferred_arguments);
-        const uint16_t *resolved_arguments=type_argument_count>0?
-            type_arguments:inferred_arguments;
-        const size_t resolved_count=type_argument_count>0?
-            type_argument_count:inferred_count;
-        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            const uint16_t spread_snapshot=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
-                array_register,0,2);
-            array_register=spread_snapshot;
-            for(size_t index=0;index<keyword_count;index++) {
-                const uint16_t snapshot=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
-                    keyword_registers[index],0,2);
-                keyword_registers[index]=snapshot;
-            }
-            const uint16_t block=compile_contextual_typed_block(compiler,
-                function,function->arity==0?0:function->arity-1,
-                resolved_arguments,resolved_count);
-            if(keyword_count>0) {
-                if(keyword_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
-                    fail(compiler,compiler->previous.span,
-                        "too many keyword arguments");return 0;
-                }
-                keyword_slots[keyword_count]=(uint8_t)(function->arity-1);
-                keyword_registers[keyword_count]=block;
-                keyword_count++;
-            } else array_register=emit_build_spread_arguments(compiler,
-                nullptr,0,array_register,&block,1,false);
-        }
-        const uint16_t destination=allocate_register(compiler);
-        emit_opcode(compiler,keyword_count==0?
-            (type_argument_count==0?DIAMOND_OP_CALL_SPREAD:
-             DIAMOND_OP_CALL_TYPED_SPREAD):
-            (type_argument_count==0?DIAMOND_OP_CALL_KEYWORD_SPREAD:
-             DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD));
-        emit_register(compiler,destination);
-        emit_function_index(compiler,(size_t)function_index);
-        emit_register(compiler,array_register);
-        if(keyword_count>0) {
-            emit_byte(compiler,(uint8_t)keyword_count);
-            for(size_t index=0;index<keyword_count;index++) {
-                emit_byte(compiler,keyword_slots[index]);
-                emit_register(compiler,keyword_registers[index]);
-            }
-        }
-        if(type_argument_count>0) {
-            emit_byte(compiler,(uint8_t)type_argument_count);
-            for(size_t index=0;index<type_argument_count;index++)
-                emit_register(compiler,type_arguments[index]);
-        }
-        publish_call_return_type(compiler,destination,function,
-            resolved_arguments,resolved_count);
-        return destination;
-    }
+    if(call_arguments_have_spread(compiler))
+        return parse_spread_function_call(compiler,function,function_index,
+            type_arguments,type_argument_count);
     /* Keyword arguments (direct top-level calls only):
      * each argument is placed into its declared positional slot rather than
      * appended, so a keyword can fill any parameter regardless of the order
@@ -1248,57 +1338,8 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
      * left-to-right in declaration order. */
     uint16_t slot_registers[DIAMOND_MAX_ARGUMENTS];
     bool slot_filled[DIAMOND_MAX_ARGUMENTS]={};
-    size_t next_positional_slot=0;
-    bool seen_keyword=false;
-    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
-        do {
-            DiamondLexer keyword_lookahead=compiler->lexer;
-            const bool is_keyword=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-                diamond_lexer_next(&keyword_lookahead).kind==DIAMOND_TOKEN_COLON;
-            size_t slot;
-            if(is_keyword) {
-                const DiamondSpan keyword_name=compiler->current.span;
-                advance_token(compiler); /* consume the name */
-                advance_token(compiler); /* consume ':' */
-                slot=SIZE_MAX;
-                for(size_t index=0;index<function->arity&&index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
-                    if(name_equals(compiler,function->parameter_names[index],
-                                  keyword_name,false)) {slot=index;break;}
-                if(slot==SIZE_MAX) {
-                    fail(compiler,keyword_name,"no parameter with this name");
-                    return 0;
-                }
-                seen_keyword=true;
-            } else {
-                if(seen_keyword) {
-                    fail(compiler,compiler->current.span,
-                         "positional argument cannot follow a keyword argument");
-                    return 0;
-                }
-                if(next_positional_slot==DIAMOND_MAX_ARGUMENTS) {
-                    fail(compiler,compiler->current.span,"too many call arguments");
-                    return 0;
-                }
-                slot=next_positional_slot++;
-            }
-            if(slot_filled[slot]) {
-                fail(compiler,name,"multiple values for the same argument");
-                return 0;
-            }
-            slot_registers[slot]=parse_expected_argument(compiler,function,slot);
-            slot_filled[slot]=true;
-            skip_newlines(compiler);
-            if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
-        } while (!compiler->failed);
-    }
-    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler, compiler->current.span, "expected ')' after arguments");
+    if(!parse_call_slot_arguments(compiler,function,name,slot_registers,slot_filled))
         return 0;
-    }
-    advance_token(compiler);
     size_t argument_count=0;
     for(size_t index=0;index<DIAMOND_MAX_ARGUMENTS;index++)
         if(slot_filled[index])argument_count=index+1;
