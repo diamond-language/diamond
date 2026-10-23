@@ -9017,27 +9017,100 @@ DiamondVmStatus diamond_jit_super_call(DiamondVm *vm, const DiamondChunk *chunk,
         false, 0, nullptr, chunk, depth, out);
 }
 
+/* The error for generic type arguments given to a method that takes none. */
+static DiamondVmStatus reject_type_arguments(DiamondVm *vm,const DiamondStringConstant *method_name) {
+    snprintf(vm->error,sizeof vm->error,
+        "'%.*s' does not accept generic type arguments",
+        (int)method_name->length,method_name->chars);
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* Universal `tap(block)` on an instance: calls block with the receiver and
+ * returns the receiver. */
+__attribute__((noinline))
+static DiamondVmStatus jit_instance_tap(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,size_t depth,
+        DiamondValue *out) {
+    if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+        return DIAMOND_VM_TYPE_ERROR;
+    DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+    /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+    if(called->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(called->function_index>=chunk->function_count)
+        return DIAMOND_VM_INVALID_BYTECODE;
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    DiamondValue tap_argument[1]={registers[recv]};
+    DiamondValue tap_result=DIAMOND_NIL;
+    const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
+        called,tap_argument,0,1,depth,&tap_result);
+    if(tap_status!=DIAMOND_VM_OK) return tap_status;
+    *out=registers[recv];return DIAMOND_VM_OK;
+}
+
+/* No method by that name: method_missing if the class defines it, otherwise
+ * the undefined-method error. */
+__attribute__((noinline))
+static DiamondVmStatus jit_instance_method_missing(DiamondVm *vm,const DiamondChunk *owner,
+        DiamondInstance *instance,const DiamondStringConstant *method_name,
+        DiamondValue *registers,uint16_t base,uint8_t argc,size_t depth,DiamondValue *out) {
+    DiamondValue missing_result=DIAMOND_NIL;
+    bool missing_found=false;
+    const DiamondVmStatus missing_status=method_missing_helper(vm,owner,
+        instance,method_name->chars,method_name->length,
+        &registers[base],argc,depth,&missing_result,&missing_found);
+    if(missing_found) {
+        if(missing_status!=DIAMOND_VM_OK) return missing_status;
+        *out=missing_result;return DIAMOND_VM_OK;
+    }
+    snprintf(vm->error,sizeof vm->error,
+        "undefined method '%.*s' for an instance of %s",
+        (int)method_name->length,method_name->chars,instance->class->name);
+    return DIAMOND_VM_NO_METHOD_ERROR;
+}
+
+/* A private method may only be called on an implicit self receiver; a
+ * protected one only from inside its declaring class's hierarchy. */
+__attribute__((noinline))
+static DiamondVmStatus check_instance_method_visibility(DiamondVm *vm,const DiamondChunk *chunk,
+        const DiamondChunk *owner,const DiamondInstance *instance,const DiamondMethod *method,
+        const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t recv) {
+    if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
+        snprintf(vm->error,sizeof vm->error,
+            "private method '%.*s' called with an explicit receiver",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(method->is_protected) {
+        const DiamondClass *declaring=method_declaring_class(
+            owner,instance->class,method);
+        const bool has_method_self=chunk->parameter_offset==1&&
+            registers[0].kind==DIAMOND_VALUE_OBJECT&&
+            registers[0].as.object->kind==DIAMOND_OBJECT_INSTANCE;
+        const DiamondClass *caller_class=has_method_self?
+            ((DiamondInstance *)registers[0].as.object)->class:nullptr;
+        if(declaring==nullptr||caller_class==nullptr||
+           !class_is_a(owner,caller_class,declaring)) {
+            snprintf(vm->error,sizeof vm->error,
+                "protected method '%.*s' called outside its class hierarchy",
+                (int)method_name->length,method_name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    return DIAMOND_VM_OK;
+}
+
 /* JIT trampoline for DIAMOND_OP_INVOKE/INVOKE_MONO/INVOKE_TYPED dispatch on
- * an Instance receiver -- extracted from that case's own body (run_chunk,
- * below) so the interpreter and the JIT share one implementation, exactly
- * like DIAMOND_OP_SUPER's own diamond_jit_super_call just above. Kept
- * receiver-position-general (recv is a real parameter, not hardcoded to
- * register 0) so the interpreter's own case can still call this for any
- * receiver register -- only jit.c's own compile_invoke_self restricts
- * itself at compile time to recv==0 in a function with a genuine class
- * owner_class (see that function's own comment for why that's a sound
- * compile-time guarantee, not an assumption -- and why this trampoline
- * still keeps its own defensive registers[recv] runtime check regardless,
- * matching diamond_jit_super_call's own belt-and-suspenders precedent
- * rather than skipping it). `site` replaces instruction_offset, mirroring
- * diamond_jit_get_ivar's own `site` parameter -- the self-rewriting
- * INVOKE->INVOKE_MONO quickening logic below is preserved, not dropped, so
- * a JIT'd self.method() call keeps the same monomorphic inline caching
- * interpreted code gets. Macro-free by necessity (VM_RETURN/VM_PROPAGATE
- * are only valid inside run_chunk's own scope -- see their own
- * definitions): every VM_RETURN(status) below is a plain `return status`,
- * every VM_PROPAGATE(status) a plain status check, exactly like diamond_
- * jit_super_call's own style just above. */
+ * an Instance receiver. The interpreter and JIT share this implementation;
+ * recv remains a real register parameter rather than an implicit self.
+ * `site` identifies the bytecode instruction for monomorphic quickening, as
+ * in diamond_jit_get_ivar. Helpers propagate statuses explicitly because
+ * VM_RETURN/VM_PROPAGATE only apply inside run_chunk. */
 DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *chunk,
         const uint8_t *site, DiamondOpCode instruction, DiamondValue *registers,
         uint16_t recv, uint16_t name, uint16_t base, uint8_t argc,
@@ -9064,32 +9137,8 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
      * order matters here but not there. */
     if(method_name->length==3&&memcmp(method_name->chars,"tap",3)==0&&
        lookup_method(owner,instance->class,"tap",3)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
-            return DIAMOND_VM_TYPE_ERROR;
-        DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
-        /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
-        if(called->foreign_chunk!=nullptr) {
-            snprintf(vm->error,sizeof vm->error,
-                "a compile_method callable can only be passed to define_method");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(called->function_index>=chunk->function_count)
-            return DIAMOND_VM_INVALID_BYTECODE;
-        const DiamondFunction *fn=chunk->functions[called->function_index];
-        DiamondValue tap_argument[1]={registers[recv]};
-        DiamondValue tap_result=DIAMOND_NIL;
-        const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
-            called,tap_argument,0,1,depth,&tap_result);
-        if(tap_status!=DIAMOND_VM_OK) return tap_status;
-        *out=registers[recv];return DIAMOND_VM_OK;
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
+        return jit_instance_tap(vm,chunk,registers,recv,base,argc,depth,out);
     }
     if(method_name->length==4&&memcmp(method_name->chars,"nil?",4)==0&&
        argc==0&&lookup_method(owner,instance->class,"nil?",4)==nullptr) {
@@ -9099,12 +9148,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
      * unless its class defines its own. */
     if(method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0&&
        lookup_method(owner,instance->class,"to_s",4)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return stringify_value(vm,chunk,depth,registers[recv],out);
     }
@@ -9112,68 +9156,38 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
      * own inspect (any arity), which then dispatches normally. */
     if(method_name->length==7&&memcmp(method_name->chars,"inspect",7)==0&&
        lookup_method(owner,instance->class,"inspect",7)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return inspect_value(vm,chunk,depth,registers[recv],out);
     }
     if(method_name->length==3&&memcmp(method_name->chars,"dup",3)==0&&
        lookup_method(owner,instance->class,"dup",3)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_dup(vm,&registers[recv],out);
     }
     if(method_name->length==6&&memcmp(method_name->chars,"freeze",6)==0&&
        lookup_method(owner,instance->class,"freeze",6)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==11&&memcmp(method_name->chars,"deep_freeze",11)==0&&
        lookup_method(owner,instance->class,"deep_freeze",11)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_deep_freeze(vm,&registers[recv],out);
     }
     if(method_name->length==7&&memcmp(method_name->chars,"frozen?",7)==0&&
        lookup_method(owner,instance->class,"frozen?",7)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=0) return DIAMOND_VM_ARITY_ERROR;
         return diamond_jit_frozen(vm,&registers[recv],out);
     }
     if(method_name->length==11&&
        memcmp(method_name->chars,"respond_to?",11)==0&&
        lookup_method(owner,instance->class,"respond_to?",11)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         if(argc!=1) return DIAMOND_VM_ARITY_ERROR;
         if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
            registers[base].as.object->kind!=DIAMOND_OBJECT_SYMBOL)
@@ -9187,12 +9201,7 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
     if(method_name->length==11&&
        memcmp(method_name->chars,"public_send",11)==0&&
        lookup_method(owner,instance->class,"public_send",11)==nullptr) {
-        if(type_argument_count!=0) {
-            snprintf(vm->error,sizeof vm->error,
-                "'%.*s' does not accept generic type arguments",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+        if(type_argument_count!=0)return reject_type_arguments(vm,method_name);
         DiamondValue sent=DIAMOND_NIL;
         const DiamondVmStatus send_status=public_send_helper(vm,chunk,
             registers[recv],&registers[base],argc,depth,&sent);
@@ -9244,42 +9253,13 @@ DiamondVmStatus diamond_jit_invoke_instance(DiamondVm *vm, const DiamondChunk *c
             }
         }
     }
-    if(method==nullptr) {
-        DiamondValue missing_result=DIAMOND_NIL;
-        bool missing_found=false;
-        const DiamondVmStatus missing_status=method_missing_helper(vm,owner,
-            instance,method_name->chars,method_name->length,
-            &registers[base],argc,depth,&missing_result,&missing_found);
-        if(missing_found) {
-            if(missing_status!=DIAMOND_VM_OK) return missing_status;
-            *out=missing_result;return DIAMOND_VM_OK;
-        }
-        snprintf(vm->error,sizeof vm->error,
-            "undefined method '%.*s' for an instance of %s",
-            (int)method_name->length,method_name->chars,instance->class->name);
-        return DIAMOND_VM_NO_METHOD_ERROR;
-    }
-    if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {
-        snprintf(vm->error,sizeof vm->error,
-            "private method '%.*s' called with an explicit receiver",
-            (int)method_name->length,method_name->chars);
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    if(method->is_protected) {
-        const DiamondClass *declaring=method_declaring_class(
-            owner,instance->class,method);
-        const bool has_method_self=chunk->parameter_offset==1&&
-            registers[0].kind==DIAMOND_VALUE_OBJECT&&
-            registers[0].as.object->kind==DIAMOND_OBJECT_INSTANCE;
-        const DiamondClass *caller_class=has_method_self?
-            ((DiamondInstance *)registers[0].as.object)->class:nullptr;
-        if(declaring==nullptr||caller_class==nullptr||
-           !class_is_a(owner,caller_class,declaring)) {
-            snprintf(vm->error,sizeof vm->error,
-                "protected method '%.*s' called outside its class hierarchy",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
+    if(method==nullptr)
+        return jit_instance_method_missing(vm,owner,instance,method_name,registers,base,argc,
+            depth,out);
+    if(method->is_private||method->is_protected) {
+        const DiamondVmStatus visibility=check_instance_method_visibility(vm,chunk,owner,
+            instance,method,method_name,registers,recv);
+        if(visibility!=DIAMOND_VM_OK)return visibility;
     }
     if(argc<method->required_arity||
        (argc>method->arity && !method->has_variadic))
@@ -11040,246 +11020,213 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
     registers[dest]=copied;return DIAMOND_VM_OK;
 }
 
-DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
-                                                const DiamondChunk *chunk,
-                                                DiamondValue *registers, uint16_t recv,
-                                                uint16_t base, uint8_t argc, uint16_t dest,
-                                                const DiamondStringConstant *method_name) {
-    DiamondSupervisor *target_supervisor=
-        ((DiamondSupervisorHandle *)registers[recv].as.object)->supervisor;
-    const bool add_child_method=method_name->length==9&&
-        memcmp(method_name->chars,"add_child",9)==0;
-    const bool stop_method=method_name->length==4&&
-        memcmp(method_name->chars,"stop",4)==0;
-    const bool join_method=method_name->length==4&&
-        memcmp(method_name->chars,"join",4)==0;
-    const bool child_count_method=method_name->length==11&&
-        memcmp(method_name->chars,"child_count",11)==0;
-    const bool restart_count_method=method_name->length==13&&
-        memcmp(method_name->chars,"restart_count",13)==0;
-    const bool last_error_method=method_name->length==10&&
-        memcmp(method_name->chars,"last_error",10)==0;
-    const bool alive_method=method_name->length==6&&
-        memcmp(method_name->chars,"alive?",6)==0;
-    const bool restart_policy_method=method_name->length==14&&
-        memcmp(method_name->chars,"restart_policy",14)==0;
-    const bool failed_method=method_name->length==7&&
-        memcmp(method_name->chars,"failed?",7)==0;
-    if(!add_child_method&&!stop_method&&!join_method&&
-       !child_count_method&&!restart_count_method&&
-       !last_error_method&&!alive_method&&
-       !restart_policy_method&&!failed_method) {
-        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
-            (int)method_name->length,method_name->chars,"Supervisor");
+/* Supervisor#restart_policy(options): intensity and backoff, settable only
+ * before the first add_child. */
+static DiamondVmStatus supervisor_restart_policy_method(DiamondVm *vm,
+        DiamondSupervisor *target_supervisor,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    const DiamondValue given=registers[base];
+    if(given.kind!=DIAMOND_VALUE_OBJECT||
+       given.as.object->kind!=DIAMOND_OBJECT_HASH) {
+        snprintf(vm->error,sizeof vm->error,
+            "Supervisor#restart_policy expects a Hash of options");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    if(failed_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    int64_t max_restarts=-1,within_ms=5000,backoff_ms=20,max_backoff_ms=-1;
+    bool max_backoff_given=false;
+    const DiamondHash *options=(const DiamondHash *)given.as.object;
+    for(size_t entry=0;entry<options->count;entry++) {
+        const DiamondValue key=options->entries[entry].key;
+        const DiamondValue value=options->entries[entry].value;
+        if(key.kind!=DIAMOND_VALUE_OBJECT||
+           key.as.object->kind!=DIAMOND_OBJECT_STRING) {
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#restart_policy option keys must be Strings");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const DiamondString *name=(const DiamondString *)key.as.object;
+        int64_t *target=nullptr;
+        int64_t minimum=0,maximum=INT32_MAX;
+        if(name->length==12&&memcmp(name->chars,"max_restarts",12)==0) {
+            target=&max_restarts;maximum=DIAMOND_MAX_SUPERVISOR_RESTARTS;
+        } else if(name->length==9&&memcmp(name->chars,"within_ms",9)==0) {
+            target=&within_ms;minimum=1;
+        } else if(name->length==10&&memcmp(name->chars,"backoff_ms",10)==0) {
+            target=&backoff_ms;minimum=1;
+        } else if(name->length==14&&
+                  memcmp(name->chars,"max_backoff_ms",14)==0) {
+            target=&max_backoff_ms;minimum=1;max_backoff_given=true;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "unknown Supervisor#restart_policy option '%.*s' (expected "
+                "max_restarts, within_ms, backoff_ms or max_backoff_ms)",
+                (int)name->length,name->chars);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        if(value.kind!=DIAMOND_VALUE_INT||value.as.integer<minimum||
+           value.as.integer>maximum) {
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#restart_policy '%.*s' must be an Int from %" PRId64
+                " to %" PRId64,(int)name->length,name->chars,minimum,maximum);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        *target=value.as.integer;
+    }
+    if(!max_backoff_given)max_backoff_ms=backoff_ms;
+    if(max_backoff_ms<backoff_ms) {
+        snprintf(vm->error,sizeof vm->error,
+            "Supervisor#restart_policy max_backoff_ms must be at least backoff_ms");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    pthread_mutex_lock(&target_supervisor->lock);
+    if(target_supervisor->child_count!=0) {
+        pthread_mutex_unlock(&target_supervisor->lock);
+        snprintf(vm->error,sizeof vm->error,
+            "Supervisor#restart_policy must be set before the first add_child");
+        return DIAMOND_VM_SUPERVISOR_ERROR;
+    }
+    target_supervisor->max_restarts=max_restarts;
+    target_supervisor->within_ms=within_ms;
+    target_supervisor->backoff_ms=backoff_ms;
+    target_supervisor->max_backoff_ms=max_backoff_ms;
+    pthread_mutex_unlock(&target_supervisor->lock);
+    registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* Supervisor#restart_count/alive?/last_error(index): one child's state. */
+static DiamondVmStatus supervisor_child_query_method(DiamondVm *vm,
+        DiamondSupervisor *target_supervisor,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,
+        bool restart_count_method,bool alive_method) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "Supervisor child index must be an Int");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t requested_index=registers[base].as.integer;
+    pthread_mutex_lock(&target_supervisor->lock);
+    if(requested_index<0||
+       (size_t)requested_index>=target_supervisor->child_count) {
+        pthread_mutex_unlock(&target_supervisor->lock);
+        snprintf(vm->error,sizeof vm->error,
+            "Supervisor child index %" PRId64 " out of range",
+            requested_index);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    DiamondSupervisorChild *target_child=
+        &target_supervisor->children[(size_t)requested_index];
+    if(restart_count_method) {
+        const size_t current_restarts=target_child->restart_count;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_INT((int64_t)current_restarts);return DIAMOND_VM_OK;
+    }
+    if(alive_method) {
+        const bool still_alive=!target_child->done;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_BOOL(still_alive);return DIAMOND_VM_OK;
+    }
+    /* last_error_method: nil until the first crash. Copy
+     * the message out before unlocking rather than
+     * allocating (a potential GC on `vm`, unrelated to
+     * target_supervisor) while still holding the lock. */
+    char last_error_copy[sizeof target_child->last_error];
+    const bool has_error=target_child->last_error[0]!='\0';
+    if(has_error)
+        snprintf(last_error_copy,sizeof last_error_copy,
+            "%s",target_child->last_error);
+    pthread_mutex_unlock(&target_supervisor->lock);
+    if(!has_error) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    DiamondString *message=allocate_string(vm,last_error_copy,
+        strlen(last_error_copy));
+    if(message==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(message);return DIAMOND_VM_OK;
+}
+
+/* Supervisor#stop([timeout_ms]) and #join. */
+static DiamondVmStatus supervisor_stop_or_join_method(DiamondVm *vm,
+        DiamondSupervisor *target_supervisor,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,
+        bool stop_method,bool join_method) {
+    int64_t stop_timeout_ms=-1;
+    if(join_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+    if(argc==1) {
+        const DiamondValue given=registers[base];
+        if(given.kind!=DIAMOND_VALUE_INT||given.as.integer<0||
+           given.as.integer>INT32_MAX) {
+            snprintf(vm->error,sizeof vm->error,
+                "Supervisor#stop timeout_ms must be an Int from 0 to %d",
+                INT32_MAX);
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        stop_timeout_ms=given.as.integer;
+    }
+    if(stop_method) {
+        pthread_mutex_lock(&target_supervisor->lock);
+        target_supervisor->stopped=true;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        atomic_store(&target_supervisor->stop_requested,true);
+    }
+    bool forced=false;
+    if(stop_timeout_ms>=0) {
+        /* Wait for the current attempts to finish on their own for up to
+         * the timeout, then interrupt whatever is still running. The
+         * interruption is the sibling-restart one: it lands at the next
+         * instruction, so a worker parked in a blocking native call
+         * still holds the join below until that call returns. */
+        const int64_t deadline_ns=monotonic_nanoseconds()+
+            stop_timeout_ms*1000000;
+        for(;;) {
+            pthread_mutex_lock(&target_supervisor->lock);
+            bool all_done=true;
+            for(size_t index=0;index<target_supervisor->child_count;index++)
+                if(!target_supervisor->children[index].done)all_done=false;
+            pthread_mutex_unlock(&target_supervisor->lock);
+            if(all_done||monotonic_nanoseconds()>=deadline_ns)break;
+            const struct timespec nap={.tv_sec=0,.tv_nsec=1000000L};
+            nanosleep(&nap,nullptr);
+        }
+        pthread_mutex_lock(&target_supervisor->lock);
+        for(size_t index=0;index<target_supervisor->child_count;index++) {
+            if(target_supervisor->children[index].done)continue;
+            forced=true;
+            target_supervisor->stop_forced=true;
+            supervisor_interrupt_child(&target_supervisor->children[index]);
+        }
+        pthread_mutex_unlock(&target_supervisor->lock);
+    }
+    /* Without a timeout there is no cancellation: a child mid-crash-loop
+     * still finishes its *current* attempt before noticing
+     * stop_requested. join() blocks the same way but without ever
+     * setting stop_requested, so it only returns once every child
+     * finishes on its own (see docs/threads.md). */
+    supervisor_join_all_children(target_supervisor);
+    if(join_method) {
+        /* A supervisor that gave up escalates here, to whoever waits on
+         * it. stop() is cleanup and never raises. */
         pthread_mutex_lock(&target_supervisor->lock);
         const bool gave_up=target_supervisor->failed;
+        if(gave_up)
+            snprintf(vm->error,sizeof vm->error,"%.1000s",
+                target_supervisor->failure_message);
         pthread_mutex_unlock(&target_supervisor->lock);
-        registers[dest]=DIAMOND_BOOL(gave_up);return DIAMOND_VM_OK;
+        if(gave_up)return DIAMOND_VM_SUPERVISOR_ERROR;
     }
-    if(restart_policy_method) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        const DiamondValue given=registers[base];
-        if(given.kind!=DIAMOND_VALUE_OBJECT||
-           given.as.object->kind!=DIAMOND_OBJECT_HASH) {
-            snprintf(vm->error,sizeof vm->error,
-                "Supervisor#restart_policy expects a Hash of options");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        int64_t max_restarts=-1,within_ms=5000,backoff_ms=20,max_backoff_ms=-1;
-        bool max_backoff_given=false;
-        const DiamondHash *options=(const DiamondHash *)given.as.object;
-        for(size_t entry=0;entry<options->count;entry++) {
-            const DiamondValue key=options->entries[entry].key;
-            const DiamondValue value=options->entries[entry].value;
-            if(key.kind!=DIAMOND_VALUE_OBJECT||
-               key.as.object->kind!=DIAMOND_OBJECT_STRING) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Supervisor#restart_policy option keys must be Strings");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const DiamondString *name=(const DiamondString *)key.as.object;
-            int64_t *target=nullptr;
-            int64_t minimum=0,maximum=INT32_MAX;
-            if(name->length==12&&memcmp(name->chars,"max_restarts",12)==0) {
-                target=&max_restarts;maximum=DIAMOND_MAX_SUPERVISOR_RESTARTS;
-            } else if(name->length==9&&memcmp(name->chars,"within_ms",9)==0) {
-                target=&within_ms;minimum=1;
-            } else if(name->length==10&&memcmp(name->chars,"backoff_ms",10)==0) {
-                target=&backoff_ms;minimum=1;
-            } else if(name->length==14&&
-                      memcmp(name->chars,"max_backoff_ms",14)==0) {
-                target=&max_backoff_ms;minimum=1;max_backoff_given=true;
-            } else {
-                snprintf(vm->error,sizeof vm->error,
-                    "unknown Supervisor#restart_policy option '%.*s' (expected "
-                    "max_restarts, within_ms, backoff_ms or max_backoff_ms)",
-                    (int)name->length,name->chars);
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            if(value.kind!=DIAMOND_VALUE_INT||value.as.integer<minimum||
-               value.as.integer>maximum) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Supervisor#restart_policy '%.*s' must be an Int from %" PRId64
-                    " to %" PRId64,(int)name->length,name->chars,minimum,maximum);
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            *target=value.as.integer;
-        }
-        if(!max_backoff_given)max_backoff_ms=backoff_ms;
-        if(max_backoff_ms<backoff_ms) {
-            snprintf(vm->error,sizeof vm->error,
-                "Supervisor#restart_policy max_backoff_ms must be at least backoff_ms");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        pthread_mutex_lock(&target_supervisor->lock);
-        if(target_supervisor->child_count!=0) {
-            pthread_mutex_unlock(&target_supervisor->lock);
-            snprintf(vm->error,sizeof vm->error,
-                "Supervisor#restart_policy must be set before the first add_child");
-            return DIAMOND_VM_SUPERVISOR_ERROR;
-        }
-        target_supervisor->max_restarts=max_restarts;
-        target_supervisor->within_ms=within_ms;
-        target_supervisor->backoff_ms=backoff_ms;
-        target_supervisor->max_backoff_ms=max_backoff_ms;
-        pthread_mutex_unlock(&target_supervisor->lock);
-        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
-    }
-    if(child_count_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        pthread_mutex_lock(&target_supervisor->lock);
-        const size_t current_count=target_supervisor->child_count;
-        pthread_mutex_unlock(&target_supervisor->lock);
-        registers[dest]=DIAMOND_INT((int64_t)current_count);return DIAMOND_VM_OK;
-    }
-    if(restart_count_method||last_error_method||alive_method) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,
-                "Supervisor child index must be an Int");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t requested_index=registers[base].as.integer;
-        pthread_mutex_lock(&target_supervisor->lock);
-        if(requested_index<0||
-           (size_t)requested_index>=target_supervisor->child_count) {
-            pthread_mutex_unlock(&target_supervisor->lock);
-            snprintf(vm->error,sizeof vm->error,
-                "Supervisor child index %" PRId64 " out of range",
-                requested_index);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        DiamondSupervisorChild *target_child=
-            &target_supervisor->children[(size_t)requested_index];
-        if(restart_count_method) {
-            const size_t current_restarts=target_child->restart_count;
-            pthread_mutex_unlock(&target_supervisor->lock);
-            registers[dest]=DIAMOND_INT((int64_t)current_restarts);return DIAMOND_VM_OK;
-        }
-        if(alive_method) {
-            const bool still_alive=!target_child->done;
-            pthread_mutex_unlock(&target_supervisor->lock);
-            registers[dest]=DIAMOND_BOOL(still_alive);return DIAMOND_VM_OK;
-        }
-        /* last_error_method: nil until the first crash. Copy
-         * the message out before unlocking rather than
-         * allocating (a potential GC on `vm`, unrelated to
-         * target_supervisor) while still holding the lock. */
-        char last_error_copy[sizeof target_child->last_error];
-        const bool has_error=target_child->last_error[0]!='\0';
-        if(has_error)
-            snprintf(last_error_copy,sizeof last_error_copy,
-                "%s",target_child->last_error);
-        pthread_mutex_unlock(&target_supervisor->lock);
-        if(!has_error) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
-        DiamondString *message=allocate_string(vm,last_error_copy,
-            strlen(last_error_copy));
-        if(message==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(message);return DIAMOND_VM_OK;
-    }
-    if(stop_method||join_method) {
-        int64_t stop_timeout_ms=-1;
-        if(join_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
-        if(argc==1) {
-            const DiamondValue given=registers[base];
-            if(given.kind!=DIAMOND_VALUE_INT||given.as.integer<0||
-               given.as.integer>INT32_MAX) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Supervisor#stop timeout_ms must be an Int from 0 to %d",
-                    INT32_MAX);
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            stop_timeout_ms=given.as.integer;
-        }
-        if(stop_method) {
-            pthread_mutex_lock(&target_supervisor->lock);
-            target_supervisor->stopped=true;
-            pthread_mutex_unlock(&target_supervisor->lock);
-            atomic_store(&target_supervisor->stop_requested,true);
-        }
-        bool forced=false;
-        if(stop_timeout_ms>=0) {
-            /* Wait for the current attempts to finish on their own for up to
-             * the timeout, then interrupt whatever is still running. The
-             * interruption is the sibling-restart one: it lands at the next
-             * instruction, so a worker parked in a blocking native call
-             * still holds the join below until that call returns. */
-            const int64_t deadline_ns=monotonic_nanoseconds()+
-                stop_timeout_ms*1000000;
-            for(;;) {
-                pthread_mutex_lock(&target_supervisor->lock);
-                bool all_done=true;
-                for(size_t index=0;index<target_supervisor->child_count;index++)
-                    if(!target_supervisor->children[index].done)all_done=false;
-                pthread_mutex_unlock(&target_supervisor->lock);
-                if(all_done||monotonic_nanoseconds()>=deadline_ns)break;
-                const struct timespec nap={.tv_sec=0,.tv_nsec=1000000L};
-                nanosleep(&nap,nullptr);
-            }
-            pthread_mutex_lock(&target_supervisor->lock);
-            for(size_t index=0;index<target_supervisor->child_count;index++) {
-                if(target_supervisor->children[index].done)continue;
-                forced=true;
-                target_supervisor->stop_forced=true;
-                supervisor_interrupt_child(&target_supervisor->children[index]);
-            }
-            pthread_mutex_unlock(&target_supervisor->lock);
-        }
-        /* Without a timeout there is no cancellation: a child mid-crash-loop
-         * still finishes its *current* attempt before noticing
-         * stop_requested. join() blocks the same way but without ever
-         * setting stop_requested, so it only returns once every child
-         * finishes on its own (see docs/threads.md). */
-        supervisor_join_all_children(target_supervisor);
-        if(join_method) {
-            /* A supervisor that gave up escalates here, to whoever waits on
-             * it. stop() is cleanup and never raises. */
-            pthread_mutex_lock(&target_supervisor->lock);
-            const bool gave_up=target_supervisor->failed;
-            if(gave_up)
-                snprintf(vm->error,sizeof vm->error,"%.1000s",
-                    target_supervisor->failure_message);
-            pthread_mutex_unlock(&target_supervisor->lock);
-            if(gave_up)return DIAMOND_VM_SUPERVISOR_ERROR;
-        }
-        /* stop(timeout_ms) answers whether it had to interrupt anything. */
-        registers[dest]=stop_method&&stop_timeout_ms>=0?DIAMOND_BOOL(!forced):DIAMOND_NIL;
-        return DIAMOND_VM_OK;
-    }
-    /* add_child_method, per the exhaustive unknown-method
-     * check above. Mirrors DIAMOND_OP_THREAD_NEW's own body
-     * almost exactly (see its own comments) -- the real
-     * differences are storing into a fixed children[] slot
-     * instead of a fresh handle, cloning program_template
-     * once for the child's entire restart lifetime rather
-     * than per spawn, and copying args into args_vm (GC
-     * storage only, mirrors Channel's private_vm) instead of
-     * directly into a to-be-run child_vm. */
+    /* stop(timeout_ms) answers whether it had to interrupt anything. */
+    registers[dest]=stop_method&&stop_timeout_ms>=0?DIAMOND_BOOL(!forced):DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
+
+/* Supervisor#add_child(callable, args...). Mirrors DIAMOND_OP_THREAD_NEW's
+ * own body almost exactly (see its own comments) -- the real differences
+ * are storing into a fixed children[] slot instead of a fresh handle,
+ * cloning program_template once for the child's entire restart lifetime
+ * rather than per spawn, and copying args into args_vm (GC storage only,
+ * mirrors Channel's private_vm) instead of directly into a to-be-run
+ * child_vm. */
+static DiamondVmStatus supervisor_add_child_method(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondSupervisor *target_supervisor,DiamondValue *registers,uint16_t base,
+        uint8_t argc,uint16_t dest) {
     if(argc<1)return DIAMOND_VM_ARITY_ERROR;
     pthread_mutex_lock(&target_supervisor->lock);
     if(target_supervisor->stopped) {
@@ -11422,6 +11369,68 @@ DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
         return DIAMOND_VM_THREAD_ERROR;
     }
     registers[dest]=DIAMOND_INT((int64_t)new_index);return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus supervisor_invoke_helper(DiamondVm *vm,
+                                                const DiamondChunk *chunk,
+                                                DiamondValue *registers, uint16_t recv,
+                                                uint16_t base, uint8_t argc, uint16_t dest,
+                                                const DiamondStringConstant *method_name) {
+    DiamondSupervisor *target_supervisor=
+        ((DiamondSupervisorHandle *)registers[recv].as.object)->supervisor;
+    const bool add_child_method=method_name->length==9&&
+        memcmp(method_name->chars,"add_child",9)==0;
+    const bool stop_method=method_name->length==4&&
+        memcmp(method_name->chars,"stop",4)==0;
+    const bool join_method=method_name->length==4&&
+        memcmp(method_name->chars,"join",4)==0;
+    const bool child_count_method=method_name->length==11&&
+        memcmp(method_name->chars,"child_count",11)==0;
+    const bool restart_count_method=method_name->length==13&&
+        memcmp(method_name->chars,"restart_count",13)==0;
+    const bool last_error_method=method_name->length==10&&
+        memcmp(method_name->chars,"last_error",10)==0;
+    const bool alive_method=method_name->length==6&&
+        memcmp(method_name->chars,"alive?",6)==0;
+    const bool restart_policy_method=method_name->length==14&&
+        memcmp(method_name->chars,"restart_policy",14)==0;
+    const bool failed_method=method_name->length==7&&
+        memcmp(method_name->chars,"failed?",7)==0;
+    if(!add_child_method&&!stop_method&&!join_method&&
+       !child_count_method&&!restart_count_method&&
+       !last_error_method&&!alive_method&&
+       !restart_policy_method&&!failed_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"Supervisor");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(failed_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        pthread_mutex_lock(&target_supervisor->lock);
+        const bool gave_up=target_supervisor->failed;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_BOOL(gave_up);return DIAMOND_VM_OK;
+    }
+    if(restart_policy_method) {
+        return supervisor_restart_policy_method(vm,target_supervisor,registers,base,argc,dest);
+    }
+    if(child_count_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        pthread_mutex_lock(&target_supervisor->lock);
+        const size_t current_count=target_supervisor->child_count;
+        pthread_mutex_unlock(&target_supervisor->lock);
+        registers[dest]=DIAMOND_INT((int64_t)current_count);return DIAMOND_VM_OK;
+    }
+    if(restart_count_method||last_error_method||alive_method) {
+        return supervisor_child_query_method(vm,target_supervisor,registers,base,argc,dest,
+            restart_count_method,alive_method);
+    }
+    if(stop_method||join_method) {
+        return supervisor_stop_or_join_method(vm,target_supervisor,registers,base,argc,dest,
+            stop_method,join_method);
+    }
+    /* add_child_method, per the exhaustive unknown-method check above. */
+    return supervisor_add_child_method(vm,chunk,target_supervisor,registers,base,argc,dest);
 }
 
 DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
@@ -11596,91 +11605,71 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
-DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
-                                                const DiamondChunk *chunk, size_t depth,
-                                                DiamondValue *registers, uint16_t recv,
-                                                uint16_t base, uint8_t argc, uint16_t dest,
-                                                const DiamondStringConstant *method_name) {
-    DiamondUdpSocketHandle *udp_handle=
-        (DiamondUdpSocketHandle *)registers[recv].as.object;
-    const bool send_method=method_name->length==4&&
-        memcmp(method_name->chars,"send",4)==0;
-    const bool receive_method=method_name->length==7&&
-        memcmp(method_name->chars,"receive",7)==0;
-    const bool close_method=method_name->length==5&&
-        memcmp(method_name->chars,"close",5)==0;
-    if(!send_method&&!receive_method&&!close_method) {
-        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
-            (int)method_name->length,method_name->chars,"UDPSocket");
+/* UDPSocket#send(data, host, port): one datagram to the first resolved
+ * address that accepts it. */
+static DiamondVmStatus udp_send_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondUdpSocketHandle *udp_handle,DiamondValue *registers,uint16_t base,uint8_t argc,
+        uint16_t dest) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    DiamondValue converted=DIAMOND_NIL;
+    DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
+        registers[base],&converted);
+    if(stringify_status!=DIAMOND_VM_OK)return stringify_status;
+    const DiamondString *text=(const DiamondString *)converted.as.object;
+    if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
+       registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
+       registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "UDPSocket#send arguments must be (data, String host, Int port)");
         return DIAMOND_VM_TYPE_ERROR;
     }
-    if(close_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(udp_handle->fd>=0) {
-            close(udp_handle->fd);
-            udp_handle->fd=-1;
-        }
-        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
-    }
-    if(udp_handle->fd<0) {
-        snprintf(vm->error,sizeof vm->error,"UDP socket is closed");
+    const DiamondString *host=
+        (const DiamondString *)registers[(size_t)base+1].as.object;
+    char port_text[32];
+    (void)snprintf(port_text,sizeof port_text,"%" PRId64,
+                   registers[(size_t)base+2].as.integer);
+    struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_DGRAM};
+    struct addrinfo *results=nullptr;
+    const int resolve_status=
+        getaddrinfo(host->chars,port_text,&hints,&results);
+    if(resolve_status!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot resolve '%.*s:%s': %s",
+                 (int)host->length,host->chars,port_text,
+                 gai_strerror(resolve_status));
         return DIAMOND_VM_IO_ERROR;
     }
-    if(send_method) {
-        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
-        DiamondValue converted=DIAMOND_NIL;
-        DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
-            registers[base],&converted);
-        if(stringify_status!=DIAMOND_VM_OK)return stringify_status;
-        const DiamondString *text=(const DiamondString *)converted.as.object;
-        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_STRING||
-           registers[(size_t)base+2].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,
-                "UDPSocket#send arguments must be (data, String host, Int port)");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondString *host=
-            (const DiamondString *)registers[(size_t)base+1].as.object;
-        char port_text[32];
-        (void)snprintf(port_text,sizeof port_text,"%" PRId64,
-                       registers[(size_t)base+2].as.integer);
-        struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_DGRAM};
-        struct addrinfo *results=nullptr;
-        const int resolve_status=
-            getaddrinfo(host->chars,port_text,&hints,&results);
-        if(resolve_status!=0) {
-            snprintf(vm->error,sizeof vm->error,"cannot resolve '%.*s:%s': %s",
-                     (int)host->length,host->chars,port_text,
-                     gai_strerror(resolve_status));
-            return DIAMOND_VM_IO_ERROR;
-        }
-        /* Tries each resolved candidate against this same
-         * existing socket until one succeeds -- host may
-         * resolve to both IPv4 and IPv6 addresses, and
-         * sendto fails outright on a family mismatch with
-         * whichever family this socket happened to be
-         * created with (see udp_socket_helper), so this is
-         * the sendto-time equivalent of TCPSocket.connect's
-         * own try-each-candidate resilience. */
-        ssize_t sent=-1;
-        int last_errno=0;
-        for(struct addrinfo *candidate=results;candidate!=nullptr;
-            candidate=candidate->ai_next) {
-            errno=0;
-            sent=sendto(udp_handle->fd,text->chars,text->length,0,
-                        candidate->ai_addr,candidate->ai_addrlen);
-            if(sent>=0)break;
-            last_errno=errno;
-        }
-        freeaddrinfo(results);
-        if(sent<0) {
-            snprintf(vm->error,sizeof vm->error,"send error: %s",
-                strerror(last_errno));
-            return DIAMOND_VM_IO_ERROR;
-        }
-        registers[dest]=DIAMOND_INT((int64_t)sent);return DIAMOND_VM_OK;
+    /* Tries each resolved candidate against this same
+     * existing socket until one succeeds -- host may
+     * resolve to both IPv4 and IPv6 addresses, and
+     * sendto fails outright on a family mismatch with
+     * whichever family this socket happened to be
+     * created with (see udp_socket_helper), so this is
+     * the sendto-time equivalent of TCPSocket.connect's
+     * own try-each-candidate resilience. */
+    ssize_t sent=-1;
+    int last_errno=0;
+    for(struct addrinfo *candidate=results;candidate!=nullptr;
+        candidate=candidate->ai_next) {
+        errno=0;
+        sent=sendto(udp_handle->fd,text->chars,text->length,0,
+                    candidate->ai_addr,candidate->ai_addrlen);
+        if(sent>=0)break;
+        last_errno=errno;
     }
+    freeaddrinfo(results);
+    if(sent<0) {
+        snprintf(vm->error,sizeof vm->error,"send error: %s",
+            strerror(last_errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    registers[dest]=DIAMOND_INT((int64_t)sent);return DIAMOND_VM_OK;
+}
+
+/* UDPSocket#receive(max_bytes): waits for one datagram and returns
+ * {"data" => String, "host" => String, "port" => Int}. */
+static DiamondVmStatus udp_receive_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondUdpSocketHandle *udp_handle,DiamondValue *registers,uint16_t base,uint8_t argc,
+        uint16_t dest) {
     if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
     if(registers[base].kind!=DIAMOND_VALUE_INT||
        registers[base].as.integer<0) {
@@ -11822,6 +11811,177 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+/* TLSSocket#session: the received session as a DER blob for resumption, or nil. */
+static DiamondVmStatus tls_session_method(DiamondVm *vm,DiamondTlsSocketHandle *tls_handle,
+        DiamondValue *registers,uint8_t argc,uint16_t dest) {
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(tls_handle->received_session==nullptr) {
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    const int encoded_length=i2d_SSL_SESSION(tls_handle->received_session,nullptr);
+    if(encoded_length<=0) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    unsigned char *buffer=malloc((size_t)encoded_length);
+    if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    unsigned char *cursor=buffer;
+    i2d_SSL_SESSION(tls_handle->received_session,&cursor);
+    DiamondString *blob=allocate_string(vm,(const char *)buffer,
+        (size_t)encoded_length);
+    free(buffer);
+    if(blob==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(blob);return DIAMOND_VM_OK;
+}
+
+/* TLSSocket#peer_subject / #peer_fingerprint: the peer certificate's RFC 2253
+ * subject or SHA-256 fingerprint, or nil when the peer presented none. */
+static DiamondVmStatus tls_peer_certificate_method(DiamondVm *vm,DiamondTlsSocketHandle *tls_handle,
+        DiamondValue *registers,uint8_t argc,uint16_t dest,bool peer_subject_method) {
+    /* The certificate the other side presented: for an
+     * accepted connection on a listener with a
+     * client_ca, the verified client certificate; for a
+     * client connection, the server's. nil when the
+     * peer presented none (an ordinary TLS server never
+     * asks a client for one). */
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    X509 *peer=SSL_get1_peer_certificate(tls_handle->ssl);
+    if(peer==nullptr) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    char text[512];size_t text_length=0;
+    if(peer_subject_method) {
+        BIO *bio=BIO_new(BIO_s_mem());
+        if(bio==nullptr) {
+            X509_free(peer);return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        X509_NAME_print_ex(bio,X509_get_subject_name(peer),0,
+            XN_FLAG_RFC2253);
+        const int got=BIO_read(bio,text,(int)sizeof text);
+        BIO_free(bio);
+        text_length=got>0?(size_t)got:0;
+    } else {
+        unsigned char digest[EVP_MAX_MD_SIZE];unsigned int digest_length=0;
+        if(X509_digest(peer,EVP_sha256(),digest,&digest_length)==1&&
+           digest_length*2<sizeof text) {
+            for(unsigned int byte=0;byte<digest_length;byte++) {
+                (void)snprintf(text+text_length,3,"%02x",digest[byte]);
+                text_length+=2;
+            }
+        }
+    }
+    X509_free(peer);
+    DiamondString *result_string=allocate_string(vm,text,text_length);
+    if(result_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(result_string);
+    return DIAMOND_VM_OK;
+}
+
+/* TLSSocket#read([max_bytes]): until EOF, or at most max_bytes. */
+static DiamondVmStatus tls_read_method(DiamondVm *vm,DiamondTlsSocketHandle *tls_handle,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+    bool bounded=false;size_t limit=0;
+    if(argc==1) {
+        if(registers[base].kind!=DIAMOND_VALUE_INT||
+           registers[base].as.integer<0) {
+            snprintf(vm->error,sizeof vm->error,
+                "TLSSocket#read argument must be a non-negative Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        bounded=true;limit=(size_t)registers[base].as.integer;
+    }
+    StringBuilder builder={};
+    char chunk_buffer[4096];
+    for(;;) {
+        if(bounded&&builder.length>=limit)break;
+        const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
+        const size_t want=remaining<sizeof chunk_buffer?
+            remaining:sizeof chunk_buffer;
+        size_t got=0;bool eof=false;
+        const DiamondVmStatus read_status=
+            tls_read_chunk(vm,tls_handle->ssl,chunk_buffer,want,&got,&eof);
+        if(read_status!=DIAMOND_VM_OK) {
+            free(builder.chars);return read_status;
+        }
+        if(eof||got==0)break;
+        if(!builder_append(&builder,chunk_buffer,got)) {
+            free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
+/* TLSSocket#gets: one line, or nil at EOF. */
+static DiamondVmStatus tls_gets_method(DiamondVm *vm,DiamondTlsSocketHandle *tls_handle,
+        DiamondValue *registers,uint8_t argc,uint16_t dest) {
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    StringBuilder builder={};
+    bool saw_any=false;
+    const DiamondVmStatus read_status=
+        tls_read_line(vm,tls_handle->ssl,&builder,&saw_any);
+    if(read_status!=DIAMOND_VM_OK) {
+        free(builder.chars);return read_status;
+    }
+    if(!saw_any) {
+        free(builder.chars);
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
+/* TLSSocket#write(value): the value's string form, in full. */
+static DiamondVmStatus tls_write_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondTlsSocketHandle *tls_handle,DiamondValue *registers,uint16_t base,uint8_t argc,
+        uint16_t dest) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    DiamondValue converted=DIAMOND_NIL;
+    DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
+        registers[base],&converted);
+    if(stringify_status!=DIAMOND_VM_OK)return stringify_status;
+    const DiamondString *text=(const DiamondString *)converted.as.object;
+    const DiamondVmStatus write_status=
+        tls_write_all(vm,tls_handle->ssl,text->chars,text->length);
+    if(write_status!=DIAMOND_VM_OK)return write_status;
+    registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
+                                                const DiamondChunk *chunk, size_t depth,
+                                                DiamondValue *registers, uint16_t recv,
+                                                uint16_t base, uint8_t argc, uint16_t dest,
+                                                const DiamondStringConstant *method_name) {
+    DiamondUdpSocketHandle *udp_handle=
+        (DiamondUdpSocketHandle *)registers[recv].as.object;
+    const bool send_method=method_name->length==4&&
+        memcmp(method_name->chars,"send",4)==0;
+    const bool receive_method=method_name->length==7&&
+        memcmp(method_name->chars,"receive",7)==0;
+    const bool close_method=method_name->length==5&&
+        memcmp(method_name->chars,"close",5)==0;
+    if(!send_method&&!receive_method&&!close_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"UDPSocket");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(close_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(udp_handle->fd>=0) {
+            close(udp_handle->fd);
+            udp_handle->fd=-1;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(udp_handle->fd<0) {
+        snprintf(vm->error,sizeof vm->error,"UDP socket is closed");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(send_method)
+        return udp_send_method(vm,chunk,depth,udp_handle,registers,base,argc,dest);
+    return udp_receive_method(vm,chunk,depth,udp_handle,registers,base,argc,dest);
+}
+
 DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
                                                 const DiamondChunk *chunk, size_t depth,
                                                 DiamondValue *registers, uint16_t recv,
@@ -11911,23 +12071,8 @@ DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
         if(protocol==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=DIAMOND_OBJECT(protocol);return DIAMOND_VM_OK;
     }
-    if(session_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(tls_handle->received_session==nullptr) {
-            registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
-        }
-        const int encoded_length=i2d_SSL_SESSION(tls_handle->received_session,nullptr);
-        if(encoded_length<=0) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
-        unsigned char *buffer=malloc((size_t)encoded_length);
-        if(buffer==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        unsigned char *cursor=buffer;
-        i2d_SSL_SESSION(tls_handle->received_session,&cursor);
-        DiamondString *blob=allocate_string(vm,(const char *)buffer,
-            (size_t)encoded_length);
-        free(buffer);
-        if(blob==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(blob);return DIAMOND_VM_OK;
-    }
+    if(session_method)
+        return tls_session_method(vm,tls_handle,registers,argc,dest);
     if(session_reused_method) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         registers[dest]=DIAMOND_BOOL(SSL_session_reused(tls_handle->ssl)==1);
@@ -11945,106 +12090,13 @@ DiamondVmStatus tls_socket_invoke_helper(DiamondVm *vm,
         registers[dest]=DIAMOND_OBJECT(value);
         return DIAMOND_VM_OK;
     }
-    if(peer_subject_method||peer_fingerprint_method) {
-        /* The certificate the other side presented: for an
-         * accepted connection on a listener with a
-         * client_ca, the verified client certificate; for a
-         * client connection, the server's. nil when the
-         * peer presented none (an ordinary TLS server never
-         * asks a client for one). */
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        X509 *peer=SSL_get1_peer_certificate(tls_handle->ssl);
-        if(peer==nullptr) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
-        char text[512];size_t text_length=0;
-        if(peer_subject_method) {
-            BIO *bio=BIO_new(BIO_s_mem());
-            if(bio==nullptr) {
-                X509_free(peer);return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-            X509_NAME_print_ex(bio,X509_get_subject_name(peer),0,
-                XN_FLAG_RFC2253);
-            const int got=BIO_read(bio,text,(int)sizeof text);
-            BIO_free(bio);
-            text_length=got>0?(size_t)got:0;
-        } else {
-            unsigned char digest[EVP_MAX_MD_SIZE];unsigned int digest_length=0;
-            if(X509_digest(peer,EVP_sha256(),digest,&digest_length)==1&&
-               digest_length*2<sizeof text) {
-                for(unsigned int byte=0;byte<digest_length;byte++) {
-                    (void)snprintf(text+text_length,3,"%02x",digest[byte]);
-                    text_length+=2;
-                }
-            }
-        }
-        X509_free(peer);
-        DiamondString *result_string=allocate_string(vm,text,text_length);
-        if(result_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(result_string);
-        return DIAMOND_VM_OK;
-    }
-    if(read_method) {
-        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
-        bool bounded=false;size_t limit=0;
-        if(argc==1) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT||
-               registers[base].as.integer<0) {
-                snprintf(vm->error,sizeof vm->error,
-                    "TLSSocket#read argument must be a non-negative Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            bounded=true;limit=(size_t)registers[base].as.integer;
-        }
-        StringBuilder builder={};
-        char chunk_buffer[4096];
-        for(;;) {
-            if(bounded&&builder.length>=limit)break;
-            const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
-            const size_t want=remaining<sizeof chunk_buffer?
-                remaining:sizeof chunk_buffer;
-            size_t got=0;bool eof=false;
-            const DiamondVmStatus read_status=
-                tls_read_chunk(vm,tls_handle->ssl,chunk_buffer,want,&got,&eof);
-            if(read_status!=DIAMOND_VM_OK) {
-                free(builder.chars);return read_status;
-            }
-            if(eof||got==0)break;
-            if(!builder_append(&builder,chunk_buffer,got)) {
-                free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
-            }
-        }
-        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
-        free(builder.chars);
-        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
-    }
-    if(gets_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        StringBuilder builder={};
-        bool saw_any=false;
-        const DiamondVmStatus read_status=
-            tls_read_line(vm,tls_handle->ssl,&builder,&saw_any);
-        if(read_status!=DIAMOND_VM_OK) {
-            free(builder.chars);return read_status;
-        }
-        if(!saw_any) {
-            free(builder.chars);
-            registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
-        }
-        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
-        free(builder.chars);
-        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
-    }
-    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-    DiamondValue converted=DIAMOND_NIL;
-    DiamondVmStatus stringify_status=stringify_value(vm,chunk,depth,
-        registers[base],&converted);
-    if(stringify_status!=DIAMOND_VM_OK)return stringify_status;
-    const DiamondString *text=(const DiamondString *)converted.as.object;
-    const DiamondVmStatus write_status=
-        tls_write_all(vm,tls_handle->ssl,text->chars,text->length);
-    if(write_status!=DIAMOND_VM_OK)return write_status;
-    registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    if(peer_subject_method||peer_fingerprint_method)
+        return tls_peer_certificate_method(vm,tls_handle,registers,argc,dest,peer_subject_method);
+    if(read_method)
+        return tls_read_method(vm,tls_handle,registers,base,argc,dest);
+    if(gets_method)
+        return tls_gets_method(vm,tls_handle,registers,argc,dest);
+    return tls_write_method(vm,chunk,depth,tls_handle,registers,base,argc,dest);
 }
 
 DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,

@@ -614,6 +614,168 @@ static DiamondVmStatus tensor_layernorm_backward_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
+/* Whether value is a Tensor object. */
+static bool is_tensor_value(DiamondValue value) {
+    return value.kind==DIAMOND_VALUE_OBJECT&&value.as.object->kind==DIAMOND_OBJECT_TENSOR;
+}
+
+/* Tensor#get(row, col) / #set(row, col, value). */
+static DiamondVmStatus tensor_get_set_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,
+        const DiamondStringConstant *method_name,bool get_method) {
+    const uint8_t expected_argc=get_method?2:3;
+    if(argc!=expected_argc)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#%.*s's row/col arguments must be Ints",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t row=registers[base].as.integer;
+    const int64_t col=registers[(size_t)base+1].as.integer;
+    if(row<0||col<0||(size_t)row>=tensor->rows||(size_t)col>=tensor->cols) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#%.*s index (%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
+            (int)method_name->length,method_name->chars,row,col,tensor->rows,tensor->cols);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    if(get_method) {
+        registers[dest]=DIAMOND_FLOAT(tensor->data[(size_t)row*tensor->cols+(size_t)col]);
+        return DIAMOND_VM_OK;
+    }
+    const DiamondValue value=registers[(size_t)base+2];
+    if(value.kind!=DIAMOND_VALUE_INT&&value.kind!=DIAMOND_VALUE_FLOAT) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#set's value argument must be an Int or a Float");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    tensor->data[(size_t)row*tensor->cols+(size_t)col]=
+        value.kind==DIAMOND_VALUE_INT?(double)value.as.integer:value.as.real;
+    registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+}
+
+/* Tensor#add!(other): elementwise, same shape. */
+static DiamondVmStatus tensor_add_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(!is_tensor_value(registers[base])) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#add!'s argument must be a Tensor");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondTensor *other=(const DiamondTensor *)registers[base].as.object;
+    if(other->rows!=tensor->rows||other->cols!=tensor->cols) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#add! shape mismatch: %zux%zu + %zux%zu",
+            tensor->rows,tensor->cols,other->rows,other->cols);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    tensor_add_inplace_helper(tensor,other);
+    registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+}
+
+/* Tensor#add_bias!(bias): a 1xN row added to every row. */
+static DiamondVmStatus tensor_add_bias_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(!is_tensor_value(registers[base])) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#add_bias!'s argument must be a Tensor");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondTensor *bias=(const DiamondTensor *)registers[base].as.object;
+    if(bias->rows!=1||bias->cols!=tensor->cols) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#add_bias! expects a 1x%zu bias, got %zux%zu",
+            tensor->cols,bias->rows,bias->cols);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    tensor_add_bias_inplace_helper(tensor,bias);
+    registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+}
+
+/* Tensor#columns(start, width): a copy of those columns. */
+static DiamondVmStatus tensor_columns_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#columns's arguments must be Ints");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t start=registers[base].as.integer;
+    const int64_t width=registers[(size_t)base+1].as.integer;
+    if(start<0||width<=0||(size_t)start+(size_t)width>tensor->cols) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#columns(%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
+            start,width,tensor->rows,tensor->cols);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    return tensor_columns_helper(vm,tensor,(size_t)start,(size_t)width,&registers[dest]);
+}
+
+/* Tensor#add_columns!(start, src): src added into columns from start. */
+static DiamondVmStatus tensor_add_columns_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s first argument must be an Int");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(!is_tensor_value(registers[(size_t)base+1])) {
+        snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s second argument must be a Tensor");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t start=registers[base].as.integer;
+    const DiamondTensor *src=(const DiamondTensor *)registers[(size_t)base+1].as.object;
+    if(start<0||src->rows!=tensor->rows||(size_t)start+src->cols>tensor->cols) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#add_columns!(%" PRId64 ", %zux%zu) out of bounds for %zux%zu Tensor",
+            start,src->rows,src->cols,tensor->rows,tensor->cols);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    tensor_add_columns_inplace_helper(tensor,(size_t)start,src);
+    registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+}
+
+/* Tensor#layernorm_forward(gamma, beta, eps) -> [output, normalized, inv_std]; self is x. */
+static DiamondVmStatus tensor_layernorm_forward_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(!is_tensor_value(registers[base])||
+       !is_tensor_value(registers[(size_t)base+1])) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#layernorm_forward's gamma/beta arguments must be Tensors");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    double eps=0.0;
+    if(!numeric_as_double(registers[(size_t)base+2],&eps)) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#layernorm_forward's eps argument must be an Int or a Float");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    return tensor_layernorm_forward_helper(vm,tensor,
+        (const DiamondTensor *)registers[base].as.object,
+        (const DiamondTensor *)registers[(size_t)base+1].as.object,eps,&registers[dest]);
+}
+
+/* Tensor#layernorm_backward(gamma, grad_output, inv_std) -> [grad_x, grad_gamma, grad_beta];
+ * self is `normalized`. */
+static DiamondVmStatus tensor_layernorm_backward_method(DiamondVm *vm,DiamondTensor *tensor,
+        DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
+    if(!is_tensor_value(registers[base])||
+       !is_tensor_value(registers[(size_t)base+1])||
+       !is_tensor_value(registers[(size_t)base+2])) {
+        snprintf(vm->error,sizeof vm->error,
+            "Tensor#layernorm_backward's arguments must all be Tensors");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    return tensor_layernorm_backward_helper(vm,
+        (const DiamondTensor *)registers[base].as.object,
+        (const DiamondTensor *)registers[(size_t)base+1].as.object,
+        tensor,
+        (const DiamondTensor *)registers[(size_t)base+2].as.object,&registers[dest]);
+}
+
 /* Tensor#rows/#cols/#get/#set/#matmul/#to_a -- every instance method,
  * matching sqlite3_dispatch_helper's own shape (called from the big
  * receiver_kind==DIAMOND_OBJECT_TENSOR case in run_chunk's INVOKE
@@ -638,40 +800,11 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
         registers[dest]=DIAMOND_INT((int64_t)tensor->cols);return DIAMOND_VM_OK;
     }
     if(get_method||set_method) {
-        const uint8_t expected_argc=get_method?2:3;
-        if(argc!=expected_argc)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#%.*s's row/col arguments must be Ints",
-                (int)method_name->length,method_name->chars);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t row=registers[base].as.integer;
-        const int64_t col=registers[(size_t)base+1].as.integer;
-        if(row<0||col<0||(size_t)row>=tensor->rows||(size_t)col>=tensor->cols) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#%.*s index (%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
-                (int)method_name->length,method_name->chars,row,col,tensor->rows,tensor->cols);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        if(get_method) {
-            registers[dest]=DIAMOND_FLOAT(tensor->data[(size_t)row*tensor->cols+(size_t)col]);
-            return DIAMOND_VM_OK;
-        }
-        const DiamondValue value=registers[(size_t)base+2];
-        if(value.kind!=DIAMOND_VALUE_INT&&value.kind!=DIAMOND_VALUE_FLOAT) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#set's value argument must be an Int or a Float");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        tensor->data[(size_t)row*tensor->cols+(size_t)col]=
-            value.kind==DIAMOND_VALUE_INT?(double)value.as.integer:value.as.real;
-        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+        return tensor_get_set_method(vm,tensor,registers,base,argc,dest,method_name,get_method);
     }
     if(matmul_method) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+        if(!is_tensor_value(registers[base])) {
             snprintf(vm->error,sizeof vm->error,"Tensor#matmul's argument must be a Tensor");
             return DIAMOND_VM_TYPE_ERROR;
         }
@@ -687,21 +820,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
         return tensor_transpose_helper(vm,tensor,&registers[dest]);
     }
     if(method_name->length==4&&memcmp(method_name->chars,"add!",4)==0) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#add!'s argument must be a Tensor");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondTensor *other=(const DiamondTensor *)registers[base].as.object;
-        if(other->rows!=tensor->rows||other->cols!=tensor->cols) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#add! shape mismatch: %zux%zu + %zux%zu",
-                tensor->rows,tensor->cols,other->rows,other->cols);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        tensor_add_inplace_helper(tensor,other);
-        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+        return tensor_add_method(vm,tensor,registers,base,argc,dest);
     }
     if(method_name->length==6&&memcmp(method_name->chars,"scale!",6)==0) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
@@ -714,21 +833,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
         registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
     }
     if(method_name->length==9&&memcmp(method_name->chars,"add_bias!",9)==0) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#add_bias!'s argument must be a Tensor");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondTensor *bias=(const DiamondTensor *)registers[base].as.object;
-        if(bias->rows!=1||bias->cols!=tensor->cols) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#add_bias! expects a 1x%zu bias, got %zux%zu",
-                tensor->cols,bias->rows,bias->cols);
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        tensor_add_bias_inplace_helper(tensor,bias);
-        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+        return tensor_add_bias_method(vm,tensor,registers,base,argc,dest);
     }
     if(method_name->length==12&&memcmp(method_name->chars,"row_softmax!",12)==0) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
@@ -745,43 +850,10 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
         return tensor_column_sums_helper(vm,tensor,&registers[dest]);
     }
     if(method_name->length==7&&memcmp(method_name->chars,"columns",7)==0) {
-        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#columns's arguments must be Ints");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t start=registers[base].as.integer;
-        const int64_t width=registers[(size_t)base+1].as.integer;
-        if(start<0||width<=0||(size_t)start+(size_t)width>tensor->cols) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#columns(%" PRId64 ", %" PRId64 ") out of bounds for %zux%zu Tensor",
-                start,width,tensor->rows,tensor->cols);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        return tensor_columns_helper(vm,tensor,(size_t)start,(size_t)width,&registers[dest]);
+        return tensor_columns_method(vm,tensor,registers,base,argc,dest);
     }
     if(method_name->length==12&&memcmp(method_name->chars,"add_columns!",12)==0) {
-        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s first argument must be an Int");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
-            snprintf(vm->error,sizeof vm->error,"Tensor#add_columns!'s second argument must be a Tensor");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t start=registers[base].as.integer;
-        const DiamondTensor *src=(const DiamondTensor *)registers[(size_t)base+1].as.object;
-        if(start<0||src->rows!=tensor->rows||(size_t)start+src->cols>tensor->cols) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#add_columns!(%" PRId64 ", %zux%zu) out of bounds for %zux%zu Tensor",
-                start,src->rows,src->cols,tensor->rows,tensor->cols);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        tensor_add_columns_inplace_helper(tensor,(size_t)start,src);
-        registers[dest]=DIAMOND_OBJECT(tensor);return DIAMOND_VM_OK;
+        return tensor_add_columns_method(vm,tensor,registers,base,argc,dest);
     }
     if(method_name->length==5&&memcmp(method_name->chars,"clone",5)==0) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
@@ -795,8 +867,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
      * see tensor_softmax_backward_helper's own comment). */
     if(method_name->length==16&&memcmp(method_name->chars,"softmax_backward",16)==0) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+        if(!is_tensor_value(registers[base])) {
             snprintf(vm->error,sizeof vm->error,"Tensor#softmax_backward's argument must be a Tensor");
             return DIAMOND_VM_TYPE_ERROR;
         }
@@ -807,8 +878,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
      * tensor_gelu_backward_helper's own comment). */
     if(method_name->length==13&&memcmp(method_name->chars,"gelu_backward",13)==0) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
+        if(!is_tensor_value(registers[base])) {
             snprintf(vm->error,sizeof vm->error,"Tensor#gelu_backward's argument must be a Tensor");
             return DIAMOND_VM_TYPE_ERROR;
         }
@@ -819,24 +889,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
      * Array [output, normalized, inv_std] -- see
      * tensor_layernorm_forward_helper's own comment. */
     if(method_name->length==17&&memcmp(method_name->chars,"layernorm_forward",17)==0) {
-        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#layernorm_forward's gamma/beta arguments must be Tensors");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        double eps=0.0;
-        if(!numeric_as_double(registers[(size_t)base+2],&eps)) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#layernorm_forward's eps argument must be an Int or a Float");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        return tensor_layernorm_forward_helper(vm,tensor,
-            (const DiamondTensor *)registers[base].as.object,
-            (const DiamondTensor *)registers[(size_t)base+1].as.object,eps,&registers[dest]);
+        return tensor_layernorm_forward_method(vm,tensor,registers,base,argc,dest);
     }
     /* self is `normalized` (one of layernorm_forward's own returned
      * values, not x -- the backward formula never needs x directly,
@@ -845,22 +898,7 @@ DiamondVmStatus tensor_dispatch_helper(DiamondVm *vm,DiamondTensor *tensor,
      * grad_gamma, grad_beta] -- see
      * tensor_layernorm_backward_helper's own comment. */
     if(method_name->length==18&&memcmp(method_name->chars,"layernorm_backward",18)==0) {
-        if(argc!=3)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TENSOR||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+1].as.object->kind!=DIAMOND_OBJECT_TENSOR||
-           registers[(size_t)base+2].kind!=DIAMOND_VALUE_OBJECT||
-           registers[(size_t)base+2].as.object->kind!=DIAMOND_OBJECT_TENSOR) {
-            snprintf(vm->error,sizeof vm->error,
-                "Tensor#layernorm_backward's arguments must all be Tensors");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        return tensor_layernorm_backward_helper(vm,
-            (const DiamondTensor *)registers[base].as.object,
-            (const DiamondTensor *)registers[(size_t)base+1].as.object,
-            tensor,
-            (const DiamondTensor *)registers[(size_t)base+2].as.object,&registers[dest]);
+        return tensor_layernorm_backward_method(vm,tensor,registers,base,argc,dest);
     }
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Tensor");

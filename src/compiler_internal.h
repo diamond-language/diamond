@@ -858,6 +858,8 @@ DIAMOND_INTERNAL void merge_loop_exit(Compiler *compiler,LoopContext *loop,
 DIAMOND_INTERNAL uint16_t parse_index(Compiler *compiler,uint16_t receiver);
 DIAMOND_INTERNAL bool consume_block_start(Compiler *compiler);
 DIAMOND_INTERNAL bool consume_conditional_start(Compiler *compiler);
+DIAMOND_INTERNAL void capture_flow_facts(const Compiler *compiler,size_t flow_reg_count,uint16_t *types,
+        int32_t *sets,int32_t *tooling);
 DIAMOND_INTERNAL uint16_t parse_if(Compiler *compiler,bool inverted);
 DIAMOND_INTERNAL uint16_t parse_prefix(Compiler *compiler);
 DIAMOND_INTERNAL uint16_t compile_binary_op(Compiler *compiler, DiamondTokenKind operator,
