@@ -748,7 +748,7 @@ uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                         unconstrained_object=false;
                 }
                 if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
-                    covered_ids[covered_id_count++]=(uint8_t)
+                    covered_ids[covered_id_count++]=(uint16_t)
                         (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
             }
             size_t indices[64],aligned[64];
