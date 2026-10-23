@@ -544,11 +544,7 @@ static uint16_t emit_invoke_with_name(Compiler *compiler, uint16_t receiver,
         DIAMOND_OP_INVOKE:DIAMOND_OP_INVOKE_TYPED);emit_register(compiler,dest);
     emit_register(compiler,receiver);emit_register(compiler,method);emit_register(compiler,base);
     emit_byte(compiler,(uint8_t)count);
-    if(type_argument_count>0) {
-        emit_byte(compiler,(uint8_t)type_argument_count);
-        for(size_t index=0;index<type_argument_count;index++)
-            emit_register(compiler,type_arguments[index]);
-    }
+    emit_type_argument_trailer(compiler,type_arguments,type_argument_count);
     return dest;
 }
 
@@ -561,11 +557,7 @@ static uint16_t emit_invoke_typed_spread(Compiler *compiler,uint16_t receiver,
         DIAMOND_OP_INVOKE_TYPED_SPREAD);
     emit_register(compiler,destination);emit_register(compiler,receiver);
     emit_register(compiler,method);emit_register(compiler,spread);
-    if(type_argument_count>0) {
-        emit_byte(compiler,(uint8_t)type_argument_count);
-        for(size_t index=0;index<type_argument_count;index++)
-            emit_register(compiler,type_arguments[index]);
-    }
+    emit_type_argument_trailer(compiler,type_arguments,type_argument_count);
     return destination;
 }
 
@@ -592,11 +584,7 @@ static uint16_t emit_invoke_keywords(Compiler *compiler,uint16_t receiver,
         emit_register(compiler,keyword_values[index]);
     }
     if(has_block)emit_register(compiler,block);
-    if(type_argument_count>0) {
-        emit_byte(compiler,(uint8_t)type_argument_count);
-        for(size_t index=0;index<type_argument_count;index++)
-            emit_register(compiler,type_arguments[index]);
-    }
+    emit_type_argument_trailer(compiler,type_arguments,type_argument_count);
     return destination;
 }
 
@@ -1985,34 +1973,6 @@ static uint16_t parse_is_a_call(Compiler *compiler,uint16_t receiver) {
     return destination;
 }
 
-/* `.name[Type, ...]`: the current token is the '['. */
-static bool parse_invoke_type_arguments(Compiler *compiler,uint16_t *type_arguments,
-        size_t *type_argument_count_out) {
-    size_t type_argument_count=0;
-    advance_token(compiler);
-    skip_newlines(compiler);
-    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
-          !compiler->failed) {
-        if(type_argument_count==8) {
-            fail(compiler,compiler->current.span,"too many generic arguments");
-            return false;
-        }
-        type_arguments[type_argument_count++]=
-            (uint16_t)parse_type_annotation(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-        advance_token(compiler);
-        skip_newlines(compiler);
-    }
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-        fail(compiler,compiler->current.span,
-             "expected ']' after generic arguments");return false;
-    }
-    advance_token(compiler);
-    *type_argument_count_out=type_argument_count;
-    return true;
-}
-
 /* An instance call whose arguments include a keyword argument: the current
  * token is the first argument. */
 static uint16_t parse_invoke_keyword_call(Compiler *compiler,const InvokeSite *site,bool writer_name,
@@ -2189,7 +2149,7 @@ uint16_t parse_invoke_named(Compiler *compiler, uint16_t receiver,
     uint16_t type_arguments[8];size_t type_argument_count=0;
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET &&
        (!writer_name||writer_generic_arguments_ahead(compiler))) {
-        if(!parse_invoke_type_arguments(compiler,type_arguments,&type_argument_count))
+        if(!parse_explicit_type_arguments(compiler,type_arguments,&type_argument_count))
             return 0;
     }
     /* `recv.attr = value` -- sugar for `recv.attr=(value)`. Only a plain
