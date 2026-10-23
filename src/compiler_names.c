@@ -37,6 +37,329 @@ static uint16_t emit_invoke_with_name(Compiler *compiler, uint16_t receiver,
         uint16_t method, const uint16_t *type_arguments, size_t type_argument_count,
         const uint16_t *args, size_t count);
 
+typedef uint16_t (*BuiltinCallParser)(Compiler *compiler);
+
+static uint16_t parse_digest_call(Compiler *compiler) {
+    return parse_crypto_call(compiler,false);
+}
+
+static uint16_t parse_hmac_call(Compiler *compiler) {
+    return parse_crypto_call(compiler,true);
+}
+
+/* Built-in namespaces reached as `Name.call(...)`. Each is shadowed by a
+ * class, local or function of the same name; parse_name checks that before
+ * consulting this table. */
+static const struct { const char *name; BuiltinCallParser parse; }
+builtin_namespace_calls[]={
+    {"Fiber",parse_fiber_call},{"File",parse_file_call},
+    {"Dir",parse_dir_entries_call},{"Regexp",parse_regexp_new_call},
+    {"SQLite3",parse_sqlite3_open_call},{"Tensor",parse_tensor_call},
+    {"PostgreSQL",parse_postgres_open_call},{"MySQL",parse_mysql_open_call},
+    {"Time",parse_time_call},{"Process",parse_process_call},
+    {"BCrypt",parse_bcrypt_call},{"Cipher",parse_cipher_call},
+    {"Gzip",parse_gzip_call},{"Base64",parse_base64_call},
+    {"SecureRandom",parse_secure_random_call},{"Digest",parse_digest_call},
+    {"HMAC",parse_hmac_call},{"ProgramBuilder",parse_program_builder_new_call},
+    {"Thread",parse_thread_new_call},{"Channel",parse_channel_new_call},
+    {"Supervisor",parse_supervisor_new_call},{"Array",parse_array_new_call},
+    {"TCPSocket",parse_tcp_connect_call},{"TCPServer",parse_tcp_listen_call},
+    {"DNS",parse_dns_resolve_call},{"IO",parse_io_poll_call},
+    {"UDPSocket",parse_udp_socket_call},{"Signal",parse_signal_trap_call},
+    {"TLSSocket",parse_tls_connect_call},{"TLSServer",parse_tls_listen_call},
+};
+
+/* Built-in functions reached as `name(...)`, shadowed by a local or function
+ * of the same name. print/puts/warn are handled separately because they
+ * pass flags. */
+static const struct { const char *name; BuiltinCallParser parse; }
+builtin_function_calls[]={
+    {"gets",parse_gets_call},{"exit",parse_exit_call},
+    {"debugger",parse_debugger_call},{"breakpoint",parse_debugger_call},
+    {"chr",parse_chr_call},{"to_f",parse_to_float_call},
+    {"to_i",parse_to_int_call},{"to_sym",parse_to_sym_call},
+    {"diamond_json_stringify",parse_json_stringify_call},
+};
+
+static const struct { const char *name; DiamondMathFunction id; bool binary; }
+builtin_math_calls[]={
+    {"sqrt",DIAMOND_MATH_SQRT,false},{"sin",DIAMOND_MATH_SIN,false},
+    {"cos",DIAMOND_MATH_COS,false},{"tan",DIAMOND_MATH_TAN,false},
+    {"pow",DIAMOND_MATH_POW,true},{"exp",DIAMOND_MATH_EXP,false},
+    {"log",DIAMOND_MATH_LOG,false},{"tanh",DIAMOND_MATH_TANH,false},
+};
+
+static BuiltinCallParser builtin_namespace_parser(const Compiler *compiler,
+        DiamondSpan name) {
+    for(size_t index=0;index<sizeof builtin_namespace_calls/
+            sizeof builtin_namespace_calls[0];index++)
+        if(name_equals(compiler,builtin_namespace_calls[index].name,name,false))
+            return builtin_namespace_calls[index].parse;
+    return nullptr;
+}
+
+/* Parses `name(...)` when name is a built-in function; returns false, having
+ * consumed nothing, when it is not. */
+static bool parse_builtin_function_call(Compiler *compiler, DiamondSpan name,
+        uint16_t *result) {
+    if(name_equals(compiler,"print",name,false)||
+       name_equals(compiler,"puts",name,false)) {
+        *result=parse_print_call(compiler,name_equals(compiler,"puts",name,false)?
+            DIAMOND_PRINT_NEWLINE:0);
+        return true;
+    }
+    if(name_equals(compiler,"warn",name,false)) {
+        *result=parse_print_call(compiler,DIAMOND_PRINT_NEWLINE|DIAMOND_PRINT_STDERR);
+        return true;
+    }
+    for(size_t index=0;index<sizeof builtin_function_calls/
+            sizeof builtin_function_calls[0];index++)
+        if(name_equals(compiler,builtin_function_calls[index].name,name,false)) {
+            *result=builtin_function_calls[index].parse(compiler);
+            return true;
+        }
+    for(size_t index=0;index<sizeof builtin_math_calls/
+            sizeof builtin_math_calls[0];index++)
+        if(name_equals(compiler,builtin_math_calls[index].name,name,false)) {
+            *result=builtin_math_calls[index].binary?
+                parse_math_binary_call(compiler,builtin_math_calls[index].id):
+                parse_math_unary_call(compiler,builtin_math_calls[index].id);
+            return true;
+        }
+    return false;
+}
+
+/* `Module.function(...)`: the current token is the '.'. */
+static uint16_t parse_module_singleton_call(Compiler *compiler, DiamondSpan name,
+        int module_index) {
+    advance_token(compiler);
+    const DiamondModule *module=
+        &compiler->program->modules[(size_t)module_index];
+    const DiamondMethod *method=nullptr;
+    if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
+        for(size_t index=0;index<module->singleton_method_count;index++)
+            if(singleton_call_name_equals(compiler,
+                   module->singleton_methods[index].name,
+                   compiler->current.span))
+                method=&module->singleton_methods[index];
+    if(method==nullptr) {
+        fail(compiler,compiler->current.span,
+             "undefined module singleton function");return 0;
+    }
+    return parse_singleton_call(compiler,method,name,-1);
+}
+
+/* `Class.new(...)` whose arguments include a keyword argument: the current
+ * token is the first argument. */
+static uint16_t parse_class_new_keywords(Compiler *compiler, int class_index,
+        const DiamondFunction *initializer) {
+    DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t keyword_count=0;
+    const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
+        keyword_names,keyword_values,&keyword_count,initializer);
+    bool has_block=false;uint16_t block=0;
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        uint16_t inferred_arguments[8];
+        infer_contextual_spread_arguments(compiler,initializer,
+            positional,initializer==nullptr||initializer->arity<=1?0:
+                initializer->arity-2,inferred_arguments);
+        infer_contextual_keyword_arguments(compiler,initializer,
+            keyword_names,keyword_values,keyword_count,
+            inferred_arguments);
+        for(size_t index=0;index<keyword_count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
+                keyword_values[index],0,2);
+            keyword_values[index]=snapshot;
+        }
+        block=compile_contextual_typed_block(compiler,initializer,
+            initializer==nullptr||initializer->arity<=1?0:
+                initializer->arity-2,inferred_arguments,
+            initializer==nullptr?0:initializer->type_variable_count);
+        has_block=true;
+    }
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+    emit_register(compiler,destination);
+    emit_register(compiler,(uint16_t)class_index);
+    emit_register(compiler,positional);
+    emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
+    for(size_t index=0;index<keyword_count;index++) {
+        emit_register(compiler,add_name_string(compiler,keyword_names[index]));
+        emit_register(compiler,keyword_values[index]);
+    }
+    if(has_block)emit_register(compiler,block);
+    compiler->known_types[destination]=
+        (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    return destination;
+}
+
+/* `Class.new(...)` whose arguments include a spread: the current token is
+ * the first argument. */
+static uint16_t parse_class_new_spread(Compiler *compiler, int class_index,
+        const DiamondFunction *initializer) {
+    uint16_t spread=parse_spread_argument_array(compiler,nullptr,
+        nullptr,nullptr,nullptr,initializer,
+        initializer==nullptr||initializer->arity==0?0:
+            initializer->arity-1);
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        uint16_t inferred_arguments[8];
+        const size_t inferred_count=infer_contextual_spread_arguments(
+            compiler,initializer,spread,
+            initializer==nullptr||initializer->arity<=1?0:
+                initializer->arity-2,inferred_arguments);
+        const uint16_t spread_snapshot=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
+            spread,0,2);
+        spread=spread_snapshot;
+        const uint16_t block=compile_contextual_typed_block(compiler,
+            initializer,
+            initializer==nullptr||initializer->arity<=1?0:
+                initializer->arity-2,inferred_arguments,
+            inferred_count);
+        const uint16_t destination=allocate_register(compiler);
+        emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+        emit_register(compiler,destination);
+        emit_register(compiler,(uint16_t)class_index);
+        emit_register(compiler,spread);emit_byte(compiler,0x80u);
+        emit_register(compiler,block);
+        compiler->known_types[destination]=
+            (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+        return destination;
+    }
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
+    emit_register(compiler,destination);
+    emit_register(compiler,(uint16_t)class_index);
+    emit_register(compiler,spread);
+    compiler->known_types[destination]=
+        (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    return destination;
+}
+
+/* `Class.new(...)`: the current token is `new`. */
+static uint16_t parse_class_new_call(Compiler *compiler, int class_index) {
+    advance_token(compiler);
+    const DiamondFunction *initializer=
+        constructor_signature(compiler,class_index);
+    if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler, compiler->current.span, "expected '(' after 'new'");
+        return 0;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    if(call_arguments_have_keyword(compiler))
+        return parse_class_new_keywords(compiler,class_index,initializer);
+    if(call_arguments_have_spread(compiler))
+        return parse_class_new_spread(compiler,class_index,initializer);
+    uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
+    while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
+        if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
+        args[count++] = parse_expression(compiler);
+        skip_newlines(compiler);
+        if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
+    }
+    if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_DO) {
+        if(count==DIAMOND_MAX_ARGUMENTS) {
+            fail(compiler,compiler->current.span,"too many arguments");return 0;
+        }
+        uint16_t inferred_arguments[8];
+        const size_t inferred_count=infer_contextual_type_arguments(
+            compiler,initializer,args,count,inferred_arguments);
+        for(size_t index=0;index<count;index++) {
+            const uint16_t snapshot=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
+            args[index]=snapshot;
+        }
+        const uint16_t block=compile_contextual_typed_block(compiler,
+            initializer,
+            initializer==nullptr||initializer->arity<=1?0:
+                initializer->arity-2,inferred_arguments,inferred_count);
+        const size_t block_slot=initializer==nullptr||initializer->arity<=1?
+            0:(size_t)initializer->arity-2;
+        if(count<block_slot) {
+            const uint16_t positional=emit_argument_array(compiler,args,count);
+            const uint16_t destination=allocate_register(compiler);
+            emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
+            emit_register(compiler,destination);
+            emit_register(compiler,(uint16_t)class_index);
+            emit_register(compiler,positional);emit_byte(compiler,0x80u);
+            emit_register(compiler,block);
+            compiler->known_types[destination]=
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+            return destination;
+        }
+        args[count++]=block;
+    }
+    const uint16_t base = allocate_register(compiler);
+    for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
+    for (size_t i = 0; i < count; i++)
+        emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base+i), args[i], 0, 2);
+    const uint16_t dest = allocate_register(compiler);
+    emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
+    emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
+    emit_byte(compiler, (uint8_t)count);
+    compiler->known_types[dest]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
+    return dest;
+}
+
+/* `Class.method(...)`, including `Class.new(...)`: the current token is the
+ * '.'. */
+static uint16_t parse_class_member_call(Compiler *compiler, DiamondSpan name,
+        int class_index) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+             "expected constructor or singleton method");return 0;
+    }
+    if(name_equals(compiler,"redefine_method",compiler->current.span,false))
+        return parse_redefine_method_call(compiler,class_index);
+    if(name_equals(compiler,"define_method",compiler->current.span,false))
+        return parse_define_method_call(compiler,class_index);
+    if(name_equals(compiler,"compile_method",compiler->current.span,false))
+        return parse_compile_method_call(compiler,class_index);
+    if(!name_equals(compiler,"new",compiler->current.span,false)) {
+        const DiamondMethod *method=nullptr;
+        const DiamondClass *owner=
+            compiler->program->classes[(size_t)class_index];
+        while(owner!=nullptr&&method==nullptr) {
+            for(size_t index=0;index<owner->singleton_method_count;index++)
+                if(singleton_call_name_equals(compiler,
+                       owner->singleton_methods[index].name,
+                       compiler->current.span))
+                    method=&owner->singleton_methods[index];
+            owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
+                compiler->program->classes[owner->superclass];
+        }
+        if(method==nullptr) {
+            fail(compiler,compiler->current.span,
+                 "undefined class singleton method");return 0;
+        }
+        return parse_singleton_call(compiler,method,name,class_index);
+    }
+    /* Gated to the real pass only, same reasoning as case/when
+     * exhaustiveness's own discovery-pass guard (resolve_type_name
+     * has the original precedent): a `sealed class Shape` declared
+     * later in the same source might not have set its own `sealed`
+     * flag yet if discovery reaches this call site first, and fail()
+     * only remembers the first failure. */
+    if(!compiler->discovery_pass&&
+       compiler->program->classes[(size_t)class_index]->sealed) {
+        fail(compiler,compiler->current.span,
+            "cannot instantiate a sealed class directly -- "
+            "use one of its subclasses");
+        return 0;
+    }
+    return parse_class_new_call(compiler,class_index);
+}
+
 uint16_t parse_name(Compiler *compiler) {
     const DiamondSpan name = compiler->previous.span;
     int class_index=find_class(compiler,name);
@@ -76,23 +399,8 @@ uint16_t parse_name(Compiler *compiler) {
             fail(compiler,name,"undefined namespaced class");return 0;
         }
     }
-    if(module_index>=0&&compiler->current.kind==DIAMOND_TOKEN_DOT) {
-        advance_token(compiler);
-        const DiamondModule *module=
-            &compiler->program->modules[(size_t)module_index];
-        const DiamondMethod *method=nullptr;
-        if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER)
-            for(size_t index=0;index<module->singleton_method_count;index++)
-                if(singleton_call_name_equals(compiler,
-                       module->singleton_methods[index].name,
-                       compiler->current.span))
-                    method=&module->singleton_methods[index];
-        if(method==nullptr) {
-            fail(compiler,compiler->current.span,
-                 "undefined module singleton function");return 0;
-        }
-        return parse_singleton_call(compiler,method,name,-1);
-    }
+    if(module_index>=0&&compiler->current.kind==DIAMOND_TOKEN_DOT)
+        return parse_module_singleton_call(compiler,name,module_index);
     const int constant=find_namespace_constant(compiler,name);
     if(constant>=0&&find_local(compiler,name)<0) {
         const uint16_t destination=allocate_register(compiler);
@@ -101,200 +409,15 @@ uint16_t parse_name(Compiler *compiler) {
         return destination;
     }
     if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Fiber",name,false))
-        return parse_fiber_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"File",name,false))
-        return parse_file_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Dir",name,false))
-        return parse_dir_entries_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Regexp",name,false))
-        return parse_regexp_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"SQLite3",name,false))
-        return parse_sqlite3_open_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Tensor",name,false))
-        return parse_tensor_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"PostgreSQL",name,false))
-        return parse_postgres_open_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"MySQL",name,false))
-        return parse_mysql_open_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Time",name,false))
-        return parse_time_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Process",name,false))
-        return parse_process_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"BCrypt",name,false))
-        return parse_bcrypt_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Cipher",name,false))
-        return parse_cipher_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Gzip",name,false))
-        return parse_gzip_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Base64",name,false))
-        return parse_base64_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"SecureRandom",name,false))
-        return parse_secure_random_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Digest",name,false))
-        return parse_crypto_call(compiler,false);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"HMAC",name,false))
-        return parse_crypto_call(compiler,true);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"ProgramBuilder",name,false))
-        return parse_program_builder_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Thread",name,false))
-        return parse_thread_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Channel",name,false))
-        return parse_channel_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Supervisor",name,false))
-        return parse_supervisor_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Array",name,false))
-        return parse_array_new_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"TCPSocket",name,false))
-        return parse_tcp_connect_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"TCPServer",name,false))
-        return parse_tcp_listen_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"DNS",name,false))
-        return parse_dns_resolve_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"IO",name,false))
-        return parse_io_poll_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"UDPSocket",name,false))
-        return parse_udp_socket_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"Signal",name,false))
-        return parse_signal_trap_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"TLSSocket",name,false))
-        return parse_tls_connect_call(compiler);
-    if(class_index<0&&find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_DOT&&
-       name_equals(compiler,"TLSServer",name,false))
-        return parse_tls_listen_call(compiler);
+       compiler->current.kind==DIAMOND_TOKEN_DOT) {
+        const BuiltinCallParser parse=builtin_namespace_parser(compiler,name);
+        if(parse!=nullptr)return parse(compiler);
+    }
     if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       (name_equals(compiler,"print",name,false)||
-        name_equals(compiler,"puts",name,false)))
-        return parse_print_call(compiler,name_equals(compiler,"puts",name,false)?
-            DIAMOND_PRINT_NEWLINE:0);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"warn",name,false))
-        return parse_print_call(compiler,DIAMOND_PRINT_NEWLINE|DIAMOND_PRINT_STDERR);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"gets",name,false))
-        return parse_gets_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"exit",name,false))
-        return parse_exit_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       (name_equals(compiler,"debugger",name,false)||
-        name_equals(compiler,"breakpoint",name,false)))
-        return parse_debugger_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"chr",name,false))
-        return parse_chr_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"to_f",name,false))
-        return parse_to_float_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"to_i",name,false))
-        return parse_to_int_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"to_sym",name,false))
-        return parse_to_sym_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"diamond_json_stringify",name,false))
-        return parse_json_stringify_call(compiler);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"sqrt",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_SQRT);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"sin",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_SIN);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"cos",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_COS);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"tan",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_TAN);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"pow",name,false))
-        return parse_math_binary_call(compiler,DIAMOND_MATH_POW);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"exp",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_EXP);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"log",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_LOG);
-    if(find_local(compiler,name)<0&&find_function(compiler,name)<0&&
-       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN&&
-       name_equals(compiler,"tanh",name,false))
-        return parse_math_unary_call(compiler,DIAMOND_MATH_TANH);
+       compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN) {
+        uint16_t result=0;
+        if(parse_builtin_function_call(compiler,name,&result))return result;
+    }
     /* ARGV/ENV -- plain values, not calls, so unlike puts/gets/Time/etc.
      * above there's no `current.kind==LEFT_PAREN` gate: `ARGV` alone is
      * already a complete expression. Still shadowable by a constant or
@@ -316,196 +439,8 @@ uint16_t parse_name(Compiler *compiler) {
         compiler->known_types[destination]=DIAMOND_TYPE_HASH;
         return destination;
     }
-    if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT) {
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,
-                 "expected constructor or singleton method");return 0;
-        }
-        if(name_equals(compiler,"redefine_method",compiler->current.span,false))
-            return parse_redefine_method_call(compiler,class_index);
-        if(name_equals(compiler,"define_method",compiler->current.span,false))
-            return parse_define_method_call(compiler,class_index);
-        if(name_equals(compiler,"compile_method",compiler->current.span,false))
-            return parse_compile_method_call(compiler,class_index);
-        if(!name_equals(compiler,"new",compiler->current.span,false)) {
-            const DiamondMethod *method=nullptr;
-            const DiamondClass *owner=
-                compiler->program->classes[(size_t)class_index];
-            while(owner!=nullptr&&method==nullptr) {
-                for(size_t index=0;index<owner->singleton_method_count;index++)
-                    if(singleton_call_name_equals(compiler,
-                           owner->singleton_methods[index].name,
-                           compiler->current.span))
-                        method=&owner->singleton_methods[index];
-                owner=owner->superclass==DIAMOND_NO_CLASS?nullptr:
-                    compiler->program->classes[owner->superclass];
-            }
-            if(method==nullptr) {
-                fail(compiler,compiler->current.span,
-                     "undefined class singleton method");return 0;
-            }
-            return parse_singleton_call(compiler,method,name,class_index);
-        }
-        /* Gated to the real pass only, same reasoning as case/when
-         * exhaustiveness's own discovery-pass guard (resolve_type_name
-         * has the original precedent): a `sealed class Shape` declared
-         * later in the same source might not have set its own `sealed`
-         * flag yet if discovery reaches this call site first, and fail()
-         * only remembers the first failure. */
-        if(!compiler->discovery_pass&&
-           compiler->program->classes[(size_t)class_index]->sealed) {
-            fail(compiler,compiler->current.span,
-                "cannot instantiate a sealed class directly -- "
-                "use one of its subclasses");
-            return 0;
-        }
-        advance_token(compiler);
-        const DiamondFunction *initializer=
-            constructor_signature(compiler,class_index);
-        if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
-            fail(compiler, compiler->current.span, "expected '(' after 'new'");
-            return 0;
-        }
-        advance_token(compiler);
-        skip_newlines(compiler);
-        if(call_arguments_have_keyword(compiler)) {
-            DiamondSpan keyword_names[DIAMOND_MAX_DECLARED_PARAMETERS];uint16_t keyword_values[DIAMOND_MAX_DECLARED_PARAMETERS];
-            size_t keyword_count=0;
-            const uint16_t positional=parse_dynamic_keyword_arguments(compiler,
-                keyword_names,keyword_values,&keyword_count,initializer);
-            bool has_block=false;uint16_t block=0;
-            if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-                uint16_t inferred_arguments[8];
-                infer_contextual_spread_arguments(compiler,initializer,
-                    positional,initializer==nullptr||initializer->arity<=1?0:
-                        initializer->arity-2,inferred_arguments);
-                infer_contextual_keyword_arguments(compiler,initializer,
-                    keyword_names,keyword_values,keyword_count,
-                    inferred_arguments);
-                for(size_t index=0;index<keyword_count;index++) {
-                    const uint16_t snapshot=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,
-                        keyword_values[index],0,2);
-                    keyword_values[index]=snapshot;
-                }
-                block=compile_contextual_typed_block(compiler,initializer,
-                    initializer==nullptr||initializer->arity<=1?0:
-                        initializer->arity-2,inferred_arguments,
-                    initializer==nullptr?0:initializer->type_variable_count);
-                has_block=true;
-            }
-            const uint16_t destination=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
-            emit_register(compiler,destination);
-            emit_register(compiler,(uint16_t)class_index);
-            emit_register(compiler,positional);
-            emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
-            for(size_t index=0;index<keyword_count;index++) {
-                emit_register(compiler,add_name_string(compiler,keyword_names[index]));
-                emit_register(compiler,keyword_values[index]);
-            }
-            if(has_block)emit_register(compiler,block);
-            compiler->known_types[destination]=
-                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-            return destination;
-        }
-        if(call_arguments_have_spread(compiler)) {
-            uint16_t spread=parse_spread_argument_array(compiler,nullptr,
-                nullptr,nullptr,nullptr,initializer,
-                initializer==nullptr||initializer->arity==0?0:
-                    initializer->arity-1);
-            if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-                uint16_t inferred_arguments[8];
-                const size_t inferred_count=infer_contextual_spread_arguments(
-                    compiler,initializer,spread,
-                    initializer==nullptr||initializer->arity<=1?0:
-                        initializer->arity-2,inferred_arguments);
-                const uint16_t spread_snapshot=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,spread_snapshot,
-                    spread,0,2);
-                spread=spread_snapshot;
-                const uint16_t block=compile_contextual_typed_block(compiler,
-                    initializer,
-                    initializer==nullptr||initializer->arity<=1?0:
-                        initializer->arity-2,inferred_arguments,
-                    inferred_count);
-                const uint16_t destination=allocate_register(compiler);
-                emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
-                emit_register(compiler,destination);
-                emit_register(compiler,(uint16_t)class_index);
-                emit_register(compiler,spread);emit_byte(compiler,0x80u);
-                emit_register(compiler,block);
-                compiler->known_types[destination]=
-                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-                return destination;
-            }
-            const uint16_t destination=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_NEW_SPREAD);
-            emit_register(compiler,destination);
-            emit_register(compiler,(uint16_t)class_index);
-            emit_register(compiler,spread);
-            compiler->known_types[destination]=
-                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-            return destination;
-        }
-        uint16_t args[DIAMOND_MAX_ARGUMENTS]; size_t count = 0;
-        while (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN && !compiler->failed) {
-            if (count == DIAMOND_MAX_ARGUMENTS) { fail(compiler, compiler->current.span, "too many arguments"); break; }
-            args[count++] = parse_expression(compiler);
-            skip_newlines(compiler);
-            if (compiler->current.kind != DIAMOND_TOKEN_COMMA) break;
-            advance_token(compiler);
-            skip_newlines(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN) break;
-        }
-        if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
-            fail(compiler, compiler->current.span, "expected ')' after arguments"); return 0;
-        }
-        advance_token(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_DO) {
-            if(count==DIAMOND_MAX_ARGUMENTS) {
-                fail(compiler,compiler->current.span,"too many arguments");return 0;
-            }
-            uint16_t inferred_arguments[8];
-            const size_t inferred_count=infer_contextual_type_arguments(
-                compiler,initializer,args,count,inferred_arguments);
-            for(size_t index=0;index<count;index++) {
-                const uint16_t snapshot=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,args[index],0,2);
-                args[index]=snapshot;
-            }
-            const uint16_t block=compile_contextual_typed_block(compiler,
-                initializer,
-                initializer==nullptr||initializer->arity<=1?0:
-                    initializer->arity-2,inferred_arguments,inferred_count);
-            const size_t block_slot=initializer==nullptr||initializer->arity<=1?
-                0:(size_t)initializer->arity-2;
-            if(count<block_slot) {
-                const uint16_t positional=emit_argument_array(compiler,args,count);
-                const uint16_t destination=allocate_register(compiler);
-                emit_opcode(compiler,DIAMOND_OP_NEW_KEYWORDS);
-                emit_register(compiler,destination);
-                emit_register(compiler,(uint16_t)class_index);
-                emit_register(compiler,positional);emit_byte(compiler,0x80u);
-                emit_register(compiler,block);
-                compiler->known_types[destination]=
-                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-                return destination;
-            }
-            args[count++]=block;
-        }
-        const uint16_t base = allocate_register(compiler);
-        for (size_t i = 1; i < count; i++) (void)allocate_register(compiler);
-        for (size_t i = 0; i < count; i++)
-            emit_instruction(compiler, DIAMOND_OP_MOVE, (uint16_t)(base+i), args[i], 0, 2);
-        const uint16_t dest = allocate_register(compiler);
-        emit_opcode(compiler, DIAMOND_OP_NEW); emit_register(compiler,dest);
-        emit_register(compiler,(uint16_t)class_index); emit_register(compiler,base);
-        emit_byte(compiler, (uint8_t)count);
-        compiler->known_types[dest]=(uint16_t)(DIAMOND_TYPE_CLASS_BASE+class_index);
-        return dest;
-    }
+    if (class_index >= 0 && compiler->current.kind == DIAMOND_TOKEN_DOT)
+        return parse_class_member_call(compiler,name,class_index);
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN||
         (compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET&&
          find_local(compiler,name)<0&&find_function(compiler,name)>=0)) {
