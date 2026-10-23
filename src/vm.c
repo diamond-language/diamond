@@ -13260,19 +13260,9 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
     return DIAMOND_VM_TYPE_ERROR;
 }
 
-DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
-    if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
-        return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
-    const bool ago_method=method_name->length==3&&
-        memcmp(method_name->chars,"ago",3)==0;
-    const bool from_now_method=method_name->length==8&&
-        memcmp(method_name->chars,"from_now",8)==0;
-    if(ago_method||from_now_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        const DiamondVmStatus time_status=time_relative_now_helper(
-            vm,registers[recv],from_now_method,&registers[dest]);
-        return time_status;
-    }
+/* The prelude function behind a numeric duration method (`5.minutes()`),
+ * or nullptr. */
+static const char *numeric_duration_target(const DiamondStringConstant *method_name) {
     const char *duration_target=nullptr;
     if((method_name->length==6&&
         memcmp(method_name->chars,"second",6)==0)||
@@ -13299,6 +13289,166 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             (method_name->length==5&&
              memcmp(method_name->chars,"weeks",5)==0))
         duration_target="numeric_weeks";
+    return duration_target;
+}
+
+    /* Int#to_s(base): digits in base 2..36, lowercase,
+     * with a leading '-' when negative -- as in Ruby. */
+__attribute__((noinline))
+static DiamondVmStatus int_to_s_radix_method(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t base,uint16_t dest) {
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[base].as.integer<2||registers[base].as.integer>36) {
+        snprintf(vm->error,sizeof vm->error,
+            "Int#to_s base must be an Int from 2 to 36");
+        return DIAMOND_VM_ARITY_ERROR;
+    }
+    const uint64_t radix=(uint64_t)registers[base].as.integer;
+    const int64_t integer=registers[recv].as.integer;
+    uint64_t magnitude=integer<0?(uint64_t)0-(uint64_t)integer:
+        (uint64_t)integer;
+    char digits[72];size_t length=0;
+    do {
+        digits[length++]="0123456789abcdefghijklmnopqrstuvwxyz"[magnitude%radix];
+        magnitude/=radix;
+    } while(magnitude>0);
+    if(integer<0)digits[length++]='-';
+    for(size_t low=0,high=length-1;low<high;low++,high--) {
+        const char swap=digits[low];digits[low]=digits[high];digits[high]=swap;
+    }
+    DiamondString *formatted=allocate_string(vm,digits,length);
+    if(formatted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(formatted);return DIAMOND_VM_OK;
+}
+
+/* A method on a Float that the native cases did not handle: a float_ or
+ * numeric_ prelude extension, or an undefined-method error. */
+__attribute__((noinline))
+static DiamondVmStatus float_extension_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    /* Not chunk->code+instruction_offset (an ordinary call site's
+     * own would be stable, but the native-spread synthetic re-entry
+     * just above builds its own tiny bytecode buffer fresh on the C
+     * stack every time -- a different logical call site, same reused
+     * stack address, which collided two unrelated method names onto
+     * one cache entry and returned the wrong function). method_name
+     * itself is a pointer into the calling function's own permanent,
+     * never-reallocated string-constant table (fn->strings, set at
+     * compile time), stable and correctly distinct per method name
+     * regardless of which of the several dispatch paths reaches it. */
+    const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+    const DiamondFunction *extension=nullptr;
+    if(!cached_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_FLOAT,&extension)) {
+        static const char *const float_prefixes[]={"float_","numeric_"};
+        extension=find_value_extension(chunk,
+            float_prefixes,2,method_name->chars,method_name->length);
+        store_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_FLOAT,extension);
+    }
+    if(extension!=nullptr) {
+        DiamondValue call_result=DIAMOND_NIL;
+        const DiamondVmStatus status=forward_to_top_level_helper(vm,
+            chunk,extension,registers,recv,base,argc,depth,&call_result);
+        if(status!=DIAMOND_VM_OK)return status;
+        registers[dest]=call_result;return DIAMOND_VM_OK;
+    }
+    snprintf(vm->error,sizeof vm->error,
+        "undefined method '%.*s' for %s",
+        (int)method_name->length,method_name->chars,"Float");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* chr, the inverse of String#ord -- a single byte (0-255),
+ * matching every other String primitive in this VM
+ * staying byte- rather than codepoint-oriented. */
+__attribute__((noinline))
+static DiamondVmStatus int_chr_method(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint8_t argc,uint16_t dest) {
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    const int64_t code=registers[recv].as.integer;
+    if(code<0||code>255) {
+        snprintf(vm->error,sizeof vm->error,
+            "Int#chr argument must be between 0 and 255");
+        return DIAMOND_VM_INTEGER_OVERFLOW;
+    }
+    const char byte=(char)(unsigned char)code;
+    DiamondString *chr_string=allocate_string(vm,&byte,1);
+    if(chr_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(chr_string);return DIAMOND_VM_OK;
+}
+
+/* A method on an Int that the native cases did not handle: times/upto/downto,
+ * an integer_ or numeric_ prelude extension, or an undefined-method error. */
+__attribute__((noinline))
+static DiamondVmStatus int_extension_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    /* times/upto/downto -- trivial Callable[1] consumers of
+     * block syntax, forwarded to ordinary prelude Diamond
+     * functions (lib/core.di) exactly like Array/Hash's own
+     * Enumerable methods below, rather than hand-rolled
+     * here. */
+    const char *target_name=nullptr;
+    if(method_name->length==5&&
+       memcmp(method_name->chars,"times",5)==0)
+        target_name="integer_times";
+    else if(method_name->length==4&&
+            memcmp(method_name->chars,"upto",4)==0)
+        target_name="integer_upto";
+    else if(method_name->length==6&&
+            memcmp(method_name->chars,"downto",6)==0)
+        target_name="integer_downto";
+    /* Not chunk->code+instruction_offset (an ordinary call site's
+     * own would be stable, but the native-spread synthetic re-entry
+     * just above builds its own tiny bytecode buffer fresh on the C
+     * stack every time -- a different logical call site, same reused
+     * stack address, which collided two unrelated method names onto
+     * one cache entry and returned the wrong function). method_name
+     * itself is a pointer into the calling function's own permanent,
+     * never-reallocated string-constant table (fn->strings, set at
+     * compile time), stable and correctly distinct per method name
+     * regardless of which of the several dispatch paths reaches it. */
+    const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
+    const DiamondFunction *target=nullptr;
+    if(!cached_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_INT,&target)) {
+        static const char *const integer_prefixes[]={"integer_","numeric_"};
+        target=target_name!=nullptr?
+            find_top_level_function(chunk,target_name,strlen(target_name)):
+            find_value_extension(chunk,integer_prefixes,2,
+                method_name->chars,method_name->length);
+        store_extension_lookup(vm,extension_site,
+            DIAMOND_EXTENSION_KIND_INT,target);
+    }
+    if(target==nullptr&&target_name==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"Int");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(target==nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "internal error: missing standard library function '%s'",
+            target_name);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondValue call_result=DIAMOND_NIL;
+    const DiamondVmStatus status=forward_to_top_level_helper(vm,
+        chunk,target,registers,recv,base,argc,depth,&call_result);
+    if(status!=DIAMOND_VM_OK)return status;
+    registers[dest]=call_result;return DIAMOND_VM_OK;
+}
+
+DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
+        return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
+    const bool ago_method=method_name->length==3&&
+        memcmp(method_name->chars,"ago",3)==0;
+    const bool from_now_method=method_name->length==8&&
+        memcmp(method_name->chars,"from_now",8)==0;
+    if(ago_method||from_now_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        const DiamondVmStatus time_status=time_relative_now_helper(
+            vm,registers[recv],from_now_method,&registers[dest]);
+        return time_status;
+    }
+    const char *duration_target=numeric_duration_target(method_name);
     if(duration_target!=nullptr) {
         if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
         const DiamondFunction *duration_function=find_top_level_function(
@@ -13327,32 +13477,8 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             (double)registers[recv].as.integer;
         #define NUMERIC_METHOD(text) (method_name->length==sizeof(text)-1&& \
             memcmp(method_name->chars,text,sizeof(text)-1)==0)
-        /* Int#to_s(base): digits in base 2..36, lowercase,
-         * with a leading '-' when negative -- as in Ruby. */
-        if(NUMERIC_METHOD("to_s")&&argc==1&&!is_float) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT||
-               registers[base].as.integer<2||registers[base].as.integer>36) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Int#to_s base must be an Int from 2 to 36");
-                return DIAMOND_VM_ARITY_ERROR;
-            }
-            const uint64_t radix=(uint64_t)registers[base].as.integer;
-            const int64_t integer=registers[recv].as.integer;
-            uint64_t magnitude=integer<0?(uint64_t)0-(uint64_t)integer:
-                (uint64_t)integer;
-            char digits[72];size_t length=0;
-            do {
-                digits[length++]="0123456789abcdefghijklmnopqrstuvwxyz"[magnitude%radix];
-                magnitude/=radix;
-            } while(magnitude>0);
-            if(integer<0)digits[length++]='-';
-            for(size_t low=0,high=length-1;low<high;low++,high--) {
-                const char swap=digits[low];digits[low]=digits[high];digits[high]=swap;
-            }
-            DiamondString *formatted=allocate_string(vm,digits,length);
-            if(formatted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            registers[dest]=DIAMOND_OBJECT(formatted);return DIAMOND_VM_OK;
-        }
+        if(NUMERIC_METHOD("to_s")&&argc==1&&!is_float)
+            return int_to_s_radix_method(vm,registers,recv,base,dest);
         if(NUMERIC_METHOD("to_s")) {
             if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
             StringBuilder text={};
@@ -13411,111 +13537,13 @@ DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,si
             registers[dest]=converted;return DIAMOND_VM_OK;
         }
     }
-    if(registers[recv].kind==DIAMOND_VALUE_FLOAT) {
-        /* Not chunk->code+instruction_offset (an ordinary call site's
-         * own would be stable, but the native-spread synthetic re-entry
-         * just above builds its own tiny bytecode buffer fresh on the C
-         * stack every time -- a different logical call site, same reused
-         * stack address, which collided two unrelated method names onto
-         * one cache entry and returned the wrong function). method_name
-         * itself is a pointer into the calling function's own permanent,
-         * never-reallocated string-constant table (fn->strings, set at
-         * compile time), stable and correctly distinct per method name
-         * regardless of which of the several dispatch paths reaches it. */
-        const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
-        const DiamondFunction *extension=nullptr;
-        if(!cached_extension_lookup(vm,extension_site,
-                DIAMOND_EXTENSION_KIND_FLOAT,&extension)) {
-            static const char *const float_prefixes[]={"float_","numeric_"};
-            extension=find_value_extension(chunk,
-                float_prefixes,2,method_name->chars,method_name->length);
-            store_extension_lookup(vm,extension_site,
-                DIAMOND_EXTENSION_KIND_FLOAT,extension);
-        }
-        if(extension!=nullptr) {
-            DiamondValue call_result=DIAMOND_NIL;
-            const DiamondVmStatus status=forward_to_top_level_helper(vm,
-                chunk,extension,registers,recv,base,argc,depth,&call_result);
-            if(status!=DIAMOND_VM_OK)return status;
-            registers[dest]=call_result;return DIAMOND_VM_OK;
-        }
-        snprintf(vm->error,sizeof vm->error,
-            "undefined method '%.*s' for %s",
-            (int)method_name->length,method_name->chars,"Float");
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    /* chr, the inverse of String#ord -- a single byte (0-255),
-     * matching every other String primitive in this VM
-     * staying byte- rather than codepoint-oriented. */
+    if(registers[recv].kind==DIAMOND_VALUE_FLOAT)
+        return float_extension_method(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
     const bool chr_method=method_name->length==3&&
         memcmp(method_name->chars,"chr",3)==0;
-    if(chr_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        const int64_t code=registers[recv].as.integer;
-        if(code<0||code>255) {
-            snprintf(vm->error,sizeof vm->error,
-                "Int#chr argument must be between 0 and 255");
-            return DIAMOND_VM_INTEGER_OVERFLOW;
-        }
-        const char byte=(char)(unsigned char)code;
-        DiamondString *chr_string=allocate_string(vm,&byte,1);
-        if(chr_string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(chr_string);return DIAMOND_VM_OK;
-    }
-    /* times/upto/downto -- trivial Callable[1] consumers of
-     * block syntax, forwarded to ordinary prelude Diamond
-     * functions (lib/core.di) exactly like Array/Hash's own
-     * Enumerable methods below, rather than hand-rolled
-     * here. */
-    const char *target_name=nullptr;
-    if(method_name->length==5&&
-       memcmp(method_name->chars,"times",5)==0)
-        target_name="integer_times";
-    else if(method_name->length==4&&
-            memcmp(method_name->chars,"upto",4)==0)
-        target_name="integer_upto";
-    else if(method_name->length==6&&
-            memcmp(method_name->chars,"downto",6)==0)
-        target_name="integer_downto";
-    /* Not chunk->code+instruction_offset (an ordinary call site's
-     * own would be stable, but the native-spread synthetic re-entry
-     * just above builds its own tiny bytecode buffer fresh on the C
-     * stack every time -- a different logical call site, same reused
-     * stack address, which collided two unrelated method names onto
-     * one cache entry and returned the wrong function). method_name
-     * itself is a pointer into the calling function's own permanent,
-     * never-reallocated string-constant table (fn->strings, set at
-     * compile time), stable and correctly distinct per method name
-     * regardless of which of the several dispatch paths reaches it. */
-    const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
-    const DiamondFunction *target=nullptr;
-    if(!cached_extension_lookup(vm,extension_site,
-            DIAMOND_EXTENSION_KIND_INT,&target)) {
-        static const char *const integer_prefixes[]={"integer_","numeric_"};
-        target=target_name!=nullptr?
-            find_top_level_function(chunk,target_name,strlen(target_name)):
-            find_value_extension(chunk,integer_prefixes,2,
-                method_name->chars,method_name->length);
-        store_extension_lookup(vm,extension_site,
-            DIAMOND_EXTENSION_KIND_INT,target);
-    }
-    if(target==nullptr&&target_name==nullptr) {
-        snprintf(vm->error,sizeof vm->error,
-            "undefined method '%.*s' for %s",
-            (int)method_name->length,method_name->chars,"Int");
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    if(target==nullptr) {
-        snprintf(vm->error,sizeof vm->error,
-            "internal error: missing standard library function '%s'",
-            target_name);
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    DiamondValue call_result=DIAMOND_NIL;
-    const DiamondVmStatus status=forward_to_top_level_helper(vm,
-        chunk,target,registers,recv,base,argc,depth,&call_result);
-    if(status!=DIAMOND_VM_OK)return status;
-    registers[dest]=call_result;return DIAMOND_VM_OK;
+    if(chr_method)
+        return int_chr_method(vm,registers,recv,argc,dest);
+    return int_extension_method(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
 }
 
 
