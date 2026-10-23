@@ -3021,11 +3021,6 @@ int connect_with_timeout(int fd,const struct addrinfo *candidate,
     return 0;
 }
 
-/* Resolver workers own only native data, never a VM, Diamond value, or a
- * pointer into the caller's heap. Cancellation abandons a reference rather
- * than joining libc's potentially unbounded getaddrinfo. Eight outstanding
- * workers bound the resources retained by abandoned lookups. */
-
 /* Applies SO_RCVTIMEO/SO_SNDTIMEO to an already-connected fd -- a
  * negative value leaves the corresponding OS default (block forever)
  * untouched, so a caller that only wants one of the two only pays for
@@ -3722,10 +3717,6 @@ bool methods_have_own_named(const DiamondMethod *methods,size_t count,
     return false;
 }
 
-/* Regexp#match/#match? real body -- same stack-frame-isolation reasoning
- * as regexp_new_helper above (reginold_match's own fields would otherwise
- * land directly in run_chunk's frame too). */
-
 bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count) {
     if(count==0)return true;
     size_t needed;
@@ -3742,13 +3733,6 @@ bool byte_buffer_append(ByteBuffer *buffer,const char *bytes,size_t count) {
     buffer->length+=count;
     return true;
 }
-
-/* String#scan: every non-overlapping match, leftmost to rightmost, same
- * zero-length-match advance as regexp_replace_helper above. Each entry is
- * the whole matched String if the pattern has no capture groups, or an
- * Array of the capture groups (Nil for an unmatched optional group,
- * matching Regexp#match's own convention) if it does -- mirroring Ruby's
- * own #scan exactly. */
 
 /* Pushes `value` onto vm->gc_protected so diamond_vm_collect_impl's mark
  * phase treats it as a root, for a value under construction with no real
@@ -8585,22 +8569,6 @@ DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
     return run_chunk(&child,vm,forward_args,total_argc,depth+1,nullptr,result);
 }
 
-/* Shared by DIAMOND_OP_NEW's #initialize call, DIAMOND_OP_INVOKE/_MONO/
- * _TYPED's ordinary Instance method dispatch, and DIAMOND_OP_SUPER: all
- * three build the same self-plus-arguments-plus-bound-values buffer and
- * call an already-resolved `method`, differing only in how they got there
- * (constructor lookup, cache/vtable dispatch, superclass lookup) and
- * whether explicit generic type arguments are possible (only real
- * `DIAMOND_OP_INVOKE_TYPED` calls; `typed` false skips that entirely, and
- * `type_argument_count`/`type_arguments`/`caller_chunk` are then unused).
- * `self_value` is the receiver placed at args[0]; the caller keeps
- * whatever separate write it needs to make with its own return value (NEW
- * discards this call's own result -- `initialize`'s return isn't the
- * constructed instance -- rather than routing it through here). Factored
- * out (like call_closure_helper/forward_to_top_level_helper above) so the
- * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
- * run_chunk's own case blocks, times three. */
-
 /* Phase 2b baseline JIT (docs/internal/jit-design.md) -- shared by every
  * call site that invokes a DiamondFunction with an already-assembled
  * arguments buffer: DIAMOND_OP_CALL below, and invoke_resolved_method_
@@ -8769,6 +8737,21 @@ DiamondVmStatus jit_call_or_interpret(DiamondVm *vm, const DiamondFunction *func
     return (DiamondVmStatus)status;
 }
 
+/* Shared by DIAMOND_OP_NEW's #initialize call, DIAMOND_OP_INVOKE/_MONO/
+ * _TYPED's ordinary Instance method dispatch, and DIAMOND_OP_SUPER: all
+ * three build the same self-plus-arguments-plus-bound-values buffer and
+ * call an already-resolved `method`, differing only in how they got there
+ * (constructor lookup, cache/vtable dispatch, superclass lookup) and
+ * whether explicit generic type arguments are possible (only real
+ * `DIAMOND_OP_INVOKE_TYPED` calls; `typed` false skips that entirely, and
+ * `type_argument_count`/`type_arguments`/`caller_chunk` are then unused).
+ * `self_value` is the receiver placed at args[0]; the caller keeps
+ * whatever separate write it needs to make with its own return value (NEW
+ * discards this call's own result -- `initialize`'s return isn't the
+ * constructed instance -- rather than routing it through here). Factored
+ * out (like call_closure_helper/forward_to_top_level_helper above) so the
+ * DIAMOND_MAX_ARGUMENTS+1-sized buffer doesn't live directly in any of
+ * run_chunk's own case blocks, times three. */
 DiamondVmStatus invoke_resolved_method_helper(DiamondVm *vm,
         const DiamondChunk *owner_chunk,const DiamondMethod *method,
         DiamondValue self_value,const DiamondValue *registers,uint16_t base,
@@ -9366,25 +9349,6 @@ DiamondVmStatus call_closure_spread_helper(DiamondVm *vm,
         depth+1,called,result);
     free(padded);return status;
 }
-
-/* Same GC-rooting discipline as postgres_query_helper: `result` must be a
- * pointer into the caller's live registers array, `*result` is written to
- * hold the outer Array before any further allocation, and each row's Hash
- * is pushed onto that already-rooted Array (then each key set to Nil
- * first, rooting the key before decoding may itself allocate a String)
- * before its real column values are filled in one at a time.
- *
- * Unlike libpq's text protocol (PQgetvalue returns every column's value
- * directly, already materialized), the prepared-statement binary protocol
- * needs output buffers bound before fetching -- and this driver doesn't
- * know column widths ahead of time (these are ad hoc queries, not a fixed
- * schema). So every column is bound once as MYSQL_TYPE_STRING with a null
- * buffer/zero buffer_length purely to receive each row's true length via
- * mysql_stmt_fetch (which reports MYSQL_DATA_TRUNCATED, expected here,
- * not a real error) and its null flag; the actual bytes for a non-null
- * column are then pulled per cell via mysql_stmt_fetch_column into a
- * freshly sized buffer. This is the standard two-phase dynamic-length
- * fetch pattern for the MySQL C API's binary protocol. */
 
 /* Snapshots the live call-stack chain (vm->frames) into a backtrace Array
  * of "chunk:line:column" Strings, attached to the raised Exception

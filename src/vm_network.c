@@ -315,6 +315,10 @@ DiamondVmStatus tcp_connect_helper(DiamondVm *vm,const DiamondString *host,
     return DIAMOND_VM_OK;
 }
 
+/* Resolver workers own only native data, never a VM, Diamond value, or a
+ * pointer into the caller's heap. Cancellation abandons a reference rather
+ * than joining libc's potentially unbounded getaddrinfo. Eight outstanding
+ * workers bound the resources retained by abandoned lookups. */
 #define DIAMOND_RESOLVER_LIMIT 8
 static atomic_uint diamond_active_resolvers=0;
 typedef struct DiamondResolverJob {
