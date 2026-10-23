@@ -1,7 +1,8 @@
 # Diamond 0.19.0 release preparation
 
-Status: candidate preparation, 2026-10-23. No `v0.19.0` tag, public release,
-site deployment, registry deployment, or cut publication is recorded here.
+Release date: 2026-10-23. This document records verification and migration.
+Production deployment and cut-publication outcomes are recorded in the
+[registry production record](../applications/registry/deploy/PRODUCTION.md).
 The [changelog](../CHANGELOG.md) contains the complete user-visible changes
 since 0.18.0.
 
@@ -49,7 +50,11 @@ The 26 source cuts start new minor lines because older runtimes do not discover
 dependent ranges. Repository versions are not evidence that an artifact has
 been published. Existing immutable registry releases remain installable.
 The 18-cut seed has its own [reviewed inventory](registry-launch-inventory.json).
-The six withdrawn cuts remain excluded; preparation does not authorize publishing them.
+The six withdrawn cuts remain excluded. The 0.19 publication cohort updates
+the 19 already-public cut names: the 18-cut selection plus Mjolnir 0.3.1.
+Its exact artifact identities are frozen in the
+[publication inventory](registry-0.19-inventory.json). Cancellation remains
+source-only; this release does not introduce another public cut name.
 
 ## Validation and remaining release steps
 
@@ -67,9 +72,12 @@ Local verification passed on 2026-10-23:
 - Documentation/site links and anchors: 254 local documentation targets and
   45 website links checked without a broken target; JavaScript syntax checks passed.
 
-The marketing preparation is merged at `331b24e`, without a deployment.
-The runtime release PR must pass the full CI matrix on its final head before
-merging; record that result in the PR before tagging.
+The original preparation passed all 29 CI checks and merged in PR #300 at
+`02e8b7de`. Marketing preparation merged at `331b24e`. SkindicateV3's bundle
+at `158bf41` pins the verified 0.19 runtime at `02e8b7de` and passed both
+interpreted and compiled test suites on Ubuntu 26.04. The finalization PR adds
+the release date and the registry's operator-script/systemd transition; it
+must pass the full matrix before merging and tagging.
 
 The documentation and website review covers links and anchors, source/cache
 suffixes, installation commands, registry availability, package commands,
@@ -89,8 +97,11 @@ records the matching image/package telemetry, unsuccessful reproduction probes,
 and the confirmed stderr redirection bug. That diagnostic bug is fixed; the
 underlying flake remains unexplained.
 
-After the release PR is green and merged: finalize the release date, tag the
-verified commit, publish the release notes, and deploy the matching marketing
-revision and WASM. Verify canonical/legacy URLs and every example in a real
-browser. Registry runtime upgrades and migrated cut publication use their own
-backup, staging, and publication procedures; they are separate operations.
+Release order: verify backups, pass the final CI matrix, tag/publish the verified
+commit, upgrade the registry runtime, publish and verify the frozen 19-cut
+cohort, and deploy marketing and SkindicateV3 with their recorded rollback
+bundles. Restore the previous registry service unit as well as its release
+symlink on a failed upgrade: its legacy command names `app.di`, while 0.19
+uses `app.d6`. The backup downloader supports the installed operator script
+before this transition. Temporary publication credentials must be revoked and
+their local files removed after publication.

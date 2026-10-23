@@ -6,7 +6,7 @@ authoritative fine-grained record.
 
 ## Unreleased
 
-## 0.19.0 — Unreleased
+## 0.19.0 — 2026-10-23
 
 ### Added
 
@@ -36,6 +36,9 @@ authoritative fine-grained record.
 
 ### Fixed
 
+- Registry upgrades refresh the systemd entry point for `.d6` and restore the
+  previous unit on rollback. Backup download also supports the legacy `.di`
+  operator script so an existing installation can be backed up before upgrading.
 - The Gremlin test harness preserves stderr after its connection retry, so later
   runtime errors and the shell failure diagnostic remain visible. The isolated
   shutdown failure investigated in [the CI memo](docs/internal/gremlin-shutdown-flake.md)
