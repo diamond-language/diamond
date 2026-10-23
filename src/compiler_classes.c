@@ -1332,53 +1332,26 @@ static void register_struct_method(Compiler *compiler,DiamondClass *class,
     method->arity=caller_arity;method->required_arity=caller_arity;
 }
 
-/* `struct Name(field: Type, ...) ... end` -- a compile-time-only data
- * class: registers an ordinary DiamondClass (no runtime synthesis, see
- * docs/roadmap.md's "Explicitly deferred" entry on that) with one field
- * per declared member, then generates `initialize`/one reader per
- * field/`==`/`to_s` exactly as if they'd been hand-written. Readers
- * reuse compile_attribute_named verbatim (same as attr_reader); the
- * other three are hand-emitted via begin_struct_method's swap since
- * their bodies (a per-field GET_IVAR/SET_IVAR/EQUAL/IS_TYPE/TO_STRING
- * chain) don't correspond to any parseable source text. Deliberately
- * narrow for this first pass -- no superclass, no reopening, no
- * additional body -- see docs/classes-and-modules.md's own "struct
- * declarations" section for the reasoning. */
-uint16_t compile_struct(Compiler *compiler) {
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected valid struct name");
-        return 0;
-    }
-    const DiamondSpan name=compiler->current.span;
-    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
-    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
-        fail(compiler,name,"struct name is too long");return 0;
-    }
-    if(find_interface_name(compiler,stored_name)>=0||
-       find_module_name(compiler,stored_name)>=0) {
-        fail(compiler,name,"type name is already defined");return 0;
-    }
-    /* Registered *before* the field list parses (unlike compile_class's
-     * own superclass clause, which is likewise parsed only after this
-     * same registration) so a self-referential field type -- `struct
-     * Node(value: Int, next: Node)` -- can already resolve this class's
-     * own name via parse_type_annotation/resolve_type_name below. */
+/* Registers the struct's class (or claims the slot discovery reserved for
+ * it) and resets it to an empty generated struct. Returns nullptr on
+ * failure. */
+static DiamondClass *declare_struct_class(Compiler *compiler, DiamondSpan name,
+        const char *stored_name, int *index_out) {
     const int existing_class=find_class_name(compiler,stored_name);
     int index;DiamondClass *class;
     if(existing_class>=0) {
         class=compiler->program->classes[(size_t)existing_class];
         if(!class->declared_by_discovery) {
-            fail(compiler,name,"struct is already defined");return 0;
+            fail(compiler,name,"struct is already defined");return nullptr;
         }
         index=existing_class;
     } else {
         if(compiler->program->class_count==DIAMOND_MAX_CLASSES) {
             fail(compiler,name,"too many classes: a program holds at most 1024 "
-                 "classes and structs, cuts included");return 0;
+                 "classes and structs, cuts included");return nullptr;
         }
         class=diamond_program_class_slot(compiler->program,compiler->program->class_count);
-        if(class==nullptr) {fail(compiler,name,"out of memory");return 0;}
+        if(class==nullptr) {fail(compiler,name,"out of memory");return nullptr;}
         index=(int)compiler->program->class_count++;
     }
     if(class->declared_by_discovery) {
@@ -1407,6 +1380,14 @@ uint16_t compile_struct(Compiler *compiler) {
     class->declaration_column=(uint32_t)name.column;
     class->declaration_start=name.start;
     (void)snprintf(class->name,sizeof class->name,"%s",stored_name);
+    *index_out=index;
+    return class;
+}
+
+/* Parses `(field: Type, ...)` after the struct name, recording each field
+ * on class. */
+static bool parse_struct_fields(Compiler *compiler, DiamondClass *class,
+        DiamondSpan *field_name_spans, int *field_type_sets, size_t *field_count_out) {
     advance_token(compiler);
     if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler,compiler->current.span,"expected '(' after struct name");
@@ -1414,8 +1395,6 @@ uint16_t compile_struct(Compiler *compiler) {
     }
     advance_token(compiler);
     skip_newlines(compiler);
-    DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
-    int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
     size_t field_count=0;
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         while(!compiler->failed) {
@@ -1463,77 +1442,348 @@ uint16_t compile_struct(Compiler *compiler) {
             if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_PAREN)break;
         }
     }
-    if(compiler->failed)return 0;
+    if(compiler->failed)return false;
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,"expected ')' after struct fields");
-        return 0;
+        return false;
     }
     advance_token(compiler);
+    *field_count_out=field_count;
+    return true;
+}
+
+/* Parses `< Parent` after the field list: the parent must be an earlier
+ * struct, and its fields take the first slots. */
+static bool parse_struct_superclass(Compiler *compiler, DiamondClass *class,
+        int index, const DiamondSpan *field_name_spans, size_t own_field_count,
+        size_t *inherited_count_out, const DiamondFunction **inherited_init_out) {
+    size_t inherited_count=0;
+    const DiamondFunction *inherited_init=nullptr;
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+             "expected superclass name after '<'");return false;
+    }
+    const DiamondSpan superclass_span=compiler->current.span;
+    char superclass_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!consume_qualified_name(compiler,superclass_name,sizeof superclass_name)) {
+        fail(compiler,superclass_span,"superclass name is too long");return false;
+    }
+    const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
+    if(parent<0) {
+        fail(compiler,superclass_span,"undefined superclass");return false;
+    }
+    const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
+    if(parent==index||!parent_class->generated_struct) {
+        fail(compiler,superclass_span,
+             "a struct's superclass must be a struct declared earlier");
+        return false;
+    }
+    for(size_t method=0;method<parent_class->method_count;method++)
+        if(strcmp(parent_class->methods[method].name,"initialize")==0&&
+           (size_t)parent_class->methods[method].function_index<
+               compiler->program->function_count)
+            inherited_init=compiler->program->functions[
+                parent_class->methods[method].function_index];
+    if(inherited_init==nullptr) {
+        fail(compiler,superclass_span,
+             "a struct's superclass must be a struct declared earlier");
+        return false;
+    }
+    inherited_count=parent_class->field_count;
+    if(inherited_count+own_field_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
+        fail(compiler,superclass_span,"too many struct fields");return false;
+    }
+    for(size_t own=0;own<own_field_count;own++)
+        for(size_t inherited=0;inherited<inherited_count;inherited++)
+            if(strcmp(class->fields[own],parent_class->fields[inherited])==0) {
+                fail(compiler,field_name_spans[own],
+                     "struct field is already defined by its superclass");
+                return false;
+            }
+    /* Inherited fields take the first slots, as in an ordinary
+     * subclass, so the parent's methods and readers keep working. */
+    for(size_t own=own_field_count;own-->0;) {
+        memcpy(class->fields[own+inherited_count],class->fields[own],
+            DIAMOND_MAX_FUNCTION_NAME);
+        class->field_type_status[own+inherited_count]=class->field_type_status[own];
+        class->field_known_class[own+inherited_count]=class->field_known_class[own];
+    }
+    for(size_t inherited=0;inherited<inherited_count;inherited++) {
+        memcpy(class->fields[inherited],parent_class->fields[inherited],
+            DIAMOND_MAX_FUNCTION_NAME);
+        class->field_type_status[inherited]=parent_class->field_type_status[inherited];
+        class->field_known_class[inherited]=parent_class->field_known_class[inherited];
+    }
+    class->field_count=inherited_count+own_field_count;
+    class->superclass=(uint16_t)parent;
+    *inherited_count_out=inherited_count;
+    *inherited_init_out=inherited_init;
+    return true;
+}
+
+    /* initialize(field0, field1, ...): one SET_IVAR per field, register
+     * 1+index holding that parameter by the ordinary calling convention
+     * (see compile_attribute_named's own identical comment on this). */
+static void emit_struct_initialize(Compiler *compiler, DiamondClass *class,
+        int index, DiamondSpan name, const int *field_type_sets,
+        size_t inherited_count, size_t own_field_count,
+        const DiamondFunction *inherited_init) {
+    const size_t total_count=inherited_count+own_field_count;
+    size_t init_function_index=0;
+    DiamondFunction *init=
+        compiler_add_function(compiler,&init_function_index);
+    if(init==nullptr) {
+        fail(compiler,name,"out of memory");
+    } else {
+        (void)snprintf(init->name,sizeof init->name,"initialize");
+        init->owner_class=(uint16_t)index;
+        init->arity=(uint8_t)(total_count+1);
+        init->required_arity=init->arity;
+        init->return_type_set=DIAMOND_NO_TYPE_SET;
+        init->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+        for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+            init->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+        for(size_t field=0;field<total_count;field++)
+            (void)snprintf(init->parameter_names[field],
+                DIAMOND_MAX_FUNCTION_NAME,"%s",class->fields[field]);
+        /* Decoded *before* begin_struct_method below retargets
+         * compiler->function to `init` (a fresh function with its own,
+         * still-empty type_sets table) -- field_type_sets[] indexes into
+         * the *enclosing* function's type_sets (valid when parse_type_
+         * annotation captured it, back when the field list was parsed),
+         * not init's own. Decoding after the retarget silently read the
+         * wrong table (index out of init's own much-smaller type_set_
+         * count, so type_set_single_class always returned -1) -- caught
+         * by this phase's own verification methodology (compared JIT
+         * eligibility with/without this fix on a real struct case, not
+         * assumed), not proven correct by inspection alone. */
+        int field_known_classes[DIAMOND_MAX_DECLARED_PARAMETERS];
+        for(size_t field=0;field<own_field_count;field++)
+            field_known_classes[inherited_count+field]=
+                type_set_single_class(compiler,field_type_sets[field]);
+        const DiamondFunction *struct_outer=compiler->function;
+        StructMethodState state;
+        if(!begin_struct_method(compiler,init,&state)) {
+            fail(compiler,name,"out of memory compiling initialize");
+        } else {
+            (void)allocate_register(compiler);
+            for(size_t field=0;field<total_count;field++) {
+                const bool inherited=field<inherited_count;
+                const uint16_t value_register=allocate_register(compiler);
+                /* Check each argument against its field's declared type,
+                 * as a hand-written initialize(x: Int, ...) would -- at
+                 * construction, not first when the reader is called.
+                 * Recording it as the parameter's type also gives calls
+                 * the compile-time argument check. */
+                const uint16_t parameter_set=inherited
+                    ? (inherited_init->parameter_type_sets[field]==
+                           DIAMOND_NO_TYPE_SET
+                        ? DIAMOND_NO_TYPE_SET
+                        : clone_type_set_into_current(compiler,
+                            inherited_init->type_sets,
+                            inherited_init->type_set_count,
+                            inherited_init->parameter_type_sets[field]))
+                    : clone_type_set_into_current(compiler,
+                        struct_outer->type_sets,struct_outer->type_set_count,
+                        (uint16_t)field_type_sets[field-inherited_count]);
+                if(parameter_set!=DIAMOND_NO_TYPE_SET) {
+                    init->parameter_type_sets[field]=parameter_set;
+                    emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value_register,
+                        parameter_set,0,2);
+                }
+                emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
+                    (uint16_t)field,value_register,3);
+                /* See record_field_known_type's own comment: a struct
+                 * field's declared type (required syntax, never
+                 * DIAMOND_NO_TYPE_SET) feeds the same class-level fact a
+                 * bare `self.field =` assignment would, so this field
+                 * doesn't wrongly look "never assigned" (status 0). */
+                if(!inherited)
+                    record_field_known_type(class,field,field_known_classes[field]);
+            }
+            emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
+            end_struct_method(compiler,&state);
+        }
+        register_struct_method(compiler,class,name,"initialize",
+            (uint16_t)init_function_index,(uint8_t)total_count);
+    }
+}
+
+    /* ==(other): IS_TYPE, then an exact-class check (SAME_CLASS), then a short-circuit AND
+     * of one GET_IVAR+GET_IVAR+EQUAL+JUMP_IF_FALSE per field -- the same
+     * shape compile_begin's own rescue-type matching already uses. */
+static void emit_struct_equals(Compiler *compiler, DiamondClass *class,
+        int index, DiamondSpan name, size_t total_count) {
+    size_t eq_function_index=0;
+    DiamondFunction *eq=compiler_add_function(compiler,&eq_function_index);
+    if(eq==nullptr) {
+        fail(compiler,name,"out of memory");
+    } else {
+        (void)snprintf(eq->name,sizeof eq->name,"==");
+        eq->owner_class=(uint16_t)index;
+        eq->arity=2;eq->required_arity=2;
+        eq->return_type_set=DIAMOND_NO_TYPE_SET;
+        eq->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+        for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+            eq->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+        (void)snprintf(eq->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,"other");
+        StructMethodState state;
+        if(!begin_struct_method(compiler,eq,&state)) {
+            fail(compiler,name,"out of memory compiling ==");
+        } else {
+            (void)allocate_register(compiler);
+            const uint16_t other=allocate_register(compiler);
+            const uint16_t type_ok=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
+            size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+1];
+            size_t mismatch_count=0;
+            mismatch_jumps[mismatch_count++]=
+                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
+            /* A subclass instance has the struct's fields too, but is
+             * not equal to an instance of another class. */
+            const uint16_t same_class=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_SAME_CLASS,same_class,0,other,3);
+            mismatch_jumps[mismatch_count++]=
+                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,same_class);
+            for(size_t field=0;field<total_count;field++) {
+                const uint16_t left=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_GET_IVAR,left,0,
+                    (uint16_t)field,3);
+                const uint16_t right=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_GET_IVAR,right,other,
+                    (uint16_t)field,3);
+                const uint16_t equal=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_EQUAL,equal,left,right,3);
+                mismatch_jumps[mismatch_count++]=
+                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,equal);
+            }
+            const uint16_t true_result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_BOOL,true_result,true,0,2);
+            emit_instruction(compiler,DIAMOND_OP_RETURN,true_result,0,0,1);
+            const size_t mismatch_target=compiler->function->code_count;
+            for(size_t jump=0;jump<mismatch_count;jump++)
+                patch_jump(compiler,mismatch_jumps[jump],mismatch_target);
+            const uint16_t false_result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_BOOL,false_result,false,0,2);
+            emit_instruction(compiler,DIAMOND_OP_RETURN,false_result,0,0,1);
+            end_struct_method(compiler,&state);
+        }
+        register_struct_method(compiler,class,name,"==",
+            (uint16_t)eq_function_index,1);
+    }
+}
+
+    /* to_s(): "ClassName(field0: v0, field1: v1)" -- a CONSTANT-free
+     * chain of STRING/GET_IVAR/TO_STRING/ADD, exactly the shape
+     * parse_string's own interpolation-joining loop already uses. */
+static void emit_struct_to_s(Compiler *compiler, DiamondClass *class,
+        int index, DiamondSpan name, const char *stored_name, size_t total_count) {
+    size_t to_s_function_index=0;
+    DiamondFunction *to_s=compiler_add_function(compiler,&to_s_function_index);
+    if(to_s==nullptr) {
+        fail(compiler,name,"out of memory");
+    } else {
+        (void)snprintf(to_s->name,sizeof to_s->name,"to_s");
+        to_s->owner_class=(uint16_t)index;
+        to_s->arity=1;to_s->required_arity=1;
+        to_s->return_type_set=DIAMOND_NO_TYPE_SET;
+        to_s->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
+        for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
+            to_s->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
+        StructMethodState state;
+        if(!begin_struct_method(compiler,to_s,&state)) {
+            fail(compiler,name,"out of memory compiling to_s");
+        } else {
+            (void)allocate_register(compiler);
+            char piece[DIAMOND_MAX_FUNCTION_NAME+4];
+            (void)snprintf(piece,sizeof piece,"%s(",stored_name);
+            uint16_t result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_STRING,result,
+                add_literal_string(compiler,piece,name),0,2);
+            for(size_t field=0;field<total_count;field++) {
+                (void)snprintf(piece,sizeof piece,field==0?"%s: ":", %s: ",
+                    class->fields[field]);
+                const uint16_t prefix=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_STRING,prefix,
+                    add_literal_string(compiler,piece,name),0,2);
+                const uint16_t joined=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,
+                    prefix,3);
+                const uint16_t field_value=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_GET_IVAR,field_value,0,
+                    (uint16_t)field,3);
+                const uint16_t stringified=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_TO_STRING,stringified,
+                    field_value,0,2);
+                result=allocate_register(compiler);
+                emit_instruction(compiler,DIAMOND_OP_ADD,result,joined,
+                    stringified,3);
+            }
+            const uint16_t suffix=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_STRING,suffix,
+                add_literal_string(compiler,")",name),0,2);
+            const uint16_t final_result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_ADD,final_result,result,
+                suffix,3);
+            emit_instruction(compiler,DIAMOND_OP_RETURN,final_result,0,0,1);
+            end_struct_method(compiler,&state);
+        }
+        register_struct_method(compiler,class,name,"to_s",
+            (uint16_t)to_s_function_index,0);
+    }
+}
+
+/* `struct Name(field: Type, ...) ... end` -- a compile-time-only data
+ * class: registers an ordinary DiamondClass (no runtime synthesis, see
+ * docs/roadmap.md's "Explicitly deferred" entry on that) with one field
+ * per declared member, then generates `initialize`/one reader per
+ * field/`==`/`to_s` exactly as if they'd been hand-written. Readers
+ * reuse compile_attribute_named verbatim (same as attr_reader); the
+ * other three are hand-emitted via begin_struct_method's swap since
+ * their bodies (a per-field GET_IVAR/SET_IVAR/EQUAL/IS_TYPE/TO_STRING
+ * chain) don't correspond to any parseable source text. Deliberately
+ * narrow for this first pass -- no superclass, no reopening, no
+ * additional body -- see docs/classes-and-modules.md's own "struct
+ * declarations" section for the reasoning. */
+uint16_t compile_struct(Compiler *compiler) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected valid struct name");
+        return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
+        fail(compiler,name,"struct name is too long");return 0;
+    }
+    if(find_interface_name(compiler,stored_name)>=0||
+       find_module_name(compiler,stored_name)>=0) {
+        fail(compiler,name,"type name is already defined");return 0;
+    }
+    /* Registered *before* the field list parses (unlike compile_class's
+     * own superclass clause, which is likewise parsed only after this
+     * same registration) so a self-referential field type -- `struct
+     * Node(value: Int, next: Node)` -- can already resolve this class's
+     * own name via parse_type_annotation/resolve_type_name below. */
+    int index=0;
+    DiamondClass *class=declare_struct_class(compiler,name,stored_name,&index);
+    if(class==nullptr)return 0;
+    DiamondSpan field_name_spans[DIAMOND_MAX_DECLARED_PARAMETERS];
+    int field_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS];
+    size_t field_count=0;
+    if(!parse_struct_fields(compiler,class,field_name_spans,field_type_sets,&field_count))
+        return 0;
     /* The fields declared above, and (below) the whole inherited-then-own
      * list the generated methods cover. */
     const size_t own_field_count=field_count;
     size_t inherited_count=0;
     const DiamondFunction *inherited_init=nullptr;
-    if(compiler->current.kind==DIAMOND_TOKEN_LESS) {
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,
-                 "expected superclass name after '<'");return 0;
-        }
-        const DiamondSpan superclass_span=compiler->current.span;
-        char superclass_name[DIAMOND_MAX_FUNCTION_NAME];
-        if(!consume_qualified_name(compiler,superclass_name,sizeof superclass_name)) {
-            fail(compiler,superclass_span,"superclass name is too long");return 0;
-        }
-        const int parent=find_class_qualified_or_scoped(compiler,superclass_name);
-        if(parent<0) {
-            fail(compiler,superclass_span,"undefined superclass");return 0;
-        }
-        const DiamondClass *parent_class=compiler->program->classes[(size_t)parent];
-        if(parent==index||!parent_class->generated_struct) {
-            fail(compiler,superclass_span,
-                 "a struct's superclass must be a struct declared earlier");
-            return 0;
-        }
-        for(size_t method=0;method<parent_class->method_count;method++)
-            if(strcmp(parent_class->methods[method].name,"initialize")==0&&
-               (size_t)parent_class->methods[method].function_index<
-                   compiler->program->function_count)
-                inherited_init=compiler->program->functions[
-                    parent_class->methods[method].function_index];
-        if(inherited_init==nullptr) {
-            fail(compiler,superclass_span,
-                 "a struct's superclass must be a struct declared earlier");
-            return 0;
-        }
-        inherited_count=parent_class->field_count;
-        if(inherited_count+own_field_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
-            fail(compiler,superclass_span,"too many struct fields");return 0;
-        }
-        for(size_t own=0;own<own_field_count;own++)
-            for(size_t inherited=0;inherited<inherited_count;inherited++)
-                if(strcmp(class->fields[own],parent_class->fields[inherited])==0) {
-                    fail(compiler,field_name_spans[own],
-                         "struct field is already defined by its superclass");
-                    return 0;
-                }
-        /* Inherited fields take the first slots, as in an ordinary
-         * subclass, so the parent's methods and readers keep working. */
-        for(size_t own=own_field_count;own-->0;) {
-            memcpy(class->fields[own+inherited_count],class->fields[own],
-                DIAMOND_MAX_FUNCTION_NAME);
-            class->field_type_status[own+inherited_count]=class->field_type_status[own];
-            class->field_known_class[own+inherited_count]=class->field_known_class[own];
-        }
-        for(size_t inherited=0;inherited<inherited_count;inherited++) {
-            memcpy(class->fields[inherited],parent_class->fields[inherited],
-                DIAMOND_MAX_FUNCTION_NAME);
-            class->field_type_status[inherited]=parent_class->field_type_status[inherited];
-            class->field_known_class[inherited]=parent_class->field_known_class[inherited];
-        }
-        class->field_count=inherited_count+own_field_count;
-        class->superclass=(uint16_t)parent;
-    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LESS&&
+       !parse_struct_superclass(compiler,class,index,field_name_spans,
+           own_field_count,&inherited_count,&inherited_init))
+        return 0;
     const size_t total_count=inherited_count+own_field_count;
     if(!consume_block_start(compiler))return 0;
     const int outer_class=compiler->current_class;
@@ -1544,210 +1794,12 @@ uint16_t compile_struct(Compiler *compiler) {
     for(size_t field=0;field<field_count&&!compiler->failed;field++)
         compile_attribute_named(compiler,false,false,
             field_name_spans[field],field_type_sets[field]);
-    /* initialize(field0, field1, ...): one SET_IVAR per field, register
-     * 1+index holding that parameter by the ordinary calling convention
-     * (see compile_attribute_named's own identical comment on this). */
-    if(!compiler->failed) {
-        size_t init_function_index=0;
-        DiamondFunction *init=
-            compiler_add_function(compiler,&init_function_index);
-        if(init==nullptr) {
-            fail(compiler,name,"out of memory");
-        } else {
-            (void)snprintf(init->name,sizeof init->name,"initialize");
-            init->owner_class=(uint16_t)index;
-            init->arity=(uint8_t)(total_count+1);
-            init->required_arity=init->arity;
-            init->return_type_set=DIAMOND_NO_TYPE_SET;
-            init->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
-            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
-                init->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
-            for(size_t field=0;field<total_count;field++)
-                (void)snprintf(init->parameter_names[field],
-                    DIAMOND_MAX_FUNCTION_NAME,"%s",class->fields[field]);
-            /* Decoded *before* begin_struct_method below retargets
-             * compiler->function to `init` (a fresh function with its own,
-             * still-empty type_sets table) -- field_type_sets[] indexes into
-             * the *enclosing* function's type_sets (valid when parse_type_
-             * annotation captured it, back when the field list was parsed),
-             * not init's own. Decoding after the retarget silently read the
-             * wrong table (index out of init's own much-smaller type_set_
-             * count, so type_set_single_class always returned -1) -- caught
-             * by this phase's own verification methodology (compared JIT
-             * eligibility with/without this fix on a real struct case, not
-             * assumed), not proven correct by inspection alone. */
-            int field_known_classes[DIAMOND_MAX_DECLARED_PARAMETERS];
-            for(size_t field=0;field<own_field_count;field++)
-                field_known_classes[inherited_count+field]=
-                    type_set_single_class(compiler,field_type_sets[field]);
-            const DiamondFunction *struct_outer=compiler->function;
-            StructMethodState state;
-            if(!begin_struct_method(compiler,init,&state)) {
-                fail(compiler,name,"out of memory compiling initialize");
-            } else {
-                (void)allocate_register(compiler);
-                for(size_t field=0;field<total_count;field++) {
-                    const bool inherited=field<inherited_count;
-                    const uint16_t value_register=allocate_register(compiler);
-                    /* Check each argument against its field's declared type,
-                     * as a hand-written initialize(x: Int, ...) would -- at
-                     * construction, not first when the reader is called.
-                     * Recording it as the parameter's type also gives calls
-                     * the compile-time argument check. */
-                    const uint16_t parameter_set=inherited
-                        ? (inherited_init->parameter_type_sets[field]==
-                               DIAMOND_NO_TYPE_SET
-                            ? DIAMOND_NO_TYPE_SET
-                            : clone_type_set_into_current(compiler,
-                                inherited_init->type_sets,
-                                inherited_init->type_set_count,
-                                inherited_init->parameter_type_sets[field]))
-                        : clone_type_set_into_current(compiler,
-                            struct_outer->type_sets,struct_outer->type_set_count,
-                            (uint16_t)field_type_sets[field-inherited_count]);
-                    if(parameter_set!=DIAMOND_NO_TYPE_SET) {
-                        init->parameter_type_sets[field]=parameter_set;
-                        emit_instruction(compiler,DIAMOND_OP_CHECK_TYPE,value_register,
-                            parameter_set,0,2);
-                    }
-                    emit_instruction(compiler,DIAMOND_OP_SET_IVAR,0,
-                        (uint16_t)field,value_register,3);
-                    /* See record_field_known_type's own comment: a struct
-                     * field's declared type (required syntax, never
-                     * DIAMOND_NO_TYPE_SET) feeds the same class-level fact a
-                     * bare `self.field =` assignment would, so this field
-                     * doesn't wrongly look "never assigned" (status 0). */
-                    if(!inherited)
-                        record_field_known_type(class,field,field_known_classes[field]);
-                }
-                emit_instruction(compiler,DIAMOND_OP_RETURN,0,0,0,1);
-                end_struct_method(compiler,&state);
-            }
-            register_struct_method(compiler,class,name,"initialize",
-                (uint16_t)init_function_index,(uint8_t)total_count);
-        }
-    }
-    /* ==(other): IS_TYPE, then an exact-class check (SAME_CLASS), then a short-circuit AND
-     * of one GET_IVAR+GET_IVAR+EQUAL+JUMP_IF_FALSE per field -- the same
-     * shape compile_begin's own rescue-type matching already uses. */
-    if(!compiler->failed) {
-        size_t eq_function_index=0;
-        DiamondFunction *eq=compiler_add_function(compiler,&eq_function_index);
-        if(eq==nullptr) {
-            fail(compiler,name,"out of memory");
-        } else {
-            (void)snprintf(eq->name,sizeof eq->name,"==");
-            eq->owner_class=(uint16_t)index;
-            eq->arity=2;eq->required_arity=2;
-            eq->return_type_set=DIAMOND_NO_TYPE_SET;
-            eq->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
-            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
-                eq->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
-            (void)snprintf(eq->parameter_names[0],DIAMOND_MAX_FUNCTION_NAME,"other");
-            StructMethodState state;
-            if(!begin_struct_method(compiler,eq,&state)) {
-                fail(compiler,name,"out of memory compiling ==");
-            } else {
-                (void)allocate_register(compiler);
-                const uint16_t other=allocate_register(compiler);
-                const uint16_t type_ok=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_IS_TYPE,type_ok,other,
-                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+index),3);
-                size_t mismatch_jumps[DIAMOND_MAX_DECLARED_PARAMETERS+1];
-                size_t mismatch_count=0;
-                mismatch_jumps[mismatch_count++]=
-                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,type_ok);
-                /* A subclass instance has the struct's fields too, but is
-                 * not equal to an instance of another class. */
-                const uint16_t same_class=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_SAME_CLASS,same_class,0,other,3);
-                mismatch_jumps[mismatch_count++]=
-                    emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,same_class);
-                for(size_t field=0;field<total_count;field++) {
-                    const uint16_t left=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,left,0,
-                        (uint16_t)field,3);
-                    const uint16_t right=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,right,other,
-                        (uint16_t)field,3);
-                    const uint16_t equal=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_EQUAL,equal,left,right,3);
-                    mismatch_jumps[mismatch_count++]=
-                        emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,equal);
-                }
-                const uint16_t true_result=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_BOOL,true_result,true,0,2);
-                emit_instruction(compiler,DIAMOND_OP_RETURN,true_result,0,0,1);
-                const size_t mismatch_target=compiler->function->code_count;
-                for(size_t jump=0;jump<mismatch_count;jump++)
-                    patch_jump(compiler,mismatch_jumps[jump],mismatch_target);
-                const uint16_t false_result=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_BOOL,false_result,false,0,2);
-                emit_instruction(compiler,DIAMOND_OP_RETURN,false_result,0,0,1);
-                end_struct_method(compiler,&state);
-            }
-            register_struct_method(compiler,class,name,"==",
-                (uint16_t)eq_function_index,1);
-        }
-    }
-    /* to_s(): "ClassName(field0: v0, field1: v1)" -- a CONSTANT-free
-     * chain of STRING/GET_IVAR/TO_STRING/ADD, exactly the shape
-     * parse_string's own interpolation-joining loop already uses. */
-    if(!compiler->failed) {
-        size_t to_s_function_index=0;
-        DiamondFunction *to_s=compiler_add_function(compiler,&to_s_function_index);
-        if(to_s==nullptr) {
-            fail(compiler,name,"out of memory");
-        } else {
-            (void)snprintf(to_s->name,sizeof to_s->name,"to_s");
-            to_s->owner_class=(uint16_t)index;
-            to_s->arity=1;to_s->required_arity=1;
-            to_s->return_type_set=DIAMOND_NO_TYPE_SET;
-            to_s->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
-            for(size_t p=0;p<DIAMOND_MAX_DECLARED_PARAMETERS;p++)
-                to_s->parameter_type_sets[p]=DIAMOND_NO_TYPE_SET;
-            StructMethodState state;
-            if(!begin_struct_method(compiler,to_s,&state)) {
-                fail(compiler,name,"out of memory compiling to_s");
-            } else {
-                (void)allocate_register(compiler);
-                char piece[DIAMOND_MAX_FUNCTION_NAME+4];
-                (void)snprintf(piece,sizeof piece,"%s(",stored_name);
-                uint16_t result=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_STRING,result,
-                    add_literal_string(compiler,piece,name),0,2);
-                for(size_t field=0;field<total_count;field++) {
-                    (void)snprintf(piece,sizeof piece,field==0?"%s: ":", %s: ",
-                        class->fields[field]);
-                    const uint16_t prefix=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_STRING,prefix,
-                        add_literal_string(compiler,piece,name),0,2);
-                    const uint16_t joined=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_ADD,joined,result,
-                        prefix,3);
-                    const uint16_t field_value=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_GET_IVAR,field_value,0,
-                        (uint16_t)field,3);
-                    const uint16_t stringified=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_TO_STRING,stringified,
-                        field_value,0,2);
-                    result=allocate_register(compiler);
-                    emit_instruction(compiler,DIAMOND_OP_ADD,result,joined,
-                        stringified,3);
-                }
-                const uint16_t suffix=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_STRING,suffix,
-                    add_literal_string(compiler,")",name),0,2);
-                const uint16_t final_result=allocate_register(compiler);
-                emit_instruction(compiler,DIAMOND_OP_ADD,final_result,result,
-                    suffix,3);
-                emit_instruction(compiler,DIAMOND_OP_RETURN,final_result,0,0,1);
-                end_struct_method(compiler,&state);
-            }
-            register_struct_method(compiler,class,name,"to_s",
-                (uint16_t)to_s_function_index,0);
-        }
-    }
+    if(!compiler->failed)
+        emit_struct_initialize(compiler,class,index,name,field_type_sets,
+            inherited_count,own_field_count,inherited_init);
+    if(!compiler->failed)emit_struct_equals(compiler,class,index,name,total_count);
+    if(!compiler->failed)
+        emit_struct_to_s(compiler,class,index,name,stored_name,total_count);
     /* A hand-written def/attr/include supplementing the generated
      * members above -- see compile_class_body's own comment. A def named
      * == or to_s replaces the generated one (struct_replaceable_*; see
