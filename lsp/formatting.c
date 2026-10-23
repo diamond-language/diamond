@@ -236,10 +236,10 @@ static bool push_level(int *depth,bool is_interface,bool *interface_level) {
     return true;
 }
 
-static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
-        size_t line_count,FormatLineDepth *lines) {
-    for(size_t line=0;line<line_count;line++)lines[line]=(FormatLineDepth){0};
-    int depth=0;
+/* compute_line_depths' running state, carried from one physical line to
+ * the next. */
+typedef struct FormatDepthState {
+    int depth;
     /* interface_level[N]: true iff the level about to be entered when
      * depth is N (i.e. the *previous* opener) was an `interface`. Only
      * consulted by DEF/CLOSURE: a `def name(...) -> Type` header with
@@ -255,21 +255,219 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * an `end` expectation that never resolves, since the interface's
      * own single `end` closes the whole body, not each signature
      * individually. */
-    bool interface_level[DIAMOND_FORMAT_MAX_DEPTH]={0};
-    DiamondTokenKind prev_kind=DIAMOND_TOKEN_NEWLINE; /* sentinel: nothing before EOF-of-nothing yet counts as a fresh line */
+    bool interface_level[DIAMOND_FORMAT_MAX_DEPTH];
+    DiamondTokenKind prev_kind;
     /* Depth a leading-dot chain started at, or -1 outside one. A line
      * starting with `.` continues the previous statement (the lexer drops
      * the newline before it), so it and the lines after it print one level
      * deeper, until a later line that does not start with `.` (NEWLINE
      * tokens never reach this pass, see tokenize) ends it. */
-    int chain_base=-1;
+    int chain_base;
     /* Depth an endless `def f() =` whose body starts on the next line was
      * at, or -1: the body prints one level deeper, like a chain. It ends at
      * the first later line that starts with everything balanced again and
      * does not start with `.` (body_first skips the check for the body's own
      * first line). */
-    int body_base=-1;
-    bool body_first=false;
+    int body_base;
+    bool body_first;
+} FormatDepthState;
+
+/* State for the tokens of one physical line. */
+typedef struct FormatLineState {
+    /* The line starts with `.` and no chain is open yet: it opens one. */
+    bool chain_line;
+    bool first_in_rest_of_line;
+    bool line_has_endless_def;
+    /* True right after a block-form `loop`/`while`/`until` on this
+     * same physical line, until either a `do` is actually seen (it
+     * absorbs it, see below) or the line just ends -- naturally
+     * scoped to one line since a loop/while/until's own optional
+     * `do` must always directly follow it with no line break in
+     * between (src/compiler.c's consume_loop_start), the same
+     * "newline only right after an open bracket/comma/before a
+     * close" rule already bounds a condition expression's own
+     * span. Deliberately never cleared by any *other* token kind:
+     * `while cond do` needs this to survive every token of `cond`
+     * itself, however many there are, not just the token
+     * immediately after `while`. */
+    bool pending_loop_do;
+} FormatLineState;
+
+/* The start of a line with tokens: ends an endless-def body or a
+ * leading-dot chain the line no longer continues, then consumes its
+ * leading dedent keywords, advancing *k past them. Returns false when
+ * depth goes negative. */
+static bool begin_token_line(FormatDepthState *state,const DiamondToken *tokens,
+        size_t token_count,size_t line,size_t *k) {
+    if(state->body_base>=0&&state->depth==state->body_base+1) {
+        if(state->body_first)state->body_first=false;
+        else if(tokens[*k].kind!=DIAMOND_TOKEN_DOT&&state->chain_base<0) {
+            state->depth--;
+            state->body_base=-1;
+        }
+    }
+    if(state->chain_base>=0&&state->depth==state->chain_base+1&&
+       tokens[*k].kind!=DIAMOND_TOKEN_DOT) {
+        state->depth--;
+        state->chain_base=-1;
+    }
+    while(*k<token_count&&(size_t)tokens[*k].span.line==line&&
+          is_leading_dedent_kind(tokens[*k].kind)) {
+        state->depth--;
+        if(state->depth<0)return false;
+        state->prev_kind=tokens[*k].kind;
+        (*k)++;
+    }
+    return true;
+}
+
+/* Opens or closes depth levels for tokens[k], the next token on the
+ * current line. Returns false when depth goes negative or past
+ * DIAMOND_FORMAT_MAX_DEPTH. */
+static bool apply_token_depth(FormatDepthState *state,FormatLineState *line,
+        const DiamondToken *tokens,size_t token_count,size_t k) {
+    const DiamondTokenKind kind=tokens[k].kind;
+    switch(kind) {
+        case DIAMOND_TOKEN_DOT:
+            if(line->chain_line&&line->first_in_rest_of_line) {
+                state->chain_base=state->depth;
+                if(!push_level(&state->depth,false,state->interface_level))return false;
+            }
+            break;
+        case DIAMOND_TOKEN_LEFT_PAREN:
+        case DIAMOND_TOKEN_LEFT_BRACKET:
+        case DIAMOND_TOKEN_LEFT_BRACE:
+            if(!push_level(&state->depth,false,state->interface_level))return false;
+            break;
+        case DIAMOND_TOKEN_RIGHT_PAREN:
+        case DIAMOND_TOKEN_RIGHT_BRACKET:
+        case DIAMOND_TOKEN_RIGHT_BRACE:
+        case DIAMOND_TOKEN_END:
+            state->depth--;
+            if(state->depth<0)return false;
+            break;
+        case DIAMOND_TOKEN_CLASS:
+            /* `value.class()` -- src/compiler.c's own
+             * parse_invoke deliberately accepts DIAMOND_TOKEN_
+             * CLASS right after a `.` as this one compiler-
+             * recognized member name (a class *declaration*
+             * never starts mid-expression after a dot, so it's
+             * unambiguous there): "right after '.' it can only
+             * ever be a member name". No other keyword gets
+             * this treatment -- `.begin`/`.end`/`.def`/etc.
+             * right after a dot are real compile errors
+             * ("expected method name after '.'"), not
+             * something this pass needs to special-case too.
+             * Found against this repo's own real corpus
+             * (packages/logger's own `error.class()` call). */
+            if(state->prev_kind!=DIAMOND_TOKEN_DOT&&
+               !push_level(&state->depth,false,state->interface_level))
+                return false;
+            break;
+        case DIAMOND_TOKEN_MODULE:
+        case DIAMOND_TOKEN_STRUCT:
+        case DIAMOND_TOKEN_BEGIN:
+        case DIAMOND_TOKEN_CASE:
+            if(!push_level(&state->depth,false,state->interface_level))return false;
+            break;
+        case DIAMOND_TOKEN_INTERFACE:
+            if(!push_level(&state->depth,true,state->interface_level))return false;
+            break;
+        case DIAMOND_TOKEN_LOOP:
+            /* Bare `loop ... end` and `loop do ... end` are the
+             * exact same one-level construct (parse_loop's own
+             * consume_loop_start absorbs an optional `do` right
+             * after `loop` as pure syntax sugar, not a second
+             * nested block) -- only `loop` itself opens a
+             * level; the `do` case below must not also open one
+             * when it's this same construct's own. */
+            if(!push_level(&state->depth,false,state->interface_level))return false;
+            line->pending_loop_do=true;
+            break;
+        case DIAMOND_TOKEN_DO:
+            /* Opens a level of its own (attaching a block to an
+             * arbitrary call, `values.each() do |x| ... end`)
+             * unless it's the optional decoration right after
+             * `loop`/a block-form `while`/`until`'s own
+             * condition, which already opened this exact level
+             * when the loop/while/until token itself was seen. */
+            if(!line->pending_loop_do&&!push_level(&state->depth,false,state->interface_level))
+                return false;
+            line->pending_loop_do=false;
+            break;
+        case DIAMOND_TOKEN_DEF:
+        case DIAMOND_TOKEN_CLOSURE:
+            /* `closure name(...) ... end` (a named closure) goes
+             * through the exact same compile_definition as `def`
+             * (src/compiler.c, just with is_closure=true) --
+             * identical grammar, identical possible endless
+             * `= expr` one-liner form, so def_is_endless applies
+             * unchanged. Found the hard way: this repo's own
+             * corpus (packages/active_tagging's own
+             * `closure collect_name(raw) ... end`) was the only
+             * thing that ever exercised this keyword during
+             * validation -- CLOSURE was simply absent from this
+             * switch entirely before, silently under-counting
+             * depth by one for its whole body.
+             *
+             * A third shape, checked first: `def name(...) ->
+             * Type` with no body and no `end` of its own at all
+             * -- legal exactly inside an `interface` body (a
+             * pure signature), where the interface's own single
+             * `end` closes the whole thing. def_is_endless would
+             * say "not endless" here (there's no `=`), which is
+             * correct on its own terms but would still wrongly
+             * expect a matching `end` that will never come --
+             * found against this repo's own real corpus
+             * (packages/arel/lib/arel/support.d6's own
+             * `interface ArelTraversalNode` block). */
+            {
+                const bool signature_only=state->depth>0&&state->interface_level[state->depth-1];
+                if(!signature_only&&!def_is_endless(tokens,token_count,k)) {
+                    if(!push_level(&state->depth,false,state->interface_level))return false;
+                } else if(!signature_only) {
+                    line->line_has_endless_def=true;
+                }
+            }
+            break;
+        case DIAMOND_TOKEN_IF:
+        case DIAMOND_TOKEN_UNLESS:
+        case DIAMOND_TOKEN_WHILE:
+        case DIAMOND_TOKEN_UNTIL:
+            /* Block-form (opens a level, needs a matching `end`)
+             * iff this is the first token processed for its own
+             * physical line (a fresh statement, or a bracket-
+             * continuation line -- Diamond only allows a
+             * newline outside brackets at a real statement
+             * boundary, so "first on its own line" already
+             * covers both) or NOT immediately preceded by a
+             * value-end token -- see is_value_end_kind's own
+             * comment for why that's the deny-list this checks,
+             * not an allow-list of specific "expects a new
+             * expression" kinds. Matches src/compiler.c's own
+             * postfix_modifier_ahead in spirit, not by sharing
+             * its code (that one runs mid-parse with real
+             * expression-boundary information this token-only
+             * pass doesn't have). WHILE/UNTIL specifically also
+             * arm pending_loop_do the same way LOOP does, since
+             * they share consume_loop_start's own optional-`do`
+             * grammar. */
+            if(line->first_in_rest_of_line||!is_value_end_kind(state->prev_kind)) {
+                if(!push_level(&state->depth,false,state->interface_level))return false;
+                if(kind==DIAMOND_TOKEN_WHILE||kind==DIAMOND_TOKEN_UNTIL)
+                    line->pending_loop_do=true;
+            }
+            break;
+        default:break;
+    }
+    return true;
+}
+
+static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
+        size_t line_count,FormatLineDepth *lines) {
+    for(size_t line=0;line<line_count;line++)lines[line]=(FormatLineDepth){0};
+    /* prev_kind's NEWLINE is a sentinel: nothing before EOF-of-nothing yet counts as a fresh line */
+    FormatDepthState state={.prev_kind=DIAMOND_TOKEN_NEWLINE,.chain_base=-1,.body_base=-1};
     size_t token_index=0;
     size_t last_processed_line=0;
     for(size_t line=1;line<=line_count&&token_index<token_count;line++) {
@@ -277,198 +475,32 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
         last_processed_line=line;
         if((size_t)tokens[token_index].span.line!=line) {
             /* No token starts on this physical line at all. */
-            lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=depth};
+            lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=state.depth};
             continue;
         }
         size_t k=token_index;
-        if(body_base>=0&&depth==body_base+1) {
-            if(body_first)body_first=false;
-            else if(tokens[k].kind!=DIAMOND_TOKEN_DOT&&chain_base<0) {
-                depth--;
-                body_base=-1;
-            }
-        }
-        if(chain_base>=0&&depth==chain_base+1&&tokens[k].kind!=DIAMOND_TOKEN_DOT) {
-            depth--;
-            chain_base=-1;
-        }
-        int leading_dedent=0;
-        while(k<token_count&&(size_t)tokens[k].span.line==line&&
-              is_leading_dedent_kind(tokens[k].kind)) {
-            depth--;leading_dedent++;
-            if(depth<0)return false;
-            prev_kind=tokens[k].kind;
-            k++;
-        }
-        (void)leading_dedent;
+        if(!begin_token_line(&state,tokens,token_count,line,&k))return false;
         const bool branch_line=k<token_count&&(size_t)tokens[k].span.line==line&&
             is_branch_kind(tokens[k].kind);
-        const bool chain_line=k<token_count&&(size_t)tokens[k].span.line==line&&
-            tokens[k].kind==DIAMOND_TOKEN_DOT&&chain_base<0;
-        const int print_depth=depth-(branch_line?1:0)+(chain_line?1:0);
+        FormatLineState line_state={
+            .chain_line=k<token_count&&(size_t)tokens[k].span.line==line&&
+                tokens[k].kind==DIAMOND_TOKEN_DOT&&state.chain_base<0,
+            .first_in_rest_of_line=true};
+        const int print_depth=state.depth-(branch_line?1:0)+(line_state.chain_line?1:0);
         if(print_depth<0)return false;
         lines[line-1]=(FormatLineDepth){.has_tokens=true,.depth=print_depth};
-
-        bool first_in_rest_of_line=true;
-        bool line_has_endless_def=false;
-        /* True right after a block-form `loop`/`while`/`until` on this
-         * same physical line, until either a `do` is actually seen (it
-         * absorbs it, see below) or the line just ends -- naturally
-         * scoped to one line since a loop/while/until's own optional
-         * `do` must always directly follow it with no line break in
-         * between (src/compiler.c's consume_loop_start), the same
-         * "newline only right after an open bracket/comma/before a
-         * close" rule already bounds a condition expression's own
-         * span. Deliberately never cleared by any *other* token kind:
-         * `while cond do` needs this to survive every token of `cond`
-         * itself, however many there are, not just the token
-         * immediately after `while`. */
-        bool pending_loop_do=false;
         while(k<token_count&&(size_t)tokens[k].span.line==line) {
-            const DiamondTokenKind kind=tokens[k].kind;
-            switch(kind) {
-                case DIAMOND_TOKEN_DOT:
-                    if(chain_line&&first_in_rest_of_line) {
-                        chain_base=depth;
-                        if(!push_level(&depth,false,interface_level))return false;
-                    }
-                    break;
-                case DIAMOND_TOKEN_LEFT_PAREN:
-                case DIAMOND_TOKEN_LEFT_BRACKET:
-                case DIAMOND_TOKEN_LEFT_BRACE:
-                    if(!push_level(&depth,false,interface_level))return false;
-                    break;
-                case DIAMOND_TOKEN_RIGHT_PAREN:
-                case DIAMOND_TOKEN_RIGHT_BRACKET:
-                case DIAMOND_TOKEN_RIGHT_BRACE:
-                case DIAMOND_TOKEN_END:
-                    depth--;
-                    if(depth<0)return false;
-                    break;
-                case DIAMOND_TOKEN_CLASS:
-                    /* `value.class()` -- src/compiler.c's own
-                     * parse_invoke deliberately accepts DIAMOND_TOKEN_
-                     * CLASS right after a `.` as this one compiler-
-                     * recognized member name (a class *declaration*
-                     * never starts mid-expression after a dot, so it's
-                     * unambiguous there): "right after '.' it can only
-                     * ever be a member name". No other keyword gets
-                     * this treatment -- `.begin`/`.end`/`.def`/etc.
-                     * right after a dot are real compile errors
-                     * ("expected method name after '.'"), not
-                     * something this pass needs to special-case too.
-                     * Found against this repo's own real corpus
-                     * (packages/logger's own `error.class()` call). */
-                    if(prev_kind!=DIAMOND_TOKEN_DOT&&
-                       !push_level(&depth,false,interface_level))
-                        return false;
-                    break;
-                case DIAMOND_TOKEN_MODULE:
-                case DIAMOND_TOKEN_STRUCT:
-                case DIAMOND_TOKEN_BEGIN:
-                case DIAMOND_TOKEN_CASE:
-                    if(!push_level(&depth,false,interface_level))return false;
-                    break;
-                case DIAMOND_TOKEN_INTERFACE:
-                    if(!push_level(&depth,true,interface_level))return false;
-                    break;
-                case DIAMOND_TOKEN_LOOP:
-                    /* Bare `loop ... end` and `loop do ... end` are the
-                     * exact same one-level construct (parse_loop's own
-                     * consume_loop_start absorbs an optional `do` right
-                     * after `loop` as pure syntax sugar, not a second
-                     * nested block) -- only `loop` itself opens a
-                     * level; the `do` case below must not also open one
-                     * when it's this same construct's own. */
-                    if(!push_level(&depth,false,interface_level))return false;
-                    pending_loop_do=true;
-                    break;
-                case DIAMOND_TOKEN_DO:
-                    /* Opens a level of its own (attaching a block to an
-                     * arbitrary call, `values.each() do |x| ... end`)
-                     * unless it's the optional decoration right after
-                     * `loop`/a block-form `while`/`until`'s own
-                     * condition, which already opened this exact level
-                     * when the loop/while/until token itself was seen. */
-                    if(!pending_loop_do&&!push_level(&depth,false,interface_level))
-                        return false;
-                    pending_loop_do=false;
-                    break;
-                case DIAMOND_TOKEN_DEF:
-                case DIAMOND_TOKEN_CLOSURE:
-                    /* `closure name(...) ... end` (a named closure) goes
-                     * through the exact same compile_definition as `def`
-                     * (src/compiler.c, just with is_closure=true) --
-                     * identical grammar, identical possible endless
-                     * `= expr` one-liner form, so def_is_endless applies
-                     * unchanged. Found the hard way: this repo's own
-                     * corpus (packages/active_tagging's own
-                     * `closure collect_name(raw) ... end`) was the only
-                     * thing that ever exercised this keyword during
-                     * validation -- CLOSURE was simply absent from this
-                     * switch entirely before, silently under-counting
-                     * depth by one for its whole body.
-                     *
-                     * A third shape, checked first: `def name(...) ->
-                     * Type` with no body and no `end` of its own at all
-                     * -- legal exactly inside an `interface` body (a
-                     * pure signature), where the interface's own single
-                     * `end` closes the whole thing. def_is_endless would
-                     * say "not endless" here (there's no `=`), which is
-                     * correct on its own terms but would still wrongly
-                     * expect a matching `end` that will never come --
-                     * found against this repo's own real corpus
-                     * (packages/arel/lib/arel/support.d6's own
-                     * `interface ArelTraversalNode` block). */
-                    {
-                        const bool signature_only=depth>0&&interface_level[depth-1];
-                        if(!signature_only&&!def_is_endless(tokens,token_count,k)) {
-                            if(!push_level(&depth,false,interface_level))return false;
-                        } else if(!signature_only) {
-                            line_has_endless_def=true;
-                        }
-                    }
-                    break;
-                case DIAMOND_TOKEN_IF:
-                case DIAMOND_TOKEN_UNLESS:
-                case DIAMOND_TOKEN_WHILE:
-                case DIAMOND_TOKEN_UNTIL:
-                    /* Block-form (opens a level, needs a matching `end`)
-                     * iff this is the first token processed for its own
-                     * physical line (a fresh statement, or a bracket-
-                     * continuation line -- Diamond only allows a
-                     * newline outside brackets at a real statement
-                     * boundary, so "first on its own line" already
-                     * covers both) or NOT immediately preceded by a
-                     * value-end token -- see is_value_end_kind's own
-                     * comment for why that's the deny-list this checks,
-                     * not an allow-list of specific "expects a new
-                     * expression" kinds. Matches src/compiler.c's own
-                     * postfix_modifier_ahead in spirit, not by sharing
-                     * its code (that one runs mid-parse with real
-                     * expression-boundary information this token-only
-                     * pass doesn't have). WHILE/UNTIL specifically also
-                     * arm pending_loop_do the same way LOOP does, since
-                     * they share consume_loop_start's own optional-`do`
-                     * grammar. */
-                    if(first_in_rest_of_line||!is_value_end_kind(prev_kind)) {
-                        if(!push_level(&depth,false,interface_level))return false;
-                        if(kind==DIAMOND_TOKEN_WHILE||kind==DIAMOND_TOKEN_UNTIL)
-                            pending_loop_do=true;
-                    }
-                    break;
-                default:break;
-            }
-            prev_kind=kind;
-            first_in_rest_of_line=false;
+            if(!apply_token_depth(&state,&line_state,tokens,token_count,k))return false;
+            state.prev_kind=tokens[k].kind;
+            line_state.first_in_rest_of_line=false;
             k++;
         }
         token_index=k;
         /* `def f(x) =` with nothing after the `=`: the body is on the next line. */
-        if(line_has_endless_def&&prev_kind==DIAMOND_TOKEN_EQUAL&&body_base<0) {
-            body_base=depth;
-            body_first=true;
-            if(!push_level(&depth,false,interface_level))return false;
+        if(line_state.line_has_endless_def&&state.prev_kind==DIAMOND_TOKEN_EQUAL&&state.body_base<0) {
+            state.body_base=state.depth;
+            state.body_first=true;
+            if(!push_level(&state.depth,false,state.interface_level))return false;
         }
     }
     /* Any lines past the last one the main loop actually visited
@@ -480,10 +512,10 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * inside the already-correctly-filled range and silently
      * overwrite a real line's own computed depth. */
     for(size_t line=last_processed_line+1;line<=line_count;line++)
-        lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=depth};
-    if(chain_base>=0&&depth==chain_base+1)depth--;
-    if(body_base>=0&&depth==body_base+1)depth--;
-    return depth==0;
+        lines[line-1]=(FormatLineDepth){.has_tokens=false,.depth=state.depth};
+    if(state.chain_base>=0&&state.depth==state.chain_base+1)state.depth--;
+    if(state.body_base>=0&&state.depth==state.body_base+1)state.depth--;
+    return state.depth==0;
 }
 
 /* `start_col`/`end_col` are byte columns within the line whose text is `line_text`; the edit's range is sent in UTF-16 code units, which
