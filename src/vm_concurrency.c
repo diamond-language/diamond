@@ -204,29 +204,14 @@ void *thread_entry_trampoline(void *argument) {
     return nullptr;
 }
 
-/* pthread_create's entry point for one supervised child -- unlike
- * thread_entry_trampoline (a single run, one OS thread per Thread.new
- * call), this loops for the child's *entire* supervised lifetime: a
- * fresh DiamondVm/heap per attempt, freed at the end of every attempt
- * whether it crashed or not, exactly the isolated-heap-per-run guarantee
- * an ordinary Thread already gives a single spawn. A clean, non-raising
- * return ends the loop for good (v1 restarts on crash only, never on a
- * normal return -- see docs/threads.md); an uncaught exception or
- * internal VM failure records the reason, bumps restart_count, and
- * loops again after a fixed 20ms delay (a safety valve bounding CPU use
- * from a child that crashes immediately every time, not a configurable
- * backoff policy; the roadmap's Supervisor section lists one as open) unless
- * stop_requested has been set meanwhile. Builds its own synthetic
- * DiamondChunk once, up front, exactly the shape thread_entry_
- * trampoline's own local `child_chunk` already uses -- program_template
- * never changes across restarts, so this doesn't need rebuilding per
- * iteration the way thread_entry_trampoline's per-spawn one does. */
-static void *supervisor_child_entry_trampoline(void *argument) {
-    DiamondSupervisorChild *child=(DiamondSupervisorChild *)argument;
-    DiamondSupervisor *supervisor=child->supervisor;
+/* The synthetic DiamondChunk a supervised child runs, exactly the shape
+ * thread_entry_trampoline's own local `child_chunk` already uses --
+ * program_template never changes across restarts, so it is built once
+ * per child, not per attempt. */
+static DiamondChunk supervisor_child_chunk(const DiamondSupervisorChild *child) {
     const DiamondFunction *target_fn=
         child->program_template->functions[child->function_index];
-    const DiamondChunk child_chunk={
+    return (DiamondChunk){
         .name=target_fn->name,.code=target_fn->code,
         .lines=target_fn->lines,.columns=target_fn->columns,
         .code_count=target_fn->code_count,
@@ -245,6 +230,176 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         .register_count=target_fn->register_count,
         .has_variadic=target_fn->has_variadic,
         .range_class_index=child->program_template->range_class_index};
+}
+
+/* Sets up one attempt's freshly allocated run_vm and copies the child's
+ * constants and arguments into it. Returns false when an argument could
+ * not be copied. Called without the supervisor's lock. */
+static bool prepare_supervised_attempt(DiamondSupervisorChild *child,
+        const DiamondChunk *child_chunk,DiamondVm *run_vm,DiamondValue *run_args) {
+    DiamondSupervisor *supervisor=child->supervisor;
+    diamond_vm_init(run_vm);
+    diamond_vm_configure_jit_from_env(run_vm);
+    run_vm->range_class_index=child->program_template->range_class_index;
+    run_vm->root_chunk=child_chunk;
+    /* The interrupt check costs every dispatched instruction, so it is
+     * armed up front only where a sibling's crash may need it.
+     * Supervisor#stop(timeout_ms) arms it on demand through running_vm. */
+    run_vm->interrupt_flag=&child->interrupt;
+    if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE||
+       supervisor->max_restarts>=0)
+        run_vm->resource_limits_active=true;
+    /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
+     * NEW's own argument copy loop uses, for the identical reason: a
+     * later argument's copy_value_into_vm call can itself trigger a
+     * collection on run_vm before anything roots an earlier argument
+     * already copied into it this iteration. */
+    bool copy_failed=false;
+    run_vm->spawned_thread=true;
+    copy_namespace_constants_into_vm(child->args_vm,run_vm,
+        child->program_template->classes,child->program_template->classes);
+    const size_t args_mark=run_vm->gc_protected_count;
+    for(uint8_t index=0;index<child->arg_count;index++) {
+        if(!copy_value_into_vm(run_vm,child->args[index],nullptr,
+                child->program_template->classes,
+                child->program_template->classes,nullptr,
+                &run_args[index])||
+           !gc_protect(run_vm,run_args[index])) {
+            copy_failed=true;break;
+        }
+    }
+    gc_unprotect(run_vm,args_mark);
+    return !copy_failed;
+}
+
+/* Records why a failed attempt ended in child->last_error, and counts a
+ * restart where one follows. Called with the supervisor's lock held. */
+static void record_attempt_failure(DiamondSupervisorChild *child,DiamondVm *run_vm,
+        DiamondVmStatus status) {
+    DiamondSupervisor *supervisor=child->supervisor;
+    const bool interrupted_by_sibling=status==DIAMOND_VM_INTERRUPTED;
+    if(interrupted_by_sibling&&supervisor->failed) {
+        /* The supervisor gave up: this is a shutdown, not a restart. */
+        snprintf(child->last_error,sizeof child->last_error,
+            "stopped: the supervisor's restart intensity was exceeded");
+    } else if(interrupted_by_sibling&&supervisor->stop_forced) {
+        /* Supervisor#stop(timeout_ms) ran out of patience. */
+        snprintf(child->last_error,sizeof child->last_error,
+            "stopped: Supervisor#stop timed out");
+    } else if(interrupted_by_sibling) {
+        /* Not this child's own crash: a sibling's failure restarted
+         * it, and last_error says so. No restart delay below, since
+         * this attempt wasn't failing on its own. */
+        child->restart_count++;
+        snprintf(child->last_error,sizeof child->last_error,
+            "restarted: a sibling crashed");
+    } else if(status==DIAMOND_VM_EXCEPTION) {
+        child->restart_count++;
+        format_uncaught_exception_message(run_vm,run_vm->exception,false);
+        snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
+    } else {
+        child->restart_count++;
+        const char *message=run_vm->error[0]!='\0'?run_vm->error:
+            diamond_vm_status_name(status);
+        snprintf(child->last_error,sizeof child->last_error,"%s",message);
+    }
+}
+
+/* Counts the child's own crash at `now_ns` against the restart intensity
+ * (more than max_restarts crashes within within_ms), and gives up -- and
+ * interrupts every other running child -- when it is exceeded. Called
+ * with the supervisor's lock held. */
+static void count_crash_against_intensity(DiamondSupervisorChild *child,int64_t now_ns) {
+    DiamondSupervisor *supervisor=child->supervisor;
+    if(supervisor->max_restarts<0||supervisor->failed||
+       atomic_load(&supervisor->stop_requested))
+        return;
+    /* Drop crashes that left the window, then count this one. */
+    const int64_t window_ns=supervisor->within_ms*1000000;
+    size_t kept=0;
+    for(size_t index=0;index<supervisor->crash_time_count;index++)
+        if(now_ns-supervisor->crash_times_ns[index]<=window_ns)
+            supervisor->crash_times_ns[kept++]=
+                supervisor->crash_times_ns[index];
+    supervisor->crash_time_count=kept;
+    supervisor->crash_times_ns[supervisor->crash_time_count++]=now_ns;
+    if((int64_t)supervisor->crash_time_count>supervisor->max_restarts) {
+        supervisor->failed=true;
+        /* This crash is not followed by a restart. */
+        child->restart_count--;
+        snprintf(supervisor->failure_message,
+            sizeof supervisor->failure_message,
+            "supervisor gave up: more than %" PRId64 " crashes within "
+            "%" PRId64 " ms (last error: %s)",
+            supervisor->max_restarts,supervisor->within_ms,
+            child->last_error);
+        atomic_store(&supervisor->stop_requested,true);
+        for(size_t other=0;other<supervisor->child_count;other++)
+            if(other!=child->index&&!supervisor->children[other].done)
+                supervisor_interrupt_child(&supervisor->children[other]);
+    }
+}
+
+/* The child's own crash: the exponential backoff before its restart, after
+ * counting the crash against the restart intensity. Called with the
+ * supervisor's lock held. */
+static int64_t crash_restart_delay_ms(DiamondSupervisorChild *child,
+        int64_t attempt_started_ns) {
+    DiamondSupervisor *supervisor=child->supervisor;
+    int64_t restart_delay_ms=supervisor->backoff_ms;
+    const int64_t now_ns=monotonic_nanoseconds();
+    /* An attempt that outlived the longest pause was healthy: the
+     * crash that ended it starts a new run of consecutive crashes. */
+    if((now_ns-attempt_started_ns)/1000000>supervisor->max_backoff_ms)
+        child->consecutive_crashes=0;
+    child->consecutive_crashes++;
+    for(size_t doubling=1;doubling<child->consecutive_crashes&&
+            restart_delay_ms<supervisor->max_backoff_ms;doubling++)
+        restart_delay_ms*=2;
+    if(restart_delay_ms>supervisor->max_backoff_ms)
+        restart_delay_ms=supervisor->max_backoff_ms;
+    count_crash_against_intensity(child,now_ns);
+    return restart_delay_ms;
+}
+
+/* This child's own crash: take down the siblings its strategy
+ * covers. Already-finished children (clean return) stay
+ * finished, the same as for a plain crash. Called with the supervisor's
+ * lock held. */
+static void interrupt_strategy_siblings(DiamondSupervisorChild *child) {
+    DiamondSupervisor *supervisor=child->supervisor;
+    const size_t first=supervisor->strategy==DIAMOND_SUPERVISOR_ONE_FOR_ALL?0:
+        child->index+1;
+    for(size_t other=first;other<supervisor->child_count;other++) {
+        if(other==child->index||supervisor->children[other].done)continue;
+        supervisor_interrupt_child(&supervisor->children[other]);
+    }
+}
+
+/* Flips alive?() to false for a child that is about to stop for good. */
+static void mark_supervised_child_done(DiamondSupervisorChild *child) {
+    pthread_mutex_lock(&child->supervisor->lock);
+    child->done=true;
+    pthread_mutex_unlock(&child->supervisor->lock);
+}
+
+/* pthread_create's entry point for one supervised child -- unlike
+ * thread_entry_trampoline (a single run, one OS thread per Thread.new
+ * call), this loops for the child's *entire* supervised lifetime: a
+ * fresh DiamondVm/heap per attempt, freed at the end of every attempt
+ * whether it crashed or not, exactly the isolated-heap-per-run guarantee
+ * an ordinary Thread already gives a single spawn. A clean, non-raising
+ * return ends the loop for good (v1 restarts on crash only, never on a
+ * normal return -- see docs/threads.md); an uncaught exception or
+ * internal VM failure records the reason, bumps restart_count, and
+ * loops again after the restart policy's backoff (see
+ * crash_restart_delay_ms) unless stop_requested has been set meanwhile.
+ * Every lock and unlock of supervisor->lock is in this function; the
+ * helpers it calls either run unlocked or say they need it held. */
+static void *supervisor_child_entry_trampoline(void *argument) {
+    DiamondSupervisorChild *child=(DiamondSupervisorChild *)argument;
+    DiamondSupervisor *supervisor=child->supervisor;
+    const DiamondChunk child_chunk=supervisor_child_chunk(child);
     for(;;) {
         /* A child added after the supervisor gave up (or racing with it)
          * must not start: nothing would ever interrupt it. */
@@ -277,38 +432,8 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             pthread_mutex_unlock(&supervisor->lock);
             break;
         }
-        diamond_vm_init(run_vm);
-        diamond_vm_configure_jit_from_env(run_vm);
-        run_vm->range_class_index=child->program_template->range_class_index;
-        run_vm->root_chunk=&child_chunk;
-        /* The interrupt check costs every dispatched instruction, so it is
-         * armed up front only where a sibling's crash may need it.
-         * Supervisor#stop(timeout_ms) arms it on demand through running_vm. */
-        run_vm->interrupt_flag=&child->interrupt;
-        if(supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE||
-           supervisor->max_restarts>=0)
-            run_vm->resource_limits_active=true;
-        /* Same defensive gc_protect-as-produced pattern DIAMOND_OP_THREAD_
-         * NEW's own argument copy loop uses, for the identical reason: a
-         * later argument's copy_value_into_vm call can itself trigger a
-         * collection on run_vm before anything roots an earlier argument
-         * already copied into it this iteration. */
         DiamondValue run_args[DIAMOND_MAX_ARGUMENTS]={};
-        bool copy_failed=false;
-        run_vm->spawned_thread=true;
-        copy_namespace_constants_into_vm(child->args_vm,run_vm,
-            child->program_template->classes,child->program_template->classes);
-        const size_t args_mark=run_vm->gc_protected_count;
-        for(uint8_t index=0;index<child->arg_count;index++) {
-            if(!copy_value_into_vm(run_vm,child->args[index],nullptr,
-                    child->program_template->classes,
-                    child->program_template->classes,nullptr,
-                    &run_args[index])||
-               !gc_protect(run_vm,run_args[index])) {
-                copy_failed=true;break;
-            }
-        }
-        gc_unprotect(run_vm,args_mark);
+        const bool copy_failed=!prepare_supervised_attempt(child,&child_chunk,run_vm,run_args);
         DiamondValue run_result=DIAMOND_NIL;
         pthread_mutex_lock(&supervisor->lock);
         child->running_vm=run_vm;
@@ -328,86 +453,15 @@ static void *supervisor_child_entry_trampoline(void *argument) {
             break;
         }
         const bool interrupted_by_sibling=status==DIAMOND_VM_INTERRUPTED;
-        if(interrupted_by_sibling&&supervisor->failed) {
-            /* The supervisor gave up: this is a shutdown, not a restart. */
-            snprintf(child->last_error,sizeof child->last_error,
-                "stopped: the supervisor's restart intensity was exceeded");
-        } else if(interrupted_by_sibling&&supervisor->stop_forced) {
-            /* Supervisor#stop(timeout_ms) ran out of patience. */
-            snprintf(child->last_error,sizeof child->last_error,
-                "stopped: Supervisor#stop timed out");
-        } else if(interrupted_by_sibling) {
-            /* Not this child's own crash: a sibling's failure restarted
-             * it, and last_error says so. No restart delay below, since
-             * this attempt wasn't failing on its own. */
-            child->restart_count++;
-            snprintf(child->last_error,sizeof child->last_error,
-                "restarted: a sibling crashed");
-        } else if(status==DIAMOND_VM_EXCEPTION) {
-            child->restart_count++;
-            format_uncaught_exception_message(run_vm,run_vm->exception,false);
-            snprintf(child->last_error,sizeof child->last_error,"%s",run_vm->error);
-        } else {
-            child->restart_count++;
-            const char *message=run_vm->error[0]!='\0'?run_vm->error:
-                diamond_vm_status_name(status);
-            snprintf(child->last_error,sizeof child->last_error,"%s",message);
-        }
+        record_attempt_failure(child,run_vm,status);
         int64_t restart_delay_ms=supervisor->backoff_ms;
-        if(!interrupted_by_sibling) {
-            const int64_t now_ns=monotonic_nanoseconds();
-            /* An attempt that outlived the longest pause was healthy: the
-             * crash that ended it starts a new run of consecutive crashes. */
-            if((now_ns-attempt_started_ns)/1000000>supervisor->max_backoff_ms)
-                child->consecutive_crashes=0;
-            child->consecutive_crashes++;
-            for(size_t doubling=1;doubling<child->consecutive_crashes&&
-                    restart_delay_ms<supervisor->max_backoff_ms;doubling++)
-                restart_delay_ms*=2;
-            if(restart_delay_ms>supervisor->max_backoff_ms)
-                restart_delay_ms=supervisor->max_backoff_ms;
-            if(supervisor->max_restarts>=0&&!supervisor->failed&&
-               !atomic_load(&supervisor->stop_requested)) {
-                /* Drop crashes that left the window, then count this one. */
-                const int64_t window_ns=supervisor->within_ms*1000000;
-                size_t kept=0;
-                for(size_t index=0;index<supervisor->crash_time_count;index++)
-                    if(now_ns-supervisor->crash_times_ns[index]<=window_ns)
-                        supervisor->crash_times_ns[kept++]=
-                            supervisor->crash_times_ns[index];
-                supervisor->crash_time_count=kept;
-                supervisor->crash_times_ns[supervisor->crash_time_count++]=now_ns;
-                if((int64_t)supervisor->crash_time_count>supervisor->max_restarts) {
-                    supervisor->failed=true;
-                    /* This crash is not followed by a restart. */
-                    child->restart_count--;
-                    snprintf(supervisor->failure_message,
-                        sizeof supervisor->failure_message,
-                        "supervisor gave up: more than %" PRId64 " crashes within "
-                        "%" PRId64 " ms (last error: %s)",
-                        supervisor->max_restarts,supervisor->within_ms,
-                        child->last_error);
-                    atomic_store(&supervisor->stop_requested,true);
-                    for(size_t other=0;other<supervisor->child_count;other++)
-                        if(other!=child->index&&!supervisor->children[other].done)
-                            supervisor_interrupt_child(&supervisor->children[other]);
-                }
-            }
-        }
+        if(!interrupted_by_sibling)
+            restart_delay_ms=crash_restart_delay_ms(child,attempt_started_ns);
         if(!interrupted_by_sibling&&
            !supervisor->failed&&
            supervisor->strategy!=DIAMOND_SUPERVISOR_ONE_FOR_ONE&&
-           !atomic_load(&supervisor->stop_requested)) {
-            /* This child's own crash: take down the siblings its strategy
-             * covers. Already-finished children (clean return) stay
-             * finished, the same as for a plain crash. */
-            const size_t first=supervisor->strategy==DIAMOND_SUPERVISOR_ONE_FOR_ALL?0:
-                child->index+1;
-            for(size_t other=first;other<supervisor->child_count;other++) {
-                if(other==child->index||supervisor->children[other].done)continue;
-                supervisor_interrupt_child(&supervisor->children[other]);
-            }
-        }
+           !atomic_load(&supervisor->stop_requested))
+            interrupt_strategy_siblings(child);
         pthread_mutex_unlock(&supervisor->lock);
         diamond_vm_free(run_vm);free(run_vm);
         if(atomic_load(&supervisor->stop_requested)) {
@@ -417,9 +471,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
              * that checks alive?() right after stop() returns would
              * still see a stale "true" for a child that stopped here
              * rather than via a clean return. */
-            pthread_mutex_lock(&supervisor->lock);
-            child->done=true;
-            pthread_mutex_unlock(&supervisor->lock);
+            mark_supervised_child_done(child);
             break;
         }
         if(interrupted_by_sibling)continue;
@@ -428,9 +480,7 @@ static void *supervisor_child_entry_trampoline(void *argument) {
         nanosleep(&delay,nullptr);
         /* stop() may have arrived during the pause: no further attempt. */
         if(atomic_load(&supervisor->stop_requested)) {
-            pthread_mutex_lock(&supervisor->lock);
-            child->done=true;
-            pthread_mutex_unlock(&supervisor->lock);
+            mark_supervised_child_done(child);
             break;
         }
     }
