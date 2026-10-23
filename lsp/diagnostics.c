@@ -176,154 +176,137 @@ static void build_dependency_paths(const DiamondSourceBundle *bundle,
     *out_dependency_paths=paths;
 }
 
-JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
-        const char *text,size_t length,
-        JsonValue **out_dependency_publish,JsonValue **out_dependency_paths) {
-    /* DiamondProgram is tens of MB (fixed-size arrays sized for
-     * self-hosting-scale programs, per src/compiler.h's own comment on
-     * the struct) -- heap-allocated here for the same reason main.c
-     * heap-allocates it rather than putting it on the stack, and kept
-     * across calls (lazily allocated once, reused for every subsequent
-     * didOpen/didChange) since a fresh malloc+free of that size on every
-     * keystroke would be wasteful for no benefit. Each compile below
-     * still needs an explicit diamond_program_free right before it: the
-     * function table is independently heap-allocated, and
-     * diamond_program_init's memset alone would leak the previous
-     * keystroke's functions instead of freeing them. */
-    static DiamondProgram *scratch=nullptr;
-    if(scratch==nullptr) {
-        scratch=calloc(1,sizeof *scratch);
-        if(scratch==nullptr)return nullptr;
+/* `source` (source_length bytes, then a NUL) behind the prelude and the
+ * "#line 1" reset, as the compiler sees a whole program, in a malloc'd
+ * buffer; nullptr on allocation failure. *out_user_offset is where
+ * `source` starts in it. */
+static char *with_prelude(const char *source,size_t source_length,size_t *out_user_offset) {
+    const bool include_json=diamond_prelude_needs_json(source);
+    const size_t prelude_length=diamond_prelude_length(include_json);
+    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
+    char *combined=malloc(prelude_length+reset_length+source_length+1);
+    if(combined==nullptr)return nullptr;
+    size_t offset=diamond_prelude_write(combined,include_json);
+    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
+    memcpy(combined+offset,source,source_length);
+    combined[offset+source_length]='\0';
+    *out_user_offset=prelude_length+reset_length;
+    return combined;
+}
+
+/* Each compile needs an explicit diamond_program_free right before it:
+ * the function table is independently heap-allocated, and
+ * diamond_program_init's memset alone would leak the previous
+ * keystroke's functions instead of freeing them. */
+static bool compile_scratch(DiamondProgram *scratch,const char *combined,
+        DiamondDiagnostic *diagnostic) {
+    diamond_program_free(scratch);
+    return diamond_compile(combined,scratch,diagnostic);
+}
+
+/* Appends one diagnostic to `diagnostics`; false on allocation failure,
+ * leaving the array as it was. */
+static bool push_diagnostic(JsonValue *diagnostics,const char *text,size_t length,
+        size_t line,size_t column,size_t span_length,const char *message) {
+    JsonValue *entry=build_diagnostic(text,length,line,column,span_length,message);
+    if(entry==nullptr||!json_array_push(diagnostics,entry)) {
+        json_free(entry);
+        return false;
     }
+    return true;
+}
 
-    JsonValue *diagnostics=json_array();
-    if(diagnostics==nullptr)return nullptr;
-
-    /* A div template (packages/div, any ".div" path) never `require`s
-     * anything of its own -- see lsp/div.h's own comment -- so it skips
-     * the require-bundling path entirely: translate its tag syntax into
-     * ordinary Diamond source with div_translate, compile *that* exactly
-     * the way the no-on-disk-location branch below compiles raw text
-     * (prelude + "#line 1" reset, diagnostic.span.line indexing directly
-     * into the user content with no segment-table indirection needed),
-     * then map any resulting diagnostic's line back through the position
-     * array div_translate returned instead of through diamond_resolve_
-     * diagnostic_location's bundle segments (there is no bundle here).
-     * No dependency tracking either (out_dependency_publish/
-     * out_dependency_paths stay untouched, same as every early-return
-     * path below already leaves them) -- a template has nothing to
-     * `require`, so nothing to publish or track. */
-    if(div_is_template_path(uri)) {
-        DivPosition *positions=nullptr;size_t position_count=0;
-        size_t error_line=1,error_column=1;const char *error_message=nullptr;
-        char *generated=div_translate(text,length,&positions,&position_count,
-            &error_line,&error_column,&error_message);
-        if(generated==nullptr) {
-            JsonValue *entry=build_diagnostic(text,length,error_line,error_column,1,error_message);
-            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
-                json_free(entry);
-                json_free(diagnostics);
-                return nullptr;
-            }
-            return diagnostics;
-        }
-        const bool include_json=diamond_prelude_needs_json(generated);
-        const size_t prelude_length=diamond_prelude_length(include_json);
-        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-        const size_t generated_length=strlen(generated);
-        char *combined=malloc(prelude_length+reset_length+generated_length+1);
-        if(combined==nullptr) {
-            free(generated);free(positions);
-            json_free(diagnostics);
-            return nullptr;
-        }
-        size_t combined_offset=diamond_prelude_write(combined,include_json);
-        memcpy(combined+combined_offset,DIAMOND_USER_LINE_RESET,reset_length);
-        combined_offset+=reset_length;
-        memcpy(combined+combined_offset,generated,generated_length+1);
-        free(generated);
-
-        DiamondDiagnostic diagnostic;
-        diamond_program_free(scratch);
-        const bool ok=diamond_compile(combined,scratch,&diagnostic);
-        free(combined);
-        if(!ok) {
-            /* positions[line-1].line==0 means this generated line is
-             * fixed boilerplate with no single corresponding template
-             * position (see DivPosition's own comment) -- anchor at the
-             * template's own start rather than reporting nothing, same
-             * fallback the require-resolution-failure path below uses. */
-            size_t template_line=1,template_column=1;
-            if(diagnostic.span.line>=1&&diagnostic.span.line<=position_count) {
-                const DivPosition mapped=positions[diagnostic.span.line-1];
-                if(mapped.line>0) {
-                    template_line=mapped.line;
-                    template_column=mapped.column+
-                        (diagnostic.span.column>0?diagnostic.span.column-1:0);
-                }
-            }
-            JsonValue *entry=build_diagnostic(text,length,template_line,template_column,
-                diagnostic.span.length,diagnostic.message);
-            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
-                json_free(entry);
-                free(positions);
-                json_free(diagnostics);
-                return nullptr;
-            }
-        }
+/* A div template (packages/div, any ".div" path) never `require`s
+ * anything of its own -- see lsp/div.h's own comment -- so it skips
+ * the require-bundling path entirely: translate its tag syntax into
+ * ordinary Diamond source with div_translate, compile *that* exactly
+ * the way the no-on-disk-location branch below compiles raw text
+ * (prelude + "#line 1" reset, diagnostic.span.line indexing directly
+ * into the user content with no segment-table indirection needed),
+ * then map any resulting diagnostic's line back through the position
+ * array div_translate returned instead of through diamond_resolve_
+ * diagnostic_location's bundle segments (there is no bundle here).
+ * No dependency tracking either (out_dependency_publish/
+ * out_dependency_paths stay untouched, same as every early-return
+ * path below already leaves them) -- a template has nothing to
+ * `require`, so nothing to publish or track. Returns false on
+ * allocation failure. */
+static bool template_diagnostics(DiamondProgram *scratch,JsonValue *diagnostics,
+        const char *text,size_t length) {
+    DivPosition *positions=nullptr;size_t position_count=0;
+    size_t error_line=1,error_column=1;const char *error_message=nullptr;
+    char *generated=div_translate(text,length,&positions,&position_count,
+        &error_line,&error_column,&error_message);
+    if(generated==nullptr)
+        return push_diagnostic(diagnostics,text,length,error_line,error_column,1,error_message);
+    size_t user_offset;
+    char *combined=with_prelude(generated,strlen(generated),&user_offset);
+    free(generated);
+    if(combined==nullptr) {
         free(positions);
-        return diagnostics;
+        return false;
     }
 
-    /* No on-disk location (an untitled/unsaved buffer, or a non-file://
-     * scheme): compile the document in isolation, same as before this
-     * required-file support existed. A bare `require` line in such a
-     * document still can't resolve (there's no directory to resolve it
-     * against), but that's the same "no false diagnostic for valid code,
-     * no cross-file resolution either" tradeoff every path through this
-     * function makes for a *different* file's own errors -- see
-     * docs/lsp.md. */
-    char *path=diagnostics_uri_to_path(uri);
-    if(path==nullptr) {
-        const bool include_json=diamond_prelude_needs_json(text);
-        const size_t prelude_length=diamond_prelude_length(include_json);
-        const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-        char *combined=malloc(prelude_length+reset_length+length+1);
-        if(combined==nullptr) {
-            json_free(diagnostics);
-            return nullptr;
-        }
-        size_t offset=diamond_prelude_write(combined,include_json);
-        memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
-        memcpy(combined+offset,text,length);
-        combined[offset+length]='\0';
-        DiamondDiagnostic diagnostic;
-        diamond_program_free(scratch);
-        const bool ok=diamond_compile(combined,scratch,&diagnostic);
-        free(combined);
-        if(!ok) {
-            JsonValue *entry=build_diagnostic(text,length,diagnostic.span.line,diagnostic.span.column,
-                diagnostic.span.length,diagnostic.message);
-            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
-                json_free(entry);
-                json_free(diagnostics);
-                return nullptr;
+    DiamondDiagnostic diagnostic;
+    const bool ok=compile_scratch(scratch,combined,&diagnostic);
+    free(combined);
+    bool pushed=true;
+    if(!ok) {
+        /* positions[line-1].line==0 means this generated line is
+         * fixed boilerplate with no single corresponding template
+         * position (see DivPosition's own comment) -- anchor at the
+         * template's own start rather than reporting nothing, same
+         * fallback the require-resolution-failure path below uses. */
+        size_t template_line=1,template_column=1;
+        if(diagnostic.span.line>=1&&diagnostic.span.line<=position_count) {
+            const DivPosition mapped=positions[diagnostic.span.line-1];
+            if(mapped.line>0) {
+                template_line=mapped.line;
+                template_column=mapped.column+
+                    (diagnostic.span.column>0?diagnostic.span.column-1:0);
             }
         }
-        return diagnostics;
+        pushed=push_diagnostic(diagnostics,text,length,template_line,template_column,
+            diagnostic.span.length,diagnostic.message);
     }
+    free(positions);
+    return pushed;
+}
 
+/* No on-disk location (an untitled/unsaved buffer, or a non-file://
+ * scheme): compile the document in isolation, same as before this
+ * required-file support existed. A bare `require` line in such a
+ * document still can't resolve (there's no directory to resolve it
+ * against), but that's the same "no false diagnostic for valid code,
+ * no cross-file resolution either" tradeoff every path through this
+ * function makes for a *different* file's own errors -- see
+ * docs/lsp.md. Returns false on allocation failure. */
+static bool unsaved_diagnostics(DiamondProgram *scratch,JsonValue *diagnostics,
+        const char *text,size_t length) {
+    size_t user_offset;
+    char *combined=with_prelude(text,length,&user_offset);
+    if(combined==nullptr)return false;
+    DiamondDiagnostic diagnostic;
+    const bool ok=compile_scratch(scratch,combined,&diagnostic);
+    free(combined);
+    if(ok)return true;
+    return push_diagnostic(diagnostics,text,length,diagnostic.span.line,diagnostic.span.column,
+        diagnostic.span.length,diagnostic.message);
+}
+
+/* A document saved at `path`: its requires are bundled (open documents
+ * override their on-disk text), and the bundle is compiled. Returns false
+ * on allocation failure. */
+static bool file_diagnostics(DiamondProgram *scratch,JsonValue *diagnostics,
+        const DocumentTable *documents,const char *path,const char *text,size_t length,
+        JsonValue **out_dependency_publish,JsonValue **out_dependency_paths) {
     /* A null-terminated copy: document_get_text's own buffer is already
      * null-terminated, but diamond_load_program takes a plain `const
      * char *`, and length-bounding it against `length` here (rather than
      * trusting the caller's null terminator) keeps this function correct
      * even if that guarantee ever changes upstream. */
     char *text_copy=malloc(length+1);
-    if(text_copy==nullptr) {
-        free(path);
-        json_free(diagnostics);
-        return nullptr;
-    }
+    if(text_copy==nullptr)return false;
     memcpy(text_copy,text,length);
     text_copy[length]='\0';
 
@@ -332,43 +315,25 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
     const bool loaded=diamond_load_program_with_override(path,text_copy,
         document_resolve_source,(void *)documents,&bundle,load_error,sizeof load_error);
     free(text_copy);
-    if(!loaded) {
-        free(path);
-        /* No resolvable range for a require-resolution failure (the
-         * message is prose, not a machine-parseable location) -- anchor
-         * it at the document's own start rather than reporting nothing,
-         * since this is a real problem with *this* document (an
-         * unresolvable require), not a downstream file's own error. */
-        JsonValue *entry=build_diagnostic(text,length,1,1,1,load_error);
-        if(entry==nullptr||!json_array_push(diagnostics,entry)) {
-            json_free(entry);
-            json_free(diagnostics);
-            return nullptr;
-        }
-        return diagnostics;
-    }
+    /* No resolvable range for a require-resolution failure (the
+     * message is prose, not a machine-parseable location) -- anchor
+     * it at the document's own start rather than reporting nothing,
+     * since this is a real problem with *this* document (an
+     * unresolvable require), not a downstream file's own error. */
+    if(!loaded)return push_diagnostic(diagnostics,text,length,1,1,1,load_error);
 
-    const bool include_json=diamond_prelude_needs_json(bundle.source);
-    const size_t prelude_length=diamond_prelude_length(include_json);
-    const size_t reset_length=sizeof(DIAMOND_USER_LINE_RESET)-1;
-    const size_t bundle_length=strlen(bundle.source);
-    char *combined=malloc(prelude_length+reset_length+bundle_length+1);
+    size_t user_offset;
+    char *combined=with_prelude(bundle.source,strlen(bundle.source),&user_offset);
     if(combined==nullptr) {
-        free(path);
         diamond_source_bundle_free(&bundle);
-        json_free(diagnostics);
-        return nullptr;
+        return false;
     }
-    size_t offset=diamond_prelude_write(combined,include_json);
-    memcpy(combined+offset,DIAMOND_USER_LINE_RESET,reset_length);offset+=reset_length;
-    memcpy(combined+offset,bundle.source,bundle_length+1);
 
     DiamondDiagnostic diagnostic;
-    diamond_program_free(scratch);
-    const bool ok=diamond_compile(combined,scratch,&diagnostic);
+    const bool ok=compile_scratch(scratch,combined,&diagnostic);
     if(!ok) {
         const DiamondResolvedLocation resolved=diamond_resolve_diagnostic_location(
-            path,combined,diagnostic,&bundle,prelude_length+reset_length);
+            path,combined,diagnostic,&bundle,user_offset);
         /* A diagnostic resolved to a different (required) file's own
          * source is a real error, but publishing it against *this*
          * document's uri would point an editor at the wrong file --
@@ -379,15 +344,11 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
          * document's own diagnostics (correctly empty, since its own
          * error is elsewhere) are still real and worth returning. */
         if(strcmp(resolved.path,path)==0) {
-            JsonValue *entry=build_diagnostic(text,length,resolved.line,resolved.column,
-                diagnostic.span.length,diagnostic.message);
-            if(entry==nullptr||!json_array_push(diagnostics,entry)) {
-                json_free(entry);
+            if(!push_diagnostic(diagnostics,text,length,resolved.line,resolved.column,
+                    diagnostic.span.length,diagnostic.message)) {
                 free(combined);
-                free(path);
                 diamond_source_bundle_free(&bundle);
-                json_free(diagnostics);
-                return nullptr;
+                return false;
             }
         } else if(out_dependency_publish!=nullptr) {
             *out_dependency_publish=build_dependency_publish(documents,&resolved,
@@ -397,7 +358,45 @@ JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
     if(out_dependency_paths!=nullptr)
         build_dependency_paths(&bundle,path,out_dependency_paths);
     free(combined);
-    free(path);
     diamond_source_bundle_free(&bundle);
+    return true;
+}
+
+JsonValue *diagnostics_compute(const DocumentTable *documents,const char *uri,
+        const char *text,size_t length,
+        JsonValue **out_dependency_publish,JsonValue **out_dependency_paths) {
+    /* DiamondProgram is tens of MB (fixed-size arrays sized for
+     * self-hosting-scale programs, per src/compiler.h's own comment on
+     * the struct) -- heap-allocated here for the same reason main.c
+     * heap-allocates it rather than putting it on the stack, and kept
+     * across calls (lazily allocated once, reused for every subsequent
+     * didOpen/didChange) since a fresh malloc+free of that size on every
+     * keystroke would be wasteful for no benefit. */
+    static DiamondProgram *scratch=nullptr;
+    if(scratch==nullptr) {
+        scratch=calloc(1,sizeof *scratch);
+        if(scratch==nullptr)return nullptr;
+    }
+
+    JsonValue *diagnostics=json_array();
+    if(diagnostics==nullptr)return nullptr;
+
+    bool ok;
+    if(div_is_template_path(uri)) {
+        ok=template_diagnostics(scratch,diagnostics,text,length);
+    } else {
+        char *path=diagnostics_uri_to_path(uri);
+        if(path==nullptr) {
+            ok=unsaved_diagnostics(scratch,diagnostics,text,length);
+        } else {
+            ok=file_diagnostics(scratch,diagnostics,documents,path,text,length,
+                out_dependency_publish,out_dependency_paths);
+            free(path);
+        }
+    }
+    if(!ok) {
+        json_free(diagnostics);
+        return nullptr;
+    }
     return diagnostics;
 }
