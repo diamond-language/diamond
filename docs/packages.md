@@ -6,7 +6,7 @@ retained. The loader prefers `lib/<name>.d6`, then
 `<name>.d6`, then the corresponding legacy `.di` paths. Facet accepts and
 audits both source suffixes so immutable releases remain installable.
 
-For the proposed publishable package contract and hosted registry roadmap, see
+For the publishable package contract and registry design history, see
 [cut-contract.md](cut-contract.md) and
 [package-registry-plan.md](package-registry-plan.md). This page documents the
 currently implemented behavior.
@@ -16,7 +16,7 @@ manifest, and runtime file inventory without installing dependencies or
 creating an archive. `--files` prints the sorted candidate artifact file list.
 `facet pack <cut-directory> <output.tar>` packages that exact list as a
 deterministic ustar archive and prints its SHA-256 digest. Neither command
-publishes to a registry yet.
+publishes to a registry.
 `facet verify <archive.tar> [--sha256 <digest>]` checks a packed artifact
 without extracting it. The expected digest is required when verifying bytes
 against a trusted lockfile or registry record.

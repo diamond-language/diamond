@@ -18,8 +18,8 @@ start at [`docs/syntax.md`](../syntax.md) or [`docs/io.md`](../io.md) instead.
   and its deoptimization and GC-root contracts.
 - [gremlin scaling investigation](gremlin-scaling-investigation.md) -- plan for
   explaining why `gremlin_serve` throughput plateaus around 8 threads.
-- [Lifting the class limit](class-limit-design.md) -- why a program is capped at 180 classes and the
-  staged plan (16-bit type ids, 16-bit class operands, dynamic class storage) to remove it.
+- [Lifting the class limit](class-limit-design.md) -- the completed migration from 180 to 1,024 classes
+  (16-bit type ids and class operands, with dynamic class storage).
 - [Fuzzing](fuzzing.md) -- building and running the fuzzing harness, including the
   differential (interpreter vs JIT) execution fuzzer.
 - [WebAssembly build](wasm.md) -- the wasm32-wasip1 module, its REPL driver, what is

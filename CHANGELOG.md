@@ -6,6 +6,8 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.19.0 — Unreleased
+
 ### Added
 
 - Diamond source files now use `.d6` and bytecode caches use `.d6c`, avoiding
@@ -23,6 +25,14 @@ authoritative fine-grained record.
   read-ahead so it can share stdin with `gets()`.
 - `gremlin_serve`'s tenth argument, `host`, listens on one address (for example `"127.0.0.1"` behind a reverse proxy) instead of every
   interface.
+
+### Changed
+
+- Language-server receiver inference follows imported collection contents,
+  guard and short-circuit branches, and helper return values more precisely.
+  See [the language-server guide](docs/lsp.md) for the supported cases and limits.
+- The Mjolnir guide now describes dialect-dependent query counts rather than
+  promising one round trip for every repository operation.
 
 ### Fixed
 
@@ -42,7 +52,7 @@ authoritative fine-grained record.
   name (cache-busted URLs missed), served dotfiles such as `.env` and `.git/config`, and matched `/assetsX` against the prefix `/assets`. `ContentNegotiation` ranked `q=0` lowest
   instead of refusing it, and sent no `Vary: Accept`. `RateLimit` kept a bucket for every key ever seen; finished windows are dropped past `max_keys` (default 100000).
 - CI: `actions/checkout` and `vmactions/freebsd-vm` are pinned to commit SHAs (the tag stays in a comment) instead of a movable major tag, and `docs/ci.md` says how to update them.
-- applications/registry/monitor.di: `--timeout` bounded each socket operation, but a read keeps going while bytes keep arriving, so a server that trickled a body a byte at a
+- applications/registry/monitor.d6: `--timeout` bounded each socket operation, but a read keeps going while bytes keep arriving, so a server that trickled a body a byte at a
   time held the probe open for as long as it liked (36 seconds against a 1-second timeout in a test), and the archive time check never got a turn. The probe runs in a
   worker thread and the whole run is cut off after twice `--timeout` plus 5 seconds with the error class `Timeout`. `make test-monitor` (part of `test-integration`) covers it.
 - active_discussion: the documented `active_discussion_karma_votes` schema had no uniqueness on a voter's vote for a target, so two simultaneous votes by one voter made two rows. It declares `UNIQUE(target_type, target_id, voter_handle)`, and the README says that two different voters voting at once can still lose a karma change, because votes are applied from the karma each request loaded and the package has no row locking.
@@ -55,7 +65,7 @@ authoritative fine-grained record.
 - CI: the workflow token is read-only (`permissions: contents: read`), and the wasi-sdk download fails on an HTTP error and is checked against a pinned
   SHA-256.
 - `make` stops when `tools/aot_fingerprint.sh` fails; it used to write the AOT config with an empty fingerprint, so the cache never noticed a changed source.
-- `tools/registry_needs_upgrade.di` keeps non-ASCII paths whole when listing changed files, anchors its path patterns with `\A`, and refuses a `--host`,
+- `tools/registry_needs_upgrade.d6` keeps non-ASCII paths whole when listing changed files, anchors its path patterns with `\A`, and refuses a `--host`,
   `--deployed` or `--target` value that starts with a dash (it would reach `ssh` or `git` as an option).
 - The registry runbook creates the issued credential file with a private umask on the local side as well, not only on the server.
 - tools/deploy_registry.sh treated any upgrade-check exit other than 20 as "nothing to do" and exited 0, so an unreachable host or an unknown
@@ -131,7 +141,7 @@ authoritative fine-grained record.
   no limit; it honours `max_redirects` (default 5) like `http_request`.
 - Pheint: `Account.email` was readable by anyone through a game's `owner`, so an anonymous `{ games { owner { email } } }` listed every owner's
   address. It is `null` for everyone but the signed-in account now, and the field is nullable.
-- Pheint: `setup_db.di` dropped every table and created the demo account (published password) even with `DIAMOND_ENV=production`. It
+- Pheint: `setup_db.d6` dropped every table and created the demo account (published password) even with `DIAMOND_ENV=production`. It
   refuses without `PHEINT_CONFIRM_RESET=yes` there and never seeds the demo account.
 - `Process.spawn`: the `"stdout"` and `"stderr"` file options need the `filesystem` capability under `DIAMOND_SANDBOX` (the child
   opened the file, so `subprocess` alone let it write anywhere); giving `"stderr"` together with `"stderr_to_stdout"` raises
@@ -140,7 +150,7 @@ authoritative fine-grained record.
   with an embedded NUL byte instead of acting on the part before it.
 - `__dir__` and `__FILE__` inside a string interpolation are substituted correctly when the interpolation holds a string containing a
   brace (`"#{h["}"]} ... __dir__"` used to rewrite the literal text after it).
-- The registry `backup.di` removes a partial destination on any failure, and a failed cleanup no longer replaces the original error.
+- The registry `backup.d6` removes a partial destination on any failure, and a failed cleanup no longer replaces the original error.
 - GraphQL: a fragment-cycle validation error names only the fragments that are on the cycle, not ones that merely spread into it.
 - A request that drove a handler into a call-stack overflow (`SystemStackError`, which is not a `StandardError`) killed the whole
   Gremlin worker; it now answers `500 Internal Server Error` like any other handler failure. Found with a deeply nested GraphQL
@@ -154,27 +164,41 @@ authoritative fine-grained record.
 
 ### Packages
 
-- `graphsql` 0.1.4: depends on `graphql ^0.2.0`. The registry's launch seed pins it.
-- `rack` 0.1.3: the middleware fixes above.
-- `active_discussion` 0.1.1: the schema and concurrency note above.
-- `active_auth` 0.2.3: single-use tokens and backup codes are atomic.
-- `active_record` 0.19.5: a doc comment changed with the anchored validators, which changes the archive. The registry launch seed pins the new `arel`
-  0.34.6, `graphql` 0.2.1, `http` 0.1.3, `jobs` 0.1.3, `network_safety` 0.1.3, `redis` 0.1.3, `websocket` 0.1.3 and `active_record` 0.19.5.
-- `jobs` 0.1.3: the worker fixes above.
-- `redis` 0.1.3: the reply-alignment fix above.
-- `websocket` 0.1.3: the message size cap and control-frame checks above.
-- `mjolnir` 0.2.4: the update, `update_all` and MySQL/MariaDB write fixes above.
-- `gremlin` 0.4.7 and `websocket` 0.1.4: the connection, deadline and cleanup fixes above. The registry launch seed pins both.
-- `active_auth` 0.2.2: the anchored email and username validators, the secret-free JSON shape and the `Secure` session cookie above.
-- `active_tagging` 0.1.1: the anchored tag-name validator above.
-- `graphql` 0.2.1: the query depth and size limits above.
-- `graphql` 0.2.0: error masking, strict scalars and the fragment-cycle message above.
-- `network_safety` 0.1.3: the guard fixes above.
-- `http` 0.1.3: the redirect fixes above.
-- `arel` 0.34.6: the bind-order fix above.
-- `gremlin` 0.4.6: the `host` argument above. The registry's launch seed pins 0.4.6.
-- `graphql` 0.1.7: the three GraphQL fixes above. The registry's launch seed pins 0.1.7.
-- `gremlin` 0.4.5: a handler's stack overflow answers 500. The registry's launch seed pins 0.4.5.
+All 26 source cuts move to new minor lines because their entry points now use
+`.d6`. Older runtimes cannot load these artifacts; older published `.di` cuts
+remain compatible with 0.19.0. These are repository versions, **not a publication
+record**. The deterministic launch inventory selects 18 cuts. The withdrawn
+`active_auth`, `active_discussion`, `active_karma`, `active_social`,
+`active_tagging`, and `dials` cuts remain excluded from publication.
+
+| Cut | Last `.di` source version | Current `.d6` source version |
+|---|---|---|
+| `active_auth` | 0.2.3 | 0.3.0 |
+| `active_discussion` | 0.1.1 | 0.2.0 |
+| `active_karma` | 0.1.0 | 0.2.0 |
+| `active_record` | 0.19.5 | 0.20.0 |
+| `active_social` | 0.1.0 | 0.2.0 |
+| `active_tagging` | 0.1.1 | 0.2.0 |
+| `arel` | 0.34.6 | 0.35.0 |
+| `cancellation` | 0.6.0 | 0.7.0 |
+| `cookies` | 0.1.2 | 0.2.0 |
+| `database_config` | 0.1.2 | 0.2.0 |
+| `dials` | 0.2.0 | 0.3.0 |
+| `div` | 0.2.4 | 0.3.0 |
+| `graphql` | 0.2.1 | 0.3.0 |
+| `graphsql` | 0.1.4 | 0.2.0 |
+| `gremlin` | 0.4.7 | 0.5.0 |
+| `http` | 0.1.3 | 0.2.0 |
+| `jobs` | 0.1.3 | 0.2.0 |
+| `log_viewer` | 0.1.2 | 0.2.0 |
+| `logger` | 0.4.2 | 0.5.0 |
+| `mjolnir` | 0.2.4 | 0.3.1 |
+| `multipart` | 0.2.2 | 0.3.0 |
+| `network_safety` | 0.1.3 | 0.2.0 |
+| `rack` | 0.1.3 | 0.2.0 |
+| `redis` | 0.1.3 | 0.2.0 |
+| `registry` | 0.1.2 | 0.2.0 |
+| `websocket` | 0.1.4 | 0.2.0 |
 
 ## 0.18.0 — 2026-10-18
 

@@ -1,6 +1,10 @@
 # Lifting the 180-class limit
 
-A Diamond program holds at most `DIAMOND_MAX_CLASSES` = 180 classes and structs, **cuts included**.
+Since 0.18.0 a Diamond program holds up to `DIAMOND_MAX_CLASSES` = 1,024 classes
+and structs, **cuts included**. The following describes the original 180-class
+limit and the migration that removed it.
+
+Before the migration, a program held at most 180 classes and structs.
 Past it, compilation stops with `too many classes`. A real application (Pheint, a GraphQL API on
 `gremlin`, `graphql`, `mjolnir`, `arel`, `http` and `logger`) reaches the limit with ordinary code; it
 only fits by turning its namespaces into `module`s (which do not count) and its tables into hash rows.
@@ -9,7 +13,7 @@ Modules are capped too (255), and have the same storage problem.
 This document is the plan for removing the limit. Stages 1-4 are implemented (the limit is now 1,024); stage 5 is
 still optional.
 
-## Why it is 180
+## Why it was 180
 
 Three independent things cap the count, and they all have to move:
 

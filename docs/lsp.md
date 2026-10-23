@@ -59,7 +59,7 @@ search over a real (if scoped) lexical symbol table:
   resolves to exactly one top-level function by that name at compile
   time — no overloading, no scoping to worry about), a class name
   (always names exactly one class, single inheritance), a module name,
-  or an interface name. `src/compiler.c` records each one's declaration-site position (1-based line/column
+  or an interface name. The compiler records each one's declaration-site position (1-based line/column
   of its own name token, plus the matching byte offset in the compiled
   buffer — `declaration_line`/`declaration_column`/`declaration_start`
   on `DiamondFunction`/`DiamondClass`/`DiamondModule`/`DiamondInterface`,
@@ -322,7 +322,7 @@ search over a real (if scoped) lexical symbol table:
   document's own — `lib/core.d6`'s prelude and anything pulled in via
   `require` are all valid to type) plus every local variable/parameter
   actually *in scope at the cursor* — real lexical scoping, backed by a
-  genuine (if narrow) per-function symbol table `src/compiler.c` now
+  genuine (if narrow) per-function symbol table the compiler now
   builds as a side effect of compiling: `DiamondFunction.scope_locals`
   (`src/vm.h`) records every local's own name and the exact byte range
   (in the compiled buffer) it's valid for, taken directly from the
@@ -446,10 +446,10 @@ search over a real (if scoped) lexical symbol table:
   `closure`, which shares `def`'s exact grammar) needs no `end` at
   all; `loop`/`while`/`until`'s own optional trailing `do` is absorbed
   syntax for the same one level, not a second nested block
-  (`src/compiler.c`'s `consume_loop_start`); and a `def` signature
+  (`src/compiler_flow.c`'s `consume_loop_start`); and a `def` signature
   with no body at all is legal exactly inside an `interface`'s own
   body. `value.class()` is the one keyword the compiler itself accepts
-  as a method name right after a dot (`src/compiler.c`'s own
+  as a method name right after a dot (`src/compiler_names.c`'s own
   `parse_invoke`), so it's excluded from opening a level there too.
   Between two tokens on the same line, a comma takes no space before it
   and one after it (unless a closing bracket follows), and an assignment,

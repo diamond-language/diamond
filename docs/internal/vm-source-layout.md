@@ -6,6 +6,10 @@ measurements that decide what is worth splitting next.
 
 ## Where the compile time is
 
+The timings and line counts below are historical measurements from the VM
+extraction, not measurements of the current release. Later compiler and dispatch
+helper refactors do not imply a build-speed improvement.
+
 Measured with clang `-O1 -fsanitize=address,undefined` (what the fuzzers and `CC=clang make
 sanitize` use), on one core:
 

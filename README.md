@@ -6,7 +6,7 @@
 Diamond is an object-oriented language with gradual, checked static typing,
 compiled to a register-bytecode VM written in C23 (with an optional x86-64
 JIT). It builds to one standalone executable, and runs in your browser at
-[dilang.tech](https://dilang.tech).
+[getdiamond.codes](https://getdiamond.codes).
 
 ```ruby
 class Counter
@@ -87,7 +87,7 @@ builds):
 ./app
 ```
 
-Try it without installing anything: the REPL at [dilang.tech](https://dilang.tech)
+Try it without installing anything: the REPL at [getdiamond.codes](https://getdiamond.codes)
 runs the interpreter as WebAssembly (`wasm/build.sh`, see
 [docs/internal/wasm.md](docs/internal/wasm.md)).
 
