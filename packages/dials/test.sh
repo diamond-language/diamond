@@ -220,7 +220,7 @@ count=$((count + 1))
 # unique names (home, author) -> 2 defs total, not 3. Written to a real
 # file and required, matching how a real app consumes this -- not a
 # dynamic-eval shortcut. ---
-generated="$work/generated_paths.di"
+generated="$work/generated_paths.d6"
 actual="$(run_case "
 def noop(request, context, params) = nil
 router = Dials::Router.new()

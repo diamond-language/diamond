@@ -4,7 +4,7 @@
 #   tools/fetch_registry_backup.sh DESTINATION --host root@your-host --app REMOTE_APP --data REMOTE_ROOT [--port 22]
 #
 # DESTINATION is a new directory on this machine (an existing one is never touched). The snapshot is
-# made on the server by backup.di, streamed back as a tar, checked for anything but plain files
+# made on the server by backup.d6, streamed back as a tar, checked for anything but plain files
 # below `snapshot/`, extracted, and finally restored into a scratch directory to prove it is usable.
 # Set DIAMOND_BIN to use a diamond other than build/diamond, and SSH to substitute the ssh command.
 set -euo pipefail
@@ -45,9 +45,9 @@ trap cleanup EXIT
 
 app_dir="${app%/}"
 quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
-# The server's own diamond runs backup.di (installed next to the app directory, in bin/).
+# The server's own diamond runs backup.d6 (installed next to the app directory, in bin/).
 remote_command="set -eu; work=\$(mktemp -d /tmp/diamond-registry-backup.XXXXXXXX); trap 'rm -rf -- \"\$work\"' EXIT; "
-remote_command+="$(quote "$app_dir/../bin/diamond") $(quote "$app_dir/backup.di") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
+remote_command+="$(quote "$app_dir/../bin/diamond") $(quote "$app_dir/backup.d6") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
 remote_command+="tar -C \"\$work\" -cf - snapshot"
 
 archive="$destination/.transfer.tar"
@@ -74,7 +74,7 @@ while IFS= read -r line; do
 done < <(tar -tvf "$archive")
 
 tar -xf "$archive" -C "$destination" || fail "cannot extract the snapshot"
-"$diamond" "$root/applications/registry/backup.di" restore "$destination/snapshot" "$destination/.restore-check" >/dev/null \
+"$diamond" "$root/applications/registry/backup.d6" restore "$destination/snapshot" "$destination/.restore-check" >/dev/null \
     || fail "the snapshot does not restore"
 rm -rf -- "$destination/.restore-check" "$archive"
 complete=true

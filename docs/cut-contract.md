@@ -1,5 +1,9 @@
 # Publishable cut contract
 
+New artifacts use `.d6` source entry points. Facet continues to accept and
+audit `.di` sources and entry points for existing, immutable releases; the
+current layout below describes newly built cuts.
+
 Status: artifact validation, publishing, and the HTTP read/publish service are
 implemented; public deployment remains pending. Current behavior is in
 [packages.md](packages.md); the proposed wire API
@@ -8,7 +12,7 @@ is in [registry-protocol.md](registry-protocol.md).
 `facet check <cut-directory>` now performs the first local preflight. It checks
 the canonical name and directory, strict version spelling, summary, nonempty
 license declaration, public maintainers, data-only runtime dependency ranges, and regular
-`diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.di` files. It rejects
+`diamond.cut`, `README.md`, `LICENSE`, and `lib/<name>.d6` files. It rejects
 unknown manifest keys. It audits the candidate runtime file tree and
 `--files` prints the sorted included file list. It does not yet verify SPDX
 expressions. It checks statically visible literal imports
@@ -36,7 +40,7 @@ has the same layout:
   README.md               required for publication
   LICENSE                 required for publication
   lib/
-    <name>.di             required public entry point
+    <name>.d6             required public entry point
     <name>/...            optional implementation files
   test.sh                  optional development test runner
   tests/                  optional development tests
@@ -74,7 +78,7 @@ unqualified `verify` is useful for inspecting a local archive but cannot
 establish that it matches a lockfile or registry record.
 
 An installed cut occupies `cuts/<name>/` within the consuming project, with
-`cuts/<name>/lib/<name>.di` as its entry point. Installation never writes into
+`cuts/<name>/lib/<name>.d6` as its entry point. Installation never writes into
 Diamond's own `packages/` tree. A version is selected per name for the whole
 application because the compiler currently uses a flat program namespace.
 

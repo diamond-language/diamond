@@ -9,11 +9,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # The session ends with deliberate errors, so calc exits 1.
-status=0; "$diamond" calc.di < testdata/session.txt > "$work/interpreted.txt" || status=$?
+status=0; "$diamond" calc.d6 < testdata/session.txt > "$work/interpreted.txt" || status=$?
 [[ "$status" == 1 ]]
 diff -u testdata/session.expected "$work/interpreted.txt"
 
-"$diamond" build calc.di -o "$work/calc" > "$work/build.log"
+"$diamond" build calc.d6 -o "$work/calc" > "$work/build.log"
 status=0; "$work/calc" < testdata/session.txt > "$work/binary.txt" || status=$?
 [[ "$status" == 1 ]]
 diff -u testdata/session.expected "$work/binary.txt"

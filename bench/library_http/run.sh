@@ -29,10 +29,10 @@ wait_for_port() {
 }
 
 # Same require list and Author/Book.configure setup as examples/library/
-# app.di itself -- just port/threads parameterized (app.di hardcodes
+# app.d6 itself -- just port/threads parameterized (app.d6 hardcodes
 # both) and started from lib_dir so Database.get's relative "library.db"
 # path resolves to the same seeded database examples/library already
-# uses (bash setup_db.di once below, before any trial runs).
+# uses (bash setup_db.d6 once below, before any trial runs).
 server_src() {
     local port="$1" threads="$2"
     cat <<SRCEOF
@@ -91,8 +91,8 @@ run_trial() {
     rm -f "$out"
 }
 
-echo "seeding library_test.db (examples/library/setup_db.di, DIAMOND_ENV=test)..."
-(cd "$lib_dir" && DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null)
+echo "seeding library_test.db (examples/library/setup_db.d6, DIAMOND_ENV=test)..."
+(cd "$lib_dir" && DIAMOND_ENV=test "$diamond" setup_db.d6 >/dev/null)
 
 echo "route           | threads | req/sec   | mean latency | p99 latency | failed"
 echo "----------------|---------|-----------|--------------|-------------|-------"

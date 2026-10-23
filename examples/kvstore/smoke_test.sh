@@ -13,8 +13,8 @@ server_pid=""
 cleanup() { [[ -n "$server_pid" ]] && kill "$server_pid" 2> /dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
 
-"$diamond" build kvserver.di -o "$work/kvserver" > "$work/build.log"
-"$diamond" build kvclient.di -o "$work/kvclient" > "$work/build.log"
+"$diamond" build kvserver.d6 -o "$work/kvserver" > "$work/build.log"
+"$diamond" build kvclient.d6 -o "$work/kvclient" > "$work/build.log"
 kv() { "$work/kvclient" "$port" "$@"; }
 start() {
   # bash starts background jobs with SIGINT ignored; reset it (docs/networking.md).

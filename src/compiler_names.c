@@ -1452,7 +1452,7 @@ static void publish_array_push_return_type(Compiler *compiler,uint16_t result,
 }
 
 /* Built-in collection methods have deliberately broad Callable signatures in
- * core.di, but their runtime callback inputs are still determined by the
+ * core.d6, but their runtime callback inputs are still determined by the
  * receiver's nested graph. Publish that graph while compiling a trailing
  * anonymous block so its parameters participate in ordinary local inference.
  * This complements (rather than replaces) declared Callable context: user

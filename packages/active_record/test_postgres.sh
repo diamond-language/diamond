@@ -56,4 +56,4 @@ export DIAMOND_PG_TEST_CONNINFO="host=127.0.0.1 port=${port} dbname=diamond_ar_t
 
 # The test requires the arel and active_record cuts, so run it from a project that has them installed.
 "$root/tools/install_local_cuts.sh" "$test_project" >/dev/null
-(cd "$test_project" && "$diamond" "$here/test_postgres.di")
+(cd "$test_project" && "$diamond" "$here/test_postgres.d6")

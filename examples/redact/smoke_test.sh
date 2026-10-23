@@ -8,9 +8,9 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" redact.di --rules testdata/rules.txt testdata/app.log | cmp testdata/tagged.expected -
+"$diamond" redact.d6 --rules testdata/rules.txt testdata/app.log | cmp testdata/tagged.expected -
 
-"$diamond" build redact.di -o "$work/redact" > "$work/build.log"
+"$diamond" build redact.d6 -o "$work/redact" > "$work/build.log"
 redact="$work/redact"
 "$redact" --rules testdata/rules.txt testdata/app.log | cmp testdata/tagged.expected -
 "$redact" --mask testdata/app.log | cmp testdata/masked.expected -

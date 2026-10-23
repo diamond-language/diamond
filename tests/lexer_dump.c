@@ -1,9 +1,9 @@
 /* Reference token dumper for the self-hosting Phase 2 differential
  * harness (tests/lexer_diff.sh): reads a file's raw content and prints
  * one line per token via diamond_lexer_next, in the exact format
- * selfhost/lexer_dump.di's Diamond-language lexer also prints, so a
+ * selfhost/lexer_dump.d6's Diamond-language lexer also prints, so a
  * plain `diff` between the two catches any divergence between the C
- * lexer and its Diamond-language port (selfhost/lexer.di). See
+ * lexer and its Diamond-language port (selfhost/lexer.d6). See
  * docs/roadmap.md's self-hosting Phase 2 entry. */
 #include "lexer.h"
 

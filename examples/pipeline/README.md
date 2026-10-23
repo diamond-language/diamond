@@ -9,7 +9,7 @@ this example keeps a multi-stage pipeline flowing while stages are denied,
 run away, or crash.
 
 ```text
-$ diamond pipeline.di ../../build/diamond
+$ diamond pipeline.d6 ../../build/diamond
 == results
   #1 Ada -> ada=Lovelace#29010
   #2 grace -> grace=Hopper#9147
@@ -17,9 +17,9 @@ $ diamond pipeline.di ../../build/diamond
   #6 alan -> alan=Turing#60662
   #8 linus -> linus=Torvalds#16223
 == dead letters
-  #3 spin at normalize: budget (stages/normalize.di: runtime error: resource limit exceeded)
-  #5 beacon at enrich: denied (stages/enrich.di: runtime error: sandbox denies TCPSocket.connect)
-  #7 poison at seal: gave up (stages/seal.di: runtime error: uncaught exception: seal failed on poison=? (attempt 3))
+  #3 spin at normalize: budget (stages/normalize.d6: runtime error: resource limit exceeded)
+  #5 beacon at enrich: denied (stages/enrich.d6: runtime error: sandbox denies TCPSocket.connect)
+  #7 poison at seal: gave up (stages/seal.d6: runtime error: uncaught exception: seal failed on poison=? (attempt 3))
 == restarts
   normalize: 0
   enrich: 0
@@ -29,11 +29,11 @@ $ diamond pipeline.di ../../build/diamond
 ## Usage
 
 ```text
-pipeline.di DIAMOND_BINARY [MANIFEST]
+pipeline.d6 DIAMOND_BINARY [MANIFEST]
 ```
 
 `DIAMOND_BINARY` is the `diamond` used to run each stage (a stage runs as
-`diamond --sandbox stage.di`, in its own process). `MANIFEST` defaults to
+`diamond --sandbox stage.d6`, in its own process). `MANIFEST` defaults to
 `manifest.json`. Exit status is 0 on completion, 64 for a usage error, and 66
 when the manifest can't be read.
 
@@ -76,8 +76,8 @@ items -> [normalize] -> [enrich] -> [seal] -> results
 
 | File | Role |
 | --- | --- |
-| `pipeline.di` | feeds items, drains results, prints the report |
-| `lib/worker.di` | the supervised stage worker: sandboxed run, classify, retry |
-| `stages/*.di` | the untrusted stages (`normalize`, `enrich`, `seal`) |
+| `pipeline.d6` | feeds items, drains results, prints the report |
+| `lib/worker.d6` | the supervised stage worker: sandboxed run, classify, retry |
+| `stages/*.d6` | the untrusted stages (`normalize`, `enrich`, `seal`) |
 | `manifest.json` | stages, grants, budgets, and the input items |
 | `smoke_test.sh` | interpreted and `diamond build` runs against `testdata/` |

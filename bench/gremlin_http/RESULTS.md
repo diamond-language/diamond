@@ -1,7 +1,7 @@
 # gremlin_serve HTTP throughput/latency benchmark
 
 Measures `gremlin_serve`'s `threads: N` parallelism (see
-`packages/gremlin/gremlin.di`) under real concurrent HTTP load — one
+`packages/gremlin/gremlin.d6`) under real concurrent HTTP load — one
 `SO_REUSEPORT` listener per worker thread, each its own independent
 `DiamondVm`/heap. Recorded 2026-08-17 on the same machine as
 `bench/BASELINE.md`.

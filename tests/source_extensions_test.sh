@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset DIAMOND_NO_CACHE
 diamond="$(realpath ./build/diamond)"
 facet="$(realpath ./build/facet)"
 work="$(mktemp -d)"
@@ -55,9 +56,18 @@ printf 'require_cut "example"\ncut_value()\n' > cut_app.d6
 mv example/lib/example.d6 example/lib/example.di
 "$facet" pack example legacy.tar >/dev/null
 "$facet" verify legacy.tar >/dev/null
+printf 'require_cut "unlisted"\n' > example/lib/extra.di
+if "$facet" pack example undeclared.tar > pack.out 2>&1; then
+    echo 'facet skipped the legacy source import audit' >&2
+    exit 1
+fi
+grep -q 'unlisted' pack.out
+rm example/lib/extra.di
 rm cuts/example/lib/example.d6
 tar -xf legacy.tar -C cuts/example
 [[ "$("$diamond" cut_app.d6)" == 18 ]]
+printf 'def cut_value() = 20\n' > cuts/example/example.d6
+[[ "$("$diamond" cut_app.d6)" == 20 ]]
 printf 'def cut_value() = 24\n' > cuts/example/lib/example.d6
 [[ "$("$diamond" cut_app.d6)" == 24 ]]
 

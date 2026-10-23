@@ -7,9 +7,9 @@ without letting it touch anything outside the process itself. Ordinary computati
 runs to completion and can report a result.
 
 ```sh
-diamond --sandbox untrusted.di
+diamond --sandbox untrusted.d6
 # or, equivalently:
-DIAMOND_SANDBOX=1 diamond untrusted.di
+DIAMOND_SANDBOX=1 diamond untrusted.d6
 ```
 
 Any value enables it -- `DIAMOND_SANDBOX=1`, matching `DIAMOND_STRESS_GC`'s own
@@ -51,7 +51,7 @@ ALLOW` (only consulted once `DIAMOND_SANDBOX` is already set) names categories t
 through instead:
 
 ```sh
-DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.di   # filesystem/database/subprocess still denied
+DIAMOND_SANDBOX=1 DIAMOND_SANDBOX_ALLOW=network diamond app.d6   # filesystem/database/subprocess still denied
 ```
 
 Five categories, comma-separated when combining more than one:
@@ -102,9 +102,9 @@ network at all) and combine naturally with `--sandbox` for defense in depth (see
 guarantee against code that rescues them):
 
 ```sh
-DIAMOND_MAX_INSTRUCTIONS=1000000 diamond untrusted.di
-DIAMOND_MAX_WALL_MILLISECONDS=5000 diamond untrusted.di
-DIAMOND_MAX_MEMORY_BYTES=100000000 diamond untrusted.di
+DIAMOND_MAX_INSTRUCTIONS=1000000 diamond untrusted.d6
+DIAMOND_MAX_WALL_MILLISECONDS=5000 diamond untrusted.d6
+DIAMOND_MAX_MEMORY_BYTES=100000000 diamond untrusted.d6
 ```
 
 - `DIAMOND_MAX_INSTRUCTIONS` -- opcode dispatch count.

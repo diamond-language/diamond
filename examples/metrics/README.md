@@ -5,12 +5,12 @@ datagrams (`requests:1|c`, `queue_depth:7|g`, `latency:12.5|ms`); the server
 aggregates them and, on SIGTERM or Ctrl+C, prints what it collected and exits.
 
 ```text
-$ diamond metrics.di serve 8125 &
+$ diamond metrics.d6 serve 8125 &
 listening on udp/8125
-$ diamond metrics.di send 8125 'requests:1|c' 'latency:12.5|ms'
+$ diamond metrics.d6 send 8125 'requests:1|c' 'latency:12.5|ms'
 ok 1
 ok 1
-$ diamond metrics.di report 8125
+$ diamond metrics.d6 report 8125
 counters
   requests           1.00
 timers (ms)
@@ -23,10 +23,10 @@ signal received; final totals:
 ## Usage
 
 ```text
-metrics.di serve PORT             # collect until SIGINT/SIGTERM or a !stop datagram
-metrics.di send PORT LINE...      # each LINE is one datagram; prints each reply
-metrics.di report PORT [--json]   # ask a running server for its aggregates
-metrics.di aggregate FILE         # aggregate a file of metric lines, no network
+metrics.d6 serve PORT             # collect until SIGINT/SIGTERM or a !stop datagram
+metrics.d6 send PORT LINE...      # each LINE is one datagram; prints each reply
+metrics.d6 report PORT [--json]   # ask a running server for its aggregates
+metrics.d6 aggregate FILE         # aggregate a file of metric lines, no network
 ```
 
 Metric types: `|c` counter (summed; `|c|@0.1` scales a 10%-sampled counter

@@ -9,21 +9,21 @@ normally, so `DIAMOND_TRACE_GC=1`'s ordinary print-at-exit path
 (`src/run_source.c`) reports direct collection count/total-time evidence
 with none of that confound.
 
-- **`session_churn.di`**: the same allocation shape as `bench/burn_in/
-  server.di`'s per-worker session cache -- `build_payload`/`touch_session`
+- **`session_churn.d6`**: the same allocation shape as `bench/burn_in/
+  server.d6`'s per-worker session cache -- `build_payload`/`touch_session`
   are copied verbatim from there. A large, mostly-stable `sessions` Hash
   (`LIVE_SET_SIZE` distinct keys, cycling) gets one entry wholesale-replaced
   per iteration, `ITERATIONS` times total.
   ```
-  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.di LIVE_SET_SIZE ITERATIONS
+  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.d6 LIVE_SET_SIZE ITERATIONS
   ```
-- **`pure_churn.di`**: the control -- identical per-iteration
+- **`pure_churn.d6`**: the control -- identical per-iteration
   `build_payload` allocation, but nothing is kept alive across iterations.
   Isolates whether GC cost is driven by *live* data size or just raw
   allocation volume, by holding the latter comparable while zeroing the
   live set.
   ```
-  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/pure_churn.di ITERATIONS
+  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/pure_churn.d6 ITERATIONS
   ```
 
 ## Results: pre-generational baseline
@@ -34,7 +34,7 @@ predates the generational collector (see "Results: generational GC + card
 marking" below for the current numbers) -- kept as the baseline the
 generational work was measured against.
 
-**Live-set-size sweep** (`session_churn.di`, churn held fixed at 200,000
+**Live-set-size sweep** (`session_churn.d6`, churn held fixed at 200,000
 iterations, only the size of the persistent session cache varies):
 
 | live set | collections | GC time | wall time | GC share | cost/collection |
@@ -45,7 +45,7 @@ iterations, only the size of the persistent session cache varies):
 |   20,000 |          27 |   2.54s |     7.35s |    34.6% |            94.2ms |
 |   40,000 |          23 |   2.36s |     7.59s |    31.1% |           102.6ms |
 
-**Churn-volume sweep** (`session_churn.di`, live set held fixed at 20,000,
+**Churn-volume sweep** (`session_churn.d6`, live set held fixed at 20,000,
 only the total iteration count varies):
 
 | iterations | collections | GC time | wall time | GC share |
@@ -55,7 +55,7 @@ only the total iteration count varies):
 |    200,000 |          27 |   2.57s |     7.36s |    34.9% |
 |    400,000 |          37 |   5.66s |    15.09s |    37.5% |
 
-**Control** (`pure_churn.di`, no live set at all):
+**Control** (`pure_churn.d6`, no live set at all):
 
 | iterations | collections | GC time | wall time | GC share |
 |-----------:|------------:|--------:|----------:|---------:|
@@ -71,7 +71,7 @@ Same machine, same debug build shape, now with the generational collector
 (`minor_gc_threshold_bytes` = 1MiB). `DIAMOND_TRACE_GC=1` now reports major
 and minor collections separately.
 
-**Live-set-size sweep** (`session_churn.di`, churn held fixed at 200,000
+**Live-set-size sweep** (`session_churn.d6`, churn held fixed at 200,000
 iterations):
 
 | live set | major coll. | major GC time | minor coll. | minor GC time | total GC time | wall time | GC share |
@@ -92,7 +92,7 @@ them relative to the total collection count, so the *typical* pause a
 running program experiences is now bounded regardless of live-set size --
 the actual goal this work targeted.
 
-**Churn-volume sweep** (`session_churn.di`, live set held fixed at 20,000):
+**Churn-volume sweep** (`session_churn.d6`, live set held fixed at 20,000):
 
 | iterations | major coll. | major GC time | minor coll. | minor GC time | total GC time | wall time | GC share |
 |-----------:|------------:|---------------:|------------:|---------------:|---------------:|----------:|---------:|
@@ -101,7 +101,7 @@ the actual goal this work targeted.
 |    200,000 |          27 |          2.05s |       3,446 |           0.40s |          2.45s |    12.52s |    19.6% |
 |    400,000 |          37 |          4.13s |       6,896 |           0.81s |          4.94s |    24.46s |    20.2% |
 
-**Control** (`pure_churn.di`, no live set at all -- nothing survives to be
+**Control** (`pure_churn.d6`, no live set at all -- nothing survives to be
 promoted, so this only ever triggers major collections, same as before the
 generational change):
 
@@ -160,12 +160,12 @@ different reasons:
    burn_in`'s own live numbers never showing catastrophic RSS growth,
    just noisy, hard-to-interpret variance.
 
-3. **The `pure_churn.di` control confirms the live set is what's expensive,
+3. **The `pure_churn.d6` control confirms the live set is what's expensive,
    not allocation volume in general.** At comparable iteration counts,
    pure churn with *no* persistent live set holds a flat ~12-13% GC share
    -- collections are far more frequent (an order of magnitude more) but
    each one is nearly free, since there's almost nothing live to mark or
-   walk past. `session_churn.di`'s 3x-higher GC share, and its individual
+   walk past. `session_churn.d6`'s 3x-higher GC share, and its individual
    collections being tens of milliseconds instead of microseconds, is
    attributable specifically to carrying a large, mostly-unchanging live
    set through every single collection cycle -- exactly what a
@@ -176,11 +176,11 @@ different reasons:
 ```
 make debug
 for size in 1000 5000 10000 20000 40000; do
-  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.di "$size" 200000
+  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.d6 "$size" 200000
 done
 for iters in 50000 100000 200000 400000; do
-  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.di 20000 "$iters"
-  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/pure_churn.di "$iters"
+  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/session_churn.d6 20000 "$iters"
+  DIAMOND_TRACE_GC=1 ./build/diamond bench/gc_churn/pure_churn.d6 "$iters"
 done
 ```
 

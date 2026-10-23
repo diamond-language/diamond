@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sustained-load burn-in for gremlin_serve, multi-threaded (server.di runs
+# Sustained-load burn-in for gremlin_serve, multi-threaded (server.d6 runs
 # threads: 4). Establishes the baseline docs/roadmap.md's "Generational or
 # incremental GC" entry calls for before any collector redesign: does RSS
 # and tail latency stay flat under a long, steady request churn, or do
@@ -53,7 +53,7 @@ rss_kb() {
 }
 
 server_log="$(mktemp)"
-"$diamond" "bench/burn_in/server.di" >"$server_log" 2>&1 &
+"$diamond" "bench/burn_in/server.d6" >"$server_log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
 

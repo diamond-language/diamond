@@ -1,10 +1,10 @@
 # diamond_run_source's own auto-dispatch (src/run_source.c) caches
 # compiled bytecode next to a script's real on-disk path by default (see
 # docs/caching.md) -- every test-* target here eventually runs the real
-# `diamond` binary against tests/cases/*.di (directly from a shell
+# `diamond` binary against tests/cases/*.d6 (directly from a shell
 # script, not just through build/run_cases's own diamond_run_source_
 # with_template, which never touches the cache at all regardless). A
-# .dic file left behind in tests/cases/ from one test run could silently
+# .d6c file left behind in tests/cases/ from one test run could silently
 # serve stale bytecode to a *later* run whose compiler changed in some
 # way the cache's own build fingerprint doesn't happen to catch --
 # exactly the kind of regression this whole test suite exists to catch,
@@ -102,7 +102,7 @@ CFLAGS_COMMON := -std=c23 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
 # by default, for a debug build any more than a release one. That
 # distinction matters because -native is not just "some missed
 # vectorization on newer CPUs" the way a bytecode VM's non-numeric hot
-# path might suggest -- measured directly (bench/int_arithmetic.di, this
+# path might suggest -- measured directly (bench/int_arithmetic.d6, this
 # repo's own bignum.c, which a plain `-march=x86-64` baseline denies
 # BMI2/ADX): ~3.9s/iter generic vs ~0.5s/iter native, a ~7x difference,
 # not a rounding error. Multi-precision arithmetic leans on BMI2
@@ -308,12 +308,12 @@ $(REGINOLD_LIB):
 $(TARGET): $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(REGINOLD_LIB)
 	$(CC) $(OBJECTS) $(REPL_COMPLETION_OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
 
-# The bytecode cache (docs/caching.md) must not reuse a .dic compiled by a
+# The bytecode cache (docs/caching.md) must not reuse a .d6c compiled by a
 # different compiler, even when the file format is unchanged. A checksum of
 # the compiler's sources and prelude goes into the cache fingerprint, and
 # compiled_prelude.o rebuilds whenever any of them change. cksum is POSIX,
 # so this works on every platform CI covers.
-PRELUDE_SOURCES := lib/core.di $(wildcard lib/core/*.di)
+PRELUDE_SOURCES := lib/core.d6 $(wildcard lib/core/*.d6)
 DIAMOND_BUILD_ID := $(shell cat src/*.c src/*.h $(PRELUDE_SOURCES) | cksum | cut -d' ' -f1)
 $(BUILD_DIR)/compiled_prelude.o: CPPFLAGS += -DDIAMOND_BUILD_ID=$(DIAMOND_BUILD_ID)u
 $(BUILD_DIR)/compiled_prelude.o: $(SOURCES) $(wildcard src/*.h) $(PRELUDE_SOURCES)
@@ -356,7 +356,7 @@ API_SOURCES := $(filter-out src/main.c src/repl.c,$(SOURCES))
 # Build-time embedded prelude snapshot (docs/roadmap.md's "Make programs
 # start faster"): src/compiled_prelude_data.c's own #embed points at
 # this generated .bin, not a checked-in source file, so (unlike
-# src/prelude.c's lib/*.di #embeds) nothing here is tracked by a `.c`
+# src/prelude.c's lib/*.d6 #embeds) nothing here is tracked by a `.c`
 # file's own mtime -- every target below that compiles
 # src/compiled_prelude_data.c as one of $(API_SOURCES) needs
 # $(PRELUDE_BIN) listed as an explicit (order-only) prerequisite of its
@@ -392,7 +392,7 @@ $(DBG_OBJ_DIR)/%.o: src/%.c
 # Same reason as $(BUILD_DIR)/compiled_prelude_data.o's own line below.
 $(DBG_OBJ_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
 
-# The prelude sources too (lib/core.di and lib/core/*.di): src/prelude.c
+# The prelude sources too (lib/core.d6 and lib/core/*.d6): src/prelude.c
 # #embeds them, and this generator compiles the sources directly, so no .d
 # file records that dependency. Without it, editing the prelude left
 # compiled_prelude.bin -- the prelude bytecode every diamond binary
@@ -415,7 +415,7 @@ $(BUILD_DIR)/compiled_prelude_data.o: $(PRELUDE_BIN)
 # active, same as $(TARGET) itself -- tests/run.sh's own file-based case
 # loop runs whatever `make test`/`test-release`/`test-sanitize` just
 # built, and needs run_cases to match (see docs/roadmap.md for why this
-# exists: running every tests/cases/*.di case in this one process
+# exists: running every tests/cases/*.d6 case in this one process
 # instead of tests/run.sh spawning a fresh `diamond` per case). Placed
 # here, after $(PRELUDE_BIN)'s own definition above, not up by
 # $(TARGET)'s own rule where it used to sit -- a prerequisite list
@@ -628,11 +628,11 @@ test-registry-package: $(TARGET)
 
 test-registry-http: $(TARGET) $(BUILD_DIR)/facet
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/backup_download_test.sh
-	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond $(CURDIR)/$(BUILD_DIR)/diamond packages/registry/http_test.di
+	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond $(CURDIR)/$(BUILD_DIR)/diamond packages/registry/http_test.d6
 
 # Opt-in staging gate: requires nginx and local sockets; run in a QEMU guest.
 test-registry-nginx: $(TARGET) $(BUILD_DIR)/facet
-	$(BUILD_DIR)/diamond packages/registry/nginx_test.di
+	$(BUILD_DIR)/diamond packages/registry/nginx_test.d6
 
 # The reviewed launch inventory against freshly built archives. A changed package needs its version bumped and its inventory entry
 # regenerated (docs/registry-release-plan.md); this is the part of test-registry-seed that needs no nginx.
@@ -641,7 +641,7 @@ test-registry-inventory: $(TARGET) $(BUILD_DIR)/facet
 
 test-registry-seed: $(TARGET) $(BUILD_DIR)/facet
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/registry/seed_test.sh
-	REGISTRY_REHEARSE_SEED=1 $(BUILD_DIR)/diamond packages/registry/nginx_test.di
+	REGISTRY_REHEARSE_SEED=1 $(BUILD_DIR)/diamond packages/registry/nginx_test.d6
 
 # The same SQL against live MariaDB, MySQL and PostgreSQL servers in throwaway containers (podman, or docker through a `podman` on
 # PATH; each script skips when there is none). CI runs it in its own job; the default `make test` stays hermetic.
@@ -695,13 +695,13 @@ $(BUILD_DIR)/formatting_test: tests/formatting_test.c lsp/formatting.c lsp/forma
 # Spacing, blank-line and range rules, plus whitespace-only and idempotence
 # invariants over every Diamond source in the tree.
 test-formatting: $(BUILD_DIR)/formatting_test
-	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
+	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.d6' | sort)
 
 test-lsp: $(BUILD_DIR)/diamond-lsp $(BUILD_DIR)/receiver_test $(BUILD_DIR)/json_test $(BUILD_DIR)/position_test $(BUILD_DIR)/analysis_cache_test $(BUILD_DIR)/formatting_test
 	$(BUILD_DIR)/receiver_test
 	$(BUILD_DIR)/json_test
 	$(BUILD_DIR)/position_test
-	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.di' | sort)
+	$(BUILD_DIR)/formatting_test $$(find tests/cases examples packages lib -name '*.d6' | sort)
 	bash tests/analysis_cache_test.sh
 	bash tests/v3_editor_test.sh
 	bash tests/lsp_test.sh

@@ -6,7 +6,7 @@ processes, each under `DIAMOND_MAX_WALL_MILLISECONDS=300`, and reports how each
 one ended.
 
 ```text
-$ diamond host.di diamond
+$ diamond host.d6 diamond
 quick
   finishes inside the budget; nothing trips
   exited normally
@@ -36,9 +36,9 @@ rescue then block
    rescuable `ResourceLimitError` after about 300 ms instead of hanging. The
    same holds for `Channel.select`, `Channel.select_send`, and `Channel#send` on a full
    channel.
-2. **Rescuing is how you finish cleanly.** In `guests/cleanup.di` the error is
+2. **Rescuing is how you finish cleanly.** In `guests/cleanup.d6` the error is
    rescued, `ensure` runs, and the process exits with status 0.
-3. **The budget fires once.** `guests/rescue_then_block.di` rescues the error
+3. **The budget fires once.** `guests/rescue_then_block.d6` rescues the error
    and then blocks again. The wall-clock budget is off after it fires, but a
    grace allowance of one second (counted from the deadline, not from the
    rescue) is all the program gets. After that the process is stopped with an

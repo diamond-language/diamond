@@ -26,16 +26,16 @@ check_output() {
     grep -q '^  resource_limit .*resource limit exceeded$' "$out"
 }
 
-"$diamond" host.di "$diamond" > "$work/interpreted.txt"
+"$diamond" host.d6 "$diamond" > "$work/interpreted.txt"
 check_output "$work/interpreted.txt"
 
-"$diamond" build host.di -o "$work/host" > "$work/build.log"
+"$diamond" build host.d6 -o "$work/host" > "$work/build.log"
 "$work/host" "$diamond" > "$work/compiled.txt"
 check_output "$work/compiled.txt"
 
 # The host itself must exit 0 -- every plugin above is either meant to
 # succeed or meant to be caught and classified, none of them "crashed"
 # (the one status that would make the host report failure).
-"$diamond" host.di "$diamond" > /dev/null
+"$diamond" host.d6 "$diamond" > /dev/null
 
 echo "plugins smoke test passed"

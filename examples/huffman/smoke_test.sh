@@ -9,12 +9,12 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" huffman.di --encode testdata/sample.txt "$work/sample.huf" > /dev/null
+"$diamond" huffman.d6 --encode testdata/sample.txt "$work/sample.huf" > /dev/null
 cmp testdata/sample.huf.expected "$work/sample.huf"
-"$diamond" huffman.di --decode "$work/sample.huf" "$work/sample.out" > /dev/null
+"$diamond" huffman.d6 --decode "$work/sample.huf" "$work/sample.out" > /dev/null
 cmp testdata/sample.txt "$work/sample.out"
 
-"$diamond" build huffman.di -o "$work/huffman" > "$work/build.log"
+"$diamond" build huffman.d6 -o "$work/huffman" > "$work/build.log"
 huffman="$work/huffman"
 "$huffman" --encode testdata/sample.txt "$work/sample2.huf" > /dev/null
 cmp testdata/sample.huf.expected "$work/sample2.huf"

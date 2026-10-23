@@ -8,7 +8,7 @@
 
 /* Computes a textDocument/documentSymbol result: every top-level
  * function and class actually declared *in this document* -- not
- * lib/core.di's prelude, and not anything pulled in through `require`
+ * lib/core.d6's prelude, and not anything pulled in through `require`
  * (an outline view showing symbols that aren't actually in the file
  * would be more confusing than useful; require'd symbols are each
  * their own document's own outline instead, one didOpen/didChange

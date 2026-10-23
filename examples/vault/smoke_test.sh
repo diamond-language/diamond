@@ -11,11 +11,11 @@ trap 'rm -rf "$work"' EXIT
 # Cheap settings so the test is fast; real use keeps the defaults.
 export VAULT_PASSWORD=hunter2 VAULT_BCRYPT_COST=4 VAULT_KDF_ROUNDS=1000
 
-"$diamond" build vault.di -o "$work/vault" > "$work/build.log"
+"$diamond" build vault.d6 -o "$work/vault" > "$work/build.log"
 # run_vault NAME ARGS...: runs the interpreted or built vault.
 run_vault() {
   local how="$1"; shift
-  if [[ "$how" == interpreted ]]; then "$diamond" vault.di "$@"; else "$work/vault" "$@"; fi
+  if [[ "$how" == interpreted ]]; then "$diamond" vault.d6 "$@"; else "$work/vault" "$@"; fi
 }
 check() {
   local how="$1" file="$work/$1.vault"

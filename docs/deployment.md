@@ -1,13 +1,13 @@
 # Deployment
 
-`diamond build` compiles a `.di` program into a standalone native executable:
-no `diamond` interpreter, no `.di` source file, and no recompilation step at
+`diamond build` compiles a `.d6` program into a standalone native executable:
+no `diamond` interpreter, no `.d6` source file, and no recompilation step at
 run time. It exists for shipping a finished Diamond program to a machine
 that doesn't have (and shouldn't need) a Diamond checkout, alongside the
-ordinary `diamond program.di` interpreter path.
+ordinary `diamond program.d6` interpreter path.
 
 ```sh
-./build/diamond build app.di -o app
+./build/diamond build app.d6 -o app
 ./app arg1 arg2
 ```
 
@@ -15,7 +15,7 @@ You can also invoke the Diamond binary from the application directory:
 
 ```sh
 cd ../skindicate.dia
-../diamond/build/diamond build app.di
+../diamond/build/diamond build app.d6
 ```
 
 ## CLI contract
@@ -24,12 +24,12 @@ cd ../skindicate.dia
 diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
 ```
 
-- `SOURCE` is compiled exactly the way `diamond program.di` compiles it --
+- `SOURCE` is compiled exactly the way `diamond program.d6` compiles it --
   identical `require` resolution, identical embedded-prelude-template fast
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.
 - `-o OUTPUT` names the produced binary. Defaults to `SOURCE`'s own basename
-  with a trailing `.di` extension stripped (`app.di` -> `app`; no extension
+  with a trailing `.d6` extension stripped (`app.d6` -> `app`; no extension
   at all if `SOURCE` has none).
 - `--cc=COMPILER` overrides the C compiler used to link the binary (`gcc`,
   `clang`, a full path, ...). Defaults to the compiler recorded in the
@@ -42,7 +42,7 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
   default one. It needs an installed kit built with `AOT_LTO=1`; without one it exits 74
   and says how to build it. It does not combine with the checkout's `make` path.
 - A compile error (a real syntax/type/name error in `SOURCE` or anything it
-  `require`s) prints the same diagnostic `diamond program.di` would and
+  `require`s) prints the same diagnostic `diamond program.d6` would and
   exits 65 -- the C compiler and `make` are never invoked in this case.
 - A `make`/link failure (a missing toolchain or system library) exits 74.
 - On success, prints `diamond: built 'OUTPUT'` and exits 0.
@@ -118,9 +118,9 @@ signal may not emit that summary. The JIT remains off when `DIAMOND_JIT` is
 unset, including for standalone binaries.
 
 At the language level, the produced binary behaves exactly like
-`diamond program.di`: it sets `ARGV` from its own command-line arguments and
+`diamond program.d6`: it sets `ARGV` from its own command-line arguments and
 prints its top-level result the same way (`diamond_value_print`, the same
-function `diamond program.di` itself uses -- e.g. a program whose last
+function `diamond program.d6` itself uses -- e.g. a program whose last
 expression is a bare string prints that string, with no explicit `puts`
 needed).
 
@@ -147,7 +147,7 @@ See [docs/roadmap.md](roadmap.md) for what's explicitly deferred here
 
 ## Cross-compilation
 
-`diamond build app.di --target=aarch64-linux-gnu` produces a binary for another
+`diamond build app.d6 --target=aarch64-linux-gnu` produces a binary for another
 platform. The compiled program is portable between targets with the same word size
 and byte order (the program image records both and a mismatched image is refused when
 it loads); what changes is the runtime, which must be compiled and linked for the
@@ -158,7 +158,7 @@ and `libcrypt`. A *cross kit* holds that runtime, built once per target:
 make release
 make aot-kit-cross TARGET_TRIPLE=aarch64-linux-gnu SYSROOT=/opt/sysroots/aarch64 \
      CROSS_FLAGS_EXTRA='--gcc-install-dir=/opt/sysroots/aarch64/usr/lib/gcc/aarch64-redhat-linux/16'
-./build/diamond build app.di --target=aarch64-linux-gnu
+./build/diamond build app.d6 --target=aarch64-linux-gnu
 ```
 
 - A cross build needs a C23 compiler that targets the triple (clang 19+ with
@@ -191,7 +191,7 @@ architecture, including a `FROM scratch` container:
 make aot-kit-cross TARGET_TRIPLE=x86_64-alpine-linux-musl SYSROOT=/opt/sysroots/alpine \
      NO_MYSQL=1 STATIC=1 \
      CROSS_FLAGS_EXTRA='--gcc-install-dir=/opt/sysroots/alpine/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0 -rtlib=libgcc --unwindlib=libgcc'
-./build/diamond build app.di --target=x86_64-alpine-linux-musl
+./build/diamond build app.d6 --target=x86_64-alpine-linux-musl
 ```
 
 - The sysroot needs static libraries: `libc.a`, `libssl.a`/`libcrypto.a`, `libsqlite3.a`,
@@ -272,7 +272,7 @@ release` instead: `x86-64-v3` is a named, standardized ISA tier (AVX2/BMI2/
 FMA/LZCNT/MOVBE), not one CPU's exact feature set -- supported by any real
 x86_64 machine from roughly 2013 (Intel Haswell) or 2015 (AMD Excavator)
 onward, recovering the same speedup `-march=native` would give a local
-build (confirmed directly: `bench/int_arithmetic.di`, ~3.9s/iter at the
+build (confirmed directly: `bench/int_arithmetic.d6`, ~3.9s/iter at the
 portable `x86-64` baseline vs ~0.5s/iter at both `native` and `x86-64-v3` --
 multi-precision arithmetic leans heavily on BMI2/ADX) without tying the
 binary to whichever machine happened to compile it. Any cross-build script

@@ -16,7 +16,7 @@ mkdir -p data/blobs data/staging
 export REGISTRY_ROOT="$PWD/data"
 export REGISTRY_FACET="$(cd ../.. && pwd)/build/facet"
 export REGISTRY_PORT=18120
-../../build/diamond app.di
+../../build/diamond app.d6
 ```
 
 Schema migration runs at startup. `REGISTRY_ROOT` must point to private storage
@@ -109,10 +109,10 @@ it is an operator-supplied label, not an authentication mechanism.
 ```sh
 export REGISTRY_OPERATOR="operator@example.com"
 umask 077
-../../build/diamond credentials.di issue alice 3600 'publish:greeter,manage:greeter' 'initial access' > credential.json
-../../build/diamond credentials.di list
-../../build/diamond credentials.di rotate 1 3600 'routine rotation' > replacement.json
-../../build/diamond credentials.di revoke 2 'access removed'
+../../build/diamond credentials.d6 issue alice 3600 'publish:greeter,manage:greeter' 'initial access' > credential.json
+../../build/diamond credentials.d6 list
+../../build/diamond credentials.d6 rotate 1 3600 'routine rotation' > replacement.json
+../../build/diamond credentials.d6 revoke 2 'access removed'
 ```
 
 Use the actual IDs returned by your commands. Issuance and rotation print the
@@ -152,12 +152,12 @@ fields and authorization rules.
 
 ## Backup and recovery
 
-Use the Diamond tool (`backup.di`, run with the registry's own `diamond`) with trusted
+Use the Diamond tool (`backup.d6`, run with the registry's own `diamond`) with trusted
 local source and destination parents. Run as the storage owner. Both commands require a **new destination**:
 
 ```sh
-diamond backup.di backup /var/lib/diamond-registry /srv/backups/registry-20260923
-diamond backup.di restore /srv/backups/registry-20260923 /srv/recovery/registry
+diamond backup.d6 backup /var/lib/diamond-registry /srv/backups/registry-20260923
+diamond backup.d6 restore /srv/backups/registry-20260923 /srv/recovery/registry
 ```
 
 Backup may run while the service publishes. `VACUUM INTO` captures a
@@ -225,8 +225,8 @@ and faded out at the bottom. Search filters the loaded releases; load more
 to search additional pages. The catalog uses text rendering for metadata and a
 same-origin script policy. It contains no publishing credential or administration UI.
 
-Keep `catalog.di`, `catalog.html`, `catalog.js`, `catalog.css`, `cut.html`, and
-`cut.js`, and `markdown.js` beside `app.di` when deploying. `/cuts/<name>` is a cut's show page
+Keep `catalog.d6`, `catalog.html`, `catalog.js`, `catalog.css`, `cut.html`, and
+`cut.js`, and `markdown.js` beside `app.d6` when deploying. `/cuts/<name>` is a cut's show page
 (README, install command, and version history), backed by `catalog/<name>.json`.
 `REGISTRY_BASE` prefixes the catalog and its assets as well as the API. Install
 commands use the catalog's origin/base; the public quickstart uses cuts.dilang.tech.

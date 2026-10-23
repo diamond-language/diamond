@@ -1612,7 +1612,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * patch-factory idiom (vm.c) relies on such a closure carrying the
      * same owner_class/self-register treatment a genuine instance method
      * gets, even though it's just a local closure value -- confirmed by
-     * legacy_0093.di/legacy_0094.di/legacy_0095.di, which construct
+     * legacy_0093.d6/legacy_0094.d6/legacy_0095.d6, which construct
      * exactly this shape and require it to work. A closure nested any
      * deeper, or inside an ordinary instance method, or inside a plain
      * top-level function, gets neither: it's an ordinary closure, no

@@ -599,7 +599,7 @@ end
 
 `1..5` (inclusive of `5`) and `1...5` (exclusive of `5`) both desugar
 directly at parse time into `Range.new(1, 5, false)` /
-`Range.new(1, 5, true)` — `Range` is a plain class in `lib/core.di`, the
+`Range.new(1, 5, true)` — `Range` is a plain class in `lib/core.d6`, the
 same "not a native object" precedent `StringBuilder` already establishes,
 not a new VM value kind. No new bytecode opcode exists for it either:
 the desugaring reuses the exact same `NEW` instruction sequence

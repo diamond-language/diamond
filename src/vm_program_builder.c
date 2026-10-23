@@ -1017,7 +1017,7 @@ static DiamondVmStatus program_builder_set_class_method_visibility(DiamondVm *vm
  * DiamondMethod struct verbatim under a new name -- same
  * function_index/arity/required_arity/is_private, just re-registered
  * so a second name can call the identical implementation. The
- * caller (selfhost/parser.di) is expected to have already appended
+ * caller (selfhost/parser.d6) is expected to have already appended
  * "=" to either name string when aliasing a writer method, the same
  * way declare_method's own name argument already does. */
 static DiamondVmStatus program_builder_alias_class_method(DiamondVm *vm, DiamondProgram *built,
@@ -1178,7 +1178,7 @@ static DiamondVmStatus program_builder_expand_source(DiamondVm *vm, DiamondProgr
         (const DiamondString *)registers[(size_t)base+1].as.object;
     /* Resolving a `require` reads files from disk, and the expanded text
      * is handed back to the caller: without this check a sandboxed
-     * script could read any file whose name ends in `.di` (any absolute
+     * script could read any file whose name ends in `.d6` (any absolute
      * or `../` path, or a symlink named so), and learn which paths exist
      * from the error text, while File.open and File.read are denied.
      * The check is the same as VM_SANDBOX_GUARD's, which only works

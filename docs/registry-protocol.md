@@ -62,7 +62,7 @@ returned by the API. A credential has scopes such as:
 
 Read endpoints are public by default. Token creation, rotation, and revocation
 are local operator actions in v1, implemented by
-`applications/registry/credentials.di`. Tokens are random 256-bit secrets with
+`applications/registry/credentials.d6`. Tokens are random 256-bit secrets with
 required expiry; only SHA-256 fingerprints are stored. Rotation revokes the
 old credential atomically with issuance of its replacement. Servers reject credentials containing control
 characters and record credential identity, scopes, and expiry in audit events,

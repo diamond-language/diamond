@@ -1,0 +1,152 @@
+# Exercises real HTTP and persistence; every wait and child lifetime is bounded.
+#
+#   diamond smoke_test.d6 PROGRAM...    (PROGRAM is `diamond service.d6` or a built binary)
+#
+# The server is started as PROGRAM PORT DATABASE_PATH.
+require "../../tests/harness"
+
+command = ARGV
+
+# The service under test and the calls the scenarios share.
+class Service
+  def initialize(command: Array, port: Int, database: String)
+    @command = command
+    @port = port
+    @database = database
+    @server = nil
+  end
+
+  def server() = @server
+  def port() = @port
+
+  def request(path: String, data)
+    body = data == nil ? nil : JSON.stringify(data)
+    answer = Harness.http(@port, data == nil ? "GET" : "POST", path, body)
+    [answer[0], JSON.parse(answer[1])]
+  end
+
+  def start()
+    @server = Harness::Child.new(@command + [@port.to_s(), @database], {"DIAMOND_NO_CACHE": "1"})
+    Harness.wait_for(12000, "server never became ready") do
+      @server.pump(10)
+      unless @server.running?()
+        raise "server exited during startup:\n#{@server.stdout_text()}#{@server.stderr_text()}"
+      end
+      ready = true
+      begin
+        ready = self.request("/health", nil)[0] == 200
+      rescue error: IOError
+        ready = false
+      end
+      ready
+    end
+  end
+
+  def stop()
+    @server.terminate()
+    code = @server.wait_exit(5000)
+    raise "unclean shutdown (exit #{code.inspect()})" unless code == 0
+  end
+
+  def enqueue(args: Hash)
+    answer = self.request("/jobs", args)
+    raise "unexpected enqueue response #{answer}" unless answer[0] == 202
+    answer[1]["id"]
+  end
+
+  def state(job: Int)
+    answer = self.request("/jobs/#{job}", nil)
+    raise "unexpected state response #{answer}" unless answer[0] == 200
+    answer[1]
+  end
+
+  def cancel(job: Int) = self.request("/jobs/#{job}/cancel", {})[1]
+
+  def await_state(job: Int, expected: String)
+    found = nil
+    Harness.wait_for(12000, "job #{job} did not reach #{expected}") do
+      current = self.state(job)
+      found = current if current["status"] == expected
+      found != nil
+    end
+    found
+  end
+
+  def stored(job: Int)
+    db = SQLite3.open(@database)
+    begin
+      row = db.query("SELECT status, attempts FROM jobs WHERE id = ?", [job])[0]
+      [row["status"], row["attempts"]]
+    ensure
+      db.close()
+    end
+  end
+end
+
+def check(condition, message)
+  raise message unless condition
+end
+
+work = Process.run(["mktemp", "-d"]).stdout().strip()
+service = Service.new(command, Harness.reserve_port(), "#{work}/jobs.sqlite")
+begin
+  service.start()
+  check(service.request("/jobs", {"work_ms": -1})[0] == 400, "negative work accepted")
+  check(service.request("/jobs", [1, 2])[0] == 400, "non-object body accepted")
+  check(service.request("/jobs/999999", nil)[0] == 404, "unknown job found")
+  normal = service.enqueue({"work_ms": 20})
+  check(service.await_state(normal, "succeeded")["result"] == 20, "wrong result")
+  check(service.cancel(normal)["status"] == "succeeded", "finished job cancelled")
+  timed = service.enqueue({"work_ms": 500, "timeout_ms": 30})
+  check(service.await_state(timed, "timed_out")["attempts"] == 0, "timeout counted as an attempt")
+  immediate = service.enqueue({"work_ms": 0, "timeout_ms": 0})
+  service.await_state(immediate, "timed_out")
+  retried = service.enqueue({"work_ms": 0, "fail_until": 1, "max_attempts": 2})
+  check(service.await_state(retried, "succeeded")["attempts"] == 1, "retry did not happen")
+  failed = service.enqueue({"work_ms": 0, "fail_until": 3, "max_attempts": 1})
+  check(service.await_state(failed, "failed")["attempts"] == 1, "wrong failed attempts")
+  running = service.enqueue({"work_ms": 60000, "timeout_ms": 60000})
+  service.await_state(running, "running")
+  queued = service.enqueue({"work_ms": 0})
+  check(service.cancel(queued)["status"] == "cancelled", "queued job not cancelled")
+  service.cancel(running)
+  service.await_state(running, "cancelled")
+  interrupted = service.enqueue({"work_ms": 5000, "timeout_ms": 15000})
+  service.await_state(interrupted, "running")
+
+  # An incomplete request must drain/expire without bypassing the application's cancellation
+  # and database cleanup.
+  stalled = TCPSocket.connect("127.0.0.1", service.port(), {"connect_timeout_ms": 2000, "read_timeout_ms": 5000})
+  silent = TCPSocket.connect("127.0.0.1", service.port(), {"connect_timeout_ms": 2000, "read_timeout_ms": 5000})
+  stalled.write("GET /health HTTP/1.1\r\nHost: localhost\r\n")
+  stalled.flush()
+  Harness.sleep_ms(50)
+  service.stop()
+  check(stalled.read(1) == "", "shutdown left a connection open")
+  check(silent.read(1) == "", "shutdown left a silent client open")
+  stalled.close()
+  silent.close()
+  check(service.stored(interrupted) == ["pending", 0], "interrupted job state #{service.stored(interrupted)}")
+
+  service.start()
+  service.await_state(interrupted, "succeeded")
+  check(service.state(queued)["status"] == "cancelled", "queued cancellation was lost")
+  abandoned = service.enqueue({"work_ms": 1500, "timeout_ms": 5000})
+  service.await_state(abandoned, "running")
+  service.server().kill()
+  service.server().wait()
+  check(service.stored(abandoned)[0] == "running", "abandoned job was not left running")
+  service.start()
+  service.await_state(abandoned, "succeeded")
+  service.stop()
+  puts("job service lifecycle tests passed")
+rescue error: StandardError
+  server = service.server()
+  puts(server.stdout_text() + server.stderr_text()) if server != nil
+  raise error
+ensure
+  server = service.server()
+  server.finish() if server != nil
+  Process.run(["rm", "-rf", work])
+end
+exit(0)

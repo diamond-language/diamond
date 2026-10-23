@@ -11,11 +11,11 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build exact.di -o "$work/exact" > "$work/build.log"
+"$diamond" build exact.d6 -o "$work/exact" > "$work/build.log"
 
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 
-for exact in "$diamond exact.di" "$work/exact"; do
+for exact in "$diamond exact.d6" "$work/exact"; do
   $exact solve testdata/system.txt | cmp testdata/system.expected -
   $exact inverse testdata/hilbert.txt | cmp testdata/hilbert_inverse.expected -
   [[ "$($exact det testdata/hilbert.txt)" == "1/266716800000" ]]

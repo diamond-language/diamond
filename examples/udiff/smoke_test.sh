@@ -10,10 +10,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build udiff.di -o "$work/udiff" > "$work/build.log"
+"$diamond" build udiff.d6 -o "$work/udiff" > "$work/build.log"
 
 # Everything below runs against the interpreter first, then the binary.
-for udiff in "$diamond udiff.di" "$work/udiff"; do
+for udiff in "$diamond udiff.d6" "$work/udiff"; do
     # Exit status 1 means "they differ", so run, check the status, then compare.
     differs() { # differs EXPECTED_FILE udiff-args...
         local expected="$1"; shift
@@ -78,7 +78,7 @@ done
 if command -v diff > /dev/null && diff --version 2> /dev/null | head -1 | grep -qi "gnu\|diffutils"; then
     for context in 0 1 3 8; do
         diff -U "$context" testdata/old.txt testdata/new.txt | tail -n +3 > "$work/gnu.body" || true
-        $diamond udiff.di -U "$context" testdata/old.txt testdata/new.txt > "$work/mine" || true
+        $diamond udiff.d6 -U "$context" testdata/old.txt testdata/new.txt > "$work/mine" || true
         tail -n +3 "$work/mine" | cmp "$work/gnu.body" -
     done
 fi

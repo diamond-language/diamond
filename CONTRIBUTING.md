@@ -12,7 +12,7 @@ feature reference.
 
 For anything beyond a small fix, skim
 [docs/internal/design.md](docs/internal/design.md) and the relevant topic
-guide under `docs/` before touching `src/` or `lib/core.di` -- README.md's
+guide under `docs/` before touching `src/` or `lib/core.d6` -- README.md's
 own "Learn more" section links the full set.
 
 ## Build and test
@@ -147,7 +147,7 @@ Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):
 `test-all` only confirms the self-hosted frontend still parses and runs
 itself, not full parity. `make test-self-host` (~1400 cases) is periodic,
 not per-push -- it's dominated by the self-hosted parser re-parsing
-`lib/core.di` through the interpreter on every case.
+`lib/core.d6` through the interpreter on every case.
 
 ## Code style
 

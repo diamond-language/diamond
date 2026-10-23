@@ -5,7 +5,7 @@ tokenizer, a Pratt parser, a sealed syntax tree, an evaluator, and a
 simplifier. Errors point at the column that caused them.
 
 ```text
-$ diamond calc.di
+$ diamond calc.d6
 > area = pi * 3 ^ 2
 => 28.274333882308138
 > 2 ^ 100
@@ -27,17 +27,17 @@ failed, so it also works as a checker for a file of expressions.
 
 ## What it shows
 
-- **A sealed syntax tree.** `Expr` in `lib/ast.di` is `sealed`, with six
+- **A sealed syntax tree.** `Expr` in `lib/ast.d6` is `sealed`, with six
   subclasses. `calc_show` and `Evaluator#eval` each `case` over all six;
   forgetting one is a compile error, not a silent `nil`.
-- **Object patterns.** `calc_simplify_node` (`lib/evaluator.di`) states
+- **Object patterns.** `calc_simplify_node` (`lib/evaluator.d6`) states
   each rewrite as a pattern over the tree, such as
   `BinOp{op: "*", left: Num{value: 0}}`. Comma-separated alternatives bind
   the same name (`other`) so one branch covers `x + 0`, `0 + x`, `x * 1`,
   and the rest; an `if` guard handles `a - a`.
 - **Array patterns with rest bindings.** The parser's `parse_prefix`
   matches `[token.kind(), token.text()]` against `[:op, "-"]` and
-  `[:name, name]`. The command dispatcher in `calc.di` matches split words
+  `[:name, name]`. The command dispatcher in `calc.d6` matches split words
   against `[":tree", _, *_]`.
 - **A struct and Symbols.** `Token` is a one-line `struct` whose `kind` is
   a Symbol (`:number`, `:name`, `:op`, `:end`).

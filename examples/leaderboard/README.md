@@ -4,7 +4,7 @@ Replays a log of `name score` events into a ranked board, announcing rank
 changes as they happen.
 
 ```text
-$ diamond leaderboard.di testdata/season1.txt --top 4
+$ diamond leaderboard.d6 testdata/season1.txt --top 4
 ann joins with 50
 bob joins with 70
 bob takes the lead from ann
@@ -26,7 +26,7 @@ above the mean: eve
 ## Usage
 
 ```text
-leaderboard.di FILE [--top N] [--quiet] [--versus FILE2]
+leaderboard.d6 FILE [--top N] [--quiet] [--versus FILE2]
 ```
 
 A player's board score is their best; only a personal best changes the board.

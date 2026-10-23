@@ -1,6 +1,6 @@
 # Prepared-statement caching: direct evidence
 
-`Arel::PreparedStatements` (`packages/arel/lib/arel/prepared_statements.di`)
+`Arel::PreparedStatements` (`packages/arel/lib/arel/prepared_statements.d6`)
 reuses one compiled `Statement` per (connection, SQL text) pair across
 every `Query#to_a`/`#count` and `Insert`/`Update`/`Delete#execute`/`#to_a`
 call, instead of re-preparing the same statement shape from scratch on
@@ -10,28 +10,28 @@ non-networked script that runs to completion and prints its own timing"
 shape `bench/gc_churn` already established, for the same reason: no
 networking, threading, or OS-scheduling noise mixed into the number.
 
-- **`uncached_query.di`**: the pre-existing behavior, still fully
+- **`uncached_query.d6`**: the pre-existing behavior, still fully
   available -- `db.query(sql, params)` directly, paying
   `sqlite3_prepare_v2`'s full parse/plan cost on every single call even
   though it's the same statement shape every time.
   ```
-  ./build/diamond bench/prepared_statements/uncached_query.di ITERATIONS
+  ./build/diamond bench/prepared_statements/uncached_query.d6 ITERATIONS
   ```
-- **`cached_query.di`**: the same workload through
+- **`cached_query.d6`**: the same workload through
   `Arel::PreparedStatements.for(db, sql).query(params)` instead -- the
   statement is compiled once, on the first call, and every later call
   reuses it.
   ```
-  ./build/diamond bench/prepared_statements/cached_query.di ITERATIONS
+  ./build/diamond bench/prepared_statements/cached_query.d6 ITERATIONS
   ```
-- **`cached_query_many_shapes.di`**: the cached path again, but rotating
+- **`cached_query_many_shapes.d6`**: the cached path again, but rotating
   through `SHAPE_COUNT` distinct SQL strings instead of one -- checks the
   cache still wins once a real app's own handful of distinct query
   shapes is in play, not just the single-statement best case.
   ```
-  ./build/diamond bench/prepared_statements/cached_query_many_shapes.di ITERATIONS SHAPE_COUNT
+  ./build/diamond bench/prepared_statements/cached_query_many_shapes.d6 ITERATIONS SHAPE_COUNT
   ```
-- **`repository_level.di`**: context, not a before/after -- the full
+- **`repository_level.d6`**: context, not a before/after -- the full
   `ActiveRecord`/`Arel` stack's own per-call cost (`Query` construction,
   `SQLiteVisitor` rendering, `Hash`-per-row mapping) around a repeated
   `Repository#find`, which already goes through the cache automatically
@@ -41,10 +41,10 @@ networking, threading, or OS-scheduling noise mixed into the number.
   the caching win off *this* number instead would understate it by an
   order of magnitude (see below).
   ```
-  ./build/diamond bench/prepared_statements/repository_level.di ITERATIONS
+  ./build/diamond bench/prepared_statements/repository_level.d6 ITERATIONS
   ```
 
-All four share `setup.di`'s fixture: a single in-memory `items` table,
+All four share `setup.d6`'s fixture: a single in-memory `items` table,
 200 seeded rows, queried by primary key (`WHERE id = ?`, cycling through
 the 200 ids) -- the same "point lookup repeated many times" shape a real
 worker's request loop actually produces.
@@ -57,7 +57,7 @@ build (`make release`), single-threaded, wall time both self-reported
 (`/usr/bin/time -f %es`) -- the two agreed to within process-startup noise
 at every data point below, so only the self-reported number is tabled.
 
-**Iteration sweep** (`uncached_query.di` vs `cached_query.di`, one SQL
+**Iteration sweep** (`uncached_query.d6` vs `cached_query.d6`, one SQL
 shape):
 
 | iterations | uncached | cached | reduction |
@@ -72,7 +72,7 @@ A consistent ~40% reduction in pure SQL-execution-layer time across two
 orders of magnitude of iteration count, for the single most common shape
 (one query, run repeatedly) this change targets.
 
-**Distinct-shape sweep** (`cached_query_many_shapes.di`, 50,000 iterations
+**Distinct-shape sweep** (`cached_query_many_shapes.d6`, 50,000 iterations
 held fixed, only `SHAPE_COUNT` varies):
 
 | shape count | elapsed |
@@ -89,10 +89,10 @@ the design goal from the class's own doc comment ("the set of distinct
 SQL shapes one running app actually issues is small and fixed") holds up
 even well past what a real app's own query variety looks like.
 
-**ORM-overhead context** (`repository_level.di`, already using the cache
+**ORM-overhead context** (`repository_level.d6`, already using the cache
 internally):
 
-| iterations | elapsed | vs. `cached_query.di` at the same iteration count |
+| iterations | elapsed | vs. `cached_query.d6` at the same iteration count |
 |-----------:|--------:|---------------------------------------------------:|
 |      1,000 |  0.0834s |                                     ~40x higher |
 |      5,000 |  0.4066s |                                     ~37x higher |
@@ -126,14 +126,14 @@ real request volumes -- consistent with, not contradicted by, the
 ```
 make release
 for iters in 1000 5000 20000 50000 100000; do
-  ./build/diamond bench/prepared_statements/uncached_query.di "$iters"
-  ./build/diamond bench/prepared_statements/cached_query.di "$iters"
+  ./build/diamond bench/prepared_statements/uncached_query.d6 "$iters"
+  ./build/diamond bench/prepared_statements/cached_query.d6 "$iters"
 done
 for shapes in 1 10 50 200; do
-  ./build/diamond bench/prepared_statements/cached_query_many_shapes.di 50000 "$shapes"
+  ./build/diamond bench/prepared_statements/cached_query_many_shapes.d6 50000 "$shapes"
 done
 for iters in 1000 5000 20000 50000; do
-  ./build/diamond bench/prepared_statements/repository_level.di "$iters"
+  ./build/diamond bench/prepared_statements/repository_level.d6 "$iters"
 done
 ```
 

@@ -8,10 +8,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" markdown.di --toc testdata/sample.md > "$work/interpreted.html"
+"$diamond" markdown.d6 --toc testdata/sample.md > "$work/interpreted.html"
 diff -u testdata/sample.html "$work/interpreted.html"
 
-"$diamond" build markdown.di -o "$work/markdown" > "$work/build.log"
+"$diamond" build markdown.d6 -o "$work/markdown" > "$work/build.log"
 "$work/markdown" --toc testdata/sample.md | diff -u testdata/sample.html -
 "$work/markdown" --toc < testdata/sample.md | diff -u testdata/sample.html -
 "$work/markdown" --stats testdata/sample.md 2>&1 >/dev/null | diff -u testdata/sample.stats -

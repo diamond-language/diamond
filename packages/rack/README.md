@@ -59,7 +59,7 @@ reuses it. This program serves a per-visitor counter using the logging and encry
 session middleware from the [`logger`](https://github.com/diamond-language/diamond/tree/main/packages/logger) and [`cookies`](https://github.com/diamond-language/diamond/tree/main/packages/cookies) cuts:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "gremlin"
 require_cut "rack"
 require_cut "cookies"
@@ -88,7 +88,7 @@ gremlin_serve(8080, app)
 ```
 
 ```sh
-SESSION_SECRET=$(openssl rand -hex 32) diamond app.di
+SESSION_SECRET=$(openssl rand -hex 32) diamond app.d6
 curl -c jar -b jar localhost:8080/    # visit 1
 curl -c jar -b jar localhost:8080/    # visit 2
 ```

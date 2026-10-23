@@ -27,7 +27,7 @@ export diamond limit sweep_env out
 
 run_case() {
     local case_file="$1" name base
-    name="${case_file%.di}"
+    name="${case_file%.d6}"
     base="$(basename "$name")"
     if [[ ! -f "$name.expected" && ! -f "$name.expected_error" &&
           ! -f "$name.expected_contains" && ! -f "$name.expected_lastline" &&
@@ -65,7 +65,7 @@ run_case() {
 }
 export -f run_case
 
-printf '%s\n' tests/cases/*.di | xargs -P "$jobs" -I{} bash -c 'run_case {}' | sort | tee "$out/report"
+printf '%s\n' tests/cases/*.d6 | xargs -P "$jobs" -I{} bash -c 'run_case {}' | sort | tee "$out/report"
 count="$(wc -l < "$out/report")"
 echo "sweep: $count case(s) differ or fail under: $sweep_env"
 [[ "$count" -eq 0 ]]

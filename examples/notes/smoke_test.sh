@@ -10,8 +10,8 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export work
 
-"$diamond" build notes.di -o "$work/notes" > "$work/build.log"
-printf '#!/usr/bin/env bash\nexec "%s" "%s/notes.di" "$@"\n' "$diamond" "$PWD" > "$work/interpreted"
+"$diamond" build notes.d6 -o "$work/notes" > "$work/build.log"
+printf '#!/usr/bin/env bash\nexec "%s" "%s/notes.d6" "$@"\n' "$diamond" "$PWD" > "$work/interpreted"
 chmod +x "$work/interpreted"
 
 for notes in "$work/interpreted" "$work/notes"; do
@@ -35,6 +35,6 @@ db.close()' "$work/old.db" > /dev/null
 "$diamond" -e 'puts(SQLite3.open(ARGV[0]).query("PRAGMA user_version")[0]["user_version"])' "$work/old.db" | grep -x 2 > /dev/null
 
 # A return or break out of a transaction block rolls it back.
-"$diamond" testdata/transaction_exits.di | sed -n '1,4p' | tr '\n' ' ' | grep -qx 'left early broke out 0 1 '
+"$diamond" testdata/transaction_exits.d6 | sed -n '1,4p' | tr '\n' ' ' | grep -qx 'left early broke out 0 1 '
 
 echo "notes smoke test passed"

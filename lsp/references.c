@@ -364,7 +364,7 @@ static bool find_workspace_occurrences(const DocumentTable *documents,const char
 
     char **paths=nullptr;
     size_t path_count=0,path_capacity=0;
-    if(!collect_di_files(workspace_root,&paths,&path_count,&path_capacity)) {
+    if(!collect_source_files(workspace_root,&paths,&path_count,&path_capacity)) {
         for(size_t index=0;index<path_count;index++)free(paths[index]);
         free(paths);
         *out_allocation_failed=true;

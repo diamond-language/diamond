@@ -29,7 +29,7 @@ char *diagnostics_path_to_uri(const char *path);
 
 /* Compiles `text` (a document's current contents, identified by its LSP
  * `uri` so `require` resolves relative to the right on-disk directory)
- * the same way src/main.c's own run_source does -- lib/core.di prepended
+ * the same way src/main.c's own run_source does -- lib/core.d6 prepended
  * (so a document's own top-level functions can call anything the
  * prelude defines the way they always could natively) and `require`d
  * files resolved and bundled in via diamond_load_program_with_override,

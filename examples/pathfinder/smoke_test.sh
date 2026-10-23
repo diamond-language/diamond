@@ -9,9 +9,9 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build pathfinder.di -o "$work/pathfinder" > "$work/build.log"
+"$diamond" build pathfinder.d6 -o "$work/pathfinder" > "$work/build.log"
 
-for pathfinder in "$diamond pathfinder.di" "$work/pathfinder"; do
+for pathfinder in "$diamond pathfinder.d6" "$work/pathfinder"; do
     for map in maze mud; do
         for algo in bfs dijkstra astar; do
             $pathfinder --algo "$algo" --stats "testdata/$map.txt" | cmp "testdata/$map.$algo.expected" -

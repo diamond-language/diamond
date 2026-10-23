@@ -19,15 +19,15 @@ cross-origin half of the same middleware stack.
 ## Layout
 
 ```
-app.di           entry point: requires boot.di, starts gremlin_serve
-boot.di          everything else -- rack_app, both middleware chains,
-                 .configure calls -- split out so smoke_test.di can
+app.d6           entry point: requires boot.d6, starts gremlin_serve
+boot.d6          everything else -- rack_app, both middleware chains,
+                 .configure calls -- split out so smoke_test.d6 can
                  require it directly without a real socket, the same
-                 split examples/project_board's own boot.di/app.di use
+                 split examples/project_board's own boot.d6/app.d6 use
 lib/
-  web.di         the cookie-session-backed guestbook routes
-  api.di         the stateless, cross-origin JSON route
-smoke_test.di    direct-dispatch proof of the whole composed stack
+  web.d6         the cookie-session-backed guestbook routes
+  api.d6         the stateless, cross-origin JSON route
+smoke_test.d6    direct-dispatch proof of the whole composed stack
 ```
 
 ## What each route demonstrates
@@ -59,7 +59,7 @@ smoke_test.di    direct-dispatch proof of the whole composed stack
   preflight is answered directly and never reaches the handler.
 
 Both routes share **one** `RateLimit` policy, not two independently
-tuned ones -- see `boot.di`'s own comment on why (`RateLimit.configure`,
+tuned ones -- see `boot.d6`'s own comment on why (`RateLimit.configure`,
 like `CookieSession`/`Cors`, is a class-variable write, so it can only
 hold one policy at a time within a process). Its key function tells the
 two route groups apart: a per-session id for the web routes, a single
@@ -70,7 +70,7 @@ shared bucket for the API route.
 ```sh
 cd examples/guestbook
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond app.di
+../../build/diamond app.d6
 ```
 
 Then, in another terminal:
@@ -89,20 +89,20 @@ page's own inline script, not something `curl` can discover on its own)
 or read the token out of the page source for a scripted `curl -X POST`
 with an `X-CSRF-Token` header matching it.
 
-A real deployment sets `GUESTBOOK_SESSION_SECRET`; without it, `app.di`
+A real deployment sets `GUESTBOOK_SESSION_SECRET`; without it, `app.d6`
 falls back to a fixed development-only secret so the example runs with
-zero setup -- see `boot.di`'s own comment.
+zero setup -- see `boot.d6`'s own comment.
 
 ## Smoke test
 
 ```sh
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond smoke_test.di
+../../build/diamond smoke_test.d6
 ```
 
 Direct-dispatch (calls `web_app`/`api_app`/`rack_app` straight from
-`boot.di`, no real socket), following `examples/project_board`'s own
-`smoke_test.di` convention. Covers: session persistence across requests
+`boot.d6`, no real socket), following `examples/project_board`'s own
+`smoke_test.d6` convention. Covers: session persistence across requests
 via the rotating session cookie (`CookieSession` re-encrypts with a
 fresh nonce on every response, so the *latest* Set-Cookie is the only
 one that reflects current state -- reusing an older one silently rolls

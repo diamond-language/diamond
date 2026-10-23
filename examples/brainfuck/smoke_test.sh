@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Runs the brainfuck interpreter and depth.di through the interpreter and
+# Runs the brainfuck interpreter and depth.d6 through the interpreter and
 # as `diamond build` binaries. hello.bf (906 instructions) and busy.bf
 # (326765) both run in a single call frame, far past the ordinary depth
-# limit of 95; depth.di shows which recursion shapes get that treatment.
+# limit of 95; depth.d6 shows which recursion shapes get that treatment.
 # Set DIAMOND_BIN to use a diamond other than ../../build/diamond.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -10,13 +10,13 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build brainfuck.di -o "$work/brainfuck" > "$work/build.log"
-"$diamond" build depth.di -o "$work/depth" >> "$work/build.log"
+"$diamond" build brainfuck.d6 -o "$work/brainfuck" > "$work/build.log"
+"$diamond" build depth.d6 -o "$work/depth" >> "$work/build.log"
 
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 message_of() { "$@" 2>&1 >/dev/null || true; }
 
-for bf in "$diamond brainfuck.di" "$work/brainfuck"; do
+for bf in "$diamond brainfuck.d6" "$work/brainfuck"; do
   [[ "$($bf testdata/hello.bf)" == "Hello World!" ]]
   [[ "$(message_of $bf testdata/hello.bf --steps)" == "906 instructions" ]]
   [[ "$($bf testdata/cat.bf --input 'hi there')" == "hi there" ]]
@@ -38,7 +38,7 @@ for bf in "$diamond brainfuck.di" "$work/brainfuck"; do
   [[ "$(status_of $bf testdata/hello.bf --input)" == 64 ]]
 done
 
-for depth in "$diamond depth.di" "$work/depth"; do
+for depth in "$diamond depth.d6" "$work/depth"; do
   $depth | cmp testdata/depth.expected -
   [[ "$($depth 50 | grep -c 'stack overflow')" == 0 ]]
   [[ "$(status_of $depth 0)" == 64 ]]

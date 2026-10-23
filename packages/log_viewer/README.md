@@ -17,7 +17,7 @@ This installs the cut into `cuts/log_viewer/`; load it with `require_cut "log_vi
 ## Usage
 
 ```sh
-diamond app.di | DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log
+diamond app.d6 | DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log
 DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log logs.ndjson
 ```
 
@@ -27,7 +27,7 @@ Services that log with the [`logger`](https://github.com/diamond-language/diamon
 JSON object per line to standard output. Pipe that through the viewer while developing:
 
 ```sh
-diamond app.di | DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log
+diamond app.d6 | DIAMOND_BIN=diamond cuts/log_viewer/bin/diamond-log
 # 2026-10-07T23:55:01Z INFO [app] request.completed status=200
 ```
 

@@ -101,8 +101,8 @@ static char *read_file(const char *path) {
     return source;
 }
 
-/* `diamond build app.di` with no `-o` defaults the output to `app.di`'s
- * own basename, extension stripped ("app.di" -> "app"; no extension at
+/* `diamond build app.d6` with no `-o` defaults the output to `app.d6`'s
+ * own basename, extension stripped ("app.d6" -> "app"; no extension at
  * all if the source has none). Caller owns the returned buffer. */
 static char *derive_output_path(const char *source_path) {
     const char *slash = strrchr(source_path, '/');
@@ -677,7 +677,7 @@ static int handle_build_command(int argc, char **argv) {
 
 /* `diamond cache clear [--dry-run] [PATH...]`: removes bytecode caches
  * (docs/caching.md). A PATH that is a file names that script's own cache; a
- * directory is searched recursively for `.dic` files; with no PATH it is the
+ * directory is searched recursively for `.d6c` and legacy `.dic` files; with no PATH it is the
  * current directory. Only files that start with a cache's magic bytes are
  * removed, and symbolic links are never followed. */
 typedef struct CacheClearTotals {
@@ -818,7 +818,7 @@ static void print_usage(FILE *stream) {
           "output: SOURCE's own basename with its extension stripped) -- see\n"
           "docs/deployment.md. The Diamond build checkout must be available.\n"
           "\n"
-          "'diamond cache clear' removes the bytecode caches (.dic files) next to\n"
+          "'diamond cache clear' removes the bytecode caches (.d6c files) next to\n"
           "scripts: those of the given files, every one under the given\n"
           "directories, or under the current directory. 'diamond cache warm'\n"
           "compiles scripts and writes their caches without running them, for\n"

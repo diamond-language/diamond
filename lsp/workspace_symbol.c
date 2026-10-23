@@ -21,7 +21,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 
-/* Recursively appends every *.di file's own absolute path under
+/* Recursively appends every *.d6 file's own absolute path under
  * `directory` to `*paths` (grown as needed, `*count`/`*capacity`
  * tracking it the same way document.c's own DocumentTable does),
  * skipping dotfiles/dotdirs entirely (never meaningful Diamond source,
@@ -29,7 +29,7 @@
  * fatal if `directory` can't be opened (permission, a broken symlink,
  * a race with something deleting it mid-walk) -- just nothing found
  * there; only an allocation failure returns false. */
-bool collect_di_files(const char *directory,char ***paths,
+bool collect_source_files(const char *directory,char ***paths,
         size_t *count,size_t *capacity) {
     DIR *dir=opendir(directory);
     if(dir==nullptr)return true;
@@ -43,12 +43,12 @@ bool collect_di_files(const char *directory,char ***paths,
         struct stat info;
         if(stat(child,&info)!=0)continue;
         if(S_ISDIR(info.st_mode)) {
-            ok=collect_di_files(child,paths,count,capacity);
+            ok=collect_source_files(child,paths,count,capacity);
             continue;
         }
         if(!S_ISREG(info.st_mode))continue;
         const size_t name_length=strlen(entry->d_name);
-        if(name_length<3||strcmp(entry->d_name+name_length-3,".di")!=0)continue;
+        if(name_length<3||strcmp(entry->d_name+name_length-3,".d6")!=0)continue;
         if(*count==*capacity) {
             const size_t grown_capacity=*capacity==0?32:*capacity*2;
             char **grown=realloc(*paths,grown_capacity*sizeof(char *));
@@ -249,7 +249,7 @@ JsonValue *workspace_symbol_compute(const DocumentTable *documents,
 
     char **paths=nullptr;
     size_t count=0,capacity=0;
-    if(!collect_di_files(workspace_root,&paths,&count,&capacity)) {
+    if(!collect_source_files(workspace_root,&paths,&count,&capacity)) {
         for(size_t index=0;index<count;index++)free(paths[index]);
         free(paths);
         json_free(symbols);
@@ -260,7 +260,7 @@ JsonValue *workspace_symbol_compute(const DocumentTable *documents,
      * -- see tests/run_cases.c's own comment on why:
      * malloc/free-ing an ~83MB DiamondProgram per file is real mmap/
      * munmap kernel work, and a workspace can easily have hundreds of
-     * *.di files. Lazily allocated on first use, kept for the life of
+     * *.d6 files. Lazily allocated on first use, kept for the life of
      * the process (like every other lsp/ handler's own scratch
      * buffer) rather than per-request. scan_file's explicit
      * diamond_program_free right before each compile is still required:

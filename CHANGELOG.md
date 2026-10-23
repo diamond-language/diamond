@@ -8,6 +8,12 @@ authoritative fine-grained record.
 
 ### Added
 
+- Diamond source files now use `.d6` and bytecode caches use `.d6c`, avoiding
+  the `.di` suffix used by D interface files. Imports prefer `.d6`; existing
+  `.di` sources and published cuts remain loadable. Repository sources,
+  package entry points, editor associations, and test tooling use `.d6`.
+  Migrated cuts start new minor versions; nothing is published automatically.
+
 - `Channel.new(0)` makes a rendezvous channel: `send` returns only once a receiver has taken the value. `try_send` succeeds only while a
   receiver is parked, and `Channel.select_send` refuses one. See docs/threads.md.
 - Native `gets()` and the terminal debugger's input wait can be interrupted by

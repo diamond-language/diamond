@@ -43,7 +43,7 @@ clear_vars=(DIAMOND_STRESS_GC DIAMOND_STRESS_MINOR_GC DIAMOND_QUICKEN
 # expectation, otherwise returns 1 with the reason on stdout. Mirrors the
 # expectation kinds tests/run.sh checks.
 run_once() { # case_file
-    local file="$1" base="${1%.di}"
+    local file="$1" base="${1%.d6}"
     local env_args=() flag_args=() line
     if [[ -f "$base.env" ]]; then
         while IFS= read -r line; do [[ -n "$line" ]] && env_args+=("$line"); done < "$base.env"
@@ -88,10 +88,10 @@ run_once() { # case_file
 }
 
 cases=()
-for file in tests/cases/*.di; do
+for file in tests/cases/*.d6; do
     [[ -z "$filter" ]] || [[ "$file" =~ $filter ]] || continue
     grep -qE 'Thread\.new|Supervisor|Channel' "$file" || continue
-    base="${file%.di}"
+    base="${file%.d6}"
     [[ -f "$base.expected" || -f "$base.expected_error" || -f "$base.expected_contains" ||
        -f "$base.expected_lastline" ]] || grep -q 'suite\.run!()' "$file" || continue
     cases+=("$file")

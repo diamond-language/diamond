@@ -6,7 +6,7 @@ This paragraph spans two lines, and mentions `a < b && c > d` in code.
 ## Getting started
 
 1. Install the toolchain.
-2. Run `diamond script.di`.
+2. Run `diamond script.d6`.
 3. Read the [language reference](docs/syntax.md).
 
 ## Getting started

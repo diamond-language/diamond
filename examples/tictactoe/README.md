@@ -5,7 +5,7 @@ levels deep) to search completely, with no need for alpha-beta pruning or
 a transposition table.
 
 ```text
-$ diamond tictactoe.di --best "XX......."
+$ diamond tictactoe.d6 --best "XX......."
 o plays 2 -> o loses with best play
 ```
 
@@ -14,7 +14,7 @@ losing position for O no matter what it does, which is exactly what the
 search finds: blocking at 2 is O's *least bad* move, and it still loses.
 
 ```text
-$ diamond tictactoe.di --self
+$ diamond tictactoe.d6 --self
 . . .
 . . .
 . . .
@@ -34,8 +34,8 @@ rather than just cited.
 ## Usage
 
 ```text
-tictactoe.di --self
-tictactoe.di --best BOARD      # BOARD is 9 characters: . for empty, X, O
+tictactoe.d6 --self
+tictactoe.d6 --best BOARD      # BOARD is 9 characters: . for empty, X, O
 ```
 
 `--best` infers whose turn it is from the count of `X`s and `O`s (fewer

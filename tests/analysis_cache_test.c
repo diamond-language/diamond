@@ -45,8 +45,8 @@ int main(void) {
     char directory[]="/tmp/diamond-analysis-cache-XXXXXX";
     if(mkdtemp(directory)==nullptr)return 1;
     char root[256],helper[256];
-    snprintf(root,sizeof root,"%s/main.di",directory);
-    snprintf(helper,sizeof helper,"%s/helper.di",directory);
+    snprintf(root,sizeof root,"%s/main.d6",directory);
+    snprintf(helper,sizeof helper,"%s/helper.d6",directory);
     const char *source="require \"./helper\"\n";
     bool ok=write_source(helper,"def cached_disk() = 1\n");
     /* Repeated unchanged buffers must compile only once. The shell harness

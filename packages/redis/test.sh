@@ -13,7 +13,7 @@ diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
 
 # Part 1: pure RESP2 protocol-level checks -- no real server, just
-# protocol.di exercised directly against a small in-memory fake
+# protocol.d6 exercised directly against a small in-memory fake
 # connection. Anything that doesn't need a real Redis lives here
 # rather than in the slower, container-dependent section below.
 unit_out="$(mktemp)"
@@ -29,7 +29,7 @@ end
 # A fake connection serving #gets()/#read(n) from a fixed input
 # buffer, and collecting every #write(value) into its own buffer --
 # enough of TCPSocket's own blocking File-shaped contract for
-# protocol.di's own needs.
+# protocol.d6's own needs.
 class FakeConn
   def initialize(input)
     @input = input

@@ -6,7 +6,7 @@ itself, `rejected/` holds four small programs that the compiler refuses to
 run, one per kind of mistake it catches.
 
 ```text
-$ diamond grades.di testdata/scores.csv
+$ diamond grades.d6 testdata/scores.csv
 Students
   name         mean median grade
   ada          92.3   91.0 A     3 course(s): math, physics, poetry
@@ -32,10 +32,10 @@ Rejected
 ## What it shows
 
 - **Generic functions.** `group_by_key[T, K]` and `best_by[T]`
-  (`lib/stats.di`) work for any element type; the compiler infers `T` and
+  (`lib/stats.d6`) work for any element type; the compiler infers `T` and
   `K` from each call's arguments.
 - **A sealed result type.** `parse_score` returns `ParseResult`, which is
-  `Parsed` or `Rejected`. `grades.di` matches it with binding patterns
+  `Parsed` or `Rejected`. `grades.d6` matches it with binding patterns
   (`when Parsed{score: score}`), and because the class is sealed, leaving a
   case out doesn't compile.
 - **`Nil` in the type.** `best_by` returns `T | Nil`, so

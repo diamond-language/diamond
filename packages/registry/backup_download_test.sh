@@ -9,7 +9,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 tool="$root/tools/fetch_registry_backup.sh"
 
-# A snapshot as backup.di writes it: database, blobs and a manifest.
+# A snapshot as backup.d6 writes it: database, blobs and a manifest.
 snapshot="$work/snapshot"
 mkdir -p "$snapshot/blobs"
 blob='verified backup blob'

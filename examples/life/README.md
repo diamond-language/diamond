@@ -4,7 +4,7 @@ Conway's Game of Life: loads a pattern and prints it, then each
 generation after it.
 
 ```text
-$ diamond life.di testdata/glider.txt 4
+$ diamond life.d6 testdata/glider.txt 4
 ........
 ........
 ..#.....
@@ -33,7 +33,7 @@ exactly where the starting pattern was, offset by (1, 1).
 ## Usage
 
 ```text
-life.di PATTERN_FILE GENERATIONS
+life.d6 PATTERN_FILE GENERATIONS
 ```
 
 `PATTERN_FILE` is text: `.` for dead, `#` for alive, one line per row, all

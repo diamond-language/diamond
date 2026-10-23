@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A modest, actively-safety-capped push past run.sh's own baseline (see
-# server_hard.di: max_sessions=30000/worker vs server.di's 20000). Unlike
+# server_hard.d6: max_sessions=30000/worker vs server.d6's 20000). Unlike
 # run.sh, this carries its own RSS watchdog polling every 1s independent
 # of ab's batch boundaries, and kill -9's the server the instant RSS
 # crosses RSS_HARD_CAP_KB -- run.sh's own per-batch RSS check only looks
@@ -30,7 +30,7 @@ fi
 
 duration_seconds="${1:-300}"
 concurrency="${2:-20}"
-server_script="${3:-bench/burn_in/server_hard.di}"
+server_script="${3:-bench/burn_in/server_hard.d6}"
 batch_seconds=15
 port="${BURN_IN_PORT:-19421}"
 # Hard ceiling, checked every watchdog tick, independent of batch

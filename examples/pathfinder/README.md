@@ -4,7 +4,7 @@ Shortest routes across an ASCII map, three ways: breadth-first search,
 Dijkstra's algorithm, and A*. The map is printed with the route drawn as `*`.
 
 ```text
-$ diamond pathfinder.di --algo astar --stats testdata/mud.txt
+$ diamond pathfinder.d6 --algo astar --stats testdata/mud.txt
 ##############
 #S...........#
 #*9999999999.#
@@ -13,7 +13,7 @@ $ diamond pathfinder.di --algo astar --stats testdata/mud.txt
 #***#G*****9.#
 ##############
 astar: 22 steps, cost 22, looked at 47 cells
-$ diamond pathfinder.di --algo bfs --stats testdata/mud.txt
+$ diamond pathfinder.d6 --algo bfs --stats testdata/mud.txt
 ##############
 #S*********..#
 #.99999999*9.#
@@ -47,13 +47,13 @@ column).
 
 ## How it works
 
-- `lib/heap.di` -- `MinHeap`, a binary heap of `Entry` structs. Entries with
+- `lib/heap.d6` -- `MinHeap`, a binary heap of `Entry` structs. Entries with
   equal priority come out first-in first-out, so a search takes the same route
   on every run.
-- `lib/grid.di` -- `Grid` parses the map into flat arrays (cell = `y * width +
+- `lib/grid.d6` -- `Grid` parses the map into flat arrays (cell = `y * width +
   x`) and hands out neighbours and costs. A wall, a ragged line, or a stray
   character raises `MapError` with its position.
-- `lib/search.di` -- the three searches. Dijkstra and A* are one function,
+- `lib/search.d6` -- the three searches. Dijkstra and A* are one function,
   `search_priority`, which takes the heuristic as a `Callable`: `0` for
   Dijkstra, distance-to-goal for A*.
 

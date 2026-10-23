@@ -10,11 +10,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # The sample has rejected lines, so the report exits 1.
-status=0; "$diamond" grades.di testdata/scores.csv > "$work/interpreted.txt" || status=$?
+status=0; "$diamond" grades.d6 testdata/scores.csv > "$work/interpreted.txt" || status=$?
 [[ "$status" == 1 ]]
 diff -u testdata/scores.expected "$work/interpreted.txt"
 
-"$diamond" build grades.di -o "$work/grades" > "$work/build.log"
+"$diamond" build grades.d6 -o "$work/grades" > "$work/build.log"
 status=0; "$work/grades" testdata/scores.csv > "$work/binary.txt" || status=$?
 [[ "$status" == 1 ]]
 diff -u testdata/scores.expected "$work/binary.txt"
@@ -33,8 +33,8 @@ expect_rejected() {
   [[ "$status" == 65 ]] || { echo "rejected/$1 exited $status, not 65" >&2; exit 1; }
   grep -qF "$2" "$work/rejected.err" || { echo "rejected/$1: wrong error" >&2; cat "$work/rejected.err" >&2; exit 1; }
 }
-expect_rejected wrong_argument.di "argument 'average' of letter: expected Float, got String"
-expect_rejected missing_case.di "case is not exhaustive over its subject's known closed type; missing: Rejected"
-expect_rejected nullable_result.di "expected Score, got Score | Nil"
-expect_rejected wrong_return.di "expected String, got Int"
+expect_rejected wrong_argument.d6 "argument 'average' of letter: expected Float, got String"
+expect_rejected missing_case.d6 "case is not exhaustive over its subject's known closed type; missing: Rejected"
+expect_rejected nullable_result.d6 "expected Score, got Score | Nil"
+expect_rejected wrong_return.d6 "expected String, got Int"
 echo "grades smoke test passed"

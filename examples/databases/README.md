@@ -11,7 +11,7 @@ from this directory, then run:
 
 ```sh
 DIAMOND_DATABASE_EXAMPLE_CONFIG=/absolute/path/to/config.json \
-  build/diamond examples/databases/databases.di
+  build/diamond examples/databases/databases.d6
 ```
 
 Use an existing test database and a user allowed to create temporary tables.

@@ -8,19 +8,19 @@
 #include <string.h>
 
 /* Native recursive-descent JSON parser (RFC 8259), replacing lib/core/
- * json_codec.di's own pure-Diamond JSONCodec#parse for JSON.parse's hot
+ * json_codec.d6's own pure-Diamond JSONCodec#parse for JSON.parse's hot
  * path -- confirmed directly at ~330ms/MB (interpreted bytecode walking
  * a String one character/method-call at a time) against a real
- * training-corpus-scale dataset (examples/transformer/lib/corpus.di's
+ * training-corpus-scale dataset (examples/transformer/lib/corpus.d6's
  * own comment). Semantics match JSONCodec#parse exactly: same grammar
  * (no leading '+', no rejection of leading zeros -- neither did the
  * version this replaces), same surrogate-pair combining, same result
  * shape (String/Int/Float/Bool/nil/Array/Hash), same JSONError-on-
  * malformed-input contract -- verified against every tests/cases/
- * json_parse_*.di case. Diamond String is a raw byte buffer, not UTF-8-
+ * json_parse_*.d6 case. Diamond String is a raw byte buffer, not UTF-8-
  * validated (see docs/design.md), so this parses bytes throughout;
  * \uXXXX escapes are the one place UTF-8 encoding happens, matching
- * json_codec.di's own utf8_encode exactly.
+ * json_codec.d6's own utf8_encode exactly.
  *
  * GC safety: only *containers* (Array/Hash) are ever gc_protect'd, once
  * each, for the life of the whole top-level parse (unprotected together,

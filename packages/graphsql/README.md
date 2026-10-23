@@ -22,7 +22,7 @@ resolver's lookahead to `GraphSQL.resolve`. This complete program wires an in-me
 database, two models, a schema, and a query:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "graphql"
 require_cut "graphsql"
 

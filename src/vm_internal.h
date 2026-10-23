@@ -187,7 +187,7 @@ typedef struct GrowBuffer {
  * again. 92 sits at the low end of that narrow window rather than the
  * middle, since a smaller value only ever makes a real overflow *less*
  * likely to be reached before this guard trips -- the one thing that
- * must still hold is `legacy_0091.di`'s own `depth(90)` succeeding (a
+ * must still hold is `legacy_0091.d6`'s own `depth(90)` succeeding (a
  * hard floor, confirmed at 92). If a future change reopens this margin
  * again, re-run the same empirical sweep -- across every build variant
  * this project ships (debug, release, sanitize, and a container image
@@ -1291,7 +1291,7 @@ DIAMOND_INTERNAL void infer_from_value(const DiamondChunk *chunk,DiamondValue va
  * safely under the OS stack limit. Confirmed empirically while adding
  * this: even a few bytes of extra locals declared directly in run_chunk's
  * own switch shifted a stack-depth regression test (tests/cases/
- * program_builder_call_declared_function.di's sibling deep-recursion
+ * program_builder_call_declared_function.d6's sibling deep-recursion
  * case) from a clean "call stack overflow" to a real ASan-caught
  * stack-overflow segfault -- that margin is thinner than it looks.
  * Locals declared inside a called helper live on the *helper's* frame,

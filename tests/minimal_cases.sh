@@ -48,8 +48,8 @@ expect_output 'puts(SecureRandom.hex(8).length())' "16"
 # 2. Everything that does not use a dropped feature behaves as it does in a full build.
 uses_dropped='SQLite3|PostgreSQL|MySQL|Gzip|TLS|Cipher|ActiveRecord|active_record|Mjolnir|mjolnir|Arel|arel|require_cut|database_config|Repository|Jobs\b|jobs'
 checked=0
-for source in tests/cases/*.di; do
-    base="${source%.di}"
+for source in tests/cases/*.d6; do
+    base="${source%.d6}"
     [[ -f "$base.expected" ]] || continue
     grep -Eq "$uses_dropped" "$source" && continue
     env_args=(); flag_args=(); line=

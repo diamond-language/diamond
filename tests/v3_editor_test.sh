@@ -6,13 +6,13 @@ set -euo pipefail
 # is required. Exercise the real protocol and the compiler's actual traces.
 work="$(realpath "$(mktemp -d)")"
 trap 'kill "${lsp_pid:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
-root_uri="file://$work/main.di"
-query_uri="file://$work/query.di"
+root_uri="file://$work/main.d6"
+query_uri="file://$work/query.d6"
 query_initial='class Query\n  def initial() -> Query = self\n  def where(expression: String) -> Query = self\n  def order_by(field: String) -> Query = self\n  def limit(count: Int) -> Query = self\nend\n'
 # Move limit's declaration and change its signature as well as its member set.
 query_edited='class Query\n\n  def refreshed() -> Query = self\n  def where(expression: String) -> Query = self\n  def order_by(field: String) -> Query = self\n  def limit(size: Int) -> Query = self\nend\n'
-printf '%b' "$query_initial" > "$work/query.di"
-cat > "$work/schema.di" <<'EOF'
+printf '%b' "$query_initial" > "$work/query.d6"
+cat > "$work/schema.d6" <<'EOF'
 require "./query"
 class SkinSchema
   def query() = Query.new()
@@ -112,7 +112,7 @@ response="$(request_at_uri 14 hover "$query_uri" 5 8)"
 [[ "$response" == *'"value":"def limit(size: Int) -> Query"'* ]]
 response="$(request_at_uri 15 definition "$query_uri" 5 8)"
 check_location "$response" "$query_uri" 5 6 11
-[[ "$(cat "$work/query.di")" != *refreshed* ]]
+[[ "$(cat "$work/query.d6")" != *refreshed* ]]
 
 # A broken imported buffer cannot expose the preceding successful analysis.
 allow_errors=true
@@ -129,7 +129,7 @@ check_query refreshed initial size 5
 # invalidate the same root's cached analysis without a document notification.
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$query_uri"'"}}}'
 check_query initial refreshed count 4
-printf '%b' "$query_edited" > "$work/query.di"
+printf '%b' "$query_edited" > "$work/query.d6"
 check_query refreshed initial size 5
 
 # Method signatures must exclude the implicit receiver when counting required,
@@ -235,14 +235,14 @@ done
 # Global references and rename must never select or edit colliding methods.
 # Materialize the open root so the workspace scan sees it, plus an importer
 # whose real bare call must be included exactly once despite require bundling.
-printf '%b' "$declaration_source" > "$work/main.di"
-cat > "$work/shared_user.di" <<'EOF'
+printf '%b' "$declaration_source" > "$work/main.d6"
+cat > "$work/shared_user.d6" <<'EOF'
 require "./main"
 def invoke_global()
   shared(true)
 end
 EOF
-shared_user_uri="file://$work/shared_user.di"
+shared_user_uri="file://$work/shared_user.d6"
 request_symbol_action() {
     local id="$1" method="$2" line="$3" character="$4" extra
     if [[ "$method" == rename ]]; then
@@ -285,18 +285,18 @@ for position in '0 6' '31 4'; do
     count="$(printf '%s' "$response" | grep -o '"newText":"renamed_shared"' | wc -l | tr -d '[:space:]')"
     [[ "$count" == 3 ]]
 done
-[[ "$(cat "$work/main.di")" != *renamed_shared* ]]
+[[ "$(cat "$work/main.d6")" != *renamed_shared* ]]
 
 # Declaration-only types return an empty array, not null, when excluded.
 # Reopened class headers are declarations too; constructor calls remain.
 context_source='class ContextClass\nend\nclass ContextClass\nend\nmodule ContextModule\nend\ninterface ContextInterface\nend\ndef context_usage() = ContextClass.new()\ndef context_unused() = 1\ndef context_typed(value: ContextClass) -> ContextClass = value\n'
-printf '%b' "$context_source" > "$work/context.di"
-context_uri="file://$work/context.di"
-cat > "$work/context_user.di" <<'EOF'
+printf '%b' "$context_source" > "$work/context.d6"
+context_uri="file://$work/context.d6"
+cat > "$work/context_user.d6" <<'EOF'
 require "./context"
 def context_import(value: ContextClass) -> ContextClass = value
 EOF
-context_user_uri="file://$work/context_user.di"
+context_user_uri="file://$work/context_user.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$context_uri"'","text":"'"$context_source"'"}}}'
 response="$(read_message)"
 [[ "$response" == *'"diagnostics":[]'* ]]
@@ -348,10 +348,10 @@ for range in '10 42 54' '1 43 55'; do
 done
 count="$(printf '%s' "$response" | grep -o '"newText":"RenamedContext"' | wc -l | tr -d '[:space:]')"
 [[ "$count" == 7 ]]
-[[ "$(cat "$work/context_user.di")" != *RenamedContext* ]]
+[[ "$(cat "$work/context_user.d6")" != *RenamedContext* ]]
 
 # Unrelated workspace globals also collide, across every declaration kind.
-cat > "$work/collisions.di" <<'EOF'
+cat > "$work/collisions.d6" <<'EOF'
 def ExistingFunction() -> Int = 1
 class ExistingClass
 end
@@ -360,7 +360,7 @@ end
 interface ExistingInterface
 end
 EOF
-collision_uri="file://$work/collisions.di"
+collision_uri="file://$work/collisions.d6"
 rename_context() {
     send '{"jsonrpc":"2.0","id":66,"method":"textDocument/rename","params":{"textDocument":{"uri":"'"$context_uri"'"},"position":{"line":10,"character":44},"newName":"'"$1"'"}}'
     read_response 66
@@ -395,7 +395,7 @@ for target in UnsavedTarget ContextClass later; do
     count="$(printf '%s' "$response" | grep -o '"newText":"'"$target"'"' | wc -l | tr -d '[:space:]')"
     [[ "$count" == 7 ]]
 done
-[[ "$(cat "$work/collisions.di")" != *UnsavedTarget* ]]
+[[ "$(cat "$work/collisions.d6")" != *UnsavedTarget* ]]
 
 send '{"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}'
 read_response 99 >/dev/null

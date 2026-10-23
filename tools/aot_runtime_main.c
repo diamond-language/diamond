@@ -11,7 +11,7 @@
  * way run_source.c's own run_compiled_chunk does for the ordinary CLI:
  * diamond_vm_set_argv for ARGV, diamond_vm_run, diamond_value_print the
  * top-level result on success (confirmed directly against the real CLI:
- * `echo '"hello"' > f.di; diamond f.di` prints "hello" with no explicit
+ * `echo '"hello"' > f.d6; diamond f.d6` prints "hello" with no explicit
  * puts -- diamond_value_print is what does that). DIAMOND_JIT and
  * DIAMOND_TRACE_JIT share the interpreter's opt-in behavior. */
 #define _DEFAULT_SOURCE

@@ -10,7 +10,7 @@ fingerprint_extra="$test_dir/runtime-abi.marker"
 export AOT_FINGERPRINT_EXTRA="$fingerprint_extra"
 printf '%s\n' 'runtime ABI v1' > "$fingerprint_extra"
 
-cat > "$test_dir/app.di" <<'EOF'
+cat > "$test_dir/app.d6" <<'EOF'
 def increment(value: Int) -> Int = value + 1
 i = 0
 while i < 100
@@ -20,11 +20,11 @@ i
 EOF
 
 cd "$test_dir"
-"$diamond_bin" build app.di > "$test_dir/first-build.log"
+"$diamond_bin" build app.d6 > "$test_dir/first-build.log"
 test -x "$test_dir/app"
 output="$("$test_dir/app")"
 test "$output" = "100"
-"$diamond_bin" build app.di -o app-again > "$test_dir/second-build.log"
+"$diamond_bin" build app.d6 -o app-again > "$test_dir/second-build.log"
 test "$("$test_dir/app-again")" = "100"
 if grep -Eq ' -c src/|ar rcs ' "$test_dir/second-build.log"; then
     echo "second standalone build rebuilt the cached runtime" >&2
@@ -36,7 +36,7 @@ fi
 touch -r "$fingerprint_extra" "$test_dir/original-mtime"
 printf '%s\n' 'runtime ABI v2' > "$fingerprint_extra"
 touch -r "$test_dir/original-mtime" "$fingerprint_extra"
-"$diamond_bin" build app.di -o app-after-abi-change > "$test_dir/third-build.log"
+"$diamond_bin" build app.d6 -o app-after-abi-change > "$test_dir/third-build.log"
 test "$("$test_dir/app-after-abi-change")" = "100"
 if ! grep -Eq ' -c src/|ar rcs ' "$test_dir/third-build.log"; then
     echo "content change with preserved mtime did not rebuild the cached runtime" >&2

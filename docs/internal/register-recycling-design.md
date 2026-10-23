@@ -113,9 +113,9 @@ Once `v` was later captured into a block and boxed, `BOX_LOCAL` converted
 register 0 -- `self` itself -- into a `Cell` *in place*, and every later
 `self.foo(...)` in that same method received the raw Cell as its receiver
 instead of the instance. Caught by the existing test suite
-(`tests/cases/active_record_batches.di`, `packages/arel`'s query
+(`tests/cases/active_record_batches.d6`, `packages/arel`'s query
 renderer) as `undefined method 'render_source' for Cell`; minimized to
-`tests/cases/self_assigned_to_new_local_then_captured.di`, which
+`tests/cases/self_assigned_to_new_local_then_captured.d6`, which
 reproduces the exact crash with the guard reverted and is silent with it.
 
 Every other call site of `compile_assignment_store` (`case`/pattern
@@ -192,7 +192,7 @@ the interpreter (C's own evaluation order reads both operands before the
 assignment, even when they alias) and the JIT (`DIAMOND_JIT=1`,
 `DIAMOND_JIT_THRESHOLD=1`, forcing tier-up almost immediately) -- both
 produce identical output to the non-aliased case across every opcode on
-the allowlist; see `tests/cases/register_recycling_reassignment_chain_jit.di`.
+the allowlist; see `tests/cases/register_recycling_reassignment_chain_jit.d6`.
 
 **A real, if unrelated, bug found while verifying this**: `--dump-bytecode`
 on the first test program in this codebase's history to use `>>`,
@@ -207,7 +207,7 @@ alongside). A debug-tool-only gap: `run_chunk`'s own dispatch
 affected, and the actual program output was correct throughout -- this
 briefly looked like Stage 2 corrupting bytecode, and the only way to tell
 the two apart was fixing the disassembler and re-reading the (now
-correct) dump. See `tests/cases/disassemble_shift_bitwise_opcodes.di`.
+correct) dump. See `tests/cases/disassemble_shift_bitwise_opcodes.d6`.
 
 **Measured impact** (`total = total + 1`-shaped chains up to 1300
 statements, alternated binaries against `main` (pre-Stage-1) 3 rounds):
@@ -229,13 +229,13 @@ along the way" below), and `make test-sanitize`, all clean.
 ## A stale test fixture found along the way
 
 While re-running the parser differential corpus during Stage 2's own
-verification, `tests/parser_error_cases/require_broken_manifest.di` and
-`require_nonhash_manifest.di` failed -- both predate this session and
+verification, `tests/parser_error_cases/require_broken_manifest.d6` and
+`require_nonhash_manifest.d6` failed -- both predate this session and
 were unrelated to register recycling, but investigating rather than
 citing them as pre-existing turned up a real, fixable problem: their
 `.err` fixture files (`"failed to compile"` / `"must evaluate to a
 Hash"`) were stale, left over from before this project's package system
-was reworked (`diamond_packages`/`package.di` -> `cuts`/`diamond.cut`,
+was reworked (`diamond_packages`/`package.d6` -> `cuts`/`diamond.cut`,
 August 2026). The *current* native and self-hosted compilers already
 agree with each other and produce clear, correct messages (`cut manifest
 '...' must be data only: line 1: expected data literal` / `... expected

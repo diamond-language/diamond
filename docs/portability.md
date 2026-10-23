@@ -32,8 +32,8 @@ enough POSIX-adjacent surface area to matter here.
   not been validated on Linux arm64 yet.
 - **Alpine (musl), GCC, x86_64** -- CI runs `make test` plus a curated set
   of focused targets (`test-musl` job, same workflow) on every pull-request update. Every
-  `tests/cases/*.di` corpus case passes except two known failures
-  (`bcrypt.di`, `active_record_secure_password.di`) are excluded from the
+  `tests/cases/*.d6` corpus case passes except two known failures
+  (`bcrypt.d6`, `active_record_secure_password.d6`) are excluded from the
   CI run itself rather than left to fail it -- both are the same real,
   documented libc limitation (BCrypt, below), not a bug. Narrower than
   `test-all`: GCC only (Clang-on-musl has not been checked), and no
@@ -45,10 +45,10 @@ enough POSIX-adjacent surface area to matter here.
 - **FreeBSD 15.1, Clang, x86_64** -- CI runs `make test` plus the same
   curated focused-target set as musl (`test-freebsd` job, same workflow),
   via a real QEMU-booted VM (`vmactions/freebsd-vm`), on every pull-request update. Four
-  known failures excluded the same way musl's two are: `bcrypt.di`/
-  `active_record_secure_password.di` (BCrypt.hash needs libxcrypt's
+  known failures excluded the same way musl's two are: `bcrypt.d6`/
+  `active_record_secure_password.d6` (BCrypt.hash needs libxcrypt's
   `crypt_gensalt_rn`, unavailable with no `<crypt.h>` at all on FreeBSD --
-  see "FreeBSD/OpenBSD" below) and `math_exp_log(_tanh).di` (exp/log
+  see "FreeBSD/OpenBSD" below) and `math_exp_log(_tanh).d6` (exp/log
   differ from glibc's own libm in the last representable bit -- expected
   cross-library variance, not a bug). Narrower than `test-all` for the
   same reason musl's own job is: no sanitizer/tsan builds or
@@ -353,7 +353,7 @@ not just a build-level check.
     `gmtime_r`-produced `struct tm` for a fixed-offset Time; `strftime`'s
     own `%z` conversion trusts that field on glibc but not on Darwin's
     libc, confirmed directly by this same CI run (`tests/cases/
-    time_calendar_constructors.di`, `east`/`west`'s own `%z` cases).
+    time_calendar_constructors.d6`, `east`/`west`'s own `%z` cases).
     Fixed at the source rather than excluded: Diamond now substitutes
     `%z` itself before a fixed-offset Time's format string ever reaches
     the system `strftime(3)` (`substitute_fixed_offset_z`), so the
@@ -477,7 +477,7 @@ tests/run.sh`):
 - **Two real, expected (not fixed) platform differences**, excluded from
   the CI run the same way musl's own two BCrypt cases are (`test-freebsd`
   job's own comment):
-  - `bcrypt.di`/`active_record_secure_password.di`: `BCrypt.hash` needs
+  - `bcrypt.d6`/`active_record_secure_password.d6`: `BCrypt.hash` needs
     libxcrypt's `crypt_gensalt_rn`/`CRYPT_GENSALT_IMPLEMENTS_AUTO_ENTROPY`
     to generate a fresh salt, both declared only in libxcrypt's own
     `<crypt.h>` -- which doesn't exist on FreeBSD at all (see the
@@ -488,7 +488,7 @@ tests/run.sh`):
     result. `BCrypt.verify` is unaffected -- no salt generation, just
     `crypt_r` against an existing digest, confirmed genuinely correct on
     FreeBSD (see below).
-  - `math_exp_log(_tanh).di`: `exp(1.0)`/`exp(log(5.0))` differ from
+  - `math_exp_log(_tanh).d6`: `exp(1.0)`/`exp(log(5.0))` differ from
     glibc's own libm in the last representable bit
     (`2.7182818284590455` vs `2.718281828459045`, `5.0` vs
     `4.999999999999999`). Not a bug in either library -- IEEE 754 only

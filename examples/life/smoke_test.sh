@@ -8,9 +8,9 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" life.di testdata/glider.txt 4 | cmp testdata/glider.expected -
+"$diamond" life.d6 testdata/glider.txt 4 | cmp testdata/glider.expected -
 
-"$diamond" build life.di -o "$work/life" > "$work/build.log"
+"$diamond" build life.d6 -o "$work/life" > "$work/build.log"
 life="$work/life"
 "$life" testdata/glider.txt 4 | cmp testdata/glider.expected -
 

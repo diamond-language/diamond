@@ -9,8 +9,8 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" agenda.di --today 2026-09-25 --days 10 testdata/events.txt | diff -u testdata/agenda.expected -
-"$diamond" build agenda.di -o "$work/agenda" > "$work/build.log"
+"$diamond" agenda.d6 --today 2026-09-25 --days 10 testdata/events.txt | diff -u testdata/agenda.expected -
+"$diamond" build agenda.d6 -o "$work/agenda" > "$work/build.log"
 agenda() { "$work/agenda" "$@"; }
 agenda --today 2026-09-25 --days 10 testdata/events.txt | diff -u testdata/agenda.expected -
 agenda --today 2026-09-25 --cal testdata/events.txt | diff -u testdata/calendar.expected -

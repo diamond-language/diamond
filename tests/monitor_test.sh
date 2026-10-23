@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# applications/registry/monitor.di against a local TLS server: a healthy registry passes, and one that trickles its response
+# applications/registry/monitor.d6 against a local TLS server: a healthy registry passes, and one that trickles its response
 # body a byte at a time (just inside every socket timeout) is cut off by the overall deadline instead of holding the probe open.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,7 +13,7 @@ export DIAMOND_NO_CACHE=1
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/server.key" -out "$work/server.pem" -days 2 \
     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
 
-cat > "$work/server.di" <<'DIEOF'
+cat > "$work/server.d6" <<'DIEOF'
 mode = ARGV[0]
 port = ARGV[1].to_i()
 listener = TLSServer.listen(port, ARGV[2], ARGV[3], {})
@@ -40,7 +40,7 @@ DIEOF
 
 run_server() { # mode port
     rm -f "$work/ready"
-    "$diamond" "$work/server.di" "$1" "$2" "$work/server.pem" "$work/server.key" "$work/ready" >"$work/server.log" 2>&1 &
+    "$diamond" "$work/server.d6" "$1" "$2" "$work/server.pem" "$work/server.key" "$work/ready" >"$work/server.log" 2>&1 &
     server_pid=$!
     for _ in $(seq 1 100); do [[ -f "$work/ready" ]] && return 0; sleep 0.1; done
     echo "monitor_test: the $1 server did not start" >&2; cat "$work/server.log" >&2; exit 1
@@ -49,7 +49,7 @@ run_server() { # mode port
 probe() { # port -> prints "<exit status>|<record>|<seconds>"
     local started status=0 record
     started=$(date +%s)
-    record="$("$diamond" applications/registry/monitor.di "https://localhost:$1" --ca-file "$work/server.pem" --timeout 1)" || status=$?
+    record="$("$diamond" applications/registry/monitor.d6 "https://localhost:$1" --ca-file "$work/server.pem" --timeout 1)" || status=$?
     printf '%s|%s|%s' "$status" "$record" "$(( $(date +%s) - started ))"
 }
 

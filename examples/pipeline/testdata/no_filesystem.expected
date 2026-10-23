@@ -1,7 +1,7 @@
 == results
 == dead letters
-  #1 ada at enrich: denied (stages/enrich.di: runtime error: sandbox denies File.open)
-  #2 beacon at enrich: denied (stages/enrich.di: runtime error: sandbox denies TCPSocket.connect)
+  #1 ada at enrich: denied (stages/enrich.d6: runtime error: sandbox denies File.open)
+  #2 beacon at enrich: denied (stages/enrich.d6: runtime error: sandbox denies TCPSocket.connect)
 == restarts
   normalize: 0
   enrich: 0

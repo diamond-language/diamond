@@ -136,12 +136,12 @@ mkdir -p "$REGISTRY_PUBLISH_ROOT"/{blobs,staging,publish_test/lib}
 printf '%s\n' '{"name":"publish_test","version":"1.0.0","summary":"Publish test","license":"MIT","maintainers":[{"name":"Test","contact":"test@example.com"}],"dependencies":{"logger":"^0.1.0"}}' >"$REGISTRY_PUBLISH_ROOT/publish_test/diamond.cut"
 printf 'test\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/README.md"
 printf 'MIT\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/LICENSE"
-printf '1\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/lib/publish_test.di"
+printf '1\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/lib/publish_test.d6"
 "$REGISTRY_FACET" pack "$REGISTRY_PUBLISH_ROOT/publish_test" "$REGISTRY_PUBLISH_ROOT/first.tar" >/dev/null
 printf 'changed\n' >"$REGISTRY_PUBLISH_ROOT/publish_test/README.md"
 "$REGISTRY_FACET" pack "$REGISTRY_PUBLISH_ROOT/publish_test" "$REGISTRY_PUBLISH_ROOT/changed.tar" >/dev/null
-cp "$source_root/packages/registry/publish_test.di" "$test_project/publish_test.di"
-"$diamond" "$test_project/publish_test.di"
+cp "$source_root/packages/registry/publish_test.d6" "$test_project/publish_test.d6"
+"$diamond" "$test_project/publish_test.d6"
 
 output="$("$diamond" -e 'root = ENV["REGISTRY_TEST_ROOT"]
 paths = [root + "/existing-directory", root + "/existing-link", root + "/missing"]

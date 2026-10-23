@@ -66,7 +66,7 @@ enum {
      * genuinely ordinary literals (a multi-line SQL CREATE TABLE
      * statement, a GraphQL query) that had to be manually split into an
      * Array + .join() to work around it -- see skindicate.dia's own
-     * setup_db.di and winamp_api.di for real examples this fix
+     * setup_db.d6 and winamp_api.d6 for real examples this fix
      * eliminates the workaround for. */
     DIAMOND_MAX_STRING_LENGTH = 4095,
     DIAMOND_MAX_CLASSES = 1024,
@@ -263,7 +263,7 @@ typedef enum DiamondOpCode : uint8_t {
      * above despite the similar shape, specifically to avoid shifting
      * every opcode declared after an insertion point -- ProgramBuilder-
      * based tests (see tests/cases/program_builder_call_declared_
-     * function.di) and the self-hosted compiler bootstrap both encode
+     * function.d6) and the self-hosted compiler bootstrap both encode
      * raw numeric opcode values, not symbolic names, so DiamondOpCode's
      * existing numbering is effectively a stable ABI within this
      * codebase, not just an implementation detail. */
@@ -557,7 +557,7 @@ typedef enum DiamondOpCode : uint8_t {
      * here, not grouped next to DIAMOND_OP_CALL above, for the same
      * stable-numbering reason as DIAMOND_OP_CHANNEL_NEW/DIAMOND_OP_
      * SUPERVISOR_NEW just above -- anything encoding a raw opcode number
-     * directly (hand-built ProgramBuilder bytecode, an old cached .dic)
+     * directly (hand-built ProgramBuilder bytecode, an old cached .d6c)
      * must never have an existing opcode's own number silently reassigned
      * to something else. */
     DIAMOND_OP_TAIL_CALL,
@@ -573,7 +573,7 @@ typedef enum DiamondOpCode : uint8_t {
      * here" at compile time) is what lets a debugger add or remove a
      * breakpoint against an already-running process with no restart.
      * Only ever emitted when compiling a debug session at all (see
-     * Compiler.debug_mode) -- an ordinary `diamond script.di` run has
+     * Compiler.debug_mode) -- an ordinary `diamond script.d6` run has
      * none of these and pays nothing for this feature. Appended here
      * for the same stable-numbering reason as DIAMOND_OP_TAIL_CALL
      * just above. */
@@ -588,13 +588,13 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_TCP_CONNECT_NONBLOCK, /* dest, numeric address, port */
     DIAMOND_OP_DNS_RESOLVE, /* dest, hostname, cancellation channels, deadline */
     DIAMOND_OP_TLS_START_HANDSHAKE, /* dest, connected Socket, hostname, options */
-    DIAMOND_OP_JSON_STRINGIFY, /* dest, value (native JSON.stringify); selfhost/parser.di hard-codes this value, so new opcodes go after it */
+    DIAMOND_OP_JSON_STRINGIFY, /* dest, value (native JSON.stringify); selfhost/parser.d6 hard-codes this value, so new opcodes go after it */
     DIAMOND_OP_CHANNEL_SELECT, /* dest, Array of Channels, deadline */
     /* `receiver["literal"]` with a plain (non-interpolated) string literal and no `=` after it:
      * dest, receiver, string constant index. A Hash receiver is searched by the constant's
      * bytes without allocating the key String that STRING + INDEX_GET would build on every
      * execution; any other receiver builds that String and runs INDEX_GET's own logic
-     * (diamond_jit_index_get). selfhost/parser.di does not emit it. */
+     * (diamond_jit_index_get). selfhost/parser.d6 does not emit it. */
     DIAMOND_OP_INDEX_GET_STRING,
     DIAMOND_OP_CHANNEL_SELECT_SEND, /* dest, Array of Channels, value, deadline */
     /* dest, left, right: true when both are instances of exactly the same
@@ -604,7 +604,7 @@ typedef enum DiamondOpCode : uint8_t {
     /* dest, argv Array, options Hash: Process.run / Process.spawn with the
      * optional second argument (env, cwd, stdin). Without options the compiler
      * emits the two-operand PROCESS_RUN / PROCESS_SPAWN, which keeps the
-     * layout selfhost/parser.di emits. */
+     * layout selfhost/parser.d6 emits. */
     DIAMOND_OP_PROCESS_RUN_OPTIONS,
     DIAMOND_OP_PROCESS_SPAWN_OPTIONS,
     /* count (1 byte), target (2 bytes): `break`/`next`/`redo` from inside
@@ -615,7 +615,7 @@ typedef enum DiamondOpCode : uint8_t {
     DIAMOND_OP_UNWIND_JUMP,
     /* dest, value, options Hash: JSON.stringify with the optional second argument (indent,
      * sort_keys). Without options the compiler emits the two-operand JSON_STRINGIFY, which
-     * keeps the layout selfhost/parser.di emits. */
+     * keeps the layout selfhost/parser.d6 emits. */
     DIAMOND_OP_JSON_STRINGIFY_OPTIONS,
     DIAMOND_OP_COUNT,
 } DiamondOpCode;
@@ -757,7 +757,7 @@ const char *diamond_native_type_name(uint8_t kind);
  * interpreter's matchers call this; the JIT's guard emitter in jit.c asks
  * it which ids are plain and mirrors the same kind tests as machine code,
  * so a change here must be reflected in compile_check_type's two kind
- * switches. tests/cases/plain_type_guard_matrix.di checks every plain id
+ * switches. tests/cases/plain_type_guard_matrix.d6 checks every plain id
  * against every value kind. */
 static inline int diamond_plain_type_match(DiamondValue value, uint16_t id) {
     const bool object = value.kind == DIAMOND_VALUE_OBJECT;
@@ -1397,7 +1397,7 @@ struct DiamondChunk {
      * etc.), which is every construction site except the handful of
      * actual call/invoke opcode handlers in src/vm.c. */
     bool has_variadic;
-    /* Index into `classes` of the class named "Range" (lib/core.di),
+    /* Index into `classes` of the class named "Range" (lib/core.d6),
      * resolved once at the end of diamond_compile (by name, never
      * hardcoded -- confirmed directly that its index can shift with
      * conservative prelude module selection, so nothing may assume a
@@ -1477,10 +1477,10 @@ typedef enum DiamondVmStatus : uint8_t {
     DIAMOND_VM_NO_METHOD_ERROR,
     /* String#parse_json failures: malformed input at the native JSON
      * parser (src/vm.c's json_parse_value and friends), replacing
-     * lib/core/json_codec.di's own pure-Diamond JSONCodec#parse for
+     * lib/core/json_codec.d6's own pure-Diamond JSONCodec#parse for
      * JSON.parse's hot path. Message is always a specific parse-position
      * diagnostic, surfaced as JSONError -- see exception_class_for_status.
-     * JSONError itself moved from a lib/core/json_codec.di class
+     * JSONError itself moved from a lib/core/json_codec.d6 class
      * declaration to a builtin (DIAMOND_CLASS_JSON_ERROR) so native code
      * can raise it the same generic way every other native error class
      * here already does. */
@@ -1670,7 +1670,7 @@ struct DiamondVm {
      * nursery should stay small and cheap to keep minor collections
      * frequent, unlike the major threshold, which deliberately grows
      * with the live set to avoid re-collecting a large heap too often.
-     * 1MiB, tuned against bench/gc_churn's session_churn.di after card
+     * 1MiB, tuned against bench/gc_churn's session_churn.d6 after card
      * marking landed: 64KiB (the pre-card-marking placeholder) triggered
      * a minor collection roughly every 4 iterations of that benchmark's
      * workload, which dominated wall time even with cheap per-collection
@@ -1804,7 +1804,7 @@ struct DiamondVm {
      * correct however deep in a nested call this is read. See
      * DiamondChunk's own copy of this comment (this field exists so
      * DIAMOND_OP_INDEX_GET/SET can recognize a Range instance -- lib/
-     * core.di, no native VM value kind for Range at all -- without a
+     * core.d6, no native VM value kind for Range at all -- without a
      * hardcoded class index, confirmed directly that one can shift with
      * conservative prelude module selection). */
     uint16_t range_class_index;
@@ -2205,7 +2205,7 @@ bool diamond_native_method_satisfies(uint16_t receiver_type,const char *name,
  * duplication (two independent copies of the same per-kind switch)
  * previously let src/value.c's own copy silently miss cases (Tensor,
  * Channel, Supervisor, Time, ...) that src/vm.c's copy already covered,
- * found the hard way while writing bench/tensor_matmul.di. */
+ * found the hard way while writing bench/tensor_matmul.d6. */
 void diamond_format_value_type(char *buffer, size_t capacity, DiamondValue value);
 /* Writes a Time value's default string representation ("2026-08-30
  * 12:30:00 UTC", "... +0000", or a fixed-offset zone) into `buffer`,

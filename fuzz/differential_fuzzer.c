@@ -89,7 +89,7 @@ static bool run_captured(const char *source, DiamondProgram *program,
     dup2(out_fd, STDOUT_FILENO);
     dup2(err_fd, STDERR_FILENO);
     diamond_program_free(program);
-    out->status = diamond_run_source_with_template("fuzz.di", source, DIAMOND_DUMP_NONE, program,
+    out->status = diamond_run_source_with_template("fuzz.d6", source, DIAMOND_DUMP_NONE, program,
         prelude_template, 0, nullptr);
     fflush(stdout);
     fflush(stderr);

@@ -1,5 +1,9 @@
 # Cuts
 
+New cut entry points use `.d6`. The loader prefers `lib/<name>.d6`, then
+`<name>.d6`, then the corresponding legacy `.di` paths. Facet accepts and
+audits both source suffixes so immutable releases remain installable.
+
 For the proposed publishable package contract and hosted registry roadmap, see
 [cut-contract.md](cut-contract.md) and
 [package-registry-plan.md](package-registry-plan.md). This page documents the
@@ -52,11 +56,12 @@ greet("world")
 `require_cut` is a require form of its own, distinct from plain `require`
 — parsed the same textual way (`src/loader.c`'s `expand()`), but resolved
 completely differently: `require_cut "name"` always resolves to
-`cuts/name/lib/name.di`, anchored to the *process's own current working
+`cuts/name/lib/name.d6`, anchored to the *process's own current working
 directory* (not the requiring file's own directory — cuts are
 project-level, so they're anchored the same way the top-level entry file
-itself is). If `cuts/name/lib/name.di` doesn't exist, the loader falls
-back to the flat `cuts/name/name.di` location before giving up. If neither
+itself is). If `cuts/name/lib/name.d6` doesn't exist, the loader falls
+back to the flat `cuts/name/name.d6` location, then the corresponding legacy
+`.di` paths. If none
 resolves, `require_cut` fails with a clear "cannot require_cut" error
 rather than silently doing nothing.
 
@@ -85,13 +90,13 @@ cuts/
   greeter/
     diamond.cut           # manifest (optional)
     lib/
-      greeter.di       # public entry point, same name as the cut
-      helpers.di        # implementation components
+      greeter.d6       # public entry point, same name as the cut
+      helpers.d6        # implementation components
 ```
 
-The public entry point is resolved from `lib/<name>.di`. A cut's own code
+The public entry point is resolved from `lib/<name>.d6`. A cut's own code
 can require sibling components with ordinary relative paths from that
-`lib/` directory. The loader retains the flat `<name>.di` location (no
+`lib/` directory. The loader retains the flat `<name>.d6` location (no
 `lib/` subdirectory) as a compatibility fallback for cuts that have not
 migrated yet.
 

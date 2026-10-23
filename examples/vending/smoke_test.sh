@@ -10,11 +10,11 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build vending.di -o "$work/vending" > "$work/build.log"
+"$diamond" build vending.d6 -o "$work/vending" > "$work/build.log"
 
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 
-for vm in "$diamond vending.di" "$work/vending"; do
+for vm in "$diamond vending.d6" "$work/vending"; do
   $vm testdata/session.txt | cmp testdata/session.expected -
   [[ "$(status_of $vm testdata/session.txt)" == 0 ]]
 

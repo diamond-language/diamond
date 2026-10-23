@@ -527,7 +527,7 @@ static void emit_epilogue(JitCompiler *jc) {
  * call site itself but on some later, unrelated frame operation. Guarded
  * behind jc->needs_frame now, exactly like emit_epilogue's own success/
  * retry exit already correctly does -- see tests/cases/jit_propagate_
- * without_frame.di, which reproduces this exact shape. */
+ * without_frame.d6, which reproduces this exact shape. */
 static void emit_epilogue_propagate(JitCompiler *jc) {
     JitBuffer *buf = &jc->buf;
     const int32_t saved_rsp_delta = buf->rsp_delta;

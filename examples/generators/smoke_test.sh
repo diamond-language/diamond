@@ -8,10 +8,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" generators.di > "$work/interpreted.txt"
+"$diamond" generators.d6 > "$work/interpreted.txt"
 diff -u expected.txt "$work/interpreted.txt"
 
-"$diamond" build generators.di -o "$work/generators" > "$work/build.log"
+"$diamond" build generators.d6 -o "$work/generators" > "$work/build.log"
 "$work/generators" > "$work/binary.txt"
 diff -u expected.txt "$work/binary.txt"
 echo "generators smoke test passed"

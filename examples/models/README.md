@@ -12,7 +12,7 @@ $ cat testdata/schema.json
           "in_print": {"type": "Bool"}},
  "Author": {...}}
 
-$ diamond models.di testdata/schema.json
+$ diamond models.d6 testdata/schema.json
 == generated methods
   Book responds to title: true
   Book responds to in_print?: true
@@ -36,7 +36,7 @@ $ diamond models.di testdata/schema.json
 
 ## What it shows
 
-- **Methods from data.** `Model.fields(spec)` (`lib/model.di`) loops over
+- **Methods from data.** `Model.fields(spec)` (`lib/model.d6`) loops over
   the schema and, for each field, builds a method body from a string with
   `self.compile_method` and installs it with `self.define_method`: a reader,
   a writer (`title=`, which `book.title = "Dune"` calls), and for Bool

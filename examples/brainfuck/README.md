@@ -1,10 +1,10 @@
 # examples/brainfuck
 
 A Brainfuck interpreter whose main loop is a self-recursive tail call, and a
-companion `depth.di` that measures which recursion shapes Diamond optimizes.
+companion `depth.d6` that measures which recursion shapes Diamond optimizes.
 
 ```text
-$ diamond brainfuck.di testdata/hello.bf --steps
+$ diamond brainfuck.d6 testdata/hello.bf --steps
 Hello World!
 906 instructions
 ```
@@ -16,7 +16,7 @@ calls. This program never gets near it, because a function's own tail call
 reuses its frame.
 
 ```text
-$ diamond depth.di
+$ diamond depth.d6
 shape                                 depth   result
 self tail call                       100000   ok
 non-tail: 1 + f(n - 1)               100000   stack overflow
@@ -28,8 +28,8 @@ non-tail, within the limit               80   ok
 ## Usage
 
 ```text
-brainfuck.di FILE [--input TEXT] [--limit N] [--steps]
-depth.di [N]
+brainfuck.d6 FILE [--input TEXT] [--limit N] [--steps]
+depth.d6 [N]
 ```
 
 `--input` supplies the bytes `,` reads (0 once they run out), `--limit N`
@@ -46,7 +46,7 @@ limit), and 66 when the file can't be read.
   whole value of a `return`, in a plain function, outside any `begin`. The
   work of each instruction is pushed into `Machine#apply`, so the recursive
   call stays that simple.
-- **What does not qualify, measured.** `depth.di` runs the same 100,000-deep
+- **What does not qualify, measured.** `depth.d6` runs the same 100,000-deep
   count four ways. The self tail call and the mutual (ping/pong) tail calls survive;
   a non-tail recursion and a tail call inside `begin/rescue` hit the depth limit. None of those is an error in the
   language, just ordinary recursion.
@@ -69,6 +69,6 @@ limit), and 66 when the file can't be read.
 bash smoke_test.sh
 ```
 
-Runs the interpreter and `depth.di` interpreted and as `diamond build`
+Runs the interpreter and `depth.d6` interpreted and as `diamond build`
 binaries: output and instruction counts of the sample programs, the step
 limit, each error message and exit status, and the depth table.

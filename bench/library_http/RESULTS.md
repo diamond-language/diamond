@@ -88,7 +88,7 @@ raw concurrent-connection burst test (many `curl`s at once, bypassing
 paths (normally silent by design — a broken client's exception
 shouldn't crash the server, but it also swallows the diagnostic needed
 here), which surfaced:
-   - **The dominant cause**: `examples/library/app.di` called
+   - **The dominant cause**: `examples/library/app.d6` called
      `Author.configure`/`Book.configure` once before `gremlin_serve`,
      expecting it to reach every worker. `@@repository` is a class
      variable, and `gremlin_serve(threads: N)`'s N-1 spawned workers
@@ -100,7 +100,7 @@ here), which surfaced:
      #<ActiveRecord::Repository>` on the fourth) before touching any
      code. Fixed by moving the configure calls behind a per-worker lazy
      guard (`ensure_models_configured(context)` in
-     `lib/middleware.di`), the same `context`-memoized shape
+     `lib/middleware.d6`), the same `context`-memoized shape
      `Dials::RouterHolder` and this app's own `Database.get` already
      use for other per-worker resources. Full writeup in
      `docs/threads.md`'s new "Gotcha" note — this isn't specific to

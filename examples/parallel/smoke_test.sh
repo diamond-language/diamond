@@ -8,10 +8,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" parallel.di > "$work/interpreted.txt"
+"$diamond" parallel.d6 > "$work/interpreted.txt"
 diff -u expected.txt "$work/interpreted.txt"
 
-"$diamond" build parallel.di -o "$work/parallel" > "$work/build.log"
+"$diamond" build parallel.d6 -o "$work/parallel" > "$work/build.log"
 "$work/parallel" > "$work/binary.txt"
 diff -u expected.txt "$work/binary.txt"
 # Thread scheduling varies run to run; the output must not.

@@ -18,7 +18,7 @@
  * Location's own uri names that file, resolved via
  * diamond_resolve_diagnostic_location's segment table (src/compiler.h)
  * -- the same machinery a compile error's own location already goes
- * through. A match declared in lib/core.di's own prelude is
+ * through. A match declared in lib/core.d6's own prelude is
  * deliberately excluded (it has no meaningful open-document-relative
  * position and no editor-visible uri to jump to) -- practically, hover
  * still shows a prelude function's real signature (useful, no location

@@ -6,7 +6,7 @@ inline `code`, **strong**, *emphasis*, and links. It's a tour of Diamond's
 string and `Regexp` handling.
 
 ```text
-$ diamond markdown.di --toc testdata/sample.md
+$ diamond markdown.d6 --toc testdata/sample.md
 <nav>
 <ul>
   <li><a href="#getting-started">Getting started</a></li>
@@ -34,7 +34,7 @@ and 66 when the file can't be opened.
 ## What it shows
 
 - **Regexp as `case` patterns.** `BlockParser#next_block`
-  (`lib/blocks.di`) classifies each line with `case line` and `when
+  (`lib/blocks.d6`) classifies each line with `case line` and `when
   @heading`, `when @fence`, and so on: a `Regexp` in a `when` searches the
   String subject. `match` then pulls out the captures, destructured with
   `[_, hashes, text] = @heading.match(line)`.

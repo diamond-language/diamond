@@ -2,7 +2,7 @@
   "name": "diamond-language",
   "displayName": "Diamond",
   "description": "Syntax highlighting and language server diagnostics/hover/go-to-definition/outline for the Diamond programming language",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -14,7 +14,7 @@
       {
         "id": "diamond",
         "aliases": ["Diamond", "diamond"],
-        "extensions": [".di"],
+        "extensions": [".d6"],
         "configuration": "./language-configuration.json"
       },
       {
@@ -70,7 +70,7 @@
             "properties": {
               "program": {
                 "type": "string",
-                "description": "Absolute path to the Diamond (.di) script to run.",
+                "description": "Absolute path to the Diamond (.d6) script to run.",
                 "default": "${file}"
               },
               "args": {

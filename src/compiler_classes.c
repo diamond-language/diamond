@@ -2684,7 +2684,7 @@ uint16_t compile_assignment_store(Compiler *compiler, DiamondSpan name,
      *   boxed -- boxing register 0 in place corrupted `self` for the
      *   rest of the method, surfacing as "undefined method ... for Cell"
      *   at a completely unrelated later `self.foo(...)` call (found via
-     *   tests/cases/active_record_batches.di, an existing, not new,
+     *   tests/cases/active_record_batches.d6, an existing, not new,
      *   test). This second guard doesn't need to know about `self`
      *   specifically, or about any other such case -- anything that
      *   existed before this statement's RHS began is, by this compiler's

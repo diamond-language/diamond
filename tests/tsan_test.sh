@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Runs Thread's own test cases (tests/cases/thread_*.di), Channel's own
-# (tests/cases/channel_*.di -- including the two real two-Thread producer/
+# Runs Thread's own test cases (tests/cases/thread_*.d6), Channel's own
+# (tests/cases/channel_*.d6 -- including the two real two-Thread producer/
 # consumer cases, the actual reason this feature needs TSan coverage at
 # all: a brand-new mutex+condvar primitive, see docs/internal/concurrency-
-# internals.md), Supervisor's own (tests/cases/supervisor_*.di -- a pthread
+# internals.md), Supervisor's own (tests/cases/supervisor_*.d6 -- a pthread
 # per child mutating shared restart_count/last_error/done fields under a
 # mutex plus one lock-free atomic, the same class of risk Channel's own
 # mutex+condvar work already needed this suite for), plus a couple of
@@ -49,8 +49,8 @@ trap 'rm -rf "$case_dir" "$output_dir"' EXIT
 TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1}" "$run_cases_abs" "$case_dir" "$output_dir"
 
 case_count=0
-for case_file in "$case_dir"/*.di; do
-    case_name="${case_file%.di}"
+for case_file in "$case_dir"/*.d6; do
+    case_name="${case_file%.d6}"
     case_base="$(basename "$case_name")"
     if [[ -f "$case_name.expected" ]]; then
         actual="$(<"$output_dir/$case_base.stdout")"

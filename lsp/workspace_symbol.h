@@ -6,14 +6,14 @@
 
 #include <stddef.h>
 
-/* Recursively collects every *.di file's own absolute path under
+/* Recursively collects every *.d6 file's own absolute path under
  * `directory` into `*paths` (grown via `*count`/`*capacity`), skipping
  * dotfiles/dotdirs. Shared by workspace_symbol.c's own workspace-wide
  * scan and lsp/references.c's, which needs the identical "every source
  * file in the workspace" walk. Not fatal if `directory` can't be opened;
  * only an allocation failure returns false. See workspace_symbol.c for
  * the full comment. */
-bool collect_di_files(const char *directory,char ***paths,
+bool collect_source_files(const char *directory,char ***paths,
     size_t *count,size_t *capacity);
 
 /* `path`'s content, preferring an open document's live (possibly
@@ -23,12 +23,12 @@ bool collect_di_files(const char *directory,char ***paths,
 char *read_file_preferring_open(const DocumentTable *documents,const char *path);
 
 /* Computes a workspace/symbol result: every top-level function/class,
- * across every *.di file found by recursively walking `workspace_root`
+ * across every *.d6 file found by recursively walking `workspace_root`
  * (skipping dotfiles/dotdirs -- .git and friends), whose name contains
  * `query` as a case-insensitive substring (an empty query matches
  * everything, same as leaving the picker unfiled in most editors).
  * Each file is compiled independently the same way any open document
- * is (lib/core.di prepended, its own `require`s bundled in via
+ * is (lib/core.d6 prepended, its own `require`s bundled in via
  * diamond_load_program_with_override) -- only symbols actually
  * declared *in that file itself* are reported, the exact "own
  * declarations only" rule lsp/document_symbol.c already applies to a

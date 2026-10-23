@@ -22,7 +22,7 @@ ln -s "$package_root/lib" "$test_project/lib"
 cd "$test_project"
 
 # Part 1: pure protocol-level checks -- no sockets, no gremlin_serve,
-# just frame.di/handshake.di/connection.di exercised directly against a
+# just frame.d6/handshake.d6/connection.d6 exercised directly against a
 # small in-memory fake connection. Anything that doesn't need a real
 # byte stream lives here rather than in the slower, flakier live-server
 # section below.
@@ -82,7 +82,7 @@ class FakeConn
 end
 
 # A controllable stand-in for the raw native Socket that
-# websocket_try_send_text (broadcast.di) writes to directly, bypassing
+# websocket_try_send_text (broadcast.d6) writes to directly, bypassing
 # NonblockingConnection entirely -- so this, unlike FakeConn above,
 # needs to mimic the real Socket#write(data) -> Int contract (bytes
 # actually written, possibly fewer than requested, or a raised
@@ -324,7 +324,7 @@ check(!ws.closed?(), "a successful send must not close the connection")
 # websocket_try_send_text: a write that would block from the very
 # first byte closes the connection and returns false, rather than
 # retrying/yielding (which would suspend the wrong fiber -- see
-# broadcast.di's own comment).
+# broadcast.d6's own comment).
 raw_socket = FakeSocket.new(0)
 conn = FakeConn.new("")
 conn.install_socket(raw_socket)
@@ -414,7 +414,7 @@ wait_for_port() {
 
 port=19420
 out="$(mktemp)"
-cat >"$out.di" <<DIEOF
+cat >"$out.d6" <<DIEOF
 require "$package_root/../gremlin/lib/gremlin"
 require "$package_root/lib/websocket"
 def run()
@@ -441,7 +441,7 @@ def run()
 end
 run()
 DIEOF
-timeout 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -476,7 +476,7 @@ node_status=$?
 cat "$node_out"
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di" "$node_out"
+rm -f "$out" "$out.d6" "$node_out"
 if [[ "$node_status" != "0" ]]; then
     exit 1
 fi

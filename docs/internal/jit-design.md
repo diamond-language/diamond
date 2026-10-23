@@ -20,7 +20,7 @@ bailouts (integer overflow, division edge cases) that re-run the *whole*
 function via the interpreter rather than resuming mid-flight. See `src/
 jit.c`'s own header comment for the precise, current scope, and `bench/
 RESULTS.md`'s "Phase 2 baseline JIT" section for the first real measurement
-(~2.95x on `bench/int_arithmetic.di`, release build). The frame contract,
+(~2.95x on `bench/int_arithmetic.d6`, release build). The frame contract,
 tier-up trigger, and deopt design below remain the target for whatever
 comes after this slice -- most concretely, compiling `INVOKE_MONO`-guarded
 calls, which is the first thing that would actually need them.
@@ -44,7 +44,7 @@ interpret` helper in `vm.c`.
 
 **What this did *not* reach, found the hard way**: the actual motivating
 target, skindicate's own `User#initialize`-shaped row hydration
-(`bench/object_hydration.di`'s `HydratedUser#initialize`), still isn't
+(`bench/object_hydration.d6`'s `HydratedUser#initialize`), still isn't
 JIT-eligible. `attributes["email"]`-style Hash access compiles a fresh
 `DIAMOND_OP_STRING` construction for the literal key on *every* call --
 this is not a benchmark-specific quirk, string-literal Hash keys are
@@ -52,10 +52,10 @@ pervasive in ordinary Diamond code -- and string construction is a real
 allocation, landing squarely back in "needs the general frame/GC-root
 contract" territory this whole extension had been sidestepping. Confirmed
 end-to-end on a smaller case built specifically to isolate this (`tests/
-cases/jit_hash_ivar_construct.di`: same `SET_IVAR`/`INDEX_GET`/
+cases/jit_hash_ivar_construct.d6`: same `SET_IVAR`/`INDEX_GET`/
 `CHECK_TYPE`/self/argument machinery, Hash key passed as a parameter
 instead of a literal) -- that one compiles and measures correctly,
-confirming the extension itself works; `object_hydration.di`'s own
+confirming the extension itself works; `object_hydration.d6`'s own
 `initialize` does not, purely because of the string-literal keys. A real
 "Phase 2c" -- an allocation-capable trampoline for string/Hash/Array
 construction, plus actually building the `DiamondFrame`-publishing
@@ -82,7 +82,7 @@ prologue -- reusing the exact same decode/dispatch logic as the real
 compile rather than a second, separately-maintained opcode-width table
 that could drift out of sync with it.
 
-Reached the actual target: `bench/object_hydration.di`'s `HydratedUser#
+Reached the actual target: `bench/object_hydration.d6`'s `HydratedUser#
 initialize` now compiles (previously always `jit_ineligible`), verified
 against three configurations agreeing on output (`59000`/the dedicated
 `tests/cases/jit_string_construct*` cases' `2800`): plain interpreted,
@@ -92,20 +92,20 @@ proof that a register held live across a `STRING`-triggered allocation
 (`self`, the Hash argument, and intermediate temporaries) actually survives
 via the published frame, not by good luck. Measured honestly, this closes
 the compile-eligibility gap but the speedup on this specific shape is
-modest (~2-3% on `object_hydration.di`, see `bench/RESULTS.md`'s "Phase 2c"
+modest (~2-3% on `object_hydration.d6`, see `bench/RESULTS.md`'s "Phase 2c"
 section) because most of the per-call cost is inside the trampolines
 themselves (Hash lookup, ivar write, type check, string allocation) doing
 the same work the interpreter would -- the JIT only removes bytecode
 dispatch overhead on top, not the underlying work, same pattern already
-observed with Phase 2b's `hash_ivar_construct.di`. Full suite (1331 cases)
+observed with Phase 2b's `hash_ivar_construct.d6`. Full suite (1331 cases)
 verified green under both debug and ASan/UBSan sanitizer builds, with
 `DIAMOND_JIT` unset (default, zero behavior change) and with
 `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1` (compiles every
 eligible function immediately, forces a collection on every allocation) --
 no missed GC root surfaced. Confirmed no regression on Phase 2/2b's
 existing allocation-free benchmarks from adding the pre-scan mechanism:
-`int_arithmetic.di` still measures ~2.9x (previously ~2.95x, within noise),
-`hash_ivar_construct.di`'s `Box` still measures ~6-7% (previously 4-7%).
+`int_arithmetic.d6` still measures ~2.9x (previously ~2.95x, within noise),
+`hash_ivar_construct.d6`'s `Box` still measures ~6-7% (previously 4-7%).
 
 Still out of scope, deliberately: `HASH`/`ARRAY`/`NEW` construction (the
 pre-scan only checks for `STRING`), and skindicate's *real*
@@ -117,8 +117,8 @@ through. Whether that's worth a follow-on phase is not yet decided.
 exact gap** -- `HASH` (needed for a `= {}` default argument) and
 `DIAMOND_OP_SUPER` itself, plus a fix removing `EQUAL`/`NOT_EQUAL`'s own
 bailout entirely (see below). skindicate's real `User#initialize`
-(`skindicate.dia/lib/models/user.di`) now compiles, verified directly
-against the real file (not just the `bench/object_hydration.di` mirror).
+(`skindicate.dia/lib/models/user.d6`) now compiles, verified directly
+against the real file (not just the `bench/object_hydration.d6` mirror).
 
 This phase looked structurally different from every one before it: SUPER
 is the first opcode that can run arbitrary interpreted code with real
@@ -161,7 +161,7 @@ confirming `depth` threads correctly across multiple compiled hops).
 **Honest end-to-end result, and why it's smaller than object_hydration's
 own ~2-3%**: `User#initialize` itself compiles and is proven correct, but
 its own `super(attributes)` call reaches `ActiveRecord::Model#initialize`
-(`packages/active_record/lib/active_record/model.di:36-49`), which
+(`packages/active_record/lib/active_record/model.d6:36-49`), which
 remains fully interpreted -- its own body loops over `attributes.keys()`
 calling ordinary methods (`.keys()`, `.length()`) and uses `INDEX_GET` on
 an *Array* (unsupported -- this JIT's `INDEX_GET` trampoline is Hash-only)
@@ -195,7 +195,7 @@ re-checking `EQUAL`'s own full case) surfaced:
    `values_equal` -- Phase 2d's `diamond_jit_values_equal` called
    `values_equal` directly, unconditionally. A class defining `def ==`
    compared via JIT'd `EQUAL` silently got identity comparison instead.
-   Confirmed as a real, catchable bug: `tests/cases/jit_equal_overload.di`
+   Confirmed as a real, catchable bug: `tests/cases/jit_equal_overload.d6`
    (two equal-by-value `Point` instances compared inside a small JIT'd
    `compare(a, b) = a == b`) returns `10` with the fix and `0` without it
    -- verified directly by temporarily reverting the fix (`git stash`) and
@@ -208,7 +208,7 @@ re-checking `EQUAL`'s own full case) surfaced:
    `INDEX_GET` on an Instance with a real `[]` override, reached *after*
    such a call, would have incorrectly propagated `TYPE_ERROR` rather than
    invoking the override. Confirmed the same way:
-   `tests/cases/jit_index_get_overload_after_super.di` (a `Box` defining
+   `tests/cases/jit_index_get_overload_after_super.d6` (a `Box` defining
    `def [](key)`, indexed from inside a JIT'd constructor right after its
    own `super()` call) returns `1050` with the fix and raises an uncaught
    `TypeError` without it.
@@ -228,7 +228,7 @@ all three trampolines are compiled with `jc->has_called = true`
 unconditionally (the same conservative, compile-time-only choice
 `compile_super_call` already makes), and `diamond_jit_index_get`/`_set`
 additionally set `jc->needs_frame = true` (their String/Array paths can
-allocate). A new `tests/cases/jit_array_index.di` exercises Array
+allocate). A new `tests/cases/jit_array_index.d6` exercises Array
 `INDEX_GET`/`INDEX_SET` directly as a real new capability, not just a bug
 fix. Full suite (1340 cases) green under debug + ASan/UBSan, `DIAMOND_JIT`
 unset and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`; no
@@ -333,7 +333,7 @@ case working. Found investigating a related LSP hover gap (see
 receiver's own plain scalar `known_types[]` tag when no type set is
 registered at all (`receiver_set_index<0`) -- purely additive; the
 type-set branch's own existing behavior for Array/Hash is unchanged.
-`tests/cases/jit_length_less_int_string.di` is the regression case.
+`tests/cases/jit_length_less_int_string.d6` is the regression case.
 
 ### Phase 2g: `DIAMOND_OP_GET_IVAR` support -- closes one of the three gaps above
 
@@ -441,7 +441,7 @@ under `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`
 every allocation) -- no missed GC root, no regression on Phase 2/2b/2c/
 2d/2e's existing benchmarks. Extensive pre-existing interpreter coverage
 for these exact deopt/bignum/division/operator-override paths (`tests/
-cases/add_int_deopt_*`, `operator_deopt_gap_*`, `spaceship_bignum.di`,
+cases/add_int_deopt_*`, `operator_deopt_gap_*`, `spaceship_bignum.d6`,
 ...) passed unchanged throughout, giving strong confidence the
 extraction preserved the interpreter's own behavior exactly rather than
 introducing subtle drift.
@@ -473,7 +473,7 @@ the task before any codegen was written:
    caching. "Generic `INVOKE` support" as a single phase was never a
    realistic scope; this document's own earlier wording undersold that.
 2. **The real motivating target had already changed.** `packages/
-   active_record/lib/active_record/model.di`'s `Model#initialize` no
+   active_record/lib/active_record/model.d6`'s `Model#initialize` no
    longer loops over `attributes.keys()`/`.length()` the way Phase 2d/2e's
    own notes describe -- the 2026-09-15 ORM hydration hotspot fix (already
    on record) rewrote it to `@attributes = attributes.dup()`, ~20x faster
@@ -482,7 +482,7 @@ the task before any codegen was written:
    `CHECK_TYPE`, one `INVOKE` (`.dup()`), `SET_IVAR` x2, `HASH`, `RETURN`
    -- every opcode already JIT-supported except that single `INVOKE`.
    Also confirmed the real call site (`skindicate.dia/lib/models/
-   user.di`: `User.new(row)`) compiles to plain `DIAMOND_OP_NEW`, not
+   user.d6`: `User.new(row)`) compiles to plain `DIAMOND_OP_NEW`, not
    `NEW_KEYWORDS` (which bypasses JIT dispatch entirely via a synthetic
    `run_chunk` call rather than `jit_call_or_interpret`) -- so a JIT'd
    `initialize` really would be reached by real construction.
@@ -550,22 +550,22 @@ in this phase.
 (`DIAMOND_TRACE_JIT=1` showing `jit: 1 compiled function(s)` where it
 showed `0` before this phase, confirmed by checking out the pre-Phase-4
 tree and rerunning the identical program) --
-`tests/cases/jit_invoke_dup.di` also confirms `dup` produces a real,
+`tests/cases/jit_invoke_dup.d6` also confirms `dup` produces a real,
 independent copy (mutating the original Hash after construction doesn't
 affect the constructed instance). `dup`/`freeze`/`frozen?` verified
 correct across every `dup_defined` receiver kind (Int, String, Array,
 Hash) under `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`
-(`tests/cases/jit_dup_freeze_frozen_kinds.di`). The "not `dup_defined` at
+(`tests/cases/jit_dup_freeze_frozen_kinds.d6`). The "not `dup_defined` at
 runtime" fallback verified directly: a `dup()` call compiled against an
 Instance receiver correctly reports one runtime bailout and falls back
 to full, correct interpretation rather than mishandling it
-(`tests/cases/jit_dup_instance_fallback.di`). Full suite (1551 cases)
+(`tests/cases/jit_dup_instance_fallback.d6`). Full suite (1551 cases)
 green under debug, ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1
 DIAMOND_STRESS_GC=1` -- the sharpest available check for `dup`'s own
 allocation, since its live registers (the Hash argument, in particular)
 must survive a collection forced on every allocation.
 
-**Honest end-to-end measurement**: `bench/object_hydration.di` gained a
+**Honest end-to-end measurement**: `bench/object_hydration.d6` gained a
 new `HydratedModel`/`run_dup()` pair mirroring `Model#initialize`'s exact
 current shape (the pre-existing `HydratedUser`/`run()` benchmark is
 unchanged -- it still demonstrates a *different*, still-open gap:
@@ -576,13 +576,13 @@ interpreted vs. ~300-320ms JIT'd, a real but modest ~8-10% end-to-end win
 -- most of the per-call cost is inside `diamond_jit_dup`'s own Hash-copy
 work either way (same cost whether reached via the interpreter or a
 trampoline call), matching the exact pattern Phase 2c's own
-`object_hydration.di` measurement (~2-3%) and Phase 2b's
-`hash_ivar_construct.di` (~4-8%) already established: this JIT tier
+`object_hydration.d6` measurement (~2-3%) and Phase 2b's
+`hash_ivar_construct.d6` (~4-8%) already established: this JIT tier
 removes bytecode dispatch overhead, not the underlying native work.
 
 ### Phase 5: generic (non-`_INT`) arithmetic/comparison, and a real pre-existing bug found along the way
 
-Investigating "why is `bench/hash_ops.di` slow" (`Hash` itself turned out
+Investigating "why is `bench/hash_ops.d6` slow" (`Hash` itself turned out
 not to be -- see `bench/RESULTS.md`'s own correction) found the real
 answer: `total = total + values[index]` never JIT-compiled at all, at any
 threshold, because a Hash's values have no static type, so that `ADD` can
@@ -594,8 +594,8 @@ then, only `ADD_INT`/`SUBTRACT_INT`/`MULTIPLY_INT`/`DIVIDE_INT`/
 `LESS_INT`; `LESS_EQUAL_INT`/`GREATER_INT`/`GREATER_EQUAL_INT` were never
 added either. One generic opcode anywhere in a function's body bails the
 *entire function* out of JIT eligibility. This is the exact same root
-cause as `int_arithmetic_dynamic.di`'s own ~2.8x gap against
-`int_arithmetic.di`: any value the compiler can't statically prove `Int`
+cause as `int_arithmetic_dynamic.d6`'s own ~2.8x gap against
+`int_arithmetic.d6`: any value the compiler can't statically prove `Int`
 (an untyped parameter, a Hash/Array element) used in arithmetic anywhere
 disables the JIT for its whole containing function.
 
@@ -648,11 +648,11 @@ happened to be the first work that tripped over it while testing.
 Fixed by guarding `emit_epilogue_propagate`'s own frame-pop behind
 `jc->needs_frame`, exactly mirroring `emit_epilogue`'s own success/retry
 exit, which already had this guard correctly. Regression test:
-`tests/cases/jit_propagate_without_frame.di` (the `EQUAL`-only
+`tests/cases/jit_propagate_without_frame.d6` (the `EQUAL`-only
 reproduction, deliberately independent of any Phase 5 opcode, to prove
 the fix addresses the real, general defect rather than papering over one
 specific new trigger). Also fixed: `tests/cases/jit_ineligible_function_
-falls_back.di` used `value * 2` (untyped parameter) as its own "still
+falls_back.d6` used `value * 2` (untyped parameter) as its own "still
 correctly falls back to interpretation" example -- Phase 5 made that
 construct JIT-eligible, so it no longer demonstrated what the test's own
 name promised; replaced with a genuinely still-unsupported construct
@@ -666,11 +666,11 @@ of bug this phase found and fixed). Correctness spot-checked directly
 across the fast native-Int path, bignum overflow, String concatenation,
 Float mixing, an Instance operator override (`+`/`<`), division by zero,
 and the three previously-entirely-unsupported `_INT` comparison forms
-reached via `DIAMOND_QUICKEN` -- all correct. `bench/hash_ops.di` and
-`bench/int_arithmetic_dynamic.di` (release build, `DIAMOND_JIT_
+reached via `DIAMOND_QUICKEN` -- all correct. `bench/hash_ops.d6` and
+`bench/int_arithmetic_dynamic.d6` (release build, `DIAMOND_JIT_
 THRESHOLD=1`): `hash_ops` ~0.057s interpreted -> ~0.038s JIT'd (~1.5x);
 `int_arithmetic_dynamic` ~1.07s -> ~0.51s (~2.1x), closing most of its
-own ~2.8x gap against the fully-typed `int_arithmetic.di`.
+own ~2.8x gap against the fully-typed `int_arithmetic.d6`.
 
 **Still doesn't reach every function**: a value the JIT itself can't
 prove is Int at *runtime* either (a real String, Instance, Float, ...)
@@ -720,10 +720,10 @@ Phase 2e.
 Verified directly: a `Widget` instance with no override now compiles
 `dup`/`freeze`/`frozen?` calls with zero bailouts and produces a real,
 independent copy (mutating the copy doesn't affect the original) --
-`tests/cases/jit_instance_dup_freeze_frozen.di`, including under
+`tests/cases/jit_instance_dup_freeze_frozen.d6`, including under
 `DIAMOND_STRESS_GC=1` (the sharpest check for `allocate_instance`'s own
 GC-root publishing in this exact path). A class that *does* override
-`dup` (`tests/cases/jit_dup_instance_fallback.di`, updated -- it
+`dup` (`tests/cases/jit_dup_instance_fallback.d6`, updated -- it
 previously demonstrated the old "any Instance always falls back"
 behavior, which this phase specifically changes) still correctly falls
 back to real interpretation and calls the real override, confirmed via
@@ -837,7 +837,7 @@ call), a same-function non-self receiver call confirming the containing
 function still correctly bails as a whole, and `self.method[Type]()`
 still bailing. Full suite (1557 cases) green under debug, ASan/UBSan, and
 `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1 DIAMOND_STRESS_GC=1`. Real,
-measured win: `bench/jit_invoke_self.di` (a `self.method()` call inside
+measured win: `bench/jit_invoke_self.d6` (a `self.method()` call inside
 a hot loop, the whole loop now compiling with zero bailouts) ~35% faster
 JIT'd (0.75s -> 0.49s, release build, stable across repeated runs).
 
@@ -926,7 +926,7 @@ carries `parameter_type_sets[DIAMOND_MAX_DECLARED_PARAMETERS]` and
 `type_sets`/`type_set_count` -- the compiler populates these for every
 explicitly-typed parameter today, for free, with no compiler changes
 needed. Real, hot skindicate/arel code already uses this: e.g.
-`packages/arel/lib/arel/visitor.di`'s `render_attribute(attribute:
+`packages/arel/lib/arel/visitor.d6`'s `render_attribute(attribute:
 Arel::Attribute)`, `render_table(table: Arel::Table)`, `render_join(join:
 Arel::Join, params: Array)` -- exactly inside Phase 8's own identified hot
 path. So the real gap wasn't "no type info exists" -- it was "the JIT never
@@ -976,7 +976,7 @@ an early draft of the `compile_body` wiring added a blanket `recv != 0`
 guard before trying this path, which silently excluded that legitimate
 `self_offset == 0`/`recv == 0` case entirely. Caught immediately by the
 plan's own "verify against real compiled bytecode, don't assume" step
-(`bench/jit_invoke_typed_param.di`-shaped test: `DIAMOND_TRACE_JIT` showed
+(`bench/jit_invoke_typed_param.d6`-shaped test: `DIAMOND_TRACE_JIT` showed
 2 compiled instead of the expected 3) -- removed the guard; `parameter_is_
 single_class`'s own `recv_register < self_offset` bounds check already
 correctly rejects every case where register 0 actually means self, so the
@@ -1008,7 +1008,7 @@ wrong one.
 `Runner.go(box: Box, n)`-shaped script confirmed the delta (2 -> 3
 compiled functions, 0 bailouts either way -- a function that never becomes
 JIT-eligible in the first place isn't a "bailout" in `DIAMOND_TRACE_JIT`'s
-own sense, matching Phase 7's own `jit_invoke_self_mixed_receiver.di`
+own sense, matching Phase 7's own `jit_invoke_self_mixed_receiver.d6`
 precedent). New `tests/cases/jit_invoke_typed_param*` cases cover: the
 basic compiling case (including the `self_offset == 0` plain-function
 path specifically, the case the `recv != 0` bug above hid), a reassigned
@@ -1027,7 +1027,7 @@ ways afterward) -- a stale/mismatched `build/` artifact left over from an
 earlier, unrelated `make test-sanitize`/`make` interleaving in this same
 session, not a real bug; worth recording since it cost real investigation
 time before the cause was found. Release A/B benchmark
-(`bench/jit_invoke_typed_param.di`, a hot loop calling a method on a typed
+(`bench/jit_invoke_typed_param.d6`, a hot loop calling a method on a typed
 parameter): ~0.55s interpreted vs. ~0.34s JIT'd, a consistent ~38% win
 across repeated runs, comparable in magnitude to Phase 7's own ~35%.
 
@@ -1137,7 +1137,7 @@ so a function containing either still bails whole.
 **Verified**: `git stash`-compared before/after on a minimal `x =
 Box.new(...); ...; x.double()`-in-a-loop script confirmed the delta (2 ->
 3 compiled functions, 0 bailouts either way). Two pre-existing tests
-(`jit_dup_instance_fallback.di`, `jit_invoke_self_universal.di`) needed
+(`jit_dup_instance_fallback.d6`, `jit_invoke_self_universal.d6`) needed
 their own compiled-function counts bumped -- both already contained a
 `.new()` call inside an overridden `dup()`, previously uncompiled,
 correctly compiling now. New `tests/cases/jit_new_local*`/`jit_new_
@@ -1155,7 +1155,7 @@ still correctly bailing. Full bar: debug suite (1569/1569 including the
 new cases), ASan/UBSan (1569/1569), and the JIT+`DIAMOND_STRESS_GC`
 combination run directly against each new test case (all still correct,
 on a from-scratch clean rebuild -- Phase 9's own postmortem, avoided this
-time). Release A/B benchmark (`bench/jit_new_local.di`, a hot loop
+time). Release A/B benchmark (`bench/jit_new_local.d6`, a hot loop
 constructing a fresh `Box` and calling a method on it every iteration):
 ~1.02s interpreted vs. ~0.67s JIT'd, a consistent ~35% win across
 repeated runs, in the same range as Phase 7/9's own ~35%/~38%.
@@ -1250,7 +1250,7 @@ through the wrong table silently read out of `init`'s much smaller
 phase's own verification methodology -- comparing real JIT eligibility
 (`run` compiled or not, checked by function name via a temporary local
 trace, not just a raw count) with the fix landed vs. deliberately
-disabled on `tests/cases/jit_ivar_local_struct.di` -- rather than trusted
+disabled on `tests/cases/jit_ivar_local_struct.d6` -- rather than trusted
 by inspection; both states looked identical (`run` ineligible either
 way) until the decode was moved earlier, before `begin_struct_method`
 retargets `compiler->function`, into a small local array read back
@@ -1281,7 +1281,7 @@ network case at "ready\ncaught INT\naccepted\nnil" is independently flaky
 in this environment, reproduced identically with every change here
 stashed away, so not a regression from this phase), and the JIT+
 `DIAMOND_STRESS_GC` combination all still correct. Release A/B benchmark
-(`bench/jit_ivar_local.di`, a hot loop reading an ivar once outside the
+(`bench/jit_ivar_local.d6`, a hot loop reading an ivar once outside the
 loop and calling a method on it every iteration): ~38% faster JIT'd
 (~0.57s -> ~0.35s, release build, stable across repeated runs), in the
 same range as Phase 7/9/10's own ~35-38%.
@@ -1413,7 +1413,7 @@ ASan/UBSan (via `build/run_cases` directly plus the JIT+`DIAMOND_
 STRESS_GC` combination -- this sandbox's own `tests/run.sh` signal test
 is independently flaky, confirmed via a stash-everything control run,
 unrelated to this phase). Release A/B benchmark (`bench/jit_invoke_
-result.di`, a hot loop calling a typed parameter's method and then a
+result.d6`, a hot loop calling a typed parameter's method and then a
 method on *that* result every iteration): ~33% faster JIT'd (~0.9s ->
 ~0.6s, release build, stable across repeated runs), in the same range
 as every prior `INVOKE`-dispatch phase's own ~35-38%.
@@ -1458,7 +1458,7 @@ own whole-program `redefine_method_used_anywhere` flag and mask the
 thing being tested). Each eligibility claim confirmed via a temporary
 trace, including the delta with the fix stashed out. Full bar: debug
 suite (1585/1585), ASan/UBSan, JIT+`DIAMOND_STRESS_GC`, all green.
-~37% faster on a new `bench/jit_invoke_result_self.di` (release build).
+~37% faster on a new `bench/jit_invoke_result_self.d6` (release build).
 
 **A real, negative finding worth recording, not just the win**: rerunning
 this session's own isolated skindicate ORM microbenchmark (`Skin.random_
@@ -1607,7 +1607,7 @@ a stash-based A/B, not just a single-sided pass). Full debug suite,
 ASan/UBSan, and `DIAMOND_JIT=1 DIAMOND_STRESS_GC=1`, all green. No
 compiler.c changes at all this phase -- the entire fix lives in
 `src/jit.c`/`src/jit.h`/`src/vm.c`, since the compiler-side mechanism
-was already correct. ~39% faster on a new `bench/jit_is_type.di`
+was already correct. ~39% faster on a new `bench/jit_is_type.d6`
 (release build, `classify` from the `is_type_basic` reproduction above
 in a 3M-iteration loop): ~0.43s interpreted, ~0.26s with `DIAMOND_JIT=1`.
 
@@ -1702,7 +1702,7 @@ class, correctly disables this path too.
 **Cache safety**: confirmed via `src/compiled_prelude.c`'s
 `diamond_cache_fingerprint()` (includes `function_size=sizeof(
 DiamondFunction)`): growing `DiamondFunction` automatically invalidates
-any `.dic` bytecode cache written before this change (a safe cache miss,
+any `.d6c` bytecode cache written before this change (a safe cache miss,
 never a crash) -- the same mechanism that already silently covered
 Phase 11/12/13's own new fields, none of which are explicitly
 serialized in `diamond_program_write_compiled`/`read_compiled` either.
@@ -1711,7 +1711,7 @@ function loaded from a stale-format cache and never recompiled fresh
 just silently misses this optimization -- never dispatches incorrectly.
 
 **A genuine, positive side effect on an existing test, not a
-regression**: `tests/cases/jit_invoke_typed_param_union.di` (Phase 9's
+regression**: `tests/cases/jit_invoke_typed_param_union.d6` (Phase 9's
 own `box: Box | Nil` test) started compiling one more function (3, not
 2) the moment this phase landed -- its own `if box is Box; box.double();
 end` is exactly this phase's target shape, and its comment/expectation,
@@ -1746,13 +1746,13 @@ behavior and error messages are unchanged. The JIT calls the same
 `diamond_jit_index_get_string` trampoline (`compile_index_get_string`, 7 arguments, with
 `needs_frame` and `has_called` set exactly as for `INDEX_GET`), and the three bytecode-walking
 scans in `src/jit.c` list the new opcode with the same three-`u16` shape as `INDEX_GET`. The
-opcode goes after `CHANNEL_SELECT`, so `selfhost/parser.di`'s hard-coded numbers are
+opcode goes after `CHANNEL_SELECT`, so `selfhost/parser.d6`'s hard-coded numbers are
 unaffected, and the self-hosted compiler does not emit it.
 
 Measured on Skindicate's row mapping (100k iterations of 24 rows, JIT on): about 30% faster
 (2.97 s to 2.07 s per 40k iterations). On the full batch-loader loop described under "Where
 the next win is", 5.30 s to 5.02 s (about 5%, all six interleaved pairs faster) against a
-control binary built from the commit before this one. `tests/cases/index_get_literal_key.di`
+control binary built from the commit before this one. `tests/cases/index_get_literal_key.d6`
 compares every literal read against the same read through a variable, for Hash, Instance
 `[]`, String, Array, nil and Int receivers, under JIT and GC stress.
 
@@ -1919,7 +1919,7 @@ No JIT code changed. The existing Phase 11 receiver proof compiles the inner
 call, while Phase 12's `register_known_class` and `redefine_method` guard carry
 its declared return into the outer call. Focused cases cover the compiling
 path and a later conflicting-write rejection. The release benchmark
-`bench/jit_invoke_result_ivar.di` measured 7.95–9.00s interpreted and
+`bench/jit_invoke_result_ivar.d6` measured 7.95–9.00s interpreted and
 3.90–4.73s JIT compiled across three alternating runs, about a 49% reduction
 using the run averages.
 
@@ -2003,7 +2003,7 @@ Two measurements that used to sit in the roadmap and should survive its cleanup:
   are `self`-receiver-shaped, showed no improvement, and the suspected cause was that
   Arel's hot methods had no explicit `-> Type` return annotation, which this mechanism
   deliberately never trusts (Phase 12's restriction). Annotating `Query`'s builders and
-  render methods does speed the render path in isolation: `bench/arel_render.di` went
+  render methods does speed the render path in isolation: `bench/arel_render.d6` went
   from 1.78 s to 1.56 s interpreted and from 1.70 s to 1.50 s with `DIAMOND_JIT=1`
   (about 12%, three runs each). On Skindicate's real loop (`Skin.uploaders_for`,
   `SkinPlatform.platforms_for`, `SkinScreenshot.screenshots_for` and a 24-row
@@ -2069,7 +2069,7 @@ The interpreter and bytecode format remain unchanged.
 ### Compile on the first call for a function with a loop
 
 There is no on-stack replacement, so the call-count threshold (50) never fires for a
-loop inside a function called once: `bench/int_arithmetic.di`'s `run()` ran its five
+loop inside a function called once: `bench/int_arithmetic.d6`'s `run()` ran its five
 million iterations interpreted although every opcode in it is whitelisted. Measured
 with `DIAMOND_JIT_THRESHOLD=1` against the default (release build, one run each):
 `int_arithmetic` 0.36 s to 0.06 s, `dispatch_monomorphic` 0.18 s to 0.11 s.
@@ -2097,7 +2097,7 @@ Full suite passes with `DIAMOND_JIT=1`.
 
 `DIAMOND_OP_CALL` (a call to a named function by its plain name) was the largest
 remaining rejection: any function containing one stayed interpreted, so a recursive
-function like `bench/fibonacci.di` never compiled (0 compiled functions). It now
+function like `bench/fibonacci.d6` never compiled (0 compiled functions). It now
 compiles through `diamond_jit_call_function` (src/vm.c), which validates exactly as the
 interpreter's case does and calls `jit_call_or_interpret`, so a callee that has itself
 compiled runs as native code. The callee chunk is built by `plain_call_chunk`
@@ -2131,7 +2131,7 @@ instead of re-running it). Fixed in one mechanism:
   live frame, so the caller is named with the line of its call.
 
 A function that fails *before* any call (a guard) is still re-run by the interpreter,
-which records its own line, as before. This also fixed `tests/cases/stack_trace.di`
+which records its own line, as before. This also fixed `tests/cases/stack_trace.d6`
 losing its `divide` frame under `DIAMOND_JIT_THRESHOLD=1` on `main`; the whole suite now
 passes with `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1`, a stricter configuration than the
 default-threshold run.
@@ -2182,7 +2182,7 @@ was ineligible, which kept typed tail recursion interpreted. Four `jit_*_reassig
 that count compiled functions went up by one for the same reason.
 
 Measured (release, one run each): a 10,000,000-iteration `sum(n, acc)` 0.87 s to 0.18 s;
-`bench/tail_call_optimization.di` 0.28 s to 0.065 s.
+`bench/tail_call_optimization.d6` 0.28 s to 0.065 s.
 
 ## Threads and interruption
 

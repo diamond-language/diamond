@@ -5,7 +5,7 @@ the whole file is parsed into chunks, each chunk's CRC-32 is checked, and
 edited files are written back with freshly computed CRCs.
 
 ```text
-$ diamond pngmeta.di info testdata/photo.png
+$ diamond pngmeta.d6 info testdata/photo.png
 testdata/photo.png: 4x3, 8-bit RGB
   IHDR     13
   gAMA      4
@@ -15,9 +15,9 @@ testdata/photo.png: 4x3, 8-bit RGB
   IDAT     47
   tEXt     42  Comment: taken on the pier, GPS 51.5N 0.12W
   IEND      0
-$ diamond pngmeta.di strip testdata/photo.png /tmp/clean.png
+$ diamond pngmeta.d6 strip testdata/photo.png /tmp/clean.png
 /tmp/clean.png: 120 bytes, removed 4 chunks
-$ diamond pngmeta.di set testdata/photo.png /tmp/tagged.png Author "Grace Hopper"
+$ diamond pngmeta.d6 set testdata/photo.png /tmp/tagged.png Author "Grace Hopper"
 /tmp/tagged.png: 259 bytes, Author set
 ```
 
@@ -45,9 +45,9 @@ error, and 66 when a file can't be read.
 
 - **Binary data in Strings.** `File.read`/`File.write` move the whole file
   as one String; `getbyte` reads single bytes, `slice` pulls out chunks, and
-  `chr` builds bytes back up (`u32_bytes` in `lib/png.di`).
+  `chr` builds bytes back up (`u32_bytes` in `lib/png.d6`).
 - **Byte and bit arithmetic**: big-endian integers assembled with `<<` and
-  `|`, and a table-driven CRC-32 (`lib/crc32.di`) using `^`, `>>`, `&`, and
+  `|`, and a table-driven CRC-32 (`lib/crc32.d6`) using `^`, `>>`, `&`, and
   hex literals such as `0xEDB8_8320`.
 - **String escapes for bytes**: the PNG signature is
   `"\x89PNG\r\n\x1a\n"`.

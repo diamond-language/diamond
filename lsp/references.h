@@ -12,7 +12,7 @@
  * class, module, or interface name under the cursor -- the same "no
  * overloading, single inheritance, globally unambiguous by name"
  * declaration kinds hover/definition/documentSymbol already single out
- * (see lsp/definition.h), scanned across every *.di file under
+ * (see lsp/definition.h), scanned across every *.d6 file under
  * `workspace_root` the same way workspace/symbol does (lsp/
  * workspace_symbol.h's collect_di_files/read_file_preferring_open).
  *

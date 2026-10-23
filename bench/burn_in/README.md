@@ -14,7 +14,7 @@ make release
 bash bench/burn_in/run.sh [duration_seconds] [concurrency]
 ```
 
-For anything beyond `server.di`'s documented 20000-session-per-worker
+For anything beyond `server.d6`'s documented 20000-session-per-worker
 config -- a bigger live set, specifically -- use `run_hard.sh` instead,
 never `run.sh` directly:
 
@@ -54,7 +54,7 @@ actual duration, throughput, and tail latency from `ab`.
 
 ## Reading the output
 
-Two allocation shapes run on every request (see `server.di`'s own
+Two allocation shapes run on every request (see `server.d6`'s own
 comments):
 
 - **Request-scoped churn** (`build_payload`): a Hash/Array built and
@@ -181,7 +181,7 @@ worth knowing about if this harness ever misbehaves again:
   worker, so the handle was GC-unreachable the instant it was created,
   and `free_thread`'s block-join guarantee (`src/vm.c`) then blocked the
   spawning thread forever joining a worker whose event loop is
-  deliberately infinite. Fixed in `packages/gremlin/gremlin.di` by
+  deliberately infinite. Fixed in `packages/gremlin/gremlin.d6` by
   rooting every spawned `Thread` in an Array that outlives the server.
   Symptom if this regresses: `ab` reports lost/timed-out requests, and
   `ss -tn` shows connections stuck in `CLOSE-WAIT` with unread data.

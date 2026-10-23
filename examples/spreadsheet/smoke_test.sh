@@ -9,11 +9,11 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" spreadsheet.di testdata/budget.txt | cmp testdata/budget.expected -
-"$diamond" spreadsheet.di testdata/budget.txt --cell C1 | grep -qx "1644.5"
-"$diamond" spreadsheet.di testdata/budget.txt --cell D2 | grep -qx "889"
+"$diamond" spreadsheet.d6 testdata/budget.txt | cmp testdata/budget.expected -
+"$diamond" spreadsheet.d6 testdata/budget.txt --cell C1 | grep -qx "1644.5"
+"$diamond" spreadsheet.d6 testdata/budget.txt --cell D2 | grep -qx "889"
 
-"$diamond" build spreadsheet.di -o "$work/spreadsheet" > "$work/build.log"
+"$diamond" build spreadsheet.d6 -o "$work/spreadsheet" > "$work/build.log"
 sheet="$work/spreadsheet"
 "$sheet" testdata/budget.txt | cmp testdata/budget.expected -
 "$sheet" testdata/budget.txt --cell C2 | grep -qx "411.125"

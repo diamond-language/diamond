@@ -23,7 +23,7 @@
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 /* Sibling-file bytecode cache (see docs/caching.md): SHA-256 of the fully
- * require-expanded bundle.source, and a ".dic" path derived from `name`.
+ * require-expanded bundle.source, and a ".d6c" path derived from `name`.
  * `-e` (name is always the literal string "-e" regardless of what code
  * was actually passed, per main.c's own dispatch) and any path with no
  * stable on-disk identity get no cache path at all -- diamond_run_source
@@ -399,7 +399,7 @@ static DiamondProgram *build_embedded_prelude_template(void) {
  *     this function always used before the embedded template existed --
  *     zero behavior change for that case, since the embedded template
  *     is always built with JSON included (tools/gen_compiled_prelude.c)
- *     and would otherwise make a name declared only by lib/core/json.di
+ *     and would otherwise make a name declared only by lib/core/json.d6
  *     collide with a same-named top-level class/def in a program that
  *     never even mentions JSON.
  *

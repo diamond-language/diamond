@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # HTTP throughput/latency benchmark for gremlin_serve's `threads: N`
-# parallelism (see packages/gremlin/gremlin.di) -- one SO_REUSEPORT
+# parallelism (see packages/gremlin/gremlin.d6) -- one SO_REUSEPORT
 # listener per worker thread, each its own independent DiamondVm/heap.
 # Two workloads:
 #   - hello: a fixed tiny response, no per-request compute -- measures

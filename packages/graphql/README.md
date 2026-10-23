@@ -21,7 +21,7 @@ query text, variables, and a context Hash. This program serves a schema at `POST
 using `gremlin`; the "database" is an in-memory Hash so it runs as is:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "gremlin"
 require_cut "graphql"
 
@@ -85,7 +85,7 @@ gremlin_serve(8080, Endpoint.handle)
 ```
 
 ```sh
-diamond app.di
+diamond app.d6
 curl -d '{"query":"query($id: ID!) { author(id: $id) { name books { title } } }","variables":{"id":"1"}}' \
   localhost:8080/graphql
 # {"data":{"author":{"name":"Ada Lovelace","books":[{"title":"Notes"},{"title":"Sketch"}]}}}

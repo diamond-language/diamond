@@ -7,9 +7,9 @@ client certificates, ALPN negotiation, session resumption, and binary data
 framed behind a length on the same connection as text.
 
 ```text
-$ diamond tlsecho.di serve 8443 cert.pem key.pem &
+$ diamond tlsecho.d6 serve 8443 cert.pem key.pem &
 listening on tls/8443
-$ diamond tlsecho.di client localhost 8443 --ca cert.pem --alpn tlsecho/2,tlsecho/1 \
+$ diamond tlsecho.d6 client localhost 8443 --ca cert.pem --alpn tlsecho/2,tlsecho/1 \
     'ECHO hello' 'GZIP compress me'
 negotiated: tlsecho/2
 ECHO hello -> hello
@@ -19,8 +19,8 @@ GZIP compress me -> 20 lines of 'compress me', 240 bytes, compressed on the wire
 ## Usage
 
 ```text
-tlsecho.di serve PORT CERT KEY [--client-ca CAFILE]
-tlsecho.di client HOST PORT --ca CAFILE [--cert FILE --key FILE] [--alpn LIST]
+tlsecho.d6 serve PORT CERT KEY [--client-ca CAFILE]
+tlsecho.d6 client HOST PORT --ca CAFILE [--cert FILE --key FILE] [--alpn LIST]
                  [--resume] COMMAND...
 ```
 

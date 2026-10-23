@@ -14,7 +14,7 @@ set -euo pipefail
 
 diamond=./build/diamond
 
-self_parse_result="$(echo "selfhost/parser.di" | $diamond selfhost/self_parse_check.di 2>&1)"
+self_parse_result="$(echo "selfhost/parser.d6" | $diamond selfhost/self_parse_check.d6 2>&1)"
 if [[ "$self_parse_result" != "PARSED OK"* ]]; then
     echo "self-hosted parser failed to parse its own source: $self_parse_result" >&2
     exit 1
@@ -26,15 +26,15 @@ echo "self-hosted parser self-parse bootstrap check passed"
 # but the compiled result actually running, and correctly using its own
 # compiled Parser/Lexer classes to compile-and-run a third, independent
 # target program -- a compiler compiling itself and then doing real work
-# with the result. self_run_check.di appends a driver (read a path, call
-# parse_and_run_with_core on it) to the bundled parser.di+lexer.di+
-# core.di source before compiling, so running the self-compiled result
+# with the result. self_run_check.d6 appends a driver (read a path, call
+# parse_and_run_with_core on it) to the bundled parser.d6+lexer.d6+
+# core.d6 source before compiling, so running the self-compiled result
 # performs the same "compile and run an arbitrary program" operation
 # natively-run code does, one VM level deeper.
-self_run_target="tests/parser_cases/generic_collection_constraints.di"
+self_run_target="tests/parser_cases/generic_collection_constraints.d6"
 self_run_expected="$("$diamond" "$self_run_target")"
-self_run_actual="$(printf 'selfhost/parser.di\n%s\n' "$self_run_target" | \
-    "$diamond" selfhost/self_run_check.di 2>&1 | sed '$d')"
+self_run_actual="$(printf 'selfhost/parser.d6\n%s\n' "$self_run_target" | \
+    "$diamond" selfhost/self_run_check.d6 2>&1 | sed '$d')"
 if [[ "$self_run_actual" != "$self_run_expected" ]]; then
     echo "self-hosted parser self-run bootstrap mismatch" >&2
     echo "  expected: $self_run_expected" >&2

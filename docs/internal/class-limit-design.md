@@ -38,14 +38,14 @@ Two costs make raising the constant alone unacceptable even if the ids were wide
 - `Thread.new` (`clone_program_from_chunk`) `memcpy`s the whole `classes[]` array, so every spawned
   thread and every `gremlin` worker pays 11.5 MB for classes it does not have. At 1,000 classes that
   would be 64 MB per thread.
-- Every `.dic` bytecode cache and the compiled-prelude snapshot is laid out around the fixed tables.
+- Every `.d6c` bytecode cache and the compiled-prelude snapshot is laid out around the fixed tables.
 
 ## Goals and non-goals
 
 - Raise the limit to **1,024** classes at first, with the representation able to go to roughly 60,000 by
   changing one constant. (Interfaces stay at 32 and generic variables at 32; no program has needed more.)
 - A program with few classes must get *cheaper*, not more expensive: no inline 11.5 MB array.
-- No change to language semantics, `.di` source, or the public cut API.
+- No change to language semantics, `.d6` source, or the public cut API.
 - Not a goal: lifting the module limit (255) or the 256-method-per-class limit. They share the storage
   rework, so the module table should move with the classes, but their ceilings stay put.
 
@@ -82,9 +82,9 @@ happens together with the operand change in stage 2. Stage 1 landed with that ch
 
 Each class operand becomes a big-endian 16-bit value (`emit_function_index`'s convention): `emit_byte`
 becomes 16-bit emission at the nine class-operand sites in `compiler.c`, and `READ_BYTE` becomes
-`READ_SHORT` at the matching interpreter, JIT, disassembler and `selfhost/parser.di` entries (a first
+`READ_SHORT` at the matching interpreter, JIT, disassembler and `selfhost/parser.d6` entries (a first
 count is nine `READ_BYTE` class reads; stage 2 starts by enumerating them properly). Instruction length
-changes, so `DIAMOND_CACHE_FORMAT_VERSION` is bumped and every `.dic` is rejected and rebuilt (a cache
+changes, so `DIAMOND_CACHE_FORMAT_VERSION` is bumped and every `.d6c` is rejected and rebuilt (a cache
 miss, not an error). The JIT's `READ_*` decoding and its inline-cache
 site tables change with the operand width.
 
@@ -129,7 +129,7 @@ the macOS builds and the differential fuzzer) before the next starts.
 2. Widen class operands in bytecode and move the id bases. (Only class operands needed widening: `IS_TYPE` and the
    type-set operands were already 16 bits. Every `UINT8_MAX` that meant "no class", "no owner" or "unknown type"
    became a named 16-bit sentinel; one missed (the built-in `Exception`'s missing superclass) made every
-   superclass walk loop forever.) Verification: suite; `.dic` rejected by version mismatch and rebuilt; the
+   superclass walk loop forever.) Verification: suite; `.d6c` rejected by version mismatch and rebuilt; the
    differential fuzzer with class-heavy seeds; JIT and interpreter agree on a program that builds
    instances of 150+ classes.
 3. Dynamic storage. Verification: suite; a `Thread.new` start-up benchmark before/after; peak RSS of a
@@ -154,9 +154,9 @@ to add classes without checking a budget.
 - **`ProgramBuilder` and foreign programs.** An instance that crosses a `ProgramBuilder#run` boundary
   resolves its class against an adopted program, so stage 3 must keep class pointers stable
   (individually allocated classes are, a reallocated inline array would not be).
-- **The self-hosted parser** keeps its own opcode table (`selfhost/parser.di`) and must change in step
+- **The self-hosted parser** keeps its own opcode table (`selfhost/parser.d6`) and must change in step
   with stage 2.
-- **Third-party `.dic` files** are rebuilt on version mismatch; nothing is shipped as bytecode.
+- **Third-party `.d6c` files** are rebuilt on version mismatch; nothing is shipped as bytecode.
 
 ## Open questions
 

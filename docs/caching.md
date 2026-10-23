@@ -1,15 +1,19 @@
 # Bytecode caching
 
-`diamond script.di` caches the compiled program in a sibling `.dic` file next to the
+`diamond script.d6` caches the compiled program in a sibling `.d6c` file next to the
 source, so a second, unchanged run skips compilation entirely. No flag, no separate
 command -- it's on by default for the ordinary CLI.
 
+Legacy `.di` sources retain their `.dic` sibling caches. Files with any other
+suffix (or none) receive an appended `.d6c`. `cache clear` recognizes both
+cache suffixes and still removes only files containing a valid cache header.
+
 ```sh
-diamond app.di   # first run: compiles, writes app.dic
-diamond app.di   # second run: reads app.dic, skips straight to running
+diamond app.d6   # first run: compiles, writes app.d6c
+diamond app.d6   # second run: reads app.d6c, skips straight to running
 ```
 
-On a real, substantial multi-file application (skindicate.dia's own `app.di`),
+On a real, substantial multi-file application (skindicate.dia's own `app.d6`),
 this took startup from ~1.35s to ~0.11s on a second run -- roughly 13x, with byte-
 identical behavior.
 
@@ -31,7 +35,7 @@ Caching only ever skips the **compile** step (lexing, parsing, bytecode generati
 is no way around that without caching the load step separately, which this doesn't
 attempt.
 
-A `.dic` file that's missing, truncated, damaged, hand-edited, or was written by a
+A `.d6c` file that's missing, truncated, damaged, hand-edited, or was written by a
 different build of `diamond` is treated exactly like a cache miss: `diamond` falls back
 to a clean recompile and, on success, overwrites the stale file. This never crashes and
 never affects a script's own observable behavior -- caching is a pure optimization.
@@ -49,16 +53,16 @@ Every read checks, in order:
    program gets. This layer does not trust the checksum: it is not cryptographic, so a
    file deliberately re-signed after editing still has to pass it.
 
-A `.dic` is still not a distribution format. A file that passes every check runs
+A `.d6c` is still not a distribution format. A file that passes every check runs
 whatever bytecode it contains, so anyone who can write one next to a script can change
 what that script does without touching its source -- the same trust you already give the
-directory's `.di` files. Set `DIAMOND_NO_CACHE=1` where that isn't true. Validation
+directory's `.d6` files. Set `DIAMOND_NO_CACHE=1` where that isn't true. Validation
 guarantees memory safety, not that the bytecode matches the source. Cache format
 version 4 added the body checksum; older files are ignored and rebuilt.
 
 ## Size
 
-A `.dic` holds the program's own bytecode, not the prelude: the binary already embeds a
+A `.d6c` holds the program's own bytecode, not the prelude: the binary already embeds a
 compiled copy, and a cache file leaves out the prelude's functions and rebuilds them from
 that copy on load. A three-line script's cache is about 20 KB. Each function is stored as
 its used bytes, not its full in-memory record (about 11 KB).
@@ -77,14 +81,14 @@ target is refused); older files are ignored and rebuilt.
 ## Removing caches
 
 ```sh
-diamond cache clear app.di        # app.dic only
-diamond cache clear src/ lib/     # every .dic under those directories
-diamond cache clear               # every .dic under the current directory
+diamond cache clear app.d6        # app.d6c only
+diamond cache clear src/ lib/     # every .d6c under those directories
+diamond cache clear               # every .d6c under the current directory
 diamond cache clear --dry-run     # list what would go, remove nothing
 ```
 
 It removes only files that start with a Diamond cache's magic bytes, so an unrelated file
-that happens to end in `.dic` is left alone, and it never follows symbolic links or enters
+that happens to end in `.d6c` is left alone, and it never follows symbolic links or enters
 `.git`. A script whose cache was removed just recompiles and writes a new one on its next
 run, so clearing is always safe.
 
@@ -92,7 +96,7 @@ run, so clearing is always safe.
 ## Warming caches
 
 ```sh
-diamond cache warm app.di lib/worker.di
+diamond cache warm app.d6 lib/worker.d6
 ```
 
 compiles each script and writes its cache without running it, which is what an image or
@@ -105,7 +109,7 @@ for the `diamond` binary that wrote it, so warm with the binary the deployment r
 ## Disabling it
 
 `DIAMOND_NO_CACHE=1` (any value, matching `DIAMOND_STRESS_GC`'s own convention) turns
-caching off entirely for that invocation -- no `.dic` file is read or written.
+caching off entirely for that invocation -- no `.d6c` file is read or written.
 `DIAMOND_TRACE_CACHE=1` prints a `cache: hit`/`cache: miss`/`cache: wrote` line to
 stderr, useful for confirming the feature is actually doing something.
 
