@@ -602,29 +602,11 @@ static void finish_case_flow(Compiler *compiler,CaseFlowJoin *join,
     compiler->tooling_type_sets[destination]=join->result_tooling_set;
 }
 
-/* Compiles one `when`/`else`/`end` branch of a case expression and
- * everything after it, recursively -- same shape as parse_if's own
- * elsif recursion, and for the same reason: each level's "jump past the
- * rest of the chain" target only becomes known once the recursive call
- * has parsed all the way through to the final `end`, at which point
- * compiler->function->code_count is already sitting at the true end of
- * the whole chain, so every level's jump converges on that same address
- * without this function needing to collect and patch a jump list itself.
- *
- * `entry_types`/`entry_sets`/`entry_tooling` (snapshots of the three
- * corresponding compiler fact arrays taken once, in parse_case, before the first branch)
- * gets restored at the top of every call -- a when-clause's values and
- * body are compiled as though no earlier when-clause's (also-compiled,
- * possibly-speculative) body actually ran, mirroring why parse_if resets
- * to its own before_types before compiling the else branch. `join` then
- * accumulates every branch's result and local state into the same advisory
- * unions parse_if uses; a missing else contributes the entry state and Nil. */
-uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
-        size_t flow_reg_count, const uint16_t *entry_types,
-        const int32_t *entry_sets,const int32_t *entry_tooling,
-        size_t flow_local_count,
-        const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
-        bool subjectless,CaseExhaustiveness *exhaustiveness) {
+/* Restores the compiler's facts to the case's entry state before a branch
+ * compiles (see parse_case_branches). */
+static void restore_case_branch_entry(Compiler *compiler,size_t flow_reg_count,
+        const uint16_t *entry_types,const int32_t *entry_sets,const int32_t *entry_tooling,
+        size_t flow_local_count,const uint32_t *entry_alias) {
     for(size_t index=0;index<flow_reg_count;index++) {
         compiler->known_types[index]=entry_types[index];
         compiler->known_type_sets[index]=entry_sets[index];
@@ -648,215 +630,201 @@ uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
         compiler->tooling_type_sets[reg]=-1;
         compiler->locals[index].alias_identity=0;
     }
-    if(compiler->current.kind==DIAMOND_TOKEN_ELSE) {
-        advance_token(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
-        const uint16_t body_result=compile_sequence(compiler);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
-        merge_case_branch(compiler,join,flow_reg_count,flow_local_count,body_result);
-        if(compiler->current.kind!=DIAMOND_TOKEN_END) {
-            fail(compiler,compiler->current.span,
-                 "expected 'end' after case expression");
+}
+
+/* `else BODY end`: the current token is `else`. */
+static uint16_t compile_case_else(Compiler *compiler,uint16_t destination,CaseFlowJoin *join,
+        size_t flow_reg_count,size_t flow_local_count) {
+    advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
+    const uint16_t body_result=compile_sequence(compiler);
+    emit_instruction(compiler,DIAMOND_OP_MOVE,destination,body_result,0,2);
+    merge_case_branch(compiler,join,flow_reg_count,flow_local_count,body_result);
+    if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+        fail(compiler,compiler->current.span,
+             "expected 'end' after case expression");
+        return destination;
+    }
+    const size_t join_offset=compiler->current.span.start;
+    advance_token(compiler);
+    finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
+        destination,join_offset);
+    return destination;
+}
+
+/* The closing `end` with no `else`: the case yields nil, which is an error
+ * when the case had to be exhaustive and is not. */
+static uint16_t compile_case_end(Compiler *compiler,uint16_t destination,CaseFlowJoin *join,
+        size_t flow_reg_count,size_t flow_local_count,
+        CaseExhaustiveness *exhaustiveness) {
+    if(exhaustiveness->active) {
+        bool all_covered=true;
+        for(uint8_t member=0;member<exhaustiveness->required_count;member++)
+            if(!exhaustiveness->covered[member]){all_covered=false;break;}
+        if(!all_covered) {
+            fail_non_exhaustive_case(compiler,exhaustiveness);
             return destination;
         }
-        const size_t join_offset=compiler->current.span.start;
-        advance_token(compiler);
-        finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
-            destination,join_offset);
-        return destination;
     }
-    if(compiler->current.kind==DIAMOND_TOKEN_END) {
-        if(exhaustiveness->active) {
-            bool all_covered=true;
-            for(uint8_t member=0;member<exhaustiveness->required_count;member++)
-                if(!exhaustiveness->covered[member]){all_covered=false;break;}
-            if(!all_covered) {
-                fail_non_exhaustive_case(compiler,exhaustiveness);
-                return destination;
-            }
-        }
-        emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
-        compiler->known_types[destination]=DIAMOND_TYPE_NIL;
-        compiler->known_type_sets[destination]=-1;
-        merge_case_branch(compiler,join,flow_reg_count,flow_local_count,destination);
-        const size_t join_offset=compiler->current.span.start;
-        advance_token(compiler);
-        finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
-            destination,join_offset);
-        return destination;
-    }
-    if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
-        fail(compiler,compiler->current.span,
-             "expected 'when', 'else', or 'end' in case expression");
-        return destination;
-    }
+    emit_instruction(compiler,DIAMOND_OP_NIL,destination,0,0,1);
+    compiler->known_types[destination]=DIAMOND_TYPE_NIL;
+    compiler->known_type_sets[destination]=-1;
+    merge_case_branch(compiler,join,flow_reg_count,flow_local_count,destination);
+    const size_t join_offset=compiler->current.span.start;
     advance_token(compiler);
-    /* One `when` clause can list several comma-separated values (`when
-     * 1, 2`) -- match_reg accumulates whether *any* of them matches the
-     * subject, short-circuiting like `||` does (skip evaluating/
-     * comparing a later value once an earlier one already matched)
-     * rather than always evaluating every value in the list. CASE_MATCH
-     * implements Range inclusion, Regexp search, class/subclass matching,
-     * and ordinary/custom equality fallback in one runtime operation. */
-    const uint16_t match_reg=allocate_register(compiler);
-    /* Type ids this `when` clause covers unconditionally, for
-     * exhaustiveness -- only ever populated by the scalar (non-array-
-     * pattern) branch below, and only kept if this clause turns out to
-     * have no `if` guard (see the guard-handling block further down). */
-    uint16_t covered_ids[DIAMOND_MAX_UNION_TYPES]={0};size_t covered_id_count=0;
+    finish_case_flow(compiler,join,flow_reg_count,flow_local_count,
+        destination,join_offset);
+    return destination;
+}
+
+/* A `when` of Array/Hash/object patterns, comma-joined alternatives
+ * included: emits the matcher for each into match_reg, binds their
+ * variables, and records the classes an unconstrained object pattern
+ * covers. Returns false on a compile error. */
+static bool compile_case_array_alternatives(Compiler *compiler,uint16_t subject,
+        uint16_t match_reg,CaseBinding *bindings,size_t *binding_count_out,
+        uint16_t *covered_ids,size_t *covered_id_count_io) {
     CaseArrayNode array_nodes[64]={};uint8_t array_root=0;size_t node_count=0;
-    CaseBinding bindings[64]={};size_t binding_count=0;
-    DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
-    const int pattern_head_class=
-        probe_case_pattern_class(compiler,&after_pattern_head);
-    const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
-        pattern_head_class>=0&&after_pattern_head==DIAMOND_TOKEN_LEFT_BRACE;
-    const bool array_pattern=!subjectless&&(
-        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
-        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern);
-    if(array_pattern) {
-        size_t success_jumps[16];size_t success_count=0;bool first_pattern=true;
-        for(;;) {
-            if(success_count==16) {
-                fail(compiler,compiler->current.span,
-                    "too many case pattern alternatives");return destination;
+    size_t binding_count=0;
+    size_t covered_id_count=*covered_id_count_io;
+    size_t success_jumps[16];size_t success_count=0;bool first_pattern=true;
+    for(;;) {
+        if(success_count==16) {
+            fail(compiler,compiler->current.span,
+                "too many case pattern alternatives");return false;
+        }
+        memset(array_nodes,0,sizeof array_nodes);node_count=0;
+        array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
+        if(compiler->failed||!validate_case_array_bindings(
+                compiler,array_nodes,node_count))return false;
+        /* Exhaustiveness, per alternative: an object pattern whose
+         * readers are all bare bindings or `_` (including an empty
+         * `Class{}`) matches every instance of that class exactly as
+         * a bare scalar `when Class` does, so it soundly covers that
+         * union/sealed-hierarchy member -- and when several such
+         * alternatives are comma-joined, each one covers its own
+         * class, since any of them matching selects this same
+         * branch. A literal, pin, or nested pattern among the
+         * readers only matches a subset of the class and never
+         * counts; neither does an Array/Hash pattern (it names no
+         * class). A trailing `if` guard zeroes covered_id_count
+         * further down regardless, so a guarded clause never counts. */
+        {
+            bool unconstrained_object=
+                array_nodes[array_root].kind==CASE_OBJECT_GROUP;
+            for(uint8_t child=0;unconstrained_object&&
+                child<array_nodes[array_root].child_count;child++) {
+                const CaseArrayNodeKind kind=
+                    array_nodes[array_nodes[array_root].children[child]].kind;
+                if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
+                    unconstrained_object=false;
             }
-            memset(array_nodes,0,sizeof array_nodes);node_count=0;
-            array_root=parse_case_array_node(compiler,array_nodes,&node_count,0);
-            if(compiler->failed||!validate_case_array_bindings(
-                    compiler,array_nodes,node_count))return destination;
-            /* Exhaustiveness, per alternative: an object pattern whose
-             * readers are all bare bindings or `_` (including an empty
-             * `Class{}`) matches every instance of that class exactly as
-             * a bare scalar `when Class` does, so it soundly covers that
-             * union/sealed-hierarchy member -- and when several such
-             * alternatives are comma-joined, each one covers its own
-             * class, since any of them matching selects this same
-             * branch. A literal, pin, or nested pattern among the
-             * readers only matches a subset of the class and never
-             * counts; neither does an Array/Hash pattern (it names no
-             * class). A trailing `if` guard zeroes covered_id_count
-             * further down regardless, so a guarded clause never counts. */
-            {
-                bool unconstrained_object=
-                    array_nodes[array_root].kind==CASE_OBJECT_GROUP;
-                for(uint8_t child=0;unconstrained_object&&
-                    child<array_nodes[array_root].child_count;child++) {
-                    const CaseArrayNodeKind kind=
-                        array_nodes[array_nodes[array_root].children[child]].kind;
-                    if(kind!=CASE_ARRAY_BIND&&kind!=CASE_ARRAY_WILDCARD)
-                        unconstrained_object=false;
-                }
-                if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
-                    covered_ids[covered_id_count++]=(uint16_t)
-                        (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
-            }
-            size_t indices[64],aligned[64];
-            const size_t alternative_binding_count=
-                collect_case_bindings(array_nodes,node_count,indices);
-            if(first_pattern) {
-                binding_count=alternative_binding_count;
-                for(size_t binding=0;binding<binding_count;binding++) {
-                    bindings[binding].name=array_nodes[indices[binding]].name;
-                    bindings[binding].reg=allocate_register(compiler);
-                    aligned[binding]=indices[binding];
-                }
-            } else if(!align_case_alternative_bindings(compiler,array_nodes,
-                    indices,alternative_binding_count,bindings,binding_count,
-                    aligned))return destination;
-            emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
-            compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
-            size_t failure_jumps[128];size_t failure_count=0;
-            emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
-                failure_jumps,&failure_count);
-            /* Each binding's type is whatever the matcher proved about the
-             * element it binds. This must come after emit_case_array_match:
-             * that's what assigns each node's subject_register (before it,
-             * every one is still 0, which would hand bindings the facts of
-             * whatever lives in register 0). A later alternative that binds
-             * a differently typed element makes the binding untyped. */
+            if(unconstrained_object&&covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                covered_ids[covered_id_count++]=(uint16_t)
+                    (DIAMOND_TYPE_CLASS_BASE+array_nodes[array_root].class_index);
+        }
+        size_t indices[64],aligned[64];
+        const size_t alternative_binding_count=
+            collect_case_bindings(array_nodes,node_count,indices);
+        if(first_pattern) {
+            binding_count=alternative_binding_count;
             for(size_t binding=0;binding<binding_count;binding++) {
-                const uint16_t source=array_nodes[aligned[binding]].subject_register;
-                if(first_pattern) {
-                    compiler->known_types[bindings[binding].reg]=compiler->known_types[source];
-                    compiler->known_type_sets[bindings[binding].reg]=
-                        compiler->known_type_sets[source];
-                } else if(compiler->known_types[bindings[binding].reg]!=
-                              compiler->known_types[source]||
-                          compiler->known_type_sets[bindings[binding].reg]!=
-                              compiler->known_type_sets[source]) {
-                    compiler->known_types[bindings[binding].reg]=TYPE_UNKNOWN;
-                    compiler->known_type_sets[bindings[binding].reg]=-1;
-                }
+                bindings[binding].name=array_nodes[indices[binding]].name;
+                bindings[binding].reg=allocate_register(compiler);
+                aligned[binding]=indices[binding];
             }
-            for(size_t binding=0;binding<binding_count;binding++)
-                emit_instruction(compiler,DIAMOND_OP_MOVE,bindings[binding].reg,
-                    array_nodes[aligned[binding]].subject_register,0,2);
-            success_jumps[success_count++]=emit_jump(compiler,DIAMOND_OP_JUMP,0);
-            for(size_t failure=0;failure<failure_count;failure++)
-                patch_jump(compiler,failure_jumps[failure],
-                    compiler->function->code_count);
-            first_pattern=false;
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);skip_newlines(compiler);
-        }
-        for(size_t success=0;success<success_count;success++)
-            patch_jump(compiler,success_jumps[success],compiler->function->code_count);
-    } else {
-        bool first_value=true;size_t skip_jump=0;
-        for(;;) {
-            if(!first_value)
-                skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
-            uint16_t value_reg;
-            DiamondTokenKind after_pattern=DIAMOND_TOKEN_ERROR;
-            const int pattern_class=
-                probe_case_pattern_class(compiler,&after_pattern);
-            if(pattern_class>=0&&after_pattern!=DIAMOND_TOKEN_DOT&&
-               after_pattern!=DIAMOND_TOKEN_LEFT_BRACE) {
-                value_reg=compile_case_pattern_class(compiler,pattern_class);
-                if(covered_id_count<DIAMOND_MAX_UNION_TYPES)
-                    covered_ids[covered_id_count++]=
-                        (uint16_t)(DIAMOND_TYPE_CLASS_BASE+pattern_class);
-            } else {
-                value_reg=parse_expression(compiler);
-                if(compiler->known_types[value_reg]==DIAMOND_TYPE_NIL&&
-                   compiler->known_type_sets[value_reg]<0&&
-                   covered_id_count<DIAMOND_MAX_UNION_TYPES)
-                    covered_ids[covered_id_count++]=DIAMOND_TYPE_NIL;
+        } else if(!align_case_alternative_bindings(compiler,array_nodes,
+                indices,alternative_binding_count,bindings,binding_count,
+                aligned))return false;
+        emit_instruction(compiler,DIAMOND_OP_BOOL,match_reg,true,0,2);
+        compiler->known_types[match_reg]=DIAMOND_TYPE_BOOL;
+        size_t failure_jumps[128];size_t failure_count=0;
+        emit_case_array_match(compiler,array_nodes,array_root,subject,match_reg,
+            failure_jumps,&failure_count);
+        /* Each binding's type is whatever the matcher proved about the
+         * element it binds. This must come after emit_case_array_match:
+         * that's what assigns each node's subject_register (before it,
+         * every one is still 0, which would hand bindings the facts of
+         * whatever lives in register 0). A later alternative that binds
+         * a differently typed element makes the binding untyped. */
+        for(size_t binding=0;binding<binding_count;binding++) {
+            const uint16_t source=array_nodes[aligned[binding]].subject_register;
+            if(first_pattern) {
+                compiler->known_types[bindings[binding].reg]=compiler->known_types[source];
+                compiler->known_type_sets[bindings[binding].reg]=
+                    compiler->known_type_sets[source];
+            } else if(compiler->known_types[bindings[binding].reg]!=
+                          compiler->known_types[source]||
+                      compiler->known_type_sets[bindings[binding].reg]!=
+                          compiler->known_type_sets[source]) {
+                compiler->known_types[bindings[binding].reg]=TYPE_UNKNOWN;
+                compiler->known_type_sets[bindings[binding].reg]=-1;
             }
-            const uint16_t eq_reg=allocate_register(compiler);
-            if(subjectless) {
-                emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);
-                emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,eq_reg,0,2);
-            } else
-                emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,
-                    value_reg,subject,3);
-            compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
-            emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
-            if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
-            first_value=false;
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-            advance_token(compiler);skip_newlines(compiler);
         }
+        for(size_t binding=0;binding<binding_count;binding++)
+            emit_instruction(compiler,DIAMOND_OP_MOVE,bindings[binding].reg,
+                array_nodes[aligned[binding]].subject_register,0,2);
+        success_jumps[success_count++]=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+        for(size_t failure=0;failure<failure_count;failure++)
+            patch_jump(compiler,failure_jumps[failure],
+                compiler->function->code_count);
+        first_pattern=false;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);skip_newlines(compiler);
     }
-    if(compiler->current.kind==DIAMOND_TOKEN_IF) {
-        const size_t skip_guard=
-            emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
-        advance_token(compiler);
-        const size_t saved_local_count=array_pattern?
-            push_case_guard_bindings(compiler,bindings,binding_count):
-            compiler->local_count;
-        const uint16_t guard=parse_expression(compiler);
-        compiler->local_count=saved_local_count;
-        compiler->narrowing=(Narrowing){};
-        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,guard,0,2);
-        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,match_reg,0,2);
-        patch_jump(compiler,skip_guard,compiler->function->code_count);
-        /* A guard can reject an otherwise-matching pattern at runtime, so
-         * a guarded `when` never proves a type is unconditionally
-         * covered -- see CaseExhaustiveness's own comment. */
-        covered_id_count=0;
+    for(size_t success=0;success<success_count;success++)
+        patch_jump(compiler,success_jumps[success],compiler->function->code_count);
+    *binding_count_out=binding_count;
+    *covered_id_count_io=covered_id_count;
+    return true;
+}
+
+/* A `when` of plain values or class names: match_reg becomes whether any
+ * of them matches the subject (or is truthy, for a subjectless case). */
+static void compile_case_scalar_values(Compiler *compiler,uint16_t subject,bool subjectless,
+        uint16_t match_reg,uint16_t *covered_ids,size_t *covered_id_count_io) {
+    size_t covered_id_count=*covered_id_count_io;
+    bool first_value=true;size_t skip_jump=0;
+    for(;;) {
+        if(!first_value)
+            skip_jump=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,match_reg);
+        uint16_t value_reg;
+        DiamondTokenKind after_pattern=DIAMOND_TOKEN_ERROR;
+        const int pattern_class=
+            probe_case_pattern_class(compiler,&after_pattern);
+        if(pattern_class>=0&&after_pattern!=DIAMOND_TOKEN_DOT&&
+           after_pattern!=DIAMOND_TOKEN_LEFT_BRACE) {
+            value_reg=compile_case_pattern_class(compiler,pattern_class);
+            if(covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                covered_ids[covered_id_count++]=
+                    (uint16_t)(DIAMOND_TYPE_CLASS_BASE+pattern_class);
+        } else {
+            value_reg=parse_expression(compiler);
+            if(compiler->known_types[value_reg]==DIAMOND_TYPE_NIL&&
+               compiler->known_type_sets[value_reg]<0&&
+               covered_id_count<DIAMOND_MAX_UNION_TYPES)
+                covered_ids[covered_id_count++]=DIAMOND_TYPE_NIL;
+        }
+        const uint16_t eq_reg=allocate_register(compiler);
+        if(subjectless) {
+            emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,value_reg,0,2);
+            emit_instruction(compiler,DIAMOND_OP_NOT,eq_reg,eq_reg,0,2);
+        } else
+            emit_instruction(compiler,DIAMOND_OP_CASE_MATCH,eq_reg,
+                value_reg,subject,3);
+        compiler->known_types[eq_reg]=DIAMOND_TYPE_BOOL;
+        emit_instruction(compiler,DIAMOND_OP_MOVE,match_reg,eq_reg,0,2);
+        if(!first_value)patch_jump(compiler,skip_jump,compiler->function->code_count);
+        first_value=false;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);skip_newlines(compiler);
     }
+    *covered_id_count_io=covered_id_count;
+}
+
+/* Marks each required member a `when` covers. */
+static void mark_case_coverage(Compiler *compiler,CaseExhaustiveness *exhaustiveness,
+        const uint16_t *covered_ids,size_t covered_id_count) {
     /* A `when` naming a class covers a required member that is that class
      * or any descendant of it: the pattern matches subclass instances at
      * runtime, so `when Shape` leaves nothing of `Circle < Shape` unmatched. */
@@ -880,6 +848,92 @@ uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
                     walk=(size_t)DIAMOND_TYPE_CLASS_BASE+parent;
                 }
             }
+}
+
+/* Compiles one `when`/`else`/`end` branch of a case expression and
+ * everything after it, recursively -- same shape as parse_if's own
+ * elsif recursion, and for the same reason: each level's "jump past the
+ * rest of the chain" target only becomes known once the recursive call
+ * has parsed all the way through to the final `end`, at which point
+ * compiler->function->code_count is already sitting at the true end of
+ * the whole chain, so every level's jump converges on that same address
+ * without this function needing to collect and patch a jump list itself.
+ *
+ * `entry_types`/`entry_sets`/`entry_tooling` (snapshots of the three
+ * corresponding compiler fact arrays taken once, in parse_case, before the first branch)
+ * gets restored at the top of every call -- a when-clause's values and
+ * body are compiled as though no earlier when-clause's (also-compiled,
+ * possibly-speculative) body actually ran, mirroring why parse_if resets
+ * to its own before_types before compiling the else branch. `join` then
+ * accumulates every branch's result and local state into the same advisory
+ * unions parse_if uses; a missing else contributes the entry state and Nil. */
+uint16_t parse_case_branches(Compiler *compiler, uint16_t subject,
+        size_t flow_reg_count, const uint16_t *entry_types,
+        const int32_t *entry_sets,const int32_t *entry_tooling,
+        size_t flow_local_count,
+        const uint32_t *entry_alias, uint16_t destination,CaseFlowJoin *join,
+        bool subjectless,CaseExhaustiveness *exhaustiveness) {
+    restore_case_branch_entry(compiler,flow_reg_count,entry_types,entry_sets,entry_tooling,
+        flow_local_count,entry_alias);
+    if(compiler->current.kind==DIAMOND_TOKEN_ELSE)
+        return compile_case_else(compiler,destination,join,flow_reg_count,flow_local_count);
+    if(compiler->current.kind==DIAMOND_TOKEN_END)
+        return compile_case_end(compiler,destination,join,flow_reg_count,flow_local_count,
+            exhaustiveness);
+    if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
+        fail(compiler,compiler->current.span,
+             "expected 'when', 'else', or 'end' in case expression");
+        return destination;
+    }
+    advance_token(compiler);
+    /* One `when` clause can list several comma-separated values (`when
+     * 1, 2`) -- match_reg accumulates whether *any* of them matches the
+     * subject, short-circuiting like `||` does (skip evaluating/
+     * comparing a later value once an earlier one already matched)
+     * rather than always evaluating every value in the list. CASE_MATCH
+     * implements Range inclusion, Regexp search, class/subclass matching,
+     * and ordinary/custom equality fallback in one runtime operation. */
+    const uint16_t match_reg=allocate_register(compiler);
+    /* Type ids this `when` clause covers unconditionally, for
+     * exhaustiveness -- only ever populated by the scalar (non-array-
+     * pattern) branch below, and only kept if this clause turns out to
+     * have no `if` guard (see the guard-handling block further down). */
+    uint16_t covered_ids[DIAMOND_MAX_UNION_TYPES]={0};size_t covered_id_count=0;
+    CaseBinding bindings[64]={};size_t binding_count=0;
+    DiamondTokenKind after_pattern_head=DIAMOND_TOKEN_ERROR;
+    const int pattern_head_class=
+        probe_case_pattern_class(compiler,&after_pattern_head);
+    const bool object_pattern=compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
+        pattern_head_class>=0&&after_pattern_head==DIAMOND_TOKEN_LEFT_BRACE;
+    const bool array_pattern=!subjectless&&(
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET||
+        compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE||object_pattern);
+    if(array_pattern) {
+        if(!compile_case_array_alternatives(compiler,subject,match_reg,bindings,&binding_count,
+                covered_ids,&covered_id_count))
+            return destination;
+    } else
+        compile_case_scalar_values(compiler,subject,subjectless,match_reg,covered_ids,
+            &covered_id_count);
+    if(compiler->current.kind==DIAMOND_TOKEN_IF) {
+        const size_t skip_guard=
+            emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
+        advance_token(compiler);
+        const size_t saved_local_count=array_pattern?
+            push_case_guard_bindings(compiler,bindings,binding_count):
+            compiler->local_count;
+        const uint16_t guard=parse_expression(compiler);
+        compiler->local_count=saved_local_count;
+        compiler->narrowing=(Narrowing){};
+        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,guard,0,2);
+        emit_instruction(compiler,DIAMOND_OP_NOT,match_reg,match_reg,0,2);
+        patch_jump(compiler,skip_guard,compiler->function->code_count);
+        /* A guard can reject an otherwise-matching pattern at runtime, so
+         * a guarded `when` never proves a type is unconditionally
+         * covered -- see CaseExhaustiveness's own comment. */
+        covered_id_count=0;
+    }
+    mark_case_coverage(compiler,exhaustiveness,covered_ids,covered_id_count);
     if(!consume_conditional_start(compiler))return destination;
     const size_t false_jump=
         emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,match_reg);
