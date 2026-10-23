@@ -256,6 +256,25 @@ static void bind_captured_cells(Compiler *compiler,const EnclosingScope *scope,
     }
 }
 
+/* Appends an inferred one-member type set {type} to function's table and
+ * returns its index. Unlike concrete_type_set it never reuses an existing
+ * set; the caller has already reserved the slot with reserve_type_sets. */
+static size_t append_inferred_type_set(DiamondFunction *function,uint16_t type) {
+    const size_t index=function->type_set_count++;
+    DiamondTypeSet *set=&function->type_sets[index];
+    set->count=1;set->inferred=true;
+    set->members[0]=(DiamondTypeMember){
+        .id=type,
+        .argument_set=DIAMOND_NO_TYPE_SET,
+        .second_argument_set=DIAMOND_NO_TYPE_SET,
+        .callable_arity=UINT8_MAX,
+        .callable_return_set=DIAMOND_NO_TYPE_SET,
+        .callable_parameters_typed=false};
+    for(size_t parameter=0;parameter<16;parameter++)
+        set->members[0].callable_parameter_sets[parameter]=DIAMOND_NO_TYPE_SET;
+    return index;
+}
+
 /* Parses a block's `|x, y|` parameters, if it has any: bare identifiers, each given the type the
  * call site's contextual signature supplies (`contextual_*`; `outer_function` owns the type sets
  * those indices name). No type annotations or default values (a deliberate v1 scope cut, see this
@@ -317,19 +336,8 @@ static void parse_block_parameters(Compiler *compiler,DiamondFunction *function,
                      * well-typed body and then reject its closure at runtime. */
                     if(function->parameter_type_sets[parameter_count]==
                            DIAMOND_NO_TYPE_SET&&reserve_type_sets(compiler,1)) {
-                        const size_t set_index=function->type_set_count++;
-                        DiamondTypeSet *set=&function->type_sets[set_index];
-                        set->count=1;set->inferred=true;
-                        set->members[0]=(DiamondTypeMember){
-                            .id=contextual_types[parameter_count],
-                            .argument_set=DIAMOND_NO_TYPE_SET,
-                            .second_argument_set=DIAMOND_NO_TYPE_SET,
-                            .callable_arity=UINT8_MAX,
-                            .callable_return_set=DIAMOND_NO_TYPE_SET,
-                            .callable_parameters_typed=false};
-                        for(size_t index=0;index<16;index++)
-                            set->members[0].callable_parameter_sets[index]=
-                                DIAMOND_NO_TYPE_SET;
+                        const size_t set_index=append_inferred_type_set(function,
+                            contextual_types[parameter_count]);
                         function->parameter_type_sets[parameter_count]=
                             (uint16_t)set_index;
                     }
@@ -360,6 +368,77 @@ static void parse_block_parameters(Compiler *compiler,DiamondFunction *function,
         } else if(!compiler->failed) {
             advance_token(compiler);
         }
+    }
+}
+
+/* `yield` inside a block still means the enclosing method's own &block, as
+ * in Ruby: `def any?(&test) = items.find() do |x| yield(x) end` calls
+ * `test`. That parameter is an ordinary local, captured like every other, so
+ * point the block's current block at its captured cell -- unless a block
+ * parameter of the same name shadows it (find_local then resolves to the
+ * parameter, which isn't captured). */
+static void retarget_block_yield(Compiler *compiler,const EnclosingScope *scope) {
+    for(size_t i=0;i<compiler->enclosing_local_count;i++) {
+        if(compiler->enclosing_locals[i].reg!=scope->current_block_register)
+            continue;
+        const int inner=find_local(compiler,compiler->enclosing_locals[i].name);
+        if(inner>=0&&compiler->locals[(size_t)inner].captured) {
+            compiler->has_current_block=true;
+            compiler->current_block_register=
+                compiler->locals[(size_t)inner].reg;
+            if(scope->current_block_type_set!=DIAMOND_NO_TYPE_SET&&
+               scope->current_block_type_set<scope->function->type_set_count)
+                compiler->current_block_type_set=clone_type_set_into_current(
+                    compiler,scope->function->type_sets,
+                    scope->function->type_set_count,
+                    scope->current_block_type_set);
+        }
+        break;
+    }
+}
+
+/* The block's editor-only result graph, indexed in the block's own table
+ * (or -1); it is cloned into the caller's table once that is current
+ * again. */
+static int32_t block_tooling_return_set(Compiler *compiler,DiamondFunction *function,
+        uint16_t body_result,uint16_t declared_return_set) {
+    int32_t block_tooling_return=-1;
+    if(!compiler->failed&&declared_return_set==DIAMOND_NO_TYPE_SET&&
+       !compiler->return_flow_seen&&!compiler->method_has_block_return)
+        block_tooling_return=compiler->tooling_type_sets[body_result]>=0?
+            compiler->tooling_type_sets[body_result]:
+            compiler->known_type_sets[body_result];
+    if(block_tooling_return<0&&!compiler->failed&&
+       declared_return_set==DIAMOND_NO_TYPE_SET&&!compiler->return_flow_seen&&
+       !compiler->method_has_block_return&&
+       compiler->known_types[body_result]!=TYPE_UNKNOWN&&
+       reserve_type_sets(compiler,1))
+        block_tooling_return=(int32_t)append_inferred_type_set(function,
+            compiler->known_types[body_result]);
+    return block_tooling_return;
+}
+
+/* Records the block's return type (declared, or inferred from body_result),
+ * emits its RETURN and consumes the closing `end`. */
+static void finish_block_return(Compiler *compiler,DiamondFunction *function,
+        uint16_t body_result,uint16_t declared_return_set) {
+    if(declared_return_set!=DIAMOND_NO_TYPE_SET) {
+        emit_type_check(compiler,body_result,declared_return_set,
+            compiler->previous.span);
+        function->return_type_set=declared_return_set;
+    } else if(compiler->known_type_sets[body_result]>=0) {
+        function->return_type_set=
+            (uint16_t)compiler->known_type_sets[body_result];
+    } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
+              reserve_type_sets(compiler,1)) {
+        function->return_type_set=(uint16_t)append_inferred_type_set(function,
+            compiler->known_types[body_result]);
+    }
+    emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
+    if(compiler->current.kind!=DIAMOND_TOKEN_END) {
+        fail(compiler,compiler->current.span,"expected 'end' after block body");
+    } else {
+        advance_token(compiler);
     }
 }
 
@@ -524,31 +603,8 @@ uint16_t compile_block(Compiler *compiler) {
     if(!compiler->failed)
         bind_captured_cells(compiler,&scope,captured_fact_registers);
 
-    /* `yield` inside this block still means the enclosing method's own
-     * &block, as in Ruby: `def any?(&test) = items.find() do |x| yield(x)
-     * end` calls `test`. That parameter is an ordinary local, captured
-     * above like every other, so point this block's current block at its
-     * captured cell -- unless a block parameter of the same name shadows it
-     * (find_local then resolves to the parameter, which isn't captured). */
-    if(!compiler->failed&&scope.has_current_block) {
-        for(size_t i=0;i<compiler->enclosing_local_count;i++) {
-            if(compiler->enclosing_locals[i].reg!=scope.current_block_register)
-                continue;
-            const int inner=find_local(compiler,compiler->enclosing_locals[i].name);
-            if(inner>=0&&compiler->locals[(size_t)inner].captured) {
-                compiler->has_current_block=true;
-                compiler->current_block_register=
-                    compiler->locals[(size_t)inner].reg;
-                if(scope.current_block_type_set!=DIAMOND_NO_TYPE_SET&&
-                   scope.current_block_type_set<scope.function->type_set_count)
-                    compiler->current_block_type_set=clone_type_set_into_current(
-                        compiler,scope.function->type_sets,
-                        scope.function->type_set_count,
-                        scope.current_block_type_set);
-            }
-            break;
-        }
-    }
+    if(!compiler->failed&&scope.has_current_block)
+        retarget_block_yield(compiler,&scope);
 
     compiler->in_function=true;
     compiler->in_block=true;
@@ -567,65 +623,10 @@ uint16_t compile_block(Compiler *compiler) {
         compiler->known_types[body_result]=merged_type;
         compiler->known_type_sets[body_result]=merged_set;
     }
-    /* The block's editor-only result graph, indexed in the block's own table;
-     * it is cloned into the caller's table once that is current again. */
-    int32_t block_tooling_return=-1;
-    if(!compiler->failed&&declared_return_set==DIAMOND_NO_TYPE_SET&&
-       !compiler->return_flow_seen&&!compiler->method_has_block_return)
-        block_tooling_return=compiler->tooling_type_sets[body_result]>=0?
-            compiler->tooling_type_sets[body_result]:
-            compiler->known_type_sets[body_result];
-    if(block_tooling_return<0&&!compiler->failed&&
-       declared_return_set==DIAMOND_NO_TYPE_SET&&!compiler->return_flow_seen&&
-       !compiler->method_has_block_return&&
-       compiler->known_types[body_result]!=TYPE_UNKNOWN&&
-       reserve_type_sets(compiler,1)) {
-        DiamondTypeSet *set=&function->type_sets[function->type_set_count];
-        set->count=1;set->inferred=true;
-        set->members[0]=(DiamondTypeMember){
-            .id=compiler->known_types[body_result],
-            .argument_set=DIAMOND_NO_TYPE_SET,
-            .second_argument_set=DIAMOND_NO_TYPE_SET,
-            .callable_arity=UINT8_MAX,
-            .callable_return_set=DIAMOND_NO_TYPE_SET,
-            .callable_parameters_typed=false};
-        for(size_t parameter=0;parameter<16;parameter++)
-            set->members[0].callable_parameter_sets[parameter]=
-                DIAMOND_NO_TYPE_SET;
-        block_tooling_return=(int32_t)function->type_set_count++;
-    }
-    if(!compiler->failed) {
-        if(declared_return_set!=DIAMOND_NO_TYPE_SET) {
-            emit_type_check(compiler,body_result,declared_return_set,
-                compiler->previous.span);
-            function->return_type_set=declared_return_set;
-        } else if(compiler->known_type_sets[body_result]>=0) {
-            function->return_type_set=
-                (uint16_t)compiler->known_type_sets[body_result];
-        } else if(compiler->known_types[body_result]!=TYPE_UNKNOWN&&
-                  reserve_type_sets(compiler,1)) {
-            const size_t return_set=function->type_set_count++;
-            DiamondTypeSet *set=&function->type_sets[return_set];
-            set->count=1;set->inferred=true;
-            set->members[0]=(DiamondTypeMember){
-                .id=compiler->known_types[body_result],
-                .argument_set=DIAMOND_NO_TYPE_SET,
-                .second_argument_set=DIAMOND_NO_TYPE_SET,
-                .callable_arity=UINT8_MAX,
-                .callable_return_set=DIAMOND_NO_TYPE_SET,
-                .callable_parameters_typed=false};
-            for(size_t parameter=0;parameter<16;parameter++)
-                set->members[0].callable_parameter_sets[parameter]=
-                    DIAMOND_NO_TYPE_SET;
-            function->return_type_set=(uint16_t)return_set;
-        }
-        emit_instruction(compiler,DIAMOND_OP_RETURN,body_result,0,0,1);
-        if(compiler->current.kind!=DIAMOND_TOKEN_END) {
-            fail(compiler,compiler->current.span,"expected 'end' after block body");
-        } else {
-            advance_token(compiler);
-        }
-    }
+    const int32_t block_tooling_return=
+        block_tooling_return_set(compiler,function,body_result,declared_return_set);
+    if(!compiler->failed)
+        finish_block_return(compiler,function,body_result,declared_return_set);
 
     function->capture_count=(uint8_t)compiler->capture_count;
     function->register_count=compiler->next_register;
@@ -1427,20 +1428,8 @@ static void infer_definition_return(Compiler *compiler,DiamondFunction *function
             function->inferred_return_type_set=(uint16_t)inferred_set;
         } else if(inferred_type!=TYPE_UNKNOWN&&
                   reserve_type_sets(compiler,1)) {
-            const size_t return_set=function->type_set_count++;
-            DiamondTypeSet *set=&function->type_sets[return_set];
-            set->count=1;set->inferred=true;
-            set->members[0]=(DiamondTypeMember){
-                .id=inferred_type,
-                .argument_set=DIAMOND_NO_TYPE_SET,
-                .second_argument_set=DIAMOND_NO_TYPE_SET,
-                .callable_arity=UINT8_MAX,
-                .callable_return_set=DIAMOND_NO_TYPE_SET,
-                .callable_parameters_typed=false};
-            for(size_t parameter=0;parameter<16;parameter++)
-                set->members[0].callable_parameter_sets[parameter]=
-                    DIAMOND_NO_TYPE_SET;
-            function->inferred_return_type_set=(uint16_t)return_set;
+            function->inferred_return_type_set=
+                (uint16_t)append_inferred_type_set(function,inferred_type);
         }
     }
 }
