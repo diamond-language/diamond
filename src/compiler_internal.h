@@ -725,6 +725,10 @@ DIAMOND_INTERNAL void infer_contextual_keyword_arguments(Compiler *compiler,
         const DiamondFunction *target,const DiamondSpan *names,
         const uint16_t *values,size_t count,uint16_t *bindings);
 DIAMOND_INTERNAL uint16_t parse_call(Compiler *compiler, DiamondSpan name);
+DIAMOND_INTERNAL bool parse_explicit_type_arguments(Compiler *compiler,uint16_t *type_arguments,
+        size_t *type_argument_count_out);
+DIAMOND_INTERNAL void emit_type_argument_trailer(Compiler *compiler,const uint16_t *type_arguments,
+        size_t type_argument_count);
 DIAMOND_INTERNAL bool infer_reference_type_arguments(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_offset,size_t arity,
         uint16_t *bindings);

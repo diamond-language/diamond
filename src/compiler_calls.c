@@ -21,7 +21,7 @@
 
 /* Explicit generic arguments trail every typed call opcode: their count,
  * then each type-set register. */
-static void emit_type_argument_trailer(Compiler *compiler,const uint16_t *type_arguments,
+void emit_type_argument_trailer(Compiler *compiler,const uint16_t *type_arguments,
         size_t type_argument_count) {
     if(type_argument_count==0)return;
     emit_byte(compiler,(uint8_t)type_argument_count);
@@ -495,11 +495,6 @@ uint16_t parse_closure_call_arguments(Compiler *compiler, uint16_t callable) {
     return destination;
 }
 
-/* The discovery pass can encounter a call before its top-level function's
- * signature has been seen. It only needs to keep walking far enough to record
- * that later declaration; the real pass will validate the call against the
- * copied signature. Parse the complete call shape here without emitting a
- * callable function index that does not exist in this throwaway program yet. */
 /* Discovery pass only: an unresolved `name` inside a nested def's body
  * that is that def's own name makes it a recursive local helper. */
 void note_self_reference(Compiler *compiler,DiamondSpan name) {
@@ -510,6 +505,11 @@ void note_self_reference(Compiler *compiler,DiamondSpan name) {
         compiler->current_definition->calls_itself=true;
 }
 
+/* The discovery pass can encounter a call before its top-level function's
+ * signature has been seen. It only needs to keep walking far enough to record
+ * that later declaration; the real pass will validate the call against the
+ * copied signature. Parse the complete call shape here without emitting a
+ * callable function index that does not exist in this throwaway program yet. */
 static uint16_t parse_discovery_unknown_call(Compiler *compiler) {
     if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
         advance_token(compiler);skip_newlines(compiler);
@@ -1140,10 +1140,10 @@ static uint16_t parse_unknown_function_call(Compiler *compiler, DiamondSpan name
     return 0;
 }
 
-/* Explicit generic arguments, `name[Type, ...](...)`: the current token is
- * the '['. */
-static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction *function,
-        DiamondSpan name, uint16_t *type_arguments, size_t *type_argument_count_out) {
+/* Explicit generic arguments, `[Type, ...]`, up to 8: the current token is the
+ * '['; consumes through the ']'. Callers apply their own count checks. */
+bool parse_explicit_type_arguments(Compiler *compiler,uint16_t *type_arguments,
+        size_t *type_argument_count_out) {
     size_t type_argument_count=0;
     advance_token(compiler);
     skip_newlines(compiler);
@@ -1165,6 +1165,17 @@ static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction 
              "expected ']' after generic arguments");return false;
     }
     advance_token(compiler);
+    *type_argument_count_out=type_argument_count;
+    return true;
+}
+
+/* Explicit generic arguments, `name[Type, ...](...)`: the current token is
+ * the '['. */
+static bool parse_call_type_arguments(Compiler *compiler, const DiamondFunction *function,
+        DiamondSpan name, uint16_t *type_arguments, size_t *type_argument_count_out) {
+    size_t type_argument_count=0;
+    if(!parse_explicit_type_arguments(compiler,type_arguments,&type_argument_count))
+        return false;
     if(type_argument_count!=function->type_variable_count) {
         fail(compiler,name,"wrong number of generic arguments");return false;
     }
@@ -1763,26 +1774,8 @@ static uint16_t parse_singleton_reference(Compiler *compiler,
 static bool parse_singleton_type_arguments(Compiler *compiler,const DiamondFunction *function,
         DiamondSpan name,uint16_t *type_arguments,size_t *type_argument_count_out) {
     size_t type_argument_count=0;
-    advance_token(compiler);
-    skip_newlines(compiler);
-    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&
-          !compiler->failed) {
-        if(type_argument_count==8) {
-            fail(compiler,compiler->current.span,"too many generic arguments");
-            return false;
-        }
-        type_arguments[type_argument_count++]=
-            (uint16_t)parse_type_annotation(compiler);
-        skip_newlines(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-        advance_token(compiler);
-        skip_newlines(compiler);
-    }
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET) {
-        fail(compiler,compiler->current.span,
-             "expected ']' after generic arguments");return false;
-    }
-    advance_token(compiler);
+    if(!parse_explicit_type_arguments(compiler,type_arguments,&type_argument_count))
+        return false;
     if(function==nullptr) {
         fail(compiler,name,
             "explicit generic arguments are not supported on a forward-"
