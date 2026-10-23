@@ -12943,6 +12943,144 @@ static DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *ch
     return DIAMOND_VM_TYPE_ERROR;
 }
 
+/* Array/Hash methods implemented by a prelude function: the method name,
+ * then the function for an Array receiver and for a Hash receiver (nullptr
+ * when the method does not exist on that kind). A Hash's select/count/any?/
+ * all?/map pass a two-parameter block (key, value); the hash_ versions
+ * check the block's arity. count() on either takes no block at all. */
+#define COLLECTION_BRIDGE(name,array_target,hash_target) \
+    {name,sizeof name-1,array_target,hash_target}
+static const struct {
+    const char *name; size_t length;
+    const char *array_target; const char *hash_target;
+} collection_bridges[]={
+    COLLECTION_BRIDGE("each","array_each","hash_each"),
+    COLLECTION_BRIDGE("lazy","enumerable_lazy",nullptr),
+    COLLECTION_BRIDGE("select","enumerable_select","diamond_hash_select"),
+    COLLECTION_BRIDGE("count","diamond_array_count","diamond_hash_count"),
+    COLLECTION_BRIDGE("any?","enumerable_any","diamond_hash_any"),
+    COLLECTION_BRIDGE("all?","enumerable_all","diamond_hash_all"),
+    COLLECTION_BRIDGE("reduce","enumerable_reduce","enumerable_reduce"),
+    COLLECTION_BRIDGE("map","enumerable_map","diamond_hash_map"),
+    COLLECTION_BRIDGE("sum","array_sum",nullptr),
+    COLLECTION_BRIDGE("reject","array_reject",nullptr),
+    COLLECTION_BRIDGE("find","array_find",nullptr),
+    COLLECTION_BRIDGE("each_with_index","array_each_with_index",nullptr),
+    COLLECTION_BRIDGE("sort","enumerable_sort",nullptr),
+    COLLECTION_BRIDGE("sort_by","enumerable_sort_by",nullptr),
+    COLLECTION_BRIDGE("min","enumerable_min",nullptr),
+    COLLECTION_BRIDGE("max","enumerable_max",nullptr),
+    COLLECTION_BRIDGE("min_by","array_min_by",nullptr),
+    COLLECTION_BRIDGE("max_by","array_max_by",nullptr),
+    COLLECTION_BRIDGE("take","array_take",nullptr),
+    COLLECTION_BRIDGE("drop","array_drop",nullptr),
+    COLLECTION_BRIDGE("flat_map","array_flat_map",nullptr),
+    COLLECTION_BRIDGE("partition","array_partition",nullptr),
+    COLLECTION_BRIDGE("group_by","array_group_by",nullptr),
+    COLLECTION_BRIDGE("zip","array_zip",nullptr),
+    COLLECTION_BRIDGE("each_slice","array_each_slice",nullptr),
+    COLLECTION_BRIDGE("each_cons","array_each_cons",nullptr),
+    COLLECTION_BRIDGE("tally","array_tally",nullptr),
+    COLLECTION_BRIDGE("first","array_first",nullptr),
+    COLLECTION_BRIDGE("first_or","array_first_or",nullptr),
+    COLLECTION_BRIDGE("last","array_last",nullptr),
+    COLLECTION_BRIDGE("last_or","array_last_or",nullptr),
+    COLLECTION_BRIDGE("include?","array_include",nullptr),
+    COLLECTION_BRIDGE("reverse","array_reverse",nullptr),
+    COLLECTION_BRIDGE("concat","array_concat",nullptr),
+    COLLECTION_BRIDGE("compact","array_compact",nullptr),
+    COLLECTION_BRIDGE("uniq","array_uniq",nullptr),
+    COLLECTION_BRIDGE("flatten","array_flatten",nullptr),
+    COLLECTION_BRIDGE("delete_at","array_delete_at",nullptr),
+    COLLECTION_BRIDGE("empty?","array_empty","hash_empty"),
+    COLLECTION_BRIDGE("fetch",nullptr,"hash_fetch"),
+    COLLECTION_BRIDGE("keys",nullptr,"hash_keys"),
+    COLLECTION_BRIDGE("values",nullptr,"hash_values"),
+    COLLECTION_BRIDGE("map_values",nullptr,"hash_map_values"),
+    COLLECTION_BRIDGE("merge",nullptr,"hash_merge"),
+};
+#undef COLLECTION_BRIDGE
+
+/* The prelude function behind an Array/Hash method, or nullptr when the
+ * method has none for this receiver kind. */
+static const char *collection_bridge_target(DiamondObjectKind receiver_kind,
+        const DiamondStringConstant *method_name) {
+    for(size_t index=0;index<sizeof collection_bridges/sizeof collection_bridges[0];index++)
+        /* The first-character test skips most memcmp calls: eleven names
+         * share length 4, and this runs on every bridged call. */
+        if(method_name->length==collection_bridges[index].length&&
+           method_name->chars[0]==collection_bridges[index].name[0]&&
+           memcmp(method_name->chars,collection_bridges[index].name,
+               collection_bridges[index].length)==0)
+            return receiver_kind==DIAMOND_OBJECT_ARRAY?
+                collection_bridges[index].array_target:
+                collection_bridges[index].hash_target;
+    return nullptr;
+}
+
+/* Hash#key_at / Hash#value_at, and the undefined-method error for any other
+ * Hash method that reached the end of collection_invoke_helper. */
+__attribute__((noinline))
+static DiamondVmStatus hash_entry_at_method(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    const bool key_method=method_name->length==6&&
+        memcmp(method_name->chars,"key_at",6)==0;
+    const bool value_method=method_name->length==8&&
+        memcmp(method_name->chars,"value_at",8)==0;
+    if(!key_method&&!value_method) {
+        snprintf(vm->error,sizeof vm->error,
+            "undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"Hash");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT)
+        return DIAMOND_VM_TYPE_ERROR;
+    DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
+    const int64_t index=registers[base].as.integer;
+    if(index<0||(uint64_t)index>=hash->count) {
+        snprintf(vm->error,sizeof vm->error,
+            "index %" PRId64 " out of bounds for Hash of length %zu",
+            index,hash->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    const DiamondHashEntry entry=hash->entries[(size_t)index];
+    registers[dest]=key_method?entry.key:entry.value;return DIAMOND_VM_OK;
+}
+
+/* (start, length) -- same bounds/clamping contract as
+ * String#slice (see that one's own comment): start
+ * must be in [0, count] (start==count is a valid,
+ * always-empty slice), length must be >=0, and the
+ * actual element count taken clamps to whatever's
+ * actually available rather than erroring on a
+ * length that runs past the end. Array had no #slice
+ * at all before this -- String's own existed, Array's
+ * didn't, an inconsistency with no principled reason
+ * behind it. */
+__attribute__((noinline))
+static DiamondVmStatus array_slice_method(DiamondVm *vm,DiamondArray *array,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
+        snprintf(vm->error,sizeof vm->error,"Array#slice arguments must be Int");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t start=registers[base].as.integer;
+    const int64_t requested_length=registers[(size_t)base+1].as.integer;
+    if(start<0||(uint64_t)start>array->count||requested_length<0) {
+        snprintf(vm->error,sizeof vm->error,
+            "index %" PRId64 " out of bounds for Array of length %zu",
+            start,array->count);
+        return DIAMOND_VM_INDEX_ERROR;
+    }
+    const size_t available=array->count-(size_t)start;
+    const size_t take=(size_t)requested_length<available?
+        (size_t)requested_length:available;
+    DiamondArray *sliced=allocate_array(vm,array->values+(size_t)start,take);
+    if(sliced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(sliced);return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
     if(method_name->length==11&&memcmp(method_name->chars,"respond_to?",11)==0)
         return builtin_respond_to(chunk,registers[recv],registers[base],argc,&registers[dest]);
@@ -13014,185 +13152,6 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         return DIAMOND_VM_OK;
     }
     if(receiver_kind==DIAMOND_OBJECT_ARRAY||receiver_kind==DIAMOND_OBJECT_HASH) {
-        const char *target_name=nullptr;
-        if(method_name->length==4&&memcmp(method_name->chars,"each",4)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
-                "array_each":"hash_each";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"lazy",4)==0)
-            target_name="enumerable_lazy";
-        /* A Hash's select/count/any?/all?/map pass a
-         * two-parameter block (key, value); the hash_
-         * versions check the block's arity. count() on
-         * either takes no block at all. */
-        else if(method_name->length==6&&
-                memcmp(method_name->chars,"select",6)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
-                "diamond_hash_select":"enumerable_select";
-        else if(method_name->length==5&&
-                memcmp(method_name->chars,"count",5)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
-                "diamond_hash_count":"diamond_array_count";
-        else if(method_name->length==4&&
-                memcmp(method_name->chars,"any?",4)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
-                "diamond_hash_any":"enumerable_any";
-        else if(method_name->length==4&&
-                memcmp(method_name->chars,"all?",4)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
-                "diamond_hash_all":"enumerable_all";
-        else if(method_name->length==6&&
-                memcmp(method_name->chars,"reduce",6)==0)
-            target_name="enumerable_reduce";
-        else if(method_name->length==3&&
-                memcmp(method_name->chars,"map",3)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_HASH?
-                "diamond_hash_map":"enumerable_map";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==3&&
-                memcmp(method_name->chars,"sum",3)==0)
-            target_name="array_sum";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==6&&
-                memcmp(method_name->chars,"reject",6)==0)
-            target_name="array_reject";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"find",4)==0)
-            target_name="array_find";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==15&&
-                memcmp(method_name->chars,"each_with_index",15)==0)
-            target_name="array_each_with_index";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"sort",4)==0)
-            target_name="enumerable_sort";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==7&&
-                memcmp(method_name->chars,"sort_by",7)==0)
-            target_name="enumerable_sort_by";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==3&&
-                memcmp(method_name->chars,"min",3)==0)
-            target_name="enumerable_min";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==3&&
-                memcmp(method_name->chars,"max",3)==0)
-            target_name="enumerable_max";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==6&&
-                memcmp(method_name->chars,"min_by",6)==0)
-            target_name="array_min_by";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==6&&
-                memcmp(method_name->chars,"max_by",6)==0)
-            target_name="array_max_by";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"take",4)==0)
-            target_name="array_take";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"drop",4)==0)
-            target_name="array_drop";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==8&&
-                memcmp(method_name->chars,"flat_map",8)==0)
-            target_name="array_flat_map";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==9&&
-                memcmp(method_name->chars,"partition",9)==0)
-            target_name="array_partition";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==8&&
-                memcmp(method_name->chars,"group_by",8)==0)
-            target_name="array_group_by";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==3&&
-                memcmp(method_name->chars,"zip",3)==0)
-            target_name="array_zip";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==10&&
-                memcmp(method_name->chars,"each_slice",10)==0)
-            target_name="array_each_slice";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==9&&
-                memcmp(method_name->chars,"each_cons",9)==0)
-            target_name="array_each_cons";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==5&&
-                memcmp(method_name->chars,"tally",5)==0)
-            target_name="array_tally";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==5&&
-                memcmp(method_name->chars,"first",5)==0)
-            target_name="array_first";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==8&&
-                memcmp(method_name->chars,"first_or",8)==0)
-            target_name="array_first_or";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"last",4)==0)
-            target_name="array_last";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==7&&
-                memcmp(method_name->chars,"last_or",7)==0)
-            target_name="array_last_or";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==8&&
-                memcmp(method_name->chars,"include?",8)==0)
-            target_name="array_include";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==7&&
-                memcmp(method_name->chars,"reverse",7)==0)
-            target_name="array_reverse";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==6&&
-                memcmp(method_name->chars,"concat",6)==0)
-            target_name="array_concat";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==7&&
-                memcmp(method_name->chars,"compact",7)==0)
-            target_name="array_compact";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"uniq",4)==0)
-            target_name="array_uniq";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==7&&
-                memcmp(method_name->chars,"flatten",7)==0)
-            target_name="array_flatten";
-        else if(receiver_kind==DIAMOND_OBJECT_ARRAY&&
-                method_name->length==9&&
-                memcmp(method_name->chars,"delete_at",9)==0)
-            target_name="array_delete_at";
-        else if(method_name->length==6&&
-                memcmp(method_name->chars,"empty?",6)==0)
-            target_name=receiver_kind==DIAMOND_OBJECT_ARRAY?
-                "array_empty":"hash_empty";
-        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                method_name->length==5&&
-                memcmp(method_name->chars,"fetch",5)==0)
-            target_name="hash_fetch";
-        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                method_name->length==4&&
-                memcmp(method_name->chars,"keys",4)==0)
-            target_name="hash_keys";
-        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                method_name->length==6&&
-                memcmp(method_name->chars,"values",6)==0)
-            target_name="hash_values";
-        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                method_name->length==10&&
-                memcmp(method_name->chars,"map_values",10)==0)
-            target_name="hash_map_values";
-        else if(receiver_kind==DIAMOND_OBJECT_HASH&&
-                method_name->length==5&&
-                memcmp(method_name->chars,"merge",5)==0)
-            target_name="hash_merge";
         /* Not chunk->code+instruction_offset (an ordinary call site's
          * own would be stable, but the native-spread synthetic re-entry
          * just above builds its own tiny bytecode buffer fresh on the C
@@ -13205,14 +13164,22 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
          * regardless of which of the several dispatch paths reaches it. */
         const uint8_t *extension_site=(const uint8_t *)(const void *)method_name;
         const DiamondFunction *target=nullptr;
+        /* The bridge table is scanned only on a cache miss, so cached calls
+         * cost no more than the inline name tests it replaced. A bridged
+         * name whose prelude function is missing is never cached: that call
+         * reports the error below, and so does every later one, so a cached
+         * nullptr always means "no bridge" and needs no table scan. */
+        const char *target_name=nullptr;
         if(!cached_extension_lookup(vm,extension_site,
                 (uint8_t)receiver_kind,&target)) {
+            target_name=collection_bridge_target(receiver_kind,method_name);
             target=target_name!=nullptr?
                 find_top_level_function(chunk,target_name,strlen(target_name)):
                 find_collection_extension(chunk,receiver_kind,
                     method_name->chars,method_name->length);
-            store_extension_lookup(vm,extension_site,
-                (uint8_t)receiver_kind,target);
+            if(target!=nullptr||target_name==nullptr)
+                store_extension_lookup(vm,extension_site,
+                    (uint8_t)receiver_kind,target);
         }
         if(target==nullptr&&target_name!=nullptr) {
                 snprintf(vm->error,sizeof vm->error,
@@ -13257,31 +13224,8 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
             return DIAMOND_VM_OUT_OF_MEMORY;
         registers[dest]=found?removed:DIAMOND_NIL;return DIAMOND_VM_OK;
     }
-    if(receiver_kind==DIAMOND_OBJECT_HASH) {
-        const bool key_method=method_name->length==6&&
-            memcmp(method_name->chars,"key_at",6)==0;
-        const bool value_method=method_name->length==8&&
-            memcmp(method_name->chars,"value_at",8)==0;
-        if(!key_method&&!value_method) {
-            snprintf(vm->error,sizeof vm->error,
-                "undefined method '%.*s' for %s",
-                (int)method_name->length,method_name->chars,"Hash");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT)
-            return DIAMOND_VM_TYPE_ERROR;
-        DiamondHash *hash=(DiamondHash *)registers[recv].as.object;
-        const int64_t index=registers[base].as.integer;
-        if(index<0||(uint64_t)index>=hash->count) {
-            snprintf(vm->error,sizeof vm->error,
-                "index %" PRId64 " out of bounds for Hash of length %zu",
-                index,hash->count);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        const DiamondHashEntry entry=hash->entries[(size_t)index];
-        registers[dest]=key_method?entry.key:entry.value;return DIAMOND_VM_OK;
-    }
+    if(receiver_kind==DIAMOND_OBJECT_HASH)
+        return hash_entry_at_method(vm,registers,recv,base,argc,dest,method_name);
     if(receiver_kind==DIAMOND_OBJECT_STRING)
         return string_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
     if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
@@ -13309,38 +13253,8 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         registers[dest]=array->count==0?DIAMOND_NIL:
             array->values[--array->count];return DIAMOND_VM_OK;
     }
-    /* (start, length) -- same bounds/clamping contract as
-     * String#slice (see that one's own comment): start
-     * must be in [0, count] (start==count is a valid,
-     * always-empty slice), length must be >=0, and the
-     * actual element count taken clamps to whatever's
-     * actually available rather than erroring on a
-     * length that runs past the end. Array had no #slice
-     * at all before this -- String's own existed, Array's
-     * didn't, an inconsistency with no principled reason
-     * behind it. */
-    if(method_name->length==5&&memcmp(method_name->chars,"slice",5)==0) {
-        if(argc!=2)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_INT||
-           registers[(size_t)base+1].kind!=DIAMOND_VALUE_INT) {
-            snprintf(vm->error,sizeof vm->error,"Array#slice arguments must be Int");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t start=registers[base].as.integer;
-        const int64_t requested_length=registers[(size_t)base+1].as.integer;
-        if(start<0||(uint64_t)start>array->count||requested_length<0) {
-            snprintf(vm->error,sizeof vm->error,
-                "index %" PRId64 " out of bounds for Array of length %zu",
-                start,array->count);
-            return DIAMOND_VM_INDEX_ERROR;
-        }
-        const size_t available=array->count-(size_t)start;
-        const size_t take=(size_t)requested_length<available?
-            (size_t)requested_length:available;
-        DiamondArray *sliced=allocate_array(vm,array->values+(size_t)start,take);
-        if(sliced==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(sliced);return DIAMOND_VM_OK;
-    }
+    if(method_name->length==5&&memcmp(method_name->chars,"slice",5)==0)
+        return array_slice_method(vm,array,registers,base,argc,dest);
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Array");
     return DIAMOND_VM_TYPE_ERROR;
