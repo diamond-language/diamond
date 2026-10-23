@@ -986,19 +986,44 @@ static bool has_own_method_named(const Compiler *compiler,int owner,
             return true;
     return false;
 }
+/* `private`/`protected`/`public` in a class or module body. */
+static bool is_visibility_token(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_PRIVATE||kind==DIAMOND_TOKEN_PROTECTED||
+        kind==DIAMOND_TOKEN_PUBLIC;
+}
+
+static void compile_visibility_token(Compiler *compiler) {
+    const bool private_visibility=
+        compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
+    const bool protected_visibility=
+        compiler->current.kind==DIAMOND_TOKEN_PROTECTED;
+    compile_visibility(compiler,private_visibility,protected_visibility);
+}
+
+/* attr / attr_reader / attr_writer / attr_accessor / attr_predicate. */
+static bool is_attribute_token(DiamondTokenKind kind) {
+    return kind==DIAMOND_TOKEN_ATTR||kind==DIAMOND_TOKEN_ATTR_READER||
+        kind==DIAMOND_TOKEN_ATTR_WRITER||kind==DIAMOND_TOKEN_ATTR_ACCESSOR||
+        kind==DIAMOND_TOKEN_ATTR_PREDICATE;
+}
+
+static void compile_attribute_declaration(Compiler *compiler) {
+    const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
+    const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
+    const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
+    const bool predicate=
+        compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
+    compile_attribute(compiler,reader,
+                      shorthand||predicate?false:writer,predicate);
+}
+
 
 static void compile_class_body(Compiler *compiler, DiamondClass *class) {
     prescan_singleton_signatures(compiler,class->singleton_methods,
         &class->singleton_method_count,true);
     while(!compiler->failed && compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
-           compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
-           compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
-            const bool private_visibility=
-                compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            const bool protected_visibility=
-                compiler->current.kind==DIAMOND_TOKEN_PROTECTED;
-            compile_visibility(compiler,private_visibility,protected_visibility);
+        if(is_visibility_token(compiler->current.kind)) {
+            compile_visibility_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             fail(compiler,compiler->current.span,
                  "module_function is only valid in modules");break;
@@ -1006,18 +1031,8 @@ static void compile_class_body(Compiler *compiler, DiamondClass *class) {
             compile_alias_method(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_DELEGATE) {
             compile_delegate(compiler);
-        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE) {
-            const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
-            const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
-            const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
-            const bool predicate=
-                compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
-            compile_attribute(compiler,reader,
-                              shorthand||predicate?false:writer,predicate);
+        } else if(is_attribute_token(compiler->current.kind)) {
+            compile_attribute_declaration(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
                   assignment_ahead(compiler)) {
             const char first=compiler->source[compiler->current.span.start];
@@ -2130,20 +2145,10 @@ void prescan_singleton_signatures(Compiler *compiler,
     }
 }
 
-uint16_t compile_module(Compiler *compiler) {
-    if(compiler->function!=&compiler->program->entry) {
-        fail(compiler,compiler->current.span,
-             "modules must be declared at top level");return 0;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected valid module name");return 0;
-    }
-    const DiamondSpan name=compiler->current.span;
-    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
-    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
-        fail(compiler,name,"module name is too long");return 0;
-    }
+/* Finds or creates the module named by `name` and readies its slot for this
+ * pass (see the reopen and reset comments below). Returns nullptr on error. */
+static DiamondModule *declare_module(Compiler *compiler,DiamondSpan name,
+        const char *stored_name,int *index_out) {
     const int existing_module=find_module_name(compiler,stored_name);
     /* A module can always be reopened -- a second `module Foo ... end`
      * adds to the same module rather than erroring (see docs/syntax.md's
@@ -2152,7 +2157,7 @@ uint16_t compile_module(Compiler *compiler) {
      * class or interface) stays a hard error. */
     if(find_class_name(compiler,stored_name)>=0||
        find_interface_name(compiler,stored_name)>=0) {
-        fail(compiler,name,"module name is already defined");return 0;
+        fail(compiler,name,"module name is already defined");return nullptr;
     }
     int index;
     DiamondModule *module;
@@ -2218,7 +2223,7 @@ uint16_t compile_module(Compiler *compiler) {
             snprintf(message,sizeof message,
                 "too many modules: a program holds at most %u modules, prelude and cuts included",
                 (unsigned)DIAMOND_MAX_MODULES);
-            fail(compiler,name,message);return 0;
+            fail(compiler,name,message);return nullptr;
         }
         index=(int)compiler->program->module_count++;
         module=&compiler->program->modules[(size_t)index];
@@ -2249,11 +2254,87 @@ uint16_t compile_module(Compiler *compiler) {
     module->declaration_line=(uint32_t)name.line;
     module->declaration_column=(uint32_t)name.column;
     module->declaration_start=name.start;
+    *index_out=index;
+    return module;
+}
+
+/* `include Other` inside a module: copies Other's fields and methods in,
+ * keeping any of this module's own. The current token is `include`. */
+static bool compile_module_include(Compiler *compiler,DiamondModule *module,int index) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+             "expected module name after 'include'");return false;
+    }
+    const DiamondSpan include_span=compiler->current.span;
+    const int lexical_module=find_module(compiler,include_span);
+    char include_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!consume_qualified_name(compiler,include_name,
+                               sizeof include_name)) {
+        fail(compiler,include_span,"invalid qualified module name");return false;
+    }
+    const int included=strstr(include_name,"::")==nullptr?
+        lexical_module:find_module_name(compiler,include_name);
+    if(included==index) {
+        fail(compiler,include_span,
+             "module cannot include itself");return false;
+    }
+    if(included<0) {
+        fail(compiler,include_span,"undefined module");return false;
+    }
+    const DiamondModule *source=
+        &compiler->program->modules[(size_t)included];
+    record_included_module(module->included_modules,
+        &module->included_module_count,(uint8_t)included);
+    for(size_t imported=0;imported<source->field_count;imported++) {
+        bool present=false;
+        for(size_t field=0;field<module->field_count;field++)
+            if(strcmp(module->fields[field],source->fields[imported])==0)
+                present=true;
+        if(present)continue;
+        if(module->field_count==DIAMOND_MAX_FIELDS) {
+            fail(compiler,include_span,
+                 "included module adds too many fields");break;
+        }
+        (void)snprintf(module->fields[module->field_count++],
+            DIAMOND_MAX_FUNCTION_NAME,"%s",source->fields[imported]);
+    }
+    if(compiler->failed)return false;
+    if(module->method_count+source->method_count>DIAMOND_MAX_METHODS) {
+        fail(compiler,compiler->current.span,
+             "included module adds too many methods");return false;
+    }
+    for(size_t method=0;method<source->method_count;method++) {
+        if(has_own_method_named(compiler,-2,module->methods,
+                module->method_count,source->methods[method].name))continue;
+        module->methods[module->method_count]=source->methods[method];
+        module->methods[module->method_count++].included=true;
+    }
+    return true;
+}
+
+uint16_t compile_module(Compiler *compiler) {
+    if(compiler->function!=&compiler->program->entry) {
+        fail(compiler,compiler->current.span,
+             "modules must be declared at top level");return 0;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected valid module name");return 0;
+    }
+    const DiamondSpan name=compiler->current.span;
+    char stored_name[DIAMOND_MAX_FUNCTION_NAME];
+    if(!declaration_name(compiler,stored_name,sizeof stored_name,name)) {
+        fail(compiler,name,"module name is too long");return 0;
+    }
+    int index=0;
+    DiamondModule *module=declare_module(compiler,name,stored_name,&index);
+    if(module==nullptr)return 0;
     advance_token(compiler);
     if(!consume_block_start(compiler))return 0;
     /* Only during discovery -- the real pass relies on cross-pass
-     * carryover instead (module->next_singleton_claim, see this
-     * function's own reopen comment above); see prescan_module_
+     * carryover instead (module->next_singleton_claim, see
+     * declare_module's reopen comment); see prescan_module_
      * function_signatures's own comment for the full design and why
      * that carryover alone can't close this gap on its own. */
     if(compiler->discovery_pass)
@@ -2267,32 +2348,16 @@ uint16_t compile_module(Compiler *compiler) {
     compiler->methods_protected=false;
     compiler->module_function_mode=false;
     while(!compiler->failed&&compiler->current.kind!=DIAMOND_TOKEN_END) {
-        if(compiler->current.kind==DIAMOND_TOKEN_PRIVATE||
-           compiler->current.kind==DIAMOND_TOKEN_PROTECTED||
-           compiler->current.kind==DIAMOND_TOKEN_PUBLIC) {
-            const bool private_visibility=
-                compiler->current.kind==DIAMOND_TOKEN_PRIVATE;
-            const bool protected_visibility=
-                compiler->current.kind==DIAMOND_TOKEN_PROTECTED;
-            compile_visibility(compiler,private_visibility,protected_visibility);
+        if(is_visibility_token(compiler->current.kind)) {
+            compile_visibility_token(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE_FUNCTION) {
             compile_module_function(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_ALIAS_METHOD) {
             compile_alias_method(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_DELEGATE) {
             compile_delegate(compiler);
-        } else if(compiler->current.kind==DIAMOND_TOKEN_ATTR||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_READER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_WRITER||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_ACCESSOR||
-                  compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE) {
-            const bool reader=compiler->current.kind!=DIAMOND_TOKEN_ATTR_WRITER;
-            const bool writer=compiler->current.kind!=DIAMOND_TOKEN_ATTR_READER;
-            const bool shorthand=compiler->current.kind==DIAMOND_TOKEN_ATTR;
-            const bool predicate=
-                compiler->current.kind==DIAMOND_TOKEN_ATTR_PREDICATE;
-            compile_attribute(compiler,reader,
-                              shorthand||predicate?false:writer,predicate);
+        } else if(is_attribute_token(compiler->current.kind)) {
+            compile_attribute_declaration(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER&&
            assignment_ahead(compiler)) {
             const DiamondSpan constant_name=compiler->current.span;
@@ -2303,55 +2368,7 @@ uint16_t compile_module(Compiler *compiler) {
             }
             (void)compile_assignment(compiler);
         } else if(compiler->current.kind==DIAMOND_TOKEN_INCLUDE) {
-            advance_token(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-                fail(compiler,compiler->current.span,
-                     "expected module name after 'include'");break;
-            }
-            const DiamondSpan include_span=compiler->current.span;
-            const int lexical_module=find_module(compiler,include_span);
-            char include_name[DIAMOND_MAX_FUNCTION_NAME];
-            if(!consume_qualified_name(compiler,include_name,
-                                       sizeof include_name)) {
-                fail(compiler,include_span,"invalid qualified module name");break;
-            }
-            const int included=strstr(include_name,"::")==nullptr?
-                lexical_module:find_module_name(compiler,include_name);
-            if(included==index) {
-                fail(compiler,include_span,
-                     "module cannot include itself");break;
-            }
-            if(included<0) {
-                fail(compiler,include_span,"undefined module");break;
-            }
-            const DiamondModule *source=
-                &compiler->program->modules[(size_t)included];
-            record_included_module(module->included_modules,
-                &module->included_module_count,(uint8_t)included);
-            for(size_t imported=0;imported<source->field_count;imported++) {
-                bool present=false;
-                for(size_t field=0;field<module->field_count;field++)
-                    if(strcmp(module->fields[field],source->fields[imported])==0)
-                        present=true;
-                if(present)continue;
-                if(module->field_count==DIAMOND_MAX_FIELDS) {
-                    fail(compiler,include_span,
-                         "included module adds too many fields");break;
-                }
-                (void)snprintf(module->fields[module->field_count++],
-                    DIAMOND_MAX_FUNCTION_NAME,"%s",source->fields[imported]);
-            }
-            if(compiler->failed)break;
-            if(module->method_count+source->method_count>DIAMOND_MAX_METHODS) {
-                fail(compiler,compiler->current.span,
-                     "included module adds too many methods");break;
-            }
-            for(size_t method=0;method<source->method_count;method++) {
-                if(has_own_method_named(compiler,-2,module->methods,
-                        module->method_count,source->methods[method].name))continue;
-                module->methods[module->method_count]=source->methods[method];
-                module->methods[module->method_count++].included=true;
-            }
+            if(!compile_module_include(compiler,module,index))break;
         } else if(compiler->current.kind==DIAMOND_TOKEN_DEF) {
             (void)compile_definition(compiler,false);
         } else if(compiler->current.kind==DIAMOND_TOKEN_MODULE) {
