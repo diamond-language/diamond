@@ -724,7 +724,9 @@ static void cache_clear_directory(const char *directory, CacheClearTotals *total
         if (lstat(path, &info) == 0) {
             if (S_ISDIR(info.st_mode)) {
                 cache_clear_directory(path, totals);
-            } else if (name_length > 4 && strcmp(name + name_length - 4, ".dic") == 0) {
+            } else if (name_length > 4 &&
+                       (strcmp(name + name_length - 4, ".d6c") == 0 ||
+                        strcmp(name + name_length - 4, ".dic") == 0)) {
                 cache_clear_file(path, totals);
             }
         }

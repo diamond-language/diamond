@@ -34,26 +34,25 @@ static void diamond_hash_source(const char *source, uint8_t out[32]) {
     EVP_Digest(source, strlen(source), out, &digest_length, EVP_sha256(), nullptr);
 }
 
-/* `app.di` -> `app.dic` (matches Python's own classic foo.py -> foo.pyc
- * sibling-cache convention -- append, don't replace, so the source's own
- * extension stays legible in the cache file's name); anything not ending
- * in ".di" just gets ".dic" appended wholesale. Returns nullptr for `-e`
+/* `app.d6` -> `app.d6c`; legacy `app.di` -> `app.dic`. Other names get
+ * ".d6c" appended. Returns nullptr for `-e`
  * (no real file to sit a cache file next to) or on allocation failure --
  * both are treated identically by every caller: no cache path means no
  * caching for this run, silently. */
 char *diamond_cache_path_for(const char *name) {
     if (strcmp(name, "-e") == 0) return nullptr;
     const size_t name_length = strlen(name);
-    const bool has_di_extension = name_length >= 3 &&
-        strcmp(name + name_length - 3, ".di") == 0;
+    const bool has_source_extension = name_length >= 3 &&
+        (strcmp(name + name_length - 3, ".d6") == 0 ||
+         strcmp(name + name_length - 3, ".di") == 0);
     char *path = malloc(name_length + 5);
     if (path == nullptr) return nullptr;
     memcpy(path, name, name_length);
-    if (has_di_extension) {
+    if (has_source_extension) {
         path[name_length] = 'c';
         path[name_length + 1] = '\0';
     } else {
-        memcpy(path + name_length, ".dic", 5);
+        memcpy(path + name_length, ".d6c", 5);
     }
     return path;
 }

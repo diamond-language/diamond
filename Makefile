@@ -545,6 +545,10 @@ facet: $(BUILD_DIR)/facet
 test-facet: $(BUILD_DIR)/facet
 	bash tests/facet_test.sh
 
+.PHONY: test-source-extensions
+test-source-extensions: debug facet
+	bash tests/source_extensions_test.sh
+
 test-database-config-package: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash packages/database_config/test.sh
 
@@ -1069,6 +1073,7 @@ test-integration:
 	$(MAKE) test-nested-yield-guard
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
+	$(MAKE) test-source-extensions
 	$(MAKE) test-database-config-package
 	$(MAKE) test-http-package
 	$(MAKE) test-gremlin-package
