@@ -20,7 +20,7 @@ This installs the cut into `cuts/multipart/`; load it with `require_cut "multipa
 an upload and writes the file into an existing `uploads/` directory:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "gremlin"
 require_cut "multipart"
 
@@ -44,7 +44,7 @@ gremlin_serve(8080, UploadsController.create)
 
 ```sh
 mkdir uploads
-diamond app.di
+diamond app.d6
 curl -F title=Dark -F theme_file=@theme.zip localhost:8080/
 ```
 

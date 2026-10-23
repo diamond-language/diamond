@@ -24,23 +24,23 @@ a current reference point for the expanded suite going forward.
 Five new benchmarks, each targeting a hot-path category the original
 14 didn't touch at all:
 
-- **`exception_handling.di`** — `begin`/`rescue`/`ensure` in a loop
+- **`exception_handling.d6`** — `begin`/`rescue`/`ensure` in a loop
   that both raises-and-catches *and* runs an ensure block every
   iteration (the common "expected, handled" case, not a rare uncaught
   crash). First and only benchmark to exercise `PUSH_RESCUE`/
   `POP_RESCUE`/`PUSH_ENSURE`/`RUN_ENSURE`/`END_ENSURE`.
-- **`iterator_blocks.di`** — `Array#each`/`#map`/`#select` with a
+- **`iterator_blocks.d6`** — `Array#each`/`#map`/`#select` with a
   block, the overwhelmingly common way real Diamond code iterates
   (every other benchmark in the suite uses a hand-written `while`
   loop instead). First to exercise block/closure-call machinery
   (`GET_CAPTURE_CELL`, `BOX_LOCAL`, `CALL_CLOSURE`) as its dominant
   cost rather than a side detail.
-- **`range_iteration.di`** — `Range#each`, a distinct code path from
+- **`range_iteration.d6`** — `Range#each`, a distinct code path from
   both a hand-written loop and iterating a materialized `Array` (no
   backing `Array` ever gets allocated).
-- **`case_pattern_matching.di`** — `case`/`when` dispatch over a plain
+- **`case_pattern_matching.d6`** — `case`/`when` dispatch over a plain
   `Int` scrutinee. First to exercise `CASE_MATCH` at all.
-- **`typed_dispatch.di`** — a typed instance method (checked
+- **`typed_dispatch.d6`** — a typed instance method (checked
   parameter/return type) plus a generic method called with an
   explicit type argument every iteration. **Closes a gap
   `BASELINE.md`'s own "Coverage gaps" section explicitly flagged**:
@@ -63,7 +63,7 @@ numeric indices back to opcode names) was a hand-maintained mirror of
 `src/vm.h`'s `DiamondOpCode` enum, last updated 2026-08-20 — stale
 enough to have the wrong name for every opcode from index 2 onward
 (missing `SYMBOL`, plus ~80 opcodes added since). This is the exact
-same silent-desync failure mode as the `selfhost/parser.di` opcode
+same silent-desync failure mode as the `selfhost/parser.d6` opcode
 mirror bug fixed the same day (see project memory) — rather than
 patch the hardcoded list, `run.sh` now derives `OPCODE_NAMES` from
 `src/vm.h` at run time (`sed`/`grep` over the enum block), so it can't
@@ -106,10 +106,10 @@ default-vs-quicken delta here is within noise (≤2%), including
 when that finding was first written.
 
 **Block/closure iteration has real, measurable overhead over a
-hand-written loop.** `iterator_blocks.di`'s opcode trace is dominated
+hand-written loop.** `iterator_blocks.d6`'s opcode trace is dominated
 by `GET_CAPTURE_CELL` (7.2M) ahead of even `MOVE` (4.1M) — the block
 capturing `total`/`values` by reference costs more dispatch than the
-loop body's own arithmetic. `range_iteration.di` (1M `Range#each`
+loop body's own arithmetic. `range_iteration.d6` (1M `Range#each`
 iterations, a much smaller per-iteration body) shows `GET_CAPTURE_CELL`,
 `BOX_LOCAL`, and `MOVE` all landing within 2% of each other (~2.0-2.04M
 each) — comparable in magnitude to the loop's own `ADD` (2.005M), not
@@ -120,7 +120,7 @@ mechanism itself, not incidental to what these particular blocks
 happen to do.
 
 **Exception handling's steady-state cost is modest relative to other
-suite benchmarks.** `exception_handling.di`'s top opcodes are
+suite benchmarks.** `exception_handling.d6`'s top opcodes are
 `CONSTANT`/`MOVE`/`JUMP` ahead of any of `PUSH_RESCUE`/`PUSH_ENSURE`/
 `RUN_ENSURE`/`END_ENSURE`/`POP_RESCUE`. Confirmed via `--dump-bytecode`
 that each of the source's two nesting levels (the outer `begin...
@@ -136,10 +136,10 @@ Per-iteration cost (~403ns per full nested begin/rescue/ensure cycle,
 it to be, even accounting for the two-level nesting cost above.
 
 **`when a..b` allocates a fresh Range object on every evaluation, not
-just once.** `case_pattern_matching.di`'s ~441ns/iter (1M internal
+just once.** `case_pattern_matching.d6`'s ~441ns/iter (1M internal
 iterations) is *higher* than both `dispatch_polymorphic`'s ~191ns/iter
 and `dispatch_polymorphic_no_index`'s ~247ns/iter (2M internal
-iterations each) despite `case_pattern_matching.di` doing less apparent work per call
+iterations each) despite `case_pattern_matching.d6` doing less apparent work per call
 (one function call plus one pattern match, vs. `dispatch_polymorphic_
 no_index`'s if/elsif receiver selection plus one polymorphic method
 call). The opcode trace's `CHECK_TYPE`/`SET_IVAR` (each
@@ -157,10 +157,10 @@ would be a real, concrete optimization — worth a closer look if
 `case`/`when` performance becomes an actual target later.
 
 **Typed dispatch's overhead over untyped dispatch is small but
-present.** `typed_dispatch.di` (~477ns/iter, 1M internal iterations,
-one typed call + one generic call each) vs. `dispatch_monomorphic.di`
+present.** `typed_dispatch.d6` (~477ns/iter, 1M internal iterations,
+one typed call + one generic call each) vs. `dispatch_monomorphic.d6`
 (~141ns/iter, 2M internal iterations, one untyped call each) — an
-average ~239ns/call for `typed_dispatch.di` vs. ~141ns/call for plain
+average ~239ns/call for `typed_dispatch.d6` vs. ~141ns/call for plain
 monomorphic dispatch, roughly 70% higher, not free. `CHECK_TYPE` runs
 3 times per
 iteration, confirmed via `--dump-bytecode`: once for `process`'s `Int`
@@ -171,7 +171,7 @@ type inference eliding runtime checks where possible), and twice for
 return, since a generic return type can't be statically proven the
 same way). Each check is a real, measured cost, not free at runtime.
 
-## Addition: `object_hydration.di` (2026-09-12)
+## Addition: `object_hydration.d6` (2026-09-12)
 
 Added while gathering representative benchmark evidence ahead of planning
 real JIT work (`docs/roadmap.md`'s "Native-code execution" section requires
@@ -199,7 +199,7 @@ run): `MOVE` 140,202; `STRING` 130,000; `INDEX_GET` 50,000; `ADD` 40,000;
 20,403; `CHECK_TYPE` 20,000 (typed `attr_accessor` writes being checked).
 No `INVOKE`/`INVOKE_MONO` in the top 15 — this workload's cost is
 dominated by object construction and typed field assignment, not method
-dispatch, distinct from `typed_dispatch.di` above.
+dispatch, distinct from `typed_dispatch.d6` above.
 
 **Motivating context**: this shape was found to dominate a real
 application's (skindicate) front-page response time this session — a
@@ -216,7 +216,7 @@ per `docs/roadmap.md`'s explicit requirement not to pursue JIT work
 ## Phase 2 baseline JIT: first real measurement (2026-09-12)
 
 `DIAMOND_JIT=1` (see `docs/internal/jit-design.md`) against `bench/
-int_arithmetic.di`, same environment as above (`make release`,
+int_arithmetic.d6`, same environment as above (`make release`,
 `-march=native`, one binary, `DIAMOND_JIT` toggled purely via env var so
 this is a true same-binary A/B, not a rebuild comparison). Interpreted
 figures here use the **release** (`-O3`) build specifically -- an earlier
@@ -255,7 +255,7 @@ from register moves/constants/`_INT` arithmetic/comparisons/jumps/return
 for exactly what is and isn't covered, and why (a call-free,
 allocation-free, exception-free subset needs none of the general frame/
 GC-root contract the design doc lays out for a future call-compiling
-tier). `bench/object_hydration.di` and `bench/typed_dispatch.di` both
+tier). `bench/object_hydration.d6` and `bench/typed_dispatch.d6` both
 correctly report 0 compiled functions under `DIAMOND_JIT=1` -- neither
 fits this narrow subset yet -- and produce output identical to the
 non-JIT baseline, confirming the bailout-at-compile-time gate is safe for
@@ -276,7 +276,7 @@ check is now wired into `invoke_resolved_method_helper` too (covers
 `DIAMOND_OP_CALL`.
 
 **The actual motivating target still isn't reachable.**
-`bench/object_hydration.di`'s own `HydratedUser#initialize` -- modeling
+`bench/object_hydration.d6`'s own `HydratedUser#initialize` -- modeling
 skindicate's real row hydration -- still doesn't compile:
 `attributes["email"]`-style Hash access compiles a fresh `DIAMOND_OP_
 STRING` construction for the literal key on every call, and string
@@ -285,10 +285,10 @@ construction is a real allocation. This isn't specific to this benchmark
 it's a real, general gap, not an edge case to special-case around.
 Confirmed directly: deploying this build to skindicate would show 0
 compiled functions on its real controller/model code and no measurable
-difference on `/`, exactly like Phase 2 did. `object_hydration.di`'s own
+difference on `/`, exactly like Phase 2 did. `object_hydration.d6`'s own
 comment now documents this in detail.
 
-**What does work, measured honestly:** `bench/hash_ivar_construct.di` (new)
+**What does work, measured honestly:** `bench/hash_ivar_construct.d6` (new)
 isolates the same `SET_IVAR`/`INDEX_GET`/`CHECK_TYPE`/self/argument
 machinery with the Hash key passed as a parameter instead of a literal,
 sidestepping the string-construction gap -- `Box#initialize` compiles and
@@ -334,7 +334,7 @@ Closed the gap Phase 2b identified: added `STRING` opcode support via a
 real `DiamondFrame`-publishing prologue/epilogue (built, not just
 designed -- see `docs/internal/jit-design.md`'s own Phase 2c status note
 for the trampolines and the dry-run-compile-pass mechanism that decides,
-per function, whether it's needed at all). `bench/object_hydration.di`'s
+per function, whether it's needed at all). `bench/object_hydration.d6`'s
 own `HydratedUser#initialize` -- the actual motivating target since
 Phase 0 -- now compiles for the first time.
 
@@ -344,11 +344,11 @@ matching `bench/run.sh`'s own table:
 
 | benchmark | repeat | interpreted (per round) | JIT (per round) |
 |---|---:|---:|---:|
-| `object_hydration.di` | 120 | ~2.34-2.41s | ~2.28-2.33s |
-| `hash_ivar_construct.di` | 250 | ~2.70-2.78s | ~2.59-2.61s |
-| `int_arithmetic.di` (regression check) | 15 | ~7.6-8.1s | ~2.65-2.69s |
+| `object_hydration.d6` | 120 | ~2.34-2.41s | ~2.28-2.33s |
+| `hash_ivar_construct.d6` | 250 | ~2.70-2.78s | ~2.59-2.61s |
+| `int_arithmetic.d6` (regression check) | 15 | ~7.6-8.1s | ~2.65-2.69s |
 
-**`object_hydration.di`: ~2-3% faster end to end.** Modest, and consistent
+**`object_hydration.d6`: ~2-3% faster end to end.** Modest, and consistent
 with Phase 2b's own finding: `initialize`'s compiled body still calls the
 same C trampolines (`diamond_jit_hash_get`/`diamond_jit_set_ivar`/
 `diamond_jit_check_type`/`diamond_jit_new_string`) the interpreter's own
@@ -359,15 +359,15 @@ baseline's own output (`59000`) in every configuration tested.
 
 **No regression on Phase 2/2b's allocation-free benchmarks** from adding
 the pre-scan/dry-run mechanism, which was the explicit condition for
-landing this: `int_arithmetic.di` still measures **~2.9x**
+landing this: `int_arithmetic.d6` still measures **~2.9x**
 (`DIAMOND_JIT_THRESHOLD=1`, within noise of Phase 2's own ~2.95x),
-`hash_ivar_construct.di`'s `Box` still measures **~6-7%** faster
+`hash_ivar_construct.d6`'s `Box` still measures **~6-7%** faster
 (within Phase 2b's own measured 4-7% range) -- neither function triggers
 the pre-scan's `needs_frame` path (no `STRING` in either body), so neither
 pays anything for the mechanism existing.
 
-**Dedicated GC-root stress test** (`tests/cases/jit_string_construct.di`/
-`jit_string_construct_stress_gc.di`, new): a class whose `initialize`
+**Dedicated GC-root stress test** (`tests/cases/jit_string_construct.d6`/
+`jit_string_construct_stress_gc.d6`, new): a class whose `initialize`
 does three sequential `STRING`+`INDEX_GET`+`SET_IVAR` sequences from
 literal Hash keys, run under `DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1` with
 and without `DIAMOND_STRESS_GC=1` (forces a collection on *every*
@@ -403,20 +403,20 @@ rejected outright at compile time) is in `docs/internal/jit-design.md`'s
 own Phase 2d status note.
 
 **The actual target now compiles.** Verified directly against
-`skindicate.dia/lib/models/user.di`'s real `User#initialize` (not just
-the `object_hydration.di` mirror) via `DIAMOND_TRACE_JIT=1`: 1 compiled
+`skindicate.dia/lib/models/user.d6`'s real `User#initialize` (not just
+the `object_hydration.d6` mirror) via `DIAMOND_TRACE_JIT=1`: 1 compiled
 function, 0 bailouts, correct output identical to the interpreted
 baseline across representative attribute Hashes (including the `= {}`
 default-argument path).
 
 **Three dedicated regression cases prove the actual hazard this phase
 exists to prevent is prevented, not just "doesn't crash"**:
-`tests/cases/jit_super_raise_propagates.di` (a superclass constructor
+`tests/cases/jit_super_raise_propagates.d6` (a superclass constructor
 that raises -- confirms it runs exactly once, not twice, via a Hash-
 mutation counter a double-invocation would double), `jit_super_then_
-bail_propagates.di` (SUPER succeeds, then a *later*, unrelated opcode
+bail_propagates.d6` (SUPER succeeds, then a *later*, unrelated opcode
 bails -- same "ran exactly once" proof for a different failure site), and
-`jit_super_chain.di` (6 levels of SUPER, all independently compiled,
+`jit_super_chain.d6` (6 levels of SUPER, all independently compiled,
 proving `depth` threads correctly across multiple compiled hops without
 a false-positive stack-overflow or crash). All three pass identically
 under interpreted, `DIAMOND_JIT=1`, and `DIAMOND_JIT=1
@@ -424,15 +424,15 @@ DIAMOND_STRESS_GC=1`.
 
 **No regression on Phase 2/2b/2c's existing benchmarks** from the 6th
 persistent register (`depth`) and its alignment pad, or the new
-`jc->has_called` dispatch: `int_arithmetic.di` still ~2.9-3x (release,
+`jc->has_called` dispatch: `int_arithmetic.d6` still ~2.9-3x (release,
 `DIAMOND_JIT_THRESHOLD=1`, 5 rounds, JIT side steady at ~2.70-2.73s per
-round vs Phase 2c's own ~2.65-2.69s), `hash_ivar_construct.di` still
-~4-6% faster, `object_hydration.di` still ~2-8% faster (both within the
+round vs Phase 2c's own ~2.65-2.69s), `hash_ivar_construct.d6` still
+~4-6% faster, `object_hydration.d6` still ~2-8% faster (both within the
 same range previously measured).
 
 **Honest end-to-end result -- smaller than object_hydration's own ~2-3%,
 and worth understanding why**: measured a real `User.new(row)` loop
-(100,000 iterations, same skindicate checkout, `boot.di` required
+(100,000 iterations, same skindicate checkout, `boot.d6` required
 directly) interpreted vs `DIAMOND_JIT=1`:
 
 | | wall time (100,000 `User.new` calls) |
@@ -444,7 +444,7 @@ directly) interpreted vs `DIAMOND_JIT=1`:
 exact benchmark shows exactly **1** compiled function, not 2:
 `User#initialize` compiles, but its own `super(attributes)` call reaches
 `ActiveRecord::Model#initialize`
-(`packages/active_record/lib/active_record/model.di:36-49`), which
+(`packages/active_record/lib/active_record/model.d6:36-49`), which
 never does -- its body loops over `attributes.keys()` calling ordinary
 methods (`.keys()`, `.length()`) and uses `INDEX_GET` on an *Array*
 (this JIT's own `INDEX_GET` trampoline is Hash-only) plus `INDEX_SET`
@@ -484,8 +484,8 @@ correctness bugs (silent wrong answers, not crashes):
 for each bug, the new regression test was run against the pre-fix code
 (via a temporary `git stash` of the fix) and confirmed to actually fail
 there before trusting that it passing afterward means anything --
-`jit_equal_overload.di` returns `0` instead of the correct `10` without
-the fix; `jit_index_get_overload_after_super.di` raises an uncaught
+`jit_equal_overload.d6` returns `0` instead of the correct `10` without
+the fix; `jit_index_get_overload_after_super.d6` raises an uncaught
 `TypeError` instead of returning `1050` without the fix. Both trampolines
 were rewritten as full extractions of their real opcode's case body
 (`diamond_jit_equal_general`, `diamond_jit_index_get`, and new
@@ -497,10 +497,10 @@ opcode's real behavior into a trampoline again.
 **New real capability, not just a fix**: `INDEX_SET` is JIT-compiled for
 the first time (Hash/String/Instance-overload/Array, full parity with the
 real opcode), and `INDEX_GET` now handles Array receivers too (previously
-Hash-only). `tests/cases/jit_array_index.di` exercises both directly.
+Hash-only). `tests/cases/jit_array_index.d6` exercises both directly.
 
-No regression on Phase 2/2b/2c/2d's benchmarks: `int_arithmetic.di` still
-~2.9-3x, `hash_ivar_construct.di` still ~6-8% faster, `object_hydration.di`
+No regression on Phase 2/2b/2c/2d's benchmarks: `int_arithmetic.d6` still
+~2.9-3x, `hash_ivar_construct.d6` still ~6-8% faster, `object_hydration.d6`
 still ~4-8% faster (release, 3 alternating rounds each, `DIAMOND_JIT_
 THRESHOLD=1` where applicable). The real end-to-end `User.new` benchmark
 (skindicate's actual `User#initialize`, 100,000 calls) is unchanged from
@@ -529,34 +529,34 @@ reasoning).
 ## Addition: seven new workloads for previously unbenchmarked primitives (2026-09-17)
 
 `Tensor`, `Channel`, `Supervisor`, `Regexp`, `struct`, and `freeze`/
-`frozen?` had zero `bench/*.di` coverage before this session, despite
+`frozen?` had zero `bench/*.d6` coverage before this session, despite
 several landing across the current release cycle -- only ad-hoc
 one-off numbers in their own commit messages (Tensor's own GFLOPS
 figures) existed anywhere. Seven new files close that gap, one
 workload per primitive, `Thread` included as `Supervisor`'s own
 steady-state baseline:
 
-- `tensor_matmul.di` -- `Tensor#matmul` at 512x512 (real, threaded,
+- `tensor_matmul.d6` -- `Tensor#matmul` at 512x512 (real, threaded,
   k-blocked native path: total FLOPS is far above
   `DIAMOND_TENSOR_MATMUL_THREAD_FLOOR`, not the single-threaded
   small-shape fallback).
-- `channel_message_passing.di` -- 20,000 `Channel#send`/`#receive`
+- `channel_message_passing.d6` -- 20,000 `Channel#send`/`#receive`
   round trips between two real OS threads (every payload deep-copied
   across the heap boundary).
-- `thread_pool.di` / `supervisor_pool.di` -- the identical 16-worker,
+- `thread_pool.d6` / `supervisor_pool.d6` -- the identical 16-worker,
   fixed-arithmetic workload run under plain `Thread.new` versus
   `Supervisor`, to isolate supervision's own steady-state overhead
   (nothing crashes in either) from plain thread spawn/join cost.
-- `regexp_match.di` -- `Regexp#match` with two capture groups, 20,000
+- `regexp_match.d6` -- `Regexp#match` with two capture groups, 20,000
   freshly-built subject strings (reginold, `docs/runtime-reference.md`).
-- `freeze_mutation_check.di` -- `Array#push`/`Hash#[]=`/instance-variable
+- `freeze_mutation_check.d6` -- `Array#push`/`Hash#[]=`/instance-variable
   writes on ordinary, never-frozen receivers, 200,000 iterations each --
   every one of these now pays a frozen check before the mutation
   proceeds regardless of whether the receiver is actually frozen; this
   is the common (unfrozen) path's own baseline cost.
-- `struct_field_access.di` -- `struct Point(x: Int, y: Int)`
+- `struct_field_access.d6` -- `struct Point(x: Int, y: Int)`
   construction plus both generated readers, 200,000 iterations, to
-  compare against `hash_ivar_construct.di`/`object_hydration.di`'s own
+  compare against `hash_ivar_construct.d6`/`object_hydration.d6`'s own
   hand-written-class numbers below.
 
 Same environment/methodology as the rest of this file (`gcc (GCC)
@@ -593,8 +593,8 @@ without a concrete workload that cares.
 
 **`struct_field_access` vs. hand-written-class equivalents**: ~0.319s
 for 200,000 struct construct+read cycles here versus
-`hash_ivar_construct.di`'s ~100x100-per-batch hand-written-class shape
-and `object_hydration.di`'s own 4-field hand-written class -- opcode
+`hash_ivar_construct.d6`'s ~100x100-per-batch hand-written-class shape
+and `object_hydration.d6`'s own 4-field hand-written class -- opcode
 trace (`CHECK_TYPE`/`SET_IVAR`/`GET_IVAR`/`INVOKE_MONO` all at
 ~400,000, matching two typed fields x 200,000 iterations) shows
 `struct`'s generated `initialize`/readers compiling to the exact same
@@ -602,7 +602,7 @@ opcode shape a hand-written class's own typed `attr_accessor` already
 would -- no generic/reflective struct-specific dispatch path, as
 documented.
 
-**A real bug found while writing `tensor_matmul.di`, not a benchmark
+**A real bug found while writing `tensor_matmul.d6`, not a benchmark
 result**: `puts(tensor_result)` printed `#<Closure>` instead of
 anything Tensor-shaped. `src/vm.c`'s `builder_format_value` (backs
 `puts`/string interpolation) and `src/value.c`'s `diamond_value_fprint`
@@ -618,7 +618,7 @@ and `static`) instead of two independently hand-maintained copies --
 the same "two duplicated implementations silently drift" failure shape
 this project has hit before (`DIAMOND_OP_SET_IVAR`'s interpreter case
 versus the JIT's own trampoline, `freeze`/`frozen?`'s own addition).
-Regression test: `tests/cases/native_resource_default_to_s.di`.
+Regression test: `tests/cases/native_resource_default_to_s.d6`.
 
 **Follow-up**: `diamond_format_value_type` alone left `Time` printing
 the generic `#<Time>` placeholder from the CLI's own top-level-result
@@ -628,32 +628,32 @@ formatted it correctly via `src/vm.c`'s own `format_time_default`).
 Fixed by extracting that formatting into a buffer-based
 `diamond_format_time_default` and exporting it too, so both paths
 share the exact same real date formatting instead of one lacking it.
-`tests/cases/time_stringify.di` now exercises both paths directly.
+`tests/cases/time_stringify.d6` now exercises both paths directly.
 
 ## Addition: three new workloads for JIT Phase 3/4 and self-recursive TCO (2026-09-18)
 
 Self-recursive tail-call optimization and the two most recent JIT
 phases (`has_called` no longer blocking int arithmetic/comparison;
-`dup`/`freeze`/`frozen?` support) had no dedicated `bench/*.di`
-coverage -- `object_hydration.di`'s `run_dup()` exercises Phase 4
+`dup`/`freeze`/`frozen?` support) had no dedicated `bench/*.d6`
+coverage -- `object_hydration.d6`'s `run_dup()` exercises Phase 4
 incidentally inside an ActiveRecord-shaped benchmark, but nothing
 isolated either JIT phase on its own, and TCO had no workload at all.
 
-- `tail_call_optimization.di` -- a qualifying self-recursive tail call
+- `tail_call_optimization.d6` -- a qualifying self-recursive tail call
   (explicit `return` guard clause, `return selfcall(...)` as the
   function's own trailing statement -- see docs/callables.md) 3,000,000
   levels deep. Opcode trace confirms `TAIL_CALL` (not plain `CALL`)
   for all 3,000,000 occurrences -- direct proof the optimization is
   active, not just "didn't crash": ordinary recursion this deep would
   overflow `DIAMOND_MAX_CALL_DEPTH` (95) almost immediately.
-- `jit_arith_after_call.di` -- a Hash `INDEX_GET` (sets `jc->has_called`)
+- `jit_arith_after_call.d6` -- a Hash `INDEX_GET` (sets `jc->has_called`)
   followed by a provably-`Int` loop counter's own `LESS_INT`/`ADD_INT`
   in the same function -- the exact shape Phase 3 closed
-  (`tests/cases/jit_int_arith_after_index_get.di`'s own sized-for-
+  (`tests/cases/jit_int_arith_after_index_get.d6`'s own sized-for-
   timing sibling). Before Phase 3 this function was permanently
   JIT-ineligible (0 compiled functions, no matter how hot); now it
   compiles and measurably helps.
-- `jit_dup.di` -- isolates just `dup` (Phase 4) in its own function,
+- `jit_dup.d6` -- isolates just `dup` (Phase 4) in its own function,
   called repeatedly from a separate driver loop (the same shape
   `Model#initialize` is actually reached: many separate calls, not one
   call in a hot internal loop -- a `dup` call *inside* a loop condition
@@ -670,24 +670,24 @@ same `make release` binary, `DIAMOND_JIT` toggled purely via env var:
 | `jit_dup` (default threshold, 500,000 calls) | ~0.171s | ~0.137s | ~1.25x |
 
 `jit_arith_after_call`'s own win is real but noisier and more modest
-than the ~2.9-3x `int_arithmetic.di` gets (a debug-build comparison of
+than the ~2.9-3x `int_arithmetic.d6` gets (a debug-build comparison of
 this same file showed a misleadingly large ~7x, the same debug-baseline
 distortion `bench/RESULTS.md`'s own Phase 2 section already warns
 about) -- this function does far less arithmetic per iteration relative
 to its `INDEX_GET`/`STRING`-key-allocation overhead than `int_
-arithmetic.di` does, so bytecode-dispatch removal buys proportionally
+arithmetic.d6` does, so bytecode-dispatch removal buys proportionally
 less. `jit_dup`'s own ~25% win is consistent with, if a little higher
-than, Phase 4's own `object_hydration.di` measurement (~8-10% end to
+than, Phase 4's own `object_hydration.d6` measurement (~8-10% end to
 end) -- expected, since this file isolates `dup` alone rather than
 diluting it with `run()`'s own un-JIT'd Hash-literal-construction and
-`.length()`/`.attribute()` calls the way `object_hydration.di`'s
+`.length()`/`.attribute()` calls the way `object_hydration.d6`'s
 `run_dup()` does.
 
 `tail_call_optimization` and both JIT files also ran in the default
 sweep below for their own interpreted-baseline numbers (repeat=15,
 repeat=15, repeat=30 respectively) -- see the table.
 
-**`thread_pool.di`/`supervisor_pool.di` also changed this session**:
+**`thread_pool.d6`/`supervisor_pool.d6` also changed this session**:
 capped from 16 workers down to 5, at the user's own request (headroom
 for other work on the same dev machine, less cache pressure from
 running a benchmark locally). Re-measured at the new worker count
@@ -700,15 +700,15 @@ noise a 5-thread, sub-50ms measurement is naturally more sensitive to
 than the old 16-thread one was, not evidence supervision itself got
 proportionally more expensive.
 
-## Correction: `hash_ops.di`'s own comment was stale, not a live finding (2026-09-18)
+## Correction: `hash_ops.d6`'s own comment was stale, not a live finding (2026-09-18)
 
-Reviewing this session's full sweep with the user, `hash_ops.di`'s own
+Reviewing this session's full sweep with the user, `hash_ops.d6`'s own
 comment ("hash_find is a genuine O(n) linear scan... not a real hash
 table") looked like the standout actionable finding -- until checking
 `git log` on `hash_find` itself before acting on it. `Hash` was
 rewritten to a real open-addressing hash table on 2026-08-07
 (`15d8d868`, "Replace Hash's O(n) linear scan with a real hash table")
--- over a month before this session. `hash_ops.di`'s own comment and
+-- over a month before this session. `hash_ops.d6`'s own comment and
 5,000-entry sizing (deliberately small to avoid an O(n^2) insert phase)
 were simply never updated afterward. Confirmed directly: 100x more
 entries (5,000 -> 500,000) cost only ~10x more total time for
@@ -737,14 +737,14 @@ have been the first move, not an afterthought.
 
 ## Follow-up: closing the loop -- generic arithmetic JIT support (2026-09-18, same day)
 
-The real reason `hash_ops.di`'s `run()` never JIT-compiled turned out to
+The real reason `hash_ops.d6`'s `run()` never JIT-compiled turned out to
 have nothing to do with Hash at all: `total = total + values[index]` is
 generic `ADD` (a Hash's values have no static type), and the JIT had zero
 cases for any generic arithmetic/comparison opcode -- only the runtime-
 quickened `_INT` forms, and not even all of those (`LESS_EQUAL_INT`/
 `GREATER_INT`/`GREATER_EQUAL_INT` were never added). Closed this session
-(`docs/internal/jit-design.md`'s own "Phase 5") -- both `hash_ops.di` and
-`int_arithmetic_dynamic.di` (the file that originally named the typed-
+(`docs/internal/jit-design.md`'s own "Phase 5") -- both `hash_ops.d6` and
+`int_arithmetic_dynamic.d6` (the file that originally named the typed-
 vs-untyped gap) now compile and measurably help:
 
 | Benchmark | Interpreted | JIT'd | Speedup |
@@ -753,7 +753,7 @@ vs-untyped gap) now compile and measurably help:
 | `int_arithmetic_dynamic` (`DIAMOND_JIT_THRESHOLD=1`) | ~1.07s | ~0.51s | ~2.1x |
 
 `int_arithmetic_dynamic`'s own win closes most (though not all) of the
-~2.8x gap this file's own comment names against `int_arithmetic.di` --
+~2.8x gap this file's own comment names against `int_arithmetic.d6` --
 the remainder is inherent to the runtime kind check every generic-opcode
 call site now pays that a statically-proven-`Int` `_INT` site's fast
 path skips.
@@ -845,7 +845,7 @@ state, so this is a deployment sanity check rather than a throughput result.
 
 ## Ivar receiver result chaining -- JIT Phase 16 (2026-09-20)
 
-`bench/jit_invoke_result_ivar.di` exercises `result = @factory.make(@value)`
+`bench/jit_invoke_result_ivar.d6` exercises `result = @factory.make(@value)`
 followed by a hot loop calling a declared method on `result`. Release build,
 `DIAMOND_JIT_THRESHOLD=1`, three alternating runs:
 
@@ -859,19 +859,19 @@ shape; it is not an end-to-end application measurement.
 
 ## Native collection reads -- JIT Phase 17 (2026-09-20)
 
-`bench/jit_native_collection_reads.di` runs five million iterations containing
+`bench/jit_native_collection_reads.d6` runs five million iterations containing
 Array/Hash `length`, Hash `key_at`, and Hash `value_at`. One release-build run
 took 4.86s interpreted and 0.19s with JIT (`DIAMOND_JIT_THRESHOLD=1`), about
 96% faster. This intentionally isolates dispatch overhead; it does not predict
 the end-to-end Skindicate gain.
 
-The follow-up `bench/jit_native_string_reads.di` runs five million iterations
+The follow-up `bench/jit_native_string_reads.d6` runs five million iterations
 containing String `length`, `index_of`, and `ord`. Three alternating release
 runs averaged 0.80s interpreted and 0.27s with JIT, about 67% faster.
 
 ## Allocating String slice -- JIT Phase 18 (2026-09-20)
 
-`bench/jit_native_string_slice.di` runs one million `String#slice` allocations
+`bench/jit_native_string_slice.d6` runs one million `String#slice` allocations
 and reads each result's length. Three alternating release runs averaged 0.17s
 interpreted and 0.063s with JIT, about 63% faster. The focused regression also
 runs under `DIAMOND_STRESS_GC=1` to validate the framed allocation path.

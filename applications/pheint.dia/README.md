@@ -6,20 +6,20 @@ this project does not render HTML or own frontend assets.
 
 ## Layout
 
-- `app.di` starts the HTTP server.
-- `boot.di` loads application dependencies and source files.
+- `app.d6` starts the HTTP server.
+- `boot.d6` loads application dependencies and source files.
 - `lib/config` owns environment configuration.
 - `lib/controllers` contains JSON and GraphQL request actions.
 - `lib/graphql` contains the schema and resolvers.
 - `lib/models` contains `Account`, `Player`, and server-side `Session` models.
 - `lib/helpers` contains shared application helpers.
-- `lib/routes.di` and `lib/middleware.di` wire the request pipeline.
+- `lib/routes.d6` and `lib/middleware.d6` wire the request pipeline.
 
 ## Run
 
 ```sh
 cd applications/pheint.dia
-../../build/diamond app.di
+../../build/diamond app.d6
 ```
 
 The server listens on <http://127.0.0.1:18100> by default. `PORT` overrides
@@ -28,7 +28,7 @@ the port, `DIAMOND_ENV` selects `development`, `test`, or `production`, and
 be formatted during development with `packages/log_viewer`:
 
 ```sh
-../../build/diamond app.di | DIAMOND_BIN=../../build/diamond ../../packages/log_viewer/bin/diamond-log
+../../build/diamond app.d6 | DIAMOND_BIN=../../build/diamond ../../packages/log_viewer/bin/diamond-log
 ```
 
 The API exposes:
@@ -45,7 +45,7 @@ The API exposes:
 Initialize the selected database with:
 
 ```sh
-../../build/diamond setup_db.di
+../../build/diamond setup_db.d6
 ```
 
 This command recreates and seeds the selected database schema. Accounts store normalized
@@ -65,7 +65,7 @@ The game domain is:
 
 The seed creates `demo@pheint.dia` / `@demo`, two games (`Asteroid Run` and
 `Cipher Sprint`), leaderboards for both, and an initial Asteroid Run score.
-`setup_db.di` drops and recreates every table. With `DIAMOND_ENV=production` it refuses to run unless `PHEINT_CONFIRM_RESET=yes` is set,
+`setup_db.d6` drops and recreates every table. With `DIAMOND_ENV=production` it refuses to run unless `PHEINT_CONFIRM_RESET=yes` is set,
 and it never creates the demo account there.
 
 An account's `email` is visible only to that account (it is `null` for anyone else, including on a game's `owner`).
@@ -239,5 +239,5 @@ ordering; leaderboard score pages apply the offset after policy-aware ranking.
 Run the direct-dispatch smoke test with:
 
 ```sh
-DIAMOND_ENV=test ../../build/diamond smoke_test.di
+DIAMOND_ENV=test ../../build/diamond smoke_test.d6
 ```

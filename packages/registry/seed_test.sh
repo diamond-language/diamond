@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 diamond="${DIAMOND_BIN:-$root/build/diamond}"
-tool="$root/tools/prepare_registry_seed.di"
+tool="$root/tools/prepare_registry_seed.d6"
 expected="$root/docs/registry-launch-inventory.json"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

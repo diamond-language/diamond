@@ -26,27 +26,27 @@ while IFS= read -r instruction; do
 done < <(grep '^[0-9]' "$work/json-user")
 
 # Imported application code is included; warm caches cannot reintroduce preamble.
-cat > "$work/helper.di" <<'DI'
+cat > "$work/helper.d6" <<'DI'
 def imported() = 40
 class Box
   def value() = 2
 end
 DI
-cat > "$work/main.di" <<'DI'
+cat > "$work/main.d6" <<'DI'
 require "helper"
 def app() = imported() + Box.new().value()
 puts(ARGV[0])
 app()
 DI
-env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode "$work/main.di" hello > "$work/all"
-env -u DIAMOND_NO_CACHE DIAMOND_TRACE_CACHE=1 "$diamond" --dump-bytecode=all "$work/main.di" hello > "$work/all-alias" 2> "$work/cache-log"
+env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode "$work/main.d6" hello > "$work/all"
+env -u DIAMOND_NO_CACHE DIAMOND_TRACE_CACHE=1 "$diamond" --dump-bytecode=all "$work/main.d6" hello > "$work/all-alias" 2> "$work/cache-log"
 grep -q 'cache: hit' "$work/cache-log"
-cp "$work/main.dic" "$work/cache-before"
+cp "$work/main.d6c" "$work/cache-before"
 cmp "$work/all" "$work/all-alias"
-env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode=user "$work/main.di" hello > "$work/file-user"
-env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode=user "$work/main.di" hello > "$work/file-user-again"
+env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode=user "$work/main.d6" hello > "$work/file-user"
+env -u DIAMOND_NO_CACHE "$diamond" --dump-bytecode=user "$work/main.d6" hello > "$work/file-user-again"
 cmp "$work/file-user" "$work/file-user-again"
-cmp "$work/main.dic" "$work/cache-before"
+cmp "$work/main.d6c" "$work/cache-before"
 for name in imported value app; do grep -q "^== $name ==$" "$work/file-user"; done
 [[ "$(grep -c '^== ' "$work/file-user")" == 4 ]]
 [[ "$(tail -2 "$work/file-user")" == $'hello\n42' ]]

@@ -5,7 +5,7 @@
 #
 #   tools/deploy_registry.sh [--force] [--dry-run] [--no-verify]
 #
-# By default it stops when tools/registry_needs_upgrade.di says NONE or OPTIONAL;
+# By default it stops when tools/registry_needs_upgrade.d6 says NONE or OPTIONAL;
 # --force upgrades anyway. --dry-run prints every mutating command instead of
 # running it (the read-only upgrade check still runs).
 #
@@ -47,7 +47,7 @@ revision=$(git rev-parse HEAD); short=${revision:0:8}
 
 echo "== is an upgrade needed?"
 verdict=0
-build/diamond tools/registry_needs_upgrade.di --host "$host" || verdict=$?
+build/diamond tools/registry_needs_upgrade.d6 --host "$host" || verdict=$?
 # 20 = required, 10 = optional, 0 = none. Anything else means the check itself failed (host unreachable, deployed revision unknown, git error), which must not look like "nothing to do".
 case $verdict in
     20) ;;
@@ -100,8 +100,8 @@ if ! $dry; then
     [[ -x build/facet ]] || make -s facet >/dev/null
     curl -fsS https://cuts.dilang.tech/health; echo
 fi
-if $verify; then run build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech
-else echo "skipped: --no-verify (run tools/verify_registry_launch.di after publishing the new versions)"; fi
+if $verify; then run build/diamond tools/verify_registry_launch.d6 https://cuts.dilang.tech
+else echo "skipped: --no-verify (run tools/verify_registry_launch.d6 after publishing the new versions)"; fi
 
 echo; echo "== prune: keep only the newest backup and bundle, remove uploads from the host"
 run ssh "$host" 'rm -f /root/registry-deployment.tar.gz /root/upgrade.sh'

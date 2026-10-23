@@ -97,7 +97,7 @@ search over a real (if scoped) lexical symbol table:
     segment-relative remap anywhere else.
   - Document symbols lists every top-level function, class, module, and
     interface declared *in
-    that document itself* — not lib/core.di's prelude, and not anything
+    that document itself* — not lib/core.d6's prelude, and not anything
     pulled in through `require` (each of those has its own outline, a
     didOpen away). `range`/`selectionRange` are identical for each
     entry (just the name token — nothing tracks a declaration's full
@@ -319,7 +319,7 @@ search over a real (if scoped) lexical symbol table:
     say why.
 - `textDocument/completion` (`lsp/completion.c`) suggests every
   top-level function, class, module, and interface in the whole compiled program (not just this
-  document's own — `lib/core.di`'s prelude and anything pulled in via
+  document's own — `lib/core.d6`'s prelude and anything pulled in via
   `require` are all valid to type) plus every local variable/parameter
   actually *in scope at the cursor* — real lexical scoping, backed by a
   genuine (if narrow) per-function symbol table `src/compiler.c` now
@@ -364,7 +364,7 @@ search over a real (if scoped) lexical symbol table:
   does not implement fails CI.
 - `workspace/symbol` (`lsp/workspace_symbol.c`) recursively walks the
   workspace root given via `initialize` (skipping dotfiles/dotdirs —
-  `.git` and friends), compiles every `*.di` file it finds the same way
+  `.git` and friends), compiles every `*.d6` file it finds the same way
   an open document is (an open file's own live, possibly-unsaved buffer
   is preferred over disk, same as everywhere else `require` resolves),
   and returns every top-level function, class, module, and interface actually declared *in that
@@ -468,7 +468,7 @@ search over a real (if scoped) lexical symbol table:
   depth still comes from the whole document, so a range that starts inside
   a block indents correctly. A range ending at column 0 of a line does not
   include that line.
-  `tests/formatting_test.c` checks the rules and, over every `.di` file in the
+  `tests/formatting_test.c` checks the rules and, over every `.d6` file in the
   tests, examples, packages and `lib` (2,500+ files), that the token stream
   is unchanged apart from NEWLINE counts and that a second pass proposes
   nothing. Lines that start (or whose newline falls) inside a
@@ -491,7 +491,7 @@ Any document whose path/uri ends in `.div` (`packages/div` — see its own
 README for the tag grammar) is not raw Diamond source, so it's never
 handed to `diamond_compile` as-is; `lsp/div.c`'s `div_translate` first
 turns it into an ordinary Diamond source buffer implementing the same
-tag semantics `packages/div/lib/div/compiler.di`'s own `Div.compile_source`
+tag semantics `packages/div/lib/div/compiler.d6`'s own `Div.compile_source`
 does (a hand-ported C mirror, kept behaviorally in sync by hand — there's
 no shared implementation between the two, see that file's own header
 comment for the exact grammar and scope cuts), then compiles *that*
@@ -541,7 +541,7 @@ no `require` line of its own to read that from).
 A document's text is compiled exactly the way `src/main.c`'s own
 `run_source` compiles a file natively: `require`d files resolved and
 bundled in via `diamond_load_program_with_override` (`src/loader.h`),
-then `lib/core.di` prepended and a `#line 1` reset so the prelude's own
+then `lib/core.d6` prepended and a `#line 1` reset so the prelude's own
 line numbers never leak into a reported diagnostic's position. A
 diagnostic's line/column are re-resolved back through
 `diamond_load_program`'s own segment table
@@ -590,7 +590,7 @@ configuration at that binary with stdio as the transport (no `--stdio`
 flag needed or accepted — stdio is the only transport this server
 speaks). The exact configuration step is editor-specific; consult your
 editor's LSP client documentation for how it registers a server for a
-new file type/extension (`.di`).
+new file type/extension (`.d6`).
 
 `make test-lsp` runs `tests/lsp_test.sh`, which drives the real binary
 over its real stdio transport via a bash `coproc` — the same

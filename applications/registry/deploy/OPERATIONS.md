@@ -36,8 +36,8 @@ credentials in URLs, and do not enable debug logging on live traffic.
 Run the probe from outside the service host:
 
 ```sh
-diamond applications/registry/monitor.di https://cuts.example.com
-diamond applications/registry/monitor.di https://cuts.example.com --archive-sha256 DIGEST
+diamond applications/registry/monitor.d6 https://cuts.example.com
+diamond applications/registry/monitor.d6 https://cuts.example.com --archive-sha256 DIGEST
 ```
 
 For a private CA, use `--ca-file /path/to/ca.pem`. Certificate and hostname
@@ -91,7 +91,7 @@ thresholds, log rotation, retention, and an alert receiver in the host environme
 
 The registry is one bundle built from a single repository revision, but most
 releases change nothing it runs, so it is **not upgraded on every release**.
-`tools/registry_needs_upgrade.di` compares the revision live on the server with a
+`tools/registry_needs_upgrade.d6` compares the revision live on the server with a
 target (default `HEAD`) and answers:
 
 - **REQUIRED** (exit 20): the registry app files, a cut it loads (the dependency
@@ -103,11 +103,11 @@ target (default `HEAD`) and answers:
 
 `tools/deploy_registry.sh` runs the whole routine: the check above, swap in the build
 VM, a verified backup, the bundle build, upload and `upgrade.sh`, public verification
-(`verify_registry_launch.di`), and pruning. It stops unless the verdict is REQUIRED;
+(`verify_registry_launch.d6`), and pruning. It stops unless the verdict is REQUIRED;
 `--force` upgrades anyway, `--dry-run` prints every mutating command instead of
 running it, and `--no-verify` skips the public verification when the bundled seed names
 versions you have not published yet (an upgrade never publishes; run
-`verify_registry_launch.di` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
+`verify_registry_launch.d6` after publishing them). Backups and bundles live in `~/diamond-registry-backups/` (outside every
 checkout) and only the newest of each is kept. Afterwards update the "Runtime
 revision" line in `PRODUCTION.md`.
 

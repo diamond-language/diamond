@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 /* Builds the exact buffer diamond_compile expects for an open document
- * -- lib/core.di prepended, a `#line 1` reset, then either `text`
+ * -- lib/core.d6 prepended, a `#line 1` reset, then either `text`
  * as-is (`path==nullptr`: an untitled/non-file:// document, compiled in
  * isolation) or `text` resolved and require-bundled via
  * diamond_load_program (`path`: a real on-disk location). Mirrors

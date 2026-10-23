@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Opt-in: runs tests/cases/mjolnir_dialect_writes.di against live MariaDB, MySQL and PostgreSQL servers in throwaway podman containers
+# Opt-in: runs tests/cases/mjolnir_dialect_writes.d6 against live MariaDB, MySQL and PostgreSQL servers in throwaway podman containers
 # (the same shape as packages/arel/test_*_dialect.sh). The default dialects of that file -- SQLite with and without RETURNING -- run in
 # every `make test`; this checks that the read-back path and the constraint-message matching hold on the databases they are for.
 #
@@ -10,7 +10,7 @@ set -euo pipefail
 
 diamond="${DIAMOND_BIN:-diamond}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-test_file="$root/tests/cases/mjolnir_dialect_writes.di"
+test_file="$root/tests/cases/mjolnir_dialect_writes.d6"
 # The test requires the mjolnir and arel cuts, so run it from a project that has them installed.
 test_project="$(mktemp -d)"
 "$root/tools/install_local_cuts.sh" "$test_project" >/dev/null

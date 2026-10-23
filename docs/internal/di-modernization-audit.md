@@ -6,7 +6,7 @@ where the existing spelling is intentional.
 
 ## Summary
 
-The largest naming smell is the collection helper family in `lib/core.di`:
+The largest naming smell is the collection helper family in `lib/core.d6`:
 `array_*`, `hash_*`, and `enumerable_*`. These are mostly receiver operations
 that should eventually live on `Array`, `Hash`, or `Enumerable` as ordinary
 methods. The migration should be staged because the current compiler resolves
@@ -23,7 +23,7 @@ real boundary and should remain.
 Array and Hash receiver methods are done. The mechanism was already in place:
 `vm.c`'s `INVOKE` handling for `Array`/`Hash` receivers keeps a name-forwarding
 table (around `vm.c`'s `receiver_kind==DIAMOND_OBJECT_ARRAY||...HASH` branch)
-that maps a method name straight to the matching `lib/core.di` free function
+that maps a method name straight to the matching `lib/core.d6` free function
 via `find_top_level_function`, so most candidates in this doc (`map`,
 `select`, `sum`, `reject`, `find`, `each_with_index`, `sort_by`, `min_by`/
 `max_by`, `take`, `drop`, `flat_map`, `partition`, `group_by`, `zip`,
@@ -33,7 +33,7 @@ audit. What was missing has been added the same way: Array gets `first`,
 `compact`, `uniq`, `flatten`, `delete_at`; Hash gets `fetch`, `empty?`,
 `keys`, `values`, `include_key?`, `map_values`, `merge`. The free functions
 are unchanged and remain the compatibility-wrapper implementations the
-receiver methods forward to. Internal `lib/core.di` and package call sites
+receiver methods forward to. Internal `lib/core.d6` and package call sites
 (`packages/rack`, `packages/gremlin`, `packages/arel`) were migrated to the
 new receiver syntax, including the `unless`/`include?` rewrite this doc's
 own "Truthiness and `unless`" section uses as its worked example — that
@@ -45,18 +45,18 @@ described next) is also done, not still pending -- see the paragraph below
 and the "Enumerable candidates" section.
 
 Compound assignment (step 4) and the `unless`/truthiness rewrite (step 5)
-have landed in `packages/arel/lib/arel.di`, and now also in `lib/core.di`,
-`lib/core/numeric.di`, `lib/core/json_codec.di`, `lib/minitest.di`, and
-`packages/gremlin/lib/gremlin.di`. Both passes were applied out of the
+have landed in `packages/arel/lib/arel.d6`, and now also in `lib/core.d6`,
+`lib/core/numeric.d6`, `lib/core/json_codec.d6`, `lib/minitest.d6`, and
+`packages/gremlin/lib/gremlin.d6`. Both passes were applied out of the
 Recommended Order below (ahead of Enumerable) because they're purely local,
 behavior-preserving syntax edits with no call-site or compilation-order
 implications, unlike the receiver-method migrations. Two categories were
 deliberately left alone rather than rewritten:
 
 - string-concatenation accumulators such as `result = result + ch` in
-  `lib/core/json_codec.di`, matching the same exclusion already applied in
-  `arel.di` (a separate StringBuilder/O(n^2) concern, not a syntax question);
-- `if callback(...) == false` guards in `lib/core.di`'s `enumerable_all` and
+  `lib/core/json_codec.d6`, matching the same exclusion already applied in
+  `arel.d6` (a separate StringBuilder/O(n^2) concern, not a syntax question);
+- `if callback(...) == false` guards in `lib/core.d6`'s `enumerable_all` and
   `array_reject` (around lines 334, 341, 397), where `callback` is an
   untyped, caller-supplied `Callable[1]`. Unlike `array_include`'s
   guaranteed-`Bool` return in this doc's own worked example, a predicate
@@ -64,15 +64,15 @@ deliberately left alone rather than rewritten:
   `unless callback(...)` (nil is falsy) but not under `== false` (nil isn't
   `false`) — the same nil-vs-false trap this doc's "Truthiness and `unless`"
   section already warns about, just via `== false` instead of `!= nil`.
-  `gremlin.di`'s `@eof == false` inside a compound `while` condition was
+  `gremlin.d6`'s `@eof == false` inside a compound `while` condition was
   left for the same reason it's out of the documented if-guard→`unless`
   pattern in the first place: it's a `while` condition, not a single-branch
   `if` guard.
 
-`packages/http/lib/http.di` has also been swept: 6 of its 7 `if x != nil`-shaped
+`packages/http/lib/http.d6` has also been swept: 6 of its 7 `if x != nil`-shaped
 guards converted to `unless`; the 7th (`http_request`'s Content-Length check,
 around line 220) has an `else` branch and was left as `if` for the same
-elsif/else reason as `arel.di`'s remaining cases. A repo-wide re-scan after
+elsif/else reason as `arel.d6`'s remaining cases. A repo-wide re-scan after
 this pass found no further unconverted compound-assignment or single-branch
 nil-guard candidates in `lib/` or `packages/`.
 
@@ -113,7 +113,7 @@ mechanism works. The one function that actually fit the "redundant
 wrapper" description was `array_join` (`values.join(separator)`, forwarding
 to the already fully-native, non-table-dispatched `.join()`, per
 `src/vm.c`'s `array_join_helper` comment) -- it has been deleted from
-`lib/core.di`. `tests/cases/array_join_method.di` (which exercised both
+`lib/core.d6`. `tests/cases/array_join_method.d6` (which exercised both
 `.join()` and the free-function form) and `tests/cases/legacy_0440`
 through `legacy_0443` (which existed solely to test the free-function
 form) were updated to `values.join(...)` receiver syntax, preserving their
@@ -160,7 +160,7 @@ and the free function was only a compatibility wrapper, unlike the rest of
 this list, whose free functions remain vm.c's actual dispatch targets.
 `array_map_int`/`array_map_string`/`array_map_typed` were deliberately left
 as free functions (typed contracts, not drop-in receiver renames -- see
-Status). `array_sort` in `lib/core/numeric.di` is also a special case: it is
+Status). `array_sort` in `lib/core/numeric.d6` is also a special case: it is
 typed specifically for `Array[Int]` and should either become an Array
 method with a deliberate typed contract or be replaced by the existing
 native sorting surface, not blindly renamed.
@@ -193,14 +193,14 @@ options.merge(overrides)
 Note: a `hash_find` also appears in the broader code inventory, but it's
 `src/vm.c`'s own internal `static ptrdiff_t hash_find(...)` C helper (a
 key-lookup routine used by hash equality/merge/indexing) -- an unrelated,
-same-named symbol in the native runtime, not a `lib/core.di` free function
+same-named symbol in the native runtime, not a `lib/core.d6` free function
 in this naming family. Nothing to reconcile here.
 
 ### Enumerable candidates (done)
 
 These are protocol operations that belong on `Enumerable`, or on the concrete
 receiver if the runtime already provides a native fast path. Per Status
-above, `module Enumerable` in `lib/core.di` now defines all of them:
+above, `module Enumerable` in `lib/core.d6` now defines all of them:
 
 - `enumerable_select`, `enumerable_count`, `enumerable_any`, `enumerable_all`
 - `enumerable_map`, `enumerable_reduce`
@@ -311,7 +311,7 @@ inspection, or `method_missing` merely to make the code look more Rails-like.
 
 1. Add or confirm receiver methods for one Array family at a time, preserving
    the free functions as compatibility wrappers.
-2. Migrate internal `lib/core*.di` call sites to receiver syntax and add focused
+2. Migrate internal `lib/core*.d6` call sites to receiver syntax and add focused
    behavior tests.
 3. Done for Array and Hash (see Status above). Repeat for Enumerable after
    resolving cross-receiver contracts.

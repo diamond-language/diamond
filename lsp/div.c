@@ -36,7 +36,7 @@ static const char *find_substring(const char *haystack,size_t haystack_length,
 }
 
 /* Scans `source` into `*out_tokens`/`*out_count` (both malloc'd, caller
- * frees the array), mirroring Div.scan exactly (compiler.di) -- the same
+ * frees the array), mirroring Div.scan exactly (compiler.d6) -- the same
  * "<%"/"%>" delimiter search, the same "text before the first unmatched
  * <%" special case, the same unterminated-tag failure. Returns false only
  * for that last case, leaving *out_error_offset at the unterminated tag's
@@ -371,7 +371,7 @@ char *div_translate(const char *source,size_t length,
     }
 
     /* Kept behaviorally identical to Div.escape_helper_lines
-     * (compiler.di) and Div.escape_html (runtime.di) -- see that file's
+     * (compiler.d6) and Div.escape_html (runtime.d6) -- see that file's
      * own comment and test.sh's cross-check between the two. Fixed name
      * rather than divc's own per-file derived one: nothing outside this
      * one compile ever calls it (see div.h's own comment). */

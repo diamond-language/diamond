@@ -36,7 +36,7 @@ wait_for_port() {
 }
 
 for threads in 1 2 4 6; do
-    (cd "$app_dir" && DIAMOND_ENV=test "$diamond" "$bench_dir/server.di" "$threads" "$port") >/tmp/mp_server.log 2>&1 &
+    (cd "$app_dir" && DIAMOND_ENV=test "$diamond" "$bench_dir/server.d6" "$threads" "$port") >/tmp/mp_server.log 2>&1 &
     server_pid=$!
     if ! wait_for_port; then
         echo "threads=$threads server failed to start" >&2
@@ -51,7 +51,7 @@ for threads in 1 2 4 6; do
     sleep 0.5
     idle_3=$(rss_kb "$server_pid")
 
-    (cd "$bench_dir" && "$diamond" load.di "$fixed_load_threads" "$fixed_iterations" "http://127.0.0.1:$port") >/tmp/mp_load.log 2>&1
+    (cd "$bench_dir" && "$diamond" load.d6 "$fixed_load_threads" "$fixed_iterations" "http://127.0.0.1:$port") >/tmp/mp_load.log 2>&1
 
     post_1=$(rss_kb "$server_pid")
     sleep 0.3

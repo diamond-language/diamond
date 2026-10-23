@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Baseline benchmark runner. Times each bench/*.di program via
+# Baseline benchmark runner. Times each bench/*.d6 program via
 # DIAMOND_REPEAT (repeats execution in-process against the same
 # compiled chunk, so results measure interpreter throughput rather
 # than process startup/compile overhead), then reports per-iteration
@@ -53,9 +53,9 @@ declare -A REPEATS=(
 
 run_pass() {
     local quicken_env="$1"
-    for path in bench/*.di; do
+    for path in bench/*.d6; do
         local name
-        name="$(basename "$path" .di)"
+        name="$(basename "$path" .d6)"
         local repeat="${REPEATS[$name]:-10}"
         local start end elapsed per_iter
         start="$(date +%s.%N)"
@@ -81,7 +81,7 @@ fi
 # DiamondOpCode enum value -- this array maps N back to its name.
 # Extracted directly from src/vm.h's enum declaration order at run
 # time, rather than hand-maintained, so it can never silently desync
-# the way selfhost/parser.di's own hand-maintained opcode mirror once
+# the way selfhost/parser.d6's own hand-maintained opcode mirror once
 # did (a real bug found and fixed 2026-08-31) -- any new opcode just
 # shows up correctly named on the next run, no manual sync step.
 mapfile -t OPCODE_NAMES < <(
@@ -92,8 +92,8 @@ mapfile -t OPCODE_NAMES < <(
 
 echo
 echo "== opcode hot-path breakdown (single run, top 12 by count) =="
-for path in bench/*.di; do
-    name="$(basename "$path" .di)"
+for path in bench/*.d6; do
+    name="$(basename "$path" .d6)"
     echo "--- $name ---"
     DIAMOND_TRACE_OPCODES=1 "$diamond" "$path" >/dev/null 2>"/tmp/${name}.opcodes"
     sed -E 's/opcode\[([0-9]+)\]: ([0-9]+)/\1 \2/' "/tmp/${name}.opcodes" \

@@ -18,14 +18,14 @@ package: compile assets
 docs:
   echo writing docs
 
-$ diamond taskrun.di --plan all
+$ diamond taskrun.d6 --plan all
 1. clean
 2. compile
 3. assets
 4. package
 5. docs
 6. all
-$ diamond taskrun.di -j 4 all
+$ diamond taskrun.d6 -j 4 all
 == clean: ok
   $ echo removing build/
   removing build/
@@ -46,7 +46,7 @@ usage error, 66 when the Taskfile can't be read.
 
 ## What it shows
 
-- **Child processes.** `Job` (`lib/runner.di`) starts each command with
+- **Child processes.** `Job` (`lib/runner.d6`) starts each command with
   `Process.spawn`, checks it with `running?()` and `wait()`, and reads its
   stdout and stderr as non-blocking `Process::Stream`s.
 - **`IO.poll`.** `Runner#run` waits on every running child's streams at
@@ -54,7 +54,7 @@ usage error, 66 when the Taskfile can't be read.
   buffer holds never blocks (`processes.md` warns that `wait()` alone can
   deadlock). Each task's output is printed in one block when it ends, so
   parallel tasks don't interleave.
-- **A dependency graph.** `plan` (`lib/taskfile.di`) orders tasks with a
+- **A dependency graph.** `plan` (`lib/taskfile.d6`) orders tasks with a
   depth-first search and names any cycle it finds
   (`loop-a -> loop-b -> loop-c -> loop-a`). Its `visit` helper is a nested
   `def` that calls itself.

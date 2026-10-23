@@ -6,15 +6,15 @@ encoding builtins: `BCrypt`, `Cipher` (AES-256-GCM), `HMAC`, `Digest`,
 
 ```text
 $ export VAULT_PASSWORD='correct horse'
-$ diamond vault.di secrets.vault init
+$ diamond vault.d6 secrets.vault init
 created secrets.vault
-$ echo 'hunter2' | diamond vault.di secrets.vault add wifi
+$ echo 'hunter2' | diamond vault.d6 secrets.vault add wifi
 stored wifi
-$ diamond vault.di secrets.vault get wifi
+$ diamond vault.d6 secrets.vault get wifi
 hunter2
-$ VAULT_PASSWORD=nope diamond vault.di secrets.vault get wifi
+$ VAULT_PASSWORD=nope diamond vault.d6 secrets.vault get wifi
 vault: wrong password
-$ diamond vault.di secrets.vault verify
+$ diamond vault.d6 secrets.vault verify
 ok
 ```
 
@@ -32,7 +32,7 @@ The vault file is JSON (`JSON.stringify` / `JSON.parse`):
   constant-time `BCrypt.verify`).
 - `salt` and `rounds`: inputs to the key derivation. The 32-byte AES key is
   SHA-256 applied `rounds` times to the salted password (`derive_key` in
-  `lib/crypto.di`). This stands in for a real KDF such as PBKDF2, scrypt,
+  `lib/crypto.d6`). This stands in for a real KDF such as PBKDF2, scrypt,
   or Argon2, which Diamond doesn't provide.
 - `entries`: each secret is gzipped (`Gzip.compress`), encrypted with
   AES-256-GCM under a fresh random nonce (`Cipher.encrypt`), and

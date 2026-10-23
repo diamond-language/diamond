@@ -18,11 +18,11 @@ diamond="$prefix/bin/diamond"
 
 mkdir "$test_dir/app"
 cd "$test_dir/app"
-printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'double(21)' > app.di
+printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'double(21)' > app.d6
 
 # No kit for the target: a clear error, exit 74, and no output file.
 set +e
-"$diamond" build app.di -o missing --target=nowhere-linux-gnu 2> missing.err
+"$diamond" build app.d6 -o missing --target=nowhere-linux-gnu 2> missing.err
 status=$?
 set -e
 test "$status" -eq 74
@@ -31,7 +31,7 @@ test ! -e missing
 
 # A target name is a directory name, so path characters are refused.
 set +e
-"$diamond" build app.di -o bad --target=../escape 2> bad.err
+"$diamond" build app.d6 -o bad --target=../escape 2> bad.err
 status=$?
 set -e
 test "$status" -eq 64
@@ -44,7 +44,7 @@ rm -rf "$test_dir/wrong-kit/targets"
 printf '%s\n' 'other-linux-gnu' > "$test_dir/wrong-kit/target"
 cp -R "$test_dir/wrong-kit" "$prefix/lib/diamond/aot/targets/wanted-linux-gnu"
 set +e
-"$diamond" build app.di -o wrong --target=wanted-linux-gnu 2> wrong.err
+"$diamond" build app.d6 -o wrong --target=wanted-linux-gnu 2> wrong.err
 status=$?
 set -e
 test "$status" -eq 74
@@ -57,7 +57,7 @@ if [ -n "${DIAMOND_CROSS_SYSROOT:-}" ] && [ -n "${DIAMOND_CROSS_TARGET:-}" ]; th
         TARGET_TRIPLE="$DIAMOND_CROSS_TARGET" SYSROOT="$DIAMOND_CROSS_SYSROOT" \
         CROSS_FLAGS_EXTRA="${DIAMOND_CROSS_FLAGS_EXTRA:-}" \
         ${DIAMOND_CROSS_MAKE_ARGS:-} > "$test_dir/kit.log"
-    DIAMOND_AOT_KIT= "$repo_dir/build/diamond" build app.di -o cross \
+    DIAMOND_AOT_KIT= "$repo_dir/build/diamond" build app.d6 -o cross \
         --target="$DIAMOND_CROSS_TARGET" > cross.log
     grep -q "built 'cross' for $DIAMOND_CROSS_TARGET" cross.log
     case "$(file cross)" in

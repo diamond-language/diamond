@@ -10,7 +10,7 @@ From the repository root:
 ```sh
 make debug
 bash tools/install_local_cuts.sh .
-build/diamond examples/job_service/service.di 18090 /tmp/diamond-jobs.sqlite
+build/diamond examples/job_service/service.d6 18090 /tmp/diamond-jobs.sqlite
 ```
 
 The demo has no authentication. Gremlin's listener is network-accessible; run it

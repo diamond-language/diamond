@@ -14,7 +14,7 @@ A route handler is any callable taking `(request, context, params)` and returnin
 class methods keeps a project readable:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "gremlin"
 require_cut "dials"
 
@@ -49,7 +49,7 @@ gremlin_serve(8080, app)
 ```
 
 ```sh
-diamond app.di
+diamond app.d6
 curl localhost:8080/authors/7        # author 7
 curl -d name=ada localhost:8080/authors   # 302 to /authors/ada
 curl localhost:8080/nope             # 404 "not found: /nope"

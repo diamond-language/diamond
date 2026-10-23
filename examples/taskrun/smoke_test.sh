@@ -9,8 +9,8 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" taskrun.di -f testdata/Taskfile all | diff -u testdata/all.expected -
-"$diamond" build taskrun.di -o "$work/taskrun" > "$work/build.log"
+"$diamond" taskrun.d6 -f testdata/Taskfile all | diff -u testdata/all.expected -
+"$diamond" build taskrun.d6 -o "$work/taskrun" > "$work/build.log"
 run() { "$work/taskrun" -f testdata/Taskfile "$@"; }
 run all | diff -u testdata/all.expected -
 

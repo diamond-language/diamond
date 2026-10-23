@@ -454,7 +454,7 @@ static bool is_bare_clear_command(const char *line) {
 }
 
 /* Attempts to compile `source` (the whole REPL session so far, plus the
- * newest pending input) exactly the way -e/file execution do: core.di
+ * newest pending input) exactly the way -e/file execution do: core.d6
  * prepended, then a #line 1 reset so the diagnostic's own line/column
  * land relative to `source` itself, no offset math needed by the caller.
  * On failure, `*out_incomplete` distinguishes "ran out of input" (the

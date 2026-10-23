@@ -1546,8 +1546,8 @@ uint16_t parse_to_int_call(Compiler *compiler) {
 }
 
 /* diamond_json_stringify(value): the native behind JSON.stringify (see
- * lib/core/json.di and json_write_value in src/vm.c). Named with the same
- * diamond_ prefix lib/core.di's other internal natives use, so it doesn't
+ * lib/core/json.d6 and json_write_value in src/vm.c). Named with the same
+ * diamond_ prefix lib/core.d6's other internal natives use, so it doesn't
  * take a plain name away from user programs. */
 uint16_t parse_json_stringify_call(Compiler *compiler) {
     advance_token(compiler); /* consume '(' */

@@ -139,7 +139,7 @@ function handlePublishDiagnostics(params) {
     diagnosticCollection.set(uri, diagnostics);
 }
 
-/* 'diamond' (.di) and 'diamond-template' (.div, packages/div -- see
+/* 'diamond' (.d6) and 'diamond-template' (.div, packages/div -- see
  * lsp/div.c) both get diagnostics; only 'diamond' additionally gets
  * hover/definition/documentSymbol/completion, via those providers'
  * own separate 'diamond'-only registrations below (docs/lsp.md's own
@@ -186,7 +186,7 @@ function didClose(document) {
     });
 }
 
-/* vscode.HoverProvider#provideHover. Every open .di document already
+/* vscode.HoverProvider#provideHover. Every open .d6 document already
  * has a live server-side copy from didOpen/didChange, so this only ever
  * needs to ask about it -- no separate "send the text along with the
  * hover request" step the way an unopened document might need. */

@@ -6,7 +6,7 @@ machine written as nested `case` expressions, and it exists to put Diamond's
 pattern matching through its paces.
 
 ```text
-$ diamond vending.di testdata/session.txt
+$ diamond vending.d6 testdata/session.txt
 2: insert coins first
 3: credit $1.00
 4: dispensed A1 for $0.75
@@ -22,7 +22,7 @@ $ diamond vending.di testdata/session.txt
 ## Usage
 
 ```text
-vending.di SCRIPT
+vending.d6 SCRIPT
 ```
 
 One JSON object per line: `{"cmd": "coin", "cents": 25}`,

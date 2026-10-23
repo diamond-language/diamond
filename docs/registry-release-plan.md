@@ -71,19 +71,25 @@ verified archive's name, version, dependency ranges, SHA-256, byte size, and fil
 name, in deterministic dependency-first publication order. Changing a selected package requires regenerating and reviewing
 its inventory entry before the launch gate will pass.
 
+The `.d6` source migration starts a new minor line for every bundled cut and
+updates their dependency ranges together. These artifacts require a runtime
+with `.d6` import support; old `0.x` caret ranges must not select them. The
+regenerated inventory is a local candidate, not a publication record. Existing
+published `.di` artifacts remain immutable and loadable by the new runtime.
+
 After 0.7.0, every selected cut received a patch release that adds
 `maintainers`, and later patch releases carried README and code fixes. The
 checked-in selection and inventory describe the newest versions, which are
-published to the registry by an operator with `tools/publish_registry_seed.di`
+published to the registry by an operator with `tools/publish_registry_seed.d6`
 and are immutable once published. Until that happens,
-`verify_registry_launch.di` against production fails on the missing versions;
+`verify_registry_launch.d6` against production fails on the missing versions;
 the launch digests remain in the `v0.7.0` tag.
 
 Build the exact candidate without publishing anything:
 
 ```sh
 make facet
-build/diamond tools/prepare_registry_seed.di /tmp/registry-launch-seed \
+build/diamond tools/prepare_registry_seed.d6 /tmp/registry-launch-seed \
   --expect docs/registry-launch-inventory.json
 ```
 
@@ -127,7 +133,7 @@ The selected version is 0.7.0.
   `tools/fetch_registry_backup.sh`. Saved outside the source tree under `~/diamond-registry-backups/`;
   see the production record for its verification timestamp and retained state.
 - **Deferred by operator:** automatic alerts and receiver selection. Manual
-  `monitor.di` probes remain available; automatic notification is not a release gate.
+  `monitor.d6` probes remain available; automatic notification is not a release gate.
 - **Deferred past 0.7.0, since resolved in part:** the production reboot drill
   passed on 2026-09-24. The first Diamond certificate renewals (dilang.tech
   ~2026-11-17, cuts.dilang.tech ~2026-11-22) have not yet happened; confirm them
@@ -137,7 +143,7 @@ The selected version is 0.7.0.
   changelog entries under the version/date heading.
 - [x] Verify the final release commit: inspect the complete CI results, run the
   QEMU registry gate (`tools/test_registry_vm.sh`), and run
-  `build/diamond tools/verify_registry_launch.di https://cuts.dilang.tech`.
+  `build/diamond tools/verify_registry_launch.d6 https://cuts.dilang.tech`.
   Record the tested SHA and outcomes; earlier runs do not certify a later commit.
   Verified 2026-09-23 on `b98f27cc`: all nine CI jobs passed (run 35922577277);
   `tools/test_registry_vm.sh all` passed (seed, nginx proxy, HTTP, Caddy, systemd

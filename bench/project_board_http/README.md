@@ -31,7 +31,7 @@ driver is itself an ordinary Diamond script and can also target an already
 running server directly:
 
 ```sh
-build/diamond bench/project_board_http/load.di 12 250 http://127.0.0.1:19620
+build/diamond bench/project_board_http/load.d6 12 250 http://127.0.0.1:19620
 ```
 
 Arguments are load threads, journeys per thread, and base URL. Output is one

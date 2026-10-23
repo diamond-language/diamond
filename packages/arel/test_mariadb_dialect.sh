@@ -57,4 +57,4 @@ export DIAMOND_MYSQL_TEST_PORT="${port}"
 export DIAMOND_STRESS_GC=1
 export DIAMOND_STRESS_MINOR_GC=1
 
-"$diamond" test_mariadb_dialect.di
+"$diamond" test_mariadb_dialect.d6

@@ -12,7 +12,7 @@ typedef enum {
 } DiamondBytecodeDump;
 
 /* Compiles and runs `source` exactly the way the `diamond` CLI's own
- * file/-e execution does: lib/core.di prepended, `require` resolution,
+ * file/-e execution does: lib/core.d6 prepended, `require` resolution,
  * VM execution, every DIAMOND_*-env-var-driven tracing/stress knob
  * (DIAMOND_STRESS_GC, DIAMOND_QUICKEN, DIAMOND_REPEAT, the DIAMOND_TRACE_*
  * family, ...), matching stdout/stderr output byte-for-byte. `name` is
@@ -32,7 +32,7 @@ typedef enum {
  * process per case) -- both stay behaviorally identical to each other,
  * and to every already-recorded `.expected` file under tests/cases/,
  * which was originally captured by running the CLI itself. */
-/* `app.di` -> `app.dic`, or nullptr for `-e`/on allocation failure. The caller
+/* `app.d6` -> `app.d6c`, or nullptr for `-e`/on allocation failure. The caller
  * frees the result. */
 char *diamond_cache_path_for(const char *name);
 
@@ -46,7 +46,7 @@ int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump
  * one zero-initialized DiamondProgram can safely be reused across many calls;
  * each call releases and rebuilds its dynamically sized function storage.
  *
- * Never touches the sibling-.dic bytecode cache (docs/caching.md) --
+ * Never touches the sibling-.d6c bytecode cache (docs/caching.md) --
  * that only exists inside diamond_run_source's own auto-dispatch, keyed
  * by one real on-disk script path per process. A caller here (tests/
  * run_cases.c) runs many programs per process against no single stable

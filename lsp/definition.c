@@ -140,7 +140,7 @@ JsonValue *definition_compute(const DocumentTable *documents,const char *uri,
     }
     for(size_t index=0;!explicit_receiver&&index<chunk.function_count&&!found;index++) {
         const DiamondFunction *function=chunk.functions[index];
-        /* declaration_start>=user_offset excludes lib/core.di's own
+        /* declaration_start>=user_offset excludes lib/core.d6's own
          * prelude -- see definition.h for why a prelude match returns
          * null instead of a location nobody can jump to. */
         if(function->owner_class==DIAMOND_OWNER_NONE&&!function->nested&&

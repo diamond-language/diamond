@@ -6,7 +6,7 @@ that gives up on a crash loop instead of retrying forever, and a `case` that
 needs one branch for a whole family of classes.
 
 ```text
-$ diamond dispatcher.di
+$ diamond dispatcher.d6
 == routing
   job 1 -> primary
   job 2 -> primary
@@ -45,7 +45,7 @@ queued: primary 2, overflow 3, shed [6, 7]
    together, so a `case` over `Done | Shed | Crashed` needs two branches. Delete
    the `Failure` branch and the compiler reports `missing: Shed, Crashed`.
 
-Worker functions live in `lib/dispatch.di`. Like the `parallel` example, they
+Worker functions live in `lib/dispatch.d6`. Like the `parallel` example, they
 are top-level defs that capture nothing, because each thread runs one in its
 own VM.
 

@@ -61,7 +61,7 @@ JIT's own compile-time scan, so any function containing one is
 automatically JIT-ineligible, exactly like `debugger()`/`breakpoint()`
 already were) -- it was never the startup/steady-state-throughput-
 sensitive case those optimizations target. An ordinary `diamond
-script.di` run has none of this instrumentation at all and pays nothing
+script.d6` run has none of this instrumentation at all and pays nothing
 for the feature existing.
 
 ## Stepping

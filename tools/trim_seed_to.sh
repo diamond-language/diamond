@@ -3,7 +3,7 @@
 #
 #   tools/trim_seed_to.sh SOURCE_SEED NEW_SEED CUT...
 #
-# tools/publish_registry_seed.di publishes every cut in a seed's inventory, and a published version can never be replaced, so a release
+# tools/publish_registry_seed.d6 publishes every cut in a seed's inventory, and a published version can never be replaced, so a release
 # of a few cuts publishes from a seed trimmed to exactly those. Every archive's size and SHA-256 is checked against its inventory
 # entry while copying, and the cuts keep the source inventory's order (dependencies first). NEW_SEED must not exist.
 set -euo pipefail

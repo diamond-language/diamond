@@ -9,9 +9,9 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" pngmeta.di info testdata/photo.png testdata/icon.png | cmp testdata/info.expected -
+"$diamond" pngmeta.d6 info testdata/photo.png testdata/icon.png | cmp testdata/info.expected -
 
-"$diamond" build pngmeta.di -o "$work/pngmeta" > "$work/build.log"
+"$diamond" build pngmeta.d6 -o "$work/pngmeta" > "$work/build.log"
 pngmeta="$work/pngmeta"
 "$pngmeta" info testdata/photo.png testdata/icon.png | cmp testdata/info.expected -
 

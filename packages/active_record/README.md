@@ -17,7 +17,7 @@ This installs the cut into `cuts/active_record/`; load it with `require_cut "act
 ## Quick start
 
 A small program that connects, migrates, defines a model, validates and queries. Run it
-from the project directory with `diamond app.di`; it reads `config/database.json` (the
+from the project directory with `diamond app.d6`; it reads `config/database.json` (the
 [`database_config`](https://github.com/diamond-language/diamond/tree/main/packages/database_config) cut's format) and creates `app.db` the first time.
 
 ```json
@@ -25,7 +25,7 @@ from the project directory with `diamond app.di`; it reads `config/database.json
 ```
 
 ```ruby
-# app.di
+# app.d6
 require_cut "active_record"
 require_cut "database_config"
 

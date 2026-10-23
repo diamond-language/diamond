@@ -17,7 +17,7 @@ count=0
 
 work="$(realpath "$(mktemp -d)")"
 trap 'rm -rf "$work"' EXIT
-fixture="$work/fixture.di"
+fixture="$work/fixture.d6"
 cat > "$fixture" <<'EOF'
 def add(a, b)
   x = a + b
@@ -203,7 +203,7 @@ count=$((count + 1))
 # race needed): it always pauses regardless of any armed-line set, the
 # same way it already does with no debugger attached at all. ---
 
-fixture2="$work/fixture2.di"
+fixture2="$work/fixture2.d6"
 cat > "$fixture2" <<'EOF'
 def helper()
   debugger()
@@ -316,7 +316,7 @@ count=$((count + 1))
 # session. A fixture where every call is a leaf can't distinguish
 # step-over from step-in, so this one has outer() call inner(). ---
 
-fixture3="$work/fixture3.di"
+fixture3="$work/fixture3.d6"
 cat > "$fixture3" <<'EOF'
 def inner()
   a = 1
@@ -469,7 +469,7 @@ count=$((count + 1))
 # --- stepInTargets: the calls on the paused line, in execution order, and a
 # stepIn that enters a chosen one (not the first) ---
 
-fixture4="$work/fixture4.di"
+fixture4="$work/fixture4.d6"
 cat > "$fixture4" <<'EOF'
 def one()
   1
@@ -571,17 +571,17 @@ count=$((count + 1))
 
 # --- source paths distinguish identical line numbers in required files ---
 
-cat > "$work/first.di" <<'EOF_FIRST'
+cat > "$work/first.d6" <<'EOF_FIRST'
 def first()
   puts("first")
 end
 EOF_FIRST
-cat > "$work/second.di" <<'EOF_SECOND'
+cat > "$work/second.d6" <<'EOF_SECOND'
 def second()
   puts("second")
 end
 EOF_SECOND
-fixture4="$work/multiple.di"
+fixture4="$work/multiple.d6"
 cat > "$fixture4" <<'EOF_MAIN'
 require "./first"
 require "./second"
@@ -623,7 +623,7 @@ read_until4() {
 send4 '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"diamond"}}'
 read_until4 '"command":"initialize"' >/dev/null
 read_until4 '"event":"initialized"' >/dev/null
-send4 '{"seq":2,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$work/first.di"'"},"breakpoints":[{"line":2}]}}'
+send4 '{"seq":2,"type":"request","command":"setBreakpoints","arguments":{"source":{"path":"'"$work/first.d6"'"},"breakpoints":[{"line":2}]}}'
 read_until4 '"command":"setBreakpoints"' >/dev/null
 send4 '{"seq":3,"type":"request","command":"launch","arguments":{"program":"'"$fixture4"'"}}'
 read_until4 '"command":"launch"' >/dev/null
@@ -634,7 +634,7 @@ stopped="$(read_until4 '"event":"stopped"')"
 send4 '{"seq":5,"type":"request","command":"stackTrace","arguments":{"threadId":1}}'
 response="$(read_until4 '"command":"stackTrace"')"
 [[ "$response" == *'"name":"first"'* ]]
-[[ "$response" == *"\"path\":\"$work/first.di\""* ]]
+[[ "$response" == *"\"path\":\"$work/first.d6\""* ]]
 count=$((count + 1))
 send4 '{"seq":6,"type":"request","command":"continue","arguments":{"threadId":1}}'
 read_until4 '"command":"continue"' >/dev/null

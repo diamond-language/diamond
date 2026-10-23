@@ -25,7 +25,7 @@ Pipe the NDJSON stream through the optional log viewer for compact human
 output while developing:
 
 ```sh
-../../build/diamond app.di | DIAMOND_BIN=../../build/diamond cuts/log_viewer/bin/diamond-log
+../../build/diamond app.d6 | DIAMOND_BIN=../../build/diamond cuts/log_viewer/bin/diamond-log
 ```
 
 ## Environments
@@ -39,7 +39,7 @@ development and test default to `debug`.
 
 The smoke test refuses to run outside `DIAMOND_ENV=test`, and both benchmarks
 set the test environment themselves, so their destructive fixture resets
-cannot touch development or production data. `setup_db.di` still recreates
+cannot touch development or production data. `setup_db.d6` still recreates
 the selected database, so use it deliberately.
 
 ## Run
@@ -48,21 +48,21 @@ the selected database, so use it deliberately.
 cd examples/project_board
 bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh
-../../build/diamond setup_db.di
-../../build/diamond app.di
+../../build/diamond setup_db.d6
+../../build/diamond app.d6
 ```
 
 For production:
 
 ```sh
-DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/project-board.db LOG_LEVEL=info ../../build/diamond app.di
+DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/project-board.db LOG_LEVEL=info ../../build/diamond app.d6
 ```
 
 Run the direct-dispatch smoke test (public reads and association rendering, denied anonymous writes, failed login, missing/forged CSRF rejection, validation failures without persistence, complete project/task create-update-delete flows, cascading project deletion, logout, rejected stale sessions, and expired-session deletion) with:
 
 ```sh
-DIAMOND_ENV=test ../../build/diamond setup_db.di
-DIAMOND_ENV=test ../../build/diamond smoke_test.di
+DIAMOND_ENV=test ../../build/diamond setup_db.d6
+DIAMOND_ENV=test ../../build/diamond smoke_test.d6
 ```
 
 Open <http://127.0.0.1:18081/> and sign in with:
@@ -82,5 +82,5 @@ curl -i -c cookies.txt -d 'email=admin%40example.com&password=diamond123' http:/
 # session's CSRF token in addition to the cookie.
 ```
 
-`setup_db.di` is intentionally destructive to the selected environment's
+`setup_db.d6` is intentionally destructive to the selected environment's
 database: rerun it only when you want that environment's seed state back.

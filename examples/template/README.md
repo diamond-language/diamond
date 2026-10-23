@@ -3,7 +3,7 @@
 A small Mustache-style template renderer over a JSON context.
 
 ```text
-$ diamond template.di testdata/invoice.mustache testdata/invoice.json
+$ diamond template.d6 testdata/invoice.mustache testdata/invoice.json
 Invoice for Ada Lovelace
 
   2x widget @ $5
@@ -32,7 +32,7 @@ Invoice for {{customer.name}}
 ## Usage
 
 ```text
-template.di TEMPLATE_FILE CONTEXT_FILE.json
+template.d6 TEMPLATE_FILE CONTEXT_FILE.json
 ```
 
 Renders `TEMPLATE_FILE` against the JSON object in `CONTEXT_FILE.json` and
@@ -59,13 +59,13 @@ can't be opened.
 ## What it shows
 
 - **A one-pass parser that builds the final tree directly**
-  (`lib/parser.di`): no separate flat-token pass before nesting — each
+  (`lib/parser.d6`): no separate flat-token pass before nesting — each
   open section pushes a frame (its own path, `^`/`#` flag, and
   body-so-far) onto a stack, and its matching close pops that frame
   straight into its parent's body as a finished `SectionNode`. A
   mismatched close, an unmatched one, or one left open at end of input is
   a `TemplateError` naming the position.
-- **A sealed 3-node tree** (`lib/nodes.di`): `TextNode`, `VarNode`,
+- **A sealed 3-node tree** (`lib/nodes.d6`): `TextNode`, `VarNode`,
   `SectionNode`. `render_nodes`'s `case` has no `else` — a fourth kind
   stops it compiling until handled.
 - **Mutual recursion**: `render_section` calls `render_nodes` for its
@@ -74,7 +74,7 @@ can't be opened.
   size limit baked into the renderer itself.
 - **A JSON value is Diamond's own value**: `JSON.parse` already produces
   the `Hash`/`Array`/`String`/`Float`/`Bool`/`Nil` this needs, so the
-  whole context-lookup layer (`lib/render.di`) is under 20 lines, and
+  whole context-lookup layer (`lib/render.d6`) is under 20 lines, and
   `template_truthy?`'s three cases are exactly JSON's own falsy shapes
   plus Diamond's own empty-`Array` convention.
 - **`gsub` needs a `Regexp`, even for a literal string**: `template_

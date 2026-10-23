@@ -12,7 +12,7 @@ It runs in process, with no server and no sockets:
 
 ```sh
 bash ../../tools/install_local_cuts.sh .
-../../build/diamond smoke_test.di
+../../build/diamond smoke_test.d6
 ```
 
 `make test-example-apps` runs it with the other examples that need the repository's cuts.

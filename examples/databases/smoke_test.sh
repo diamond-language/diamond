@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-"$diamond" build databases.di -o "$work/databases" > "$work/build.log"
+"$diamond" build databases.d6 -o "$work/databases" > "$work/build.log"
 printf '%s\n' '{"adapter":"mysql"}' > "$work/invalid.json"
 printf '%s\n' '{"adapter":"postgresql","connection":"invalid_connection_option=1"}' > "$work/bad-pg.json"
 
@@ -26,6 +26,6 @@ check() {
     grep -q '^PASS:' "$work/live.out"
   fi
 }
-check "$diamond" databases.di
+check "$diamond" databases.d6
 check "$work/databases"
 echo "databases smoke test passed"

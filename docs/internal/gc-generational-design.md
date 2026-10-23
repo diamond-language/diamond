@@ -23,7 +23,7 @@ container on *every* run (`mark_remembered_set` → `mark_object_children`),
 since there was no record of which entry actually changed — cost
 proportional to container size, paid on nearly every minor collection once
 the container was "remembered" continuously (which a frequently-written
-cache always is). Measured on `bench/gc_churn/session_churn.di` at
+cache always is). Measured on `bench/gc_churn/session_churn.d6` at
 `live_set_size=20000, iterations=200000`: 27,901 minor collections costing
 64s combined, against 2s for 27 major collections — a large net loss versus
 the pre-generational collector's ~2.5s total GC time for a comparable run.
@@ -216,7 +216,7 @@ alone was sufficient.
 
 ## Results
 
-`bench/gc_churn/session_churn.di` (live_set=20000, iterations=200000),
+`bench/gc_churn/session_churn.d6` (live_set=20000, iterations=200000),
 compared across all three points in this project's history:
 
 | collector | major collections | major GC time | minor collections | minor GC time |

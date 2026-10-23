@@ -30,8 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd "$app_dir" && DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null)
-(cd "$app_dir" && DIAMOND_ENV=test "$diamond" "$bench_dir/server.di" "$server_threads" "$port") >"$server_log" 2>&1 &
+(cd "$app_dir" && DIAMOND_ENV=test "$diamond" setup_db.d6 >/dev/null)
+(cd "$app_dir" && DIAMOND_ENV=test "$diamond" "$bench_dir/server.d6" "$server_threads" "$port") >"$server_log" 2>&1 &
 server_pid=$!
 if ! wait_for_port; then
     echo "project board benchmark server failed to start" >&2
@@ -39,7 +39,7 @@ if ! wait_for_port; then
     exit 1
 fi
 
-(cd "$bench_dir" && "$diamond" load.di "$load_threads" "$iterations" "http://127.0.0.1:$port")
+(cd "$bench_dir" && "$diamond" load.d6 "$load_threads" "$iterations" "http://127.0.0.1:$port")
 
 if grep -q '^{"' "$server_log"; then
     echo "logging was not disabled" >&2

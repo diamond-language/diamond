@@ -48,7 +48,7 @@ package ecosystem are its own.
 - **Compiled, not just interpreted.** Source goes through a real Pratt
   compiler to register bytecode, run on a VM with inline caches, object
   shapes, quickening, and an opt-in x86-64 JIT. `diamond build` produces a
-  standalone executable, no separate interpreter or `.di` file needed at run
+  standalone executable, no separate interpreter or `.d6` file needed at run
   time; with a target kit it cross-compiles, and with a musl kit it links fully
   statically.
 - **Concurrency doesn't share mutable state.** Threads use isolated heaps;
@@ -64,10 +64,17 @@ package ecosystem are its own.
 
 ## Build and run
 
+`.d6` is the default and preferred extension for Diamond source files; compiled bytecode
+caches use `.d6c`. Backward compatibility with `.di` source files is retained
+for existing projects and published cuts. Use `.d6` for new files to avoid
+colliding with D interface files and to get automatic editor recognition.
+When both `helper.d6` and `helper.di` exist, `require "helper"` loads
+`helper.d6`; see the [import precedence example](docs/core-syntax.md#source-files-and-imports).
+
 ```sh
 make
 ./build/diamond -e '20 + 22'
-./build/diamond program.di
+./build/diamond program.d6
 ./build/diamond              # REPL, when stdin is a terminal
 ```
 
@@ -76,7 +83,7 @@ Build a standalone binary (from the repo root; see
 builds):
 
 ```sh
-./build/diamond build app.di -o app
+./build/diamond build app.d6 -o app
 ./app
 ```
 
@@ -92,7 +99,7 @@ sandbox.
 ## Repository layout
 
 - `src/`: loader, lexer, compiler, bytecode, VM, GC, and native primitives
-- `lib/core.di`: embedded Diamond prelude
+- `lib/core.d6`: embedded Diamond prelude
 - `selfhost/`: Diamond lexer/compiler and bootstrap programs
 - `tests/`: executable cases and native/differential harnesses
 - `lsp/`: language server; `dap/`: Debug Adapter Protocol server

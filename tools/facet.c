@@ -2366,7 +2366,7 @@ static bool sensitive_name(const char *name) {
     if (name[0] == '.' || strcmp(name, "id_rsa") == 0 ||
         strcmp(name, "id_ed25519") == 0 || strcmp(name, "credentials") == 0 ||
         strcmp(name, "secrets") == 0) return true;
-    const char *suffixes[] = {".pem", ".key", ".p12", ".pfx", ".dic"};
+    const char *suffixes[] = {".pem", ".key", ".p12", ".pfx", ".d6c", ".dic"};
     for (size_t i = 0; i < sizeof suffixes / sizeof suffixes[0]; i++) {
         size_t suffix_length = strlen(suffixes[i]);
         if (length >= suffix_length &&
@@ -2818,7 +2818,8 @@ static bool runtime_source_path(const char *relative) {
     size_t length = strlen(relative);
     return (strncmp(relative, "lib/", 4) == 0 ||
             strncmp(relative, "bin/", 4) == 0) &&
-           length >= 3 && strcmp(relative + length - 3, ".di") == 0;
+           length >= 3 && (strcmp(relative + length - 3, ".d6") == 0 ||
+                           strcmp(relative + length - 3, ".di") == 0);
 }
 
 static bool audit_source_imports(char *source, const char *relative,
@@ -3260,12 +3261,14 @@ static int cmd_verify(int argc, char **argv) {
                                        error, sizeof error);
     bool has_readme = false, has_license = false, has_entry = false;
     if (ok) {
-        char entry[128];
-        (void)snprintf(entry, sizeof entry, "lib/%s.di", name->string);
+        char entry[128], legacy_entry[128];
+        (void)snprintf(entry, sizeof entry, "lib/%s.d6", name->string);
+        (void)snprintf(legacy_entry, sizeof legacy_entry, "lib/%s.di", name->string);
         for (size_t i = 0; i < files.count; i++) {
             if (strcmp(files.paths[i], "README.md") == 0) has_readme = true;
             if (strcmp(files.paths[i], "LICENSE") == 0) has_license = true;
-            if (strcmp(files.paths[i], entry) == 0) has_entry = true;
+            if (strcmp(files.paths[i], entry) == 0 ||
+                strcmp(files.paths[i], legacy_entry) == 0) has_entry = true;
         }
         if (!has_readme || !has_license || !has_entry) {
             (void)snprintf(error, sizeof error, "archive is missing README.md, LICENSE, or public entry point");
@@ -3415,9 +3418,13 @@ static int cmd_check(int argc, char **argv) {
             goto done;
         }
     }
-    if (snprintf(path, sizeof path, "%s/lib/%s.di", root, name->string) >=
-        (int)sizeof path || !regular_file(path)) {
-        fprintf(stderr, "facet: '%s' needs a regular lib/%s.di\n", root,
+    bool has_entry = snprintf(path, sizeof path, "%s/lib/%s.d6", root, name->string) <
+        (int)sizeof path && regular_file(path);
+    if (!has_entry)
+        has_entry = snprintf(path, sizeof path, "%s/lib/%s.di", root, name->string) <
+            (int)sizeof path && regular_file(path);
+    if (!has_entry) {
+        fprintf(stderr, "facet: '%s' needs a regular lib/%s.d6\n", root,
                 name->string);
         goto done;
     }

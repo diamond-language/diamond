@@ -25,7 +25,7 @@ commit_repo() {
 # --- basic single-dependency install ---
 
 mkdir greeter_repo
-cat > greeter_repo/greeter.di <<'EOF'
+cat > greeter_repo/greeter.d6 <<'EOF'
 def greet(name)
   "hello, " + name
 end
@@ -41,7 +41,7 @@ cat > project1/diamond.cut <<EOF
 EOF
 (cd project1 && "$facet" install >/dev/null)
 
-[[ -f project1/cuts/greeter/greeter.di ]]
+[[ -f project1/cuts/greeter/greeter.d6 ]]
 [[ ! -d project1/cuts/greeter/.git ]]
 [[ -f project1/facet.lock ]]
 grep -q '"source": "git"' project1/facet.lock
@@ -73,7 +73,7 @@ mkdir -p registry_source/greeter/lib fake_bin
 printf '%s\n' '{"name": "greeter", "version": "1.2.3", "summary": "Registry greeter", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/greeter/diamond.cut
 printf '%s\n' '# Registry greeter' > registry_source/greeter/README.md
 printf '%s\n' 'MIT' > registry_source/greeter/LICENSE
-printf '%s\n' 'def greet(name)' '  "registry hello, " + name' 'end' > registry_source/greeter/lib/greeter.di
+printf '%s\n' 'def greet(name)' '  "registry hello, " + name' 'end' > registry_source/greeter/lib/greeter.d6
 "$facet" pack registry_source/greeter registry_greeter.tar >/dev/null
 digest="$(sha256sum registry_greeter.tar | cut -d' ' -f1)"
 archive_size="$(stat -c %s registry_greeter.tar)"
@@ -201,7 +201,7 @@ greet("world")')"
 
 # --- facet install respects an existing lock; facet update re-resolves ---
 
-cat > greeter_repo/greeter.di <<'EOF'
+cat > greeter_repo/greeter.d6 <<'EOF'
 def greet(name)
   "hi, " + name
 end
@@ -222,13 +222,13 @@ greet("world")')"
 # --- transitive dependency chain: a depends on b depends on c ---
 
 mkdir c_repo
-printf 'def c_value()\n  3\nend\n' > c_repo/c.di
+printf 'def c_value()\n  3\nend\n' > c_repo/c.d6
 echo '{"name": "c"}' > c_repo/diamond.cut
 commit_repo c_repo
 (cd c_repo && git tag v1.0.0)
 
 mkdir b_repo
-printf 'require_cut "c"\ndef b_value()\n  c_value() + 1\nend\n' > b_repo/b.di
+printf 'require_cut "c"\ndef b_value()\n  c_value() + 1\nend\n' > b_repo/b.d6
 cat > b_repo/diamond.cut <<EOF
 {"name": "b", "dependencies": {"c": {"git": "$work/c_repo", "tag": "v1.0.0"}}}
 EOF
@@ -236,7 +236,7 @@ commit_repo b_repo
 (cd b_repo && git tag v1.0.0)
 
 mkdir a_repo
-printf 'require_cut "b"\ndef a_value()\n  b_value() + 1\nend\n' > a_repo/a.di
+printf 'require_cut "b"\ndef a_value()\n  b_value() + 1\nend\n' > a_repo/a.d6
 cat > a_repo/diamond.cut <<EOF
 {"name": "a", "dependencies": {"b": {"git": "$work/b_repo", "tag": "v1.0.0"}}}
 EOF
@@ -248,9 +248,9 @@ cat > project2/diamond.cut <<EOF
 {"name": "myapp", "dependencies": {"a": {"git": "$work/a_repo", "tag": "v1.0.0"}}}
 EOF
 (cd project2 && "$facet" install >/dev/null)
-[[ -f project2/cuts/a/a.di ]]
-[[ -f project2/cuts/b/b.di ]]
-[[ -f project2/cuts/c/c.di ]]
+[[ -f project2/cuts/a/a.d6 ]]
+[[ -f project2/cuts/b/b.d6 ]]
+[[ -f project2/cuts/c/c.d6 ]]
 actual="$(cd project2 && "$diamond" -e 'require_cut "a"
 a_value()')"
 [[ "$actual" == "5" ]]
@@ -258,13 +258,13 @@ a_value()')"
 # --- conflicting refs for the same package name across two requesters ---
 
 mkdir shared_repo
-echo 'shared' > shared_repo/shared.di
+echo 'shared' > shared_repo/shared.d6
 echo '{"name": "shared"}' > shared_repo/diamond.cut
 commit_repo shared_repo
 (cd shared_repo && git tag v1.0.0)
 
 mkdir y_repo
-printf 'require_cut "shared"\n' > y_repo/y.di
+printf 'require_cut "shared"\n' > y_repo/y.d6
 cat > y_repo/diamond.cut <<EOF
 {"name": "y", "dependencies": {"shared": {"git": "$work/shared_repo", "branch": "main"}}}
 EOF
@@ -287,7 +287,7 @@ rm -f "$error_file"
 # --- a dependency whose own diamond.cut declares the wrong name is rejected ---
 
 mkdir mislabeled_repo
-echo 'x' > mislabeled_repo/x.di
+echo 'x' > mislabeled_repo/x.d6
 echo '{"name": "not-what-it-is-called"}' > mislabeled_repo/diamond.cut
 commit_repo mislabeled_repo
 
@@ -413,13 +413,13 @@ rm -f "$error_file"
 # constraint, not just the newest commit or the first tag found ---
 
 mkdir semver_repo
-echo 'def semver_value() = 1' > semver_repo/semver.di
+echo 'def semver_value() = 1' > semver_repo/semver.d6
 echo '{"name": "semver"}' > semver_repo/diamond.cut
 commit_repo semver_repo
 (cd semver_repo && git tag v1.0.0)
-echo 'def semver_value() = 2' > semver_repo/semver.di
+echo 'def semver_value() = 2' > semver_repo/semver.d6
 (cd semver_repo && git add -A && git commit -q -m "1.2.0" && git tag v1.2.0)
-echo 'def semver_value() = 3' > semver_repo/semver.di
+echo 'def semver_value() = 3' > semver_repo/semver.d6
 (cd semver_repo && git add -A && git commit -q -m "2.0.0" && git tag v2.0.0)
 
 mkdir project9
@@ -436,7 +436,7 @@ grep -q '"version": "v1.2.0"' project9/facet.lock
 # intersect instead of hard-conflicting ---
 
 mkdir uses_semver_a_repo
-printf 'require_cut "semver"\ndef a_value() = semver_value()\n' > uses_semver_a_repo/uses_semver_a.di
+printf 'require_cut "semver"\ndef a_value() = semver_value()\n' > uses_semver_a_repo/uses_semver_a.d6
 cat > uses_semver_a_repo/diamond.cut <<EOF
 {"name": "uses_semver_a", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <2.0.0"}}}
 EOF
@@ -456,7 +456,7 @@ a_value()')"
 # and both ranges, without ever cloning a version ---
 
 mkdir uses_semver_b_repo
-printf 'require_cut "semver"\n' > uses_semver_b_repo/uses_semver_b.di
+printf 'require_cut "semver"\n' > uses_semver_b_repo/uses_semver_b.d6
 cat > uses_semver_b_repo/diamond.cut <<EOF
 {"name": "uses_semver_b", "dependencies": {"semver": {"git": "$work/semver_repo", "version": "^2.0.0"}}}
 EOF
@@ -589,7 +589,7 @@ mkdir project21
 (cd project21 && "$facet" init myapp >/dev/null &&
     "$facet" add semver --git "$work/semver_repo" --version "^1.0.0" >/dev/null &&
     "$facet" install >/dev/null)
-[[ -f project21/cuts/semver/semver.di ]]
+[[ -f project21/cuts/semver/semver.d6 ]]
 
 mkdir project21_registry
 (cd project21_registry && "$facet" init myapp >/dev/null &&
@@ -605,7 +605,7 @@ mkdir -p registry_source/logger/lib registry_metadata
 printf '%s\n' '{"name": "logger", "version": "1.0.0", "summary": "Registry logger", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > registry_source/logger/diamond.cut
 printf '%s\n' '# Registry logger' > registry_source/logger/README.md
 printf '%s\n' 'MIT' > registry_source/logger/LICENSE
-printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/lib/logger.di
+printf '%s\n' 'def registry_log()' '  "logged"' 'end' > registry_source/logger/lib/logger.d6
 "$facet" pack registry_source/logger registry_logger.tar >/dev/null
 logger_digest="$(sha256sum registry_logger.tar | cut -d' ' -f1)"
 logger_size="$(stat -c %s registry_logger.tar)"
@@ -658,8 +658,8 @@ export FACET_TEST_LOGGER_ARCHIVE="$work/registry_logger.tar"
 (cd project21_registry && "$facet" update >/dev/null)
 grep -q '"greeter": {"source": "registry"' project21_registry/facet.lock
 grep -q '"logger": {"source": "registry"' project21_registry/facet.lock
-[[ -f project21_registry/cuts/greeter/lib/greeter.di ]]
-[[ -f project21_registry/cuts/logger/lib/logger.di ]]
+[[ -f project21_registry/cuts/greeter/lib/greeter.d6 ]]
+[[ -f project21_registry/cuts/logger/lib/logger.d6 ]]
 export PATH="$saved_path"
 unset FACET_TEST_METADATA FACET_TEST_GREETER_DIGEST FACET_TEST_LOGGER_DIGEST
 unset FACET_TEST_GREETER_ARCHIVE FACET_TEST_LOGGER_ARCHIVE
@@ -755,7 +755,7 @@ rm -f "$error_file"
 # yet" gap named) ---
 
 mkdir needs_old_repo
-printf 'require_cut "semver"\ndef old_value() = semver_value()\n' > needs_old_repo/needs_old.di
+printf 'require_cut "semver"\ndef old_value() = semver_value()\n' > needs_old_repo/needs_old.d6
 cat > needs_old_repo/diamond.cut <<EOF
 {"name": "needs_old", "dependencies": {"semver": {"git": "$work/semver_repo", "version": ">=1.0.0 <1.2.0"}}}
 EOF
@@ -862,10 +862,10 @@ mkdir -p checkcut/lib
 printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}], "dependencies": {"logger": "^0.4.0"}}\n' > checkcut/diamond.cut
 printf '# Checkcut\n' > checkcut/README.md
 printf 'MIT License\n' > checkcut/LICENSE
-printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.d6
 "$facet" check checkcut >/dev/null
 
-printf 'require "../../http/lib/http"\n' > checkcut/lib/checkcut.di
+printf 'require "../../http/lib/http"\n' > checkcut/lib/checkcut.d6
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted an import outside the cut" >&2
@@ -874,7 +874,7 @@ fi
 grep -q "imports outside the cut" "$error_file"
 rm -f "$error_file"
 
-printf 'require_cut "missing_cut"\n' > checkcut/lib/checkcut.di
+printf 'require_cut "missing_cut"\n' > checkcut/lib/checkcut.d6
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted an undeclared cut import" >&2
@@ -883,9 +883,9 @@ fi
 grep -q "imports undeclared cut 'missing_cut'" "$error_file"
 rm -f "$error_file"
 
-printf 'require_cut "logger"\ndef checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+printf 'require_cut "logger"\ndef checkcut_value() = 1\n' > checkcut/lib/checkcut.d6
 "$facet" check checkcut >/dev/null
-printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.di
+printf 'def checkcut_value() = 1\n' > checkcut/lib/checkcut.d6
 
 rm checkcut/LICENSE
 error_file="$(mktemp)"
@@ -962,15 +962,15 @@ rm -rf "$(dirname "$maintained_archive")"
 
 printf '{"name": "checkcut", "version": "1.2.0", "summary": "A checked cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}\n' > checkcut/diamond.cut
 mkdir -p checkcut/lib/checkcut checkcut/tests
-printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.di
-printf 'ignored test\n' > checkcut/tests/test.di
+printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.d6
+printf 'ignored test\n' > checkcut/tests/test.d6
 files_output="$("$facet" check checkcut --files)"
-grep -q '^lib/checkcut/helper.di$' <<<"$files_output"
-! grep -q 'tests/test.di' <<<"$files_output"
+grep -q '^lib/checkcut/helper.d6$' <<<"$files_output"
+! grep -q 'tests/test.d6' <<<"$files_output"
 [[ "$(printf '%s\n' "$files_output" | sed '/^facet:/d' | LC_ALL=C sort)" == \
    "$(printf '%s\n' "$files_output" | sed '/^facet:/d')" ]]
 
-ln -s /etc/passwd checkcut/lib/checkcut/linked.di
+ln -s /etc/passwd checkcut/lib/checkcut/linked.d6
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted symlink in runtime tree" >&2
@@ -978,9 +978,9 @@ if "$facet" check checkcut >/dev/null 2>"$error_file"; then
 fi
 grep -q "unsafe file type or hardlink" "$error_file"
 rm -f "$error_file"
-rm checkcut/lib/checkcut/linked.di
+rm checkcut/lib/checkcut/linked.d6
 
-printf 'stale bytecode\n' > checkcut/lib/checkcut/helper.dic
+printf 'stale bytecode\n' > checkcut/lib/checkcut/helper.d6c
 error_file="$(mktemp)"
 if "$facet" check checkcut >/dev/null 2>"$error_file"; then
     echo "facet check accepted cache file in runtime tree" >&2
@@ -988,7 +988,7 @@ if "$facet" check checkcut >/dev/null 2>"$error_file"; then
 fi
 grep -q "excluded or sensitive path" "$error_file"
 rm -f "$error_file"
-rm checkcut/lib/checkcut/helper.dic
+rm checkcut/lib/checkcut/helper.d6c
 
 mkdir checkcut/lib/Widgets checkcut/lib/widgets
 error_file="$(mktemp)"
@@ -1002,11 +1002,11 @@ rm -rf checkcut/lib/Widgets checkcut/lib/widgets
 
 "$facet" pack checkcut one.tar > pack_output
 tar -tf one.tar > packed_files
-grep -q '^lib/checkcut/helper.di$' packed_files
+grep -q '^lib/checkcut/helper.d6$' packed_files
 ! grep -q '^tests/' packed_files
 grep -q '^sha256: ' pack_output
 [[ "$(sed -n 's/^sha256: //p' pack_output)" == "$(sha256sum one.tar | cut -d' ' -f1)" ]]
-touch -t 202001010000 checkcut/lib/checkcut/helper.di
+touch -t 202001010000 checkcut/lib/checkcut/helper.d6
 "$facet" pack checkcut two.tar >/dev/null
 cmp one.tar two.tar
 

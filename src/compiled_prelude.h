@@ -90,7 +90,7 @@ DiamondCacheFingerprint diamond_cache_fingerprint(void);
  * magic bytes. Only the magic is checked, so a file from another build or
  * format version still counts: `diamond cache clear` uses this to remove
  * stale caches while leaving an unrelated file that happens to end in
- * `.dic` alone. */
+ * `.d6c` alone. */
 bool diamond_cache_file_is_cache(const char *path);
 
 /* Reads a cache file previously written by diamond_program_write_cache_

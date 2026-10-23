@@ -22,7 +22,7 @@ assert_contains() {
 
 # Longer queries are written as an Array of lines joined with "\n" rather
 # than one literal, which keeps each line readable. run_file below (source
-# written to a temp .di file, not passed via -e) is what most cases here use
+# written to a temp .d6 file, not passed via -e) is what most cases here use
 # once a query gets past a one-liner.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -35,7 +35,7 @@ $script"
 
 run_file() {
     local script="$1"
-    local f="$work/case.di"
+    local f="$work/case.d6"
     {
         echo "require \"$(pwd)/lib/graphql\""
         echo "$script"

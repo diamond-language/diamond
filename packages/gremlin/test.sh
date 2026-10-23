@@ -245,7 +245,7 @@ rm -f "$out"
 
 # Graceful shutdown, idle case: SIGTERM with zero in-flight connections
 # exits promptly (the fast path -- see GremlinShutdown.requested?() &&
-# connections.length() == 0 in server.di) with a clean exit code, not a
+# connections.length() == 0 in server.d6) with a clean exit code, not a
 # bare kill. `timeout` forwards a signal it receives to the process it's
 # monitoring and (when the child exits on its own well within the
 # timeout) reports that child's own exit status, so `$pid` here still
@@ -371,7 +371,7 @@ rm -f "$out"
 # own response directly to the raw connection and returns nil must have
 # that response reach the client verbatim, with handle_connection's own
 # http_write_response never firing a second, conflicting response behind
-# it (the whole point of the nil convention -- see gremlin.di's own
+# it (the whole point of the nil convention -- see gremlin.d6's own
 # "Escape hatch" doc comment). A deliberately non-HTTP-shaped body (no
 # Content-Length, a status line gremlin_serve itself would never
 # generate) is proof the response came from the handler's own write, not
@@ -418,7 +418,7 @@ port=19417
 out="$(mktemp)"
 tick_log="$(mktemp)"
 rm -f "$tick_log"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
@@ -433,7 +433,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -450,7 +450,7 @@ response="$(timeout 3 cat <&3)"
 
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di" "$tick_log"
+rm -f "$out" "$out.d6" "$tick_log"
 
 # A raising on_tick logs and keeps the worker alive -- doesn't crash
 # the whole server, matching every other per-connection handler failure
@@ -458,7 +458,7 @@ rm -f "$out" "$out.di" "$tick_log"
 # rescue error: StandardError).
 port=19418
 out="$(mktemp)"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
@@ -471,7 +471,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -486,14 +486,14 @@ grep -q '"message":"tick.handler_failed"' "$out"
 
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di"
+rm -f "$out" "$out.d6"
 
 # A handler that raises answers 500 with a generic body (the message stays in
 # the log) and the server keeps serving the next request. That includes one that
 # recurses until the call stack overflows (SystemStackError is not a StandardError).
 port=19419
 out="$(mktemp)"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def descend(depth) = descend(depth + 1) + 1
 def run()
@@ -506,7 +506,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -536,12 +536,12 @@ response="$(timeout 3 cat <&3)"
 
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di"
+rm -f "$out" "$out.d6"
 
 # The request hash carries the client's address as "peer_address" (the TCP peer, not a header).
 port=19420
 out="$(mktemp)"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
@@ -551,7 +551,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -564,7 +564,7 @@ response="$(timeout 3 cat <&3)"
 
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di"
+rm -f "$out" "$out.d6"
 
 # Graceful shutdown still exits promptly with a tick configured -- the
 # combined gremlin_poll_timeout_ms bound (shutdown deadline vs. next
@@ -573,7 +573,7 @@ rm -f "$out" "$out.di"
 # running during a longer drain either.
 port=19419
 out="$(mktemp)"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
@@ -586,7 +586,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -598,7 +598,7 @@ wait "$pid" || status=$?
 status="${status:-0}"
 [[ "$status" == "0" || "$status" == "143" ]]
 grep -q '"message":"server.shutdown_complete"' "$out"
-rm -f "$out" "$out.di"
+rm -f "$out" "$out.d6"
 
 # Another connection's fiber may close a connection whose own fiber is still
 # parked waiting to read -- a WebSocket broadcast dropping a slow member does
@@ -607,7 +607,7 @@ rm -f "$out" "$out.di"
 # and take the whole server down.
 port=19420
 out="$(mktemp)"
-cat >"$out.di" <<SRCEOF
+cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 class Parked
   def self.set(conn)
@@ -634,7 +634,7 @@ def run()
 end
 run()
 SRCEOF
-timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
 pid=$!
 wait_for_port "$port"
 { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -658,7 +658,7 @@ response="$(timeout 3 cat <&3)"
 
 kill "$pid" 2>/dev/null || true
 wait "$pid" 2>/dev/null || true
-rm -f "$out" "$out.di"
+rm -f "$out" "$out.d6"
 
 # Returning is restricted to a single HTTP worker until shutdown state can
 # coordinate every worker; reject the unsupported mode before binding.
@@ -696,7 +696,7 @@ for spec in "1 127.0.0.1" "2 127.0.0.1" "1 "; do
     out="$(mktemp)"
     serve_call="gremlin_serve($port, handler, $workers)"
     [[ -z "$bind" ]] || serve_call="gremlin_serve($port, handler, $workers, nil, nil, nil, false, nil, 10.0, \"$bind\")"
-    cat >"$out.di" <<SRCEOF
+    cat >"$out.d6" <<SRCEOF
 require "$package_root/lib/gremlin"
 def run()
   def handler(request, context)
@@ -706,7 +706,7 @@ def run()
 end
 run()
 SRCEOF
-    timeout --foreground 10 "$diamond" "$out.di" >"$out" 2>&1 &
+    timeout --foreground 10 "$diamond" "$out.d6" >"$out" 2>&1 &
     pid=$!
     wait_for_port "$port"
     { exec 3<&- 3>&-; } 2>/dev/null || true
@@ -724,15 +724,15 @@ SRCEOF
     fi
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-    rm -f "$out" "$out.di"
+    rm -f "$out" "$out.d6"
 done
 echo "19 gremlin tests passed"
 
 # Token-managed shutdown returns through the owner and bounds stalled clients.
-"$diamond" "$package_root/test/shutdown_driver.di" "$diamond" "$package_root/test/shutdown.di"
-"$diamond" build "$package_root/test/shutdown.di" -o "$test_project/shutdown-test" > "$test_project/build.log"
-"$diamond" "$package_root/test/shutdown_driver.di" "$test_project/shutdown-test"
+"$diamond" "$package_root/test/shutdown_driver.d6" "$diamond" "$package_root/test/shutdown.d6"
+"$diamond" build "$package_root/test/shutdown.d6" -o "$test_project/shutdown-test" > "$test_project/build.log"
+"$diamond" "$package_root/test/shutdown_driver.d6" "$test_project/shutdown-test"
 
-"$diamond" "$package_root/test/multi_shutdown_driver.di" "$diamond" "$package_root/test/multi_shutdown.di"
-"$diamond" build "$package_root/test/multi_shutdown.di" -o "$test_project/multi-shutdown-test" > "$test_project/multi-build.log"
-"$diamond" "$package_root/test/multi_shutdown_driver.di" "$test_project/multi-shutdown-test"
+"$diamond" "$package_root/test/multi_shutdown_driver.d6" "$diamond" "$package_root/test/multi_shutdown.d6"
+"$diamond" build "$package_root/test/multi_shutdown.d6" -o "$test_project/multi-shutdown-test" > "$test_project/multi-build.log"
+"$diamond" "$package_root/test/multi_shutdown_driver.d6" "$test_project/multi-shutdown-test"

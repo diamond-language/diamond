@@ -60,7 +60,7 @@ for the full rules.
 
 `ARGV` and `ENV` are plain global values, not calls — `ARGV` is an
 `Array` of `String`s, the script's own trailing command-line arguments
-(`diamond script.di one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a
+(`diamond script.d6 one two` → `ARGV == ["one", "two"]`; `[]` for `-e`/a
 file run with no trailing args, or from the REPL). `ENV` is a `Hash` of
 `String` to `String`, a snapshot of the process environment taken at
 startup — `ENV["PATH"]`, `ENV["HOME"]`, etc.; a missing key is `nil`,
@@ -263,7 +263,7 @@ The program still runs afterward, with its usual output and exit status.
 
 Plain `--dump-bytecode` keeps the complete dump; `--dump-bytecode=all` is an
 explicit equivalent. User-only dumps recompile instead of reading or updating
-the `.dic` cache so the preamble boundary is known even for cached programs.
+the `.d6c` cache so the preamble boundary is known even for cached programs.
 This is a preamble filter, not a single-file or single-function selector.
 
 ## Diagnostic environment variables

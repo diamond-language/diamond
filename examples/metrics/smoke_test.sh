@@ -16,13 +16,13 @@ server_pid=""
 cleanup() { [[ -n "$server_pid" ]] && kill "$server_pid" 2> /dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
 
-"$diamond" build metrics.di -o "$work/metrics" > "$work/build.log"
+"$diamond" build metrics.d6 -o "$work/metrics" > "$work/build.log"
 m="$work/metrics"
 client() { timeout 10 "$m" "$@"; }
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 
 # Offline aggregation, interpreted and built.
-"$diamond" metrics.di aggregate testdata/lines.txt | cmp testdata/lines.expected -
+"$diamond" metrics.d6 aggregate testdata/lines.txt | cmp testdata/lines.expected -
 "$m" aggregate testdata/lines.txt | cmp testdata/lines.expected -
 [[ "$("$m" aggregate testdata/bad_lines.txt 2>&1 >/dev/null)" == "testdata/bad_lines.txt:2: bad value 'x'" ]]
 [[ "$(status_of "$m" aggregate testdata/bad_lines.txt)" == 65 ]]

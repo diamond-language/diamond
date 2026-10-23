@@ -5,7 +5,7 @@ worker pool and a pipeline wired together with `Channel`s, what thread
 isolation means in practice, and what happens when a worker fails.
 
 ```text
-$ diamond parallel.di --time
+$ diamond parallel.d6 --time
 == fan-out
   range 1: 3711 runs for 238 steps
   ...
@@ -45,7 +45,7 @@ faster. `diamond --version` says which one you have.)
    learns which attempt it is on from a channel of tickets, since a channel
    is the one value shared by reference across attempts.
 
-Everything a thread runs lives in `lib/work.di` as a plain top-level
+Everything a thread runs lives in `lib/work.d6` as a plain top-level
 `def` with no captures, which is what `Thread.new` and
 `Supervisor#add_child` require.
 

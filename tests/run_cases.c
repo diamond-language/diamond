@@ -1,4 +1,4 @@
-/* Runs every selected .di file under tests/cases through diamond_run_source
+/* Runs every selected .d6 file under tests/cases through diamond_run_source
  * (src/run_source.c) *in this one process*, instead of tests/run.sh
  * spawning a fresh `diamond` process per file -- see docs/roadmap.md for
  * why that was the dominant cost of a full `make test` run (measured:
@@ -200,7 +200,7 @@ static void restore_fd(int target, int saved) {
     close(saved);
 }
 
-/* One case: run <cases_dir>/<name>.di, capturing its output into
+/* One case: run <cases_dir>/<name>.d6, capturing its output into
  * <output_dir>/<name>.stdout, .combined, and .exitcode.
  *
  * .combined is stdout bytes immediately followed by stderr bytes, not a
@@ -220,7 +220,7 @@ static void restore_fd(int target, int saved) {
  * just against these files instead of a fresh process's own output. */
 static bool run_one_case(const char *cases_dir, const char *output_dir, const char *name) {
     char di_path[PATH_BUFFER_SIZE], env_path[PATH_BUFFER_SIZE], flags_path[PATH_BUFFER_SIZE];
-    if (!format_path(di_path, sizeof di_path, "%s/%s.di", cases_dir, name) ||
+    if (!format_path(di_path, sizeof di_path, "%s/%s.d6", cases_dir, name) ||
         !format_path(env_path, sizeof env_path, "%s/%s.env", cases_dir, name) ||
         !format_path(flags_path, sizeof flags_path, "%s/%s.flags", cases_dir, name)) {
         fprintf(stderr, "run_cases: path too long for case %s\n", name);
@@ -356,7 +356,7 @@ static bool run_one_case(const char *cases_dir, const char *output_dir, const ch
 /* True when `name`'s sibling .expected/.expected_error/
  * .expected_contains/.expected_lastline files -- the only four kinds
  * tests/run.sh's file-based-case loop knows how to compare against --
- * exist. A `.di` file with none of the four (the older inline -e/env-
+ * exist. A `.d6` file with none of the four (the older inline -e/env-
  * var assertions elsewhere in tests/run.sh are driven a different way
  * entirely) is silently skipped, matching that loop's own existing
  * behavior exactly. */
@@ -370,7 +370,7 @@ static bool should_run_case(const char *cases_dir, const char *name) {
             file_exists(path)) return true;
     }
     char source_path[PATH_BUFFER_SIZE];
-    if (!format_path(source_path, sizeof source_path, "%s/%s.di", cases_dir, name)) return false;
+    if (!format_path(source_path, sizeof source_path, "%s/%s.d6", cases_dir, name)) return false;
     char *source=read_whole_file(source_path,nullptr);
     if(source==nullptr)return false;
     const bool uses_exit_status=strstr(source,"suite.run!()")!=nullptr;
@@ -382,7 +382,7 @@ static bool should_run_case(const char *cases_dir, const char *name) {
 int main(int argc, char **argv) {
     /* DIAMOND_MAX_CALL_DEPTH (src/vm.c) is tuned against an ordinary
      * 8MB main-thread stack -- deep Diamond-level recursion (see
-     * legacy_0092.di's own SystemStackError regression case) is expected
+     * legacy_0092.d6's own SystemStackError regression case) is expected
      * to hit that guard well before run_chunk's own C recursion could
      * exhaust it. This tool runs every case *in this one process* rather
      * than spawning a fresh `diamond` per case (see this file's own
@@ -425,10 +425,10 @@ int main(int argc, char **argv) {
     }
 
     char pattern[PATH_BUFFER_SIZE];
-    snprintf(pattern, sizeof pattern, "%s/*.di", cases_dir);
+    snprintf(pattern, sizeof pattern, "%s/*.d6", cases_dir);
     glob_t matches = {};
     if (glob(pattern, 0, nullptr, &matches) != 0) {
-        fprintf(stderr, "run_cases: no *.di files found under %s\n", cases_dir);
+        fprintf(stderr, "run_cases: no *.d6 files found under %s\n", cases_dir);
         return 1;
     }
 
@@ -438,7 +438,7 @@ int main(int argc, char **argv) {
         const char *di_path = matches.gl_pathv[index];
         const char *base = strrchr(di_path, '/');
         base = base != nullptr ? base + 1 : di_path;
-        const size_t base_length = strlen(base) - 3; /* strip trailing ".di" */
+        const size_t base_length = strlen(base) - 3; /* strip trailing ".d6" */
         char name[PATH_BUFFER_SIZE];
         if (base_length >= sizeof name) {
             fprintf(stderr, "run_cases: case name too long: %s\n", base);

@@ -52,4 +52,4 @@ export DIAMOND_PG_TEST_CONNINFO="host=127.0.0.1 port=${port} dbname=diamond_arel
 export DIAMOND_STRESS_GC=1
 export DIAMOND_STRESS_MINOR_GC=1
 
-"$diamond" test_postgres_dialect.di
+"$diamond" test_postgres_dialect.d6

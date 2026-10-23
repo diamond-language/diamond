@@ -136,7 +136,7 @@ for engine in $engines; do
         engine_memory="$memory"
     fi
     for run in $(seq 1 "$repeats"); do
-        "$diamond" "$bench_dir/benchmark.di" "$config" "$engine" \
+        "$diamond" "$bench_dir/benchmark.d6" "$config" "$engine" \
             "$rows" "$warmup" "$iterations" \
             | jq -c --arg version "$version" --argjson run "$run" \
                 --arg cpus "$engine_cpus" --arg memory "$engine_memory" \

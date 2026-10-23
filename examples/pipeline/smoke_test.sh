@@ -13,16 +13,16 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build pipeline.di -o "$work/pipeline" > "$work/build.log"
+"$diamond" build pipeline.d6 -o "$work/pipeline" > "$work/build.log"
 
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 
-for vm in "$diamond pipeline.di $diamond" "$work/pipeline $diamond"; do
+for vm in "$diamond pipeline.d6 $diamond" "$work/pipeline $diamond"; do
   $vm | cmp testdata/run.expected -
   $vm testdata/no_filesystem.json | cmp testdata/no_filesystem.expected -
   [[ "$(status_of $vm testdata/missing.json)" == 66 ]]
 done
 
-[[ "$(status_of "$diamond" pipeline.di)" == 64 ]]
+[[ "$(status_of "$diamond" pipeline.d6)" == 64 ]]
 
 echo "pipeline smoke test passed"

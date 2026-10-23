@@ -10,9 +10,9 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" template.di testdata/invoice.mustache testdata/invoice.json | cmp testdata/invoice.expected -
+"$diamond" template.d6 testdata/invoice.mustache testdata/invoice.json | cmp testdata/invoice.expected -
 
-"$diamond" build template.di -o "$work/template" > "$work/build.log"
+"$diamond" build template.d6 -o "$work/template" > "$work/build.log"
 template="$work/template"
 "$template" testdata/invoice.mustache testdata/invoice.json | cmp testdata/invoice.expected -
 

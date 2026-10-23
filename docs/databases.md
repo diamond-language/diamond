@@ -341,11 +341,11 @@ here is simply a syntax error `mysql_stmt_prepare` itself raises as an
 ordinary `MySQLError`.
 
 An Arel dialect visitor for MySQL now exists --
-`Arel::MySQLVisitor` (`packages/arel/lib/arel/mysql_visitor.di`), verified against a
+`Arel::MySQLVisitor` (`packages/arel/lib/arel/mysql_visitor.d6`), verified against a
 live MySQL 8 server (`packages/arel/README.md`,
 `packages/arel/ROADMAP.md`) -- reusing this driver unchanged, since it
 was never MariaDB-specific at the native layer. MariaDB gets its own
-`Arel::MariaDBVisitor` (`packages/arel/lib/arel/mariadb_visitor.di`),
+`Arel::MariaDBVisitor` (`packages/arel/lib/arel/mariadb_visitor.d6`),
 not a `MySQLVisitor` alias: it diverges enough (MariaDB-only `RETURNING`,
 different upsert and pagination rendering) to need real per-statement
 overrides, verified against a live MariaDB 11 server. Still out of scope for

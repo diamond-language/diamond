@@ -16,14 +16,14 @@ count=0
 # `require` only resolves against an actual directory, so unlike every
 # other case in this script (which use a uri that was never a real path
 # at all), these need one. realpath'd the same way diamond_lsp already is
-# above: a `require`d file's own path (unlike main.di's own uri, echoed
+# above: a `require`d file's own path (unlike main.d6's own uri, echoed
 # straight back from what this script sent) is resolved by the compiler's
 # loader, which canonicalizes it -- on a system where the raw mktemp
 # path is itself a symlink (macOS's /var -> /private/var), comparing
 # against the un-resolved path here would silently never match.
 work="$(realpath "$(mktemp -d)")"
 trap 'rm -rf "$work"' EXIT
-cat > "$work/helper.di" <<'EOF'
+cat > "$work/helper.d6" <<'EOF'
 def greet(name)
   "hello, " + name
 end
@@ -78,11 +78,11 @@ send '{"jsonrpc":"2.0","method":"initialized","params":{}}'
 
 # --- didOpen on broken source publishes exactly one diagnostic ---
 
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///broken.di","text":"def f(\n"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///broken.d6","text":"def f(\n"}}}'
 response="$(read_message)"
 [[ "$response" == *'"method":"textDocument/publishDiagnostics"'* ]]
 count=$((count + 1))
-[[ "$response" == *'"uri":"file:///broken.di"'* ]]
+[[ "$response" == *'"uri":"file:///broken.d6"'* ]]
 count=$((count + 1))
 [[ "$response" == *'"message":"expected parameter name"'* ]]
 count=$((count + 1))
@@ -91,27 +91,27 @@ count=$((count + 1))
 
 # --- didChange with a full-sync replacement clears the diagnostic ---
 
-send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///broken.di"},"contentChanges":[{"text":"puts(1 + 2)"}]}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///broken.d6"},"contentChanges":[{"text":"puts(1 + 2)"}]}}'
 response="$(read_message)"
-[[ "$response" == *'"uri":"file:///broken.di"'* ]]
+[[ "$response" == *'"uri":"file:///broken.d6"'* ]]
 count=$((count + 1))
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
 
 # --- didClose also publishes an empty diagnostics array ---
 
-send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///reopen.di","text":"def f(\n"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///reopen.d6","text":"def f(\n"}}}'
 read_message >/dev/null
-send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///reopen.di"}}}'
+send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///reopen.d6"}}}'
 response="$(read_message)"
-[[ "$response" == *'"uri":"file:///reopen.di"'* ]]
+[[ "$response" == *'"uri":"file:///reopen.d6"'* ]]
 count=$((count + 1))
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
 
 # --- a valid require against a real on-disk file: no false diagnostic ---
 
-main_uri="file://$work/main.di"
+main_uri="file://$work/main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$main_uri"'","text":"require \"helper\"\nputs(greet(\"world\"))"}}}'
 response="$(read_message)"
 [[ "$response" == *"\"uri\":\"$main_uri\""* ]]
@@ -134,7 +134,7 @@ count=$((count + 1))
 # above, for the previous case) stays correctly empty, since its own
 # text has no error ---
 
-cat > "$work/broken_dependency.di" <<'EOF'
+cat > "$work/broken_dependency.d6" <<'EOF'
 def broken(
   1
 end
@@ -146,7 +146,7 @@ count=$((count + 1))
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
 response="$(read_message)"
-[[ "$response" == *"\"uri\":\"file://$work/broken_dependency.di\""* ]]
+[[ "$response" == *"\"uri\":\"file://$work/broken_dependency.d6\""* ]]
 count=$((count + 1))
 [[ "$response" == *'"message":"expected parameter name"'* ]]
 count=$((count + 1))
@@ -162,16 +162,16 @@ count=$((count + 1))
 
 # --- editing an open dependency's live buffer, unsaved, is seen
 # immediately by a document that requires it, and re-publishes that
-# document's diagnostics too -- not just once helper.di is saved to
+# document's diagnostics too -- not just once helper.d6 is saved to
 # disk. Proves both live in-memory require resolution
 # (document_resolve_source, lsp/document.h) and the dependency-cascade
 # republish (lsp/dependencies.h) in one scenario: greet_loudly doesn't
-# exist in helper.di on disk, so main.di referencing it starts out with
-# a real "undefined function" error; adding greet_loudly to helper.di's
+# exist in helper.d6 on disk, so main.d6 referencing it starts out with
+# a real "undefined function" error; adding greet_loudly to helper.d6's
 # *live* buffer (never written to disk) makes that error disappear from
-# main.di's republished diagnostics without any didSave. ---
+# main.d6's republished diagnostics without any didSave. ---
 
-helper_uri="file://$work/helper.di"
+helper_uri="file://$work/helper.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$helper_uri"'","text":"def greet(name)\n  \"hello, \" + name\nend"}}}'
 response="$(read_message)"
 [[ "$response" == *"\"uri\":\"$helper_uri\""* ]]
@@ -198,9 +198,9 @@ count=$((count + 1))
 [[ "$response" == *'"diagnostics":[]'* ]]
 count=$((count + 1))
 
-# on-disk helper.di was never touched -- confirms this really came from
+# on-disk helper.d6 was never touched -- confirms this really came from
 # the live buffer, not a save
-[[ "$(cat "$work/helper.di")" != *"greet_loudly"* ]]
+[[ "$(cat "$work/helper.d6")" != *"greet_loudly"* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$helper_uri"'"}}}'
@@ -212,7 +212,7 @@ read_message >/dev/null
 # --- an unannotated factory pulled in through require keeps its inferred,
 # tooling-only return type when its result is first assigned to a local. ---
 
-cat > "$work/receiver_dependency.di" <<'EOF'
+cat > "$work/receiver_dependency.d6" <<'EOF'
 class ImportedPet
   def bark()
     1
@@ -348,7 +348,7 @@ end
 EOF
 # Generated readers retain a proven field class across a require boundary,
 # including a subsequent unannotated method call and assignment of its result.
-cat > "$work/reader_dependency.di" <<'EOF'
+cat > "$work/reader_dependency.d6" <<'EOF'
 class ImportedQuery
   def limit(count: Int) -> ImportedQuery = self
 end
@@ -367,7 +367,7 @@ def imported_query(schemas: ImportedSchemas) = imported_skin_again(schemas).quer
 def imported_skin_again(schemas: ImportedSchemas) = imported_skin(schemas)
 def imported_skin(schemas: ImportedSchemas) = schemas.skins()
 EOF
-reader_uri="file://$work/reader_import.di"
+reader_uri="file://$work/reader_import.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reader_uri"'","text":"require \"reader_dependency\"\ndef reader_queries(schemas: ImportedSchemas)\n  schema = imported_skin_again(schemas)\n  schema.query().limit(2)\n  query = imported_query(schemas)\n  query.limit(3)\n  schemas.skins().query().limit(4)\n  imported_query(schemas).limit(5)\nend"}}}'
 response="$(read_message)"
 [[ "$response" == *'"diagnostics":[]'* ]]
@@ -385,12 +385,12 @@ response="$(read_message)"
 count=$((count + 1))
 send '{"jsonrpc":"2.0","id":2002,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$reader_uri"'"},"position":{"line":5,"character":10}}}'
 response="$(read_message)"
-[[ "$response" == *"\"uri\":\"file://$work/reader_dependency.di\""* ]]
+[[ "$response" == *"\"uri\":\"file://$work/reader_dependency.d6\""* ]]
 [[ "$response" == *'"start":{"line":1,"character":6}'* ]]
 count=$((count + 1))
 
-receiver_import_uri="file://$work/receiver_import.di"
-receiver_dependency_uri="file://$work/receiver_dependency.di"
+receiver_import_uri="file://$work/receiver_import.d6"
+receiver_dependency_uri="file://$work/receiver_dependency.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_import_uri"'","text":"require \"receiver_dependency\"\ndef inspect_imported()\n  pet = build_imported_pet()\n  pet.bark()\n  branch = ImportedFactory.build()\n  leaf = branch.leaf()\n  leaf.ping()\nend"}}}'
 read_message >/dev/null
 
@@ -442,7 +442,7 @@ read_message >/dev/null
 # Tooling-only inferred receiver facts survive a conditional that leaves the
 # local untouched, but conflicting assignments across the two runtime paths
 # clear the fact instead of keeping whichever branch compiled last.
-receiver_flow_uri="file://$work/receiver_flow.di"
+receiver_flow_uri="file://$work/receiver_flow.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_flow_uri"'","text":"require \"receiver_dependency\"\ndef preserve_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    puts(1)\n  end\n  pet.bark()\nend\n\ndef discard_receiver(flag)\n  pet = build_imported_pet()\n  if flag\n    pet = ImportedFactory.build()\n  end\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -463,7 +463,7 @@ read_message >/dev/null
 
 # Separate branches can independently clone the same inferred receiver graph.
 # The join compares graph structure, not the otherwise unrelated table indices.
-receiver_equivalent_flow_uri="file://$work/receiver_equivalent_flow.di"
+receiver_equivalent_flow_uri="file://$work/receiver_equivalent_flow.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_equivalent_flow_uri"'","text":"require \"receiver_dependency\"\ndef equivalent_branch_receiver(flag)\n  if flag\n    pet = build_imported_pet()\n  else\n    pet = build_imported_pet()\n  end\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -477,7 +477,7 @@ read_message >/dev/null
 
 # Grouping parentheses preserve both a local receiver and a recursively
 # resolved call-result receiver instead of being mistaken for call syntax.
-receiver_parenthesized_uri="file://$work/receiver_parenthesized.di"
+receiver_parenthesized_uri="file://$work/receiver_parenthesized.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_parenthesized_uri"'","text":"require \"receiver_dependency\"\ndef parenthesized_receivers()\n  pet = build_imported_pet()\n  (pet).bark()\n  (build_imported_pet()).bark()\nend"}}}'
 read_message >/dev/null
 
@@ -493,7 +493,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # A class-typed Array local carries its element set through one indexing step.
-receiver_index_uri="file://$work/receiver_index.di"
+receiver_index_uri="file://$work/receiver_index.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_index_uri"'","text":"require \"receiver_dependency\"\ndef indexed_receiver(pets: Array[ImportedPet])\n  pets[0].bark()\nend\n\ndef nullable_hash_receiver(pets: Hash[String, ImportedPet])\n  pets[\"one\"].bark()\nend\n\ndef nested_indexed_receiver(pets: Array[Array[ImportedPet]])\n  pets[0][0].bark()\nend\n\ndef indexed_call_receiver()\n  build_imported_pets()[0].bark()\nend\n\ndef indexed_method_receivers()\n  factory = ImportedArrayFactory.new()\n  factory.pets()[0].bark()\n  ImportedArrayFactory.pets()[0].bark()\nend\n\ndef indexed_generic_receivers()\n  generic_array(ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap(ImportedPet.new())[0].bark()\nend\n\ndef indexed_explicit_generic_receivers()\n  generic_array[ImportedPet](ImportedPet.new())[0].bark()\n  GenericArrayFactory.wrap[ImportedPet](ImportedPet.new())[0].bark()\nend\n\ndef indexed_nested_generic_receiver(pets: Array[ImportedPet])\n  generic_array_identity(pets)[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -551,11 +551,11 @@ read_message >/dev/null
 
 # A declared imported Hash lookup remains nullable until a local nil guard
 # proves otherwise. Scope facts must restore the nil/uncertain branches too.
-cat > "$work/guarded_hash_dependency.di" <<'EOF'
+cat > "$work/guarded_hash_dependency.d6" <<'EOF'
 require "receiver_dependency"
 def declared_pet_hash() -> Hash[String, ImportedPet] = {"one": ImportedPet.new()}
 EOF
-guarded_hash_uri="file://$work/guarded_hash_main.di"
+guarded_hash_uri="file://$work/guarded_hash_main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$guarded_hash_uri"'","text":"require \"guarded_hash_dependency\"\ndef inspect_hash(flag)\n  pet = declared_pet_hash()[\"one\"]\n  pet.bark()\n  if pet != nil\n    pet.bark()\n  else\n    pet.bark()\n  end\n  pet.bark()\n  if pet != nil && flag\n    pet.bark()\n  else\n    pet.bark()\n  end\n  unless pet == nil\n    pet.bark()\n  end\n  if pet == nil\n    0\n  else\n    pet.bark()\n  end\n  return if pet == nil\n  pet.bark()\n  pet = nil\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -640,7 +640,7 @@ read_message >/dev/null
 
 # Inferred imported Hash values keep nullable editor graphs through guards,
 # repeated guards and wrappers, without promoting them to checked contracts.
-cat > "$work/inferred_hash_dependency.di" <<'EOF'
+cat > "$work/inferred_hash_dependency.d6" <<'EOF'
 require "receiver_dependency"
 def inferred_pet_hash() = {"name": ImportedPet.new()}
 def indirect_pet_hash() = {"name": build_imported_pet()}
@@ -648,7 +648,7 @@ def inferred_hash_wrapper() = inferred_pet_hash()
 def unknown_pet_hash(value) = {"name": value}
 def union_pet_hash() = {"name": ImportedPet.new(), "other": ImportedLeaf.new()}
 EOF
-inferred_hash_uri="file://$work/inferred_hash_main.di"
+inferred_hash_uri="file://$work/inferred_hash_main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$inferred_hash_uri"'","text":"require \"inferred_hash_dependency\"\ndef inspect_inferred_hash(flag, value)\n  pet = inferred_hash_wrapper()[\"name\"]\n  pet.bark()\n  if pet != nil\n    pet.bark()\n  else\n    pet.bark()\n  end\n  pet.bark()\n  unless pet == nil\n    pet.bark()\n  end\n  if pet != nil && flag\n    pet.bark()\n  else\n    pet.bark()\n  end\n  indirect = indirect_pet_hash()[\"name\"]\n  if indirect != nil\n    indirect.bark()\n  end\n  union_pet = union_pet_hash()[\"name\"]\n  if union_pet != nil\n    union_pet.bark()\n  end\n  unknown = unknown_pet_hash(value)[\"name\"]\n  if unknown != nil\n    unknown.bark()\n  end\n  original = inferred_pet_hash()\n  alias_hash = original\n  original[\"name\"] = value\n  changed = alias_hash[\"name\"]\n  if changed != nil\n    changed.bark()\n  end\n  return if pet == nil\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -757,7 +757,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Truthiness guards refine editor facts and retain Bool in both views.
-truthiness_uri="file://$work/truthiness.di"
+truthiness_uri="file://$work/truthiness.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$truthiness_uri"'","text":"require \"inferred_hash_dependency\"\ndef inspect_truthiness(pets: Hash[String, ImportedPet], flag, value)\n  pet = inferred_hash_wrapper()[\"name\"]\n  pet.bark() # before\n  if pet\n    pet.bark() # yes\n  else\n    pet.bark() # no\n  end\n  pet.bark() # join\n  unless pet\n    pet.bark() # unless_no\n  else\n    pet.bark() # unless_yes\n  end\n  if !pet\n    pet.bark() # not_no\n  else\n    pet.bark() # not_yes\n  end\n  if pet && flag\n    pet.bark() # and_yes\n  else\n    pet.bark() # and_unknown\n  end\n  unless pet || flag\n    pet.bark() # or_no\n  else\n    pet.bark() # or_unknown\n  end\n  declared = pets[\"name\"]\n  if declared\n    declared.bark() # declared_yes\n  end\n  if pet\n    pet = value\n    pet.bark() # reassigned\n  end\nend\ndef truthiness_early()\n  pet = inferred_pet_hash()[\"name\"]\n  return unless pet\n  pet.bark() # early_yes\nend\ndef truthiness_negated_early()\n  pet = inferred_pet_hash()[\"name\"]\n  return if !pet\n  pet.bark() # early_not_yes\nend\ndef truthiness_boolean(pet: ImportedPet | Bool | Nil)\n  if pet\n    pet.bark() # bool_yes\n  else\n    pet.bark() # bool_no\n  end\n  pet.bark() # bool_join\nend\ndef truthiness_checked(pet: ImportedPet | ImportedLeaf | Nil)\n  if pet\n    if pet is ImportedPet\n      pet.bark() # checked_is\n    end\n  end\nend\n"}}}'
 read_message >/dev/null
 
@@ -926,7 +926,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Short-circuit RHS queries inherit only the proof needed to reach them.
-short_circuit_uri="file://$work/short_circuit.di"
+short_circuit_uri="file://$work/short_circuit.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$short_circuit_uri"'","text":"require \"inferred_hash_dependency\"\ndef short_circuit(flag)\n  pet = inferred_pet_hash()[\"name\"]\n  pet && pet.bark() # and_yes\n  pet.bark() # after_and\n  pet == nil || pet.bark() # nil_or\n  pet != nil && pet.bark() # non_nil_and\n  !pet || pet.bark() # not_or\n  pet == nil && pet.bark() # nil_and\n  pet || pet.bark() # or_no\n  pet && flag && pet.bark() # chain\n  (pet || flag) && pet.bark() # uncertain\n  pet && (flag && pet.bark()) # nested\n  pet.bark() # after_nested\n  if pet && pet.bark() # condition\n    pet.bark() # body\n  end\n  pet.bark() # after_if\n  pet && (if flag\n    pet.bark() # nested_if_yes\n  else\n    pet.bark() # nested_if_no\n  end)\n  pet.bark() # after_nested_if\nend\ndef checked_short_circuit(pet: ImportedPet | ImportedLeaf | Nil)\n  pet is ImportedPet && pet.bark() # checked_is\n  pet.bark() # checked_after\nend\ndef bool_short_circuit(pet: ImportedPet | Bool | Nil)\n  pet && pet.bark() # bool_yes\n  pet || pet.bark() # bool_no\n  pet.bark() # bool_after\nend\n"}}}'
 read_message >/dev/null
 
@@ -1099,7 +1099,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Indexed inferred call results retain advisory class facts after assignment.
-assigned_index_uri="file://$work/assigned_index.di"
+assigned_index_uri="file://$work/assigned_index.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$assigned_index_uri"'","text":"require \"receiver_dependency\"\ndef assigned_indexed_receiver()\n  pets = build_imported_pets()\n  pet = pets[0]\n  pet.bark()\n  direct_pet = build_imported_pets()[0]\n  direct_pet.bark()\nend\n\ndef imported_nested_pets()\n  [[ImportedPet.new()]]\nend\n\ndef assigned_nested_receiver()\n  nested_pet = imported_nested_pets()[0][0]\n  nested_pet.bark()\nend\n\ndef imported_pet_hash()\n  {\"one\": ImportedPet.new()}\nend\n\ndef assigned_nullable_receiver()\n  nullable_pet = imported_pet_hash()[\"one\"]\n  nullable_pet.bark()\nend\n\ndef opaque_pets(value)\n  [value]\nend\n\ndef assigned_unknown_receiver(value)\n  unknown_pet = opaque_pets(value)[0]\n  unknown_pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1134,7 +1134,7 @@ read_message >/dev/null
 
 # Array literals retain imported inferred element graphs, without guessing
 # across unknown elements, reassignment, or mutations through an alias.
-literal_array_uri="file://$work/literal_array.di"
+literal_array_uri="file://$work/literal_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$literal_array_uri"'","text":"require \"receiver_dependency\"\ndef imported_literal_pets()\n  [build_imported_pet()]\nend\n\ndef imported_nested_literal_pets()\n  return [[build_imported_pet()]]\nend\n\ndef inspect_literal_pets(value)\n  pets = [build_imported_pet()]\n  pets[0].bark()\n  pet = pets[0]\n  pet.bark()\n  nested = [[build_imported_pet()]]\n  nested[0][0].bark()\n  imported_literal_pets()[0].bark()\n  imported_nested_literal_pets()[0][0].bark()\n  unknown = [build_imported_pet(), value]\n  unknown[0].bark()\n  reassigned = [build_imported_pet()]\n  reassigned = [ImportedLeaf.new()]\n  reassigned[0].bark()\n  mutable = [build_imported_pet()]\n  alias_pets = mutable\n  mutable[0] = value\n  alias_pets[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1168,7 +1168,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # A spread literal joins inferred prefix, spread-element, and suffix graphs.
-spread_array_uri="file://$work/spread_array.di"
+spread_array_uri="file://$work/spread_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$spread_array_uri"'","text":"require \"receiver_dependency\"\ndef imported_spread_pets()\n  [build_imported_pet(), *build_imported_pets(), build_imported_pet()]\nend\n\ndef imported_nested_spread()\n  [*[build_imported_pets()]]\nend\n\ndef inspect_spreads(value, checked: Array[ImportedPet])\n  pets = [*build_imported_pets()]\n  pets[0].bark()\n  pet = imported_spread_pets()[0]\n  pet.bark()\n  nested = imported_nested_spread()\n  nested[0][0].bark()\n  known_spread = [build_imported_pet(), *checked]\n  known_spread[0].bark()\n  suffix = [*checked, build_imported_pet()]\n  suffix[0].bark()\n  unknown_prefix = [value, *build_imported_pets()]\n  unknown_prefix[0].bark()\n  unknown_suffix = [*build_imported_pets(), value]\n  unknown_suffix[0].bark()\n  unknown_spread = [build_imported_pet(), *value]\n  unknown_spread[0].bark()\n  mutable = [*build_imported_pets()]\n  alias_pets = mutable\n  mutable[0] = value\n  alias_pets[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1202,7 +1202,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Copying/subsetting Array transforms retain inferred imported element facts.
-transform_array_uri="file://$work/transform_array.di"
+transform_array_uri="file://$work/transform_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$transform_array_uri"'","text":"require \"receiver_dependency\"\ndef transformed_factory() = build_imported_pets().reverse().take(1)\ndef inspect_transforms(value)\n  reversed = build_imported_pets().reverse()\n  reversed[0].bark()\n  unique = build_imported_pets().uniq()\n  unique[0].bark()\n  compacted = build_imported_pets().compact()\n  compacted[0].bark()\n  taken = build_imported_pets().take(1)\n  taken[0].bark()\n  dropped = build_imported_pets().drop(n: 0)\n  dropped[0].bark()\n  build_imported_pets().reverse()[0].bark()\n  wrapped = transformed_factory()[0]\n  wrapped.bark()\n  nested = [build_imported_pets()].reverse().take(1)\n  nested[0][0].bark()\n  unknown = [build_imported_pet(), value].reverse()\n  unknown[0].bark()\n  original = build_imported_pets()\n  copied = original.reverse()\n  original[0] = value\n  copied[0].bark()\n  alias_copy = copied\n  copied.push(value)\n  alias_copy[0].bark()\n  changed = build_imported_pets()\n  changed[0] = value\n  changed.reverse()[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1234,7 +1234,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Callback-dependent filters and sorts keep the source element graph.
-filter_array_uri="file://$work/filter_array.di"
+filter_array_uri="file://$work/filter_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$filter_array_uri"'","text":"require \"receiver_dependency\"\ndef filter_pets(value)\n  kept = build_imported_pets().select() do |pet| true end\n  kept[0].bark()\n  dropped = build_imported_pets().reject() do |pet| false end\n  dropped[0].bark()\n  ordered = build_imported_pets().sort_by() do |pet| 1 end\n  ordered[0].bark()\n  plain = build_imported_pets().sort()\n  plain[0].bark()\n  unknown = [build_imported_pet(), value].select() do |pet| true end\n  unknown[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1253,7 +1253,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # map and flat_map carry the callback's inferred result class.
-map_array_uri="file://$work/map_array.di"
+map_array_uri="file://$work/map_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$map_array_uri"'","text":"require \"receiver_dependency\"\ndef mapped_pets(value)\n  made = build_imported_pets().map() do |pet| build_imported_pet() end\n  made[0].bark()\n  fresh = build_imported_pets().map() do |pet| ImportedPet.new() end\n  fresh[0].bark()\n  nested = build_imported_pets().flat_map() do |pet| build_imported_pets() end\n  nested[0].bark()\n  unknown = build_imported_pets().map() do |pet| value end\n  unknown[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1272,7 +1272,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Block parameters take the receiver's inferred element graph.
-block_param_uri="file://$work/block_param.di"
+block_param_uri="file://$work/block_param.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_param_uri"'","text":"require \"receiver_dependency\"\ndef block_params(value)\n  build_imported_pets().each() do |pet|\n    pet.bark()\n  end\n  same = build_imported_pets().map() do |pet| pet end\n  same[0].bark()\n  [build_imported_pet(), value].each() do |pet|\n    pet.bark()\n  end\nend"}}}'
 read_message >/dev/null
 
@@ -1291,7 +1291,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # map and flat_map with a named function relay its inferred result graph.
-named_callable_uri="file://$work/named_callable.di"
+named_callable_uri="file://$work/named_callable.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$named_callable_uri"'","text":"require \"receiver_dependency\"\ndef make_pet(pet) = build_imported_pet()\ndef make_pets(pet) = build_imported_pets()\ndef unknown_result(pet, value) = value\ndef named_callables(value)\n  made = build_imported_pets().map(make_pet)\n  made[0].bark()\n  flat = build_imported_pets().flat_map(make_pets)\n  flat[0].bark()\n  other = build_imported_pets().map(unknown_result)\n  other[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1311,7 +1311,7 @@ read_message >/dev/null
 
 # Explicit generic bindings can carry a nested Array shape; indexing consumes
 # that shape until the final class receiver is exposed.
-receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.di"
+receiver_parameterized_binding_uri="file://$work/receiver_parameterized_binding.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_parameterized_binding_uri"'","text":"require \"receiver_dependency\"\ndef parameterized_binding_receiver()\n  generic_identity[Array[ImportedPet]]([ImportedPet.new()])[0].bark()\n  generic_identity[Array[Array[ImportedPet]]]([[ImportedPet.new()]])[0][0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1329,7 +1329,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Every arm of a union receiver contributes its own array element graph.
-receiver_union_array_uri="file://$work/receiver_union_array.di"
+receiver_union_array_uri="file://$work/receiver_union_array.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_array_uri"'","text":"require \"receiver_dependency\"\ndef union_array_receiver()\n  factory = build_union_array_receiver(true)\n  factory.pets()[0].bark()\nend\n\ndef conflicting_union_array_receiver()\n  factory = build_conflicting_union_array_receiver(true)\n  factory.pets()[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1350,7 +1350,7 @@ read_message >/dev/null
 
 # Imported alternatives keep separate owners and generic substitutions. Unknown,
 # nullable, scalar, and missing method alternatives invalidate the whole result.
-cat > "$work/varying_arrays.di" <<'EOF'
+cat > "$work/varying_arrays.d6" <<'EOF'
 require "receiver_dependency"
 class ArrayChoiceLeft
   def nested() = [[ImportedPet.new()]]
@@ -1369,7 +1369,7 @@ class ArrayChoiceRight
 end
 def imported_choice(flag) = flag ? ArrayChoiceLeft.new() : ArrayChoiceRight.new()
 EOF
-varying_arrays_uri="file://$work/varying_arrays_main.di"
+varying_arrays_uri="file://$work/varying_arrays_main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$varying_arrays_uri"'","text":"require \"varying_arrays\"\ndef inspect_choice(flag, value)\n  factory = imported_choice(flag)\n  factory.nested()[0][0].bark()\n  factory.nested().reverse().take(1)[0][0].ping()\n  factory.pick(ImportedPet.new(), ImportedLeaf.new())[0].bark()\n  factory.pick[ImportedPet, ImportedLeaf](ImportedPet.new(), ImportedLeaf.new())[0].ping()\n  factory.uncertain(value)[0].bark()\n  factory.nil_items()[0].bark()\n  factory.scalar_items()[0].bark()\n  factory.pets_only()[0].bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1443,7 +1443,7 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # Case joins apply the same rule across every when/else path.
-receiver_case_uri="file://$work/receiver_case.di"
+receiver_case_uri="file://$work/receiver_case.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_case_uri"'","text":"require \"receiver_dependency\"\ndef preserve_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    puts(1)\n  else\n    puts(2)\n  end\n  pet.bark()\nend\n\ndef discard_case_receiver(mode)\n  pet = build_imported_pet()\n  case mode\n  when 1\n    pet = ImportedFactory.build()\n  else\n    puts(2)\n  end\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1464,7 +1464,7 @@ read_message >/dev/null
 
 # Loop exits include the zero-iteration path and every break. An unchanged
 # receiver survives; a body assignment that only some exits observe clears it.
-receiver_loop_uri="file://$work/receiver_loop.di"
+receiver_loop_uri="file://$work/receiver_loop.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_loop_uri"'","text":"require \"receiver_dependency\"\ndef preserve_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    break\n  end\n  pet.bark()\nend\n\ndef discard_loop_receiver(flag)\n  pet = build_imported_pet()\n  while flag\n    pet = ImportedFactory.build()\n    break\n  end\n  pet.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1486,7 +1486,7 @@ read_message >/dev/null
 # An inferred union receiver can feed an assigned method result when every
 # class arm has a usable inferred return. One unknown arm invalidates the
 # whole result rather than letting the known arm win.
-receiver_union_uri="file://$work/receiver_union.di"
+receiver_union_uri="file://$work/receiver_union.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_union_uri"'","text":"require \"receiver_dependency\"\ndef compatible_union_result()\n  source = build_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend\n\ndef unknown_union_result()\n  source = build_unknown_union_receiver(true)\n  product = source.product(nil)\n  product.ping()\nend"}}}'
 read_message >/dev/null
 
@@ -1506,7 +1506,7 @@ read_message >/dev/null
 # Generic calls substitute fully resolved type-variable bindings into the
 # unannotated callee's inferred return, without promoting it to a real
 # compile-time return contract.
-receiver_generic_uri="file://$work/receiver_generic.di"
+receiver_generic_uri="file://$work/receiver_generic.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_generic_uri"'","text":"require \"receiver_dependency\"\ndef generic_results()\n  inferred = generic_identity(ImportedPet.new())\n  inferred.bark()\n  explicit = generic_identity[ImportedLeaf](ImportedLeaf.new())\n  explicit.ping()\n  factory = GenericFactory.new()\n  from_method = factory.echo(ImportedPet.new())\n  from_method.bark()\n  from_singleton = GenericSingletonFactory.echo(ImportedPet.new())\n  from_singleton.bark()\n  explicit_singleton = GenericSingletonFactory.echo[ImportedLeaf](ImportedLeaf.new())\n  explicit_singleton.ping()\n  generic_identity[ImportedPet](ImportedPet.new()).bark()\n  GenericSingletonFactory.echo[ImportedLeaf](ImportedLeaf.new()).ping()\n  generic_identity(ImportedPet.new()).bark()\n  GenericSingletonFactory.echo(ImportedLeaf.new()).ping()\nend"}}}'
 read_message >/dev/null
 
@@ -1526,7 +1526,7 @@ read_message >/dev/null
 # Declaring a nested function boxes its enclosing locals. Loading an inferred
 # receiver back through GET_CELL and assigning it again must retain the
 # tooling-only fact in the new local.
-receiver_capture_uri="file://$work/receiver_capture.di"
+receiver_capture_uri="file://$work/receiver_capture.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$receiver_capture_uri"'","text":"require \"receiver_dependency\"\ndef captured_result()\n  pet = build_imported_pet()\n  def observe_pet()\n    pet\n  end\n  copy = pet\n  copy.bark()\nend\n\ndef block_captured_result()\n  pet = build_imported_pet()\n  [1].each() do |value|\n    pet\n  end\n  copy = pet\n  copy.bark()\nend"}}}'
 read_message >/dev/null
 
@@ -1546,7 +1546,7 @@ read_message >/dev/null
 # --- hover resolves a top-level function name, at its own declaration
 # and at a bare call site, and a class name including its superclass ---
 
-hover_uri="file://$work/hover.di"
+hover_uri="file://$work/hover.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$hover_uri"'","text":"def add(a: Int, b: Int) -> Int\n  a + b\nend\n\nclass Base\nend\n\nclass Derived < Base\nend\n\nadd(1, 2)"}}}'
 read_message >/dev/null
 
@@ -1611,7 +1611,7 @@ read_message >/dev/null
 # would suggest (required_arity never counts the variadic slot as
 # required -- see hover.c's own comment on format_function_signature) ---
 
-variadic_hover_uri="file:///variadic_hover.di"
+variadic_hover_uri="file:///variadic_hover.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$variadic_hover_uri"'","text":"def sum(first: Int, *rest)\n  first\nend"}}}'
 read_message >/dev/null
 
@@ -1627,7 +1627,7 @@ read_message >/dev/null
 
 # --- hover preserves combined variadic and typed block parameter markers ---
 
-block_hover_uri="file:///block_hover.di"
+block_hover_uri="file:///block_hover.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_hover_uri"'","text":"def dispatch(first: Int, *rest, &block: Callable[2])\n  first\nend"}}}'
 read_message >/dev/null
 
@@ -1643,7 +1643,7 @@ read_message >/dev/null
 
 # --- hover recognizes the lexical block-presence intrinsic ---
 
-block_given_uri="file:///block_given_hover.di"
+block_given_uri="file:///block_given_hover.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$block_given_uri"'","text":"def present(&block)\n  block_given?()\nend"}}}'
 read_message >/dev/null
 
@@ -1660,13 +1660,13 @@ read_message >/dev/null
 # --- go-to-definition on a symbol pulled in through require resolves to
 # a Location in *that* file, not the requesting document ---
 
-definition_main_uri="file://$work/definition_main.di"
+definition_main_uri="file://$work/definition_main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$definition_main_uri"'","text":"require \"helper\"\nputs(greet(\"world\"))"}}}'
 read_message >/dev/null
 
 send '{"jsonrpc":"2.0","id":12,"method":"textDocument/definition","params":{"textDocument":{"uri":"'"$definition_main_uri"'"},"position":{"line":1,"character":6}}}'
 response="$(read_message)"
-[[ "$response" == *"\"uri\":\"file://$work/helper.di\""* ]]
+[[ "$response" == *"\"uri\":\"file://$work/helper.d6\""* ]]
 count=$((count + 1))
 [[ "$response" == *'"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":9}}'* ]]
 count=$((count + 1))
@@ -1675,13 +1675,13 @@ send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument"
 read_message >/dev/null
 
 # --- documentSymbol lists only this document's own top-level declarations:
-# not lib/core.di's prelude, not anything pulled in via
+# not lib/core.d6's prelude, not anything pulled in via
 # require, and -- the actual bug this caught during development --
 # correctly positioned even for a declaration *after* a require line,
 # whose raw in-buffer line number is thrown off by the required file's
 # own inlined content sitting earlier in the compiled buffer ---
 
-symbol_uri="file://$work/symbols.di"
+symbol_uri="file://$work/symbols.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$symbol_uri"'","text":"require \"helper\"\ndef mine()\n  1\nend\n\nclass Thing\nend\n\nmine()"}}}'
 read_message >/dev/null
 
@@ -1704,7 +1704,7 @@ read_message >/dev/null
 # --- documentSymbol on a document with no declarations of its own
 # is an empty array, distinct from null (which means "doesn't compile") ---
 
-empty_symbol_uri="file:///empty_symbols.di"
+empty_symbol_uri="file:///empty_symbols.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$empty_symbol_uri"'","text":"puts(1 + 2)"}}}'
 read_message >/dev/null
 
@@ -1719,7 +1719,7 @@ read_message >/dev/null
 # --- modules and interfaces are first-class declarations on every
 # declaration-oriented LSP surface ---
 
-type_symbol_uri="file:///type_symbols.di"
+type_symbol_uri="file:///type_symbols.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$type_symbol_uri"'","text":"module Tools\nend\n\ninterface Runnable\nend\n"}}}'
 read_message >/dev/null
 
@@ -1762,7 +1762,7 @@ read_message >/dev/null
 # inside a nested closure declared within it (the same capture
 # visibility the compiler's own enclosing_locals mechanism grants) ---
 
-completion_uri="file:///completion.di"
+completion_uri="file:///completion.d6"
 completion_source='def outer(a, b)\n  x = a + b\n  begin\n    raise \"boom\"\n  rescue err: String\n    y = err\n  end\n  x\nend\ntop = 42\n'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$completion_uri"'","text":"'"$completion_source"'"}}}'
 read_message >/dev/null
@@ -1814,7 +1814,7 @@ read_message >/dev/null
 # --- completion on a document that doesn't currently compile returns
 # null, matching hover/definition/documentSymbol's own rule ---
 
-broken_completion_uri="file:///completion_broken.di"
+broken_completion_uri="file:///completion_broken.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$broken_completion_uri"'","text":"def f(\n"}}}'
 read_message >/dev/null
 
@@ -1829,7 +1829,7 @@ read_message >/dev/null
 # --- hover on a document that doesn't currently compile returns null,
 # not a stale/partial signature ---
 
-broken_hover_uri="file:///hover_broken.di"
+broken_hover_uri="file:///hover_broken.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$broken_hover_uri"'","text":"def f(\n"}}}'
 read_message >/dev/null
 
@@ -1846,7 +1846,7 @@ read_message >/dev/null
 # it, as Cat. End-of-function type snapshots used to make both positions
 # incorrectly resolve as whichever class was assigned last. ---
 
-reassigned_uri="file:///reassigned_receiver.di"
+reassigned_uri="file:///reassigned_receiver.d6"
 reassigned_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect()\n  pet = Dog.new()\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\ndef inspect_union(pet: Dog | Cat)\n  pet.bark()\n  pet = Cat.new()\n  pet.meow()\nend\nclass Kennel\n  def initialize()\n    @pet = Dog.new()\n  end\n  def speak()\n    @pet.bark()\n  end\nend\nclass Mixed\n  def initialize(flag)\n    if flag\n      @pet = Dog.new()\n    else\n      @pet = Cat.new()\n    end\n  end\n  def speak()\n    @pet.bark()\n  end\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$reassigned_uri"'","text":"'"$reassigned_source"'"}}}'
 read_message >/dev/null
@@ -1935,7 +1935,7 @@ read_message >/dev/null
 # a union return, and an unannotated single-expression body (inferred). A
 # non-class arm in an explicit union remains conservative. ---
 
-chained_uri="file:///chained_receiver.di"
+chained_uri="file:///chained_receiver.d6"
 chained_source='class Leaf\n  def ping() -> Int\n    1\n  end\nend\nclass Branch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass AlternateBranch\n  def leaf() -> Leaf\n    Leaf.new()\n  end\nend\nclass Factory\n  def self.build() -> Branch\n    Branch.new()\n  end\nend\ndef make_branch() -> Branch\n  Branch.new()\nend\ndef choose_branch(flag) -> Branch | AlternateBranch\n  if flag\n    Branch.new()\n  else\n    AlternateBranch.new()\n  end\nend\ndef infer_branch()\n  Branch.new()\nend\ndef inspect()\n  make_branch().leaf().ping()\n  Factory.build().leaf().ping()\n  Branch.new().leaf().ping()\n  choose_branch(true).leaf().ping()\n  infer_branch().leaf()\n  maybe_branch(true).leaf()\nend\ndef maybe_branch(flag) -> Branch | Nil\n  flag ? Branch.new() : nil\nend\ndef choose_with_returns(flag)\n  if flag\n    return Branch.new()\n  end\n  return AlternateBranch.new()\nend\ndef inspect2()\n  choose_with_returns(true).leaf().ping()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$chained_uri"'","text":"'"$chained_source"'"}}}'
 read_message >/dev/null
@@ -2024,7 +2024,7 @@ read_message >/dev/null
 # tooling: expression results, assignments made independently in each branch,
 # and ternaries all expose both possible classes after the join. ---
 
-branch_uri="file:///branch_receiver.di"
+branch_uri="file:///branch_receiver.d6"
 branch_source='class Dog\n  def bark()\n    1\n  end\nend\nclass Cat\n  def meow()\n    2\n  end\nend\ndef inspect_if(flag)\n  pet = if flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_assign(flag)\n  pet = Dog.new()\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_ternary(flag)\n  pet = flag ? Dog.new() : Cat.new()\n  pet.bark()\nend\ndef inspect_unless(flag)\n  pet = unless flag\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_elsif(flag, other)\n  pet = if flag\n    Dog.new()\n  elsif other\n    Cat.new()\n  else\n    Dog.new()\n  end\n  pet.bark()\nend\ndef inspect_case(kind)\n  pet = case kind\n  when 1\n    Dog.new()\n  else\n    Cat.new()\n  end\n  pet.bark()\nend\ndef inspect_while(flag)\n  pet = Cat.new()\n  while flag\n    pet = Dog.new()\n    break\n  end\n  pet.bark()\nend\ndef inspect_loop(flag)\n  pet = loop\n    if flag\n      break Dog.new()\n    else\n      break Cat.new()\n    end\n  end\n  pet.bark()\nend\ndef inspect_new_in_branch(flag)\n  if flag\n    pet = Dog.new()\n  else\n    pet = Cat.new()\n  end\n  pet.bark()\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$branch_uri"'","text":"'"$branch_source"'"}}}'
 read_message >/dev/null
@@ -2047,7 +2047,7 @@ read_message >/dev/null
 # branch compiled last: the branch that never binds it contributes Nil,
 # matching what the VM actually leaves there down the untaken path ---
 
-new_local_branch_uri="file:///new_local_branch_hover.di"
+new_local_branch_uri="file:///new_local_branch_hover.d6"
 new_local_branch_source='def then_only(cond)
   if cond
     value = 1
@@ -2166,16 +2166,19 @@ read_message >/dev/null
 # --- workspace/symbol recursively walks the workspace root (given via
 # initialize's own workspaceFolders, above), skips dotdirs, and
 # case-insensitively substring-matches the query against every
-# top-level declaration name it finds, across every *.di file, not
+# top-level declaration name it finds, across every *.d6 file, not
 # just open documents ---
 
 mkdir -p "$work/ws_sub" "$work/.ws_hidden"
-cat > "$work/ws_alpha.di" <<'EOF'
+# A .di file must not be indexed as Diamond merely because it shares the
+# workspace: that suffix belongs to D interface files.
+printf 'def d_interface_should_not_index() = 4\n' > "$work/interface.di"
+cat > "$work/ws_alpha.d6" <<'EOF'
 def alpha_fn()
   1
 end
 EOF
-cat > "$work/ws_sub/ws_beta.di" <<'EOF'
+cat > "$work/ws_sub/ws_beta.d6" <<'EOF'
 def beta_fn()
   2
 end
@@ -2186,7 +2189,7 @@ end
 interface BetaRunnable
 end
 EOF
-cat > "$work/.ws_hidden/ws_hidden.di" <<'EOF'
+cat > "$work/.ws_hidden/ws_hidden.d6" <<'EOF'
 def hidden_fn()
   3
 end
@@ -2206,12 +2209,14 @@ count=$((count + 1))
 count=$((count + 1))
 [[ "$response" != *'"name":"hidden_fn"'* ]]
 count=$((count + 1))
+[[ "$response" != *'"name":"d_interface_should_not_index"'* ]]
+count=$((count + 1))
 
 send '{"jsonrpc":"2.0","id":20,"method":"workspace/symbol","params":{"query":"ALPHA"}}'
 response="$(read_message)"
 [[ "$response" == *'"name":"alpha_fn","kind":12'* ]]
 count=$((count + 1))
-[[ "$response" == *"\"uri\":\"file://$work/ws_alpha.di\""* ]]
+[[ "$response" == *"\"uri\":\"file://$work/ws_alpha.d6\""* ]]
 count=$((count + 1))
 [[ "$response" != *'"name":"beta_fn"'* ]]
 count=$((count + 1))
@@ -2219,7 +2224,7 @@ count=$((count + 1))
 # an open document's own live (possibly unsaved) buffer is what gets
 # scanned, not stale on-disk content -- same "live over stale" rule
 # every other lsp/ feature that resolves source text already follows
-ws_alpha_uri="file://$work/ws_alpha.di"
+ws_alpha_uri="file://$work/ws_alpha.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'","text":"def alpha_fn()\n  1\nend\ndef alpha_fn_live()\n  2\nend"}}}'
 read_message >/dev/null
 
@@ -2227,7 +2232,7 @@ send '{"jsonrpc":"2.0","id":21,"method":"workspace/symbol","params":{"query":"al
 response="$(read_message)"
 [[ "$response" == *'"name":"alpha_fn_live"'* ]]
 count=$((count + 1))
-[[ "$(cat "$work/ws_alpha.di")" != *"alpha_fn_live"* ]]
+[[ "$(cat "$work/ws_alpha.d6")" != *"alpha_fn_live"* ]]
 count=$((count + 1))
 
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$ws_alpha_uri"'"}}}'
@@ -2238,7 +2243,7 @@ read_message >/dev/null
 # function/class name, deduplicated, and stays conservative for a purely
 # local name or a same-named keyword-argument label ---
 
-cat > "$work/ref_helper.di" <<'EOF'
+cat > "$work/ref_helper.d6" <<'EOF'
 class RefWidget
   def initialize(label: String)
     @label = label
@@ -2251,7 +2256,7 @@ def ref_build(label: String) -> RefWidget
   RefWidget.new(label)
 end
 EOF
-cat > "$work/ref_main.di" <<'EOF'
+cat > "$work/ref_main.d6" <<'EOF'
 require "ref_helper"
 
 def ref_use()
@@ -2262,8 +2267,8 @@ end
 local_count = 0
 kwarg_user = ref_build(label: "kw")
 EOF
-ref_helper_uri="file://$work/ref_helper.di"
-ref_main_uri="file://$work/ref_main.di"
+ref_helper_uri="file://$work/ref_helper.d6"
+ref_main_uri="file://$work/ref_main.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ref_helper_uri"'","text":"class RefWidget\n  def initialize(label: String)\n    @label = label\n  end\nend\n\ndef label(value: String) -> String = value\n\ndef ref_build(label: String) -> RefWidget\n  RefWidget.new(label)\nend"}}}'
 read_message >/dev/null
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$ref_main_uri"'","text":"require \"ref_helper\"\n\ndef ref_use()\n  w = ref_build(\"a\")\n  label(\"x\")\nend\n\nlocal_count = 0\nkwarg_user = ref_build(label: \"kw\")"}}}'
@@ -2275,7 +2280,7 @@ response="$(read_message)"
 # the declaration itself (always followed by its own "(") ...
 [[ "$response" == *"\"uri\":\"$ref_helper_uri\",\"range\":{\"start\":{\"line\":8,\"character\":4}"* ]]
 count=$((count + 1))
-# ... and the one real call site in ref_main.di
+# ... and the one real call site in ref_main.d6
 [[ "$response" == *"\"uri\":\"$ref_main_uri\",\"range\":{\"start\":{\"line\":3,\"character\":6}"* ]]
 count=$((count + 1))
 
@@ -2397,7 +2402,7 @@ read_message >/dev/null
 
 # --- local Callable hover retains bound-reference parameter/return graphs ---
 
-callable_local_uri="file:///callable_local_hover.di"
+callable_local_uri="file:///callable_local_hover.d6"
 callable_local_source='class HoverOps\n  def increment(value: Int) -> Int = value + 1\n  def wrap[T](value: T) -> Array[T] = [value]\nend\nclass HoverRed\nend\nclass HoverBlue\nend\ndef inspect(value: HoverRed | HoverBlue)\n  ops = HoverOps.new()\n  increment = ops.increment\n  wrapped = ops.wrap[String]\n  increment(1)\n  wrapped\n  items = [1, 2]\n  items\n  union_value = value\n  union_value\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$callable_local_uri"'","text":"'"$callable_local_source"'"}}}'
 read_message >/dev/null
@@ -2427,7 +2432,7 @@ read_message >/dev/null
 
 # --- synthesized Callable-union block parameters retain full union graphs ---
 
-union_block_uri="file:///union_block_hover.di"
+union_block_uri="file:///union_block_hover.d6"
 union_block_source='class LspRed\n  def score() -> Int = 40\nend\nclass LspBlue\n  def score() -> Int = 40\nend\ndef with_red(&block: Callable[[LspRed], Int]) -> Int = yield(LspRed.new())\ndef with_blue(&block: Callable[[LspBlue], Int]) -> Int = yield(LspBlue.new())\nchoice = if ARGV.length() == 0\n  with_red\nelse\n  with_blue\nend\nchoice() do |value|\n  value.score() + 2\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$union_block_uri"'","text":"'"$union_block_source"'"}}}'
 read_message >/dev/null
@@ -2442,7 +2447,7 @@ read_message >/dev/null
 
 # --- divergent union-receiver returns hover as their safe joined graph ---
 
-union_return_uri="file:///union_return_hover.di"
+union_return_uri="file:///union_return_hover.d6"
 union_return_source='class ReturnLeft\n  def value() -> Int = 42\nend\nclass ReturnRight\n  def value() -> String = \"forty-two\"\nend\ndef inspect(receiver: ReturnLeft | ReturnRight)\n  joined = receiver.value()\n  joined\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$union_return_uri"'","text":"'"$union_return_source"'"}}}'
 read_message >/dev/null
@@ -2457,7 +2462,7 @@ read_message >/dev/null
 
 # --- native collection relays retain joined union element graphs ---
 
-collection_relay_uri="file:///collection_relay_hover.di"
+collection_relay_uri="file:///collection_relay_hover.d6"
 collection_relay_source='def inspect(arrays: Array[Int] | Array[String], hashes: Hash[String, Int] | Hash[Symbol, String])
   first = arrays.first()
   first
@@ -2496,7 +2501,7 @@ read_message >/dev/null
 
 # --- argument and callback collection relays construct nested result graphs ---
 
-collection_transform_uri="file:///collection_transform_hover.di"
+collection_transform_uri="file:///collection_transform_hover.d6"
 collection_transform_source='def stringify(value: Int | String) -> String = \"mapped\"
 def inspect(arrays: Array[Int] | Array[String], hashes: Hash[String, Int] | Hash[Symbol, String])
   fallback = arrays.first_or(\"fallback\")
@@ -2550,7 +2555,7 @@ read_message >/dev/null
 
 # --- scalar, nullable, padded, and Callable-union collection results ---
 
-collection_scalar_uri="file:///collection_scalar_hover.di"
+collection_scalar_uri="file:///collection_scalar_hover.d6"
 collection_scalar_source='def inspect(arrays: Array[Int] | Array[String], mapper: Callable[[Int | String], String] | Callable[[Int | String], Symbol])
   minimum = arrays.min()
   minimum
@@ -2619,7 +2624,7 @@ read_message >/dev/null
 
 # --- mutable collection locals widen from push and indexed writes ---
 
-collection_mutation_uri="file:///collection_mutation_hover.di"
+collection_mutation_uri="file:///collection_mutation_hover.d6"
 collection_mutation_source='def inspect()
   items = []
   items.push(42)
@@ -2918,7 +2923,7 @@ read_message >/dev/null
 
 # --- a ninth mutation arm degrades instead of retaining eight stale arms ---
 
-collection_overflow_uri="file:///collection_overflow_hover.di"
+collection_overflow_uri="file:///collection_overflow_hover.d6"
 collection_overflow_source='class OverflowA
 end
 class OverflowB
@@ -2955,7 +2960,7 @@ read_message >/dev/null
 
 # --- heterogeneous spread literals bind generic result positions ---
 
-spread_generic_uri="file:///spread_generic_hover.di"
+spread_generic_uri="file:///spread_generic_hover.d6"
 spread_generic_source='def second[T, U](first: T, second: U) -> U = second\ndef suffix[A, B, C](first: A, middle: B, last: C) -> C = last\ndef keyword_middle[A, B, C](first: A, middle: B, last: C) -> B = middle\ndef inspect()\n  joined = second(*[\"ignored\", 42])\n  joined\n  fixed_joined = suffix(true, *[\"middle\"], 42)\n  fixed_joined\n  keyword_joined = keyword_middle(*[true, 42], last: \"done\")\n  keyword_joined\nend'
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$spread_generic_uri"'","text":"'"$spread_generic_source"'"}}}'
 read_message >/dev/null
@@ -2996,7 +3001,7 @@ read_message >/dev/null
 # `=`, which used to make the endless-detection scan run straight past the
 # header looking for any `=` anywhere later in the file) ---
 
-fmt_ok_uri="file:///fmt_ok.di"
+fmt_ok_uri="file:///fmt_ok.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_ok_uri"'","text":"interface Greetable\n  def greet() -> String\nend\n\nclass Widget\n  def process(items)\n    loop do\n      break if items.length() == 0\n    end\n    closure helper(x)\n      x + 1\n    end\n    value = if items.length() > 0 then items[0] else 0 end\n    kind = value.class()\n    result = helper(value)\n    result\n  end\n  def self.make() -> Widget = Widget.new()\nend"}}}'
 read_message >/dev/null
 
@@ -3016,7 +3021,7 @@ read_message >/dev/null
 # instead of the 6 its own nesting -- inside process(), inside the
 # closure -- needs) -- confirms a real fix gets proposed for these
 # constructs, not just a false "already fine" on them.
-fmt_broken_uri="file:///fmt_broken.di"
+fmt_broken_uri="file:///fmt_broken.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_broken_uri"'","text":"interface Greetable\n  def greet() -> String\nend\n\nclass Widget\n  def process(items)\n    loop do\n      break if items.length() == 0\n    end\n    closure helper(x)\n    x + 1\n    end\n    value = if items.length() > 0 then items[0] else 0 end\n    kind = value.class()\n    result = helper(value)\n    result\n  end\n  def self.make() -> Widget = Widget.new()\nend"}}}'
 read_message >/dev/null
 
@@ -3034,7 +3039,7 @@ read_message >/dev/null
 # Line 3 starts inside the literal (leading untouched) but its closing quote
 # ends it, so the two spaces AFTER the quote are ordinary trailing whitespace
 # and are still trimmed.
-fmt_string_uri="file:///fmt_string.di"
+fmt_string_uri="file:///fmt_string.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_string_uri"'","text":"def f()\n  x = \"a\n   b  \nc\"  \n  x\nend"}}}'
 read_message >/dev/null
 
@@ -3049,7 +3054,7 @@ read_message >/dev/null
 # A method chain continued on leading-dot lines: the chain lines print one level
 # deeper than the statement, and a `do` body one level deeper again. Already
 # correct here, so no edits; the flush-left copy gets its `.map` line fixed.
-fmt_chain_uri="file:///fmt_chain.di"
+fmt_chain_uri="file:///fmt_chain.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_chain_uri"'","text":"def f(items)\n  result = items\n    .map() do |v|\n      v + 1\n    end\n    .reverse()\n  result\nend"}}}'
 read_message >/dev/null
 
@@ -3061,7 +3066,7 @@ count=$((count + 1))
 send '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$fmt_chain_uri"'"}}}'
 read_message >/dev/null
 
-fmt_flush_uri="file:///fmt_flush.di"
+fmt_flush_uri="file:///fmt_flush.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_flush_uri"'","text":"def f(items)\n  result = items\n  .reverse()\n  result\nend"}}}'
 read_message >/dev/null
 
@@ -3077,7 +3082,7 @@ read_message >/dev/null
 # nesting depth still taken from the whole document; and the spacing and
 # blank-line rules from the same pass ---
 
-fmt_range_uri="file:///fmt_range.di"
+fmt_range_uri="file:///fmt_range.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$fmt_range_uri"'","text":"def f()\nx=1\ny=[1,2]\nend\n\n\nz=3"}}}'
 read_message >/dev/null
 
@@ -3114,7 +3119,7 @@ count=$((count + 1))
 
 # --- completion on built-in values: String/Array/Hash/Int/Float locals and literals ---
 
-builtin_uri="file://$work/builtin_members.di"
+builtin_uri="file://$work/builtin_members.d6"
 send '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$builtin_uri"'","text":"s = \"abc\"\na = [3, 1, 2]\nh = {\"a\": 1}\ni = 5\nf = 2.5\ns.length()\na.length()\nh.length()\ni.abs()\nf.abs()\n\"lit\".length()\n7.abs()\n\ns.strip().length()\n[1, 2].length()\n{\"a\": 1}.length()\ni.to_s().length()\n(s).length()\ns.split(\" \").length()\na.length().abs()\n"}}}'
 read_message >/dev/null
 builtin_labels() { # id line character -> one label per line
@@ -3163,7 +3168,7 @@ count=$((count + 5))
 for entry in 'string_members|"abc"' 'array_members|[3, 1, 2]' 'hash_members|{"a": 1}' \
              'int_members|5' 'float_members|2.5'; do
     variable="${entry%%|*}"; literal="${entry#*|}"
-    script="$work/members_$variable.di"
+    script="$work/members_$variable.d6"
     : > "$script"
     while IFS= read -r member; do
         grep -qxF -- "$member" <<<"$baseline" && continue
@@ -3183,8 +3188,8 @@ send_utf8() {
     bytes="$(printf '%s' "$body" | LC_ALL=C wc -c)"
     printf 'Content-Length: %d\r\n\r\n%s' "$bytes" "$body" >&"${LSP[1]}"
 }
-unicode_uri="file://$work/unicode_positions.di"
-printf 'def greet(name)\n  name\nend\nlabel = "é😀"; greet("a")\nsecond = "é😀"; def later()\n  1\nend\n' > "$work/unicode_positions.di"
+unicode_uri="file://$work/unicode_positions.d6"
+printf 'def greet(name)\n  name\nend\nlabel = "é😀"; greet("a")\nsecond = "é😀"; def later()\n  1\nend\n' > "$work/unicode_positions.d6"
 send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$unicode_uri"'","text":"def greet(name)\n  name\nend\nlabel = \"é😀\"; greet(\"a\")\nsecond = \"é😀\"; def later()\n  1\nend\n"}}}'
 read_message >/dev/null
 
@@ -3215,7 +3220,7 @@ response="$(read_message)"
 count=$((count + 1))
 
 # the formatter's edits after the string are at UTF-16 columns 11 and 12 (byte columns 14 and 15)
-format_uri="file://$work/unicode_format.di"
+format_uri="file://$work/unicode_format.d6"
 send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$format_uri"'","text":"s = \"é😀\";x=1\n"}}}'
 read_message >/dev/null
 send_utf8 '{"jsonrpc":"2.0","id":3006,"method":"textDocument/formatting","params":{"textDocument":{"uri":"'"$format_uri"'"},"options":{"tabSize":2,"insertSpaces":true}}}'
@@ -3224,7 +3229,7 @@ response="$(read_message)"
 count=$((count + 1))
 
 # a syntax error after the string is reported at UTF-16 column 11 (byte column 14)
-error_uri="file://$work/unicode_error.di"
+error_uri="file://$work/unicode_error.d6"
 send_utf8 '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$error_uri"'","text":"s = \"é😀\"; )\n"}}}'
 response="$(read_message)"
 [[ "$response" == *'"severity":1'* && "$response" == *'"start":{"line":0,"character":11}'* ]]

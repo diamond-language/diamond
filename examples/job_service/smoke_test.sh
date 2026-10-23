@@ -6,6 +6,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export DIAMOND_NO_CACHE=1
 bash tools/install_local_cuts.sh . > "$work/cuts.log"
-"$diamond" examples/job_service/smoke_test.di "$diamond" examples/job_service/service.di
-"$diamond" build examples/job_service/service.di -o "$work/service" > "$work/build.log"
-"$diamond" examples/job_service/smoke_test.di "$work/service"
+"$diamond" examples/job_service/smoke_test.d6 "$diamond" examples/job_service/service.d6
+"$diamond" build examples/job_service/service.d6 -o "$work/service" > "$work/build.log"
+"$diamond" examples/job_service/smoke_test.d6 "$work/service"

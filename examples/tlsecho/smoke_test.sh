@@ -37,7 +37,7 @@ client_cert() { # ca name subject
 client_cert clientca alice "/CN=alice/O=Acme"
 client_cert evilca mallory "/CN=mallory"
 
-"$diamond" build tlsecho.di -o "$work/tlsecho" > "$work/build.log"
+"$diamond" build tlsecho.d6 -o "$work/tlsecho" > "$work/build.log"
 t="$work/tlsecho"
 client() { timeout 20 "$t" client "$@"; }
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }

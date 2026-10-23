@@ -366,13 +366,13 @@ helpers), and `#softmax_backward(grad_output)`/`#gelu_backward(grad_output)`
 (returns `[output, normalized, inv_std]`, an `Array[Tensor]`)/
 `#layernorm_backward(gamma, grad_output, inv_std)` (called on
 `layernorm_forward`'s own `normalized` result; returns `[grad_x,
-grad_gamma, grad_beta]`) — see `examples/transformer/lib/tensor_ops.di`
+grad_gamma, grad_beta]`) — see `examples/transformer/lib/tensor_ops.d6`
 for friendlier Diamond wrappers around these, and that example's own
-`gradcheck.di` for every formula checked against numerical
+`gradcheck.d6` for every formula checked against numerical
 (finite-difference) gradients. Still deliberately
 narrow, not a general tensor library: no broadcasting, no non-2D shapes,
 and no autodiff built into `Tensor` itself — `examples/transformer`'s own
-reverse-mode autograd (`examples/transformer/lib/var.di` and `autograd.di`) is ordinary
+reverse-mode autograd (`examples/transformer/lib/var.d6` and `autograd.d6`) is ordinary
 Diamond code layered on top of these primitives, not a VM feature. It
 exists to measure real `matmul`/elementwise throughput (`bench/`-style
 native code, not boxed `DiamondValue` arrays) before committing to a
@@ -530,7 +530,7 @@ untouched); `Int` is the only type with a native ordering comparison,
 so this is Int-only, checked up front (`expected Array[Int], got
 Array` on a non-Int element) rather than failing confusingly mid-sort.
 
-`StringBuilder` (defined in the prelude, `lib/core.di`) is the named
+`StringBuilder` (defined in the prelude, `lib/core.d6`) is the named
 escape hatch from `result = result + piece` in a loop — quadratic,
 since it reallocates and copies the whole accumulated string on every
 iteration:
@@ -555,7 +555,7 @@ already has for a pre-collected array of pieces.
 
 Beyond the methods above, built-in values answer most of the everyday
 Enumerable-style methods. They're ordinary Diamond functions in the prelude
-(`lib/core.di`, named `diamond_array_…`, `diamond_hash_…`, and so on) that
+(`lib/core.d6`, named `diamond_array_…`, `diamond_hash_…`, and so on) that
 the VM finds when a value has no native method of that name. A program can
 define its own `array_foo(values, ...)` (or `hash_`, `string_`, `integer_`,
 `float_`, `numeric_`) function to add a method, or to replace one of these.

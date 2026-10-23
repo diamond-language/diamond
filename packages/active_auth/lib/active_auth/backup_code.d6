@@ -1,0 +1,102 @@
+module ActiveAuth
+
+  # Ported from ActiveAuth's own BackupCode -- one-time 2FA recovery
+  # codes. Only a bcrypt digest of each normalized code is ever stored;
+  # `self.generate_for!` returns the raw codes exactly once, for the
+  # caller to show the account holder immediately (never retrievable
+  # again afterward).
+  class BackupCode < ActiveRecord::Model
+    attr_accessor account_id, code_digest: String, used_at
+
+    def self.batch_size() = 8
+
+    def initialize(attributes: Hash = {})
+      super(attributes)
+      @account_id = attributes["account_id"]
+      @code_digest = attributes["code_digest"]
+      @used_at = attributes["used_at"]
+    end
+
+    def to_attributes() = {"account_id": @account_id, "code_digest": @code_digest, "used_at": @used_at}
+    # The JSON shape leaves out the secret columns; #to_attributes (used to persist the record) keeps them.
+    def as_json() = {"account_id": @account_id, "used_at": @used_at}
+    def repository() = @@repository
+    def self.repository() = @@repository
+    def self.configure(repository: ActiveRecord::Repository)
+      @@repository = repository
+    end
+
+    def used?() -> Bool = @used_at != nil
+
+    # Uppercase, alphanumeric-only -- accepts "a1b2-c3d4-e5f6",
+    # "A1B2 C3D4 E5F6", or the bare "A1B2C3D4E5F6" as the same code.
+    def self.normalize_code(raw: String) -> String
+      letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      upper = raw.upcase()
+      upper.split("").select() do |ch|
+        letters.include?(ch)
+      end.join("")
+    end
+
+    # Ruby's own #match? also checks a second, more weakly-normalized
+    # form (upcase + whitespace-only strip, dashes kept) -- redundant in
+    # practice, since every stored digest was created from the fully
+    # normalized (alnum-only) form to begin with, so it can never match
+    # a real code the first check wouldn't already catch. Not ported.
+    def match?(raw_code: String) -> Bool
+      if self.used?()
+        return false
+      end
+      BCrypt.verify(BackupCode.normalize_code(raw_code), @code_digest)
+    end
+
+    # Marks the code used with an UPDATE that applies only while the row is still unused, and says whether this call was the one that did.
+    # Of several requests presenting the same code at once exactly one gets true: #match? looks at the copy each of them loaded before
+    # any consumed it, so that check alone cannot stop a second use.
+    def consume!(db) -> Bool
+      table = Arel.table("backup_codes")
+      now = Time.now().to_i()
+      changed = Arel.update(table).set({"used_at": now}).where(
+        table.column("id").eq(self.id())).where(table.column("used_at").eq(nil)).execute(db)
+      if changed == 0
+        return false
+      end
+      self.used_at = now
+      true
+    end
+
+    # Checks and consumes in one call, so a caller doesn't have to remember to call both. True only when the code matched and this call
+    # consumed it: the consume is a conditional UPDATE, so a second request with the same code loses even if it matched on a stale copy.
+    def consume_if_match!(db, raw_code: String) -> Bool
+      if self.match?(raw_code)
+        self.consume!(db)
+      else
+        false
+      end
+    end
+
+    def account(db) = self.belongs_to(Account.repository()).get(db, @account_id)
+
+    # Replaces every existing code for `account_id` with BATCH_SIZE fresh
+    # ones, returning the raw codes (e.g. ["A1B2-C3D4-E5F6", ...]) --
+    # show these to the account holder once; only digests are persisted.
+    def self.generate_for!(db, account_id)
+      existing = BackupCode.where({"account_id": account_id}).to_a(db)
+      existing.each() do |code| code.destroy(db) end
+      raw_codes = []
+      BackupCode.batch_size().times() do |index|
+        raw_codes.push("#{SecureRandom.hex(2).upcase()}-#{SecureRandom.hex(2).upcase()}-#{SecureRandom.hex(2).upcase()}")
+      end
+      raw_codes.each() do |raw|
+        BackupCode.create(db, {"account_id": account_id, "code_digest": BCrypt.hash(BackupCode.normalize_code(raw), 12)})
+      end
+      raw_codes
+    end
+  end
+
+end
+
+# A genuine top-level function, not nested inside `module ActiveAuth`
+# above -- see account.d6's own comment for why it's placed after the
+# module.
+def build_backup_code(row) = ActiveAuth::BackupCode.new(row)

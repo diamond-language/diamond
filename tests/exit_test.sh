@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # exit() terminates the whole OS process immediately (see DIAMOND_OP_EXIT,
-# src/vm.c's exit_helper) -- it can never be exercised from tests/cases/*.di,
+# src/vm.c's exit_helper) -- it can never be exercised from tests/cases/*.d6,
 # since build/run_cases runs its entire ~1000-case corpus in one shared
 # process (tests/run_cases.c) and a real exit() there would kill the whole
 # batch, not just this one case. Every assertion here goes through a real

@@ -5,7 +5,7 @@ pipelines built from those generators, as two-way coroutines, and as tasks
 under a small cooperative scheduler.
 
 ```text
-$ diamond generators.di
+$ diamond generators.d6
 == infinite generators
 naturals:  0 1 2 3 4 5 6 7
 fibonacci: 0 1 1 2 3 5 8 13 21 34 55 89
@@ -29,7 +29,7 @@ t=3 kettle: boiled
 ## What it shows
 
 - **Generators from blocks.** `Generator.new() do ... end`
-  (`lib/generator.di`) stores its block through an `&block` parameter. Each
+  (`lib/generator.d6`) stores its block through an `&block` parameter. Each
   `each` or `first(n)` call runs the block in a fresh `Fiber` and resumes it
   once per value; the block hands values out with `Fiber.yield`. Because
   values are produced on demand, `naturals()`, `fibonacci()`, and `primes()`
@@ -51,7 +51,7 @@ t=3 kettle: boiled
   nested `def`s. `Fiber.new` needs a zero-argument callable, so
   `make_tokenizer` captures its `text` argument instead of taking it as a
   parameter.
-- **A scheduler.** `Scheduler` (`lib/scheduler.di`) keeps one fiber per task
+- **A scheduler.** `Scheduler` (`lib/scheduler.d6`) keeps one fiber per task
   on a simulated clock. Tasks yield `[:sleep, ticks]` or `:pass`, and `step`
   matches the request with an array pattern and an `if` guard. A task that
   raises is rescued at `resume`, logged, and dropped without disturbing the

@@ -378,22 +378,19 @@ static bool expand_source(Loader *loader,const char *path,const char *source,
                         path,line,requested);
                     return false;
                 }
-                int written=snprintf(cut_path,DIAMOND_MAX_SOURCE_PATH,
-                    "cuts/%.*s/lib/%.*s.di",
-                    (int)request_length,requested,(int)request_length,requested);
-                bool resolved=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
-                    realpath(cut_path,canonical)!=nullptr;
-                if(!resolved) {
-                    written=snprintf(cut_path,DIAMOND_MAX_SOURCE_PATH,
-                        "cuts/%.*s/%.*s.di",
-                        (int)request_length,requested,(int)request_length,requested);
+                const char *entries[]={"cuts/%.*s/lib/%.*s.d6","cuts/%.*s/%.*s.d6",
+                    "cuts/%.*s/lib/%.*s.di","cuts/%.*s/%.*s.di"};
+                bool resolved=false;
+                for(size_t index=0;index<sizeof entries/sizeof entries[0]&&!resolved;index++) {
+                    const int written=snprintf(cut_path,DIAMOND_MAX_SOURCE_PATH,
+                        entries[index],(int)request_length,requested,(int)request_length,requested);
                     resolved=written>0&&(size_t)written<DIAMOND_MAX_SOURCE_PATH&&
                         realpath(cut_path,canonical)!=nullptr;
                 }
                 free(cut_path);
                 if(!resolved) {
                     (void)snprintf(loader->error,loader->error_capacity,
-                        "%s:%zu: cannot require_cut '%s': no cuts/%.*s/lib/%.*s.di",
+                        "%s:%zu: cannot require_cut '%s': no cuts/%.*s/lib/%.*s.d6",
                         path,line,requested,
                         (int)request_length,requested,(int)request_length,requested);
                     return false;
@@ -401,8 +398,11 @@ static bool expand_source(Loader *loader,const char *path,const char *source,
                 if(!validate_cut_manifest(loader,requested,request_length,path,line))
                     return false;
             } else {
-                if(request_length<3||strcmp(requested+request_length-3,".di")!=0)
-                    memcpy(requested+request_length,".di",4);
+                const bool implicit_extension=request_length<3||
+                    (strcmp(requested+request_length-3,".d6")!=0&&
+                     strcmp(requested+request_length-3,".di")!=0);
+                if(implicit_extension)
+                    memcpy(requested+request_length,".d6",4);
                 char joined[DIAMOND_MAX_SOURCE_PATH];
                 const char *slash=strrchr(path,'/');
                 const size_t directory=slash==nullptr?0:(size_t)(slash-path)+1;
@@ -421,7 +421,14 @@ static bool expand_source(Loader *loader,const char *path,const char *source,
                     }
                     memcpy(joined,path,directory);strcpy(joined+directory,requested);
                 }
-                if(realpath(joined,canonical)==nullptr) {
+                bool resolved=realpath(joined,canonical)!=nullptr;
+                if(!resolved&&implicit_extension&&(errno==ENOENT||errno==ENOTDIR)) {
+                    const size_t joined_length=strlen(joined);
+                    memcpy(joined+joined_length-3,".di",4);
+                    resolved=realpath(joined,canonical)!=nullptr;
+                    memcpy(joined+joined_length-3,".d6",4);
+                }
+                if(!resolved) {
                     (void)snprintf(loader->error,loader->error_capacity,
                         "%s:%zu: cannot require '%s': %s",path,line,joined,
                         strerror(errno));

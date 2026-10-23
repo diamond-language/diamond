@@ -7,18 +7,18 @@ exercise Diamond's type system: generics, union types, sealed hierarchies with
 exhaustive `case`, `Comparable`, and `freeze`.
 
 ```text
-$ diamond resolver.di testdata/index.txt web:">=1.0.0"
+$ diamond resolver.d6 testdata/index.txt web:">=1.0.0"
 web 2.0.0
 rack 2.0.0
 json 2.0.0
 
-$ diamond resolver.di testdata/index.txt web:"=1.1.0"
+$ diamond resolver.d6 testdata/index.txt web:"=1.1.0"
 web 1.1.0
 rack 1.2.0
 json 1.1.0
 logger 0.5.0
 
-$ diamond resolver.di testdata/index.txt admin:"*"
+$ diamond resolver.d6 testdata/index.txt admin:"*"
 conflict: json must be exactly 1.0.0 (wanted by admin 1.0.0)
   but 2.0.0 is already chosen
 ```
@@ -26,8 +26,8 @@ conflict: json must be exactly 1.0.0 (wanted by admin 1.0.0)
 ## Usage
 
 ```text
-resolver.di INDEX NAME:CONSTRAINT...
-resolver.di --check INDEX
+resolver.d6 INDEX NAME:CONSTRAINT...
+resolver.d6 --check INDEX
 ```
 
 `INDEX` has one release per line: `name version [dep:constraint ...]`, with
@@ -50,30 +50,30 @@ the same walk to a solution.
 ## What it shows
 
 - **Generics on functions and methods.** `unique[T](items: Array[T]) ->
-  Array[T]` (`lib/set.di`) ties its argument and result together, and
+  Array[T]` (`lib/set.d6`) ties its argument and result together, and
   `Set#add[T]` binds `T` per call. In this version type parameters exist on
   functions and methods only; `class Set[T]` is a parse error, so the `Set`
   class stores untyped members. The compiler checks calls it can prove wrong;
   anything else is checked as the call runs: `unique(5)` raises a `TypeError`
   (`expected Array[TypeVariable], got Int`).
-- **Hand-written `Set`.** Diamond has no built-in `Set`, so `lib/set.di` builds
+- **Hand-written `Set`.** Diamond has no built-in `Set`, so `lib/set.d6` builds
   one over a Hash. `--check` uses `unique` to report each missing dependency
   once, however many releases mention it.
 - **Union types.** `resolve` returns `Resolved | Conflict | Missing`, three
   unrelated classes; `Conflict#chosen` is `Version | Nil`, and
   `Index#newest_matching` returns `Release | Nil` so callers must handle the
   empty case.
-- **Exhaustive `case` over a union.** `report` in `resolver.di` has a `case`
+- **Exhaustive `case` over a union.** `report` in `resolver.d6` has a `case`
   with no `else` that names `Resolved`, `Conflict` and `Missing`. Delete one
   arm and the file stops compiling: `case is not exhaustive over its
   subject's known closed type; missing: Missing`.
 - **Sealed hierarchy.** `Constraint` is `sealed` with four subclasses
-  (`lib/constraint.di`). `satisfies?` and `describe` both `case` over it with
+  (`lib/constraint.d6`). `satisfies?` and `describe` both `case` over it with
   no `else`, using object patterns (`Between{low: low, high: high}`) to bind
   the readers; remove the `AtLeast` arm and compilation fails with `missing:
   AtLeast`. Adding a fifth constraint kind would break each of them the same
   way.
-- **`Comparable`.** `Version` defines `<=>` once (`lib/version.di`) and gets
+- **`Comparable`.** `Version` defines `<=>` once (`lib/version.d6`) and gets
   `<`, `>=`, `==`, `between?`, `sort`, `sort_by` and `max` from
   `include Comparable`. The index keeps each package's releases sorted this
   way, so "newest matching" is `candidates.last()`.
@@ -82,7 +82,7 @@ the same walk to a solution.
   stored value. The loaded `Index` is frozen too, but `freeze()` only blocks
   assigning instance variables; a frozen object's Hash is still editable. So
   `Index#seal` freezes `@releases` as well, and a later `index.add(...)` raises
-  `FrozenError` (`testdata/frozen.di`).
+  `FrozenError` (`testdata/frozen.d6`).
 - **Plain `Struct`-style data.** `struct Release(name:, version:, needs:)`
   generates the constructor and readers.
 
@@ -110,5 +110,5 @@ bash smoke_test.sh
 Runs the program interpreted and as a `diamond build` binary over eleven
 resolutions (including the conflict, the pinned workaround, a missing package,
 a cycle and `--check`), comparing both to `testdata/session.expected`; checks
-every error status and message; and runs `testdata/frozen.di` for the freezing
+every error status and message; and runs `testdata/frozen.d6` for the freezing
 and generic-argument behavior.

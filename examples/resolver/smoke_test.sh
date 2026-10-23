@@ -12,10 +12,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build resolver.di -o "$work/resolver" > "$work/build.log"
+"$diamond" build resolver.d6 -o "$work/resolver" > "$work/build.log"
 
 # Prints "$ resolver args", the program's stdout, and its exit status for one
-# run of the command held in VM (an array: either `diamond resolver.di` or the
+# run of the command held in VM (an array: either `diamond resolver.d6` or the
 # built binary), so both modes produce an identical transcript.
 transcript() {
   local status=0
@@ -40,14 +40,14 @@ session() {
 }
 
 # Both binaries must print exactly the golden transcript.
-VM=("$diamond" resolver.di)
+VM=("$diamond" resolver.d6)
 session | cmp testdata/session.expected -
 VM=("$work/resolver")
 session | cmp testdata/session.expected -
 
 # Error paths: usage (64), bad data (65), unreadable index (66). Each must
 # also say something useful on stderr.
-for vm in "$diamond resolver.di" "$work/resolver"; do
+for vm in "$diamond resolver.d6" "$work/resolver"; do
   status_of() { local s=0; $vm "$@" > /dev/null 2> "$work/err" || s=$?; echo "$s"; }
   [[ "$(status_of)" == 64 ]]
   [[ "$(status_of testdata/index.txt)" == 64 ]]
@@ -63,6 +63,6 @@ for vm in "$diamond resolver.di" "$work/resolver"; do
 done
 
 # Freezing and generic checks run inside the interpreter only.
-"$diamond" testdata/frozen.di | cmp testdata/frozen.expected -
+"$diamond" testdata/frozen.d6 | cmp testdata/frozen.expected -
 
 echo "resolver smoke test passed"

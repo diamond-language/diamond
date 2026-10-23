@@ -5200,7 +5200,7 @@ DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t dept
 /* Plain byte-lexicographic ordering (memcmp on the shared prefix, then
  * shorter-is-less on a tie) -- the same ordering C's own strcmp/memcmp
  * and Ruby's String#<=> use. Diamond's String is a raw byte buffer,
- * not UTF-8-validated (see e.g. examples/transformer/lib/tokenizer.di's
+ * not UTF-8-validated (see e.g. examples/transformer/lib/tokenizer.d6's
  * own comment on why that property gets relied on elsewhere), so this
  * is a byte comparison, not a locale-aware or codepoint-aware one --
  * matches every other place in this codebase that already treats
@@ -6639,7 +6639,7 @@ bool array_value_satisfies_constraints(DiamondArray *array,
 }
 
 /* Recognizes an INDEX_GET/SET operand that's a Range instance (lib/
- * core.di, fields @start/@end/@exclusive at slots 0/1/2 in declaration
+ * core.d6, fields @start/@end/@exclusive at slots 0/1/2 in declaration
  * order -- confirmed directly against field_index's own create-on-
  * first-miss slot assignment) rather than a plain Int -- there's no
  * native VM value kind for Range at all, it's an ordinary user-space
@@ -8244,7 +8244,7 @@ DiamondVmStatus stringify_value(DiamondVm *vm,const DiamondChunk *chunk,
  * #join. stringify_value (not builder_format_value) matches
  * interpolation's own `"#{value}"` semantics exactly, including
  * calling a user-defined to_s override on an Instance -- the behavior
- * array_join's old Diamond-level `lib/core.di` loop had via its own
+ * array_join's old Diamond-level `lib/core.d6` loop had via its own
  * `"#{}"` interpolation, before it became this native, O(n) method. */
 static DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk,
         size_t depth,const DiamondArray *array,const char *separator_chars,
@@ -13156,7 +13156,7 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
      * otherwise be baked into every run_chunk call's own
      * frame, not just calls that actually reach #join --
      * confirmed by an ASan stack-overflow regression this
-     * exact addition caused in legacy_0092.di's deep-
+     * exact addition caused in legacy_0092.d6's deep-
      * recursion SystemStackError test before this was
      * factored out. */
     if(receiver_kind==DIAMOND_OBJECT_ARRAY) {
@@ -13432,7 +13432,7 @@ __attribute__((noinline))
 static DiamondVmStatus int_extension_method(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
     /* times/upto/downto -- trivial Callable[1] consumers of
      * block syntax, forwarded to ordinary prelude Diamond
-     * functions (lib/core.di) exactly like Array/Hash's own
+     * functions (lib/core.d6) exactly like Array/Hash's own
      * Enumerable methods below, rather than hand-rolled
      * here. */
     const char *target_name=nullptr;

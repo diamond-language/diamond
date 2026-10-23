@@ -11,6 +11,36 @@ dispatch. This document is a tour of the surface syntax; see
 HTTP is the `packages/http` package, installed with `facet`
 ([Cuts](packages.md)): a server and client built on the I/O primitives below.
 
+## Source files and imports
+
+`.d6` is Diamond's default and preferred source extension. `.di` files remain
+supported for backward compatibility, but use `.d6` for new source files.
+Compiled caches for `.d6` sources use `.d6c`.
+
+For an extensionless `require`, Diamond tries `.d6` first and falls back to
+`.di` only if the `.d6` file is absent. For example, put these three files in
+the same directory:
+
+```ruby
+# helper.d6
+def answer() = 42
+```
+
+```ruby
+# helper.di
+def answer() = 99
+```
+
+```ruby
+# main.d6
+require "helper"
+answer()  # => 42: helper.d6 takes precedence over helper.di
+```
+
+An explicit `require "helper.di"` loads the legacy file instead, so `answer()`
+returns `99`. If `helper.d6` is absent, `require "helper"` also loads
+`helper.di`.
+
 ## Basics
 
 ```ruby
@@ -599,7 +629,7 @@ end
 
 `1..5` (inclusive of `5`) and `1...5` (exclusive of `5`) both desugar
 directly at parse time into `Range.new(1, 5, false)` /
-`Range.new(1, 5, true)` — `Range` is a plain class in `lib/core.di`, the
+`Range.new(1, 5, true)` — `Range` is a plain class in `lib/core.d6`, the
 same "not a native object" precedent `StringBuilder` already establishes,
 not a new VM value kind. No new bytecode opcode exists for it either:
 the desugaring reuses the exact same `NEW` instruction sequence

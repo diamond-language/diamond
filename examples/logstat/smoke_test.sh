@@ -8,10 +8,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" logstat.di testdata/sample.ndjson > "$work/interpreted.txt"
+"$diamond" logstat.d6 testdata/sample.ndjson > "$work/interpreted.txt"
 cmp testdata/sample.expected "$work/interpreted.txt"
 
-"$diamond" build logstat.di -o "$work/logstat" > "$work/build.log"
+"$diamond" build logstat.d6 -o "$work/logstat" > "$work/build.log"
 "$work/logstat" testdata/sample.ndjson > "$work/binary.txt"
 cmp testdata/sample.expected "$work/binary.txt"
 "$work/logstat" < testdata/sample.ndjson | cmp testdata/sample.expected -

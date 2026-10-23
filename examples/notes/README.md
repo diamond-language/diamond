@@ -5,16 +5,16 @@ builtin directly: no ORM, just SQL, bind parameters, and a few of SQLite's
 own features.
 
 ```text
-$ echo 'Pick up flour, eggs, and the good butter.' | diamond notes.di add Groceries home errands
+$ echo 'Pick up flour, eggs, and the good butter.' | diamond notes.d6 add Groceries home errands
 added 1
-$ echo 'Butter the pan before the eggs go in.' | diamond notes.di add Omelette cooking home
+$ echo 'Butter the pan before the eggs go in.' | diamond notes.d6 add Omelette cooking home
 added 2
-$ diamond notes.di search butter
+$ diamond notes.d6 search butter
    1  Groceries
       Pick up flour, eggs, and the good [butter].
    2  Omelette
       [Butter] the pan before the eggs go in.
-$ diamond notes.di list home
+$ diamond notes.d6 list home
    1  2026-08-14  Groceries  [errands, home]
    2  2026-09-20  Omelette  [cooking, home]
 ```
@@ -45,7 +45,7 @@ can't be read.
 
 ## What it shows
 
-- **Migrations** (`lib/store.di`). Each schema version is a list of SQL
+- **Migrations** (`lib/store.d6`). Each schema version is a list of SQL
   statements, and `PRAGMA user_version` records how far a database has
   come. Opening a version-1 file (from before search existed) creates the
   search index and fills it from the existing notes.
@@ -53,7 +53,7 @@ can't be read.
   between `BEGIN` and `COMMIT`, and rolls back if the block exits any other
   way. It uses `ensure` rather than `rescue`, so a `return` or `break`
   from inside the block rolls back as well as an exception does
-  (`testdata/transaction_exits.di` checks both). A transaction started
+  (`testdata/transaction_exits.d6` checks both). A transaction started
   inside another one joins it, so `add` can be used inside `import`.
 - **All-or-nothing import.** `import` validates each entry inside one
   transaction; the first bad entry raises, and the entries before it are

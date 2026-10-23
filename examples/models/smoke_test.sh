@@ -8,8 +8,8 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" models.di testdata/schema.json | diff -u testdata/expected.txt -
-"$diamond" build models.di -o "$work/models" > "$work/build.log"
+"$diamond" models.d6 testdata/schema.json | diff -u testdata/expected.txt -
+"$diamond" build models.d6 -o "$work/models" > "$work/build.log"
 "$work/models" testdata/schema.json | diff -u testdata/expected.txt -
 
 # Methods come from the schema: drop Book's in_print field and in_print?

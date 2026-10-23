@@ -2,8 +2,8 @@
 
 Recorded 2026-10-02 on the Ryzen 5 Pro 7535U (6 cores / 12 threads), Diamond
 0.10.1 `make release` (`-O3 -DNDEBUG -march=native`), gremlin 0.4.0. Run
-`diamond bench/gremlin_http/sweep.di` (needs `ab`). The older `run.sh` predates
-the move of gremlin to `lib/gremlin.di`/`require_cut` and no longer runs.
+`diamond bench/gremlin_http/sweep.d6` (needs `ab`). The older `run.sh` predates
+the move of gremlin to `lib/gremlin.d6`/`require_cut` and no longer runs.
 
 Endpoint: ~2000-iteration integer loop, an 8-element array of hashes, and
 `JSON.stringify` per request (about 0.77 ms serial including client overhead).

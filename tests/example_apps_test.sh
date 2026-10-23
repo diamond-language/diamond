@@ -15,25 +15,25 @@ trap cleanup EXIT
 install_cuts() { bash "$root/tools/install_local_cuts.sh" . >/dev/null; }
 
 echo "== guestbook"
-(cd examples/guestbook && install_cuts && "$diamond" smoke_test.di >/dev/null)
+(cd examples/guestbook && install_cuts && "$diamond" smoke_test.d6 >/dev/null)
 
 echo "== project_board"
 (cd examples/project_board && install_cuts && DIAMOND_BIN="$diamond" bash compile_views.sh >/dev/null \
-    && DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null && DIAMOND_ENV=test "$diamond" smoke_test.di 2>&1 | grep -q smoke_test.passed)
+    && DIAMOND_ENV=test "$diamond" setup_db.d6 >/dev/null && DIAMOND_ENV=test "$diamond" smoke_test.d6 2>&1 | grep -q smoke_test.passed)
 
 echo "== chat"
-(cd examples/chat && install_cuts && "$diamond" smoke_test.di 2>&1 | grep -q "chat smoke test passed")
+(cd examples/chat && install_cuts && "$diamond" smoke_test.d6 2>&1 | grep -q "chat smoke test passed")
 
 echo "== bookmarks"
-(cd examples/bookmarks && install_cuts && "$diamond" smoke_test.di 2>&1 | grep -q "bookmarks smoke test passed")
+(cd examples/bookmarks && install_cuts && "$diamond" smoke_test.d6 2>&1 | grep -q "bookmarks smoke test passed")
 
 echo "== library"
 (
     cd examples/library
     install_cuts
     DIAMOND_BIN="$diamond" bash compile_views.sh >/dev/null
-    DIAMOND_ENV=test "$diamond" setup_db.di >/dev/null
-    DIAMOND_ENV=test "$diamond" app.di >"$(mktemp)" 2>&1 &
+    DIAMOND_ENV=test "$diamond" setup_db.d6 >/dev/null
+    DIAMOND_ENV=test "$diamond" app.d6 >"$(mktemp)" 2>&1 &
     server_pid=$!
     ready=0
     for _ in $(seq 1 100); do

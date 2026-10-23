@@ -13,8 +13,8 @@ cleanup() {
 }
 trap cleanup EXIT
 export DIAMOND_NO_CACHE=1
-timeout 30 "$diamond" test/cancellation_test.di
-"$diamond" build test/cancellation_test.di -o "$work/cancellation-test" > "$work/build.log"
+timeout 30 "$diamond" test/cancellation_test.d6
+"$diamond" build test/cancellation_test.d6 -o "$work/cancellation-test" > "$work/build.log"
 timeout 30 "$work/cancellation-test"
 
 # Signal handlers run at VM instruction boundaries, including while a token
@@ -43,19 +43,19 @@ check_signal_wait() {
         return 1
     fi
 }
-check_signal_wait "$diamond" test/signal_test.di
-"$diamond" build test/signal_test.di -o "$work/signal-test" > "$work/signal-build.log"
+check_signal_wait "$diamond" test/signal_test.d6
+"$diamond" build test/signal_test.d6 -o "$work/signal-test" > "$work/signal-build.log"
 check_signal_wait "$work/signal-test"
 echo "cancellation signal tests passed"
-"$diamond" test/socket_driver.di "$diamond" test/socket_test.di
-"$diamond" build test/socket_test.di -o "$work/socket-test" > "$work/socket-build.log"
-"$diamond" test/socket_driver.di "$work/socket-test"
-"$diamond" test/connect_driver.di "$diamond" test/connect_test.di
-"$diamond" build test/connect_test.di -o "$work/connect-test" > "$work/connect-build.log"
-"$diamond" test/connect_driver.di "$work/connect-test"
-"$diamond" test/dns_driver.di "$diamond" test/dns_test.di
-"$diamond" build test/dns_test.di -o "$work/dns-test" > "$work/dns-build.log"
-"$diamond" test/dns_driver.di "$work/dns-test"
-"$diamond" test/tls_driver.di "$diamond" test/tls_test.di
-"$diamond" build test/tls_test.di -o "$work/tls-test" > "$work/tls-build.log"
-"$diamond" test/tls_driver.di "$work/tls-test"
+"$diamond" test/socket_driver.d6 "$diamond" test/socket_test.d6
+"$diamond" build test/socket_test.d6 -o "$work/socket-test" > "$work/socket-build.log"
+"$diamond" test/socket_driver.d6 "$work/socket-test"
+"$diamond" test/connect_driver.d6 "$diamond" test/connect_test.d6
+"$diamond" build test/connect_test.d6 -o "$work/connect-test" > "$work/connect-build.log"
+"$diamond" test/connect_driver.d6 "$work/connect-test"
+"$diamond" test/dns_driver.d6 "$diamond" test/dns_test.d6
+"$diamond" build test/dns_test.d6 -o "$work/dns-test" > "$work/dns-build.log"
+"$diamond" test/dns_driver.d6 "$work/dns-test"
+"$diamond" test/tls_driver.d6 "$diamond" test/tls_test.d6
+"$diamond" build test/tls_test.d6 -o "$work/tls-test" > "$work/tls-build.log"
+"$diamond" test/tls_driver.d6 "$work/tls-test"

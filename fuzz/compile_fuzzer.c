@@ -12,7 +12,7 @@
 #include <string.h>
 
 /* Fuzzes diamond_compile directly against raw source bytes -- lexer,
- * parser, and bytecode emission, the exact surface a `.di` file exposes
+ * parser, and bytecode emission, the exact surface a `.d6` file exposes
  * to arbitrary input. Deliberately compile-only, never diamond_vm_run:
  * Diamond has real File/TCPSocket/Regexp bridges (see docs/io.md), so
  * actually executing an arbitrary fuzzer-mutated program isn't safe
@@ -20,8 +20,8 @@
  * see docs/fuzzing.md for the full reasoning and what a future
  * execution-fuzzing harness would need first.
  *
- * Deliberately doesn't prepend lib/core.di the way src/main.c's
- * run_source does for a real CLI invocation: core.di's own bytes never
+ * Deliberately doesn't prepend lib/core.d6 the way src/main.c's
+ * run_source does for a real CLI invocation: core.d6's own bytes never
  * change between iterations, so prepending it would only add fixed
  * per-iteration overhead without exercising any additional code path --
  * it's already covered by the ordinary test suite on every change. */

@@ -1,0 +1,796 @@
+# Live facet -> HTTPS proxy -> Diamond registry integration; no external network.
+#
+#   diamond packages/registry/http_test.d6
+#
+# DIAMOND_BIN and FACET_BIN override the binaries under build/.
+require "../../tests/harness"
+
+root = File.dirname(File.dirname(__dir__))
+diamond = ENV["DIAMOND_BIN"] == nil ? root + "/build/diamond" : File.expand_path(ENV["DIAMOND_BIN"])
+facet = ENV["FACET_BIN"] == nil ? root + "/build/facet" : File.expand_path(ENV["FACET_BIN"])
+
+def check(condition, message)
+  raise message unless condition
+end
+
+# A command that must succeed; its Process::Result.
+def run(argv, env, cwd)
+  result = Harness.run(argv, env, cwd)
+  raise "#{File.basename(argv[0])} failed (#{result.exit_code()}): #{result.stderr()}" unless result.success?()
+  result
+end
+
+# Whole-database text: every object's schema and every table's rows, for comparing two databases.
+def dump(db)
+  parts = []
+  db.query("SELECT name, type, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name").each() do |object|
+    parts.push(object["sql"])
+    if object["type"] == "table"
+      db.query("SELECT * FROM \"#{object["name"]}\"").each() do |row|
+        parts.push(row.to_s())
+      end
+    end
+  end
+  parts.join("\n")
+end
+
+def scalar(db, sql, params)
+  db.query(sql, params)[0].values()[0]
+end
+
+# Everything the peer sends until it closes or resets the connection.
+def raw_request(port, data, half_close)
+  socket = TCPSocket.connect("127.0.0.1", port, {"connect_timeout_ms": 5000, "read_timeout_ms": 5000})
+  begin
+    if data != ""
+      socket.write(data)
+      socket.flush()
+    end
+    socket.shutdown_write() if half_close
+    result = ""
+    loop do
+      chunk = nil
+      begin
+        chunk = socket.read(65536)
+      rescue error: IOError
+        # A reset ends the exchange; a timeout is a real failure.
+        raise error if error.message().include?("temporarily unavailable")
+        break
+      end
+      break if chunk == nil || chunk == ""
+      result = result + chunk
+    end
+    result
+  ensure
+    socket.close()
+  end
+end
+
+def contains?(text, needle) = text.include?(needle)
+
+# The HTTPS front facet talks to, and the calls the scenarios share.
+class Fixture
+  def initialize(diamond: String, facet: String, work: String, port: Int, env: Hash)
+    @diamond = diamond
+    @facet = facet
+    @work = work
+    @port = port
+    @env = env
+    @server = nil
+    @proxy = nil
+    @public_port = 0
+    @cert = work + "/cert.pem"
+    @request_ids = []
+  end
+
+  def work() = @work
+  def port() = @port
+  def env() = @env
+  def server() = @server
+  def cert() = @cert
+  def public_port() = @public_port
+  def request_ids() = @request_ids
+  def url() = "https://localhost:#{@public_port}/registry"
+  def log_text() = @server.log_text()
+
+  def start_server(log_name: String)
+    @server = Harness::Service.new([@diamond, "app.d6"], @env, @work, @work + "/" + log_name)
+    Harness.wait_for(15000, "registry failed to start") do
+      raise "the registry exited:\n#{@server.log_text()}" unless @server.running?()
+      ok = false
+      begin
+        ok = Harness.http(@port, "GET", "/registry/health", nil)[0] == 200
+      rescue error: IOError
+        ok = false
+      end
+      ok
+    end
+  end
+
+  def stop_server()
+    @server.terminate()
+    @server.finish() if @server.wait_exit(5000) == nil
+  end
+
+  def start_proxy()
+    run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+      "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
+      "-keyout", @work + "/key.pem", "-out", @cert], nil, nil)
+    @proxy = Harness::Child.new([@diamond, File.dirname(File.dirname(File.dirname(__FILE__))) + "/tests/tls_proxy.d6",
+      @cert, @work + "/key.pem", @port.to_s()], {})
+    line = @proxy.next_line(15000)
+    raise "unexpected proxy output #{line}" unless line.start_with?("port ")
+    @public_port = line.split(" ")[1].to_i()
+    @env["CURL_CA_BUNDLE"] = @cert
+    @env["NO_PROXY"] = "localhost,127.0.0.1"
+  end
+
+  def stop_proxy()
+    @proxy.finish() if @proxy != nil
+  end
+
+  # [status, payload]: JSON bodies are parsed, and every response must carry a request id that an
+  # error body repeats.
+  def request(path: String, method: String, body, headers)
+    @server.running?()
+    answer = Harness.https("localhost", @public_port, @cert, method, "/registry" + path, body, headers)
+    request_id = answer[1]["x-request-id"]
+    raise "response without a request id" if request_id == nil || request_id == ""
+    @request_ids.push(request_id)
+    payload = answer[2]
+    if answer[1]["content-type"] == "application/json"
+      payload = JSON.parse(payload)
+      if answer[0] >= 400 && payload["request_id"] != request_id
+        raise "error body request id #{payload["request_id"]} != header #{request_id}"
+      end
+    end
+    [answer[0], payload]
+  end
+
+  def get(path: String) = self.request(path, "GET", nil, {})
+  def get_with(path: String, headers: Hash) = self.request(path, "GET", nil, headers)
+
+  def credential(args: Array)
+    JSON.parse(run([@diamond, "credentials.d6"] + args, @env, @work).stdout())
+  end
+
+  def facet(args: Array, cwd)
+    run([@facet] + args, @env, cwd)
+  end
+end
+
+def write_package(work, name, version, body, dependencies)
+  path = work + "/" + name
+  Harness.mkdir_p(path + "/lib")
+  manifest = {"name": name, "version": version, "summary": "test cut", "license": "MIT",
+              "maintainers": [{"name": "Test", "contact": "test@example.com"}],
+              "dependencies": dependencies}
+  File.write(path + "/diamond.cut", JSON.stringify(manifest))
+  File.write(path + "/README.md", "test\n")
+  File.write(path + "/LICENSE", "MIT\n")
+  File.write(path + "/lib/" + name + ".d6", body)
+  path
+end
+
+def package_names(page)
+  page["releases"].map() do |row| row["name"] end
+end
+
+
+# The scenarios, one method per phase so that no method holds more locals than a block can capture.
+class Scenario
+  def initialize(root: String, diamond: String, facet: String)
+    @root = root
+    @diamond = diamond
+    @facet = facet
+    @work = Harness.make_temp_dir()
+    @data = @work + "/data"
+    @f = nil
+    @db = nil
+    @token = nil
+    @issued = nil
+    @headers = nil
+    @archive = nil
+    @release = nil
+    @greeter = nil
+    @helper = nil
+    @consumer = nil
+    @url = nil
+    @orphan_digest = nil
+    @tokens = []
+    @outsider = nil
+    @publisher_only = nil
+    @admin = nil
+    @rotated = nil
+    @audit_headers = nil
+    @dump = nil
+    @env = nil
+    @marker = "registry-test-sensitive-marker"
+  end
+
+  def work() = @work
+
+  def failure_log() = @f == nil ? "" : @f.log_text()
+
+  def cleanup()
+    @f.stop_proxy() if @f != nil
+    @f.stop_server() if @f != nil
+    Harness.remove_tree(@work)
+  end
+
+  def check(condition, message)
+    raise message unless condition
+  end
+
+  # --- setup ---------------------------------------------------------------------------------
+
+  def setup()
+    run([@root + "/tools/install_local_cuts.sh", @work], nil, nil)
+    Harness.mkdir_p(@data + "/blobs")
+    Dir.mkdir(@data + "/staging")
+    ["app.d6", "catalog.d6", "catalog.html", "catalog.js", "catalog.css", "cut.html", "cut.js", "markdown.js"].each() do |name|
+      File.copy(@root + "/applications/registry/" + name, @work + "/" + name)
+    end
+    port = Harness.reserve_port()
+    @env = {"REGISTRY_ROOT": @data, "REGISTRY_FACET": @facet, "REGISTRY_PORT": port.to_s(),
+            "REGISTRY_BASE": "/registry", "DIAMOND_NO_CACHE": "1", "REGISTRY_TIMEOUT_SECONDS": "2",
+            "REGISTRY_MAX_CONNECTIONS": "4", "REGISTRY_MAX_BODY_BYTES": "1048576"}
+    @f = Fixture.new(@diamond, @facet, @work, port, @env)
+    @f.start_server("server.log")
+    File.copy(@root + "/applications/registry/credentials.d6", @work + "/credentials.d6")
+    @env["REGISTRY_OPERATOR"] = "test-operator"
+    @issued = @f.credential(["issue", "test-owner", "3600", "publish:greeter,publish:helper,manage:greeter", "test setup"])
+    @token = @issued["token"]
+    @tokens.push(@token)
+  end
+
+  # --- hostile and malformed requests --------------------------------------------------------
+
+  def hostile_requests()
+    port = @f.port()
+    cases = [
+      ["Content-Length: 1048577", 413],
+      ["Content-Length: -1", 400],
+      ["Content-Length: 2junk", 400],
+      ["Content-Length: 0\r\nContent-Length: 0", 400],
+      ["Transfer-Encoding: chunked", 400],
+      ["X-Large: " + "a" * 8200, 431],
+      [Harness.sequence(101).map() do |i| "X-#{i}: a" end.join("\r\n"), 431],
+      [Harness.sequence(5).map() do |i| "X-#{i}: " + "a" * 7000 end.join("\r\n"), 431],
+    ]
+    cases.each() do |pair|
+      response = raw_request(port, "POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\n" + pair[0] + "\r\n\r\n", false)
+      self.check(response.start_with?("HTTP/1.1 #{pair[1]} "), "expected #{pair[1]} for #{pair[0][0, 30]}, got #{response[0, 150]}")
+      parts = response.split("\r\n\r\n")
+      payload = JSON.parse(parts[1])
+      self.check(payload["protocol"] == 1 && parts[0].include?(payload["request_id"]), "error body lacks protocol/request id")
+    end
+    response = raw_request(port, "POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nx", true)
+    self.check(response.start_with?("HTTP/1.1 400 "), "a truncated body was not a 400")
+    response = raw_request(port, "GET /registry/\x00 HTTP/1.1\r\nHost: localhost\r\n\r\n", false)
+    self.check(response.start_with?("HTTP/1.1 400 "), "a NUL in the target was not a 400")
+  end
+
+  def expect_handshake()
+    # The Expect handshake happens only after the length has been validated.
+    expect = TCPSocket.connect("127.0.0.1", @f.port(), {"connect_timeout_ms": 5000, "read_timeout_ms": 5000})
+    expect.write("POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 1\r\n\r\n")
+    expect.flush()
+    self.check(expect.read(25) == "HTTP/1.1 100 Continue\r\n\r\n", "no 100 Continue")
+    expect.write("x")
+    expect.flush()
+    self.check(expect.gets().start_with?("HTTP/1.1 404 "), "expected a 404 after the continued body")
+    expect.close()
+  end
+
+  def connection_limits()
+    port = @f.port()
+    # Partial requests are dropped by the timeout, not held open.
+    ["", "GET /registry/health HTTP/1.1\r\nHost:",
+     "POST /registry/unknown HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nx"].each() do |partial|
+      started = Time.monotonic()
+      self.check(raw_request(port, partial, false) == "", "a partial request got a response")
+      self.check(Time.monotonic() - started < 5, "a partial request was held too long")
+    end
+    # Idle clients occupy every connection slot, and a new client still gets through promptly.
+    idle = Harness.sequence(4).map() do |i| TCPSocket.connect("127.0.0.1", port, {"connect_timeout_ms": 5000}) end
+    begin
+      Harness.sleep_ms(150)
+      started = Time.monotonic()
+      self.check(raw_request(port, "", false) == "", "a connection over capacity got a response")
+      self.check(Time.monotonic() - started < 1.5, "an over-capacity connection was held too long")
+    ensure
+      idle.each() do |client|
+        client.close()
+      end
+    end
+    Harness.wait_for(2500, "capacity did not recover after clients disconnected") do
+      raw_request(port, "GET /registry/health HTTP/1.1\r\nHost: localhost\r\n\r\n", false).start_with?("HTTP/1.1 200 ")
+    end
+    # A request containing secret-looking data must not copy it into logs.
+    response = raw_request(port, "POST /registry/unknown?secret=" + @marker + " HTTP/1.1\r\nHost: localhost\r\n" +
+      "Authorization: Bearer " + @marker + "\r\nContent-Length: #{@marker.length()}\r\n\r\n" + @marker, false)
+    self.check(response.start_with?("HTTP/1.1 404 "), "the marker request was not a 404")
+  end
+
+  # --- publishing, catalog and installs --------------------------------------------------------
+
+  def publish_and_serve()
+    @db = SQLite3.open(@data + "/registry.db")
+    @f.start_proxy()
+    @url = @f.url()
+    @helper = write_package(@work, "helper", "1.0.0", "def helper_value() = \"installed from registry\"\n", {})
+    @greeter = write_package(@work, "greeter", "1.0.0", "require_cut \"helper\"\ndef greet() = helper_value()\n", {"helper": "^1.0.0"})
+    [@helper, @greeter].each() do |path|
+      @f.facet(["publish", path, "--registry", @url, "--token", @token], nil)
+    end
+    # Publish deliberately out of order, including numeric prerelease ids.
+    ["1.10.0", "2.0.0-beta.10", "2.0.0-beta.2", "2.0.0", "1.2.0"].each() do |version|
+      write_package(@work, "helper", version, "def helper_value() = \"installed from registry\"\n", {})
+      @f.facet(["publish", @helper, "--registry", @url, "--token", @token], nil)
+    end
+    answer = @f.get("/v1/cuts/helper/versions")
+    self.check(answer[0] == 200, "helper index status #{answer[0]}")
+    versions = answer[1]["versions"].map() do |v| v["version"] end
+    self.check(versions == ["1.0.0", "1.2.0", "1.10.0", "2.0.0-beta.2", "2.0.0-beta.10", "2.0.0"], "version order #{versions}")
+    @f.facet(["pack", @greeter, @work + "/greeter.tar"], nil)
+    @archive = File.read(@work + "/greeter.tar")
+    @headers = {"Authorization": "Bearer " + @token, "Content-Type": "application/octet-stream"}
+  end
+
+  def publish_rules()
+    answer = @f.request("/v1/cuts/greeter/versions", "POST", @archive, @headers)
+    self.check(answer[0] == 200 && answer[1]["version"] == "1.0.0", "re-publishing identical bytes was not idempotent")
+    self.check(!answer[1].key?("created"), "an idempotent publish reported created")
+    self.check(@f.request("/v1/cuts/greeter/versions", "POST", @archive, {})[0] == 401, "an unauthenticated publish was accepted")
+    self.check(@f.request("/v1/cuts/greeter/versions", "POST", "bad", @headers)[0] == 422, "a bad archive was accepted")
+    self.check(@f.request("/v1/cuts/unknown/versions", "POST", @archive, @headers)[0] == 403, "publishing to an unowned cut was accepted")
+    self.check(@f.request("/v1/cuts/greeter/versions", "POST", @archive,
+      {"Authorization": "Bearer " + @token, "Content-Type": "text/plain"})[0] == 400, "a wrong content type was accepted")
+    self.check(@f.get("/v1/blobs/sha256/not-a-digest")[0] == 400, "a bad digest was accepted")
+    File.write(@greeter + "/README.md", "different bytes for same version\n")
+    @f.facet(["pack", @greeter, @work + "/changed.tar"], nil)
+    answer = @f.request("/v1/cuts/greeter/versions", "POST", File.read(@work + "/changed.tar"), @headers)
+    self.check(answer[0] == 409 && answer[1]["error"] == "release_exists" && answer[1]["request_id"] != nil, "changed bytes were not a conflict")
+  end
+
+  def legacy_release()
+    # A release packed before manifests declared maintainers: blank the field in place so the ustar
+    # header and size stay canonical.
+    legacy_root = @work + "/legacy/greeter"
+    Harness.mkdir_p(@work + "/legacy")
+    run(["cp", "-R", @greeter, legacy_root], nil, nil)
+    manifest = JSON.parse(File.read(legacy_root + "/diamond.cut"))
+    manifest["version"] = "0.9.0"
+    File.write(legacy_root + "/diamond.cut", JSON.stringify(manifest))
+    @f.facet(["pack", legacy_root, @work + "/legacy.tar"], nil)
+    legacy = File.read(@work + "/legacy.tar")
+    field = ",\"maintainers\":" + JSON.stringify(manifest["maintainers"])
+    pieces = legacy.split(field)
+    self.check(pieces.length() == 2, "the maintainers field was not found exactly once")
+    legacy = pieces[0] + " " * field.length() + pieces[1]
+    answer = @f.request("/v1/cuts/greeter/versions", "POST", legacy, @headers)
+    self.check(answer[0] == 422 && answer[1]["error"] == "invalid_archive", "a release without maintainers was accepted")
+    # Releases that predate the requirement stay idempotent on retry.
+    cut_id = scalar(@db, "SELECT id FROM cuts WHERE name = 'greeter'", [])
+    @db.execute("INSERT INTO releases (cut_id, version, dependencies, sha256, size, created_at) VALUES (?, '0.9.0', ?, ?, ?, 0)",
+      [cut_id, JSON.stringify(manifest["dependencies"]), Digest.sha256(legacy), legacy.length()])
+    answer = @f.request("/v1/cuts/greeter/versions", "POST", legacy, @headers)
+    self.check(answer[0] == 200 && answer[1]["version"] == "0.9.0", "a legacy release was not idempotent")
+    stored = {}
+    @db.query("SELECT version, maintainers FROM releases WHERE cut_id = ?", [cut_id]).each() do |row|
+      stored[row["version"]] = row["maintainers"]
+    end
+    self.check(stored["0.9.0"] == nil, "a legacy release gained maintainers")
+    self.check(JSON.parse(stored["1.0.0"]) == [{"name": "Test", "contact": "test@example.com"}], "stored maintainers differ")
+    answer = @f.get("/catalog.json")
+    listed = {}
+    answer[1]["releases"].each() do |row|
+      listed[row["name"] + " " + row["version"]] = row["maintainers"]
+    end
+    # The catalog lists only each cut's newest release.
+    self.check(answer[0] == 200 && !listed.key?("greeter 0.9.0"), "the catalog listed a superseded release")
+    self.check(JSON.parse(listed["greeter 1.0.0"])[0]["contact"] == "test@example.com", "catalog maintainers differ")
+    @db.execute("DELETE FROM releases WHERE cut_id = ? AND version = '0.9.0'", [cut_id])
+  end
+
+  def release_and_blobs()
+    answer = @f.get("/v1/cuts/greeter/versions")
+    self.check(answer[0] == 200 && answer[1]["versions"] == [{"version": "1.0.0", "yanked": false}], "greeter index #{answer[1]}")
+    answer = @f.get("/v1/cuts/greeter/versions/1.0.0")
+    @release = answer[1]
+    self.check(answer[0] == 200 && @release["dependencies"] == {"helper": "^1.0.0"}, "greeter release #{@release}")
+    answer = @f.get(@release["archive"]["path"])
+    self.check(answer[0] == 200 && answer[1] == @archive, "the downloaded archive differs")
+    self.check(Digest.sha256(answer[1]) == @release["archive"]["sha256"], "the archive digest differs")
+    blob_path = @data + "/blobs/" + @release["archive"]["sha256"]
+    File.write(blob_path, "corrupt")
+    answer = @f.get(@release["archive"]["path"])
+    self.check(answer[0] == 500 && answer[1]["error"] == "internal_error", "a corrupt blob was served")
+    File.write(blob_path, @archive)
+    orphan = "not a committed release"
+    @orphan_digest = Digest.sha256(orphan)
+    File.write(@data + "/blobs/" + @orphan_digest, orphan)
+    self.check(@f.get("/v1/blobs/sha256/" + @orphan_digest)[0] == 404, "an uncommitted blob was served")
+  end
+
+  def monitor_probes()
+    # The monitor passes on a healthy registry and fails closed, without leaking the URL.
+    monitor = @root + "/applications/registry/monitor.d6"
+    good = Harness.run([@diamond, monitor, @url, "--ca-file", @f.cert(), "--archive-sha256", @release["archive"]["sha256"]], nil, nil)
+    self.check(good.success?() && JSON.parse(good.stdout())["ok"] == true, "the monitor failed on a healthy registry: #{good.stdout()}")
+    failing = [
+      [@url],                                                                      # untrusted TLS certificate
+      [@url + "/missing", "--ca-file", @f.cert()],
+      [@url, "--ca-file", @f.cert(), "--archive-sha256", "0" * 64],
+      ["http://localhost:#{@f.public_port()}"],
+    ]
+    failing.each() do |arguments|
+      bad = Harness.run([@diamond, monitor] + arguments, nil, nil)
+      self.check(bad.exit_code() == 1 && JSON.parse(bad.stdout())["ok"] == false, "the monitor did not fail for #{arguments}: #{bad.stdout()}")
+      self.check(!bad.stdout().include?(@url), "the monitor output leaked the URL")
+    end
+  end
+
+  def catalog_pages()
+    self.check(@f.get("/")[0] == 200, "the catalog page failed")
+    self.check(@f.get("/catalog.js")[0] == 200, "catalog.js failed")
+    answer = @f.get("/catalog.json")
+    self.check(answer[0] == 200 && package_names(answer[1]).include?("greeter"), "the catalog lacks greeter")
+    ["bad", "", "-1", "01", "1&after=2", "999999999999999999999999"].each() do |cursor|
+      self.check(@f.get("/catalog.json?after=" + cursor)[0] == 400, "cursor #{cursor.inspect()} was accepted")
+    end
+    # Show pages: every served version newest first, plus the latest release's summary and README
+    # read from its verified archive.
+    self.check(@f.get("/catalog.css")[0] == 200 && @f.get("/cut.js")[0] == 200 && @f.get("/markdown.js")[0] == 200, "assets failed")
+    answer = @f.get("/cuts/helper")
+    self.check(answer[0] == 200 && answer[1].include?("cut.js") && answer[1].include?("markdown.js"), "the show page lacks its scripts")
+    self.check(@f.get("/cuts/Not-A-Name")[0] == 404, "a bad cut name was served")
+    answer = @f.get("/catalog/helper.json")
+    shown = answer[1]
+    self.check(answer[0] == 200 && shown["name"] == "helper" && shown["latest"] == "2.0.0", "helper show #{shown}")
+    order = shown["versions"].map() do |v| v["version"] end
+    self.check(order == ["2.0.0", "2.0.0-beta.10", "2.0.0-beta.2", "1.10.0", "1.2.0", "1.0.0"], "show order #{order}")
+    self.check(shown["summary"] == "test cut" && shown["license"] == "MIT" && shown["readme"] == "test\n", "show details")
+    self.check(shown["versions"][0]["maintainers"] == [{"name": "Test", "contact": "test@example.com"}], "show maintainers")
+    self.check(@f.get("/catalog/missing.json")[0] == 404, "a missing cut was found")
+    self.check(@f.get("/catalog/..%2Fx.json")[0] == 404, "a traversal was served")
+  end
+
+  def consumer_install()
+    @consumer = @work + "/consumer"
+    Dir.mkdir(@consumer)
+    @f.facet(["init", "consumer"], @consumer)
+    @f.facet(["add", "greeter", "--registry", @url, "--version", "^1.0.0"], @consumer)
+    @f.facet(["update"], @consumer)
+    loaded = run([@diamond, "-e", "require_cut \"greeter\"\nputs(greet())\nexit(0)"], @env, @consumer)
+    self.check(loaded.stdout().strip() == "installed from registry", "greeter did not load: #{loaded.stdout()}")
+    self.check(File.exist?(@consumer + "/cuts/helper/lib/helper.d6"), "the dependency was not installed")
+  end
+
+  # --- ownership, yanking, credentials ---------------------------------------------------------
+
+  def manage(action: String, credential_token: String, reason: String)
+    @f.request("/v1/cuts/greeter/versions/1.0.0/" + action, "POST", JSON.stringify({"reason": reason}),
+      {"Authorization": "Bearer " + credential_token, "Content-Type": "application/json"})
+  end
+
+  def owners(action, actor: String, owner: String, reason: String)
+    path = "/v1/cuts/greeter/owners"
+    headers = {"Authorization": "Bearer " + actor, "Content-Type": "application/json"}
+    return @f.request(path, "GET", nil, headers) if action == nil
+    @f.request(path + "/" + action, "POST", JSON.stringify({"owner": owner, "reason": reason}), headers)
+  end
+
+  def count(sql: String, params: Array) = scalar(@db, sql, params)
+
+  def ownership()
+    @outsider = @f.credential(["issue", "other-owner", "3600", "manage:greeter", "wrong owner test"])
+    @publisher_only = @f.credential(["issue", "test-owner", "3600", "publish:greeter", "scope test"])
+    @tokens.push(@outsider["token"])
+    @tokens.push(@publisher_only["token"])
+    self.check(self.manage("yank", @outsider["token"], "test state change")[0] == 403, "an outsider yanked")
+    self.check(self.manage("yank", @publisher_only["token"], "test state change")[0] == 403, "a publisher-only credential yanked")
+    outsider = @outsider["token"]
+    self.check(self.owners(nil, outsider, "other-owner", "ownership test")[0] == 403, "an outsider listed owners")
+    self.check(self.owners(nil, @publisher_only["token"], "other-owner", "ownership test")[0] == 403, "a publisher-only credential listed owners")
+    self.check(@f.get("/v1/cuts/greeter/owners")[0] == 401, "an unauthenticated owner list")
+    answer = self.owners(nil, @token, "other-owner", "ownership test")
+    original = answer[1]
+    self.check(answer[0] == 200 && original["owners"].map() do |row| row["owner"] end == ["test-owner"], "original owners")
+    answer = self.owners("remove", @token, "test-owner", "ownership test")
+    self.check(answer[0] == 409 && answer[1]["error"] == "last_owner", "the last owner was removed")
+    self.check(self.owners("add", @token, "   ", "ownership test")[0] == 400, "a blank owner was added")
+    @db.execute("CREATE TRIGGER fail_owner_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'owner_add' BEGIN SELECT RAISE(ABORT, 'owner audit failure'); END")
+    self.check(self.owners("add", @token, "other-owner", "ownership test")[0] == 500, "an audit failure did not fail the request")
+    self.check(self.owners(nil, @token, "other-owner", "ownership test")[1] == original, "a failed add changed the owners")
+    @db.execute("DROP TRIGGER fail_owner_audit")
+    answer = self.owners("add", @token, "other-owner", "ownership test")
+    self.check(answer[0] == 200 && answer[1]["owners"].map() do |row| row["owner"] end == ["other-owner", "test-owner"], "owner add")
+    self.check(self.owners("add", @token, "other-owner", "ownership test")[0] == 200, "owner add is not idempotent")
+    self.check(self.count("SELECT count(*) FROM audit_events WHERE action = 'owner_add'", []) == 1, "owner add audited twice")
+    self.check(self.owners(nil, outsider, "other-owner", "ownership test")[0] == 200, "the new owner cannot list owners")
+    # Removal revokes management and publishing despite unchanged scopes.
+    self.check(self.owners("remove", outsider, "test-owner", "ownership test")[0] == 200, "owner removal")
+    self.check(self.owners(nil, @token, "other-owner", "ownership test")[0] == 403, "a removed owner can still list")
+    self.check(@f.request("/v1/cuts/greeter/versions", "POST", @archive, @headers)[0] == 403, "a removed owner can still publish")
+    self.check(self.owners("add", outsider, "test-owner", "ownership test")[0] == 200, "owner re-add")
+    self.check(self.owners("remove", @token, "other-owner", "ownership test")[0] == 200, "owner removal 2")
+    removals = self.count("SELECT count(*) FROM audit_events WHERE action = 'owner_remove'", [])
+    self.check(self.owners("remove", @token, "other-owner", "ownership test")[0] == 200, "owner removal is not idempotent")
+    self.check(self.count("SELECT count(*) FROM audit_events WHERE action = 'owner_remove'", []) == removals, "owner removal audited twice")
+    self.check(self.owners(nil, outsider, "other-owner", "ownership test")[0] == 403, "a removed owner can still list (2)")
+    event = @db.query("SELECT target_owner, reason, credential_id FROM audit_events WHERE action = 'owner_add' ORDER BY id LIMIT 1")[0]
+    self.check(event["target_owner"] == "other-owner" && event["reason"] == "ownership test" && event["credential_id"] == @issued["id"], "owner audit event")
+  end
+
+  def yanking()
+    self.check(self.manage("takedown", @token, "test state change")[0] == 403, "takedown without admin")
+    self.check(self.manage("yank", "invalid", "test state change")[0] == 401, "an invalid token yanked")
+    self.check(self.manage("yank", @token, "   ")[0] == 400, "a blank reason was accepted")
+    self.check(self.manage("yank", @token, "x" * 1025)[0] == 400, "an oversized reason was accepted")
+    answer = @f.request("/v1/cuts/greeter/versions/1.0.0/yank", "POST", "[]",
+      {"Authorization": "Bearer " + @token, "Content-Type": "application/json"})
+    self.check(answer[0] == 400, "a non-object body was accepted")
+    # An audit failure must roll back the state update.
+    @db.execute("CREATE TRIGGER fail_yank_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'yank' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+    self.check(self.manage("yank", @token, "test state change")[0] == 500, "an audit failure did not fail the yank")
+    self.check(@f.get("/v1/cuts/greeter/versions/1.0.0")[1]["yanked"] == false, "a failed yank changed the state")
+    @db.execute("DROP TRIGGER fail_yank_audit")
+    answer = self.manage("yank", @token, "test state change")
+    self.check(answer[0] == 200 && answer[1]["yanked"] == true && answer[1]["archive"] == @release["archive"], "yank")
+    self.check(self.manage("yank", @token, "repeat")[0] == 200, "yank is not idempotent")
+    self.check(self.count("SELECT count(*) FROM audit_events WHERE action = 'yank'", []) == 1, "yank audited twice")
+    Harness.remove_tree(@consumer + "/cuts")
+    @f.facet(["install"], @consumer)
+    self.check(File.exist?(@consumer + "/cuts/greeter/lib/greeter.d6"), "a locked reinstall lost a yanked release")
+    answer = self.manage("unyank", @token, "test state change")
+    self.check(answer[0] == 200 && answer[1]["yanked"] == false, "unyank")
+    self.check(@f.get("/v1/cuts/greeter/versions")[1]["versions"][0]["yanked"] == false, "unyank did not show")
+  end
+
+  def credentials()
+    @admin = @f.credential(["issue", "operator", "3600", "admin", "takedown test"])
+    @tokens.push(@admin["token"])
+    # Failure to audit the replacement must not revoke the old credential.
+    before = self.count("SELECT count(*) FROM credentials", [])
+    @db.execute("CREATE TRIGGER fail_issue_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'credential_issue' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+    failed = Harness.run([@diamond, "credentials.d6", "rotate", @admin["id"].to_s(), "3600", "failed rotation"], @env, @work)
+    self.check(failed.exit_code() != 0, "a rotation whose audit failed succeeded")
+    self.check(self.count("SELECT count(*) FROM credentials", []) == before, "a failed rotation added a credential")
+    self.check(self.count("SELECT revoked_at FROM credentials WHERE id = ?", [@admin["id"]]) == nil, "a failed rotation revoked the old credential")
+    @db.execute("DROP TRIGGER fail_issue_audit")
+    [["publish:../../invalid", "3600"], ["admin", "3600junk"]].each() do |pair|
+      invalid = Harness.run([@diamond, "credentials.d6", "issue", "operator", pair[1], pair[0], "invalid input"], @env, @work)
+      self.check(invalid.exit_code() != 0, "invalid credential input was accepted")
+    end
+    self.check(self.count("SELECT count(*) FROM credentials", []) == before, "invalid input added a credential")
+    @rotated = @f.credential(["rotate", @admin["id"].to_s(), "3600", "rotation test"])
+    @tokens.push(@rotated["token"])
+  end
+
+  def takedown()
+    self.check(self.manage("takedown", @admin["token"], "test state change")[0] == 401, "a rotated-away credential was accepted")
+    answer = self.manage("takedown", @rotated["token"], "test removal")
+    self.check(answer[0] == 200 && answer[1]["taken_down"] == true, "takedown")
+    self.check(self.manage("takedown", @rotated["token"], "repeat")[0] == 200, "takedown is not idempotent")
+    self.check(self.count("SELECT count(*) FROM audit_events WHERE action = 'takedown'", []) == 1, "takedown audited twice")
+    self.check(@f.get("/v1/cuts/greeter/versions/1.0.0")[0] == 404, "a taken-down release was served")
+    self.check(!package_names(@f.get("/catalog.json")[1]).include?("greeter"), "a taken-down cut is in the catalog")
+    self.check(@f.get(@release["archive"]["path"])[0] == 404, "a taken-down blob was served")
+    self.check(self.manage("unyank", @token, "test state change")[0] == 404, "a taken-down release could be unyanked")
+  end
+
+  def audit_log()
+    @audit_headers = {"Authorization": "Bearer " + @rotated["token"]}
+    self.check(@f.get("/v1/audit")[0] == 401, "an unauthenticated audit read")
+    self.check(@f.get_with("/v1/audit", {"Authorization": "Bearer " + @token})[0] == 403, "an audit read without admin")
+    self.check(self.owners(nil, @rotated["token"], "other-owner", "ownership test")[0] == 200, "an admin cannot list owners")
+    self.check(self.owners("remove", @rotated["token"], "test-owner", "ownership test")[0] == 409, "an admin removed the last owner")
+    ["limit=101", "limit=0", "after=-1", "after=abc", "limit=2&limit=3", "unknown=1"].each() do |query|
+      self.check(@f.get_with("/v1/audit?" + query, @audit_headers)[0] == 400, "audit query #{query} was accepted")
+    end
+    after = 0
+    events = []
+    loop do
+      answer = @f.get_with("/v1/audit?after=#{after}&limit=2", @audit_headers)
+      self.check(answer[0] == 200 && answer[1]["events"].length() <= 2, "audit page")
+      answer[1]["events"].each() do |event|
+        events.push(event)
+      end
+      break if answer[1]["next_after"] == nil
+      self.check(answer[1]["next_after"] > after, "audit paging did not advance")
+      after = answer[1]["next_after"]
+    end
+    expected_ids = @db.query("SELECT id FROM audit_events ORDER BY id").map() do |row| row["id"] end
+    self.check(events.map() do |event| event["id"] end == expected_ids, "audit ids differ")
+    self.check(events.all?() do |event| !event.key?("token_digest") && !event.key?("token") end, "audit events leak token material")
+    self.check(events.any?() do |event| event["target_owner"] == "other-owner" end, "no owner event in the audit log")
+    self.check(events.any?() do |event| event["action"] == "takedown" && event["credential_scopes"] == ["admin"] end, "no takedown event")
+    revoked = @f.credential(["revoke", @rotated["id"].to_s(), "revocation test"])
+    self.check(revoked["revoked"] == true, "revoke")
+    self.check(self.manage("takedown", @rotated["token"], "test state change")[0] == 401, "a revoked credential was accepted")
+    self.check(@f.get_with("/v1/audit", @audit_headers)[0] == 401, "a revoked credential read the audit log")
+    @f.credential(["revoke", @rotated["id"].to_s(), "repeat revocation"])
+    self.check(self.count("SELECT count(*) FROM audit_events WHERE action = 'credential_revoke' AND credential_id = ?", [@rotated["id"]]) == 1, "revocation audited twice")
+    audit = @db.query("SELECT reason, credential_id, sha256 FROM audit_events WHERE action = 'takedown'")[0]
+    self.check(audit["reason"] == "test removal" && audit["credential_id"] == @rotated["id"] && audit["sha256"] == @release["archive"]["sha256"], "takedown audit event")
+    inventory = @f.credential(["list"])
+    self.check(inventory.any?() do |item| item["id"] == @rotated["id"] && item["revoked_at"] != nil end, "the revoked credential is not listed as revoked")
+    self.check(inventory.all?() do |item| !item.key?("token") && !item.key?("token_digest") end, "the credential list leaks tokens")
+  end
+
+  # --- catalog paging over many cuts -----------------------------------------------------------
+
+  def catalog_paging()
+    # Bounded, one-row-per-cut catalog pagination without creating public artifacts: SemVer order
+    # picks 1.0.10 over 1.0.9, an unyanked release beats a newer yanked one, and an all-yanked cut
+    # still appears.
+    temporary = []
+    105.times() do |index|
+      @db.execute("INSERT INTO cuts (name, created_at) VALUES (?, 1)", ["catalog_page_#{index}"])
+      cut_id = @db.last_insert_row_id()
+      temporary.push(cut_id)
+      [["1.0.9", 0], ["1.0.10", index == 0 ? 1 : 0], ["1.1.0", 1]].each() do |entry|
+        @db.execute("INSERT INTO releases (cut_id, version, dependencies, sha256, size, yanked, created_at) VALUES (?, ?, ?, ?, 1, ?, 1)",
+          [cut_id, entry[0], "{}", Digest.sha256("catalog-#{index}-#{entry[0]}"), entry[1]])
+      end
+    end
+    seen = []
+    path = "/catalog.json"
+    previous = nil
+    loop do
+      answer = @f.get(path)
+      self.check(answer[0] == 200 && answer[1]["releases"].length() <= 100, "catalog page")
+      answer[1]["releases"].each() do |row|
+        seen.push(row)
+      end
+      break if answer[1]["next_after"] == nil
+      self.check(previous == nil || answer[1]["next_after"] < previous, "catalog paging did not descend")
+      previous = answer[1]["next_after"]
+      path = "/catalog.json?after=" + previous.to_s()
+    end
+    listed = seen.map() do |row| row["id"] end
+    self.check(listed.length() == listed.uniq().length(), "a cut was listed twice")
+    # Most recently updated first; equal times fall back to the newest cut id.
+    expected = @db.query("SELECT cut_id FROM releases WHERE takedown_reason IS NULL GROUP BY cut_id ORDER BY MAX(created_at) DESC, cut_id DESC").map() do |row| row["cut_id"] end
+    self.check(listed == expected, "catalog order differs")
+    latest = {}
+    seen.each() do |row|
+      latest[row["name"]] = [row["version"], row["yanked"]]
+    end
+    self.check(latest["catalog_page_0"] == ["1.0.9", 0], "an all-but-yanked cut shows #{latest["catalog_page_0"]}")
+    ok = true
+    104.times() do |index|
+      ok = false unless latest["catalog_page_#{index + 1}"] == ["1.0.10", 0]
+    end
+    self.check(ok, "semver ordering of the newest release")
+    @db.execute("UPDATE releases SET yanked = 1 WHERE cut_id = ?", [temporary[1]])
+    refreshed = {}
+    path = "/catalog.json"
+    while path != nil
+      page = @f.get(path)[1]
+      page["releases"].each() do |row|
+        refreshed[row["name"]] = row["version"]
+      end
+      path = page["next_after"] == nil ? nil : "/catalog.json?after=" + page["next_after"].to_s()
+    end
+    self.check(refreshed["catalog_page_1"] == "1.1.0", "an all-yanked cut shows its newest release")
+    temporary.each() do |cut_id|
+      @db.execute("DELETE FROM releases WHERE cut_id = ?", [cut_id])
+      @db.execute("DELETE FROM cuts WHERE id = ?", [cut_id])
+    end
+  end
+
+  # --- logs, backup and restore -----------------------------------------------------------------
+
+  def logs_and_dump()
+    @dump = dump(@db)
+    @tokens.each() do |raw|
+      self.check(!@dump.include?(raw), "a raw token is in the database")
+    end
+    @db.close()
+    log_text = @f.log_text()
+    self.check(!log_text.include?(@marker), "the request marker is in the log")
+    @tokens.each() do |raw|
+      self.check(!log_text.include?(raw), "a raw token is in the log")
+    end
+    records = log_text.split("\n").select() do |line| line.strip() != "" end.map() do |line| JSON.parse(line) end
+    self.check(records.any?() do |row| row["message"] == "request.timeout" end, "no request.timeout record")
+    self.check(records.any?() do |row| row["message"] == "connection.rejected" end, "no connection.rejected record")
+    self.check(records.any?() do |row| row["message"] == "request.rejected" && row["status"] == 413 end, "no 413 record")
+    completed = records.select() do |row| row["message"] == "request.completed" end
+    ids = completed.map() do |row| row["request_id"] end
+    self.check(@f.request_ids().all?() do |id| ids.include?(id) end, "a request id is missing from the log")
+    self.check(completed.length() > 0 && completed.all?() do |row| row["request_id"] != nil && row["duration_ms"] >= 0 end, "completed records")
+    self.check(completed.all?() do |row| !row.key?("path") && !row.key?("headers") && !row.key?("body") end, "completed records leak request data")
+  end
+
+  def restore_failures(backup_tool: String, backup: String)
+    restored = @work + "/restored"
+    # Restoring over an existing directory fails and leaves it alone.
+    existing = Harness.run([@diamond, backup_tool, "restore", backup, restored], nil, nil)
+    self.check(existing.exit_code() != 0 && File.exist?(restored + "/registry.db"), "an existing restore target was disturbed")
+    failed = @work + "/failed-restore"
+    blob_dir = backup + "/blobs"
+    blob = blob_dir + "/" + Dir.entries(blob_dir)[0]
+    original_bytes = File.read(blob)
+    File.write(blob, "corrupt")
+    result = Harness.run([@diamond, backup_tool, "restore", backup, failed], nil, nil)
+    self.check(result.exit_code() != 0 && !File.exist?(failed), "a corrupt blob was restored")
+    File.write(blob, original_bytes)
+    saved_database = File.read(backup + "/registry.db")
+    File.write(backup + "/registry.db", "corrupt database")
+    result = Harness.run([@diamond, backup_tool, "restore", backup, failed], nil, nil)
+    self.check(result.exit_code() != 0 && !File.exist?(failed), "a corrupt database was restored")
+    File.write(backup + "/registry.db", saved_database)
+    File.delete(backup + "/manifest.json")
+    result = Harness.run([@diamond, backup_tool, "restore", backup, failed], nil, nil)
+    self.check(result.exit_code() != 0 && !File.exist?(failed), "a backup without a manifest was restored")
+  end
+
+  def backup_and_restore()
+    backup_tool = @root + "/applications/registry/backup.d6"
+    backup = @work + "/backup"
+    restored = @work + "/restored"
+    run([@diamond, backup_tool, "backup", @data, backup], nil, nil)
+    run([@diamond, backup_tool, "restore", backup, restored], nil, nil)
+    recovered = SQLite3.open(restored + "/registry.db")
+    self.check(dump(recovered) == @dump, "the restored database differs from the original")
+    recovered.close()
+    self.check(Dir.entries(restored + "/staging").length() == 0, "staging was not empty after restore")
+    self.check(!File.exist?(restored + "/blobs/" + @orphan_digest), "an orphan blob was restored")
+    self.restore_failures(backup_tool, backup)
+  end
+
+  def restored_registry()
+    @f.stop_server()
+    @env["REGISTRY_ROOT"] = @work + "/restored"
+    @f.start_server("restored.log")
+    self.check(@f.get("/v1/cuts/greeter/versions/1.0.0")[0] == 404, "the restored registry served a taken-down release")
+    self.check(!package_names(@f.get("/catalog.json")[1]).include?("greeter"), "the restored catalog lists a taken-down cut")
+    self.check(@f.get_with("/v1/audit", @audit_headers)[0] == 401, "the restored registry accepts a revoked credential")
+    recovery = @work + "/recovery-consumer"
+    Dir.mkdir(recovery)
+    @f.facet(["init", "recovery-consumer"], recovery)
+    @f.facet(["add", "helper", "--registry", @url, "--version", "^1.0.0"], recovery)
+    @f.facet(["update"], recovery)
+    loaded = run([@diamond, "-e", "require_cut \"helper\"\nputs(helper_value())\nexit(0)"], @env, recovery)
+    self.check(loaded.stdout().strip() == "installed from registry", "the restored registry could not serve helper")
+  end
+
+  def all()
+    self.setup()
+    self.hostile_requests()
+    self.expect_handshake()
+    self.connection_limits()
+    self.publish_and_serve()
+    self.publish_rules()
+    self.legacy_release()
+    self.release_and_blobs()
+    self.monitor_probes()
+    self.catalog_pages()
+    self.consumer_install()
+    self.ownership()
+    self.yanking()
+    self.credentials()
+    self.takedown()
+    self.audit_log()
+    self.catalog_paging()
+    self.logs_and_dump()
+    self.backup_and_restore()
+    self.restored_registry()
+    puts("registry HTTPS publish/install, monitoring, administration, and restore tests passed")
+  end
+end
+
+scenario = Scenario.new(root, diamond, facet)
+begin
+  scenario.all()
+rescue error: StandardError
+  puts(scenario.failure_log())
+  raise error
+ensure
+  scenario.cleanup()
+end
+exit(0)

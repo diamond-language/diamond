@@ -1,6 +1,9 @@
 # Diamond for VS Code
 
-Syntax highlighting for `.di` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
+The extension associates `.d6` with Diamond. It leaves `.di` files to D;
+legacy Diamond sources can still be assigned the Diamond language manually.
+
+Syntax highlighting for `.d6` files — a TextMate grammar (`syntaxes/diamond.tmLanguage.json`)
 built directly from `src/lexer.h`/`src/lexer.c`'s own token list, not derived
 from or dependent on any other language's grammar — plus live diagnostics
 from `diamond-lsp` (`lsp/`, `docs/lsp.md`) and gutter-breakpoint debugging
@@ -26,7 +29,7 @@ VS Code's own built-in debug UI and protocol handling do the rest.
    point the extension at it directly: open VS Code settings and set
    `diamond.languageServerPath` to the built binary's absolute path (e.g.
    `/path/to/diamond/build/diamond-lsp`).
-3. Open a `.di` file. The extension activates on the `diamond` language,
+3. Open a `.d6` file. The extension activates on the `diamond` language,
    spawns the server, and diagnostics appear as you type (Diamond's
    compiler stops at the first error, so at most one diagnostic per file
    at a time). A top-level function name or a class name — at its own
@@ -43,7 +46,7 @@ VS Code's own built-in debug UI and protocol handling do the rest.
    inside its own clause, and an outer function's own locals stay
    visible inside a nested closure). Ctrl+T/Cmd+T (Go to Symbol in
    Workspace) searches every top-level function/class across every
-   `.di` file under the open folder, not just open documents.
+   `.d6` file under the open folder, not just open documents.
 
 If the server fails to start (wrong path, not built yet), VS Code shows an
 error notification with the attempted path; server stderr and lifecycle
@@ -61,7 +64,7 @@ the whole window — useful after rebuilding `diamond-lsp`.
 2. Either put `diamond-dap` on your `PATH`, or set `diamond.debugAdapterPath`
    in VS Code settings to its absolute path, the same way
    `diamond.languageServerPath` works for the language server above.
-3. Open a `.di` file, set a gutter breakpoint on any line with a real
+3. Open a `.d6` file, set a gutter breakpoint on any line with a real
    statement on it, then Run & Debug ("Debug Diamond File" from the
    dropdown, or F5). Breakpoints can be added or removed during the session.
    Continue, Step Over, Step Into, and Step Out are supported (see
@@ -70,7 +73,7 @@ the whole window — useful after rebuilding `diamond-lsp`.
    pane shows locals only for the innermost, currently-paused frame (an
    outer call-stack frame shows no locals in v1).
 4. A `launch.json` entry needs `"type": "diamond"`, `"request": "launch"`,
-   and `"program"` (an absolute path, `${file}` for whichever `.di` file is
+   and `"program"` (an absolute path, `${file}` for whichever `.d6` file is
    focused); `"args"` and `"cwd"` are optional. The debug adapter fills in
    a minimal one via `initialConfigurations` if you Run & Debug with no
    `launch.json` at all yet.
@@ -82,9 +85,9 @@ own `diamond-template` language id, separate from `diamond` — highlighted
 via `syntaxes/diamond-template.tmLanguage.json`, an ERB-style embedded
 grammar: everything outside `<% %>` is plain HTML (VS Code's own built-in
 `text.html.basic` grammar, not bundled here), everything inside a tag is
-real Diamond source (the same `source.diamond` grammar a `.di` file gets),
+real Diamond source (the same `source.diamond` grammar a `.d6` file gets),
 and `<%# ... %>` is a comment either way. Diagnostics work the same way
-they do for a `.di` file (`lsp/div.c` translates the template and maps
+they do for a `.d6` file (`lsp/div.c` translates the template and maps
 errors back to their real template position — see `docs/lsp.md`'s own
 `.div` section for what is and isn't covered, e.g. a call to another
 template's own partial reports a false "undefined function"); hover,
@@ -102,7 +105,7 @@ ln -s "$(pwd)/editors/vscode" ~/.vscode/extensions/diamond-language
 ```
 
 then reload the VS Code window (`Developer: Reload Window` from the command
-palette). Opening any `.di` file should now be highlighted.
+palette). Opening any `.d6` file should now be highlighted.
 
 If VS Code is a **Flatpak** install (`flatpak list | grep visualstudio`),
 it's sandboxed and never reads `~/.vscode/extensions` at all — symlink into

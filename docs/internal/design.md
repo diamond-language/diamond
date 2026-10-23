@@ -87,7 +87,7 @@ got a chance to trip.
 ## Compilation
 
 Before lexing, the source loader expands line-form `require "path"`
-dependencies at their declaration sites. Paths are canonicalized, `.di` is
+dependencies at their declaration sites. Paths are canonicalized, `.d6` is
 inferred, and nested paths are resolved relative to the requiring file. Active
 and completed file sets provide cycle detection and load-once semantics. Source
 segments map offsets in the expanded program back to dependency paths and
@@ -144,7 +144,7 @@ conservatively.
 
 ## Core prelude
 
-The C23 executable embeds `lib/core.di` with `#embed` and prefixes it to each
+The C23 executable embeds `lib/core.d6` with `#embed` and prefixes it to each
 file or `-e` program before compilation. An internal line reset keeps user
 diagnostics and stack traces at their original coordinates. Core helpers are
 therefore ordinary Diamond functions using the same bytecode, typing, exception,
@@ -160,7 +160,7 @@ an `Int`, or `nil` if not found), `slice(start, length)` (a substring,
 bounds-checking `start` but clamping `length` to what's available), and
 `to_i()` (lenient leading-digit decimal parsing, using checked arithmetic
 and raising `RangeError` on overflow). These were added as prerequisites
-for an HTTP library (originally bundled as `lib/http.di`, later pulled
+for an HTTP library (originally bundled as `lib/http.d6`, later pulled
 out into `packages/http` — see `docs/packages.md`) but are
 general-purpose.
 
@@ -1382,7 +1382,7 @@ cross-iteration persistence needed to observe staleness even when the
 pre-fix bytecode is provably wrong (confirmed via `--dump-bytecode`:
 the rescue-binding read was a bare `MOVE`, not `BOX_LOCAL`+`GET_CELL`,
 before this fix). Both are covered in
-`tests/cases/loop_capture_staleness.di` as regression/coverage cases
+`tests/cases/loop_capture_staleness.d6` as regression/coverage cases
 rather than bug demonstrations.
 
 The remaining bypass sites are all in scopes genuinely isolated from
@@ -1598,7 +1598,7 @@ registers for -- the excess never lands in an individual register at
 all, only `DIAMOND_OP_COLLECT_VARIADIC`'s own `Array`). Verified this is
 reachable, not just theoretical, before treating it as done: a variadic
 function with a small `register_count` called with `argument_count`
-comfortably exceeding it (`tests/cases/variadic_parameters.di`'s
+comfortably exceeding it (`tests/cases/variadic_parameters.d6`'s
 "sixteen args at one call site" case) reproduces the out-of-bounds write
 on the unfixed code path.
 

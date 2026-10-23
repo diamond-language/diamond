@@ -77,7 +77,7 @@ static bool resolve_own_declaration(const char *combined,const DiamondSourceBund
         size_t user_offset,const char *display_name,size_t declaration_start,
         size_t declaration_line,size_t declaration_column,size_t name_length,
         size_t *out_line,size_t *out_column) {
-    /* Below user_offset: lib/core.di's own prelude. diamond_resolve_
+    /* Below user_offset: lib/core.d6's own prelude. diamond_resolve_
      * diagnostic_location only ever remaps `.path` away from
      * `display_name` when it finds a *segment* match, and never even
      * looks for one below user_offset (the prelude was never part of

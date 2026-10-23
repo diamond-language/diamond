@@ -14,7 +14,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IS_MAC=0
 [ "$(uname -s)" = "Darwin" ] && IS_MAC=1
 BREW_PACKAGES="coreutils gnu-sed bash ripgrep openssl@3 sqlite postgresql@16 mariadb-connector-c"
-# "benchmark:in-process repeats", a representative slice of bench/*.di.
+# "benchmark:in-process repeats", a representative slice of bench/*.d6.
 BENCHMARKS="fibonacci:15 int_arithmetic:15 dispatch_monomorphic:15 dispatch_polymorphic:12
 closures:25 array_ops:30 hash_ops:40 string_ops:40 struct_field_access:15 regexp_match:15
 tensor_matmul:20 exception_handling:12 fiber_switch:10 channel_message_passing:15
@@ -175,7 +175,7 @@ prerequisites() {
     return 0
 }
 
-# The test suite writes a bytecode cache (.dic, about 4 MB each because every one embeds
+# The test suite writes a bytecode cache (.d6c, about 4 MB each because every one embeds
 # the prelude) next to each of its ~1,700 test programs: roughly 6-7 GiB at the peak of
 # `make test`, plus the build itself. Leave headroom so a nearly full disk is reported up
 # front rather than as a dozen unrelated-looking compiler errors.
@@ -235,7 +235,7 @@ exclude_known_gaps() {
     local cases="$1/tests/cases" removed=0 name suffix file stem
     if [ "$IS_MAC" -eq 1 ]; then
         for name in active_record_secure_password bcrypt; do
-            for suffix in .di .expected; do
+            for suffix in .d6 .expected; do
                 if [ -e "$cases/$name$suffix" ]; then
                     rm -f "$cases/$name$suffix"
                     removed=$((removed + 1))
@@ -283,7 +283,7 @@ build_and_test() {
         fi
         # Each test program leaves a multi-megabyte cache file behind; drop them before the
         # next step so the disk does not stay full.
-        rm -f "$work"/tests/cases/*.dic
+        rm -f "$work"/tests/cases/*.d6c
     done <<EOF
 $TEST_TARGETS
 EOF
@@ -313,7 +313,7 @@ examples() {
     step_in "$work/examples/chat" 300 "$work/build/facet" install
     seconds=$STEP_SECONDS
     if [ "$STEP_STATUS" -eq 0 ]; then
-        step_in "$work/examples/chat" 300 "$work/build/diamond" smoke_test.di
+        step_in "$work/examples/chat" 300 "$work/build/diamond" smoke_test.d6
         seconds=$((seconds + STEP_SECONDS))
     fi
     verdict="passed"
@@ -345,9 +345,9 @@ benchmarks() {
     for entry in $BENCHMARKS; do
         name="${entry%%:*}"
         repeats="${entry##*:}"
-        [ -e "$work/bench/$name.di" ] || continue
+        [ -e "$work/bench/$name.d6" ] || continue
         started="$(now)"
-        if DIAMOND_REPEAT="$repeats" run_limited 600 "$diamond" "$work/bench/$name.di" > /dev/null 2>&1; then
+        if DIAMOND_REPEAT="$repeats" run_limited 600 "$diamond" "$work/bench/$name.d6" > /dev/null 2>&1; then
             elapsed="$(awk -v s="$started" -v e="$(now)" -v r="$repeats" 'BEGIN { printf "%10.4f", (e - s) / r }')"
         else
             elapsed="    FAILED"
@@ -365,7 +365,7 @@ benchmarks() {
     record "threads   seconds   work/second relative to 1 thread"
     local cores count baseline="" rate seconds script
     cores="$(cpu_count)"
-    script="$REPO/tools/platform_report/thread_scaling.di"
+    script="$REPO/tools/platform_report/thread_scaling.d6"
     for count in 1 2 4 8 16 32 "$cores"; do
         [ "$count" -le "$cores" ] && [ "$count" -le 32 ] && echo "$count"
     done | sort -un > "$STEP_OUTPUT.counts"
@@ -398,8 +398,8 @@ run_limited() {
 # expectation (the shape tests/stress_threads.sh re-runs on Linux).
 threaded_cases() {
     local source stem
-    for source in "$1"/tests/cases/*.di; do
-        stem="${source%.di}"
+    for source in "$1"/tests/cases/*.d6; do
+        stem="${source%.d6}"
         grep -qE 'Thread\.new|Channel\.|Supervisor\.new' "$source" || continue
         [ -e "$stem.expected" ] && [ ! -e "$stem.flags" ] && echo "$source"
     done
@@ -425,7 +425,7 @@ stress_threads() {
     started=$SECONDS
     say "  $count threaded test cases, $runs runs each, with $cores busy background processes (a few minutes) ..."
     for source in $cases; do
-        stem="${source%.di}"
+        stem="${source%.d6}"
         expected="$(cat "$stem.expected")"
         attempt=0
         while [ "$attempt" -lt "$runs" ]; do
@@ -463,7 +463,7 @@ $(printf '%s\n' "$output" | tail -n 6)"
 # The JIT is x86-64 only. On Apple Silicon asking for it must be a quiet no-op that still
 # prints the right answer, never a crash.
 jit_probe() {
-    local work="$1" diamond="$1/build/diamond" program="$1/bench/dispatch_monomorphic.di"
+    local work="$1" diamond="$1/build/diamond" program="$1/bench/dispatch_monomorphic.d6"
     local plain_status plain_output status output trace verdict same=0
     section "JIT request on this CPU"
     plain_output="$(DIAMOND_NO_CACHE=1 run_limited 300 "$diamond" "$program" 2>&1)"

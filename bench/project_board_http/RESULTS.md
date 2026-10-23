@@ -47,7 +47,7 @@ portable capacity guarantee.
 ## 2026-08-29: after Arel::PreparedStatements
 
 Re-run on the same machine, same release build flags, after adding
-`Arel::PreparedStatements` (packages/arel/lib/arel/prepared_statements.di)
+`Arel::PreparedStatements` (packages/arel/lib/arel/prepared_statements.d6)
 and `InstrumentedConnection#prepare` (the fix that lets this app's own
 connection wrapper participate in the cache instead of being silently
 opted out of it -- see `bench/prepared_statements/README.md` for the

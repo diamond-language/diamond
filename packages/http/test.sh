@@ -202,7 +202,7 @@ end
 [[ "$error_response" == $'unsupported URL scheme \'ftp\' (only http/https are supported)\nnil' ]]
 
 # Server: a request declaring a Content-Length far past
-# http_max_body_size (packages/http/http.di) is dropped -- connection
+# http_max_body_size (packages/http/http.d6) is dropped -- connection
 # closed, no attempt to read that many bytes -- rather than crashing
 # the whole accept loop or trying to accumulate gigabytes of memory.
 # The server must stay alive afterward: a second, ordinary connection

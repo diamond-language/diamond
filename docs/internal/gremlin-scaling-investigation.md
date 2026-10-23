@@ -136,7 +136,7 @@ separate design question rather than part of this investigation.
 
 ## Results (2026-10-02)
 
-Tooling: `bench/gremlin_http/sweep.di --instrument` (frequency, user/system split,
+Tooling: `bench/gremlin_http/sweep.d6 --instrument` (frequency, user/system split,
 context switches, per-thread balance, RSS) plus `perf stat`/`perf record`
 (user-space only: `perf_event_paranoid` is 2, so kernel time is measured with
 `/proc` CPU accounting instead). Machine: 6 cores, SMT sibling pairs
@@ -190,7 +190,7 @@ test handler (microseconds per call, release build):
 
 `JSON.stringify` is linear (about 11 us per 3-field item, 5.8 ms for 21 KB) but
 slow: even `JSON.stringify(1)` costs 3.7 us. It is implemented in Diamond
-(`lib/core/json.di` builds a new `JSONCodec` per call, `json_codec.di`), so it
+(`lib/core/json.d6` builds a new `JSONCodec` per call, `json_codec.d6`), so it
 runs as interpreted bytecode.
 
 ## Follow-ups
@@ -198,7 +198,7 @@ runs as interpreted bytecode.
 1. **Done: native `JSON.stringify`** (see the changelog). Original note: **Native or cheaper `JSON.stringify`.** It dominates a typical API handler
    (as costly as 2000 loop iterations for a 313-byte body). Options: a native
    implementation, or at least avoiding a codec allocation per call. Measure
-   with the `json.di`-style microbenchmark above before and after.
+   with the `json.d6`-style microbenchmark above before and after.
 2. **Optionally re-run the sweep pinned to physical cores** (one worker per
    core, `ab` on its own core) to get a clean best-case curve for the docs.
 3. **Keep-alive** remains a separate design question (see below); it would cut

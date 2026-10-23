@@ -1,0 +1,283 @@
+module Arel
+
+  class Query
+    def initialize(table_name: String, predicates, orderings, limit_value: Int | Nil, offset_value: Int | Nil,
+                   projections, quoted_identifiers: Bool, bind_limits: Bool, table_alias: String | Nil = nil,
+                   distinct_value: Bool = false, groups = [], havings = [], joins = [],
+                   source_query = nil, correlations = [], ctes = [])
+      @table_name = table_name
+      @predicates = predicates
+      @orderings = orderings
+      @limit_value = limit_value
+      @offset_value = offset_value
+      @projections = projections
+      @quoted_identifiers = quoted_identifiers
+      @bind_limits = bind_limits
+      @table_alias = table_alias
+      @distinct_value = distinct_value
+      @groups = groups
+      @havings = havings
+      @joins = joins
+      @source_query = source_query
+      @correlations = correlations
+      @ctes = ctes
+    end
+
+    def self.for_table(table: Arel::Table) -> Query
+      Query.new(table.name(), [], [], nil, nil, [RawSql.new("*", [])], true, true,
+        table.table_alias())
+    end
+
+    def table_name() -> String = @table_name
+    def predicates() -> Array = @predicates
+    def orderings() -> Array = @orderings
+    def limit_value() -> Int | Nil = @limit_value
+    def offset_value() -> Int | Nil = @offset_value
+    def projections() -> Array = @projections
+    def quoted_identifiers() -> Bool = @quoted_identifiers
+    def bind_limits() -> Bool = @bind_limits
+    def table_alias() -> String | Nil = @table_alias
+    def base_reference_name() -> String
+      if @table_alias == nil
+        @table_name
+      else
+        @table_alias
+      end
+    end
+    def distinct_value() -> Bool = @distinct_value
+    def groups() -> Array = @groups
+    def havings() -> Array = @havings
+    def joins() -> Array = @joins
+    def source_query() = @source_query
+    def correlations() -> Array = @correlations
+    def ctes() -> Array = @ctes
+    def projection_count() -> Int = @projections.length()
+    def projection_count_known?() -> Bool
+      if @projections.length() != 1
+        return true
+      end
+      projection = @projections[0]
+      if projection is RawSql
+        projection.sql() != "*"
+      elsif projection is String
+        projection != "*"
+      else
+        true
+      end
+    end
+
+    def copy(predicates: Array, orderings: Array, limit_value: Int | Nil, offset_value: Int | Nil, projections: Array) -> Query
+      Query.new(@table_name, predicates, orderings, limit_value, offset_value,
+        projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins, @source_query, @correlations, @ctes)
+    end
+
+    def where(condition, params = nil) -> Query
+      additions = []
+      if condition is Hash
+        table = Table.new(@table_name)
+        index = 0
+        while index < condition.length()
+          key = condition.key_at(index)
+          value = condition[key]
+          if @quoted_identifiers
+            additions.push(table.column(key).eq(value))
+          else
+            additions.push(RawSql.new("#{key} = ?", [value]))
+          end
+          index += 1
+        end
+      elsif condition is String
+        bound = params
+        if bound == nil
+          bound = []
+        end
+        additions.push(RawSql.new(condition, bound))
+      else
+        additions.push(condition)
+      end
+      self.copy(@predicates.concat(additions), @orderings, @limit_value,
+        @offset_value, @projections)
+    end
+
+    def project(columns) -> Query
+      self.copy(@predicates, @orderings, @limit_value, @offset_value, arel_array(columns))
+    end
+    def select(columns) -> Query = self.project(columns)
+    def distinct() -> Query
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, true, @groups,
+        @havings, @joins, @source_query, @correlations, @ctes)
+    end
+    def group(expressions) -> Query
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups.concat(arel_array(expressions)), @havings, @joins, @source_query,
+        @correlations, @ctes)
+    end
+    def having(predicate) -> Query
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings.concat([predicate]), @joins, @source_query,
+        @correlations, @ctes)
+    end
+    def ensure_join_alias_available(table: Arel::Table)
+      candidate = table.reference_name()
+      if candidate.downcase() == self.base_reference_name().downcase()
+        raise ArgumentError.new("duplicate relation alias in query")
+      end
+      duplicate = false
+      index = 0
+      while index < @joins.length()
+        if @joins[index].table().reference_name().downcase() == candidate.downcase()
+          duplicate = true
+        end
+        index += 1
+      end
+      if duplicate
+        raise ArgumentError.new("duplicate relation alias in query")
+      end
+    end
+    def join(table: Arel::Table, predicate) -> Query
+      self.ensure_join_alias_available(table)
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins.concat([Join.new(table, predicate, "INNER")]),
+        @source_query, @correlations, @ctes)
+    end
+    def left_join(table: Arel::Table, predicate) -> Query
+      self.ensure_join_alias_available(table)
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins.concat([Join.new(table, predicate, "LEFT OUTER")]),
+        @source_query, @correlations, @ctes)
+    end
+    def cross_join(table: Arel::Table) -> Query
+      self.ensure_join_alias_available(table)
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins.concat([Join.new(table, nil, "CROSS")]),
+        @source_query, @correlations, @ctes)
+    end
+    def correlate(table: Arel::Table) -> Query
+      candidate = table.reference_name()
+      if candidate.downcase() == self.base_reference_name().downcase()
+        raise ArgumentError.new("correlation must reference an outer relation")
+      end
+      duplicate = false
+      index = 0
+      while index < @correlations.length()
+        if @correlations[index].reference_name().downcase() == candidate.downcase()
+          duplicate = true
+        end
+        index += 1
+      end
+      if duplicate
+        raise ArgumentError.new("duplicate correlated relation")
+      end
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins, @source_query,
+        @correlations.concat([table]), @ctes)
+    end
+    def correlate_all(tables: Array) -> Query
+      query = self
+      index = 0
+      while index < tables.length()
+        query = query.correlate(tables[index])
+        index += 1
+      end
+      query
+    end
+    def with(relation_or_name, query) -> Query
+      name = arel_cte_name(relation_or_name)
+      self.ensure_cte_name_available(name)
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins, @source_query, @correlations,
+        @ctes.concat([Cte.new(name, query)]))
+    end
+    def ensure_cte_name_available(name: String)
+      duplicate = false
+      index = 0
+      while index < @ctes.length()
+        if @ctes[index].name().downcase() == name.downcase()
+          duplicate = true
+        end
+        index += 1
+      end
+      if duplicate
+        raise ArgumentError.new("duplicate CTE name")
+      end
+    end
+    def with_recursive(relation_or_name, query) -> Query
+      name = arel_cte_name(relation_or_name)
+      self.ensure_cte_name_available(name)
+      Query.new(@table_name, @predicates, @orderings, @limit_value, @offset_value,
+        @projections, @quoted_identifiers, @bind_limits, @table_alias, @distinct_value,
+        @groups, @havings, @joins, @source_query, @correlations,
+        @ctes.concat([Cte.new(name, query, true)]))
+    end
+    def order(column_or_columns) -> Query
+      self.copy(@predicates, @orderings.concat(arel_array(column_or_columns)),
+        @limit_value, @offset_value, @projections)
+    end
+    def take(n: Int) -> Query
+      if n < 0
+        raise ArgumentError.new("limit must be non-negative")
+      end
+      self.copy(@predicates, @orderings, n, @offset_value, @projections)
+    end
+    def limit(n: Int) -> Query = self.take(n)
+    def skip(n: Int) -> Query
+      if n < 0
+        raise ArgumentError.new("offset must be non-negative")
+      end
+      self.copy(@predicates, @orderings, @limit_value, n, @projections)
+    end
+    def offset(n: Int) -> Query = self.skip(n)
+    def render_with(visitor) -> Array = visitor.render(self)
+    # Every real caller in this codebase either passes an explicit
+    # dialect visitor (PostgreSQL/MySQL/MariaDB -- only ever constructed
+    # directly in their own dialect test suites, never wired into
+    # ActiveRecord::Repository's own dispatch) or omits `visitor`
+    # entirely, meaning this default path is *always* SQLite in
+    # practice. `SQLiteVisitor` carries no instance state of its own
+    # (checked directly: sqlite_visitor.d6 declares no `@` fields), and
+    # `Visitor#render`'s only stateful field, `@query`, is already saved
+    # and restored around every render (its own `begin...ensure`,
+    # visitor.d6) specifically so the same instance can safely render
+    # nested subqueries recursively -- so reusing one instance across
+    # separate top-level calls is exactly as safe as the recursion this
+    # class already relies on, not a new assumption. Was allocating a
+    # fresh SQLiteVisitor on every single default to_sql call before this
+    # -- the hottest path in any app that never passes its own visitor
+    # (skindicate.dia's own `uploaders_for`/`platforms_for`/`screenshots_
+    # for`, every one of them). `@@default_visitor` is a per-thread class
+    # variable like any other in this codebase (Thread.new clones a
+    # separate heap; each thread's own copy lazily initializes once).
+    def to_sql(visitor = nil) -> Array
+      renderer = visitor
+      if renderer == nil
+        if @@default_visitor == nil
+          @@default_visitor = SQLiteVisitor.new()
+        end
+        renderer = @@default_visitor
+      end
+      self.render_with(renderer)
+    end
+
+    def to_a(db, visitor = nil) -> Array
+      sql, params = self.to_sql(visitor)
+      PreparedStatements.for(db, sql).query(params)
+    end
+
+    def count(db, visitor = nil) -> Int
+      sql, params = self.to_sql(visitor)
+      count_sql = "SELECT COUNT(*) AS count FROM (#{sql})"
+      rows = PreparedStatements.for(db, count_sql).query(params)
+      rows[0]["count"]
+    end
+  end
+
+end

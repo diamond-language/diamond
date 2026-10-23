@@ -620,7 +620,7 @@ static bool run_compile_pass(const char *source, DiamondProgram *program,
             /* Resolved by name, once, here -- never hardcoded, since a
              * conservative prelude that skips optional modules can shift
              * which index a *later*-defined class lands at (confirmed
-             * directly; Range itself is safe today since lib/core.di
+             * directly; Range itself is safe today since lib/core.d6
              * defines it before any conditionally-included module, but
              * nothing should assume that stays true). See DiamondChunk's
              * own comment (src/vm.h) for what this is for. */

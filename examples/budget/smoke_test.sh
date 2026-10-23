@@ -9,10 +9,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" host.di "$diamond" > "$work/interpreted.txt"
+"$diamond" host.d6 "$diamond" > "$work/interpreted.txt"
 diff -u expected.txt "$work/interpreted.txt"
 
-"$diamond" build host.di -o "$work/budget" > "$work/build.log"
+"$diamond" build host.d6 -o "$work/budget" > "$work/build.log"
 "$work/budget" "$diamond" > "$work/binary.txt"
 diff -u expected.txt "$work/binary.txt"
 echo "budget smoke test passed"

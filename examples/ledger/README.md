@@ -5,7 +5,7 @@ moves money between accounts and must balance to the cent. The bookkeeping
 is small; the point is a tour of Diamond's object model.
 
 ```text
-$ diamond ledger.di
+$ diamond ledger.d6
 opened 10 accounts
 power bill $187.00 split: $62.34 + $62.33 + $62.33 = $187.00
 16 entries posted
@@ -28,7 +28,7 @@ posting after close: FrozenError: frozen object cannot be modified
 
 ## What it shows
 
-`lib/money.di`, a value type:
+`lib/money.d6`, a value type:
 
 - **Operator overloading.** `Money` defines `+`, `-`, `*`, and `negate`
   (unary minus), so amounts read as arithmetic: `dinner + dinner * 0.2`.
@@ -44,7 +44,7 @@ posting after close: FrozenError: frozen object cannot be modified
 - **A singleton constructor.** `Money.parse` destructures
   `digits.split(".")` with `[whole, *fraction] = ...`.
 
-`lib/accounts.di` and `lib/ledger.di`, the model:
+`lib/accounts.d6` and `lib/ledger.d6`, the model:
 
 - **A sealed hierarchy.** `Account` is `sealed` with five kinds.
   `normal_side` matches all five; drop one and the program doesn't compile.
@@ -65,7 +65,7 @@ posting after close: FrozenError: frozen object cannot be modified
 - **`freeze`.** `close` freezes the entries Array and the ledger. A later
   `post` raises `FrozenError` from the frozen Array's `push`.
 
-`lib/reports.di`, the output:
+`lib/reports.d6`, the output:
 
 - **A structural interface.** `interface Report` asks for `title` and
   `rows`. The three report classes share no base class and declare nothing;
@@ -75,7 +75,7 @@ posting after close: FrozenError: frozen object cannot be modified
 - **Time.** Entries keep an ISO date; `Entry#time` parses it with
   `Time.parse`, and the reports format it with `strftime`.
 
-And in `ledger.di`, a `rescue error: A | B | C | ...` union catches each
+And in `ledger.d6`, a `rescue error: A | B | C | ...` union catches each
 failure the demo provokes.
 
 ## Test

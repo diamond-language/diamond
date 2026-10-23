@@ -5,9 +5,9 @@ frequencies, give each byte a bit string, and pack those into a real
 binary file.
 
 ```text
-$ diamond huffman.di --encode testdata/sample.txt out.huf
+$ diamond huffman.d6 --encode testdata/sample.txt out.huf
 testdata/sample.txt: 2250 -> 1351 bytes (60%)
-$ diamond huffman.di --decode out.huf back.txt
+$ diamond huffman.d6 --decode out.huf back.txt
 out.huf: decoded 2250 bytes
 $ cmp testdata/sample.txt back.txt && echo identical
 identical
@@ -21,8 +21,8 @@ which bytes it uses, to make that overhead worth paying.
 ## Usage
 
 ```text
-huffman.di --encode IN OUT
-huffman.di --decode IN OUT
+huffman.d6 --encode IN OUT
+huffman.d6 --decode IN OUT
 ```
 
 Exit status is 0 on success, 64 for a usage error, 65 for a bad input
@@ -32,7 +32,7 @@ decode), and 66 when a file can't be opened.
 ## What it shows
 
 - **Building a tree from a small forest, no priority queue needed.**
-  `huffman_build_tree` (`lib/tree.di`) repeatedly sorts the whole forest
+  `huffman_build_tree` (`lib/tree.d6`) repeatedly sorts the whole forest
   and merges its two least-frequent nodes — with at most 256 distinct
   byte values, that's simpler than a real heap and plenty fast.
 - **A sealed `Leaf`/`Branch` tree**, walked recursively
@@ -41,7 +41,7 @@ decode), and 66 when a file can't be opened.
   only a single byte value), which gets the code `"0"` directly rather
   than a zero-length string a Branch would normally produce one bit at a
   time.
-- **A real binary container format** (`lib/bits.di`): big-endian
+- **A real binary container format** (`lib/bits.d6`): big-endian
   fixed-width integers via `>>`/`&` on `Int` — the same idiom
   examples/pngmeta uses for a PNG chunk length — and packing a bit string
   into actual bytes, most-significant-bit first, with `File.read`/

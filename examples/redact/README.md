@@ -5,7 +5,7 @@ issue: emails, IP addresses, payment card numbers, bearer tokens, AWS keys,
 `password=`-style values, and private key headers, plus any rules you add.
 
 ```text
-$ diamond redact.di --summary --rules testdata/rules.txt testdata/app.log
+$ diamond redact.d6 --summary --rules testdata/rules.txt testdata/app.log
 2026-09-26T10:00:01Z INFO login ok user=[email-1] ip=[ipv4-1]
 2026-09-26T10:00:02Z INFO GET /api/orders Authorization: Bearer [bearer-1]
 2026-09-26T10:00:03Z WARN payment declined card=[card-1] user=[email-1]
@@ -61,7 +61,7 @@ line number), and 66 when a file can't be opened.
 - **Regexp features**: lookbehind (`(?<=[Bb]earer )`), alternation inside
   lookbehind, word boundaries, case-insensitive and extended options, and
   capture groups read with `Regexp#match` in the rules-file parser.
-- **Checks a regex can't express** (`lib/checks.di`): the Luhn checksum and
+- **Checks a regex can't express** (`lib/checks.d6`): the Luhn checksum and
   octet ranges, passed around as `Callable` values in a `Rule` struct.
 - **`RegexpError` handling**: a bad pattern in a rules file becomes a
   line-numbered error instead of a crash.

@@ -14,7 +14,7 @@ names them and `facet.lock` pins the exact archives.
 ```sh
 cd examples/chat
 facet install          # installs the locked cuts into cuts/
-diamond app.di         # set CHAT_PORT to change the default 18095
+diamond app.d6         # set CHAT_PORT to change the default 18095
 ```
 
 Open http://127.0.0.1:18095 in two browser windows, pick names, and chat.
@@ -32,13 +32,13 @@ Commands:
 
 - **One gremlin worker, many fibers.** `gremlin_serve(port, chat_handler, 1,
   0.05, chat_tick)` keeps every connection on one thread, so `Room`
-  (`lib/room.di`) can hold all of them in class variables. Each connection's
-  handler (`chat_session` in `boot.di`) parks its own fiber in `ws.receive()`.
+  (`lib/room.d6`) can hold all of them in class variables. Each connection's
+  handler (`chat_session` in `boot.d6`) parks its own fiber in `ws.receive()`.
 - **Fan-out without stalls.** `Room.broadcast` sends with
   `websocket_try_send_text`, which never blocks the sender's fiber. A member
   whose socket can't take a whole frame is closed and announced as having left.
 - **A bot on another thread.** Threads share no memory, so the bot
-  (`lib/bot.di`) receives commands on one `Channel` and sends replies on
+  (`lib/bot.d6`) receives commands on one `Channel` and sends replies on
   another. The server never blocks on it: commands go in with `try_send`, and
   gremlin's 50 ms tick drains replies with `try_receive`.
 - **Crash and restart.** `/crash` raises inside the bot. Its `Supervisor`
@@ -46,13 +46,13 @@ Commands:
   the restart using `restart_count` and `last_error`.
 - **Clean shutdown.** gremlin exits on SIGINT/SIGTERM once connections drain.
 
-The page (`lib/page.di`) is plain HTML and JavaScript. It renders every value
+The page (`lib/page.d6`) is plain HTML and JavaScript. It renders every value
 with `textContent`, so chat text can't inject markup.
 
 ## Test
 
 ```sh
-../../build/diamond smoke_test.di
+../../build/diamond smoke_test.d6
 ```
 
 This starts the real server and uses a minimal WebSocket client written in

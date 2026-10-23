@@ -1,0 +1,4 @@
+require "../multifile/math"
+require "../multifile/math.d6"
+
+puts(double(21))

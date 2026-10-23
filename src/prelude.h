@@ -8,7 +8,7 @@
  * the raw document/user text, or a require-resolved bundle when one
  * exists) plausibly references JSON, conservatively: any of `JSON.`,
  * `JSONCodec`, `JSONError` as a plain substring. Only ever used to
- * decide whether to *include* lib/core/json_codec.di+json.di
+ * decide whether to *include* lib/core/json_codec.d6+json.d6
  * (diamond_prelude_length/diamond_prelude_write below) -- a false
  * positive here just costs the ~1.78ms those two files add to a
  * compile that didn't need them; a false negative would break

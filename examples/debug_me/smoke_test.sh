@@ -4,8 +4,8 @@ cd "$(dirname "$0")"
 diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-"$diamond" build debug_me.di -o "$work/debug_me" > "$work/build.log"
-"$diamond" build solution.di -o "$work/solution" >> "$work/build.log"
+"$diamond" build debug_me.d6 -o "$work/debug_me" > "$work/build.log"
+"$diamond" build solution.d6 -o "$work/solution" >> "$work/build.log"
 
 check_pause() {
   grep -q '^--- paused at line_total:' "$work/actual"
@@ -21,8 +21,8 @@ check_bug() {
   "$@" < /dev/null > "$work/actual"
   check_pause
 }
-check_bug "$diamond" debug_me.di
+check_bug "$diamond" debug_me.d6
 check_bug "$work/debug_me"
-[[ $("$diamond" solution.di) == 'Total: 36 cents' ]]
+[[ $("$diamond" solution.d6) == 'Total: 36 cents' ]]
 [[ $("$work/solution") == 'Total: 36 cents' ]]
 echo "debug_me smoke test passed"

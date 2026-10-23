@@ -311,7 +311,7 @@ DiamondVmStatus tensor_from_array_helper(DiamondVm *vm,const DiamondArray *outer
  * is easily millions of elements) even though it's the one-time setup
  * cost, not the hot #matmul path.
  *
- * A plain LCG (same recurrence as examples/transformer/lib/rng.di's
+ * A plain LCG (same recurrence as examples/transformer/lib/rng.d6's
  * own SimpleRng, reimplemented here rather than shared -- this is C,
  * that's Diamond) -- not cryptographic, doesn't need to be: same seed
  * always produces the same Tensor, which is all reproducible weight
@@ -334,16 +334,16 @@ void tensor_random_helper(DiamondTensor *tensor,int64_t seed) {
  * seq_len=64), matmuls are mostly *too small* to even cross
  * DIAMOND_TENSOR_MATMUL_THREAD_FLOOR, so #matmul was never the
  * bottleneck there -- one training step measured 5.55s, and the real
- * cost was tensor_ops.di's own per-element Diamond loops (layernorm,
+ * cost was tensor_ops.d6's own per-element Diamond loops (layernorm,
  * softmax, gelu, add_bias, column slicing), each doing thousands of
  * individual #get/#set native-dispatch round-trips (memcmp method-name
  * matching, bounds checks, register shuffling) per call instead of one
  * tight C loop. At that rate a single ~140MB TinyStories shard
  * (100k stories) would take on the order of 90 days to train one pass
- * over. These mirror tensor_ops.di's own Diamond functions exactly
+ * over. These mirror tensor_ops.d6's own Diamond functions exactly
  * (same names/semantics, in-place, returning the mutated Tensor) so
  * that file can become a thin wrapper delegating to these instead of
- * rewriting any of autograd.di's own backward-formula math. */
+ * rewriting any of autograd.d6's own backward-formula math. */
 static void tensor_add_inplace_helper(DiamondTensor *a,const DiamondTensor *b) {
     const size_t total=a->rows*a->cols;
     for(size_t index=0;index<total;index++) a->data[index]+=b->data[index];
@@ -378,7 +378,7 @@ static void tensor_row_softmax_inplace_helper(DiamondTensor *x) {
     }
 }
 
-/* GELU, tanh approximation -- same formula as tensor_ops.di's own
+/* GELU, tanh approximation -- same formula as tensor_ops.d6's own
  * tensor_gelu!/scalar_tanh, but using libm's real tanh() directly
  * (this is C, not a language with no tanh() at all, unlike Diamond --
  * see scalar_tanh's own comment for why *that* one has to build it out
@@ -411,7 +411,7 @@ static DiamondVmStatus tensor_column_sums_helper(DiamondVm *vm,const DiamondTens
 
 /* Columns [start, start+width) of x, as a fresh Tensor -- splits a QKV
  * projection's d_model columns into one attention head's own slice
- * (same semantics as tensor_ops.di's own tensor_columns). */
+ * (same semantics as tensor_ops.d6's own tensor_columns). */
 static DiamondVmStatus tensor_columns_helper(DiamondVm *vm,const DiamondTensor *x,
         size_t start,size_t width,DiamondValue *out) {
     DiamondTensor *result=allocate_tensor(vm,x->rows,width);
@@ -430,7 +430,7 @@ static DiamondVmStatus tensor_columns_helper(DiamondVm *vm,const DiamondTensor *
  * contributions from more than one op (concat_columns's own backward,
  * where each head's slice could in principle overlap -- it doesn't in
  * practice here, but this stays correct either way). Same semantics as
- * tensor_ops.di's own tensor_add_columns!. */
+ * tensor_ops.d6's own tensor_add_columns!. */
 static void tensor_add_columns_inplace_helper(DiamondTensor *dest,size_t start,
         const DiamondTensor *src) {
     for(size_t row=0;row<src->rows;row++) {
@@ -442,7 +442,7 @@ static void tensor_add_columns_inplace_helper(DiamondTensor *dest,size_t start,
 
 /* Backward passes for the ops whose *forward* mutators are above but
  * whose gradient math still lived in examples/transformer's own
- * Autograd.softmax/#gelu/#layernorm (autograd.di) as plain Diamond
+ * Autograd.softmax/#gelu/#layernorm (autograd.d6) as plain Diamond
  * per-element loops -- moving only the forward mutators native
  * turned out not to be enough: a training step's own #matmul cost is
  * usually small at this model's scale (see DIAMOND_TENSOR_MATMUL_
@@ -557,7 +557,7 @@ static DiamondVmStatus tensor_layernorm_forward_helper(DiamondVm *vm,const Diamo
 
 /* Returns [grad_x, grad_gamma, grad_beta] as a Diamond Array -- the
  * standard LayerNorm backward formula (see examples/transformer/lib/
- * autograd.di's own comment for the Diamond-level derivation this
+ * autograd.d6's own comment for the Diamond-level derivation this
  * mirrors exactly; this is the same math, just native). */
 static DiamondVmStatus tensor_layernorm_backward_helper(DiamondVm *vm,
         const DiamondTensor *gamma,const DiamondTensor *grad_output,

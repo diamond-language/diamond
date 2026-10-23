@@ -75,7 +75,7 @@ handlers, and start the worker from a small script (run it under your process su
 for example a second systemd unit):
 
 ```ruby
-# worker.di
+# worker.d6
 require_cut "jobs"
 require_cut "database_config"
 require "./handlers"      # defines HANDLERS, a Hash of job kind => callable taking args
@@ -87,7 +87,7 @@ Jobs::Worker.run_forever(db, handlers: HANDLERS, poll_interval_seconds: 2)
 ```
 
 ```ruby
-# handlers.di
+# handlers.d6
 class Handlers
   def self.send_welcome_email(args)
     puts("emailing user #{args["user_id"]}")

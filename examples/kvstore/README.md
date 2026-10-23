@@ -5,9 +5,9 @@ non-blocking sockets and one `IO.poll` loop, with expiring keys, an
 append-only log that survives restarts, and a clean shutdown on SIGTERM.
 
 ```text
-$ diamond kvserver.di 7000 data.log &
+$ diamond kvserver.d6 7000 data.log &
 kvserver: 0 key(s) loaded, listening on port 7000
-$ diamond kvclient.di 7000 'SET greeting hello world' 'GET greeting' 'INCR hits' 'SETEX token 60 abc' 'TTL token' 'KEYS'
+$ diamond kvclient.d6 7000 'SET greeting hello world' 'GET greeting' 'INCR hits' 'SETEX token 60 abc' 'TTL token' 'KEYS'
 +OK
 $hello world
 :1
@@ -26,7 +26,7 @@ Requests are single lines: `PING`, `SET key value...`,
 
 ## How it works
 
-- **One event loop** (`kvserver.di`). Each pass calls
+- **One event loop** (`kvserver.d6`). Each pass calls
   `IO.poll([listener, *client sockets], clients with pending output, 500)`,
   accepts every pending connection (`accept()` on a
   `TCPServer.listen_nonblocking` listener returns `nil` instead of
@@ -38,18 +38,18 @@ Requests are single lines: `PING`, `SET key value...`,
   waits for the socket to be writable.
 - **Expiry.** `SETEX` records an expiry as Unix seconds. Reads check it,
   and the loop sweeps expired keys about once a second.
-- **Durability** (`lib/store.di`). Every change is appended to the log as a
+- **Durability** (`lib/store.d6`). Every change is appended to the log as a
   JSON array and flushed (`File#flush`); startup replays it. When the log
   holds more than twice the lines the live keys need, it's rewritten to a
   temporary file and swapped in with `File.rename`.
 - **Shutdown.** `Signal.trap("TERM", stop)` sets a flag from a nested
   `def`; `IO.poll` wakes on the signal, the loop ends, pending replies are
   sent, and the log is compacted and closed.
-- **The protocol** (`lib/protocol.di`) is one `case` over
+- **The protocol** (`lib/protocol.d6`) is one `case` over
   `[command, *args]` with Array patterns such as
   `["SETEX", key, seconds, first, *rest]`.
 
-`kvclient.di` is the blocking side: `TCPSocket.connect` with connect and
+`kvclient.d6` is the blocking side: `TCPSocket.connect` with connect and
 read timeouts, one request and one reply at a time.
 
 ## Test

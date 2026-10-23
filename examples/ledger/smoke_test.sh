@@ -8,10 +8,10 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" ledger.di > "$work/interpreted.txt"
+"$diamond" ledger.d6 > "$work/interpreted.txt"
 diff -u expected.txt "$work/interpreted.txt"
 
-"$diamond" build ledger.di -o "$work/ledger" > "$work/build.log"
+"$diamond" build ledger.d6 -o "$work/ledger" > "$work/build.log"
 "$work/ledger" > "$work/binary.txt"
 diff -u expected.txt "$work/binary.txt"
 echo "ledger smoke test passed"

@@ -5,7 +5,7 @@ does, and applies a unified diff (from `udiff`, `diff -u`, or `git diff`) to
 a file, forwards or backwards.
 
 ```text
-$ diamond udiff.di testdata/old.txt testdata/new.txt
+$ diamond udiff.d6 testdata/old.txt testdata/new.txt
 --- testdata/old.txt
 +++ testdata/new.txt
 @@ -1,11 +1,14 @@
@@ -24,7 +24,7 @@ $ diamond udiff.di testdata/old.txt testdata/new.txt
  Sphinx of black quartz,
  judge my vow.
 +And one more line.
-$ diamond udiff.di --apply -R testdata/diff.expected testdata/new.txt | cmp testdata/old.txt -
+$ diamond udiff.d6 --apply -R testdata/diff.expected testdata/new.txt | cmp testdata/old.txt -
 ```
 
 ## Usage
@@ -46,21 +46,21 @@ doesn't fit -- the same convention as `diff`.
 
 ## How it works
 
-- `lib/edit.di` -- `Edit` is a **sealed** class with three kinds, `Keep`,
+- `lib/edit.d6` -- `Edit` is a **sealed** class with three kinds, `Keep`,
   `Delete`, and `Insert`. Every `case` over an `Edit` must name all three, so
   adding a fourth stops the diff, hunk, and patch code from compiling until
   each decides what to do with it.
-- `lib/myers.di` -- Myers' O(ND) shortest-edit-script algorithm, the one
+- `lib/myers.d6` -- Myers' O(ND) shortest-edit-script algorithm, the one
   `diff` and `git` use. Cost grows with the number of changed lines, not
   with the product of the file sizes: a 3000-line file with 180 changed
   lines diffs in about a quarter of a second in a release build. (An
   earlier version filled a longest-common-subsequence table instead and
   took 38 seconds on the same input.)
-- `lib/hunks.di` -- groups an edit script into hunks with N lines of
+- `lib/hunks.d6` -- groups an edit script into hunks with N lines of
   context, merges hunks whose contexts touch, and prints `@@ -a,b +c,d @@`
   headers, including GNU's convention that an empty range starts at the line
   *before* the hunk.
-- `lib/patch.di` -- parses hunks with a `Regexp`, checks each hunk's line
+- `lib/patch.d6` -- parses hunks with a `Regexp`, checks each hunk's line
   counts against its header, and applies them, verifying every context and
   deleted line against the file before changing anything.
 

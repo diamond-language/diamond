@@ -7,28 +7,28 @@
  * (src/run_source.c, src/repl.c, lsp/compile_buffer.c,
  * lsp/diagnostics.c) -- that duplication had already drifted once
  * (lsp/compile_buffer.c and lsp/diagnostics.c each fell behind to
- * embedding lib/core.di alone, silently breaking LSP support for any
- * document using JSON/StringBuilder/numeric.di's own functions, fixed
+ * embedding lib/core.d6 alone, silently breaking LSP support for any
+ * document using JSON/StringBuilder/numeric.d6's own functions, fixed
  * separately before this file existed), so consolidating here makes
  * that parity structural instead of hand-maintained. */
 static constexpr unsigned char DIAMOND_CORE_SOURCE[] = {
-#embed "../lib/core.di" suffix(,)
+#embed "../lib/core.d6" suffix(,)
     0
 };
 static constexpr unsigned char DIAMOND_CORE_STRING_BUILDER_SOURCE[] = {
-#embed "../lib/core/string_builder.di" suffix(,)
+#embed "../lib/core/string_builder.d6" suffix(,)
     0
 };
 static constexpr unsigned char DIAMOND_CORE_NUMERIC_SOURCE[] = {
-#embed "../lib/core/numeric.di" suffix(,)
+#embed "../lib/core/numeric.d6" suffix(,)
     0
 };
 static constexpr unsigned char DIAMOND_CORE_JSON_CODEC_SOURCE[] = {
-#embed "../lib/core/json_codec.di" suffix(,)
+#embed "../lib/core/json_codec.d6" suffix(,)
     0
 };
 static constexpr unsigned char DIAMOND_CORE_JSON_SOURCE[] = {
-#embed "../lib/core/json.di" suffix(,)
+#embed "../lib/core/json.d6" suffix(,)
     0
 };
 

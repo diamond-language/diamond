@@ -425,16 +425,16 @@ jobs:
       # a bug, so every case exercising it is excluded here rather than
       # left to fail the corpus run (tests/run_cases.c's own case loop
       # stops at the first failure -- `grep -rl 'BCrypt\.' tests/cases/
-      # *.di` is what actually found both of these, not trial and error
+      # *.d6` is what actually found both of these, not trial and error
       # one case at a time). Moved aside rather than deleted only so the
       # exclusion is visibly reversible in this step's own log; the
       # container itself is discarded once the job ends either way.
       - name: Exclude the known BCrypt/musl limitation
         run: |
           mkdir -p /tmp/excluded-cases
-          mv tests/cases/active_record_secure_password.di \
+          mv tests/cases/active_record_secure_password.d6 \
              tests/cases/active_record_secure_password.expected \
-             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.d6 \
              tests/cases/bcrypt.expected \
              /tmp/excluded-cases/
       # The JIT is validated only on glibc x86-64. Keep musl's baseline on
@@ -532,7 +532,7 @@ jobs:
           # earlier diagnostic probe). Same two cases test-musl's own job
           # already excludes, same reason category, confirmed directly by
           # a real failing run here: "expected exit code 0, got: 70".
-          # math_exp_log(_tanh).di: exp(1.0)/exp(log(5.0)) differ from
+          # math_exp_log(_tanh).d6: exp(1.0)/exp(log(5.0)) differ from
           # glibc's own libm in the last representable bit on FreeBSD's
           # libm (2.7182818284590455 vs 2.718281828459045, 5.0 vs
           # 4.999999999999999) -- confirmed directly by a real failing
@@ -544,13 +544,13 @@ jobs:
           run: |
             set -e
             mkdir -p /tmp/excluded-cases
-            mv tests/cases/active_record_secure_password.di \
+            mv tests/cases/active_record_secure_password.d6 \
                tests/cases/active_record_secure_password.expected \
-               tests/cases/bcrypt.di \
+               tests/cases/bcrypt.d6 \
                tests/cases/bcrypt.expected \
-               tests/cases/math_exp_log.di \
+               tests/cases/math_exp_log.d6 \
                tests/cases/math_exp_log.expected \
-               tests/cases/math_exp_log_tanh.di \
+               tests/cases/math_exp_log_tanh.d6 \
                tests/cases/math_exp_log_tanh.expected \
                /tmp/excluded-cases/
             # The native JIT backend is intentionally limited to glibc
@@ -610,9 +610,9 @@ jobs:
       - name: Exclude the known BCrypt limitation
         run: |
           mkdir -p /tmp/excluded-cases
-          mv tests/cases/active_record_secure_password.di \
+          mv tests/cases/active_record_secure_password.d6 \
              tests/cases/active_record_secure_password.expected \
-             tests/cases/bcrypt.di \
+             tests/cases/bcrypt.d6 \
              tests/cases/bcrypt.expected \
              /tmp/excluded-cases/
       - name: Exclude glibc-only JIT cases

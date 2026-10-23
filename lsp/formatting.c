@@ -110,7 +110,7 @@ static bool def_is_endless(const DiamondToken *tokens,size_t token_count,size_t 
          * number check, this loop would keep scanning straight through
          * the def's own body and every function after it looking for
          * *any* `=` token anywhere in the rest of the file, and
-         * (confirmed directly against lib/core.di: array_empty's
+         * (confirmed directly against lib/core.d6: array_empty's
          * plain `-> Bool` return type, followed several functions
          * later by an unrelated `index = 0`) actually find one,
          * misclassifying a perfectly ordinary multi-line `def` as
@@ -249,7 +249,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
      * class/module/struct/begin/case/loop/do/if/while/until/a bracket,
      * none of which can directly contain a bare signature this way.
      * Found the hard way against this repo's own real corpus
-     * (packages/arel/lib/arel/support.di's own `interface
+     * (packages/arel/lib/arel/support.d6's own `interface
      * ArelTraversalNode` block): def_is_endless correctly said "not
      * endless" for a signature-only def (no `=` anywhere), so it got
      * an `end` expectation that never resolves, since the interface's
@@ -418,7 +418,7 @@ static bool compute_line_depths(const DiamondToken *tokens,size_t token_count,
                      * correct on its own terms but would still wrongly
                      * expect a matching `end` that will never come --
                      * found against this repo's own real corpus
-                     * (packages/arel/lib/arel/support.di's own
+                     * (packages/arel/lib/arel/support.d6's own
                      * `interface ArelTraversalNode` block). */
                     {
                         const bool signature_only=depth>0&&interface_level[depth-1];

@@ -1,8 +1,8 @@
 # Find a pricing bug with the debugger
 
-Three items at 12 cents should cost 36 cents. `debug_me.di` deliberately
+Three items at 12 cents should cost 36 cents. `debug_me.d6` deliberately
 calculates 15. Work through the pause to find out why, then compare your fix
-with `solution.di`.
+with `solution.d6`.
 
 ## Terminal walkthrough
 
@@ -10,7 +10,7 @@ From the repository root:
 
 ```sh
 make debug
-build/diamond examples/debug_me/debug_me.di
+build/diamond examples/debug_me/debug_me.d6
 ```
 
 The `debugger()` call pauses inside `line_total` after calculating `total`.
@@ -32,7 +32,7 @@ Change `+` to `*`, run again, and confirm that the paused `total` is now 36.
 Remove `debugger()` once satisfied. The supplied solution does both:
 
 ```sh
-build/diamond examples/debug_me/solution.di
+build/diamond examples/debug_me/solution.d6
 # Total: 36 cents
 ```
 
@@ -42,7 +42,7 @@ prompt or terminal stepping commands. EOF also resumes immediately, which is
 useful for automated runs:
 
 ```sh
-build/diamond examples/debug_me/debug_me.di </dev/null
+build/diamond examples/debug_me/debug_me.d6 </dev/null
 ```
 
 ## Editor walkthrough
@@ -53,7 +53,7 @@ Ensure the editor inherits `DIAMOND_BIN` pointing to the absolute path of
 `build/diamond`, or has `diamond` on its PATH. Set `diamond.debugAdapterPath`
 to the absolute path of `build/diamond-dap`.
 
-Open `debug_me.di` and set a gutter breakpoint on `total = price + quantity`.
+Open `debug_me.d6` and set a gutter breakpoint on `total = price + quantity`.
 Launch **Debug Diamond File**. The breakpoint pauses before the calculation;
 inspect `price` and `quantity` in Variables. Use Step Over to reach the
 explicit `debugger()` pause and inspect `total`. The Call Stack shows

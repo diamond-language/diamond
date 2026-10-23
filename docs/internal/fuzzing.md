@@ -2,7 +2,7 @@
 
 `fuzz/compile_fuzzer.c` is a [libFuzzer](https://llvm.org/docs/LibFuzzer.html)
 harness for `diamond_compile` — the lexer, parser, and bytecode emitter
-together, the exact surface a `.di` file's raw bytes are exposed to.
+together, the exact surface a `.d6` file's raw bytes are exposed to.
 `fuzz/execute_fuzzer.c` is a second harness for `run_chunk` (via
 `diamond_vm_run`) — the exact surface `ProgramBuilder`-constructed
 bytecode exposes, and the one the pre-release audit's register-bounds
@@ -82,7 +82,7 @@ make test-fuzz      # tests/fuzz_smoke.sh: a bounded 20-second regression check 
 
 `make test-fuzz` is deliberately short — a regression smoke test wired into
 `make test-all`, not a real campaign, so the full test suite stays fast. It
-seeds `compile_fuzzer`'s corpus from `tests/parser_cases/*.di` (the curated,
+seeds `compile_fuzzer`'s corpus from `tests/parser_cases/*.d6` (the curated,
 one-example-per-language-feature corpus — fast to load, still broad
 coverage; the full 820-file `tests/cases/` would slow corpus loading for
 no real benefit to a 20-second run) and fails loudly with the crashing
@@ -91,7 +91,7 @@ seed: the exact byte sequence that reproduced the audit's register-bounds
 bug (a `MOVE r64999, r0` inside a declared-1-register frame), so that
 regression stays covered even though every other input starts from
 nothing — raw bytecode bytes have no natural text corpus to seed from the
-way `compile_fuzzer` seeds from `.di` source.
+way `compile_fuzzer` seeds from `.d6` source.
 
 For a real campaign — hours or days, not seconds — run either binary
 directly against a persistent corpus directory so libFuzzer's own
@@ -99,7 +99,7 @@ coverage-guided mutation and corpus minimization actually have room to
 work:
 
 ```sh
-mkdir -p corpus && cp tests/parser_cases/*.di tests/cases/*.di corpus/
+mkdir -p corpus && cp tests/parser_cases/*.d6 tests/cases/*.d6 corpus/
 ./build/compile_fuzzer -max_len=8192 corpus/
 
 mkdir -p execute_corpus && printf '\x00\x00\x00\x05\xfd\xe7\x00\x00' > execute_corpus/seed

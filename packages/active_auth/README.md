@@ -21,7 +21,7 @@ model with a repository, then sign people up and look sessions up from a signed 
 This complete program does that over HTTP with `gremlin`:
 
 ```ruby
-# app.di
+# app.d6
 require_cut "gremlin"
 require_cut "active_auth"
 
@@ -87,7 +87,7 @@ gremlin_serve(8080, app)
 ```
 
 ```sh
-SESSION_SECRET=$(openssl rand -hex 32) diamond app.di
+SESSION_SECRET=$(openssl rand -hex 32) diamond app.d6
 curl -c jar -b jar -d "email=ada@example.com&username=ada&password=correcthorse" localhost:8080/sign_up
 curl -c jar -b jar localhost:8080/        # signed in as ada
 ```

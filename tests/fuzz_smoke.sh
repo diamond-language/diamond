@@ -16,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 
 corpus="$work/corpus"
 mkdir -p "$corpus"
-cp tests/parser_cases/*.di "$corpus/"
+cp tests/parser_cases/*.d6 "$corpus/"
 
 artifacts="$work/artifacts"
 mkdir -p "$artifacts"
@@ -54,7 +54,7 @@ printf '\x00\x00\x00\x05\xfd\xe7\x00\x00' > "$execute_corpus/move_out_of_range_r
 # pointer) -- pre-existing on main before the register-recycling merge
 # that happened to surface it, not caused by it, and NOT limited to
 # adversarial bytecode: `exit(Foo.bar())` from a `def self.bar() = self`
-# singleton method crashes it too (tests/cases/exit_with_class_value.di).
+# singleton method crashes it too (tests/cases/exit_with_class_value.d6).
 # A single-bit mutation of the byte sequence below (libFuzzer's own
 # ChangeBit) found a second variant of the same missing-case bug before
 # the real fix (an explicit DIAMOND_VALUE_CLASS branch, not just a
@@ -63,7 +63,7 @@ printf '\x05\x00\x00\x6e\x00\x00\x00\x80\x00\x00\x09\x92\xff' \
     > "$execute_corpus/format_value_type_null_object"
 
 # A third consumer of the same CLASS-kind-read-as-object-pointer bug:
-# raising a class value (`raise Foo.bar()`, tests/cases/raise_class_value.di)
+# raising a class value (`raise Foo.bar()`, tests/cases/raise_class_value.d6)
 # reached format_uncaught_exception_message's unconditional `.as.object`
 # read. Found by libFuzzer on CI after the fix above shipped.
 printf '\x1b\x00\x00\x6e\x00\x00\x10\x3a\x00\x00\x0b\x4c\x16' \

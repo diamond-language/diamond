@@ -27,7 +27,7 @@ A typical layout keeps templates under `views/` and application code beside it:
 myapp/
   diamond.cut
   cuts/div/ cuts/http/        # installed by facet
-  app.di
+  app.d6
   views/
     layout.html.div
     notes/
@@ -82,7 +82,7 @@ or a `make views` target. Generated files are not meant to be edited or committe
 **3. Require the generated files and call them.**
 
 ```ruby
-# app.di
+# app.d6
 require_cut "div"
 require_cut "http"
 require "./views/.cache/layout.html"
@@ -104,7 +104,7 @@ http_serve(8080, handler)
 ```
 
 ```sh
-diamond app.di
+diamond app.d6
 curl localhost:8080/notes
 ```
 
@@ -120,7 +120,7 @@ Div.check_fresh("views", "./compile_views.sh")    # the second argument is the c
 Div.stale_templates("views")                      # the stale paths as an Array, to report your own way
 ```
 
-Call it before the `require`s of the generated files are used, for example first thing in `app.di`.
+Call it before the `require`s of the generated files are used, for example first thing in `app.d6`.
 Files compiled by an older Div have no stamp and read as stale until recompiled.
 
 ## Template syntax
@@ -151,14 +151,14 @@ directory you gave it, replacing every character other than letters, digits, and
 | `views/notes/index.html.div` | `notes_index_html` |
 | `views/notes/_note.html.div` | `notes__note_html` |
 
-Compiling a single file with `divc.di` (below) uses its bare file name instead, so
+Compiling a single file with `divc.d6` (below) uses its bare file name instead, so
 two same-named templates from different directories would collide.
 
 ## Compiling one file
 
 ```sh
-diamond cuts/div/bin/divc.di views/index.html.div
-# Writes views/.cache/index.html.di
+diamond cuts/div/bin/divc.d6 views/index.html.div
+# Writes views/.cache/index.html.d6
 ```
 
 An optional second argument gives an explicit output path, and an optional third

@@ -23,7 +23,7 @@
 static constexpr char DIAMOND_USER_LINE_RESET[] = "\n#line 1\n";
 
 /* Sibling-file bytecode cache (see docs/caching.md): SHA-256 of the fully
- * require-expanded bundle.source, and a ".dic" path derived from `name`.
+ * require-expanded bundle.source, and a ".d6c" path derived from `name`.
  * `-e` (name is always the literal string "-e" regardless of what code
  * was actually passed, per main.c's own dispatch) and any path with no
  * stable on-disk identity get no cache path at all -- diamond_run_source
@@ -34,26 +34,25 @@ static void diamond_hash_source(const char *source, uint8_t out[32]) {
     EVP_Digest(source, strlen(source), out, &digest_length, EVP_sha256(), nullptr);
 }
 
-/* `app.di` -> `app.dic` (matches Python's own classic foo.py -> foo.pyc
- * sibling-cache convention -- append, don't replace, so the source's own
- * extension stays legible in the cache file's name); anything not ending
- * in ".di" just gets ".dic" appended wholesale. Returns nullptr for `-e`
+/* `app.d6` -> `app.d6c`; legacy `app.di` -> `app.dic`. Other names get
+ * ".d6c" appended. Returns nullptr for `-e`
  * (no real file to sit a cache file next to) or on allocation failure --
  * both are treated identically by every caller: no cache path means no
  * caching for this run, silently. */
 char *diamond_cache_path_for(const char *name) {
     if (strcmp(name, "-e") == 0) return nullptr;
     const size_t name_length = strlen(name);
-    const bool has_di_extension = name_length >= 3 &&
-        strcmp(name + name_length - 3, ".di") == 0;
+    const bool has_source_extension = name_length >= 3 &&
+        (strcmp(name + name_length - 3, ".d6") == 0 ||
+         strcmp(name + name_length - 3, ".di") == 0);
     char *path = malloc(name_length + 5);
     if (path == nullptr) return nullptr;
     memcpy(path, name, name_length);
-    if (has_di_extension) {
+    if (has_source_extension) {
         path[name_length] = 'c';
         path[name_length + 1] = '\0';
     } else {
-        memcpy(path + name_length, ".dic", 5);
+        memcpy(path + name_length, ".d6c", 5);
     }
     return path;
 }
@@ -400,7 +399,7 @@ static DiamondProgram *build_embedded_prelude_template(void) {
  *     this function always used before the embedded template existed --
  *     zero behavior change for that case, since the embedded template
  *     is always built with JSON included (tools/gen_compiled_prelude.c)
- *     and would otherwise make a name declared only by lib/core/json.di
+ *     and would otherwise make a name declared only by lib/core/json.d6
  *     collide with a same-named top-level class/def in a program that
  *     never even mentions JSON.
  *

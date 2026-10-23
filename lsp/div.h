@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 /* True iff `path_or_uri` names a div template (packages/div) -- anything
- * ending in ".div", matching packages/div/lib/div/compiler.di's own
+ * ending in ".div", matching packages/div/lib/div/compiler.d6's own
  * function_name_for (which strips exactly that suffix and nothing more:
  * a plain ".div" file, not necessarily ".html.div", is a template). Safe
  * to call with either a real filesystem path or a still-percent-encoded
@@ -26,11 +26,11 @@ typedef struct DivPosition {
 
 /* Translates `source` (raw .div template text) into ordinary Diamond
  * source implementing the same tag semantics as packages/div/lib/div/
- * compiler.di's own Div.compile_source (see that file's own header
+ * compiler.d6's own Div.compile_source (see that file's own header
  * comment for the tag grammar) -- a single top-level function taking
  * every name from a `<%# locals: ... %>` directive as its parameters,
  * with a fixed escape helper inlined ahead of it. The generated function
- * and helper are both given fixed internal names (unlike divc.di's own
+ * and helper are both given fixed internal names (unlike divc.d6's own
  * basename-derived ones): nothing outside this one compile ever
  * references them, since this exists purely to type-check a template's
  * own embedded Diamond code for diagnostics, never to actually produce
@@ -49,7 +49,7 @@ typedef struct DivPosition {
  * needed the way a require-bundled bundle.source's line/column does.
  *
  * On failure (currently only an unterminated `<%` tag, matching Div.scan's
- * own `raise` in compiler.di), returns nullptr, leaves *out_positions/
+ * own `raise` in compiler.d6), returns nullptr, leaves *out_positions/
  * *out_position_count untouched, and instead fills *out_error_line/
  * *out_error_column (1-based, in `source`) and *out_error_message (a
  * static string, never freed) with a diagnostic the caller can report

@@ -13,7 +13,7 @@ monthly 31 Pay credit card
 yearly 10-03 Anniversary
 2026-10-02 18:30 Concert
 
-$ diamond agenda.di --today 2026-09-25 --days 7 events.txt
+$ diamond agenda.d6 --today 2026-09-25 --days 7 events.txt
 Fri 25 Sep 2026
   08:15   Commute
   09:30   Standup
@@ -25,7 +25,7 @@ Wed 30 Sep 2026
   09:30   Standup
 ...
 
-$ diamond agenda.di --today 2026-09-25 --cal events.txt
+$ diamond agenda.d6 --today 2026-09-25 --cal events.txt
        September 2026
  Mo  Tu  We  Th  Fr  Sa  Su
       1*  2*  3*  4*  5   6
@@ -50,7 +50,7 @@ rule, 66 when the file can't be opened.
 
 - **Calendar arithmetic.** `days_from_now`, `end_of_month`, `beginning_of_month`,
   `wday`, `on_weekday?`, and `same_day?` drive the expansion
-  (`lib/expand.di`) and the grid (`lib/calendar.di`). "Last Friday" is a
+  (`lib/expand.d6`) and the grid (`lib/calendar.d6`). "Last Friday" is a
   Friday whose date a week later is in another month.
 - **Fixed-offset zones.** Every occurrence is a UTC `Time`; `--offset`
   shows it with `localtime("+05:30")`, and grouping by the shifted date

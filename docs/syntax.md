@@ -1,5 +1,10 @@
 # Language reference
 
+Diamond's default and preferred source extension is `.d6`. Existing `.di`
+files remain supported for backward compatibility. Extensionless imports
+prefer `.d6` when both suffixes exist; see
+[Source files and imports](core-syntax.md#source-files-and-imports).
+
 Diamond's language and standard-library reference is organized by topic:
 
 - [Core syntax and values](core-syntax.md) — expressions, control flow,

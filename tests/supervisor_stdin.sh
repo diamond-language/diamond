@@ -17,7 +17,7 @@ cleanup() {
 trap cleanup EXIT
 mkfifo "$stdin_tmp/input"
 exec 3<>"$stdin_tmp/input"
-cat > "$stdin_tmp/reader.di" <<'DIAMOND'
+cat > "$stdin_tmp/reader.d6" <<'DIAMOND'
 def reader(ready)
   ready.send(true)
   gets()
@@ -53,7 +53,7 @@ puts(gets())
 puts("done")
 nil
 DIAMOND
-timeout 15 "$diamond" "$stdin_tmp/reader.di" <"$stdin_tmp/input" >"$stdin_tmp/output" 2>&1 &
+timeout 15 "$diamond" "$stdin_tmp/reader.d6" <"$stdin_tmp/input" >"$stdin_tmp/output" 2>&1 &
 stdin_pid=$!
 wait_for_line() {
     local line="$1"

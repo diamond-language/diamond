@@ -22,7 +22,7 @@
  * into one flat list:
  *
  *   - Every top-level function and class in the whole compiled
- *     program (not just this document's own -- lib/core.di's prelude
+ *     program (not just this document's own -- lib/core.d6's prelude
  *     and anything pulled in via `require` are all valid to type here,
  *     unlike lsp/document_symbol.c's deliberately narrower "this file's
  *     own outline").

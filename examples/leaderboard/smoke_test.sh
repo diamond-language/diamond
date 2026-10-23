@@ -9,11 +9,11 @@ diamond="${DIAMOND_BIN:-../../build/diamond}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-"$diamond" build leaderboard.di -o "$work/leaderboard" > "$work/build.log"
+"$diamond" build leaderboard.d6 -o "$work/leaderboard" > "$work/build.log"
 
 status_of() { local s=0; "$@" > /dev/null 2>&1 || s=$?; echo "$s"; }
 
-for lb in "$diamond leaderboard.di" "$work/leaderboard"; do
+for lb in "$diamond leaderboard.d6" "$work/leaderboard"; do
   $lb testdata/season1.txt --top 4 --versus testdata/season2.txt | cmp testdata/full.expected -
   $lb testdata/season2.txt --quiet | cmp testdata/quiet.expected -
   # --versus works from the other side too.

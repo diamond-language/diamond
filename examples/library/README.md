@@ -21,31 +21,31 @@ Split one file per concern, the same pattern `packages/rack`,
 `packages/arel`, and `packages/active_record` already use:
 
 ```
-app.di                          entry point: ordered requires, then starts the server
+app.d6                          entry point: ordered requires, then starts the server
 compile_views.sh                batch-compiles lib/views/*.html.div (run first)
-setup_db.di                     creates and seeds library.db
+setup_db.d6                     creates and seeds library.db
 lib/
-  database.di                   per-worker SQLite connection
+  database.d6                   per-worker SQLite connection
   models/
-    author.di, book.di          ActiveRecord::Model classes
+    author.d6, book.d6          ActiveRecord::Model classes
   controllers/
-    authors_controller.di       AuthorsController -- one self. method per route action,
+    authors_controller.d6       AuthorsController -- one self. method per route action,
                                  (request, context, params)
-    books_controller.di         BooksController, same
+    books_controller.d6         BooksController, same
   views/
     layout.html.div             page shell + nav, wraps every response
     home.html.div, authors_table.html.div, books_table.html.div,
     author_books_table.html.div, author_show.html.div, book_show.html.div,
     author_form.html.div, book_form.html.div
-  routes.di                     one bare top-level shim function per controller action, plus
+  routes.d6                     one bare top-level shim function per controller action, plus
                                  build_router() -- see packages/dials/README.md's "Why
                                  controllers still need one small shim function per action"
-  middleware.di                 route/logging_middleware/timing_middleware/app -- still plain
+  middleware.d6                 route/logging_middleware/timing_middleware/app -- still plain
                                  top-level functions, a real language constraint (see the
                                  comment at the top of that file), not a style choice
 ```
 
-`app.di`'s own `require` block is ordered deliberately, not alphabetically
+`app.d6`'s own `require` block is ordered deliberately, not alphabetically
 -- see the comment at its top for exactly which parts of that order are
 load-bearing (views before the controllers that call them, and
 `author_books_table.html` before `author_show.html`, which calls it as a
@@ -54,7 +54,7 @@ partial).
 ## Routing
 
 Requests are dispatched through a [`packages/dials`](../../packages/dials/README.md)
-`Dials::Router` (`lib/routes.di`'s `build_router()`), replacing what used
+`Dials::Router` (`lib/routes.d6`'s `build_router()`), replacing what used
 to be a hand-written if/elsif chain (`Router.dispatch`). Path segments
 like `/authors/:id` capture into a `params` Hash merged with query/form
 params, so controller actions now take `(request, context, params)`
@@ -69,7 +69,7 @@ class verbatim (same three methods, just relocated to a real package);
 ## Views
 
 Every page renders through a [`packages/div`](../../packages/div/README.md)
-template: `lib/views/*.html.div` source compiles to an ordinary `.di` function
+template: `lib/views/*.html.div` source compiles to an ordinary `.d6` function
 (`author_show.html.div` -> `author_show_html(...)`), which a controller
 calls directly and wraps with `layout_html(title, content)`, then hands
 to `Div.html_response(200, ...)` for the actual `[status, headers, body]`
@@ -104,14 +104,14 @@ without touching development data.
 cd examples/library
 bash ../../tools/install_local_cuts.sh .
 bash compile_views.sh              # compiles lib/views/*.html.div (once, or after editing a view)
-../../build/diamond setup_db.di    # creates library.db, seeds it
-../../build/diamond app.di         # starts the server on :18080
+../../build/diamond setup_db.d6    # creates library.db, seeds it
+../../build/diamond app.d6         # starts the server on :18080
 ```
 
 For production:
 
 ```sh
-DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/library.db ../../build/diamond app.di
+DIAMOND_ENV=production DIAMOND_DATABASE_PATH=/srv/diamond/library.db ../../build/diamond app.d6
 ```
 
 Then, in another terminal:
@@ -128,8 +128,8 @@ curl http://127.0.0.1:18080/books/1
 Or open `http://127.0.0.1:18080/` in a browser -- it's plain HTML.
 Every request is logged to stdout by the `rack` logging middleware
 (`GET /books -> 200`), and `library.db` is left on disk afterward
-(gitignored) -- rerun `setup_db.di` any time to reset it. The generated
-`lib/views/.cache/*.html.di` files are gitignored too -- `compile_views.sh` re-runs
+(gitignored) -- rerun `setup_db.d6` any time to reset it. The generated
+`lib/views/.cache/*.html.d6` files are gitignored too -- `compile_views.sh` re-runs
 in well under a second, so nothing is lost by not committing them.
 
 The navigation links expose `/authors/new` and `/books/new`. Existing records

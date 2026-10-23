@@ -58,7 +58,7 @@ and RETURNING, compound queries, traversal, and inspection. Run `make test` befo
 every commit, and compare benchmark output as well as timing.
 
 Release render benchmark on this checkout (`make release`, GCC, `-O3`, native
-architecture, LTO; `bench/arel_render.di`, 20,000 renders, cache disabled):
+architecture, LTO; `bench/arel_render.d6`, 20,000 renders, cache disabled):
 five before/after runs per batch, alternating order, with identical SQL and
 parameter-count output. Both variants used the same binary and isolated copies
 of the package; the baseline package came from `55c363ed`.
@@ -143,7 +143,7 @@ every added check. The guard bypass was temporary and is not a proposed fix.
 For reproduction, use isolated package snapshots from `55c363ed` and `d53ab581`
 with one release binary, `DIAMOND_NO_CACHE=1`, and alternating execution order.
 Add `Time.monotonic()` immediately before the existing render loop in
-`bench/arel_render.di` and print the elapsed time immediately after it. Collect
+`bench/arel_render.d6` and print the elapsed time immediately after it. Collect
 trace counters separately from timings; trace flags and allocation layout can
 change collision counts. Compare complete SQL and parameter output in every run.
 
@@ -212,7 +212,7 @@ site's entries, and invalidation are unchanged. `INVOKE_MONO` probes with
 `diamond_cache_find`, which never claims a way, and then reuses the cache that
 `lookup_method_cached` returns.
 
-Method-cache misses on `bench/arel_render.di` (20,000 renders, interpreter) for
+Method-cache misses on `bench/arel_render.d6` (20,000 renders, interpreter) for
 the two package layouts `55c363ed` and the annotated package:
 
 | Cache | Baseline package | Annotated package |
@@ -321,9 +321,9 @@ the added checks in write-construction workloads.
 | Arel builder chain | JIT enabled | 1.4760 s | 1.4842 s | +0.6% |
 
 The retained read-path differences are small; they do not establish a speedup.
-`arel_parameter_contracts.di` checks constructor rejection through dynamic
+`arel_parameter_contracts.d6` checks constructor rejection through dynamic
 callers and preservation of defaults and false bind values. The separate
-`arel_invalid_flag_parameter.di` checks a direct invalid flag call and its
+`arel_invalid_flag_parameter.d6` checks a direct invalid flag call and its
 runtime diagnostic. Existing dialect, write, conflict-target, and extension
 cases cover the preserved protocols.
 

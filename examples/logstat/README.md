@@ -6,7 +6,7 @@ gremlin, and the package registry. It runs under the interpreter or ships as
 one binary built with `diamond build`.
 
 ```text
-$ diamond build logstat.di
+$ diamond build logstat.d6
 $ ./logstat testdata/sample.ndjson
 9 lines, 2 unparsed
 
@@ -49,8 +49,8 @@ nearest-rank method.
 
 ## What it shows
 
-- **A closed set of line types.** `lib/lines.di` declares `sealed class
-  LogLine` with three subclasses. `Tally#record` (`lib/report.di`) matches on
+- **A closed set of line types.** `lib/lines.d6` declares `sealed class
+  LogLine` with three subclasses. `Tally#record` (`lib/report.d6`) matches on
   them with `case`; because `LogLine` is sealed, leaving a subclass out is a
   compile error, and inside each `when` the line is narrowed to that subclass.
 - **Structs for plain data.** `Latency` is a `struct`, so it gets its
@@ -60,7 +60,7 @@ nearest-rank method.
   compile time.
 - **A real CLI.** Argument parsing from `ARGV`, file and stdin input, errors
   on stderr through `warn`, and conventional exit codes through `exit`.
-- **Shipping one file.** `diamond build logstat.di` produces a standalone
+- **Shipping one file.** `diamond build logstat.d6` produces a standalone
   executable; `smoke_test.sh` checks that it prints exactly what the
   interpreter prints.
 

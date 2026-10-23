@@ -17,7 +17,7 @@ later commit and diff against the numbers here.
 
 ## Methodology
 
-- `bench/*.di` are hand-written microbenchmarks, each targeting one
+- `bench/*.d6` are hand-written microbenchmarks, each targeting one
   hot-path category (see file comments for what each exercises and why).
 - Timed via `DIAMOND_REPEAT=N`, which re-runs the *already-compiled*
   chunk N times inside one process — this measures interpreter
@@ -25,7 +25,7 @@ later commit and diff against the numbers here.
   total wall time / N. `bench/run.sh` picks N per-benchmark to land
   around 2-5s of total measured time.
 - Every benchmark's numeric result was manually verified for
-  correctness (e.g. `fibonacci.di` → `832040`, the known `fib(30)`)
+  correctness (e.g. `fibonacci.d6` → `832040`, the known `fib(30)`)
   before being trusted for timing.
 - Two passes: default (`DIAMOND_QUICKEN` unset) and `DIAMOND_QUICKEN=1`
   (enables the VM's existing runtime opcode-specialization tier).
@@ -57,14 +57,14 @@ signal, given the methodology.)
 
 **1. `DIAMOND_QUICKEN=1` shows no measurable benefit anywhere in this
 suite — including in a benchmark built specifically to require it.**
-`int_arithmetic.di` uses plain, locally-typed Int locals, which the
+`int_arithmetic.d6` uses plain, locally-typed Int locals, which the
 *compiler* already statically specializes to `ADD_INT`/`SUBTRACT_INT`/
 `MULTIPLY_INT`/`DIVIDE_INT` at compile time (`src/compiler.c:2217-
 2260`, gated on `known_types[left]==DIAMOND_TYPE_INT` for both
 operands) — independent of `DIAMOND_QUICKEN`. So that benchmark never
 exercises the runtime tier at all.
 
-`int_arithmetic_dynamic.di` was added specifically to close that gap —
+`int_arithmetic_dynamic.d6` was added specifically to close that gap —
 it routes the same arithmetic through an untyped function parameter,
 confirmed via `--dump-bytecode` to compile to generic `ADD`/
 `SUBTRACT`/`MULTIPLY`/`DIVIDE` (no static specialization possible: the
@@ -87,10 +87,10 @@ code; call/dispatch overhead is a more promising target than further
 specializing arithmetic.
 
 **2. Inline caching for method dispatch clearly works and clearly
-matters.** `dispatch_monomorphic.di`'s opcode trace shows `INVOKE_MONO`
+matters.** `dispatch_monomorphic.d6`'s opcode trace shows `INVOKE_MONO`
 (the monomorphic-cache fast path) used 1,999,998 of 2,000,000 calls —
 essentially every call after the first upgrades to the cached path.
-`dispatch_polymorphic.di` (4 alternating receiver classes) never
+`dispatch_polymorphic.d6` (4 alternating receiver classes) never
 upgrades — plain `INVOKE` runs all 2,000,000 times, as expected for a
 call site that can't stay monomorphic. Per-iteration cost: ~133ns
 (mono) vs. ~162-169ns (poly) — roughly 20-25% slower, though note the
@@ -110,7 +110,7 @@ dispatch.
 **4. `Hash` is a genuine O(n) linear scan (`hash_find`, `src/vm.c`),
 confirmed by reading the code, not just inferred from timing** — every
 `.length()`-preserving insert or lookup scans up to `count` entries.
-`hash_ops.di` is deliberately small (5,000 keys, not 50,000) because
+`hash_ops.d6` is deliberately small (5,000 keys, not 50,000) because
 the insert phase is O(n²) overall; at 5,000 keys it's already fast in
 absolute terms (~18.4ms per repeat of the full 5,000-insert + 5,000-
 lookup workload) but this degrades quadratically — a `Hash` with tens
@@ -120,7 +120,7 @@ change, not a dispatch optimization) is worth an explicit decision
 rather than silently falling out of scope.
 
 **5. Function-call overhead is substantial and highly repetitive.**
-`fibonacci.di`'s opcode trace: `NIL` (5.39M) and `MOVE`/`CONSTANT`
+`fibonacci.d6`'s opcode trace: `NIL` (5.39M) and `MOVE`/`CONSTANT`
 (5.39M each) each outnumber `CALL`/`RETURN` (2.69M each) roughly 2:1 —
 every call pays for local-slot `NIL`-initialization and register
 shuffling on top of the call/return machinery itself. This matches
@@ -133,7 +133,7 @@ where a JIT's early wins are most likely to be.
   (typed-parameter/generic dispatch) as a hot path — none of the
   current benchmarks show these opcodes in their top-12.
 - No benchmark isolates GC pressure specifically (allocation-heavy
-  code without a dominating loop-body cost elsewhere) — `array_ops.di`
+  code without a dominating loop-body cost elsewhere) — `array_ops.d6`
   touches this via array growth but doesn't isolate it.
 - The `dispatch_polymorphic` vs `dispatch_monomorphic` comparison has a
   confound (extra Array indexing in the polymorphic variant) noted
@@ -206,7 +206,7 @@ register, both postfix-modifier fallbacks) untouched since a prior loop
 iteration could leave a non-nil value in those registers.
 
 Confirmed via `DIAMOND_TRACE_OPCODES` that this isn't just a paper
-win: `fibonacci.di`'s `NIL` count dropped from 5,385,121 (baseline) to
+win: `fibonacci.d6`'s `NIL` count dropped from 5,385,121 (baseline) to
 **0** — `compile_sequence`'s leading-placeholder site (the
 highest-frequency of the 11 removed) accounted for both NILs/call in
 fibonacci's original trace, and neither survives.
