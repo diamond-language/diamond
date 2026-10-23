@@ -5,7 +5,14 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `80810745f97a1ff27c1943515b6851117700afd1` (main, deployed
+Runtime revision: `961519af64c36a27a3efccbea5d71248e7678e28` (v0.19.0, deployed
+2026-10-23 after verified snapshots and Ubuntu HTTP/nginx/systemd staging checks).
+The installed unit now starts `app.d6`; the upgrade preserves and restores the
+previous unit as well as the release symlink on failure. All 19 new public cut
+identities and all 18 retained legacy seed identities passed resolution, digest,
+load, and locked-reinstall verification. See the 0.19 publication record below.
+
+Previously `80810745f97a1ff27c1943515b6851117700afd1` (main, deployed
 2026-10-19 with `tools/deploy_registry.sh` after a verified backup; the eleven cuts published on 2026-10-18
 and graphsql 0.1.4 were already live, and `tools/verify_registry_launch.di` passed for all 18 cuts);
 previously `bb35699e95bd3b9c8521d61e0d85e32417c59009` (v0.18.0, deployed
@@ -29,7 +36,7 @@ sort and the 18 README patch releases, published the same day), `8441e05c` from 
 from 2026-09-25 for cut show pages;
 earlier `822114807fbc9cbdd579f29fec4e0958da8b78df` from
 2026-09-24, launch revision `f90c10bd`), built in the local Ubuntu 26.04 QEMU guest with x86-64-v3 release
-flags. Only the current release is kept on the host; git is the rollback. Schema
+flags. Only the current expanded release is kept under `releases/`; verified rollback archives are retained with the backups. Schema
 migration `2026092401` (nullable `releases.maintainers`) is additive. A verified
 snapshot was taken immediately before the upgrade. Registry files live under
 `/opt/diamond-registry/releases/<revision>` with a `current` symlink; application
@@ -82,6 +89,43 @@ for each removed release's metadata and archive, and successful facet resolution
 digest checks, loading, and locked reinstall of every retained cut. The revised
 seed also passed local reproducibility and dependency-closure checks.
 
+## 0.19.0 publication, 2026-10-23
+
+The [v0.19.0 release](https://github.com/diamond-language/diamond/releases/tag/v0.19.0)
+tags `961519af64c36a27a3efccbea5d71248e7678e28`, tested by all 29 checks in
+PR #301. It updates the 19 already-public cut names, without adding another
+public name. The exact versions, dependency ranges, sizes, and SHA-256 digests
+are frozen in [registry-0.19-inventory.json](../../../docs/registry-0.19-inventory.json).
+That inventory is the 18-cut seed plus Mjolnir 0.3.1. Cancellation remains
+source-only; the six withdrawn cuts remain unavailable.
+
+Each missing version was checked before publication. Credential **29** had
+only the 19 name-specific `publish:` scopes and a 30-minute lifetime. It stayed
+on the registry host, was revoked after publication, and its secret file and
+temporary publication payload were removed. Database revocation was verified.
+The public catalog contains exactly the reviewed 19 latest identities. The new
+cohort and the old 18-cut seed both resolved, matched their reviewed hashes,
+loaded, and reinstalled from unchanged locks. Fresh Mjolnir 0.3.1/Arel 0.35.0
+and legacy Mjolnir 0.2.4/Arel 0.34.6 installs passed the website's changeset,
+query, association, and transaction example.
+
+Pre-change database/blob snapshots were restore-verified on the host before
+the registry upgrade; the Skindicate database snapshot passed SQLite integrity
+and nonempty-data checks. Runtime binaries, static assets, nginx configuration,
+and service units were retained in `/root/release-019-backup-20261023`.
+After explicit operator approval, these snapshots and rollback files were
+copied outside the Git worktrees into a private mode-0700 `.release-019/`
+directory. The pre-change and post-release registry snapshots were restored
+and verified locally; the downloaded Skindicate snapshot passed gzip and
+SQLite integrity checks. The previous Skindicate binary was also retained
+locally and matched the original running executable's SHA-256.
+
+The registry deployment dry run completed before the upgrade. The Ubuntu
+staging guest passed HTTP publication/install, nginx HTTPS/rate-limit/recovery,
+and systemd identity/sandbox/restore checks. Production health, the `.d6`
+service command, runtime version, and running executable identity were checked
+afterward. The local build VM was shut down after release verification.
+
 ## Publishing a new cut version
 
 Seed-time inventory lives in `docs/registry-launch-inventory.json`; a cut that
@@ -97,18 +141,18 @@ first (`tools/fetch_registry_backup.sh`, below). Then:
    # The umask inside the quotes applies on the server; the one around the ssh command is what makes the local file private.
    (umask 077 && ssh root@dilang.tech 'cd /opt/diamond-registry/current/app && umask 077 && \
      REGISTRY_ROOT=/var/lib/diamond-registry REGISTRY_OPERATOR=<you> \
-     runuser -u diamond-registry -- ../bin/diamond credentials.di issue \
+     runuser -u diamond-registry -- ../bin/diamond credentials.d6 issue \
        diamond-language 1800 "publish:<name>" "<reason>"' > credential.json)
    ```
 
-2. Prepare the seed (`build/diamond tools/prepare_registry_seed.di DIR --expect
+2. Prepare the seed (`build/diamond tools/prepare_registry_seed.d6 DIR --expect
    docs/registry-launch-inventory.json`) and trim it to the cuts being published with
    `tools/trim_seed_to.sh DIR NEW_SEED CUT...`, which checks each archive against its
-   inventory entry; `tools/publish_registry_seed.di` publishes every cut in the seed it
+   inventory entry; `tools/publish_registry_seed.d6` publishes every cut in the seed it
    is given. Never publish the whole seed again: versions are immutable.
-3. Verify with `tools/verify_registry_launch.di https://cuts.dilang.tech`, delete
+3. Verify with `tools/verify_registry_launch.d6 https://cuts.dilang.tech`, delete
    `credential.json`, and revoke the credential
-   (`credentials.di revoke <id> "<reason>"`) or let it expire.
+   (`credentials.d6 revoke <id> "<reason>"`) or let it expire.
 
 gremlin 0.4.0 was published this way on 2026-10-02 and 0.4.2 (a raising handler answers 500)
 on 2026-10-17 with a 30-minute credential (revoked; archive sha256
@@ -129,7 +173,7 @@ each with its own revoked credential and a passing verification. `mjolnir` 0.2.1
 `5e40bd79a0ecd124f7022a686bc2c6bfc6c711d9398562256dbfa889c71092fc`, credential 26) followed the same way on 2026-10-18, revoked, with a passing verification of all 18 launch cuts.
 
 On 2026-10-19 eleven cuts were published together after a verified laptop snapshot, with one 30-minute credential (credential 27, `publish:<name>` for each of the eleven, revoked afterwards): `arel` 0.34.6 (sha256 `b485d8a5001baac2b790b2a43912cb0bba74b3bfce091d7cc23013291d4af43f`), `active_record` 0.19.5 (sha256 `7db236e823af5a6d73def227a5ba908fe8a985cd0f184b55bcbd9dfacff41946`), `graphql` 0.2.1 (sha256 `d6f62865ff51bcdcfef18d70f5cdb3c2559c49e2bcc2c96648eb403f22c26bf8`), `http` 0.1.3 (sha256 `453d37182c35d0deb17166a7b59c39c8716db7dc054c6fe740c995f2d119fc7e`), `gremlin` 0.4.7 (sha256 `95e2548f5b7f391209fd471dee68c4bba00944aa83fe8d21db31f28c6ee12fd9`), `jobs` 0.1.3 (sha256 `7d0a284a03c4b4d7486f4f866c3befe614c14fabbe3126293a61c2e361146d4f`), `network_safety` 0.1.3 (sha256 `9fb21cae5568472003d2036364dfa988b2c9ce4b436f463d1e9064f75161d923`), `rack` 0.1.3 (sha256 `f2bd03fb212241406c3676d1bb97bb9790a851f473d145c0760b88a38b92ad34`), `redis` 0.1.3 (sha256 `cb0c9486f265926e20d258fdb09710fc576ebc722fa2ad00a841ddc66958490e`), `websocket` 0.1.4 (sha256 `7186d31b7918382b36aba04a5ed711cc66505c962987a9381c65725aeaaffaa7`), `mjolnir` 0.2.4 (sha256 `8df73f569a146e0d1c122f9f012705dbdac1e0c4a10c3d25fa71fe521144a831`). They carry the review fixes: the `graphql` strictness and query limits, the `gremlin` per-request connection, the `rack`, `http`, `websocket`, `redis`, `jobs` and `network_safety` hardening, the `arel` bind-order fix, and the `mjolnir` MySQL/MariaDB writes. `graphql` 0.2.x is a breaking line for `graphsql` 0.1.3, whose range stops at `graphql` 0.1.x, so `tools/verify_registry_launch.di` failed on the mismatch until `graphsql` 0.1.4 (which depends on `graphql ^0.2.0`) followed.
-`graphsql` 0.1.4 (sha256 `7a1d5253251075d2b70deb048b2bb6c09e2b8f468000037e01c0abe01b9a172d`, credential 28, `publish:graphsql`, revoked) followed the same day, after which `tools/verify_registry_launch.di` passed for all 18 launch cuts. The running registry service was not redeployed for any of this and still serves from release `bb35699e`.
+`graphsql` 0.1.4 (sha256 `7a1d5253251075d2b70deb048b2bb6c09e2b8f468000037e01c0abe01b9a172d`, credential 28, `publish:graphsql`, revoked) followed the same day, after which `tools/verify_registry_launch.di` passed for all 18 launch cuts. The registry service was not redeployed for these publications and at that point still served from release `bb35699e`.
 
 ## Host disk and logs
 
@@ -221,7 +265,7 @@ No transfer is made until an operator supplies the destination and remote paths.
 To rehearse recovery without touching a running service:
 
 ```sh
-diamond applications/registry/backup.di restore \
+diamond applications/registry/backup.d6 restore \
   /your/chosen/backup-directory/snapshot /your/chosen/new-recovery-directory
 ```
 

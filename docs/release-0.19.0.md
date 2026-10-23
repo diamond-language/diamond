@@ -1,10 +1,42 @@
-# Diamond 0.19.0 release preparation
+# Diamond 0.19.0 release record
 
 Release date: 2026-10-23. This document records verification and migration.
 Production deployment and cut-publication outcomes are recorded in the
 [registry production record](../applications/registry/deploy/PRODUCTION.md).
 The [changelog](../CHANGELOG.md) contains the complete user-visible changes
 since 0.18.0.
+
+## Production outcome
+
+- Diamond **v0.19.0** was published on 2026-10-23 at
+  `961519af64c36a27a3efccbea5d71248e7678e28`, after all 29 final checks passed.
+- The registry runs that revision and starts `app.d6`. Its 19-cut publication
+  matches the frozen inventory, and legacy immutable artifacts remain usable.
+  Credential 29 was revoked and its secret file removed.
+- `getdiamond.codes` serves marketing revision
+  `e1ff744d1dd5f39b98231b0d268343a431034a37`, including the `.d6` examples and
+  Mjolnir `^0.3.1` installation. `/wasm/` redirects to `/#repl`;
+  `dilang.tech` retains its path/query redirect. Live page, script, stylesheet,
+  image, and WASM bytes match the merged source. All nine REPL checks passed
+  against the downloaded live assets. The WASM SHA-256 remains
+  `d7fa1e3f8c2f94522be70cab40fb1353c74bef08e2bac24ca32ddaa227fc0bc5`.
+- SkindicateV3 runs app revision
+  `158bf4138a4e060367541f9c050bdd69edc3565c`, from its verified Ubuntu build.
+  Its executable SHA-256 is
+  `3523098cf5fc47a37a4f52255d34af937f6fad88fe3981ea2ebafcd72c4d67cb`.
+  The bundle pins runtime `02e8b7de`; its compiler, native runtime, prelude,
+  and cut sources are identical to the released tag. The later tag changes
+  release/operator tooling and documentation. The running executable identity
+  and public HTTPS home/login/signup pages were verified after restart.
+  There was no schema migration or V2 cutover.
+
+Rollback bundles and both database snapshots were verified on the server and,
+with operator approval, copied to private local storage for restore checking.
+The publication credential and temporary payload were removed; the build VM
+was shut down. The registry production record contains the detailed audit.
+No browser surface was available: HTTP, exact asset identities, and live WASM
+execution were checked; visual layout and interactive keyboard behavior were
+not independently exercised in a browser.
 
 ## Release highlights
 
@@ -75,9 +107,9 @@ Local verification passed on 2026-10-23:
 The original preparation passed all 29 CI checks and merged in PR #300 at
 `02e8b7de`. Marketing preparation merged at `331b24e`. SkindicateV3's bundle
 at `158bf41` pins the verified 0.19 runtime at `02e8b7de` and passed both
-interpreted and compiled test suites on Ubuntu 26.04. The finalization PR adds
-the release date and the registry's operator-script/systemd transition; it
-must pass the full matrix before merging and tagging.
+interpreted and compiled test suites on Ubuntu 26.04. The finalization PR #301 added
+the release date and the registry's operator-script/systemd transition, passed
+all 29 checks, and merged at `3679c49e` before publication.
 
 The documentation and website review covers links and anchors, source/cache
 suffixes, installation commands, registry availability, package commands,
