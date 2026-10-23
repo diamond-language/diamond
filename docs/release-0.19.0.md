@@ -53,11 +53,23 @@ The six withdrawn cuts remain excluded; preparation does not authorize publishin
 
 ## Validation and remaining release steps
 
-Record final local and CI results here before tagging. The candidate must pass
-the native and integration suites and the full CI matrix on its final head.
-The browser module must pass `make test-wasm` with wasi-sdk 34, and the website's
-example chips must run through the exact wrapper and module staged for deployment.
-The intentionally failing Types chip must report the type error.
+Local verification passed on 2026-10-23:
+
+- `make test`: 1,910 tests, including the 0.19.0 version assertion.
+- `make test-integration`: exit 0, including Gremlin with the stderr fix,
+  the reviewed 18-cut inventory, package/application tests, editor/cache tests,
+  and self-hosted smoke checks.
+- A fresh wasi-sdk 34 build and `node tests/wasm_repl_test.mjs`: passed.
+- The website's exact module/wrapper and six chips: passed, including the
+  intentional Types error, repeated output, and receiver-aware completion.
+  Native examples and published Mjolnir 0.2.4/Arel 0.34.6 installation and
+  examples passed. The marketing PR's nine REPL tests also passed in CI.
+- Documentation/site links and anchors: 254 local documentation targets and
+  45 website links checked without a broken target; JavaScript syntax checks passed.
+
+The marketing preparation is merged at `331b24e`, without a deployment.
+The runtime release PR must pass the full CI matrix on its final head before
+merging; record that result in the PR before tagging.
 
 The documentation and website review covers links and anchors, source/cache
 suffixes, installation commands, registry availability, package commands,
