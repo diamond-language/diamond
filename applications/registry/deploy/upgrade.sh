@@ -26,8 +26,18 @@ release="$base/releases/$revision"
 [[ ! -e "$release" ]] || { echo 'Release directory already exists' >&2; exit 1; }
 "$staging/bin/diamond" -e '1 + 1' >/dev/null
 for archive in "$staging"/seed/*.tar; do "$staging/bin/facet" verify "$archive" >/dev/null; done
+# Refresh the installed unit as part of the same transaction as the release.
+# In particular, 0.19 changes its entry point from app.di to app.d6. Keep the
+# previous unit until health succeeds so rollback can still start the old app.
+unit=/etc/systemd/system/diamond-registry.service
+unit_work=$(mktemp -d)
+trap 'rm -rf -- "$staging" "$unit_work"' EXIT
+cp -p "$unit" "$unit_work/previous.service"
+sed -e 's|/opt/diamond/applications/registry|/opt/diamond-registry/current/app|' \
+    -e 's|/opt/diamond/build/diamond|/opt/diamond-registry/current/bin/diamond|' \
+    "$staging/deploy/registry.service" > "$unit_work/diamond-registry.service"
+systemd-analyze verify "$unit_work/diamond-registry.service"
 mv "$staging" "$release"
-trap - EXIT
 chown -R root:root "$release"
 chmod 755 "$release" "$release/app" "$release/bin"
 chmod -R a+rX "$release/app" "$release/bin"
@@ -42,10 +52,13 @@ healthy() {
 ln -sfn "$release" "$base/.current-next"
 mv -T "$base/.current-next" "$base/current"
 # A restart that fails outright (a release that cannot exec) is rolled back the same way as one that never turns healthy.
-if ! systemctl restart diamond-registry || ! healthy; then
+if ! install -m 644 "$unit_work/diamond-registry.service" "$unit" ||
+   ! systemctl daemon-reload || ! systemctl restart diamond-registry || ! healthy; then
     echo "Revision $revision failed to start or pass its health check; restoring $previous" >&2
     ln -sfn "$previous" "$base/.current-next"
     mv -T "$base/.current-next" "$base/current"
+    cp -p "$unit_work/previous.service" "$unit"
+    systemctl daemon-reload
     systemctl restart diamond-registry || echo "restarting the previous release failed" >&2
     healthy || echo "the previous release is not healthy either" >&2
     # Move the failed release aside: left at $release it would make re-running the same bundle stop at "Release directory already exists".

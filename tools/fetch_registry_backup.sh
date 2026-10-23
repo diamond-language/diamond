@@ -47,7 +47,8 @@ app_dir="${app%/}"
 quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 # The server's own diamond runs backup.d6 (installed next to the app directory, in bin/).
 remote_command="set -eu; work=\$(mktemp -d /tmp/diamond-registry-backup.XXXXXXXX); trap 'rm -rf -- \"\$work\"' EXIT; "
-remote_command+="$(quote "$app_dir/../bin/diamond") $(quote "$app_dir/backup.d6") backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
+remote_command+="backup_script=$(quote "$app_dir/backup.d6"); [ -f \"\$backup_script\" ] || backup_script=$(quote "$app_dir/backup.di"); "
+remote_command+="$(quote "$app_dir/../bin/diamond") \"\$backup_script\" backup $(quote "$data") \"\$work/snapshot\" >/dev/null; "
 remote_command+="tar -C \"\$work\" -cf - snapshot"
 
 archive="$destination/.transfer.tar"

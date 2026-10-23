@@ -929,6 +929,7 @@ test-repl: debug
 
 test-deploy-registry:
 	bash tests/deploy_registry_test.sh
+	bash tests/registry_upgrade_test.sh
 
 test-monitor: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/monitor_test.sh
