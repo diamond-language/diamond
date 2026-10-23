@@ -202,7 +202,9 @@ static bool scan_regex_literal(DiamondLexer *lexer) {
     return true;
 }
 
-static DiamondToken lexer_scan(DiamondLexer *lexer) {
+/* Skips spaces, tabs, carriage returns and `#` comments. A `#line 1`
+ * comment resets the line counter (the prelude's end marker). */
+static void skip_whitespace_and_comments(DiamondLexer *lexer) {
     while (!at_end(lexer)) {
         const char character = lexer->source[lexer->current];
         if (character == ' ' || character == '\t' || character == '\r') {
@@ -227,6 +229,167 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
         }
         break;
     }
+}
+
+/* A run of decimal digits with single `_` separators between them. A `_`
+ * not followed by a digit is consumed and reported as false (an error
+ * token). */
+static inline bool scan_decimal_digits(DiamondLexer *lexer) {
+    while (true) {
+        const char next=lexer->source[lexer->current];
+        if(next>='0' && next<='9') {
+            advance(lexer);
+            continue;
+        }
+        if(next=='_') {
+            const char after=lexer->source[lexer->current+1];
+            if(after<'0' || after>'9') {
+                advance(lexer);
+                return false;
+            }
+            advance(lexer);
+            continue;
+        }
+        break;
+    }
+    return true;
+}
+
+/* 0x1F, 0b1010, 0o17: an Int in another base, with the same `_`
+ * separators a decimal literal allows. The prefix counts only when a
+ * digit of that base follows it. */
+static bool scan_prefixed_integer(DiamondLexer *lexer, DiamondToken *out) {
+    const char prefix = lexer->source[lexer->current];
+    const int base = prefix == 'x' || prefix == 'X' ? 16 :
+                     prefix == 'b' || prefix == 'B' ? 2 :
+                     prefix == 'o' || prefix == 'O' ? 8 : 0;
+    if (base != 0 && is_base_digit(lexer->source[lexer->current + 1], base)) {
+        advance(lexer);
+        while (true) {
+            const char next = lexer->source[lexer->current];
+            if (is_base_digit(next, base)) {
+                advance(lexer);
+                continue;
+            }
+            if (next == '_') {
+                advance(lexer);
+                if (!is_base_digit(lexer->source[lexer->current], base)) {
+                    *out = token(lexer, DIAMOND_TOKEN_ERROR);
+                    return true;
+                }
+                continue;
+            }
+            break;
+        }
+        *out = token(lexer, DIAMOND_TOKEN_INTEGER);
+        return true;
+    }
+    return false;
+}
+
+/* A decimal Int or Float literal whose first digit was just consumed. */
+static DiamondToken scan_number(DiamondLexer *lexer) {
+    if (!scan_decimal_digits(lexer)) return token(lexer, DIAMOND_TOKEN_ERROR);
+    /* A '.' only continues the number into a float literal if
+     * immediately followed by a digit - '.' followed by anything
+     * else (an identifier-start character, for method calls like
+     * 5.abs(), or nothing) leaves the '.' for the next token, same
+     * disambiguation rule Ruby's own lexer uses. */
+    bool is_float = false;
+    if(lexer->source[lexer->current]=='.') {
+        const char after_dot=lexer->source[lexer->current+1];
+        if(after_dot>='0' && after_dot<='9') {
+            advance(lexer);
+            if (!scan_decimal_digits(lexer)) return token(lexer, DIAMOND_TOKEN_ERROR);
+            is_float = true;
+        }
+    }
+    /* Exponent notation (1e10, 1.5e-3, 2E+7) always produces a
+     * float literal, even with no preceding '.' - same convention
+     * as Ruby/JS/C. 'e'/'E' not followed by a valid exponent (no
+     * digits after an optional sign) is left for the next token,
+     * same "peek before committing" shape as the '.' case above. */
+    if(lexer->source[lexer->current]=='e' || lexer->source[lexer->current]=='E') {
+        size_t peek = lexer->current + 1;
+        if(lexer->source[peek]=='+' || lexer->source[peek]=='-') peek++;
+        if(lexer->source[peek]>='0' && lexer->source[peek]<='9') {
+            advance(lexer);
+            if(lexer->source[lexer->current]=='+' || lexer->source[lexer->current]=='-')
+                advance(lexer);
+            if (!scan_decimal_digits(lexer)) return token(lexer, DIAMOND_TOKEN_ERROR);
+            is_float = true;
+        }
+    }
+    return token(lexer, is_float ? DIAMOND_TOKEN_FLOAT : DIAMOND_TOKEN_INTEGER);
+}
+
+/* A string literal whose opening '"' was just consumed, through its
+ * closing quote, including `#{...}` interpolations (which may hold
+ * strings of their own). */
+static DiamondToken scan_string(DiamondLexer *lexer) {
+    while (!at_end(lexer) && lexer->source[lexer->current] != '"') {
+        if(lexer->source[lexer->current]=='#'&&
+           lexer->source[lexer->current+1]=='{') {
+            advance(lexer);advance(lexer);size_t depth=1;
+            while(!at_end(lexer)&&depth>0) {
+                const char embedded=advance(lexer);
+                if(embedded=='"') {
+                    while(!at_end(lexer)&&lexer->source[lexer->current]!='"') {
+                        if(lexer->source[lexer->current]=='\\'&&
+                           lexer->source[lexer->current+1]!='\0')advance(lexer);
+                        advance(lexer);
+                    }
+                    if(!at_end(lexer))advance(lexer);
+                } else if(embedded=='{')depth++;
+                else if(embedded=='}')depth--;
+            }
+            if(depth!=0)return token(lexer,DIAMOND_TOKEN_ERROR);
+            continue;
+        }
+        if (lexer->source[lexer->current] == '\\' &&
+            lexer->source[lexer->current + 1] != '\0') {
+            advance(lexer);
+        }
+        advance(lexer);
+    }
+    if (at_end(lexer)) return token(lexer, DIAMOND_TOKEN_ERROR);
+    advance(lexer);
+    return token(lexer, DIAMOND_TOKEN_STRING);
+}
+
+/* `::`, a `:name` Symbol, or a plain ':' (the ':' was just consumed). */
+static DiamondToken scan_colon(DiamondLexer *lexer) {
+    if(match(lexer,':'))return token(lexer,DIAMOND_TOKEN_DOUBLE_COLON);
+    /* :name is a Symbol literal, but only when the colon starts a
+     * fresh token rather than being glued onto the end of a
+     * preceding value -- x:Int (a type annotation), {"a":b} (a
+     * hash-literal separator), and rescue e:Type all already put a
+     * colon directly against an identifier/digit/closing bracket or
+     * quote with no space, and must keep meaning what they meant
+     * before Symbols existed. */
+    const bool glued = lexer->start > 0 &&
+        (identifier_part(lexer->source[lexer->start - 1]) ||
+         lexer->source[lexer->start - 1] == ')' ||
+         lexer->source[lexer->start - 1] == ']' ||
+         lexer->source[lexer->start - 1] == '}' ||
+         lexer->source[lexer->start - 1] == '"');
+    if (!glued && identifier_start(lexer->source[lexer->current])) {
+        while (identifier_part(lexer->source[lexer->current])) advance(lexer);
+        if(lexer->source[lexer->current]=='?'||
+           lexer->source[lexer->current]=='!')advance(lexer);
+        /* :name= names a writer method, as in Ruby -- but not
+         * :a==b, :a=>b, or :a=~b, where the = starts an operator. */
+        else if(lexer->source[lexer->current]=='='&&
+                lexer->source[lexer->current+1]!='='&&
+                lexer->source[lexer->current+1]!='>'&&
+                lexer->source[lexer->current+1]!='~')advance(lexer);
+        return token(lexer, DIAMOND_TOKEN_SYMBOL);
+    }
+    return token(lexer, DIAMOND_TOKEN_COLON);
+}
+
+static DiamondToken lexer_scan(DiamondLexer *lexer) {
+    skip_whitespace_and_comments(lexer);
 
     lexer->start = lexer->current;
     lexer->token_line = lexer->line;
@@ -237,145 +400,12 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
     }
 
     const char character = advance(lexer);
-    /* 0x1F, 0b1010, 0o17: an Int in another base, with the same `_`
-     * separators a decimal literal allows. The prefix counts only when a
-     * digit of that base follows it. */
     if (character == '0') {
-        const char prefix = lexer->source[lexer->current];
-        const int base = prefix == 'x' || prefix == 'X' ? 16 :
-                         prefix == 'b' || prefix == 'B' ? 2 :
-                         prefix == 'o' || prefix == 'O' ? 8 : 0;
-        if (base != 0 && is_base_digit(lexer->source[lexer->current + 1], base)) {
-            advance(lexer);
-            while (true) {
-                const char next = lexer->source[lexer->current];
-                if (is_base_digit(next, base)) {
-                    advance(lexer);
-                    continue;
-                }
-                if (next == '_') {
-                    advance(lexer);
-                    if (!is_base_digit(lexer->source[lexer->current], base))
-                        return token(lexer, DIAMOND_TOKEN_ERROR);
-                    continue;
-                }
-                break;
-            }
-            return token(lexer, DIAMOND_TOKEN_INTEGER);
-        }
+        DiamondToken prefixed;
+        if (scan_prefixed_integer(lexer, &prefixed)) return prefixed;
     }
-    if (character >= '0' && character <= '9') {
-        while (true) {
-            const char next=lexer->source[lexer->current];
-            if(next>='0' && next<='9') {
-                advance(lexer);
-                continue;
-            }
-            if(next=='_') {
-                const char after=lexer->source[lexer->current+1];
-                if(after<'0' || after>'9') {
-                    advance(lexer);
-                    return token(lexer,DIAMOND_TOKEN_ERROR);
-                }
-                advance(lexer);
-                continue;
-            }
-            break;
-        }
-        /* A '.' only continues the number into a float literal if
-         * immediately followed by a digit - '.' followed by anything
-         * else (an identifier-start character, for method calls like
-         * 5.abs(), or nothing) leaves the '.' for the next token, same
-         * disambiguation rule Ruby's own lexer uses. */
-        bool is_float = false;
-        if(lexer->source[lexer->current]=='.') {
-            const char after_dot=lexer->source[lexer->current+1];
-            if(after_dot>='0' && after_dot<='9') {
-                advance(lexer);
-                while (true) {
-                    const char next=lexer->source[lexer->current];
-                    if(next>='0' && next<='9') {
-                        advance(lexer);
-                        continue;
-                    }
-                    if(next=='_') {
-                        const char after=lexer->source[lexer->current+1];
-                        if(after<'0' || after>'9') {
-                            advance(lexer);
-                            return token(lexer,DIAMOND_TOKEN_ERROR);
-                        }
-                        advance(lexer);
-                        continue;
-                    }
-                    break;
-                }
-                is_float = true;
-            }
-        }
-        /* Exponent notation (1e10, 1.5e-3, 2E+7) always produces a
-         * float literal, even with no preceding '.' - same convention
-         * as Ruby/JS/C. 'e'/'E' not followed by a valid exponent (no
-         * digits after an optional sign) is left for the next token,
-         * same "peek before committing" shape as the '.' case above. */
-        if(lexer->source[lexer->current]=='e' || lexer->source[lexer->current]=='E') {
-            size_t peek = lexer->current + 1;
-            if(lexer->source[peek]=='+' || lexer->source[peek]=='-') peek++;
-            if(lexer->source[peek]>='0' && lexer->source[peek]<='9') {
-                advance(lexer);
-                if(lexer->source[lexer->current]=='+' || lexer->source[lexer->current]=='-')
-                    advance(lexer);
-                while (true) {
-                    const char next=lexer->source[lexer->current];
-                    if(next>='0' && next<='9') {
-                        advance(lexer);
-                        continue;
-                    }
-                    if(next=='_') {
-                        const char after=lexer->source[lexer->current+1];
-                        if(after<'0' || after>'9') {
-                            advance(lexer);
-                            return token(lexer,DIAMOND_TOKEN_ERROR);
-                        }
-                        advance(lexer);
-                        continue;
-                    }
-                    break;
-                }
-                is_float = true;
-            }
-        }
-        return token(lexer, is_float ? DIAMOND_TOKEN_FLOAT : DIAMOND_TOKEN_INTEGER);
-    }
-    if (character == '"') {
-        while (!at_end(lexer) && lexer->source[lexer->current] != '"') {
-            if(lexer->source[lexer->current]=='#'&&
-               lexer->source[lexer->current+1]=='{') {
-                advance(lexer);advance(lexer);size_t depth=1;
-                while(!at_end(lexer)&&depth>0) {
-                    const char embedded=advance(lexer);
-                    if(embedded=='"') {
-                        while(!at_end(lexer)&&lexer->source[lexer->current]!='"') {
-                            if(lexer->source[lexer->current]=='\\'&&
-                               lexer->source[lexer->current+1]!='\0')advance(lexer);
-                            advance(lexer);
-                        }
-                        if(!at_end(lexer))advance(lexer);
-                    } else if(embedded=='{')depth++;
-                    else if(embedded=='}')depth--;
-                }
-                if(depth!=0)return token(lexer,DIAMOND_TOKEN_ERROR);
-                continue;
-            }
-            if (lexer->source[lexer->current] == '\\' &&
-                lexer->source[lexer->current + 1] != '\0') {
-                advance(lexer);
-            }
-            advance(lexer);
-        }
-        if (at_end(lexer)) return token(lexer, DIAMOND_TOKEN_ERROR);
-        advance(lexer);
-        return token(lexer, DIAMOND_TOKEN_STRING);
-    }
+    if (character >= '0' && character <= '9') return scan_number(lexer);
+    if (character == '"') return scan_string(lexer);
     if (identifier_start(character)) {
         while (identifier_part(lexer->source[lexer->current])) {
             advance(lexer);
@@ -415,35 +445,8 @@ static DiamondToken lexer_scan(DiamondLexer *lexer) {
                 return token(lexer,match(lexer,'.')?DIAMOND_TOKEN_DOT_DOT_DOT
                                                      :DIAMOND_TOKEN_DOT_DOT);
             return token(lexer, DIAMOND_TOKEN_DOT);
-        case ':': {
-            if(match(lexer,':'))return token(lexer,DIAMOND_TOKEN_DOUBLE_COLON);
-            /* :name is a Symbol literal, but only when the colon starts a
-             * fresh token rather than being glued onto the end of a
-             * preceding value -- x:Int (a type annotation), {"a":b} (a
-             * hash-literal separator), and rescue e:Type all already put a
-             * colon directly against an identifier/digit/closing bracket or
-             * quote with no space, and must keep meaning what they meant
-             * before Symbols existed. */
-            const bool glued = lexer->start > 0 &&
-                (identifier_part(lexer->source[lexer->start - 1]) ||
-                 lexer->source[lexer->start - 1] == ')' ||
-                 lexer->source[lexer->start - 1] == ']' ||
-                 lexer->source[lexer->start - 1] == '}' ||
-                 lexer->source[lexer->start - 1] == '"');
-            if (!glued && identifier_start(lexer->source[lexer->current])) {
-                while (identifier_part(lexer->source[lexer->current])) advance(lexer);
-                if(lexer->source[lexer->current]=='?'||
-                   lexer->source[lexer->current]=='!')advance(lexer);
-                /* :name= names a writer method, as in Ruby -- but not
-                 * :a==b, :a=>b, or :a=~b, where the = starts an operator. */
-                else if(lexer->source[lexer->current]=='='&&
-                        lexer->source[lexer->current+1]!='='&&
-                        lexer->source[lexer->current+1]!='>'&&
-                        lexer->source[lexer->current+1]!='~')advance(lexer);
-                return token(lexer, DIAMOND_TOKEN_SYMBOL);
-            }
-            return token(lexer, DIAMOND_TOKEN_COLON);
-        }
+        case ':':
+            return scan_colon(lexer);
         case '?':
             return token(lexer, DIAMOND_TOKEN_QUESTION);
         case '|':
