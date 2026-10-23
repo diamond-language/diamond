@@ -525,6 +525,175 @@ static void compile_alias_method(Compiler *compiler) {
     }
 }
 
+/* Parses `name(params...), to: @ivar` after the `delegate` keyword. */
+static bool parse_delegate_signature(Compiler *compiler, DiamondSpan *method_name_out,
+        DiamondSpan *parameter_names, size_t *parameter_count_out, bool *variadic_out,
+        bool *forwards_block_out, DiamondSpan *target_out) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,"expected method name after 'delegate'");
+        return false;
+    }
+    const DiamondSpan method_name=compiler->current.span;
+    if(method_name.length>=DIAMOND_MAX_FUNCTION_NAME) {
+        fail(compiler,method_name,"delegated method name is too long");return false;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected '(' after delegated method name");return false;
+    }
+    advance_token(compiler);
+    skip_newlines(compiler);
+    size_t parameter_count=0;
+    bool variadic=false;
+    bool forwards_block=false;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
+        bool block_parameter=false;
+        if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
+            block_parameter=true;forwards_block=true;advance_token(compiler);
+        }
+        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
+            if(forwards_block||variadic) {
+                fail(compiler,compiler->current.span,
+                    "a delegate can only declare one variadic parameter");return false;
+            }
+            variadic=true;advance_token(compiler);
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+            fail(compiler,compiler->current.span,"expected parameter name");return false;
+        }
+        if(parameter_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
+            fail(compiler,compiler->current.span,"too many parameters");return false;
+        }
+        parameter_names[parameter_count++]=compiler->current.span;
+        advance_token(compiler);
+        skip_newlines(compiler);
+        if(block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "a block delegate parameter must be last");return false;
+        }
+        if(variadic&&!block_parameter&&
+           compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            advance_token(compiler);skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND) {
+                fail(compiler,compiler->current.span,
+                    "only a block parameter may follow a variadic delegate parameter");
+                return false;
+            }
+            continue;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
+        advance_token(compiler);
+        skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
+        fail(compiler,compiler->current.span,
+             "expected ')' after delegate parameters");return false;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+        fail(compiler,compiler->current.span,
+             "expected ', to: @ivar' after delegate parameters");return false;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+       !name_equals(compiler,"to",compiler->current.span,false)) {
+        fail(compiler,compiler->current.span,"expected 'to:' in delegate");return false;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+        fail(compiler,compiler->current.span,"expected ':' after 'to'");return false;
+    }
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE) {
+        fail(compiler,compiler->current.span,
+             "delegate target must be an instance variable");return false;
+    }
+    const DiamondSpan target=compiler->current.span;
+    advance_token(compiler);
+    *method_name_out=method_name;
+    *parameter_count_out=parameter_count;
+    *variadic_out=variadic;
+    *forwards_block_out=forwards_block;
+    *target_out=target;
+    return true;
+}
+
+/* Emits the delegate's body: load the target ivar, forward every parameter
+ * (spreading a variadic one, passing the block only when one was given), and
+ * return the result. */
+static void emit_delegate_forward(Compiler *compiler, bool in_class, DiamondSpan target,
+        DiamondSpan method_name, const uint16_t *parameter_registers,
+        size_t parameter_count, bool variadic, bool forwards_block) {
+    uint16_t ivar_register;
+    if(in_class) {
+        const int field=field_index(compiler,target,true);
+        ivar_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_IVAR,ivar_register,0,
+                          (uint8_t)field,3);
+    } else {
+        const uint16_t field=module_field_name(compiler,target);
+        ivar_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
+                          field,3);
+    }
+    uint16_t result;
+    if(variadic) {
+        const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
+        if(forwards_block) {
+            const uint16_t absent=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+            const uint16_t missing=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+                parameter_registers[variadic_index+1],absent,3);
+            const size_t with_block=
+                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
+            const uint16_t without_args=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],nullptr,0,false);
+            const uint16_t without=emit_invoke_spread(compiler,ivar_register,
+                method_name,without_args);
+            result=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,result,without,0,2);
+            const size_t finished=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+            patch_jump(compiler,with_block,compiler->function->code_count);
+            const uint16_t with_args=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],
+                &parameter_registers[variadic_index+1],1,false);
+            const uint16_t with=emit_invoke_spread(compiler,ivar_register,
+                method_name,with_args);
+            emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
+            patch_jump(compiler,finished,compiler->function->code_count);
+        } else {
+            const uint16_t forwarded=emit_build_spread_arguments(compiler,
+                parameter_registers,variadic_index,
+                parameter_registers[variadic_index],nullptr,0,false);
+            result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
+        }
+    } else if(forwards_block) {
+        const uint16_t absent=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+        const uint16_t missing=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+            parameter_registers[parameter_count-1],absent,3);
+        const size_t with_block=emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
+        const uint16_t without=emit_invoke_call(compiler,ivar_register,method_name,
+            false,nullptr,0,parameter_registers,parameter_count-1);
+        result=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,result,without,0,2);
+        const size_t finished=emit_jump(compiler,DIAMOND_OP_JUMP,0);
+        patch_jump(compiler,with_block,compiler->function->code_count);
+        const uint16_t with=emit_invoke_call(compiler,ivar_register,method_name,
+            false,nullptr,0,parameter_registers,parameter_count);
+        emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
+        patch_jump(compiler,finished,compiler->function->code_count);
+    } else result=emit_invoke_call(compiler,ivar_register,method_name,
+        false,nullptr,0,parameter_registers,parameter_count);
+    emit_instruction(compiler,DIAMOND_OP_RETURN,result,0,0,1);
+}
+
 /* `delegate name(params...), to: @ivar` -- compiles into an ordinary
  * forwarding method, as if the source had literally been
  * `def name(params...) @ivar.name(params...) end`: same method metadata,
@@ -553,89 +722,14 @@ static void compile_alias_method(Compiler *compiler) {
  * bookkeeping compile_definition also carries is simply never needed). */
 void compile_delegate(Compiler *compiler) {
     const DiamondSpan keyword=compiler->current.span;
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-        fail(compiler,compiler->current.span,"expected method name after 'delegate'");
-        return;
-    }
-    const DiamondSpan method_name=compiler->current.span;
-    if(method_name.length>=DIAMOND_MAX_FUNCTION_NAME) {
-        fail(compiler,method_name,"delegated method name is too long");return;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_LEFT_PAREN) {
-        fail(compiler,compiler->current.span,
-             "expected '(' after delegated method name");return;
-    }
-    advance_token(compiler);
-    skip_newlines(compiler);
+    DiamondSpan method_name={};
     DiamondSpan parameter_names[DIAMOND_MAX_DECLARED_PARAMETERS];size_t parameter_count=0;
     bool variadic=false;
     bool forwards_block=false;
-    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN&&!compiler->failed) {
-        bool block_parameter=false;
-        if(compiler->current.kind==DIAMOND_TOKEN_AMPERSAND) {
-            block_parameter=true;forwards_block=true;advance_token(compiler);
-        }
-        if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-            if(forwards_block||variadic) {
-                fail(compiler,compiler->current.span,
-                    "a delegate can only declare one variadic parameter");return;
-            }
-            variadic=true;advance_token(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,"expected parameter name");return;
-        }
-        if(parameter_count==DIAMOND_MAX_DECLARED_PARAMETERS) {
-            fail(compiler,compiler->current.span,"too many parameters");return;
-        }
-        parameter_names[parameter_count++]=compiler->current.span;
-        advance_token(compiler);
-        skip_newlines(compiler);
-        if(block_parameter&&compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            fail(compiler,compiler->current.span,
-                "a block delegate parameter must be last");return;
-        }
-        if(variadic&&!block_parameter&&
-           compiler->current.kind==DIAMOND_TOKEN_COMMA) {
-            advance_token(compiler);skip_newlines(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_AMPERSAND) {
-                fail(compiler,compiler->current.span,
-                    "only a block parameter may follow a variadic delegate parameter");
-                return;
-            }
-            continue;
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA)break;
-        advance_token(compiler);
-        skip_newlines(compiler);
-    }
-    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
-        fail(compiler,compiler->current.span,
-             "expected ')' after delegate parameters");return;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-        fail(compiler,compiler->current.span,
-             "expected ', to: @ivar' after delegate parameters");return;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-       !name_equals(compiler,"to",compiler->current.span,false)) {
-        fail(compiler,compiler->current.span,"expected 'to:' in delegate");return;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
-        fail(compiler,compiler->current.span,"expected ':' after 'to'");return;
-    }
-    advance_token(compiler);
-    if(compiler->current.kind!=DIAMOND_TOKEN_INSTANCE_VARIABLE) {
-        fail(compiler,compiler->current.span,
-             "delegate target must be an instance variable");return;
-    }
-    const DiamondSpan target=compiler->current.span;
-    advance_token(compiler);
+    DiamondSpan target={};
+    if(!parse_delegate_signature(compiler,&method_name,parameter_names,&parameter_count,
+           &variadic,&forwards_block,&target))
+        return;
 
     char stored_name[DIAMOND_MAX_FUNCTION_NAME];
     for(size_t index=0;index<method_name.length;index++)
@@ -776,72 +870,8 @@ void compile_delegate(Compiler *compiler) {
             forwards_block?1:0,3);
     }
 
-    uint16_t ivar_register;
-    if(in_class) {
-        const int field=field_index(compiler,target,true);
-        ivar_register=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_GET_IVAR,ivar_register,0,
-                          (uint8_t)field,3);
-    } else {
-        const uint16_t field=module_field_name(compiler,target);
-        ivar_register=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_GET_IVAR_NAME,ivar_register,0,
-                          field,3);
-    }
-    uint16_t result;
-    if(variadic) {
-        const size_t variadic_index=parameter_count-(forwards_block?2u:1u);
-        if(forwards_block) {
-            const uint16_t absent=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
-            const uint16_t missing=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
-                parameter_registers[variadic_index+1],absent,3);
-            const size_t with_block=
-                emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
-            const uint16_t without_args=emit_build_spread_arguments(compiler,
-                parameter_registers,variadic_index,
-                parameter_registers[variadic_index],nullptr,0,false);
-            const uint16_t without=emit_invoke_spread(compiler,ivar_register,
-                method_name,without_args);
-            result=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,result,without,0,2);
-            const size_t finished=emit_jump(compiler,DIAMOND_OP_JUMP,0);
-            patch_jump(compiler,with_block,compiler->function->code_count);
-            const uint16_t with_args=emit_build_spread_arguments(compiler,
-                parameter_registers,variadic_index,
-                parameter_registers[variadic_index],
-                &parameter_registers[variadic_index+1],1,false);
-            const uint16_t with=emit_invoke_spread(compiler,ivar_register,
-                method_name,with_args);
-            emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
-            patch_jump(compiler,finished,compiler->function->code_count);
-        } else {
-            const uint16_t forwarded=emit_build_spread_arguments(compiler,
-                parameter_registers,variadic_index,
-                parameter_registers[variadic_index],nullptr,0,false);
-            result=emit_invoke_spread(compiler,ivar_register,method_name,forwarded);
-        }
-    } else if(forwards_block) {
-        const uint16_t absent=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
-        const uint16_t missing=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
-            parameter_registers[parameter_count-1],absent,3);
-        const size_t with_block=emit_jump(compiler,DIAMOND_OP_JUMP_IF_FALSE,missing);
-        const uint16_t without=emit_invoke_call(compiler,ivar_register,method_name,
-            false,nullptr,0,parameter_registers,parameter_count-1);
-        result=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,result,without,0,2);
-        const size_t finished=emit_jump(compiler,DIAMOND_OP_JUMP,0);
-        patch_jump(compiler,with_block,compiler->function->code_count);
-        const uint16_t with=emit_invoke_call(compiler,ivar_register,method_name,
-            false,nullptr,0,parameter_registers,parameter_count);
-        emit_instruction(compiler,DIAMOND_OP_MOVE,result,with,0,2);
-        patch_jump(compiler,finished,compiler->function->code_count);
-    } else result=emit_invoke_call(compiler,ivar_register,method_name,
-        false,nullptr,0,parameter_registers,parameter_count);
-    emit_instruction(compiler,DIAMOND_OP_RETURN,result,0,0,1);
+    emit_delegate_forward(compiler,in_class,target,method_name,parameter_registers,
+        parameter_count,variadic,forwards_block);
 
     function->capture_count=0;
     function->register_count=compiler->next_register;
