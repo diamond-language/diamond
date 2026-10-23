@@ -3072,6 +3072,232 @@ bool gc_protect(DiamondVm *vm, DiamondValue value) {
     return true;
 }
 
+/* Array/Hash: the old implementation staged copied elements in a
+ * bare malloc'd buffer (Array) or plain C locals (Hash) before
+ * they had any GC root, so a collection triggered by copying one
+ * element could free a sibling already copied moments earlier --
+ * the same bug this session already found and fixed in
+ * regexp_scan_helper/regexp_match_helper, just unreachable there
+ * (both had a real destination register to root through
+ * immediately). Fixed the same way: allocate the empty container
+ * first, protect *it* via gc_protect (there's no destination
+ * register here, unlike the regexp helpers), then populate it
+ * incrementally via array_push/hash_set so each already-copied
+ * element becomes reachable through the now-rooted container
+ * before the next one is computed. array_push/hash_set only ever
+ * grow their own backing storage via plain realloc, never trigger
+ * a GC pass themselves, so there's no unrooted window between a
+ * recursive copy_value_into_vm call returning and its result
+ * being pushed. */
+static bool copy_array_step(DiamondVm *dest_vm, DiamondValue value,
+        DiamondProgram *source_program,
+        DiamondClass *const *rebase_source_classes,
+        DiamondClass *const *rebase_dest_classes,
+        const DiamondChunk **adopted_owner,
+        DiamondValue *out) {
+    const DiamondArray *source=(const DiamondArray *)value.as.object;
+    DiamondArray *copy=allocate_array(dest_vm,nullptr,0);
+    if(copy==nullptr)return false;
+    const size_t mark=dest_vm->gc_protected_count;
+    if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
+    for(size_t index=0;index<source->count;index++) {
+        DiamondValue element=DIAMOND_NIL;
+        if(!copy_value_into_vm(dest_vm,source->values[index],
+                               source_program,rebase_source_classes,rebase_dest_classes,
+                               adopted_owner,&element)||
+           !array_push(dest_vm,copy,element)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+    }
+    gc_unprotect(dest_vm,mark);
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* Hash: see copy_array_step for the rooting order. */
+static bool copy_hash_step(DiamondVm *dest_vm, DiamondValue value,
+        DiamondProgram *source_program,
+        DiamondClass *const *rebase_source_classes,
+        DiamondClass *const *rebase_dest_classes,
+        const DiamondChunk **adopted_owner,
+        DiamondValue *out) {
+    const DiamondHash *source=(const DiamondHash *)value.as.object;
+    DiamondHash *copy=allocate_hash(dest_vm);
+    if(copy==nullptr)return false;
+    const size_t mark=dest_vm->gc_protected_count;
+    if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
+    for(size_t index=0;index<source->count;index++) {
+        DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
+        if(!copy_value_into_vm(dest_vm,source->entries[index].key,
+                               source_program,rebase_source_classes,rebase_dest_classes,
+                               adopted_owner,&key)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+        /* `key` needs its own protection window: it's not
+         * reachable through `copy` yet (hash_set hasn't run), and
+         * copying the value below can itself trigger a GC. */
+        const size_t key_mark=dest_vm->gc_protected_count;
+        if(!gc_protect(dest_vm,key)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+        if(!copy_value_into_vm(dest_vm,source->entries[index].value,
+                               source_program,rebase_source_classes,rebase_dest_classes,
+                               adopted_owner,&copied_value)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+        gc_unprotect(dest_vm,key_mark);
+        if(!hash_set(dest_vm,copy,key,copied_value)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+    }
+    gc_unprotect(dest_vm,mark);
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* Instance: adopted or rebased onto dest_vm's classes, see copy_value_step. */
+static bool copy_instance_step(DiamondVm *dest_vm, DiamondValue value,
+        DiamondProgram *source_program,
+        DiamondClass *const *rebase_source_classes,
+        DiamondClass *const *rebase_dest_classes,
+        const DiamondChunk **adopted_owner,
+        DiamondValue *out) {
+    const DiamondInstance *source=(const DiamondInstance *)value.as.object;
+    DiamondInstance *copy;
+    if(rebase_dest_classes!=nullptr) {
+        (void)rebase_source_classes;
+        copy=allocate_instance(dest_vm,
+            rebase_dest_classes[source->class->index],nullptr);
+    } else {
+        if(*adopted_owner==nullptr) {
+            const DiamondAdoptedProgram *adopted=
+                adopt_program(dest_vm,source_program,nullptr,0);
+            if(adopted==nullptr)return false;
+            *adopted_owner=&adopted->chunk;
+        }
+        copy=allocate_instance(dest_vm,source->class,*adopted_owner);
+    }
+    if(copy==nullptr)return false;
+    /* Same unrooted-window bug as Array/Hash above, fixed the
+     * same way -- `copy` itself is the container to protect;
+     * writing straight into copy->fields[index] already puts each
+     * field where mark_object's DIAMOND_OBJECT_INSTANCE case will
+     * find it, once `copy` is a root. */
+    const size_t mark=dest_vm->gc_protected_count;
+    if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
+    for(size_t index=0;index<source->field_count;index++) {
+        if(!copy_value_into_vm(dest_vm,source->fields[index],
+                               source_program,rebase_source_classes,rebase_dest_classes,
+                               adopted_owner,&copy->fields[index])) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+        /* `copy` is only reachable through gc_protect (not a real
+         * VM register), but that's still enough for a minor
+         * collection triggered by a later iteration's own
+         * recursive copy to see it as a root and promote it --
+         * this raw field write bypasses DIAMOND_OP_SET_IVAR
+         * entirely, so it needs its own barrier call each time,
+         * same as the other raw-field-write sites. */
+        if(!gc_write_barrier(dest_vm,(DiamondObject *)copy)) {
+            gc_unprotect(dest_vm,mark);return false;
+        }
+    }
+    /* allocate_instance always starts a fresh instance at
+     * class->shapes[0] (nothing "materialized" yet, in the
+     * gradual-field-initialization sense GET_IVAR's own inline
+     * cache relies on -- see lookup_field_cached/DIAMOND_OP_
+     * GET_IVAR) since it has no way to know how many fields this
+     * particular caller is about to fill in. Writing `fields[]`
+     * directly above (never going through the real SET_IVAR
+     * opcode, which is what normally advances an instance's shape
+     * one field at a time) leaves that shape stuck at 0 -- every
+     * field would read back as a cache-materialized nil despite
+     * genuinely holding a copied value, exactly the same class of
+     * bug this session's DiamondInstance.owner fix targeted, just
+     * one field over. Fixed by rebasing `source`'s own shape the
+     * same way its class was rebased/adopted just above: shapes[]
+     * is a fixed-size array *inside* DiamondClass (not separately
+     * allocated), so the shape index within it is portable the
+     * same way a class index is. */
+    copy->shape=&copy->class->shapes[
+        (size_t)(source->shape-source->class->shapes)];
+    gc_unprotect(dest_vm,mark);
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* Bignum: a plain limb copy, allocated directly on dest_vm's young list. */
+static bool copy_bignum_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue *out) {
+    const DiamondBignum *source=(const DiamondBignum *)value.as.object;
+    if (!maybe_collect(dest_vm)) return false;
+    const size_t size=
+        sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
+    DiamondBignum *copy=malloc(size);
+    if(copy==nullptr)return false;
+    copy->object=(DiamondObject){.next=dest_vm->young_objects,
+        .kind=DIAMOND_OBJECT_BIGNUM};
+    copy->negative=source->negative;copy->limb_count=source->limb_count;
+    memcpy(copy->limbs,source->limbs,source->limb_count*sizeof(uint32_t));
+    dest_vm->young_objects=&copy->object;dest_vm->bytes_allocated+=size;
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* Closure: zero-capture closures in Thread's rebase mode only. */
+static bool copy_closure_step(DiamondVm *dest_vm,DiamondValue value,
+        DiamondClass *const *rebase_dest_classes,DiamondValue *out) {
+    /* Only a *zero-capture* closure, and only in Thread's rebase
+     * mode (rebase_dest_classes!=nullptr) -- a capturing closure
+     * still holds live Cell/GC state tied to one specific heap,
+     * categorically forbidden here exactly as Thread.new's own
+     * primary-callable check already requires. In adopt mode
+     * (ProgramBuilder#run) the source and destination programs are
+     * genuinely different, so a bare function_index wouldn't mean
+     * the same function in both -- unlike Thread, whose
+     * child_program is a byte-for-byte clone of the whole
+     * functions[] table (see clone_program_from_chunk), so a valid
+     * index in one is the same function in the other with no
+     * offset arithmetic needed at all (unlike the Instance case
+     * just above, which rebases a pointer). See docs/threads.md. */
+    const DiamondClosure *source=(const DiamondClosure *)value.as.object;
+    if(source->capture_count!=0||rebase_dest_classes==nullptr)return false;
+    DiamondClosure *copy=
+        allocate_closure(dest_vm,source->function_index,nullptr,0);
+    if(copy==nullptr)return false;
+    copy->is_block=source->is_block;
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* A Channel needs neither rebasing nor adoption -- unlike Instance,
+ * nothing about it points into source_program's own tables, so
+ * this is the one kind both of copy_value_into_vm's modes accept
+ * identically (rebase mode: Thread.new/#join and Channel's own
+ * send/receive; adopt mode: ProgramBuilder#run). The channel
+ * itself is a genuinely shared, refcounted resource (see
+ * DiamondChannel's own comment) -- this bumps that refcount and
+ * hands dest_vm a fresh handle pointing at the *same* underlying
+ * channel, never a copy of its contents. */
+static bool copy_channel_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue *out) {
+    DiamondChannel *channel=((DiamondChannelHandle *)value.as.object)->channel;
+    atomic_fetch_add(&channel->refcount,1);
+    DiamondChannelHandle *copy=allocate_channel_handle(dest_vm,channel);
+    if(copy==nullptr) {
+        atomic_fetch_sub(&channel->refcount,1);
+        return false;
+    }
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
+/* A Regexp owns no shared state, only a compiled pattern: copy it by
+ * compiling the same source and options again in dest_vm. */
+static bool copy_regexp_step(DiamondVm *dest_vm,DiamondValue value,DiamondValue *out) {
+    const DiamondRegexp *source=(const DiamondRegexp *)value.as.object;
+    reginold_regex *compiled=nullptr;
+    reginold_error compile_error={0};
+    if(reginold_compile(source->source,source->source_length,source->options,
+            &compiled,&compile_error)!=REGINOLD_OK)return false;
+    DiamondRegexp *copy=allocate_regexp_handle(dest_vm,compiled,source->source,
+        source->source_length,source->options);
+    if(copy==nullptr) {reginold_regex_free(compiled);return false;}
+    *out=DIAMOND_OBJECT(copy);return true;
+}
+
 /* Deep-copies a DiamondValue rooted in some other VM's heap (typically
  * program_builder_run_helper's temporary run_vm, about to be freed) into
  * dest_vm's own heap, so the result stays valid once the source VM is
@@ -3147,205 +3373,23 @@ static bool copy_value_step(DiamondVm *dest_vm, DiamondValue value,
             if(copy==nullptr)return false;
             *out=DIAMOND_OBJECT(copy);return true;
         }
-        /* Array/Hash: the old implementation staged copied elements in a
-         * bare malloc'd buffer (Array) or plain C locals (Hash) before
-         * they had any GC root, so a collection triggered by copying one
-         * element could free a sibling already copied moments earlier --
-         * the same bug this session already found and fixed in
-         * regexp_scan_helper/regexp_match_helper, just unreachable there
-         * (both had a real destination register to root through
-         * immediately). Fixed the same way: allocate the empty container
-         * first, protect *it* via gc_protect (there's no destination
-         * register here, unlike the regexp helpers), then populate it
-         * incrementally via array_push/hash_set so each already-copied
-         * element becomes reachable through the now-rooted container
-         * before the next one is computed. array_push/hash_set only ever
-         * grow their own backing storage via plain realloc, never trigger
-         * a GC pass themselves, so there's no unrooted window between a
-         * recursive copy_value_into_vm call returning and its result
-         * being pushed. */
-        case DIAMOND_OBJECT_ARRAY: {
-            const DiamondArray *source=(const DiamondArray *)value.as.object;
-            DiamondArray *copy=allocate_array(dest_vm,nullptr,0);
-            if(copy==nullptr)return false;
-            const size_t mark=dest_vm->gc_protected_count;
-            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
-            for(size_t index=0;index<source->count;index++) {
-                DiamondValue element=DIAMOND_NIL;
-                if(!copy_value_into_vm(dest_vm,source->values[index],
-                                       source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&element)||
-                   !array_push(dest_vm,copy,element)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-            }
-            gc_unprotect(dest_vm,mark);
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        case DIAMOND_OBJECT_HASH: {
-            const DiamondHash *source=(const DiamondHash *)value.as.object;
-            DiamondHash *copy=allocate_hash(dest_vm);
-            if(copy==nullptr)return false;
-            const size_t mark=dest_vm->gc_protected_count;
-            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
-            for(size_t index=0;index<source->count;index++) {
-                DiamondValue key=DIAMOND_NIL,copied_value=DIAMOND_NIL;
-                if(!copy_value_into_vm(dest_vm,source->entries[index].key,
-                                       source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&key)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-                /* `key` needs its own protection window: it's not
-                 * reachable through `copy` yet (hash_set hasn't run), and
-                 * copying the value below can itself trigger a GC. */
-                const size_t key_mark=dest_vm->gc_protected_count;
-                if(!gc_protect(dest_vm,key)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-                if(!copy_value_into_vm(dest_vm,source->entries[index].value,
-                                       source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&copied_value)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-                gc_unprotect(dest_vm,key_mark);
-                if(!hash_set(dest_vm,copy,key,copied_value)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-            }
-            gc_unprotect(dest_vm,mark);
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        case DIAMOND_OBJECT_INSTANCE: {
-            const DiamondInstance *source=(const DiamondInstance *)value.as.object;
-            DiamondInstance *copy;
-            if(rebase_dest_classes!=nullptr) {
-                (void)rebase_source_classes;
-                copy=allocate_instance(dest_vm,
-                    rebase_dest_classes[source->class->index],nullptr);
-            } else {
-                if(*adopted_owner==nullptr) {
-                    const DiamondAdoptedProgram *adopted=
-                        adopt_program(dest_vm,source_program,nullptr,0);
-                    if(adopted==nullptr)return false;
-                    *adopted_owner=&adopted->chunk;
-                }
-                copy=allocate_instance(dest_vm,source->class,*adopted_owner);
-            }
-            if(copy==nullptr)return false;
-            /* Same unrooted-window bug as Array/Hash above, fixed the
-             * same way -- `copy` itself is the container to protect;
-             * writing straight into copy->fields[index] already puts each
-             * field where mark_object's DIAMOND_OBJECT_INSTANCE case will
-             * find it, once `copy` is a root. */
-            const size_t mark=dest_vm->gc_protected_count;
-            if(!gc_protect(dest_vm,DIAMOND_OBJECT(copy)))return false;
-            for(size_t index=0;index<source->field_count;index++) {
-                if(!copy_value_into_vm(dest_vm,source->fields[index],
-                                       source_program,rebase_source_classes,rebase_dest_classes,
-                                       adopted_owner,&copy->fields[index])) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-                /* `copy` is only reachable through gc_protect (not a real
-                 * VM register), but that's still enough for a minor
-                 * collection triggered by a later iteration's own
-                 * recursive copy to see it as a root and promote it --
-                 * this raw field write bypasses DIAMOND_OP_SET_IVAR
-                 * entirely, so it needs its own barrier call each time,
-                 * same as the other raw-field-write sites. */
-                if(!gc_write_barrier(dest_vm,(DiamondObject *)copy)) {
-                    gc_unprotect(dest_vm,mark);return false;
-                }
-            }
-            /* allocate_instance always starts a fresh instance at
-             * class->shapes[0] (nothing "materialized" yet, in the
-             * gradual-field-initialization sense GET_IVAR's own inline
-             * cache relies on -- see lookup_field_cached/DIAMOND_OP_
-             * GET_IVAR) since it has no way to know how many fields this
-             * particular caller is about to fill in. Writing `fields[]`
-             * directly above (never going through the real SET_IVAR
-             * opcode, which is what normally advances an instance's shape
-             * one field at a time) leaves that shape stuck at 0 -- every
-             * field would read back as a cache-materialized nil despite
-             * genuinely holding a copied value, exactly the same class of
-             * bug this session's DiamondInstance.owner fix targeted, just
-             * one field over. Fixed by rebasing `source`'s own shape the
-             * same way its class was rebased/adopted just above: shapes[]
-             * is a fixed-size array *inside* DiamondClass (not separately
-             * allocated), so the shape index within it is portable the
-             * same way a class index is. */
-            copy->shape=&copy->class->shapes[
-                (size_t)(source->shape-source->class->shapes)];
-            gc_unprotect(dest_vm,mark);
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        case DIAMOND_OBJECT_BIGNUM: {
-            const DiamondBignum *source=(const DiamondBignum *)value.as.object;
-            if (!maybe_collect(dest_vm)) return false;
-            const size_t size=
-                sizeof(DiamondBignum)+source->limb_count*sizeof(uint32_t);
-            DiamondBignum *copy=malloc(size);
-            if(copy==nullptr)return false;
-            copy->object=(DiamondObject){.next=dest_vm->young_objects,
-                .kind=DIAMOND_OBJECT_BIGNUM};
-            copy->negative=source->negative;copy->limb_count=source->limb_count;
-            memcpy(copy->limbs,source->limbs,source->limb_count*sizeof(uint32_t));
-            dest_vm->young_objects=&copy->object;dest_vm->bytes_allocated+=size;
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        case DIAMOND_OBJECT_CLOSURE: {
-            /* Only a *zero-capture* closure, and only in Thread's rebase
-             * mode (rebase_dest_classes!=nullptr) -- a capturing closure
-             * still holds live Cell/GC state tied to one specific heap,
-             * categorically forbidden here exactly as Thread.new's own
-             * primary-callable check already requires. In adopt mode
-             * (ProgramBuilder#run) the source and destination programs are
-             * genuinely different, so a bare function_index wouldn't mean
-             * the same function in both -- unlike Thread, whose
-             * child_program is a byte-for-byte clone of the whole
-             * functions[] table (see clone_program_from_chunk), so a valid
-             * index in one is the same function in the other with no
-             * offset arithmetic needed at all (unlike the Instance case
-             * just above, which rebases a pointer). See docs/threads.md. */
-            const DiamondClosure *source=(const DiamondClosure *)value.as.object;
-            if(source->capture_count!=0||rebase_dest_classes==nullptr)return false;
-            DiamondClosure *copy=
-                allocate_closure(dest_vm,source->function_index,nullptr,0);
-            if(copy==nullptr)return false;
-            copy->is_block=source->is_block;
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        /* A Channel needs neither rebasing nor adoption -- unlike Instance,
-         * nothing about it points into source_program's own tables, so
-         * this is the one kind both of copy_value_into_vm's modes accept
-         * identically (rebase mode: Thread.new/#join and Channel's own
-         * send/receive; adopt mode: ProgramBuilder#run). The channel
-         * itself is a genuinely shared, refcounted resource (see
-         * DiamondChannel's own comment) -- this bumps that refcount and
-         * hands dest_vm a fresh handle pointing at the *same* underlying
-         * channel, never a copy of its contents. */
-        case DIAMOND_OBJECT_CHANNEL: {
-            DiamondChannel *channel=((DiamondChannelHandle *)value.as.object)->channel;
-            atomic_fetch_add(&channel->refcount,1);
-            DiamondChannelHandle *copy=allocate_channel_handle(dest_vm,channel);
-            if(copy==nullptr) {
-                atomic_fetch_sub(&channel->refcount,1);
-                return false;
-            }
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
-        /* A Regexp owns no shared state, only a compiled pattern: copy it by
-         * compiling the same source and options again in dest_vm. */
-        case DIAMOND_OBJECT_REGEXP: {
-            const DiamondRegexp *source=(const DiamondRegexp *)value.as.object;
-            reginold_regex *compiled=nullptr;
-            reginold_error compile_error={0};
-            if(reginold_compile(source->source,source->source_length,source->options,
-                    &compiled,&compile_error)!=REGINOLD_OK)return false;
-            DiamondRegexp *copy=allocate_regexp_handle(dest_vm,compiled,source->source,
-                source->source_length,source->options);
-            if(copy==nullptr) {reginold_regex_free(compiled);return false;}
-            *out=DIAMOND_OBJECT(copy);return true;
-        }
+        case DIAMOND_OBJECT_ARRAY:
+            return copy_array_step(dest_vm,value,source_program,
+                rebase_source_classes,rebase_dest_classes,adopted_owner,out);
+        case DIAMOND_OBJECT_HASH:
+            return copy_hash_step(dest_vm,value,source_program,
+                rebase_source_classes,rebase_dest_classes,adopted_owner,out);
+        case DIAMOND_OBJECT_INSTANCE:
+            return copy_instance_step(dest_vm,value,source_program,
+                rebase_source_classes,rebase_dest_classes,adopted_owner,out);
+        case DIAMOND_OBJECT_BIGNUM:
+            return copy_bignum_step(dest_vm,value,out);
+        case DIAMOND_OBJECT_CLOSURE:
+            return copy_closure_step(dest_vm,value,rebase_dest_classes,out);
+        case DIAMOND_OBJECT_CHANNEL:
+            return copy_channel_step(dest_vm,value,out);
+        case DIAMOND_OBJECT_REGEXP:
+            return copy_regexp_step(dest_vm,value,out);
         default: return false;
     }
 }
