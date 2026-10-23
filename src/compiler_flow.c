@@ -69,6 +69,109 @@ static int32_t merge_guarded_tooling(Compiler *compiler,const Narrowing *narrowi
     return merged;
 }
 
+/* Snapshots every register's type facts (known type, type set, editor-only
+ * set) up to flow_reg_count, for a branch construct to restore or merge. */
+void capture_flow_facts(const Compiler *compiler,size_t flow_reg_count,uint16_t *types,
+        int32_t *sets,int32_t *tooling) {
+    for(size_t index=0;index<flow_reg_count;index++) {
+        types[index]=compiler->known_types[index];
+        sets[index]=compiler->known_type_sets[index];
+        tooling[index]=compiler->tooling_type_sets[index];
+    }
+}
+
+/* Locals first bound inside the then-branch: keep their then-side facts, then
+ * reset them to Nil for the false branch, which never bound them. */
+static void reset_then_new_locals(Compiler *compiler,size_t flow_local_count,
+        size_t then_local_count,uint16_t *then_new_types,int32_t *then_new_sets,
+        int32_t *then_new_tooling,uint32_t *then_new_alias) {
+    for(size_t index=flow_local_count;
+        index<then_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const uint16_t reg=compiler->locals[index].reg;
+        then_new_types[index-flow_local_count]=compiler->known_types[reg];
+        then_new_sets[index-flow_local_count]=compiler->known_type_sets[reg];
+        then_new_tooling[index-flow_local_count]=compiler->tooling_type_sets[reg];
+        then_new_alias[index-flow_local_count]=compiler->locals[index].alias_identity;
+        compiler->known_types[reg]=DIAMOND_TYPE_NIL;
+        compiler->known_type_sets[reg]=-1;
+        compiler->tooling_type_sets[reg]=-1;
+        compiler->locals[index].alias_identity=0;
+    }
+}
+
+/* The false side of an if: `else` body, an `elsif` chain (which consumes the
+ * shared `end`), or nil when there is no else. Moves its result into
+ * destination and reports its type facts; returns whether `end` was consumed. */
+static bool compile_if_false_branch(Compiler *compiler,uint16_t destination,
+        uint16_t *false_result_type_out,int32_t *false_result_set_out,
+        int32_t *false_result_tooling_out) {
+    uint16_t false_result_type=DIAMOND_TYPE_NIL;int32_t false_result_set=-1;
+    int32_t false_result_tooling=-1;
+    bool end_consumed=false;
+    if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
+        advance_token(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
+        const uint16_t else_result = compile_sequence(compiler);
+        const uint16_t else_type=compiler->known_types[else_result];
+        const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
+        emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
+        false_result_type=else_type;false_result_set=else_set;
+    } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
+        advance_token(compiler);
+        const uint16_t else_result=parse_if(compiler,false);
+        const uint16_t else_type=compiler->known_types[else_result];
+        const int32_t else_set=compiler->known_type_sets[else_result];
+        false_result_tooling=compiler->tooling_type_sets[else_result];
+        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
+        false_result_type=else_type;false_result_set=else_set;
+        end_consumed=true;
+    } else {
+        emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
+    }
+    *false_result_type_out=false_result_type;
+    *false_result_set_out=false_result_set;
+    *false_result_tooling_out=false_result_tooling;
+    return end_consumed;
+}
+
+/* Locals bound inside either branch but not before the if: a
+ * then-branch-new local (index<then_local_count) already has its real
+ * then-side snapshot in then_new_types/then_new_sets/then_new_alias
+ * (captured before this local got reset to Nil for the false-branch
+ * compile above); an else/elsif-branch-new local
+ * (index>=then_local_count) never existed on the then-side at all, so
+ * that side is modeled as Nil directly, the same "missing arm is Nil"
+ * treatment the if-expression's own missing-else result already gets. */
+static void merge_branch_new_locals(Compiler *compiler,size_t flow_local_count,
+        size_t then_local_count,const uint16_t *then_new_types,const int32_t *then_new_sets,
+        const int32_t *then_new_tooling,const uint32_t *then_new_alias) {
+    const size_t final_local_count=compiler->local_count;
+    for(size_t index=flow_local_count;
+        index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
+        const uint16_t reg=compiler->locals[index].reg;
+        const uint16_t then_side_type=index<then_local_count?
+            then_new_types[index-flow_local_count]:DIAMOND_TYPE_NIL;
+        const int32_t then_side_set=index<then_local_count?
+            then_new_sets[index-flow_local_count]:-1;
+        const int32_t then_side_tooling=index<then_local_count?
+            then_new_tooling[index-flow_local_count]:-1;
+        const uint32_t then_side_alias=index<then_local_count?
+            then_new_alias[index-flow_local_count]:0;
+        const uint16_t false_type=compiler->known_types[reg];
+        const int32_t false_set=compiler->known_type_sets[reg];
+        merge_flow_types(compiler,then_side_type,then_side_set,
+            false_type,false_set,&compiler->known_types[reg],
+            &compiler->known_type_sets[reg]);
+        const int32_t false_tooling=compiler->tooling_type_sets[reg];
+        compiler->tooling_type_sets[reg]=merge_tooling_type_sets(compiler,
+            then_side_tooling,false_tooling);
+        compiler->locals[index].alias_identity=
+            merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
+        record_scope_type_fact(compiler,reg,compiler->current.span.start);
+    }
+}
+
 uint16_t parse_if(Compiler *compiler,bool inverted) {
     compiler->narrowing=(Narrowing){};
     const uint16_t condition = parse_expression(compiler);
@@ -136,11 +239,7 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
         before_sets=heap_sets;then_sets=heap_sets+flow_reg_count;
         before_tooling=heap_tooling;then_tooling=heap_tooling+flow_reg_count;
     }
-    for(size_t index=0;index<flow_reg_count;index++) {
-        before_types[index]=compiler->known_types[index];
-        before_sets[index]=compiler->known_type_sets[index];
-        before_tooling[index]=compiler->tooling_type_sets[index];
-    }
+    capture_flow_facts(compiler,flow_reg_count,before_types,before_sets,before_tooling);
     for(size_t index=0;index<flow_local_count;index++)
         before_alias[index]=compiler->locals[index].alias_identity;
     if(narrowing.valid)
@@ -151,26 +250,12 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
     const uint16_t then_type=compiler->known_types[then_result];
     const int32_t then_set=compiler->known_type_sets[then_result];
     const int32_t then_result_tooling=compiler->tooling_type_sets[then_result];
-    for(size_t index=0;index<flow_reg_count;index++) {
-        then_types[index]=compiler->known_types[index];
-        then_sets[index]=compiler->known_type_sets[index];
-        then_tooling[index]=compiler->tooling_type_sets[index];
-    }
+    capture_flow_facts(compiler,flow_reg_count,then_types,then_sets,then_tooling);
     for(size_t index=0;index<flow_local_count;index++)
         then_alias[index]=compiler->locals[index].alias_identity;
     const size_t then_local_count=compiler->local_count;
-    for(size_t index=flow_local_count;
-        index<then_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
-        const uint16_t reg=compiler->locals[index].reg;
-        then_new_types[index-flow_local_count]=compiler->known_types[reg];
-        then_new_sets[index-flow_local_count]=compiler->known_type_sets[reg];
-        then_new_tooling[index-flow_local_count]=compiler->tooling_type_sets[reg];
-        then_new_alias[index-flow_local_count]=compiler->locals[index].alias_identity;
-        compiler->known_types[reg]=DIAMOND_TYPE_NIL;
-        compiler->known_type_sets[reg]=-1;
-        compiler->tooling_type_sets[reg]=-1;
-        compiler->locals[index].alias_identity=0;
-    }
+    reset_then_new_locals(compiler,flow_local_count,then_local_count,then_new_types,
+        then_new_sets,then_new_tooling,then_new_alias);
     emit_instruction(compiler, DIAMOND_OP_MOVE, destination, then_result, 0, 2);
     const size_t end_jump = emit_jump(compiler, DIAMOND_OP_JUMP, 0);
     patch_jump(compiler, false_jump, compiler->function->code_count);
@@ -194,28 +279,8 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
 
     uint16_t false_result_type=DIAMOND_TYPE_NIL;int32_t false_result_set=-1;
     int32_t false_result_tooling=-1;
-    bool end_consumed=false;
-    if (compiler->current.kind == DIAMOND_TOKEN_ELSE) {
-        advance_token(compiler);
-        if(compiler->current.kind==DIAMOND_TOKEN_NEWLINE)skip_newlines(compiler);
-        const uint16_t else_result = compile_sequence(compiler);
-        const uint16_t else_type=compiler->known_types[else_result];
-        const int32_t else_set=compiler->known_type_sets[else_result];
-        false_result_tooling=compiler->tooling_type_sets[else_result];
-        emit_instruction(compiler, DIAMOND_OP_MOVE, destination, else_result, 0, 2);
-        false_result_type=else_type;false_result_set=else_set;
-    } else if(compiler->current.kind==DIAMOND_TOKEN_ELSIF) {
-        advance_token(compiler);
-        const uint16_t else_result=parse_if(compiler,false);
-        const uint16_t else_type=compiler->known_types[else_result];
-        const int32_t else_set=compiler->known_type_sets[else_result];
-        false_result_tooling=compiler->tooling_type_sets[else_result];
-        emit_instruction(compiler,DIAMOND_OP_MOVE,destination,else_result,0,2);
-        false_result_type=else_type;false_result_set=else_set;
-        end_consumed=true;
-    } else {
-        emit_instruction(compiler, DIAMOND_OP_NIL, destination, 0, 0, 1);
-    }
+    const bool end_consumed=compile_if_false_branch(compiler,destination,&false_result_type,
+        &false_result_set,&false_result_tooling);
 
     for(size_t index=0;index<flow_reg_count;index++) {
         const uint16_t false_type=compiler->known_types[index];
@@ -233,38 +298,8 @@ uint16_t parse_if(Compiler *compiler,bool inverted) {
     for(size_t index=0;index<flow_local_count;index++)
         compiler->locals[index].alias_identity=merge_alias_identity(
             then_alias[index],compiler->locals[index].alias_identity);
-    /* Locals bound inside either branch but not before the if: a
-     * then-branch-new local (index<then_local_count) already has its real
-     * then-side snapshot in then_new_types/then_new_sets/then_new_alias
-     * (captured before this local got reset to Nil for the false-branch
-     * compile above); an else/elsif-branch-new local
-     * (index>=then_local_count) never existed on the then-side at all, so
-     * that side is modeled as Nil directly, the same "missing arm is Nil"
-     * treatment the if-expression's own missing-else result already gets. */
-    const size_t final_local_count=compiler->local_count;
-    for(size_t index=flow_local_count;
-        index<final_local_count&&index<DIAMOND_MAX_LOCALS;index++) {
-        const uint16_t reg=compiler->locals[index].reg;
-        const uint16_t then_side_type=index<then_local_count?
-            then_new_types[index-flow_local_count]:DIAMOND_TYPE_NIL;
-        const int32_t then_side_set=index<then_local_count?
-            then_new_sets[index-flow_local_count]:-1;
-        const int32_t then_side_tooling=index<then_local_count?
-            then_new_tooling[index-flow_local_count]:-1;
-        const uint32_t then_side_alias=index<then_local_count?
-            then_new_alias[index-flow_local_count]:0;
-        const uint16_t false_type=compiler->known_types[reg];
-        const int32_t false_set=compiler->known_type_sets[reg];
-        merge_flow_types(compiler,then_side_type,then_side_set,
-            false_type,false_set,&compiler->known_types[reg],
-            &compiler->known_type_sets[reg]);
-        const int32_t false_tooling=compiler->tooling_type_sets[reg];
-        compiler->tooling_type_sets[reg]=merge_tooling_type_sets(compiler,
-            then_side_tooling,false_tooling);
-        compiler->locals[index].alias_identity=
-            merge_alias_identity(then_side_alias,compiler->locals[index].alias_identity);
-        record_scope_type_fact(compiler,reg,compiler->current.span.start);
-    }
+    merge_branch_new_locals(compiler,flow_local_count,then_local_count,then_new_types,
+        then_new_sets,then_new_tooling,then_new_alias);
     free(heap_types);free(heap_sets);free(heap_tooling);
     merge_flow_types(compiler,then_type,then_set,false_result_type,
         false_result_set,&compiler->known_types[destination],

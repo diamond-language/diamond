@@ -1113,11 +1113,7 @@ uint16_t parse_case(Compiler *compiler) {
         entry_sets=heap_sets;join_sets=heap_sets+flow_reg_count;varied=heap_varied;
         entry_tooling=heap_tooling;join_tooling=heap_tooling+flow_reg_count;
     }
-    for(size_t index=0;index<flow_reg_count;index++) {
-        entry_types[index]=compiler->known_types[index];
-        entry_sets[index]=compiler->known_type_sets[index];
-        entry_tooling[index]=compiler->tooling_type_sets[index];
-    }
+    capture_flow_facts(compiler,flow_reg_count,entry_types,entry_sets,entry_tooling);
     if(compiler->current.kind!=DIAMOND_TOKEN_WHEN) {
         fail(compiler,compiler->current.span,
              "expected 'when' after case expression");
