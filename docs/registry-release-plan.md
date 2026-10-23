@@ -71,6 +71,12 @@ verified archive's name, version, dependency ranges, SHA-256, byte size, and fil
 name, in deterministic dependency-first publication order. Changing a selected package requires regenerating and reviewing
 its inventory entry before the launch gate will pass.
 
+The `.d6` source migration starts a new minor line for every bundled cut and
+updates their dependency ranges together. These artifacts require a runtime
+with `.d6` import support; old `0.x` caret ranges must not select them. The
+regenerated inventory is a local candidate, not a publication record. Existing
+published `.di` artifacts remain immutable and loadable by the new runtime.
+
 After 0.7.0, every selected cut received a patch release that adds
 `maintainers`, and later patch releases carried README and code fixes. The
 checked-in selection and inventory describe the newest versions, which are
