@@ -1,0 +1,1 @@
+require "circular_pkg"
