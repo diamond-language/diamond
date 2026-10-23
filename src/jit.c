@@ -1343,8 +1343,8 @@ static void compile_tail_call_other(JitCompiler *jc, uint16_t dest,
  * ever reach here once they've independently proven registers[recv] is
  * always an Instance for the entire function body -- either recv==0 and
  * jc->function->owner_class proves register 0 is always the receiver (Phase
- * 7: a real class index, not the UINT8_MAX/UINT8_MAX-1/UINT8_MAX-2 plain-
- * function/module-method/closure sentinels -- every function with a real
+ * 7: a real class index, not the DIAMOND_OWNER_NONE/MODULE/CAPTURED_SELF
+ * plain-function/module-method/closure sentinels -- every function with a real
  * owner_class is only ever entered via invoke_resolved_method_helper, which
  * unconditionally sets args[0] to the receiver), or recv names a declared
  * parameter whose static type is a single concrete class and which the
@@ -1908,6 +1908,283 @@ static int32_t register_new_class_if_sole_writer(const DiamondFunction *fn, uint
     return -1;
 }
 
+/* The DiamondJitNativeReadOp for a native String/Array/Hash method the JIT
+ * reads inline (length, index_of, ord, slice, key_at, value_at), or false
+ * when the call is not one of them. */
+static bool jit_native_read_operation(uint16_t site_type,
+        const DiamondStringConstant *native_name, uint8_t argc,
+        DiamondJitNativeReadOp *operation_out) {
+    DiamondJitNativeReadOp operation=DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
+    bool supported=false;
+    if(native_name->length==6&&
+       memcmp(native_name->chars,"length",6)==0&&argc==0) {
+        operation=site_type==DIAMOND_TYPE_STRING?
+            DIAMOND_JIT_NATIVE_STRING_LENGTH:
+            (site_type==DIAMOND_TYPE_ARRAY?
+                DIAMOND_JIT_NATIVE_ARRAY_LENGTH:
+                DIAMOND_JIT_NATIVE_HASH_LENGTH);
+        supported=true;
+    } else if(site_type==DIAMOND_TYPE_STRING&&argc==1&&
+              native_name->length==8&&
+              memcmp(native_name->chars,"index_of",8)==0) {
+        operation=DIAMOND_JIT_NATIVE_STRING_INDEX_OF;supported=true;
+    } else if(site_type==DIAMOND_TYPE_STRING&&argc==0&&
+              native_name->length==3&&
+              memcmp(native_name->chars,"ord",3)==0) {
+        operation=DIAMOND_JIT_NATIVE_STRING_ORD;supported=true;
+    } else if(site_type==DIAMOND_TYPE_STRING&&argc==2&&
+              native_name->length==5&&
+              memcmp(native_name->chars,"slice",5)==0) {
+        operation=DIAMOND_JIT_NATIVE_STRING_SLICE;supported=true;
+    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
+              native_name->length==6&&
+              memcmp(native_name->chars,"key_at",6)==0) {
+        operation=DIAMOND_JIT_NATIVE_HASH_KEY_AT;supported=true;
+    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
+              native_name->length==8&&
+              memcmp(native_name->chars,"value_at",8)==0) {
+        operation=DIAMOND_JIT_NATIVE_HASH_VALUE_AT;supported=true;
+    }
+    *operation_out=operation;
+    return supported;
+}
+
+/* Merges four independently-scoped compile-time strategies for
+ * this one opcode pair, tried in order:
+ *  1. Phase 7 (self.method(), any name): when recv==0 in a
+ *     function whose owner_class proves register 0 is always
+ *     the receiver (a real class index, not the DIAMOND_OWNER_NONE/
+ *     MODULE/CAPTURED_SELF plain-function/module-method/
+ *     closure sentinels -- see compile_invoke_dispatch's own
+ *     comment for the invariant this relies on).
+ *  2. Phase 9 (typed-param.method(), any name): when recv is
+ *     statically proven to always hold an Instance of a
+ *     single concrete class for the whole function body -- see
+ *     parameter_is_single_class/parameter_never_reassigned's
+ *     own comments.
+ *  3. Phase 10 (x = SomeClass.new(...); ...; x.method()),
+ *     extended by Phase 11 (x = self.assoc; ...; x.method(),
+ *     an ivar load instead of a constructor call): when recv
+ *     has exactly one writer in the whole function and that
+ *     writer is DIAMOND_OP_NEW, or a DIAMOND_OP_GET_IVAR of a
+ *     field DiamondFunction.ivar_known_class already proves is
+ *     a single concrete class -- see register_new_class_if_
+ *     sole_writer's own comment. Strategies 1/2/3 are
+ *     each a strict superset of strategy 4 for the receiver
+ *     they cover -- any method name, not just dup/freeze/
+ *     frozen?, and correct override dispatch via the same
+ *     lookup_method-gated logic the interpreter itself uses.
+ *  4. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
+ *     non-self, unproven types included): only the three
+ *     receiver-kind-agnostic pseudo-methods, requires argc==0
+ *     and !jc->has_called. None of the three can ever invoke
+ *     arbitrary user code, so this never sets jc->has_called
+ *     itself -- but by the same token, a call to one of them is
+ *     only ever safe to compile while has_called is still
+ *     false (see jit.h's own comment on diamond_jit_dup/
+ *     freeze/frozen). Bytecode-guaranteed to always be plain
+ *     DIAMOND_OP_INVOKE, never _MONO: an un-overridden dup/
+ *     freeze/frozen? call is intercepted by the interpreter's
+ *     own case before it ever reaches the inline-cache/
+ *     quickening logic that would rewrite it, so this strategy
+ *     never needs to handle _MONO at all.
+ * Every other INVOKE -- every native per-type method, non-self
+ * Instance dispatch through an unproven-type receiver to any
+ * other method name, `tap`, `public_send`, DIAMOND_OP_
+ * INVOKE_TYPED (no case for it at all, falls to default: below)
+ * -- bails the whole function, the same structural treatment
+ * as any other still-unsupported construct. */
+static void compile_invoke(JitCompiler *jc, size_t instruction_start, DiamondOpCode opcode,
+        uint16_t dest, uint16_t recv, uint16_t name, uint16_t base, uint8_t argc) {
+    const DiamondFunction *fn = jc->function;
+    uint16_t site_type=DIAMOND_TYPE_NONE;
+    for(size_t site=0;site<fn->invoke_site_known_class_count;site++)
+        if(fn->invoke_site_known_class[site].offset==
+                (uint32_t)instruction_start) {
+            site_type=fn->invoke_site_known_class[site].known_type;
+            break;
+        }
+    if(opcode==DIAMOND_OP_INVOKE&&name<fn->string_count&&
+       (site_type==DIAMOND_TYPE_STRING||site_type==DIAMOND_TYPE_ARRAY||
+        site_type==DIAMOND_TYPE_HASH)) {
+        const DiamondStringConstant *native_name=&fn->strings[name];
+        DiamondJitNativeReadOp operation=DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
+        const bool supported=jit_native_read_operation(site_type,native_name,argc,&operation);
+        if(supported) {
+            compile_native_call(jc,dest,recv,base,operation);
+            return;
+        }
+    }
+    if (recv == 0 && jc->function->owner_class != DIAMOND_OWNER_NONE &&
+        jc->function->owner_class != DIAMOND_OWNER_MODULE &&
+        jc->function->owner_class != DIAMOND_OWNER_CAPTURED_SELF) {
+        compile_invoke_dispatch(jc, instruction_start, dest, 0, name, base, argc,
+                             opcode == DIAMOND_OP_INVOKE_MONO);
+        return;
+    }
+    /* Phase 9: recv statically proven to always be an Instance
+     * of a single concrete class -- see parameter_is_single_
+     * class/parameter_never_reassigned's own comments. No
+     * explicit recv!=0 guard here: for a genuinely self-less
+     * function (owner_class==DIAMOND_OWNER_NONE, self_offset==0 inside
+     * parameter_is_single_class), register 0 legitimately IS
+     * the first declared parameter's own home register, not a
+     * self slot -- parameter_is_single_class's own self_offset
+     * arithmetic (and its recv_register<self_offset bounds
+     * check) already correctly rejects recv==0 for every
+     * owner_class where register 0 actually means self
+     * instead, so gating on recv!=0 here would only wrongly
+     * exclude that legitimate self_offset==0/recv==0 case, not
+     * add any real safety. Tried before the dup/freeze/
+     * frozen? path below since it's a strict superset for a
+     * proven-Instance receiver (any method name, real override
+     * dispatch, including dup/freeze/frozen? themselves via
+     * diamond_jit_invoke_instance's own universal-method
+     * interception) -- unlike that path, which only ever
+     * handles those three pseudo-methods but works for any
+     * receiver kind, proven or not. */
+    if (parameter_is_single_class(jc->function, recv) &&
+        parameter_never_reassigned(jc->function, recv)) {
+        compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
+                             opcode == DIAMOND_OP_INVOKE_MONO);
+        return;
+    }
+    /* Phase 10: recv statically proven to always hold the
+     * result of one specific DIAMOND_OP_NEW -- see register_
+     * new_class_if_sole_writer's own comment. Doesn't matter
+     * *which* class for eligibility purposes (only that it's
+     * exactly one NEW and nothing else ever writes this
+     * register) -- diamond_jit_invoke_instance dispatches by
+     * the runtime instance's own class regardless, same as
+     * Phase 9's own reasoning. */
+    if (register_new_class_if_sole_writer(jc->function, recv) >= 0) {
+        compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
+                             opcode == DIAMOND_OP_INVOKE_MONO);
+        return;
+    }
+    /* Phase 15: this exact call site's own receiver, proven a
+     * single concrete class by the compiler's real known_types
+     * tracking at the moment it emitted this instruction --
+     * unlike the three proofs above (all position-insensitive:
+     * "true everywhere in the function, or not at all"), this
+     * is position-sensitive, the only way to cover a receiver
+     * narrowed to *different* classes at different call sites
+     * (`if x is A; x.a(); elsif x is B; x.b(); end`). See
+     * DiamondFunction.invoke_site_known_class's own comment
+     * for the redefine_method_used_anywhere gate's reasoning. */
+    if (!fn->redefine_method_used_anywhere) {
+        if(site_type>=DIAMOND_TYPE_CLASS_BASE&&
+           site_type<DIAMOND_TYPE_NATIVE) {
+            compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
+                                 opcode == DIAMOND_OP_INVOKE_MONO);
+            return;
+        }
+    }
+    if (opcode == DIAMOND_OP_INVOKE_MONO || jc->has_called ||
+        argc != 0 || name >= fn->string_count) {
+        jc->bailed = true; return;
+    }
+    const DiamondStringConstant *method_name = &fn->strings[name];
+    void *trampoline = nullptr;
+    if (method_name->length == 3 && memcmp(method_name->chars, "dup", 3) == 0) {
+        trampoline = (void *)(uintptr_t)diamond_jit_dup;
+        jc->needs_frame = true;
+    } else if (method_name->length == 6 &&
+               memcmp(method_name->chars, "freeze", 6) == 0) {
+        trampoline = (void *)(uintptr_t)diamond_jit_freeze;
+    } else if (method_name->length == 7 &&
+               memcmp(method_name->chars, "frozen?", 7) == 0) {
+        trampoline = (void *)(uintptr_t)diamond_jit_frozen;
+    } else {
+        jc->bailed = true; return;
+    }
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_VM);
+    emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
+    emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+    emit_body_call(jc, trampoline);
+    emit_bail_if_al_nonzero(jc);
+}
+
+/* JUMP_IF_TRUE: jump to target unless the condition is nil or false. */
+static void compile_jump_if_true(JitCompiler *jc, size_t instruction_start,
+        uint16_t condition, size_t target) {
+    if (target <= instruction_start) emit_interrupt_poll(jc);
+    JitBuffer *buf = &jc->buf;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+    size_t nil_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* nil -> fall through */
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
+    size_t not_bool_is_truthy = emit_jcc_placeholder(buf, JCC_NE); /* not nil, not bool -> jump */
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
+    emit_test_r8(buf, REG_RAX);
+    size_t bool_false_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* bool false -> fall through */
+    /* falls through here only when kind==BOOL && boolean==true */
+    patch_rel32_to_here(buf, not_bool_is_truthy);
+    emit_u8(buf, 0xE9);
+    size_t target_field = jc->buf.length;
+    emit_u32_le(buf, 0);
+    record_global_patch(jc, target_field, target);
+    patch_rel32_to_here(buf, nil_is_falsy);
+    patch_rel32_to_here(buf, bool_false_is_falsy);
+}
+
+/* JUMP_IF_FALSE: jump to target when the condition is nil or false. */
+static void compile_jump_if_false(JitCompiler *jc, size_t instruction_start,
+        uint16_t condition, size_t target) {
+    if (target <= instruction_start) emit_interrupt_poll(jc);
+    JitBuffer *buf = &jc->buf;
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
+    emit_u8(buf, 0x0F);
+    emit_u8(buf, JCC_E);
+    size_t nil_field = jc->buf.length;
+    emit_u32_le(buf, 0);
+    record_global_patch(jc, nil_field, target);
+    emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
+    size_t not_bool = emit_jcc_placeholder(buf, JCC_NE);
+    emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
+    emit_test_r8(buf, REG_RAX);
+    size_t bool_true = emit_jcc_placeholder(buf, JCC_NE);
+    /* falls through here only when kind==BOOL && boolean==false */
+    emit_u8(buf, 0xE9);
+    size_t target_field = jc->buf.length;
+    emit_u32_le(buf, 0);
+    record_global_patch(jc, target_field, target);
+    patch_rel32_to_here(buf, not_bool);
+    patch_rel32_to_here(buf, bool_true);
+}
+
+/* A function's own tail call becomes a loop: the new
+ * arguments replace the registers and control returns to
+ * the first instruction (whose CHECK_TYPEs re-run, as in
+ * the interpreter). The argument count register is reset
+ * to the call's own, so a default left out of the tail call
+ * is taken again; try_compile already refused variadic and
+ * generic functions. A retry after an iteration re-runs from the
+ * call's original arguments, which is safe for the same
+ * reason every other retry is: effects set has_called. */
+static void compile_self_tail_call(JitCompiler *jc, uint16_t base, uint8_t argc) {
+    const DiamondFunction *fn = jc->function;
+    if (argc < fn->required_arity || argc > fn->arity || base < argc) {
+        jc->bailed = true; return;
+    }
+    emit_interrupt_poll(jc);
+    JitBuffer *buf = &jc->buf;
+    emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
+    emit_mov_imm64(buf, REG_RSI, base);
+    emit_mov_imm64(buf, REG_RDX, argc);
+    emit_mov_imm64(buf, REG_RCX, fn->register_count == 0
+        ? DIAMOND_JIT_MAX_REGISTERS : fn->register_count);
+    emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_tail_reset);
+    /* The iteration's own argument count: ARGUMENT_PROVIDED
+     * reads it to tell a defaulted parameter from a supplied
+     * one, and a tail call may leave defaults out. */
+    emit_mov_imm64(buf, JIT_ARGUMENT_COUNT, argc);
+    size_t field = emit_jmp_placeholder(buf);
+    record_global_patch(jc, field, 0);
+}
+
 /* Returns false (jc->bailed set) the moment anything outside the supported
  * whitelist is found -- the caller must then discard the whole attempt. */
 static void compile_body(JitCompiler *jc) {
@@ -2127,36 +2404,11 @@ static void compile_body(JitCompiler *jc) {
                     !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
                     jc->bailed = true; return;
                 }
-                /* A function's own tail call becomes a loop: the new
-                 * arguments replace the registers and control returns to
-                 * the first instruction (whose CHECK_TYPEs re-run, as in
-                 * the interpreter). The argument count register is reset
-                 * to the call's own, so a default left out of the tail call
-                 * is taken again; try_compile already refused variadic and
-                 * generic functions. A retry after an iteration re-runs from the
-                 * call's original arguments, which is safe for the same
-                 * reason every other retry is: effects set has_called. */
                 if ((size_t)function_index != jc->self_function_index) {
                     compile_tail_call_other(jc, dest, function_index, base, argc);
                     break;
                 }
-                if (argc < fn->required_arity || argc > fn->arity || base < argc) {
-                    jc->bailed = true; return;
-                }
-                emit_interrupt_poll(jc);
-                JitBuffer *buf = &jc->buf;
-                emit_mov_rr(buf, REG_RDI, JIT_REGISTERS_BASE);
-                emit_mov_imm64(buf, REG_RSI, base);
-                emit_mov_imm64(buf, REG_RDX, argc);
-                emit_mov_imm64(buf, REG_RCX, fn->register_count == 0
-                    ? DIAMOND_JIT_MAX_REGISTERS : fn->register_count);
-                emit_call_trampoline(buf, (void *)(uintptr_t)diamond_jit_tail_reset);
-                /* The iteration's own argument count: ARGUMENT_PROVIDED
-                 * reads it to tell a defaulted parameter from a supplied
-                 * one, and a tail call may leave defaults out. */
-                emit_mov_imm64(buf, JIT_ARGUMENT_COUNT, argc);
-                size_t field = emit_jmp_placeholder(buf);
-                record_global_patch(jc, field, 0);
+                compile_self_tail_call(jc, base, argc);
                 break;
             }
             case DIAMOND_OP_CALL: {
@@ -2194,24 +2446,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
                     !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
-                if (target <= instruction_start) emit_interrupt_poll(jc);
-                JitBuffer *buf = &jc->buf;
-                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
-                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
-                size_t nil_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* nil -> fall through */
-                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
-                size_t not_bool_is_truthy = emit_jcc_placeholder(buf, JCC_NE); /* not nil, not bool -> jump */
-                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
-                emit_test_r8(buf, REG_RAX);
-                size_t bool_false_is_falsy = emit_jcc_placeholder(buf, JCC_E); /* bool false -> fall through */
-                /* falls through here only when kind==BOOL && boolean==true */
-                patch_rel32_to_here(buf, not_bool_is_truthy);
-                emit_u8(buf, 0xE9);
-                size_t target_field = jc->buf.length;
-                emit_u32_le(buf, 0);
-                record_global_patch(jc, target_field, target);
-                patch_rel32_to_here(buf, nil_is_falsy);
-                patch_rel32_to_here(buf, bool_false_is_falsy);
+                compile_jump_if_true(jc, instruction_start, condition, target);
                 break;
             }
             case DIAMOND_OP_JUMP_IF_FALSE: {
@@ -2220,27 +2455,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
                     !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
                 size_t target = ((size_t)high << 8) | low;
-                if (target <= instruction_start) emit_interrupt_poll(jc);
-                JitBuffer *buf = &jc->buf;
-                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, KIND_OFF));
-                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_NIL);
-                emit_u8(buf, 0x0F);
-                emit_u8(buf, JCC_E);
-                size_t nil_field = jc->buf.length;
-                emit_u32_le(buf, 0);
-                record_global_patch(jc, nil_field, target);
-                emit_cmp_imm32_32(buf, REG_RAX, DIAMOND_VALUE_BOOL);
-                size_t not_bool = emit_jcc_placeholder(buf, JCC_NE);
-                emit_load_byte_zx(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(condition, AS_OFF));
-                emit_test_r8(buf, REG_RAX);
-                size_t bool_true = emit_jcc_placeholder(buf, JCC_NE);
-                /* falls through here only when kind==BOOL && boolean==false */
-                emit_u8(buf, 0xE9);
-                size_t target_field = jc->buf.length;
-                emit_u32_le(buf, 0);
-                record_global_patch(jc, target_field, target);
-                patch_rel32_to_here(buf, not_bool);
-                patch_rel32_to_here(buf, bool_true);
+                compile_jump_if_false(jc, instruction_start, condition, target);
                 break;
             }
             case DIAMOND_OP_RETURN: {
@@ -2256,51 +2471,6 @@ static void compile_body(JitCompiler *jc) {
                 emit_ret(buf);
                 break;
             }
-            /* Merges four independently-scoped compile-time strategies for
-             * this one opcode pair, tried in order:
-             *  1. Phase 7 (self.method(), any name): when recv==0 in a
-             *     function whose owner_class proves register 0 is always
-             *     the receiver (a real class index, not the UINT8_MAX/
-             *     UINT8_MAX-1/UINT8_MAX-2 plain-function/module-method/
-             *     closure sentinels -- see compile_invoke_dispatch's own
-             *     comment for the invariant this relies on).
-             *  2. Phase 9 (typed-param.method(), any name): when recv is
-             *     statically proven to always hold an Instance of a
-             *     single concrete class for the whole function body -- see
-             *     parameter_is_single_class/parameter_never_reassigned's
-             *     own comments.
-             *  3. Phase 10 (x = SomeClass.new(...); ...; x.method()),
-             *     extended by Phase 11 (x = self.assoc; ...; x.method(),
-             *     an ivar load instead of a constructor call): when recv
-             *     has exactly one writer in the whole function and that
-             *     writer is DIAMOND_OP_NEW, or a DIAMOND_OP_GET_IVAR of a
-             *     field DiamondFunction.ivar_known_class already proves is
-             *     a single concrete class -- see register_new_class_if_
-             *     sole_writer's own comment. Strategies 1/2/3 are
-             *     each a strict superset of strategy 4 for the receiver
-             *     they cover -- any method name, not just dup/freeze/
-             *     frozen?, and correct override dispatch via the same
-             *     lookup_method-gated logic the interpreter itself uses.
-             *  4. Phase 4/6 (dup/freeze/frozen? on ANY receiver, including
-             *     non-self, unproven types included): only the three
-             *     receiver-kind-agnostic pseudo-methods, requires argc==0
-             *     and !jc->has_called. None of the three can ever invoke
-             *     arbitrary user code, so this never sets jc->has_called
-             *     itself -- but by the same token, a call to one of them is
-             *     only ever safe to compile while has_called is still
-             *     false (see jit.h's own comment on diamond_jit_dup/
-             *     freeze/frozen). Bytecode-guaranteed to always be plain
-             *     DIAMOND_OP_INVOKE, never _MONO: an un-overridden dup/
-             *     freeze/frozen? call is intercepted by the interpreter's
-             *     own case before it ever reaches the inline-cache/
-             *     quickening logic that would rewrite it, so this strategy
-             *     never needs to handle _MONO at all.
-             * Every other INVOKE -- every native per-type method, non-self
-             * Instance dispatch through an unproven-type receiver to any
-             * other method name, `tap`, `public_send`, DIAMOND_OP_
-             * INVOKE_TYPED (no case for it at all, falls to default: below)
-             * -- bails the whole function, the same structural treatment
-             * as any other still-unsupported construct. */
             case DIAMOND_OP_INVOKE:
             case DIAMOND_OP_INVOKE_MONO: {
                 uint16_t dest = 0, recv = 0, name = 0, base = 0;
@@ -2308,142 +2478,7 @@ static void compile_body(JitCompiler *jc) {
                 if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
                     !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
                     !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                uint16_t site_type=DIAMOND_TYPE_NONE;
-                for(size_t site=0;site<fn->invoke_site_known_class_count;site++)
-                    if(fn->invoke_site_known_class[site].offset==
-                            (uint32_t)instruction_start) {
-                        site_type=fn->invoke_site_known_class[site].known_type;
-                        break;
-                    }
-                if(opcode==DIAMOND_OP_INVOKE&&name<fn->string_count&&
-                   (site_type==DIAMOND_TYPE_STRING||site_type==DIAMOND_TYPE_ARRAY||
-                    site_type==DIAMOND_TYPE_HASH)) {
-                    const DiamondStringConstant *native_name=&fn->strings[name];
-                    DiamondJitNativeReadOp operation=DIAMOND_JIT_NATIVE_ARRAY_LENGTH;
-                    bool supported=false;
-                    if(native_name->length==6&&
-                       memcmp(native_name->chars,"length",6)==0&&argc==0) {
-                        operation=site_type==DIAMOND_TYPE_STRING?
-                            DIAMOND_JIT_NATIVE_STRING_LENGTH:
-                            (site_type==DIAMOND_TYPE_ARRAY?
-                                DIAMOND_JIT_NATIVE_ARRAY_LENGTH:
-                                DIAMOND_JIT_NATIVE_HASH_LENGTH);
-                        supported=true;
-                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==1&&
-                              native_name->length==8&&
-                              memcmp(native_name->chars,"index_of",8)==0) {
-                        operation=DIAMOND_JIT_NATIVE_STRING_INDEX_OF;supported=true;
-                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==0&&
-                              native_name->length==3&&
-                              memcmp(native_name->chars,"ord",3)==0) {
-                        operation=DIAMOND_JIT_NATIVE_STRING_ORD;supported=true;
-                    } else if(site_type==DIAMOND_TYPE_STRING&&argc==2&&
-                              native_name->length==5&&
-                              memcmp(native_name->chars,"slice",5)==0) {
-                        operation=DIAMOND_JIT_NATIVE_STRING_SLICE;supported=true;
-                    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
-                              native_name->length==6&&
-                              memcmp(native_name->chars,"key_at",6)==0) {
-                        operation=DIAMOND_JIT_NATIVE_HASH_KEY_AT;supported=true;
-                    } else if(site_type==DIAMOND_TYPE_HASH&&argc==1&&
-                              native_name->length==8&&
-                              memcmp(native_name->chars,"value_at",8)==0) {
-                        operation=DIAMOND_JIT_NATIVE_HASH_VALUE_AT;supported=true;
-                    }
-                    if(supported) {
-                        compile_native_call(jc,dest,recv,base,operation);
-                        break;
-                    }
-                }
-                if (recv == 0 && jc->function->owner_class != DIAMOND_OWNER_NONE &&
-                    jc->function->owner_class != DIAMOND_OWNER_MODULE &&
-                    jc->function->owner_class != DIAMOND_OWNER_CAPTURED_SELF) {
-                    compile_invoke_dispatch(jc, instruction_start, dest, 0, name, base, argc,
-                                         opcode == DIAMOND_OP_INVOKE_MONO);
-                    break;
-                }
-                /* Phase 9: recv statically proven to always be an Instance
-                 * of a single concrete class -- see parameter_is_single_
-                 * class/parameter_never_reassigned's own comments. No
-                 * explicit recv!=0 guard here: for a genuinely self-less
-                 * function (owner_class==DIAMOND_OWNER_NONE, self_offset==0 inside
-                 * parameter_is_single_class), register 0 legitimately IS
-                 * the first declared parameter's own home register, not a
-                 * self slot -- parameter_is_single_class's own self_offset
-                 * arithmetic (and its recv_register<self_offset bounds
-                 * check) already correctly rejects recv==0 for every
-                 * owner_class where register 0 actually means self
-                 * instead, so gating on recv!=0 here would only wrongly
-                 * exclude that legitimate self_offset==0/recv==0 case, not
-                 * add any real safety. Tried before the dup/freeze/
-                 * frozen? path below since it's a strict superset for a
-                 * proven-Instance receiver (any method name, real override
-                 * dispatch, including dup/freeze/frozen? themselves via
-                 * diamond_jit_invoke_instance's own universal-method
-                 * interception) -- unlike that path, which only ever
-                 * handles those three pseudo-methods but works for any
-                 * receiver kind, proven or not. */
-                if (parameter_is_single_class(jc->function, recv) &&
-                    parameter_never_reassigned(jc->function, recv)) {
-                    compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
-                                         opcode == DIAMOND_OP_INVOKE_MONO);
-                    break;
-                }
-                /* Phase 10: recv statically proven to always hold the
-                 * result of one specific DIAMOND_OP_NEW -- see register_
-                 * new_class_if_sole_writer's own comment. Doesn't matter
-                 * *which* class for eligibility purposes (only that it's
-                 * exactly one NEW and nothing else ever writes this
-                 * register) -- diamond_jit_invoke_instance dispatches by
-                 * the runtime instance's own class regardless, same as
-                 * Phase 9's own reasoning. */
-                if (register_new_class_if_sole_writer(jc->function, recv) >= 0) {
-                    compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
-                                         opcode == DIAMOND_OP_INVOKE_MONO);
-                    break;
-                }
-                /* Phase 15: this exact call site's own receiver, proven a
-                 * single concrete class by the compiler's real known_types
-                 * tracking at the moment it emitted this instruction --
-                 * unlike the three proofs above (all position-insensitive:
-                 * "true everywhere in the function, or not at all"), this
-                 * is position-sensitive, the only way to cover a receiver
-                 * narrowed to *different* classes at different call sites
-                 * (`if x is A; x.a(); elsif x is B; x.b(); end`). See
-                 * DiamondFunction.invoke_site_known_class's own comment
-                 * for the redefine_method_used_anywhere gate's reasoning. */
-                if (!fn->redefine_method_used_anywhere) {
-                    if(site_type>=DIAMOND_TYPE_CLASS_BASE&&
-                       site_type<DIAMOND_TYPE_NATIVE) {
-                        compile_invoke_dispatch(jc, instruction_start, dest, recv, name, base, argc,
-                                             opcode == DIAMOND_OP_INVOKE_MONO);
-                        break;
-                    }
-                }
-                if (opcode == DIAMOND_OP_INVOKE_MONO || jc->has_called ||
-                    argc != 0 || name >= fn->string_count) {
-                    jc->bailed = true; return;
-                }
-                const DiamondStringConstant *method_name = &fn->strings[name];
-                void *trampoline = nullptr;
-                if (method_name->length == 3 && memcmp(method_name->chars, "dup", 3) == 0) {
-                    trampoline = (void *)(uintptr_t)diamond_jit_dup;
-                    jc->needs_frame = true;
-                } else if (method_name->length == 6 &&
-                           memcmp(method_name->chars, "freeze", 6) == 0) {
-                    trampoline = (void *)(uintptr_t)diamond_jit_freeze;
-                } else if (method_name->length == 7 &&
-                           memcmp(method_name->chars, "frozen?", 7) == 0) {
-                    trampoline = (void *)(uintptr_t)diamond_jit_frozen;
-                } else {
-                    jc->bailed = true; return;
-                }
-                JitBuffer *buf = &jc->buf;
-                emit_mov_rr(buf, REG_RDI, JIT_VM);
-                emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(recv, 0));
-                emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-                emit_body_call(jc, trampoline);
-                emit_bail_if_al_nonzero(jc);
+                compile_invoke(jc, instruction_start, opcode, dest, recv, name, base, argc);
                 break;
             }
             default:
