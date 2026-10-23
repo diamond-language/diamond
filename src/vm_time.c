@@ -411,6 +411,238 @@ static DiamondVmStatus time_boundary_helper(DiamondVm *vm,const DiamondTime *tar
     *out_result=DIAMOND_OBJECT(result);return DIAMOND_VM_OK;
 }
 
+/* year/month/day/hour/min/sec/wday/yday: one calendar component. */
+static DiamondVmStatus time_component_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+    int component_value=0;
+    struct tm parts={};
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(!time_struct_tm(target,&parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(method_name->length==4&&memcmp(method_name->chars,"year",4)==0)
+        component_value=parts.tm_year+1900;
+    else if(method_name->length==5&&memcmp(method_name->chars,"month",5)==0)
+        component_value=parts.tm_mon+1;
+    else if(method_name->length==3&&memcmp(method_name->chars,"day",3)==0)
+        component_value=parts.tm_mday;
+    else if(method_name->length==4&&memcmp(method_name->chars,"hour",4)==0)
+        component_value=parts.tm_hour;
+    else if(method_name->length==3&&memcmp(method_name->chars,"min",3)==0)
+        component_value=parts.tm_min;
+    else if(method_name->length==3&&memcmp(method_name->chars,"sec",3)==0)
+        component_value=parts.tm_sec;
+    else if(method_name->length==4&&memcmp(method_name->chars,"wday",4)==0)
+        component_value=parts.tm_wday;
+    else component_value=parts.tm_yday+1;
+    registers[dest]=DIAMOND_INT(component_value);
+    return DIAMOND_VM_OK;
+}
+
+/* same_day?(other): same calendar day, other projected into this Time's zone. */
+static DiamondVmStatus time_same_day_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    struct tm parts={};
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_TIME) {
+        snprintf(vm->error,sizeof vm->error,"Time#same_day? argument must be a Time");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondTime *other=(const DiamondTime *)registers[base].as.object;
+    const DiamondTime projected={.epoch=other->epoch,
+        .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
+    struct tm other_parts;
+    if(!time_struct_tm(target,&parts)||!time_struct_tm(&projected,&other_parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    registers[dest]=DIAMOND_BOOL(parts.tm_year==other_parts.tm_year&&
+        parts.tm_yday==other_parts.tm_yday);
+    return DIAMOND_VM_OK;
+}
+
+/* today?/yesterday?/tomorrow?/past?/future?/on_weekend?/on_weekday?. */
+static DiamondVmStatus time_relative_predicate_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint8_t argc,uint16_t dest,bool yesterday_p_method,bool tomorrow_p_method,bool past_p_method,bool future_p_method,bool weekend_p_method,bool weekday_p_method) {
+    struct tm parts={};
+    if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(weekend_p_method||weekday_p_method) {
+        if(!time_struct_tm(target,&parts)) {
+            snprintf(vm->error,sizeof vm->error,"Time value out of range");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const bool weekend=parts.tm_wday==0||parts.tm_wday==6;
+        registers[dest]=DIAMOND_BOOL(weekend_p_method?weekend:!weekend);
+        return DIAMOND_VM_OK;
+    }
+    struct timespec now={};clock_gettime(CLOCK_REALTIME,&now);
+    const double now_epoch=(double)now.tv_sec+(double)now.tv_nsec/1e9;
+    if(past_p_method||future_p_method) {
+        registers[dest]=DIAMOND_BOOL(past_p_method?
+            target->epoch<now_epoch:target->epoch>now_epoch);
+        return DIAMOND_VM_OK;
+    }
+    const DiamondTime current={.epoch=now_epoch,
+        .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
+    struct tm current_parts;
+    if(!time_struct_tm(target,&parts)||!time_struct_tm(&current,&current_parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    int expected_year=current_parts.tm_year;
+    int expected_yday=current_parts.tm_yday;
+    if(yesterday_p_method) {
+        expected_yday--;
+        if(expected_yday<0) {
+            expected_year--;
+            const int year=expected_year+1900;
+            expected_yday=((year%4==0&&year%100!=0)||year%400==0)?365:364;
+        }
+    } else if(tomorrow_p_method) {
+        expected_yday++;
+        const int year=current_parts.tm_year+1900;
+        const int days=((year%4==0&&year%100!=0)||year%400==0)?366:365;
+        if(expected_yday==days) { expected_year++;expected_yday=0; }
+    }
+    registers[dest]=DIAMOND_BOOL(parts.tm_year==expected_year&&
+        parts.tm_yday==expected_yday);
+    return DIAMOND_VM_OK;
+}
+
+/* utc / localtime([offset]): the same instant in another zone. */
+static DiamondVmStatus time_zone_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,bool utc_method,bool localtime_method) {
+    if(utc_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
+    if(localtime_method&&argc>1)return DIAMOND_VM_ARITY_ERROR;
+    uint8_t zone_mode=utc_method?DIAMOND_TIME_UTC:DIAMOND_TIME_LOCAL;
+    int32_t utc_offset=0;
+    if(localtime_method&&argc==1) {
+        if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
+           registers[base].as.object->kind==DIAMOND_OBJECT_STRING) {
+            if(!parse_time_utc_offset(
+                (const DiamondString *)registers[base].as.object,&utc_offset)) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#localtime offset must be 'Z' or a signed 'HH:MM[:SS]'");
+                return DIAMOND_VM_ARITY_ERROR;
+            }
+        } else if(registers[base].kind==DIAMOND_VALUE_INT) {
+            const int64_t supplied=registers[base].as.integer;
+            if(supplied<=-86400||supplied>=86400) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Time#localtime offset must be between -86399 and 86399 seconds");
+                return DIAMOND_VM_ARITY_ERROR;
+            }
+            utc_offset=(int32_t)supplied;
+        } else {
+            snprintf(vm->error,sizeof vm->error,
+                "Time#localtime offset must be an Int or String");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        zone_mode=DIAMOND_TIME_FIXED_OFFSET;
+    }
+    DiamondTime *copy=allocate_time(vm,target->epoch,zone_mode,utc_offset);
+    if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(copy);
+    return DIAMOND_VM_OK;
+}
+
+/* next_weekday([count]) / previous_weekday([count]). */
+static DiamondVmStatus time_weekday_navigation_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest,bool next_weekday_method) {
+    struct tm parts={};
+    if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+    int64_t count=1;
+    if(argc==1) {
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time weekday navigation count must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        count=registers[base].as.integer;
+        if(count<0||count>2610000) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time weekday navigation count must be between 0 and 2610000");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+    }
+    if(count==0) { registers[dest]=DIAMOND_OBJECT(target);return DIAMOND_VM_OK; }
+    if(!time_struct_tm(target,&parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const int64_t days=weekday_calendar_distance(parts.tm_wday,count,
+        next_weekday_method);
+    return time_calendar_shift_helper(vm,target,days,TIME_SHIFT_DAYS,
+        next_weekday_method,&registers[dest]);
+}
+
+/* iso8601([precision]). */
+static DiamondVmStatus time_iso8601_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+    int precision=0;
+    if(argc==1) {
+        if(registers[base].kind!=DIAMOND_VALUE_INT) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time#iso8601 precision must be an Int");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        const int64_t supplied=registers[base].as.integer;
+        if(supplied<0||supplied>9) {
+            snprintf(vm->error,sizeof vm->error,
+                "Time#iso8601 precision must be between 0 and 9");
+            return DIAMOND_VM_TYPE_ERROR;
+        }
+        precision=(int)supplied;
+    }
+    StringBuilder builder={};
+    if(!format_time_iso8601(target,precision,&builder)) {
+        free(builder.chars);
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+    free(builder.chars);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+}
+
+/* strftime(format), with %z-style offsets substituted for a fixed-offset Time. */
+static DiamondVmStatus time_strftime_method(DiamondVm *vm,DiamondTime *target,DiamondValue *registers,uint16_t base,uint8_t argc,uint16_t dest) {
+    struct tm parts={};
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "Time#strftime argument must be a String");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondString *format=(const DiamondString *)registers[base].as.object;
+    if(!time_struct_tm(target,&parts)) {
+        snprintf(vm->error,sizeof vm->error,"Time value out of range");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const char *format_chars=format->chars;
+    char *substituted=nullptr;
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+        substituted=substitute_fixed_offset_z(format_chars,target->utc_offset);
+        if(substituted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        format_chars=substituted;
+    }
+    char stack_buffer[256];
+    size_t length=strftime(stack_buffer,sizeof stack_buffer,format_chars,&parts);
+    const char *result_chars=stack_buffer;
+    char *heap_buffer=nullptr;
+    if(length==0) {
+        heap_buffer=malloc(4096);
+        if(heap_buffer==nullptr){free(substituted);return DIAMOND_VM_OUT_OF_MEMORY;}
+        length=strftime(heap_buffer,4096,format_chars,&parts);
+        result_chars=heap_buffer;
+    }
+    DiamondString *string=allocate_string(vm,result_chars,length);
+    free(heap_buffer);
+    free(substituted);
+    if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+    registers[dest]=DIAMOND_OBJECT(string);
+    return DIAMOND_VM_OK;
+}
+
 /* #year/#month/#day/#hour/#min/#sec/#wday/#yday/#to_i/#to_f/#strftime/
  * #iso8601/calendar shifts/#to_s/#utc/#localtime/#utc? -- factored out of
  * the INVOKE case body
@@ -419,7 +651,7 @@ static DiamondVmStatus time_boundary_helper(DiamondVm *vm,const DiamondTime *tar
 DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         const DiamondStringConstant *method_name,DiamondValue *registers,uint16_t base,
         uint8_t argc,uint16_t dest) {
-    bool component=false;int component_value=0;
+    int component_value=0;
     struct tm parts={};
     const bool needs_parts=
         (method_name->length==4&&memcmp(method_name->chars,"year",4)==0)||
@@ -431,31 +663,7 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         (method_name->length==4&&memcmp(method_name->chars,"wday",4)==0)||
         (method_name->length==4&&memcmp(method_name->chars,"yday",4)==0);
     if(needs_parts) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(!time_struct_tm(target,&parts)) {
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        component=true;
-        if(method_name->length==4&&memcmp(method_name->chars,"year",4)==0)
-            component_value=parts.tm_year+1900;
-        else if(method_name->length==5&&memcmp(method_name->chars,"month",5)==0)
-            component_value=parts.tm_mon+1;
-        else if(method_name->length==3&&memcmp(method_name->chars,"day",3)==0)
-            component_value=parts.tm_mday;
-        else if(method_name->length==4&&memcmp(method_name->chars,"hour",4)==0)
-            component_value=parts.tm_hour;
-        else if(method_name->length==3&&memcmp(method_name->chars,"min",3)==0)
-            component_value=parts.tm_min;
-        else if(method_name->length==3&&memcmp(method_name->chars,"sec",3)==0)
-            component_value=parts.tm_sec;
-        else if(method_name->length==4&&memcmp(method_name->chars,"wday",4)==0)
-            component_value=parts.tm_wday;
-        else component_value=parts.tm_yday+1;
-    }
-    if(component) {
-        registers[dest]=DIAMOND_INT(component_value);
-        return DIAMOND_VM_OK;
+        return time_component_method(vm,target,registers,argc,dest,method_name);
     }
     const bool today_p_method=method_name->length==6&&
         memcmp(method_name->chars,"today?",6)==0;
@@ -474,69 +682,13 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool weekday_p_method=method_name->length==11&&
         memcmp(method_name->chars,"on_weekday?",11)==0;
     if(same_day_p_method) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_TIME) {
-            snprintf(vm->error,sizeof vm->error,"Time#same_day? argument must be a Time");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondTime *other=(const DiamondTime *)registers[base].as.object;
-        const DiamondTime projected={.epoch=other->epoch,
-            .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
-        struct tm other_parts;
-        if(!time_struct_tm(target,&parts)||!time_struct_tm(&projected,&other_parts)) {
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        registers[dest]=DIAMOND_BOOL(parts.tm_year==other_parts.tm_year&&
-            parts.tm_yday==other_parts.tm_yday);
-        return DIAMOND_VM_OK;
+        return time_same_day_method(vm,target,registers,base,argc,dest);
     }
     if(today_p_method||yesterday_p_method||tomorrow_p_method||
        past_p_method||future_p_method||weekend_p_method||
        weekday_p_method) {
-        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(weekend_p_method||weekday_p_method) {
-            if(!time_struct_tm(target,&parts)) {
-                snprintf(vm->error,sizeof vm->error,"Time value out of range");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const bool weekend=parts.tm_wday==0||parts.tm_wday==6;
-            registers[dest]=DIAMOND_BOOL(weekend_p_method?weekend:!weekend);
-            return DIAMOND_VM_OK;
-        }
-        struct timespec now={};clock_gettime(CLOCK_REALTIME,&now);
-        const double now_epoch=(double)now.tv_sec+(double)now.tv_nsec/1e9;
-        if(past_p_method||future_p_method) {
-            registers[dest]=DIAMOND_BOOL(past_p_method?
-                target->epoch<now_epoch:target->epoch>now_epoch);
-            return DIAMOND_VM_OK;
-        }
-        const DiamondTime current={.epoch=now_epoch,
-            .utc_offset=target->utc_offset,.zone_mode=target->zone_mode};
-        struct tm current_parts;
-        if(!time_struct_tm(target,&parts)||!time_struct_tm(&current,&current_parts)) {
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        int expected_year=current_parts.tm_year;
-        int expected_yday=current_parts.tm_yday;
-        if(yesterday_p_method) {
-            expected_yday--;
-            if(expected_yday<0) {
-                expected_year--;
-                const int year=expected_year+1900;
-                expected_yday=((year%4==0&&year%100!=0)||year%400==0)?365:364;
-            }
-        } else if(tomorrow_p_method) {
-            expected_yday++;
-            const int year=current_parts.tm_year+1900;
-            const int days=((year%4==0&&year%100!=0)||year%400==0)?366:365;
-            if(expected_yday==days) { expected_year++;expected_yday=0; }
-        }
-        registers[dest]=DIAMOND_BOOL(parts.tm_year==expected_year&&
-            parts.tm_yday==expected_yday);
-        return DIAMOND_VM_OK;
+        return time_relative_predicate_method(vm,target,registers,argc,dest,yesterday_p_method,tomorrow_p_method,
+            past_p_method,future_p_method,weekend_p_method,weekday_p_method);
     }
     const bool to_i_method=method_name->length==4&&
         memcmp(method_name->chars,"to_i",4)==0;
@@ -577,38 +729,7 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool localtime_method=method_name->length==9&&
         memcmp(method_name->chars,"localtime",9)==0;
     if(utc_method||localtime_method) {
-        if(utc_method&&argc!=0)return DIAMOND_VM_ARITY_ERROR;
-        if(localtime_method&&argc>1)return DIAMOND_VM_ARITY_ERROR;
-        uint8_t zone_mode=utc_method?DIAMOND_TIME_UTC:DIAMOND_TIME_LOCAL;
-        int32_t utc_offset=0;
-        if(localtime_method&&argc==1) {
-            if(registers[base].kind==DIAMOND_VALUE_OBJECT&&
-               registers[base].as.object->kind==DIAMOND_OBJECT_STRING) {
-                if(!parse_time_utc_offset(
-                    (const DiamondString *)registers[base].as.object,&utc_offset)) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "Time#localtime offset must be 'Z' or a signed 'HH:MM[:SS]'");
-                    return DIAMOND_VM_ARITY_ERROR;
-                }
-            } else if(registers[base].kind==DIAMOND_VALUE_INT) {
-                const int64_t supplied=registers[base].as.integer;
-                if(supplied<=-86400||supplied>=86400) {
-                    snprintf(vm->error,sizeof vm->error,
-                        "Time#localtime offset must be between -86399 and 86399 seconds");
-                    return DIAMOND_VM_ARITY_ERROR;
-                }
-                utc_offset=(int32_t)supplied;
-            } else {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time#localtime offset must be an Int or String");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            zone_mode=DIAMOND_TIME_FIXED_OFFSET;
-        }
-        DiamondTime *copy=allocate_time(vm,target->epoch,zone_mode,utc_offset);
-        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(copy);
-        return DIAMOND_VM_OK;
+        return time_zone_method(vm,target,registers,base,argc,dest,utc_method,localtime_method);
     }
     const bool months_ago_method=method_name->length==10&&
         memcmp(method_name->chars,"months_ago",10)==0;
@@ -648,30 +769,7 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool previous_weekday_method=method_name->length==16&&
         memcmp(method_name->chars,"previous_weekday",16)==0;
     if(next_weekday_method||previous_weekday_method) {
-        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
-        int64_t count=1;
-        if(argc==1) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time weekday navigation count must be an Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            count=registers[base].as.integer;
-            if(count<0||count>2610000) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time weekday navigation count must be between 0 and 2610000");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-        }
-        if(count==0) { registers[dest]=DIAMOND_OBJECT(target);return DIAMOND_VM_OK; }
-        if(!time_struct_tm(target,&parts)) {
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const int64_t days=weekday_calendar_distance(parts.tm_wday,count,
-            next_weekday_method);
-        return time_calendar_shift_helper(vm,target,days,TIME_SHIFT_DAYS,
-            next_weekday_method,&registers[dest]);
+        return time_weekday_navigation_method(vm,target,registers,base,argc,dest,next_weekday_method);
     }
     const bool beginning_of_day_method=method_name->length==16&&
         memcmp(method_name->chars,"beginning_of_day",16)==0;
@@ -729,71 +827,12 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
     const bool iso8601_method=method_name->length==7&&
         memcmp(method_name->chars,"iso8601",7)==0;
     if(iso8601_method) {
-        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
-        int precision=0;
-        if(argc==1) {
-            if(registers[base].kind!=DIAMOND_VALUE_INT) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time#iso8601 precision must be an Int");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            const int64_t supplied=registers[base].as.integer;
-            if(supplied<0||supplied>9) {
-                snprintf(vm->error,sizeof vm->error,
-                    "Time#iso8601 precision must be between 0 and 9");
-                return DIAMOND_VM_TYPE_ERROR;
-            }
-            precision=(int)supplied;
-        }
-        StringBuilder builder={};
-        if(!format_time_iso8601(target,precision,&builder)) {
-            free(builder.chars);
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
-        free(builder.chars);
-        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+        return time_iso8601_method(vm,target,registers,base,argc,dest);
     }
     const bool strftime_method=method_name->length==8&&
         memcmp(method_name->chars,"strftime",8)==0;
     if(strftime_method) {
-        if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-           registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
-            snprintf(vm->error,sizeof vm->error,
-                "Time#strftime argument must be a String");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const DiamondString *format=(const DiamondString *)registers[base].as.object;
-        if(!time_struct_tm(target,&parts)) {
-            snprintf(vm->error,sizeof vm->error,"Time value out of range");
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        const char *format_chars=format->chars;
-        char *substituted=nullptr;
-        if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
-            substituted=substitute_fixed_offset_z(format_chars,target->utc_offset);
-            if(substituted==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-            format_chars=substituted;
-        }
-        char stack_buffer[256];
-        size_t length=strftime(stack_buffer,sizeof stack_buffer,format_chars,&parts);
-        const char *result_chars=stack_buffer;
-        char *heap_buffer=nullptr;
-        if(length==0) {
-            heap_buffer=malloc(4096);
-            if(heap_buffer==nullptr){free(substituted);return DIAMOND_VM_OUT_OF_MEMORY;}
-            length=strftime(heap_buffer,4096,format_chars,&parts);
-            result_chars=heap_buffer;
-        }
-        DiamondString *string=allocate_string(vm,result_chars,length);
-        free(heap_buffer);
-        free(substituted);
-        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
-        registers[dest]=DIAMOND_OBJECT(string);
-        return DIAMOND_VM_OK;
+        return time_strftime_method(vm,target,registers,base,argc,dest);
     }
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Time");
