@@ -1194,6 +1194,30 @@ static inline bool cached_extension_lookup(DiamondVm *vm,const uint8_t *site,
     return false;
 }
 
+/* Tags for DiamondExtensionCache's `kind` field at the three
+ * find_value_extension call sites (Float/Int/String): each is gated on
+ * registers[recv].kind before it runs, so a polymorphic call site (a
+ * union-typed receiver) can legitimately store more than one of these,
+ * plus a DiamondObjectKind entry from the collection protocol below --
+ * chosen well outside DiamondObjectKind's own range (src/object.h) so
+ * none of the four can ever collide. */
+enum {
+    DIAMOND_EXTENSION_KIND_FLOAT = 250,
+    DIAMOND_EXTENSION_KIND_INT = 251,
+    DIAMOND_EXTENSION_KIND_STRING = 252,
+};
+
+DIAMOND_INTERNAL const DiamondFunction *find_top_level_function(
+        const DiamondChunk *chunk, const char *name, size_t length);
+DIAMOND_INTERNAL const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
+        const char *const *prefixes,size_t prefix_count,const char *name,size_t length);
+DIAMOND_INTERNAL void store_extension_lookup(DiamondVm *vm,const uint8_t *site,
+        uint8_t kind,const DiamondFunction *function);
+DIAMOND_INTERNAL DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
+        const DiamondChunk *chunk,const DiamondFunction *target,
+        const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
+        size_t depth,DiamondValue *result);
+
 DIAMOND_INTERNAL DiamondFieldCacheEntry *lookup_field_cached(
     DiamondVm *vm, const uint8_t *site, const DiamondInstance *instance,
     uint8_t field, bool write);
@@ -1506,6 +1530,8 @@ DIAMOND_INTERNAL DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
                                             const DiamondStringConstant *method_name);
 
 DIAMOND_INTERNAL DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);
+
+DIAMOND_INTERNAL DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);
 
 DIAMOND_INTERNAL DiamondVmStatus numeric_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name);
 
