@@ -1470,6 +1470,8 @@ DIAMOND_INTERNAL NonlocalOutcome nonlocal_exit_arrives(DiamondVm *vm,const Diamo
         size_t *handler_count,PendingUnwind *pending,size_t *ip,
         size_t instruction_offset,DiamondValue *result);
 
+DIAMOND_INTERNAL DiamondVmStatus peer_address_helper(DiamondVm *vm,int fd,DiamondValue *dest);
+
 DIAMOND_INTERNAL DiamondVmStatus file_invoke_helper(DiamondVm *vm,
                                           const DiamondChunk *chunk, size_t depth,
                                           DiamondValue *registers, uint16_t recv, uint16_t base,
