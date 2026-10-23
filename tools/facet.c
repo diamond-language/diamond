@@ -2881,6 +2881,306 @@ static bool audit_cut_imports(const char *root, const FacetFileList *files,
     }
     return true;
 }
+/* Reads every entry of a verified-canonical tar archive: each header must be
+ * the canonical one for its path, mode and size, paths sorted and unique
+ * case-insensitively, within the size limits, padding zeroed, and the
+ * archive properly ended. Keeps the manifest, the README (when wanted for
+ * --readme) and every runtime source in memory; everything it returns is the
+ * caller's to free, including after a failure. */
+static bool read_archive_entries(FILE *archive, bool readme, FacetFileList *files_io,
+                                 char **runtime_sources, char **manifest_source_out,
+                                 char **readme_source_out, size_t *readme_length_out,
+                                 char *error, size_t error_size) {
+    FacetFileList files = *files_io;
+    char *manifest_source = NULL;
+    char *readme_source = NULL;
+    size_t readme_length = 0;
+    unsigned long long total_bytes = 0;
+    bool ok = true, ended = false;
+    while (ok && !ended) {
+        unsigned char header[512];
+        if (fread(header, 1, sizeof header, archive) != sizeof header) {
+            (void)snprintf(error, error_size, "truncated archive header");
+            ok = false;
+            break;
+        }
+        if (all_zero(header, sizeof header)) {
+            unsigned char second[512];
+            if (fread(second, 1, sizeof second, archive) != sizeof second ||
+                !all_zero(second, sizeof second) || fgetc(archive) != EOF ||
+                ferror(archive)) {
+                (void)snprintf(error, error_size, "invalid archive ending");
+                ok = false;
+            }
+            ended = true;
+            break;
+        }
+        const unsigned char *end = memchr(header, '\0', 100);
+        unsigned long long mode, size;
+        if (end == NULL || end == header ||
+            !tar_number(header + 100, 8, &mode) ||
+            !tar_number(header + 124, 12, &size) ||
+            (mode != 0644 && mode != 0755) || size > 10ULL * 1024 * 1024 ||
+            files.count == 4096 || total_bytes + size > 50ULL * 1024 * 1024) {
+            (void)snprintf(error, error_size, "invalid archive entry header or limits");
+            ok = false;
+            break;
+        }
+        char path[101];
+        size_t path_length = (size_t)(end - header);
+        memcpy(path, header, path_length);
+        path[path_length] = '\0';
+        unsigned char canonical[512];
+        tar_header(canonical, path, (unsigned)mode, size);
+        if (memcmp(header, canonical, sizeof header) != 0 ||
+            !valid_archive_path(path) ||
+            (files.count > 0 && strcmp(files.paths[files.count - 1], path) >= 0)) {
+            (void)snprintf(error, error_size, "noncanonical or unsafe archive entry: %s", path);
+            ok = false;
+            break;
+        }
+        for (size_t i = 0; i < files.count; i++) {
+            if (archive_path_conflict(files.paths[i], path)) {
+                (void)snprintf(error, error_size,
+                               "case-insensitive archive path collision: %s", path);
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) break;
+        if (files.count == files.capacity) {
+            size_t capacity = files.capacity == 0 ? 16 : files.capacity * 2;
+            char **grown = realloc(files.paths, capacity * sizeof *grown);
+            if (grown == NULL) {
+                (void)snprintf(error, error_size, "out of memory reading archive");
+                ok = false;
+                break;
+            }
+            files.paths = grown;
+            files.capacity = capacity;
+        }
+        files.paths[files.count] = strdup(path);
+        if (files.paths[files.count] == NULL) {
+            (void)snprintf(error, error_size, "out of memory reading archive");
+            ok = false;
+            break;
+        }
+        files.count++;
+        total_bytes += size;
+        if (strcmp(path, "diamond.cut") == 0) {
+            if (size > 1024 * 1024) {
+                (void)snprintf(error, error_size, "manifest exceeds 1 MiB");
+                ok = false;
+                break;
+            }
+            manifest_source = malloc((size_t)size + 1);
+            if (manifest_source == NULL ||
+                fread(manifest_source, 1, (size_t)size, archive) != (size_t)size) {
+                (void)snprintf(error, error_size, "truncated archive manifest");
+                ok = false;
+                break;
+            }
+            manifest_source[size] = '\0';
+            if (memchr(manifest_source, '\0', (size_t)size) != NULL) {
+                (void)snprintf(error, error_size, "NUL in archive manifest");
+                ok = false;
+                break;
+            }
+        } else if (readme && strcmp(path, "README.md") == 0 && size <= 1024 * 1024) {
+            readme_source = malloc((size_t)size + 1);
+            if (readme_source == NULL ||
+                fread(readme_source, 1, (size_t)size, archive) != (size_t)size) {
+                (void)snprintf(error, error_size, "truncated archive entry: %s", path);
+                ok = false;
+                break;
+            }
+            readme_length = (size_t)size;
+        } else if (runtime_source_path(path)) {
+            char *source = malloc((size_t)size + 1);
+            if (source == NULL || fread(source, 1, (size_t)size, archive) != (size_t)size) {
+                free(source);
+                (void)snprintf(error, error_size, "truncated archive source: %s", path);
+                ok = false;
+                break;
+            }
+            source[size] = '\0';
+            if (memchr(source, '\0', (size_t)size) != NULL) {
+                free(source);
+                (void)snprintf(error, error_size, "NUL in archive source: %s", path);
+                ok = false;
+                break;
+            }
+            runtime_sources[files.count - 1] = source;
+        } else {
+            unsigned char buffer[8192];
+            unsigned long long remaining = size;
+            while (remaining > 0) {
+                size_t amount = remaining < sizeof buffer ? (size_t)remaining : sizeof buffer;
+                if (fread(buffer, 1, amount, archive) != amount) {
+                    (void)snprintf(error, error_size, "truncated archive entry: %s", path);
+                    ok = false;
+                    break;
+                }
+                remaining -= amount;
+            }
+            if (!ok) break;
+        }
+        unsigned char padding[512];
+        size_t pad = (size_t)((512 - size % 512) % 512);
+        if (pad > 0 && (fread(padding, 1, pad, archive) != pad ||
+                        !all_zero(padding, pad))) {
+            (void)snprintf(error, error_size, "invalid archive padding: %s", path);
+            ok = false;
+        }
+    }
+    *files_io = files;
+    *manifest_source_out = manifest_source;
+    *readme_source_out = readme_source;
+    *readme_length_out = readme_length;
+    return ok;
+}
+
+/* Checks a parsed archive manifest: only known keys, a publishable name and
+ * plain semver version, a summary and license, well-formed dependencies,
+ * string display fields, maintainers, and imports that only name declared
+ * dependencies. */
+static bool validate_archive_manifest(const DiamondManifestValue *manifest,
+                                      const FacetFileList *files, char **runtime_sources,
+                                      const DiamondManifestValue **name_out,
+                                      const DiamondManifestValue **version_out,
+                                      char *error, size_t error_size) {
+    bool ok = true;
+    if (ok) {
+        for (const DiamondManifestValue *item = manifest->children;
+             item != NULL; item = item->next) {
+            if (!manifest_key_known(item->key)) {
+                (void)snprintf(error, error_size,
+                               "unknown archive manifest key: %s", item->key);
+                ok = false;
+                break;
+            }
+        }
+    }
+    const DiamondManifestValue *name = diamond_manifest_get(manifest, "name");
+    const DiamondManifestValue *version = diamond_manifest_get(manifest, "version");
+    Semver parsed_version;
+    if (ok && (name == NULL || name->kind != DIAMOND_MANIFEST_STRING ||
+               !publishable_name(name->string) || version == NULL ||
+               version->kind != DIAMOND_MANIFEST_STRING ||
+               version->string[0] == 'v' || version->string[0] == 'V' ||
+               !semver_parse(version->string, &parsed_version) ||
+               parsed_version.build[0] != '\0')) {
+        (void)snprintf(error, error_size, "archive manifest has invalid name or version");
+        ok = false;
+    }
+    if (ok) {
+        const DiamondManifestValue *summary = diamond_manifest_get(manifest, "summary");
+        const DiamondManifestValue *license = diamond_manifest_get(manifest, "license");
+        if (summary == NULL || summary->kind != DIAMOND_MANIFEST_STRING ||
+            summary->string[0] == '\0' || strlen(summary->string) > 160 ||
+            strpbrk(summary->string, "\r\n\t") != NULL ||
+            license == NULL || license->kind != DIAMOND_MANIFEST_STRING ||
+            license->string[0] == '\0') {
+            (void)snprintf(error, error_size, "archive manifest is missing valid summary or license");
+            ok = false;
+        }
+    }
+    if (ok) {
+        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+        if (dependencies != NULL && dependencies->kind != DIAMOND_MANIFEST_HASH) {
+            (void)snprintf(error, error_size, "archive dependencies must be a Hash");
+            ok = false;
+        } else if (dependencies != NULL) {
+            for (const DiamondManifestValue *dependency = dependencies->children;
+                 dependency != NULL; dependency = dependency->next) {
+                SemverConstraint range;
+                if (!publishable_name(dependency->key) ||
+                    dependency->kind != DIAMOND_MANIFEST_STRING ||
+                    !semver_constraint_parse(dependency->string, &range)) {
+                    (void)snprintf(error, error_size, "invalid archive dependency: %s",
+                                   dependency->key);
+                    ok = false;
+                    break;
+                }
+            }
+        }
+    }
+    if (ok) {
+        const char *display_keys[] = {"homepage", "source", "documentation", "issues"};
+        for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
+            const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
+            if (display != NULL && display->kind != DIAMOND_MANIFEST_STRING) {
+                (void)snprintf(error, error_size,
+                               "archive manifest '%s' must be a String", display_keys[i]);
+                ok = false;
+                break;
+            }
+        }
+    }
+    if (ok) {
+        char detail[256];
+        if (!validate_maintainers(manifest, false, detail, sizeof detail)) {
+            (void)snprintf(error, error_size, "archive manifest %s", detail);
+            ok = false;
+        }
+    }
+    if (ok) {
+        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+        for (size_t i = 0; i < files->count; i++) {
+            if (runtime_sources[i] != NULL &&
+                !audit_source_imports(runtime_sources[i], files->paths[i], dependencies,
+                                      error, error_size)) {
+                ok = false;
+                break;
+            }
+        }
+    }
+    *name_out = name;
+    *version_out = version;
+    return ok;
+}
+
+/* `facet verify --json`: the archive's identity plus the catalog display
+ * fields, dependencies and maintainers. */
+static void print_verify_json(const DiamondManifestValue *manifest,
+                              const DiamondManifestValue *name,
+                              const DiamondManifestValue *version, long long size,
+                              const unsigned char *digest, size_t digest_size) {
+    printf("{\"protocol\":1,\"name\":\"%s\",\"version\":\"%s\",\"size\":%lld,\"sha256\":\"",
+           name->string, version->string, size);
+    for (size_t i = 0; i < digest_size; i++) printf("%02x", digest[i]);
+    /* Catalog display fields; the registry ignores keys it does not use. */
+    const char *display_keys[] = {"summary", "license", "homepage", "source",
+                                  "documentation", "issues"};
+    fputs("\"", stdout);
+    for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
+        const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
+        if (display == NULL) continue;
+        printf(",\"%s\":", display_keys[i]);
+        print_json_string(display->string);
+    }
+    fputs(",\"dependencies\":{", stdout);
+    const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
+    bool first = true;
+    for (const DiamondManifestValue *dep = dependencies ? dependencies->children : NULL;
+         dep != NULL; dep = dep->next) {
+        printf("%s\"%s\":", first ? "" : ",", dep->key);
+        first = false;
+        print_json_string(dep->string);
+    }
+    /* Legacy archives without maintainers report an empty list. */
+    fputs("},\"maintainers\":[", stdout);
+    const DiamondManifestValue *maintainers = diamond_manifest_get(manifest, "maintainers");
+    for (const DiamondManifestValue *item = maintainers ? maintainers->children : NULL;
+         item != NULL; item = item->next) {
+        fputs(item == maintainers->children ? "{\"name\":" : ",{\"name\":", stdout);
+        print_json_string(diamond_manifest_get(item, "name")->string);
+        fputs(",\"contact\":", stdout);
+        print_json_string(diamond_manifest_get(item, "contact")->string);
+        putchar('}');
+    }
+    fputs("]}\n", stdout);
+}
 
 static int cmd_verify(int argc, char **argv) {
     bool json = false, readme = false;
@@ -2932,144 +3232,8 @@ static int cmd_verify(int argc, char **argv) {
     /* Only read into memory for --readme; display is capped at 1 MiB. */
     char *readme_source = NULL;
     size_t readme_length = 0;
-    unsigned long long total_bytes = 0;
-    bool ok = true, ended = false;
-    while (ok && !ended) {
-        unsigned char header[512];
-        if (fread(header, 1, sizeof header, archive) != sizeof header) {
-            (void)snprintf(error, sizeof error, "truncated archive header");
-            ok = false;
-            break;
-        }
-        if (all_zero(header, sizeof header)) {
-            unsigned char second[512];
-            if (fread(second, 1, sizeof second, archive) != sizeof second ||
-                !all_zero(second, sizeof second) || fgetc(archive) != EOF ||
-                ferror(archive)) {
-                (void)snprintf(error, sizeof error, "invalid archive ending");
-                ok = false;
-            }
-            ended = true;
-            break;
-        }
-        const unsigned char *end = memchr(header, '\0', 100);
-        unsigned long long mode, size;
-        if (end == NULL || end == header ||
-            !tar_number(header + 100, 8, &mode) ||
-            !tar_number(header + 124, 12, &size) ||
-            (mode != 0644 && mode != 0755) || size > 10ULL * 1024 * 1024 ||
-            files.count == 4096 || total_bytes + size > 50ULL * 1024 * 1024) {
-            (void)snprintf(error, sizeof error, "invalid archive entry header or limits");
-            ok = false;
-            break;
-        }
-        char path[101];
-        size_t path_length = (size_t)(end - header);
-        memcpy(path, header, path_length);
-        path[path_length] = '\0';
-        unsigned char canonical[512];
-        tar_header(canonical, path, (unsigned)mode, size);
-        if (memcmp(header, canonical, sizeof header) != 0 ||
-            !valid_archive_path(path) ||
-            (files.count > 0 && strcmp(files.paths[files.count - 1], path) >= 0)) {
-            (void)snprintf(error, sizeof error, "noncanonical or unsafe archive entry: %s", path);
-            ok = false;
-            break;
-        }
-        for (size_t i = 0; i < files.count; i++) {
-            if (archive_path_conflict(files.paths[i], path)) {
-                (void)snprintf(error, sizeof error,
-                               "case-insensitive archive path collision: %s", path);
-                ok = false;
-                break;
-            }
-        }
-        if (!ok) break;
-        if (files.count == files.capacity) {
-            size_t capacity = files.capacity == 0 ? 16 : files.capacity * 2;
-            char **grown = realloc(files.paths, capacity * sizeof *grown);
-            if (grown == NULL) {
-                (void)snprintf(error, sizeof error, "out of memory reading archive");
-                ok = false;
-                break;
-            }
-            files.paths = grown;
-            files.capacity = capacity;
-        }
-        files.paths[files.count] = strdup(path);
-        if (files.paths[files.count] == NULL) {
-            (void)snprintf(error, sizeof error, "out of memory reading archive");
-            ok = false;
-            break;
-        }
-        files.count++;
-        total_bytes += size;
-        if (strcmp(path, "diamond.cut") == 0) {
-            if (size > 1024 * 1024) {
-                (void)snprintf(error, sizeof error, "manifest exceeds 1 MiB");
-                ok = false;
-                break;
-            }
-            manifest_source = malloc((size_t)size + 1);
-            if (manifest_source == NULL ||
-                fread(manifest_source, 1, (size_t)size, archive) != (size_t)size) {
-                (void)snprintf(error, sizeof error, "truncated archive manifest");
-                ok = false;
-                break;
-            }
-            manifest_source[size] = '\0';
-            if (memchr(manifest_source, '\0', (size_t)size) != NULL) {
-                (void)snprintf(error, sizeof error, "NUL in archive manifest");
-                ok = false;
-                break;
-            }
-        } else if (readme && strcmp(path, "README.md") == 0 && size <= 1024 * 1024) {
-            readme_source = malloc((size_t)size + 1);
-            if (readme_source == NULL ||
-                fread(readme_source, 1, (size_t)size, archive) != (size_t)size) {
-                (void)snprintf(error, sizeof error, "truncated archive entry: %s", path);
-                ok = false;
-                break;
-            }
-            readme_length = (size_t)size;
-        } else if (runtime_source_path(path)) {
-            char *source = malloc((size_t)size + 1);
-            if (source == NULL || fread(source, 1, (size_t)size, archive) != (size_t)size) {
-                free(source);
-                (void)snprintf(error, sizeof error, "truncated archive source: %s", path);
-                ok = false;
-                break;
-            }
-            source[size] = '\0';
-            if (memchr(source, '\0', (size_t)size) != NULL) {
-                free(source);
-                (void)snprintf(error, sizeof error, "NUL in archive source: %s", path);
-                ok = false;
-                break;
-            }
-            runtime_sources[files.count - 1] = source;
-        } else {
-            unsigned char buffer[8192];
-            unsigned long long remaining = size;
-            while (remaining > 0) {
-                size_t amount = remaining < sizeof buffer ? (size_t)remaining : sizeof buffer;
-                if (fread(buffer, 1, amount, archive) != amount) {
-                    (void)snprintf(error, sizeof error, "truncated archive entry: %s", path);
-                    ok = false;
-                    break;
-                }
-                remaining -= amount;
-            }
-            if (!ok) break;
-        }
-        unsigned char padding[512];
-        size_t pad = (size_t)((512 - size % 512) % 512);
-        if (pad > 0 && (fread(padding, 1, pad, archive) != pad ||
-                        !all_zero(padding, pad))) {
-            (void)snprintf(error, sizeof error, "invalid archive padding: %s", path);
-            ok = false;
-        }
-    }
+    bool ok = read_archive_entries(archive, readme, &files, runtime_sources, &manifest_source,
+                                   &readme_source, &readme_length, error, sizeof error);
     if (fstat(fileno(archive), &archive_after) != 0 ||
         archive_before.st_size != archive_after.st_size ||
         !same_file_timestamps(&archive_before, &archive_after)) {
@@ -3090,91 +3254,10 @@ static int cmd_verify(int argc, char **argv) {
         (void)snprintf(error, sizeof error, "archive is missing diamond.cut");
         ok = false;
     }
-    if (ok) {
-        for (const DiamondManifestValue *item = manifest->children;
-             item != NULL; item = item->next) {
-            if (!manifest_key_known(item->key)) {
-                (void)snprintf(error, sizeof error,
-                               "unknown archive manifest key: %s", item->key);
-                ok = false;
-                break;
-            }
-        }
-    }
-    const DiamondManifestValue *name = diamond_manifest_get(manifest, "name");
-    const DiamondManifestValue *version = diamond_manifest_get(manifest, "version");
-    Semver parsed_version;
-    if (ok && (name == NULL || name->kind != DIAMOND_MANIFEST_STRING ||
-               !publishable_name(name->string) || version == NULL ||
-               version->kind != DIAMOND_MANIFEST_STRING ||
-               version->string[0] == 'v' || version->string[0] == 'V' ||
-               !semver_parse(version->string, &parsed_version) ||
-               parsed_version.build[0] != '\0')) {
-        (void)snprintf(error, sizeof error, "archive manifest has invalid name or version");
-        ok = false;
-    }
-    if (ok) {
-        const DiamondManifestValue *summary = diamond_manifest_get(manifest, "summary");
-        const DiamondManifestValue *license = diamond_manifest_get(manifest, "license");
-        if (summary == NULL || summary->kind != DIAMOND_MANIFEST_STRING ||
-            summary->string[0] == '\0' || strlen(summary->string) > 160 ||
-            strpbrk(summary->string, "\r\n\t") != NULL ||
-            license == NULL || license->kind != DIAMOND_MANIFEST_STRING ||
-            license->string[0] == '\0') {
-            (void)snprintf(error, sizeof error, "archive manifest is missing valid summary or license");
-            ok = false;
-        }
-    }
-    if (ok) {
-        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
-        if (dependencies != NULL && dependencies->kind != DIAMOND_MANIFEST_HASH) {
-            (void)snprintf(error, sizeof error, "archive dependencies must be a Hash");
-            ok = false;
-        } else if (dependencies != NULL) {
-            for (const DiamondManifestValue *dependency = dependencies->children;
-                 dependency != NULL; dependency = dependency->next) {
-                SemverConstraint range;
-                if (!publishable_name(dependency->key) ||
-                    dependency->kind != DIAMOND_MANIFEST_STRING ||
-                    !semver_constraint_parse(dependency->string, &range)) {
-                    (void)snprintf(error, sizeof error, "invalid archive dependency: %s",
-                                   dependency->key);
-                    ok = false;
-                    break;
-                }
-            }
-        }
-    }
-    if (ok) {
-        const char *display_keys[] = {"homepage", "source", "documentation", "issues"};
-        for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
-            const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
-            if (display != NULL && display->kind != DIAMOND_MANIFEST_STRING) {
-                (void)snprintf(error, sizeof error,
-                               "archive manifest '%s' must be a String", display_keys[i]);
-                ok = false;
-                break;
-            }
-        }
-    }
-    if (ok) {
-        char detail[256];
-        if (!validate_maintainers(manifest, false, detail, sizeof detail)) {
-            (void)snprintf(error, sizeof error, "archive manifest %s", detail);
-            ok = false;
-        }
-    }
-    if (ok) {
-        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
-        for (size_t i = 0; i < files.count; i++) {
-            if (runtime_sources[i] != NULL &&
-                !audit_source_imports(runtime_sources[i], files.paths[i], dependencies,
-                                      error, sizeof error)) {
-                ok = false;
-                break;
-            }
-        }
-    }
+    const DiamondManifestValue *name = NULL, *version = NULL;
+    if (ok)
+        ok = validate_archive_manifest(manifest, &files, runtime_sources, &name, &version,
+                                       error, sizeof error);
     bool has_readme = false, has_license = false, has_entry = false;
     if (ok) {
         char entry[128];
@@ -3190,40 +3273,8 @@ static int cmd_verify(int argc, char **argv) {
         }
     }
     if (ok && json) {
-        printf("{\"protocol\":1,\"name\":\"%s\",\"version\":\"%s\",\"size\":%lld,\"sha256\":\"",
-               name->string, version->string, (long long)archive_before.st_size);
-        for (size_t i = 0; i < sizeof digest; i++) printf("%02x", digest[i]);
-        /* Catalog display fields; the registry ignores keys it does not use. */
-        const char *display_keys[] = {"summary", "license", "homepage", "source",
-                                      "documentation", "issues"};
-        fputs("\"", stdout);
-        for (size_t i = 0; i < sizeof display_keys / sizeof display_keys[0]; i++) {
-            const DiamondManifestValue *display = diamond_manifest_get(manifest, display_keys[i]);
-            if (display == NULL) continue;
-            printf(",\"%s\":", display_keys[i]);
-            print_json_string(display->string);
-        }
-        fputs(",\"dependencies\":{", stdout);
-        const DiamondManifestValue *dependencies = diamond_manifest_get(manifest, "dependencies");
-        bool first = true;
-        for (const DiamondManifestValue *dep = dependencies ? dependencies->children : NULL;
-             dep != NULL; dep = dep->next) {
-            printf("%s\"%s\":", first ? "" : ",", dep->key);
-            first = false;
-            print_json_string(dep->string);
-        }
-        /* Legacy archives without maintainers report an empty list. */
-        fputs("},\"maintainers\":[", stdout);
-        const DiamondManifestValue *maintainers = diamond_manifest_get(manifest, "maintainers");
-        for (const DiamondManifestValue *item = maintainers ? maintainers->children : NULL;
-             item != NULL; item = item->next) {
-            fputs(item == maintainers->children ? "{\"name\":" : ",{\"name\":", stdout);
-            print_json_string(diamond_manifest_get(item, "name")->string);
-            fputs(",\"contact\":", stdout);
-            print_json_string(diamond_manifest_get(item, "contact")->string);
-            putchar('}');
-        }
-        fputs("]}\n", stdout);
+        print_verify_json(manifest, name, version, (long long)archive_before.st_size,
+                          digest, sizeof digest);
     } else if (ok && readme) {
         if (readme_source == NULL) {
             fputs("facet: README.md exceeds 1 MiB\n", stderr);
