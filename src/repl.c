@@ -574,6 +574,125 @@ static bool append_repl_pending(ReplBuffer *destination, const ReplBuffer *pendi
     return true;
 }
 
+/* Reads one line (through its '\n') from a stdin that is not a terminal,
+ * byte by byte: stdio read-ahead would hide a following gets() line from
+ * the runtime's readiness poll. */
+static ReplLineResult read_line_piped(FILE *real_stdout, const char *prompt,
+        ReplBuffer *line_buffer) {
+    ReplLineResult line_result;
+    fputs(prompt, real_stdout);
+    fflush(real_stdout);
+    line_result = REPL_LINE_EOF;
+    unsigned char byte;
+    while (read_raw_byte(&byte)) {
+        line_result = REPL_LINE_OK;
+        if (!buffer_append(line_buffer, (const char *)&byte, 1)) {
+            fprintf(stderr, "diamond: out of memory reading input\n");
+            line_result = REPL_LINE_EOF;
+            break;
+        }
+        if (byte == '\n') break;
+    }
+    return line_result;
+}
+
+/* Runs a compiled candidate with fd 1 redirected into capture, so every
+ * write it makes (through stdout) lands there, then restores fd 1. */
+static bool run_capturing_stdout(FILE *capture, int real_stdout_fd,
+        DiamondProgram *program, DiamondValue *result, DiamondVm *result_vm,
+        const char **run_error, char *error_message, size_t error_size) {
+    rewind(capture);
+    /* The run writes through fd 1, which shares this file's kernel offset;
+     * rewind() alone may only move capture's stdio buffer position and leave
+     * that offset at the previous run's end, so set it explicitly. Without
+     * this, every round after the first wrote past a hole of NUL bytes and
+     * its output read back as an empty string. */
+    if (ftruncate(fileno(capture), 0) != 0 ||
+        lseek(fileno(capture), 0, SEEK_SET) != 0) {
+        fprintf(stderr, "diamond: cannot reset output capture\n");
+    }
+    /* dup2 onto STDOUT_FILENO, not a direct `stdout = capture`
+     * assignment: `stdout` is a plain, reassignable `FILE *` global
+     * on glibc, but POSIX only guarantees it names *some* `FILE *`
+     * expression -- musl's own <stdio.h> defines it as a non-
+     * assignable macro, so the direct-assignment form doesn't even
+     * compile there (docs/portability.md). Redirecting
+     * the underlying file descriptor instead works identically on
+     * both: every write through the untouched `stdout` FILE*
+     * (puts/print/etc., including inside the user's own running
+     * code) still targets fd 1, which now happens to point at
+     * `capture`'s file. real_stdout_fd (already a dup of the
+     * original fd 1, taken above) is what restores it afterward. */
+    fflush(stdout);
+    if (dup2(fileno(capture), STDOUT_FILENO) < 0) {
+        fprintf(stderr, "diamond: cannot redirect stdout for output capture\n");
+    }
+    const bool ran_ok = run_candidate(program, result, result_vm, run_error,
+                                      error_message, error_size);
+
+    fflush(stdout);
+    if (dup2(real_stdout_fd, STDOUT_FILENO) < 0) {
+        fprintf(stderr, "diamond: cannot restore stdout after output capture\n");
+    }
+    return ran_ok;
+}
+
+/* Everything the last run wrote to capture, as a malloc'd string (nullptr
+ * when it wrote nothing). */
+static char *read_capture(FILE *capture) {
+    /* Every byte the candidate wrote went through fd 1 while it
+     * aliased `capture` (above) -- via `stdout`'s own FILE*, never
+     * through `capture`'s own FILE* at all. `capture`'s own stream
+     * position is therefore stale (still wherever ftruncate/rewind
+     * left it, unaware that a *different* FILE* wrote to the same
+     * underlying file through the shared fd) until explicitly
+     * resynced with the kernel's real file offset -- ftell here
+     * without this would silently return 0 (or whatever stale value
+     * capture's own buffering last cached), not what was actually
+     * written. */
+    if (fseek(capture, 0, SEEK_END) != 0) {
+        fprintf(stderr, "diamond: cannot resync output capture\n");
+    }
+    const long captured_length = ftell(capture);
+    char *captured = nullptr;
+    if (captured_length > 0) {
+        captured = malloc((size_t)captured_length + 1);
+        if (captured != nullptr) {
+            rewind(capture);
+            const size_t read_count = fread(captured, 1, (size_t)captured_length, capture);
+            captured[read_count] = '\0';
+        }
+    }
+    return captured;
+}
+
+/* Each run replays the whole session, so print only what this run wrote
+ * beyond the previous run's output. */
+static void print_new_output(FILE *real_stdout, const char *new_output,
+        const ReplBuffer *previous_output) {
+    const size_t new_output_length = strlen(new_output);
+    if (new_output_length >= previous_output->length &&
+        memcmp(new_output, previous_output->data, previous_output->length) == 0) {
+        fputs(new_output + previous_output->length, real_stdout);
+    } else {
+        /* Prior output wasn't reproduced verbatim (non-deterministic
+         * replay -- timing, I/O ordering, ...); fall back to showing
+         * everything this run produced rather than guessing wrong. */
+        fputs(new_output, real_stdout);
+    }
+}
+
+/* Commit: session becomes session+pending for the next round, so later
+ * input can see this round's definitions/variables. */
+static void commit_pending(ReplBuffer *session, const ReplBuffer *pending) {
+    ReplBuffer committed;
+    buffer_init(&committed);
+    buffer_append(&committed, session->data, session->length);
+    append_repl_pending(&committed, pending);
+    buffer_free(session);
+    *session = committed;
+}
+
 int diamond_repl_run(void) {
     FILE *capture = tmpfile();
     if (capture == nullptr) {
@@ -664,19 +783,7 @@ int diamond_repl_run(void) {
                 line_result = read_line_interactive(real_stdout, &history, prompt,
                     &session, &pending, &line_buffer);
             } else {
-                fputs(prompt, real_stdout);
-                fflush(real_stdout);
-                line_result = REPL_LINE_EOF;
-                unsigned char byte;
-                while (read_raw_byte(&byte)) {
-                    line_result = REPL_LINE_OK;
-                    if (!buffer_append(&line_buffer, (const char *)&byte, 1)) {
-                        fprintf(stderr, "diamond: out of memory reading input\n");
-                        line_result = REPL_LINE_EOF;
-                        break;
-                    }
-                    if (byte == '\n') break;
-                }
+                line_result = read_line_piped(real_stdout, prompt, &line_buffer);
             }
             if (line_result == REPL_LINE_EOF) {
                 buffer_free(&line_buffer);
@@ -823,87 +930,22 @@ int diamond_repl_run(void) {
 
         if (!have_candidate) continue;
 
-        rewind(capture);
-        if (ftruncate(fileno(capture), 0) != 0) {
-            fprintf(stderr, "diamond: cannot reset output capture\n");
-        }
-        /* dup2 onto STDOUT_FILENO, not a direct `stdout = capture`
-         * assignment: `stdout` is a plain, reassignable `FILE *` global
-         * on glibc, but POSIX only guarantees it names *some* `FILE *`
-         * expression -- musl's own <stdio.h> defines it as a non-
-         * assignable macro, so the direct-assignment form doesn't even
-         * compile there (docs/portability.md). Redirecting
-         * the underlying file descriptor instead works identically on
-         * both: every write through the untouched `stdout` FILE*
-         * (puts/print/etc., including inside the user's own running
-         * code) still targets fd 1, which now happens to point at
-         * `capture`'s file. real_stdout_fd (already a dup of the
-         * original fd 1, taken above) is what restores it afterward. */
-        fflush(stdout);
-        if (dup2(fileno(capture), STDOUT_FILENO) < 0) {
-            fprintf(stderr, "diamond: cannot redirect stdout for output capture\n");
-        }
-
         DiamondValue result = DIAMOND_NIL;
         DiamondVm result_vm;
         const char *run_error = nullptr;
-        const bool ran_ok = run_candidate(program, &result, &result_vm,
-                          &run_error,
-                                          error_message, sizeof error_message);
-
-        fflush(stdout);
-        if (dup2(real_stdout_fd, STDOUT_FILENO) < 0) {
-            fprintf(stderr, "diamond: cannot restore stdout after output capture\n");
-        }
-
-        /* Every byte the candidate wrote went through fd 1 while it
-         * aliased `capture` (above) -- via `stdout`'s own FILE*, never
-         * through `capture`'s own FILE* at all. `capture`'s own stream
-         * position is therefore stale (still wherever ftruncate/rewind
-         * left it, unaware that a *different* FILE* wrote to the same
-         * underlying file through the shared fd) until explicitly
-         * resynced with the kernel's real file offset -- ftell here
-         * without this would silently return 0 (or whatever stale value
-         * capture's own buffering last cached), not what was actually
-         * written. */
-        if (fseek(capture, 0, SEEK_END) != 0) {
-            fprintf(stderr, "diamond: cannot resync output capture\n");
-        }
-        const long captured_length = ftell(capture);
-        char *captured = nullptr;
-        if (captured_length > 0) {
-            captured = malloc((size_t)captured_length + 1);
-            if (captured != nullptr) {
-                rewind(capture);
-                const size_t read_count = fread(captured, 1, (size_t)captured_length, capture);
-                captured[read_count] = '\0';
-            }
-        }
+        const bool ran_ok = run_capturing_stdout(capture, real_stdout_fd, program,
+            &result, &result_vm, &run_error, error_message, sizeof error_message);
+        char *captured = read_capture(capture);
         const char *new_output = captured != nullptr ? captured : "";
         const size_t new_output_length = strlen(new_output);
-        if (new_output_length >= previous_output.length &&
-            memcmp(new_output, previous_output.data, previous_output.length) == 0) {
-            fputs(new_output + previous_output.length, real_stdout);
-        } else {
-            /* Prior output wasn't reproduced verbatim (non-deterministic
-             * replay -- timing, I/O ordering, ...); fall back to showing
-             * everything this run produced rather than guessing wrong. */
-            fputs(new_output, real_stdout);
-        }
+        print_new_output(real_stdout, new_output, &previous_output);
 
         if (ran_ok) {
             diamond_value_fprint(real_stdout, result);
             fputc('\n', real_stdout);
             buffer_reset(&previous_output);
             buffer_append(&previous_output, new_output, new_output_length);
-            /* Commit: session becomes session+pending for the next round,
-             * so later input can see this round's definitions/variables. */
-            ReplBuffer committed;
-            buffer_init(&committed);
-            buffer_append(&committed, session.data, session.length);
-            append_repl_pending(&committed, &pending);
-            buffer_free(&session);
-            session = committed;
+        commit_pending(&session, &pending);
         } else {
             fprintf(real_stdout, "%s\n", run_error != nullptr ? run_error : "unknown error");
         }
