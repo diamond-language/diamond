@@ -1,6 +1,8 @@
 # Cuts
 
-New cut entry points use `.d6`. The loader prefers `lib/<name>.d6`, then
+`.d6` is Diamond's default and preferred source extension, including for new
+cuts. Backward compatibility with `.di` source files and published cuts is
+retained. The loader prefers `lib/<name>.d6`, then
 `<name>.d6`, then the corresponding legacy `.di` paths. Facet accepts and
 audits both source suffixes so immutable releases remain installable.
 

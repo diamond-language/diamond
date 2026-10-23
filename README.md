@@ -64,9 +64,12 @@ package ecosystem are its own.
 
 ## Build and run
 
-Diamond source files use `.d6`; compiled bytecode caches use `.d6c`. The old
-`.di` source suffix remains loadable for existing projects and published cuts,
-but editor associations use `.d6` to avoid colliding with D interface files.
+`.d6` is the default and preferred extension for Diamond source files; compiled bytecode
+caches use `.d6c`. Backward compatibility with `.di` source files is retained
+for existing projects and published cuts. Use `.d6` for new files to avoid
+colliding with D interface files and to get automatic editor recognition.
+When both `helper.d6` and `helper.di` exist, `require "helper"` loads
+`helper.d6`; see the [import precedence example](docs/core-syntax.md#source-files-and-imports).
 
 ```sh
 make
