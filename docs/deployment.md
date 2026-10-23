@@ -29,8 +29,8 @@ diamond build SOURCE [-o OUTPUT] [--cc=COMPILER] [--target=TRIPLE] [--lto]
   path -- so anything that runs correctly under the interpreter compiles
   identically under `build`.
 - `-o OUTPUT` names the produced binary. Defaults to `SOURCE`'s own basename
-  with a trailing `.d6` extension stripped (`app.d6` -> `app`; no extension
-  at all if `SOURCE` has none).
+  with its final extension stripped (`app.d6` -> `app`, and legacy
+  `app.di` -> `app`). A basename without an extension is unchanged.
 - `--cc=COMPILER` overrides the C compiler used to link the binary (`gcc`,
   `clang`, a full path, ...). Defaults to the compiler recorded in the
   installed AOT kit, or to whatever `$(CC)` resolves to for an ordinary

@@ -153,4 +153,6 @@ The block's value is returned. A returned `Err` or a raised exception rolls back
 
 ## Notes
 
-The default visitor targets SQLite; pass `Mjolnir::Repo.new(db, Arel::PostgreSQLVisitor.new())` for another dialect. Mjolnir keeps no identity map and no change tracking, so each `Repo` call is exactly one round trip.
+The default visitor targets SQLite; pass `Mjolnir::Repo.new(db, Arel::PostgreSQLVisitor.new())` for another dialect. Mjolnir keeps no identity map and no change tracking, and makes database access explicit. Query counts depend on the operation and
+dialect: writes on databases without `RETURNING` may issue a follow-up read,
+and preloads and transactions can execute several statements.

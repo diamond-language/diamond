@@ -1,8 +1,8 @@
 # Cut registry protocol, version 1
 
-Status: proposed wire contract. Registry resolution and locked archive
-installation and the HTTP read/publish service are implemented. Production
-deployment remains pending. Owner management and audit inspection are implemented. This
+Status: implemented wire contract. Registry resolution, locked archive
+installation, owner management, audit inspection, and the HTTP read/publish
+service are implemented. The public registry runs at `https://cuts.dilang.tech`. This
 specification defines its metadata, authentication, and artifact boundary
 without changing Git dependency behavior.
 

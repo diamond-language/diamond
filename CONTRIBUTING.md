@@ -34,24 +34,30 @@ Required system dependencies:
 
 ```sh
 # Fedora
-sudo dnf install gcc openssl-devel sqlite-devel libpq-devel \
+sudo dnf install git make gcc openssl-devel sqlite-devel libpq-devel \
   mariadb-connector-c-devel libxcrypt-devel zlib-devel
 
 # Ubuntu (confirmed against a real Ubuntu 26.04 install; Debian is assumed
 # compatible from the same package names, not separately tested)
-sudo apt install gcc libssl-dev libsqlite3-dev libpq-dev libmariadb-dev \
+sudo apt install git make gcc libssl-dev libsqlite3-dev libpq-dev libmariadb-dev \
   libcrypt-dev zlib1g-dev
 
 # Alpine (musl; also needs libucontext for Fiber support -- see
 # docs/portability.md for what else differs on musl)
-apk add gcc musl-dev openssl-dev sqlite-dev libpq-dev mariadb-connector-c-dev \
+apk add git make gcc musl-dev openssl-dev sqlite-dev libpq-dev mariadb-connector-c-dev \
   zlib-dev libucontext libucontext-dev
 
 # FreeBSD (Clang is the base cc; GNU Make is gmake, not make)
-pkg install gmake sqlite3 openssl postgresql16-client mariadb-connector-c
+pkg install git gmake sqlite3 openssl postgresql16-client mariadb-connector-c
+gmake CC=clang CPPFLAGS_EXTRA='-I/usr/local/include -I/usr/local/include/mariadb' \
+  LDFLAGS_EXTRA='-L/usr/local/lib -L/usr/local/lib/mariadb'
 
-# macOS (Clang only -- there is no system GCC)
-brew install openssl@3 sqlite postgresql@16 mariadb-connector-c
+# macOS (install Xcode command-line tools and Homebrew first; Clang 19+)
+brew install coreutils gnu-sed bash openssl@3 sqlite postgresql@16 mariadb-connector-c
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gnu-sed)/libexec/gnubin:$(brew --prefix bash)/bin:$PATH"
+make CC=clang LDLIBS_CRYPT= \
+  CPPFLAGS_EXTRA="-I$(brew --prefix openssl@3)/include -I$(brew --prefix sqlite)/include -I$(brew --prefix postgresql@16)/include -I$(brew --prefix mariadb-connector-c)/include -I$(brew --prefix mariadb-connector-c)/include/mariadb" \
+  LDFLAGS_EXTRA="-L$(brew --prefix openssl@3)/lib -L$(brew --prefix sqlite)/lib -L$(brew --prefix postgresql@16)/lib -L$(brew --prefix mariadb-connector-c)/lib -L$(brew --prefix mariadb-connector-c)/lib/mariadb"
 ```
 
 SQLite, PostgreSQL, MySQL/MariaDB, zlib and OpenSSL are optional: `make NO_SQLITE=1`,
@@ -83,8 +89,8 @@ make lsp        # build/diamond-lsp
 so switching between them (and back to `debug`) recompiles those. The tools (`facet`, the LSP and
 DAP servers, the API and fiber tests) share one set of debug objects in `build/dbg/`, and the two
 fuzzers share one instrumented set in `build/fuzz/`; a variant switch leaves both alone. Under
-clang's ASan+UBSan `vm.c` takes about six minutes to compile, so the first `make fuzz` is slow,
-but a later edit to a harness (or to any file but `vm.c`) rebuilds in seconds. `make clean` removes
+Clang's ASan+UBSan interpreter loop in `src/vm_run_chunk.c` dominates compilation,
+so the first `make fuzz` is slow, but a later edit to a harness rebuilds in seconds. `make clean` removes
 everything.
 
 Test targets, from fastest/narrowest to slowest/broadest:

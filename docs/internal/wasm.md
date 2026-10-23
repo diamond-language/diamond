@@ -1,10 +1,11 @@
 # WebAssembly build and the browser REPL
 
 `wasm/build.sh` compiles the interpreter to `wasm32-wasip1` so a page can run Diamond with no
-server. `build/wasm/diamond.wasm` is about 3.3 MB (950 KB gzipped).
+server. The output is `build/wasm/diamond.wasm`; its size varies with the runtime
+and bundled SQLite version. Serve it with `application/wasm` and HTTP compression.
 
 ```sh
-WASI_SDK=/path/to/wasi-sdk wasm/build.sh        # needs wasi-sdk 24+ (clang 19+)
+WASI_SDK=/path/to/wasi-sdk wasm/build.sh        # CI uses wasi-sdk 34
 cd build/wasm && cp ../../wasm/web/* .   # then serve build/wasm with any static file server and open it
 ```
 

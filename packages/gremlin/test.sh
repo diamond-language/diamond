@@ -136,7 +136,9 @@ SRCEOF
 timeout --foreground 15 "$diamond" -e "$deadline_src" >"$out" 2>&1 &
 pid=$!
 for _ in $(seq 1 100); do
-    if exec 4<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null; then break; fi
+    # Scope stderr to the attempt: redirecting `exec` itself permanently hid
+    # every later runtime error and even report_failure's ERR diagnostic.
+    if { exec 4<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null; then break; fi
     sleep 0.05
 done
 printf 'GET /hold HTTP/1.1\r\nHost: localhost\r\n\r\n' >&4

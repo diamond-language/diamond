@@ -5,8 +5,8 @@ audit `.di` sources and entry points for existing, immutable releases; the
 current layout below describes newly built cuts.
 
 Status: artifact validation, publishing, and the HTTP read/publish service are
-implemented; public deployment remains pending. Current behavior is in
-[packages.md](packages.md); the proposed wire API
+implemented. The public registry runs at `https://cuts.dilang.tech`. Current behavior is in
+[packages.md](packages.md); the wire API
 is in [registry-protocol.md](registry-protocol.md).
 
 `facet check <cut-directory>` now performs the first local preflight. It checks
@@ -18,7 +18,7 @@ unknown manifest keys. It audits the candidate runtime file tree and
 expressions. It checks statically visible literal imports
 for paths that escape the cut and `require_cut` names missing from the manifest;
 dynamic imports are outside this check. Passing this check
-is necessary for a future publish, but is not a publish operation.
+is necessary for publishing, but is not a publish operation.
 
 ## Identity and layout
 
@@ -84,7 +84,7 @@ application because the compiler currently uses a flat program namespace.
 
 ## Manifest
 
-The future publishable `diamond.cut` is **data**, using a restricted literal
+The publishable `diamond.cut` is **data**, using a restricted literal
 grammar: one Hash literal with String keys and String, Hash, Array, Boolean,
 or integer literal values as needed by the schema. No calls, interpolation,
 variable references, `require`, or other executable expressions. Duplicate
@@ -188,7 +188,9 @@ and pass local archive checks. Dependent cuts load their dependencies through
 `require_cut`. `tools/install_local_cuts.sh` can stage verified local artifacts.
 `facet install` can install an exact registry artifact from a committed lock
 record, and `facet update` resolves registry metadata. `facet publish` and the
-registry service are implemented; the public service launch remains pending.
+registry service are implemented and the public service is live. New source
+versions in this repository are not necessarily published; query the registry
+for available versions.
 
 The migration now uses a dedicated data-only parser. Preserve reading existing
 literal manifests and Git source specs. Git lock entries now declare
