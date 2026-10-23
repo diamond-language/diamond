@@ -413,7 +413,7 @@ uint16_t compile_block(Compiler *compiler) {
     function->inferred_return_type_set=DIAMOND_NO_TYPE_SET;
     for(size_t index=0;index<DIAMOND_MAX_DECLARED_PARAMETERS;index++)
         function->parameter_type_sets[index]=DIAMOND_NO_TYPE_SET;
-    /* UINT8_MAX-2, compile_definition's own "self via capture" sentinel
+    /* DIAMOND_OWNER_CAPTURED_SELF, compile_definition's own "self via capture" sentinel
      * (see its own extensive comment on this exact value), when this
      * block is written somewhere `self` already exists -- materialized
      * into its own register 0 below, the same way a `closure name()
@@ -1445,6 +1445,140 @@ static void infer_definition_return(Compiler *compiler,DiamondFunction *function
     }
 }
 
+/* Copies the def's name into function->name, consumes it, and appends '='
+ * for a writer (`def name=(value)`). */
+static bool copy_definition_name(Compiler *compiler, DiamondFunction *function,
+        DiamondSpan name, bool is_index_operator) {
+    size_t copy_length=name.length;
+    for (size_t index = 0; index < copy_length; index++) {
+        function->name[index] = compiler->source[name.start + index];
+    }
+    function->name[copy_length] = '\0';
+    function->declaration_line=(uint32_t)name.line;
+    function->declaration_column=(uint32_t)name.column;
+    function->declaration_start=name.start;
+    /* is_index_operator already consumed every token of its own name
+     * ("[]"/"[]=") above -- nothing left to advance past here, unlike
+     * every other name shape (a single token, always consumed by this
+     * one advance_token). */
+    if(!is_index_operator) advance_token(compiler);
+    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
+        DiamondLexer lookahead=compiler->lexer;
+        if(diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_LEFT_PAREN) {
+            if(copy_length+1>=DIAMOND_MAX_FUNCTION_NAME) {
+                fail(compiler,name,"writer method name is too long");return false;
+            }
+            function->name[copy_length++]='=';
+            function->name[copy_length]='\0';advance_token(compiler);
+        }
+    }
+    return true;
+}
+
+/* Sets up register 0 for a def that has one: the implicit receiver of a
+ * class/module member, or self materialized from a capture for a
+ * `closure`. Runs just after compiler->next_register is reset to 0, so the
+ * first register allocated here is register 0. */
+static void setup_definition_receiver(Compiler *compiler, DiamondFunction *function,
+        DiamondSpan name, bool captures_self, bool direct_class_member,
+        bool direct_module_member, bool direct_class_singleton_member,
+        bool nested_in_singleton_method, uint16_t self_copy_register) {
+    if((direct_class_member||direct_module_member||direct_class_singleton_member||
+        nested_in_singleton_method)&&!captures_self) {
+        (void)allocate_register(compiler);
+        function->arity = 1;
+        function->required_arity=1;
+        compiler->current_method = name;
+        compiler->in_method = true;
+        /* JIT Phase 13 (docs/internal/jit-design.md): register 0 (self)
+         * genuinely holds an Instance of current_class here -- an
+         * ordinary instance method, or a def nested directly inside a
+         * singleton method (the redefine_method patch-factory idiom,
+         * which behaves exactly like an instance method, @ivar access
+         * included -- see nested_in_singleton_method's own comment
+         * above). Feeding this into known_types[0] the same way any
+         * other already-known-class register already is lets Phase 12's
+         * existing instance_call_signature/publish_instance_return_type
+         * resolve a self.foo() call's own return type, closing the
+         * "self.method().other()" half of Phase 12's own documented gap
+         * with no jit.c changes at all. Deliberately excludes direct_
+         * class_singleton_member (`def self.x`): self there is the
+         * literal *class* value (DIAMOND_OP_LOAD_CLASS, see emit_
+         * singleton_call's own comment), not an Instance -- tagging it
+         * as "known instance of current_class" would be actively wrong,
+         * not just an imprecise miss. direct_module_member is likewise
+         * excluded: a module has no class-table entry for instance_call_
+         * signature to resolve against at all. Must run after the
+         * allocate_register call just above, not before: allocate_
+         * register itself resets known_types[0] to TYPE_UNKNOWN on
+         * every call, so setting this any earlier would just be
+         * silently overwritten. */
+        if(direct_class_member||(nested_in_singleton_method&&compiler->current_class>=0))
+            compiler->known_types[0]=
+                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+compiler->current_class);
+    } else if(captures_self) {
+        /* self arrives entirely via capture, not an implicit-receiver
+         * call convention -- no extra arity (a closure is called with
+         * exactly the arguments its own parameter list declares). But
+         * register 0 *is* reserved here, unlike a plain nested def:
+         * every ordinary self/@ivar/self.foo() code path (parse_prefix's
+         * DIAMOND_TOKEN_SELF/INSTANCE_VARIABLE, compile_assignment_store,
+         * DIAMOND_OP_INVOKE_SELF_METHOD's own VM handler) hardcodes
+         * literal register 0 unconditionally and unchanged -- reusing
+         * all of that as-is (rather than teaching each one about a
+         * capture index) means this closure's own register 0 must
+         * actually hold self, materialized here via GET_CAPTURE, exactly
+         * once, before any of its own body compiles. Guaranteed to land
+         * in register 0: next_register was just reset to 0 above and
+         * nothing else has allocated from it yet on this path. */
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
+            fail(compiler,name,"nested function sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
+        compiler->in_method = true;
+    }
+}
+
+/* A nested def's value: box every captured enclosing local, emit the
+ * CLOSURE into result, and bind the name (or fill the recursive helper's
+ * pre-declared cell). */
+static void emit_definition_closure(Compiler *compiler, size_t function_index,
+        DiamondSpan name, uint16_t result, const uint16_t *captures,
+        size_t capture_count, int self_local) {
+    /* Always emit BOX_LOCAL here, even if this local was already boxed
+     * at an earlier capture site elsewhere in the function: that earlier
+     * site might be in a sibling if/else branch that doesn't dominate
+     * this one, so it may not actually have executed on this runtime
+     * path. DIAMOND_OP_BOX_LOCAL is idempotent (a no-op if the register
+     * already holds a Cell), so emitting it redundantly on paths where
+     * the earlier boxing did run is always safe. */
+    for(size_t i=0;i<capture_count;i++) {
+        for(size_t local=0;local<compiler->local_count;local++) {
+            if(compiler->locals[local].reg!=captures[i])continue;
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
+            compiler->locals[local].captured=true;
+            break;
+        }
+    }
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
+    emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
+    for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
+    if(self_local>=0) {
+        const uint16_t self_register=compiler->locals[(size_t)self_local].reg;
+        emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_register,0,0,1);
+        emit_instruction(compiler,DIAMOND_OP_SET_CELL,self_register,result,0,2);
+        compiler->locals[(size_t)self_local].captured=true;
+    } else {
+        compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result,
+            .captured=compiler->loop_captures_pending};
+    }
+}
+
 uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     if(captures_self && !compiler->in_method) {
@@ -1518,8 +1652,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * spoken for, every calling convention that places arguments must
      * skip it" (parameter_offset, computed everywhere in src/vm.c as a
      * plain `fn->owner_class==DIAMOND_OWNER_NONE?0:1` binary check -- confirmed
-     * nowhere in this codebase tests for one *specific* non-UINT8_MAX
-     * value except the assignment sites themselves, so any non-UINT8_MAX
+     * nowhere in this codebase tests for one *specific* non-DIAMOND_OWNER_NONE
+     * value except the assignment sites themselves, so any other
      * sentinel gets (2) for free with no other call site changes).
      *
      * A `closure` (captures_self) needs (2) without (1): it reserves
@@ -1527,14 +1661,14 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * (see the captures_self handling below), so calls to it must still
      * skip register 0 the same way a real method's implicit receiver
      * already does -- confirmed the hard way as a real bug: leaving
-     * owner_class at UINT8_MAX here computed parameter_offset=0,
+     * owner_class at DIAMOND_OWNER_NONE here computed parameter_offset=0,
      * silently colliding a closure's own first *declared* parameter
      * with its self-capture register. But it must never satisfy (1) --
      * it's never a patch factory, never installable via redefine_method/
-     * define_method. A third sentinel, distinct from UINT8_MAX (no
-     * owner_class at all) and UINT8_MAX-1 (the existing module-method
-     * sentinel, diamond_compile's own convention, comfortably above
-     * DIAMOND_MAX_CLASSES=180's real range either way), gives it (2)
+     * define_method. A third sentinel, DIAMOND_OWNER_CAPTURED_SELF, distinct
+     * from DIAMOND_OWNER_NONE (no owner_class at all) and
+     * DIAMOND_OWNER_MODULE (the module-method sentinel), all three above
+     * DIAMOND_MAX_CLASSES's real range, gives it (2)
      * while permanently failing (1)'s exact-match check.
      *
      * One more site needed a matching fix, not just this one:
@@ -1555,29 +1689,7 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
             DIAMOND_OWNER_MODULE:
         captures_self?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
     function->nested=!at_top_level;
-    size_t copy_length=name.length;
-    for (size_t index = 0; index < copy_length; index++) {
-        function->name[index] = compiler->source[name.start + index];
-    }
-    function->name[copy_length] = '\0';
-    function->declaration_line=(uint32_t)name.line;
-    function->declaration_column=(uint32_t)name.column;
-    function->declaration_start=name.start;
-    /* is_index_operator already consumed every token of its own name
-     * ("[]"/"[]=") above -- nothing left to advance past here, unlike
-     * every other name shape (a single token, always consumed by this
-     * one advance_token). */
-    if(!is_index_operator) advance_token(compiler);
-    if(compiler->current.kind==DIAMOND_TOKEN_EQUAL) {
-        DiamondLexer lookahead=compiler->lexer;
-        if(diamond_lexer_next(&lookahead).kind==DIAMOND_TOKEN_LEFT_PAREN) {
-            if(copy_length+1>=DIAMOND_MAX_FUNCTION_NAME) {
-                fail(compiler,name,"writer method name is too long");return 0;
-            }
-            function->name[copy_length++]='=';
-            function->name[copy_length]='\0';advance_token(compiler);
-        }
-    }
+    if(!copy_definition_name(compiler,function,name,is_index_operator))return 0;
     parse_generic_type_parameters(compiler,function);
     if (compiler->current.kind != DIAMOND_TOKEN_LEFT_PAREN) {
         fail(compiler, compiler->current.span, "expected '(' after function name");
@@ -1667,65 +1779,9 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
                 compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
         }
     }
-    if((direct_class_member||direct_module_member||direct_class_singleton_member||
-        nested_in_singleton_method)&&!captures_self) {
-        (void)allocate_register(compiler);
-        function->arity = 1;
-        function->required_arity=1;
-        compiler->current_method = name;
-        compiler->in_method = true;
-        /* JIT Phase 13 (docs/internal/jit-design.md): register 0 (self)
-         * genuinely holds an Instance of current_class here -- an
-         * ordinary instance method, or a def nested directly inside a
-         * singleton method (the redefine_method patch-factory idiom,
-         * which behaves exactly like an instance method, @ivar access
-         * included -- see nested_in_singleton_method's own comment
-         * above). Feeding this into known_types[0] the same way any
-         * other already-known-class register already is lets Phase 12's
-         * existing instance_call_signature/publish_instance_return_type
-         * resolve a self.foo() call's own return type, closing the
-         * "self.method().other()" half of Phase 12's own documented gap
-         * with no jit.c changes at all. Deliberately excludes direct_
-         * class_singleton_member (`def self.x`): self there is the
-         * literal *class* value (DIAMOND_OP_LOAD_CLASS, see emit_
-         * singleton_call's own comment), not an Instance -- tagging it
-         * as "known instance of current_class" would be actively wrong,
-         * not just an imprecise miss. direct_module_member is likewise
-         * excluded: a module has no class-table entry for instance_call_
-         * signature to resolve against at all. Must run after the
-         * allocate_register call just above, not before: allocate_
-         * register itself resets known_types[0] to TYPE_UNKNOWN on
-         * every call, so setting this any earlier would just be
-         * silently overwritten. */
-        if(direct_class_member||(nested_in_singleton_method&&compiler->current_class>=0))
-            compiler->known_types[0]=
-                (uint16_t)(DIAMOND_TYPE_CLASS_BASE+compiler->current_class);
-    } else if(captures_self) {
-        /* self arrives entirely via capture, not an implicit-receiver
-         * call convention -- no extra arity (a closure is called with
-         * exactly the arguments its own parameter list declares). But
-         * register 0 *is* reserved here, unlike a plain nested def:
-         * every ordinary self/@ivar/self.foo() code path (parse_prefix's
-         * DIAMOND_TOKEN_SELF/INSTANCE_VARIABLE, compile_assignment_store,
-         * DIAMOND_OP_INVOKE_SELF_METHOD's own VM handler) hardcodes
-         * literal register 0 unconditionally and unchanged -- reusing
-         * all of that as-is (rather than teaching each one about a
-         * capture index) means this closure's own register 0 must
-         * actually hold self, materialized here via GET_CAPTURE, exactly
-         * once, before any of its own body compiles. Guaranteed to land
-         * in register 0: next_register was just reset to 0 above and
-         * nothing else has allocated from it yet on this path. */
-        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
-            fail(compiler,name,"nested function sees too many lexical bindings");
-        } else {
-            const size_t self_capture_index=compiler->capture_count;
-            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
-            const uint16_t self_register=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
-                             (uint8_t)self_capture_index,0,2);
-        }
-        compiler->in_method = true;
-    }
+    setup_definition_receiver(compiler,function,name,captures_self,
+        direct_class_member,direct_module_member,direct_class_singleton_member,
+        nested_in_singleton_method,self_copy_register);
 
     parse_definition_parameters(compiler,function,name,captures_self);
     /* Registered before the body compiles so a qualified call to itself inside it resolves; the
@@ -1809,35 +1865,9 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         at_top_level && (compiler->current_class>=0||compiler->current_module>=0);
     const uint16_t result =
         member_result_discarded ? 0 : allocate_register(compiler);
-    if(!at_top_level) {
-        /* Always emit BOX_LOCAL here, even if this local was already boxed
-         * at an earlier capture site elsewhere in the function: that earlier
-         * site might be in a sibling if/else branch that doesn't dominate
-         * this one, so it may not actually have executed on this runtime
-         * path. DIAMOND_OP_BOX_LOCAL is idempotent (a no-op if the register
-         * already holds a Cell), so emitting it redundantly on paths where
-         * the earlier boxing did run is always safe. */
-        for(size_t i=0;i<capture_count;i++) {
-            for(size_t local=0;local<compiler->local_count;local++) {
-                if(compiler->locals[local].reg!=captures[i])continue;
-                emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
-                compiler->locals[local].captured=true;
-                break;
-            }
-        }
-        emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
-        emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
-        for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
-        if(self_local>=0) {
-            const uint16_t self_register=compiler->locals[(size_t)self_local].reg;
-            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_register,0,0,1);
-            emit_instruction(compiler,DIAMOND_OP_SET_CELL,self_register,result,0,2);
-            compiler->locals[(size_t)self_local].captured=true;
-        } else {
-            compiler->locals[compiler->local_count++]=(Local){.name=name,.reg=result,
-                .captured=compiler->loop_captures_pending};
-        }
-    }
+    if(!at_top_level)
+        emit_definition_closure(compiler,function_index,name,result,captures,
+            capture_count,self_local);
     /* else: top-level def -- no NIL needed. A genuine top-level def's
      * `result` is the sole writer of its (allocated) register, already
      * zero-inited; a class/module member's `result` is the unallocated
