@@ -1,7 +1,7 @@
 # VM source layout
 
 `src/vm.c` is the interpreter, the garbage collector and the native service layer. It grew to over
-26,000 lines; `vm.c` itself is now about 14,000 and `run_chunk` has its own file. This note records how it is organised, what has been split out and why, and the
+26,000 lines; `vm.c` itself is now about 10,000 and `run_chunk` has its own file. This note records how it is organised, what has been split out and why, and the
 measurements that decide what is worth splitting next.
 
 ## Where the compile time is
@@ -46,7 +46,7 @@ a chain of blocks keyed on the receiver's kind:
 | user-defined Instance dispatch and the rest | the remainder |
 
 The per-kind blocks (Array/Hash/String, Int/Float, Supervisor, UDP socket, TLS socket, Channel,
-Listener, Thread, File, Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions in `vm.c`, the same shape as
+Listener, Thread, File, Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions (in `vm.c` or the files below), the same shape as
 `time_dispatch_helper`, `tensor_dispatch_helper` and the database `*_dispatch_helper` functions. A
 helper returns its status instead of using `VM_RETURN`; the call site propagates it.
 
@@ -76,10 +76,12 @@ exception, below). 123 `*_helper` functions
 | `vm_time.c` | the Time natives |
 | `vm_database.c` | the SQLite, PostgreSQL and MySQL drivers |
 | `vm_process_io.c` | process spawning and file natives |
-| `vm_network.c` | TLS, TCP, UDP and DNS resolution |
+| `vm_network.c` | TLS, TCP, UDP and DNS resolution, and the Socket, Listener, UDPSocket and TLSSocket methods |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
 | `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
 | `vm_crypto.c` | BCrypt, SecureRandom, SHA-256/SHA-1 digests and HMAC, AES-GCM and Base64 (Gzip stays in `vm.c`) |
+| `vm_string.c` | the String methods (`string_invoke_helper`, `String#format`, `String#tr`) |
+| `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
 the program is still owned by the builder and dispatches by method name. The 35

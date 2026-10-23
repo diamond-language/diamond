@@ -1298,6 +1298,24 @@ static bool mysql_fixed_width_field_helper(enum enum_field_types type) {
     }
 }
 
+/* Same GC-rooting discipline as postgres_query_helper: `result` must be a
+ * pointer into the caller's live registers array, `*result` is written to
+ * hold the outer Array before any further allocation, and each row's Hash
+ * is pushed onto that already-rooted Array (then each key set to Nil
+ * first, rooting the key before decoding may itself allocate a String)
+ * before its real column values are filled in one at a time.
+ *
+ * Unlike libpq's text protocol (PQgetvalue returns every column's value
+ * directly, already materialized), the prepared-statement binary protocol
+ * needs output buffers bound before fetching -- and this driver doesn't
+ * know column widths ahead of time (these are ad hoc queries, not a fixed
+ * schema). So every column is bound once as MYSQL_TYPE_STRING with a null
+ * buffer/zero buffer_length purely to receive each row's true length via
+ * mysql_stmt_fetch (which reports MYSQL_DATA_TRUNCATED, expected here,
+ * not a real error) and its null flag; the actual bytes for a non-null
+ * column are then pulled per cell via mysql_stmt_fetch_column into a
+ * freshly sized buffer. This is the standard two-phase dynamic-length
+ * fetch pattern for the MySQL C API's binary protocol. */
 static DiamondVmStatus mysql_query_helper(DiamondVm *vm,DiamondMysqlHandle *handle,
         const char *sql_chars,size_t sql_length,const DiamondValue *param_values,
         size_t param_count,DiamondValue *result) {

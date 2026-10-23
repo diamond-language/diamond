@@ -55,8 +55,12 @@ DiamondVmStatus regexp_new_helper(DiamondVm *vm, const DiamondString *pattern,
     return DIAMOND_VM_OK;
 }
 
-/* Root through registers[dest] directly, not an out-param -- same real
- * bug, and same fix, as regexp_scan_helper above (see that function's
+/* Regexp#match/#match? real body -- same stack-frame-isolation reasoning
+ * as regexp_new_helper above (reginold_match's own fields would otherwise
+ * land directly in run_chunk's frame too).
+ *
+ * Root through registers[dest] directly, not an out-param -- same real
+ * bug, and same fix, as regexp_scan_helper below (see that function's
  * own comment for the full story: *result pointed into the caller's C
  * stack, never a real GC root, and the `groups` malloc'd buffer this
  * used to build had zero GC visibility of its own between one capture
@@ -277,7 +281,14 @@ DiamondVmStatus regexp_replace_block_helper(DiamondVm *vm,
     return DIAMOND_VM_OK;
 }
 
-/* Root through registers[dest] directly, not an out-param -- a real bug
+/* String#scan: every non-overlapping match, leftmost to rightmost, same
+ * zero-length-match advance as regexp_replace_helper above. Each entry is
+ * the whole matched String if the pattern has no capture groups, or an
+ * Array of the capture groups (Nil for an unmatched optional group,
+ * matching Regexp#match's own convention) if it does -- mirroring Ruby's
+ * own #scan exactly.
+ *
+ * Root through registers[dest] directly, not an out-param -- a real bug
  * found while investigating an unrelated crash (a self-referential-
  * looking array from String#scan, reproduced with DIAMOND_STRESS_GC=1
  * even on code well before this session's own changes). The previous
