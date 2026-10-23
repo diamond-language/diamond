@@ -537,8 +537,8 @@ static bool disassemble_jumps(DisassemblyWalk *walk) {
     return true;
 }
 
-/* Opcode group: every call form, including spread and keyword calls. Returns false, leaving the walk untouched,
- * when the opcode at the current offset belongs to another group. */
+/* Opcode group: direct calls -- CALL, TAIL_CALL, CALL_TYPED and CALL_CLOSURE. Returns false, leaving the walk
+ * untouched, when the opcode at the current offset belongs to another group. */
 static bool disassemble_calls(DisassemblyWalk *walk) {
     FILE *stream = walk->stream;
     const DiamondChunk *chunk = walk->chunk;
@@ -586,6 +586,60 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
             offset += 8;
             break;
         }
+        case DIAMOND_OP_CALL_TYPED: {
+            if(!require_bytes(stream,chunk,offset,9)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            const uint8_t count=chunk->code[offset+8];
+            if(!require_bytes(stream,chunk,offset,(size_t)9+count*2)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            const size_t function_index=
+                ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
+            fprintf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
+                "CALL_TYPED",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                function_index,
+                checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                    chunk->code[offset+7],&valid),
+                chunk->code[offset+7]);
+            for(size_t index=0;index<count;index++) {
+                if(index>0)fputs(", ",stream);
+                const uint16_t set=read_operand(chunk,offset+9+index*2);
+                valid=print_type_set(stream,chunk,set)&&valid;
+            }
+            fputs("]\n",stream);
+            if(function_index>=chunk->function_count)
+                valid=false;
+            offset+=(size_t)9+count*2;
+            break;
+        }
+        case DIAMOND_OP_CALL_CLOSURE:
+            if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
+            fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                checked_register_range(chunk,stream,read_operand(chunk,offset+5),
+                    chunk->code[offset+7],&valid),
+                chunk->code[offset+7]);
+            offset+=8;break;
+        default:
+            return false;
+    }
+    walk->offset = offset;
+    walk->valid = valid;
+    return true;
+}
+
+/* Opcode group: spread and keyword calls to functions and closures, and BUILD_SPREAD_ARGS. Returns false, leaving
+ * the walk untouched, when the opcode at the current offset belongs to another group. */
+static bool disassemble_spread_calls(DisassemblyWalk *walk) {
+    FILE *stream = walk->stream;
+    const DiamondChunk *chunk = walk->chunk;
+    size_t offset = walk->offset;
+    bool valid = walk->valid;
+    const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
+    switch (opcode) {
         case DIAMOND_OP_CALL_SPREAD: {
             if(!require_bytes(stream,chunk,offset,7)) {
                 valid=false;offset=chunk->code_count;break;
@@ -662,6 +716,81 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
                    chunk->type_set_count)valid=false;
             offset+=keyword_end+1+(size_t)type_count*2;break;
         }
+        case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
+            if(!require_bytes(stream,chunk,offset,7)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            fprintf(stream,"%-18s r%u, r%u, r%u\n","CALL_CLOSURE_SPREAD",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
+            offset+=7;break;
+        }
+        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
+            if(!require_bytes(stream,chunk,offset,8)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            const uint8_t encoded_keyword_count=chunk->code[offset+7];
+            const bool has_block=(encoded_keyword_count&0x80u)!=0;
+            const uint8_t keyword_count=encoded_keyword_count&0x7fu;
+            const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
+            if(keyword_count==0||keyword_count>16||
+               !require_bytes(stream,chunk,offset,total)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            fprintf(stream,"%-18s r%u, r%u, r%u, %u keywords\n",
+                "CALL_CLOSURE_KW",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
+                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
+                keyword_count);
+            for(size_t index=0;index<keyword_count;index++) {
+                const size_t entry=offset+8+index*4;
+                if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
+                (void)checked_register(chunk,stream,
+                    read_operand(chunk,entry+2),&valid);
+            }
+            if(has_block)(void)checked_register(chunk,stream,
+                read_operand(chunk,total-2),&valid);
+            offset+=total;break;
+        }
+        case DIAMOND_OP_BUILD_SPREAD_ARGS: {
+            if(!require_bytes(stream,chunk,offset,11)) {
+                valid=false;offset=chunk->code_count;break;
+            }
+            const uint8_t prefix_count=chunk->code[offset+5];
+            const uint8_t encoded_suffix_count=chunk->code[offset+10];
+            const uint8_t suffix_count=encoded_suffix_count&0x7fu;
+            const bool optional_block=(encoded_suffix_count&0x80u)!=0;
+            if(optional_block&&suffix_count==0)valid=false;
+            fprintf(stream,"%-18s r%u, r%u/%u, *r%u, r%u/%u%s\n",
+                "BUILD_SPREAD_ARGS",
+                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
+                checked_register_range(chunk,stream,read_operand(chunk,offset+3),
+                    prefix_count,&valid),prefix_count,
+                checked_register(chunk,stream,read_operand(chunk,offset+6),&valid),
+                checked_register_range(chunk,stream,read_operand(chunk,offset+8),
+                    suffix_count,&valid),suffix_count,
+                optional_block?" optional-block":"");
+            offset+=11;break;
+        }
+        default:
+            return false;
+    }
+    walk->offset = offset;
+    walk->valid = valid;
+    return true;
+}
+
+/* Opcode group: spread and keyword method, constructor and singleton calls. Returns false, leaving the walk
+ * untouched, when the opcode at the current offset belongs to another group. */
+static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
+    FILE *stream = walk->stream;
+    const DiamondChunk *chunk = walk->chunk;
+    size_t offset = walk->offset;
+    bool valid = walk->valid;
+    const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
+    switch (opcode) {
         case DIAMOND_OP_INVOKE_SPREAD: {
             if(!require_bytes(stream,chunk,offset,9)) {
                 valid=false;offset=chunk->code_count;break;
@@ -741,44 +870,6 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
                 if((size_t)read_operand(chunk,offset+10+index*2)>=chunk->type_set_count)
                     valid=false;
             offset+=(size_t)10+type_count*2;break;
-        }
-        case DIAMOND_OP_CALL_CLOSURE_SPREAD: {
-            if(!require_bytes(stream,chunk,offset,7)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            fprintf(stream,"%-18s r%u, r%u, r%u\n","CALL_CLOSURE_SPREAD",
-                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid));
-            offset+=7;break;
-        }
-        case DIAMOND_OP_CALL_CLOSURE_KEYWORDS: {
-            if(!require_bytes(stream,chunk,offset,8)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            const uint8_t encoded_keyword_count=chunk->code[offset+7];
-            const bool has_block=(encoded_keyword_count&0x80u)!=0;
-            const uint8_t keyword_count=encoded_keyword_count&0x7fu;
-            const size_t total=8+(size_t)keyword_count*4+(has_block?2u:0u);
-            if(keyword_count==0||keyword_count>16||
-               !require_bytes(stream,chunk,offset,total)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u keywords\n",
-                "CALL_CLOSURE_KW",
-                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                checked_register(chunk,stream,read_operand(chunk,offset+5),&valid),
-                keyword_count);
-            for(size_t index=0;index<keyword_count;index++) {
-                const size_t entry=offset+8+index*4;
-                if((size_t)read_operand(chunk,entry)>=chunk->string_count)valid=false;
-                (void)checked_register(chunk,stream,
-                    read_operand(chunk,entry+2),&valid);
-            }
-            if(has_block)(void)checked_register(chunk,stream,
-                read_operand(chunk,total-2),&valid);
-            offset+=total;break;
         }
         case DIAMOND_OP_NEW_SPREAD: {
             if(!require_bytes(stream,chunk,offset,7)) {
@@ -890,63 +981,6 @@ static bool disassemble_calls(DisassemblyWalk *walk) {
                    chunk->type_set_count)valid=false;
             offset+=keyword_end+1+(size_t)type_count*2;break;
         }
-        case DIAMOND_OP_BUILD_SPREAD_ARGS: {
-            if(!require_bytes(stream,chunk,offset,11)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            const uint8_t prefix_count=chunk->code[offset+5];
-            const uint8_t encoded_suffix_count=chunk->code[offset+10];
-            const uint8_t suffix_count=encoded_suffix_count&0x7fu;
-            const bool optional_block=(encoded_suffix_count&0x80u)!=0;
-            if(optional_block&&suffix_count==0)valid=false;
-            fprintf(stream,"%-18s r%u, r%u/%u, *r%u, r%u/%u%s\n",
-                "BUILD_SPREAD_ARGS",
-                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                checked_register_range(chunk,stream,read_operand(chunk,offset+3),
-                    prefix_count,&valid),prefix_count,
-                checked_register(chunk,stream,read_operand(chunk,offset+6),&valid),
-                checked_register_range(chunk,stream,read_operand(chunk,offset+8),
-                    suffix_count,&valid),suffix_count,
-                optional_block?" optional-block":"");
-            offset+=11;break;
-        }
-        case DIAMOND_OP_CALL_TYPED: {
-            if(!require_bytes(stream,chunk,offset,9)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            const uint8_t count=chunk->code[offset+8];
-            if(!require_bytes(stream,chunk,offset,(size_t)9+count*2)) {
-                valid=false;offset=chunk->code_count;break;
-            }
-            const size_t function_index=
-                ((size_t)chunk->code[offset+3]<<8)|chunk->code[offset+4];
-            fprintf(stream,"%-18s r%u, f%zu, r%u, %u args, [",
-                "CALL_TYPED",
-                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                function_index,
-                checked_register_range(chunk,stream,read_operand(chunk,offset+5),
-                    chunk->code[offset+7],&valid),
-                chunk->code[offset+7]);
-            for(size_t index=0;index<count;index++) {
-                if(index>0)fputs(", ",stream);
-                const uint16_t set=read_operand(chunk,offset+9+index*2);
-                valid=print_type_set(stream,chunk,set)&&valid;
-            }
-            fputs("]\n",stream);
-            if(function_index>=chunk->function_count)
-                valid=false;
-            offset+=(size_t)9+count*2;
-            break;
-        }
-        case DIAMOND_OP_CALL_CLOSURE:
-            if(!require_bytes(stream,chunk,offset,8)){valid=false;offset=chunk->code_count;break;}
-            fprintf(stream,"%-18s r%u, r%u, r%u, %u args\n","CALL_CLOSURE",
-                checked_register(chunk,stream,read_operand(chunk,offset+1),&valid),
-                checked_register(chunk,stream,read_operand(chunk,offset+3),&valid),
-                checked_register_range(chunk,stream,read_operand(chunk,offset+5),
-                    chunk->code[offset+7],&valid),
-                chunk->code[offset+7]);
-            offset+=8;break;
         default:
             return false;
     }
@@ -1757,6 +1791,7 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
         }
         walk.stream = stream;
         if (!(disassemble_loads_and_arithmetic(&walk) || disassemble_calls(&walk) ||
+              disassemble_spread_calls(&walk) || disassemble_spread_invokes(&walk) ||
               disassemble_invokes_and_variables(&walk) || disassemble_jumps(&walk) ||
               disassemble_closures_and_classes(&walk) || disassemble_io_and_conversions(&walk) ||
               disassemble_natives_and_debugging(&walk) || disassemble_patterns_and_types(&walk) ||
