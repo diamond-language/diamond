@@ -11749,7 +11749,7 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
         }
         source_addr_len=sizeof source_addr;
         errno=0;
-        received=recvfrom(udp_handle->fd,buffer,want,0,
+        received=recvfrom(udp_handle->fd,buffer,recv_len,0,
             (struct sockaddr *)&source_addr,&source_addr_len);
     }
     if(received<0) {
@@ -11819,7 +11819,6 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
     if(!hash_set(vm,receive_result,DIAMOND_OBJECT(port_key),
             DIAMOND_INT(source_port)))
         return DIAMOND_VM_OUT_OF_MEMORY;
-    return DIAMOND_VM_OK;
     return DIAMOND_VM_OK;
 }
 
