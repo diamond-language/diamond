@@ -877,6 +877,12 @@ extern DIAMOND_INTERNAL atomic_size_t diamond_active_thread_count;
 DIAMOND_INTERNAL size_t diamond_live_thread_limit(void);
 DIAMOND_INTERNAL bool diamond_reserve_thread_slot(void);
 
+DIAMOND_INTERNAL int64_t monotonic_nanoseconds(void);
+DIAMOND_INTERNAL void supervisor_interrupt_child(DiamondSupervisorChild *child);
+DIAMOND_INTERNAL DiamondVmStatus channel_wait_bounded(DiamondVm *vm,pthread_cond_t *condition,
+        pthread_mutex_t *lock);
+DIAMOND_INTERNAL void supervisor_join_all_children(DiamondSupervisor *supervisor);
+
 DIAMOND_INTERNAL int create_vm_thread(pthread_t *handle,
         void *(*entry)(void *), void *argument);
 
