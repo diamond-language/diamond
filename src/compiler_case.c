@@ -80,6 +80,243 @@ static uint16_t compile_case_pattern_class(Compiler *compiler,int class_index) {
 }
 
 static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
+        size_t *node_count,size_t depth);
+
+/* `[a, *rest, ...]`: the current token is the '['. */
+static uint8_t parse_case_array_group(Compiler *compiler,CaseArrayNode *nodes,size_t *node_count,
+        size_t depth,CaseArrayNode *node,uint8_t index) {
+    node->kind=CASE_ARRAY_GROUP;advance_token(compiler);
+    bool rest_seen=false;
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
+        if(node->child_count==16) {
+            fail(compiler,compiler->current.span,"too many case Array elements");return index;
+        }
+        node->children[node->child_count++]=
+            parse_case_array_node(compiler,nodes,node_count,depth+1);
+        const CaseArrayNodeKind child_kind=
+            nodes[node->children[node->child_count-1]].kind;
+        if(child_kind==CASE_ARRAY_REST_BIND||
+           child_kind==CASE_ARRAY_REST_WILDCARD) {
+            if(rest_seen) {
+                fail(compiler,nodes[node->children[node->child_count-1]].name,
+                    "case Array pattern may contain only one rest binding");
+                return index;
+            }
+            rest_seen=true;
+        }
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,"expected ',' in case Array pattern");
+            return index;
+        }
+        advance_token(compiler);
+    }
+    if(node->child_count==0) {
+        fail(compiler,compiler->current.span,"case Array pattern cannot be empty");
+        return index;
+    }
+    advance_token(compiler);return index;
+}
+
+/* `{key: pattern, ..., **rest}`: the current token is the '{'. */
+static uint8_t parse_case_hash_group(Compiler *compiler,CaseArrayNode *nodes,size_t *node_count,
+        size_t depth,CaseArrayNode *node,uint8_t index) {
+    node->kind=CASE_HASH_GROUP;advance_token(compiler);skip_newlines(compiler);
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&!compiler->failed) {
+        if(node->child_count==16) {
+            fail(compiler,compiler->current.span,"too many case Hash entries");
+            return index;
+        }
+        DiamondLexer rest_lookahead=compiler->lexer;
+        const DiamondToken second_star=diamond_lexer_next(&rest_lookahead);
+        if(compiler->current.kind==DIAMOND_TOKEN_STAR&&
+           second_star.kind==DIAMOND_TOKEN_STAR) {
+            advance_token(compiler);advance_token(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+                fail(compiler,compiler->current.span,
+                    "expected lowercase binding or '_' after '**' in case Hash pattern");
+                return index;
+            }
+            const uint8_t child=(uint8_t)(*node_count);
+            if(*node_count==64) {
+                fail(compiler,compiler->current.span,
+                    "case Hash pattern is too complex");return index;
+            }
+            CaseArrayNode *rest=&nodes[(*node_count)++];
+            *rest=(CaseArrayNode){.name=compiler->current.span};
+            if(span_is_underscore(compiler,rest->name))
+                rest->kind=CASE_HASH_REST_WILDCARD;
+            else {
+                const char first=compiler->source[rest->name.start];
+                if(first<'a'||first>'z') {
+                    fail(compiler,rest->name,
+                        "rest binding in case Hash pattern must be lowercase");
+                    return index;
+                }
+                rest->kind=CASE_HASH_REST_BIND;
+            }
+            node->children[node->child_count++]=child;
+            advance_token(compiler);skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+                fail(compiler,compiler->current.span,
+                    "rest binding must be last in case Hash pattern");
+                return index;
+            }
+            break;
+        }
+        const uint16_t key=parse_expression(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+            fail(compiler,compiler->current.span,
+                "expected ':' after case Hash pattern key");return index;
+        }
+        advance_token(compiler);
+        const uint8_t child=parse_case_array_node(
+            compiler,nodes,node_count,depth+1);
+        if(nodes[child].kind==CASE_ARRAY_REST_BIND||
+           nodes[child].kind==CASE_ARRAY_REST_WILDCARD||
+           nodes[child].kind==CASE_HASH_REST_BIND||
+           nodes[child].kind==CASE_HASH_REST_WILDCARD) {
+            fail(compiler,nodes[child].name,
+                "rest bindings are not supported in case Hash patterns");
+            return index;
+        }
+        nodes[child].key_register=key;
+        node->children[node->child_count++]=child;
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "expected ',' in case Hash pattern");return index;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+        fail(compiler,compiler->current.span,"expected '}' after case Hash pattern");
+        return index;
+    }
+    advance_token(compiler);return index;
+}
+
+/* `Class{reader: pattern, ...}`, matched through public zero-argument
+ * readers: the current token is the class name. */
+static uint8_t parse_case_object_group(Compiler *compiler,CaseArrayNode *nodes,size_t *node_count,
+        size_t depth,CaseArrayNode *node,uint8_t index,
+        int object_class) {
+    char object_name[DIAMOND_MAX_FUNCTION_NAME]={};
+    node->kind=CASE_OBJECT_GROUP;
+    node->class_index=(uint16_t)object_class;
+    node->value_register=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
+    emit_register(compiler,node->value_register);
+    emit_register(compiler,(uint16_t)object_class);
+    (void)consume_qualified_name(compiler,object_name,
+                                 sizeof object_name);
+    advance_token(compiler);skip_newlines(compiler);
+    while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&
+          !compiler->failed) {
+        if(node->child_count==16) {
+            fail(compiler,compiler->current.span,
+                "too many case object fields");return index;
+        }
+        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+           compiler->source[compiler->current.span.start]<'a'||
+           compiler->source[compiler->current.span.start]>'z') {
+            fail(compiler,compiler->current.span,
+                "expected lowercase reader in case object pattern");
+            return index;
+        }
+        const DiamondSpan reader_name=compiler->current.span;
+        const DiamondMethod *reader=case_pattern_reader(
+            compiler,(uint16_t)object_class,reader_name);
+        if(reader==nullptr||reader->is_private||reader->required_arity>0) {
+            fail(compiler,reader_name,
+                "case object pattern requires a public zero-argument reader");
+            return index;
+        }
+        advance_token(compiler);
+        if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+            fail(compiler,compiler->current.span,
+                "expected ':' after case object reader");return index;
+        }
+        advance_token(compiler);
+        const uint8_t child=parse_case_array_node(
+            compiler,nodes,node_count,depth+1);
+        if(nodes[child].kind==CASE_ARRAY_REST_BIND||
+           nodes[child].kind==CASE_ARRAY_REST_WILDCARD) {
+            fail(compiler,nodes[child].name,
+                "rest bindings are not supported in case object patterns");
+            return index;
+        }
+        nodes[child].member_name=reader_name;
+        node->children[node->child_count++]=child;
+        skip_newlines(compiler);
+        if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
+        if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
+            fail(compiler,compiler->current.span,
+                "expected ',' in case object pattern");return index;
+        }
+        advance_token(compiler);skip_newlines(compiler);
+    }
+    if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
+        fail(compiler,compiler->current.span,
+            "expected '}' after case object pattern");return index;
+    }
+    advance_token(compiler);return index;
+}
+
+/* `*name` or `*_` in an Array pattern: the current token is the '*'. */
+static uint8_t parse_case_rest(Compiler *compiler,CaseArrayNode *node,uint8_t index) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+            "expected lowercase binding or '_' after '*' in case Array pattern");
+        return index;
+    }
+    node->name=compiler->current.span;
+    if(span_is_underscore(compiler,node->name))
+        node->kind=CASE_ARRAY_REST_WILDCARD;
+    else {
+        const char first=compiler->source[node->name.start];
+        if(first<'a'||first>'z') {
+            fail(compiler,node->name,
+                "rest binding in case Array pattern must be lowercase");
+            return index;
+        }
+        node->kind=CASE_ARRAY_REST_BIND;
+    }
+    advance_token(compiler);return index;
+}
+
+/* `^local`, matching a local's current value: the current token is the '^'. */
+static uint8_t parse_case_pin(Compiler *compiler,CaseArrayNode *node,uint8_t index) {
+    advance_token(compiler);
+    if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
+        fail(compiler,compiler->current.span,
+            "expected lowercase local after '^' in case Array pattern");
+        return index;
+    }
+    node->name=compiler->current.span;
+    const char first=compiler->source[node->name.start];
+    if(first<'a'||first>'z'||span_is_underscore(compiler,node->name)) {
+        fail(compiler,node->name,
+            "pin in case Array pattern must name a lowercase local");
+        return index;
+    }
+    bool found=find_local(compiler,node->name)>=0;
+    for(size_t local=compiler->enclosing_local_count;local>0&&!found;local--)
+        found=spans_equal(compiler,
+            compiler->enclosing_locals[local-1].name,node->name);
+    if(!found) {
+        fail(compiler,node->name,
+            "pin references undefined local variable");return index;
+    }
+    node->kind=CASE_ARRAY_PIN;
+    advance_token(compiler);
+    node->value_register=parse_identifier(compiler);
+    return index;
+}
+
+static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
         size_t *node_count,size_t depth) {
     if(*node_count==64||depth>8) {
         fail(compiler,compiler->current.span,"case Array pattern is too complex");
@@ -87,115 +324,10 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
     }
     const uint8_t index=(uint8_t)(*node_count);
     CaseArrayNode *node=&nodes[(*node_count)++];*node=(CaseArrayNode){};
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET) {
-        node->kind=CASE_ARRAY_GROUP;advance_token(compiler);
-        bool rest_seen=false;
-        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACKET&&!compiler->failed) {
-            if(node->child_count==16) {
-                fail(compiler,compiler->current.span,"too many case Array elements");return index;
-            }
-            node->children[node->child_count++]=
-                parse_case_array_node(compiler,nodes,node_count,depth+1);
-            const CaseArrayNodeKind child_kind=
-                nodes[node->children[node->child_count-1]].kind;
-            if(child_kind==CASE_ARRAY_REST_BIND||
-               child_kind==CASE_ARRAY_REST_WILDCARD) {
-                if(rest_seen) {
-                    fail(compiler,nodes[node->children[node->child_count-1]].name,
-                        "case Array pattern may contain only one rest binding");
-                    return index;
-                }
-                rest_seen=true;
-            }
-            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACKET)break;
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-                fail(compiler,compiler->current.span,"expected ',' in case Array pattern");
-                return index;
-            }
-            advance_token(compiler);
-        }
-        if(node->child_count==0) {
-            fail(compiler,compiler->current.span,"case Array pattern cannot be empty");
-            return index;
-        }
-        advance_token(compiler);return index;
-    }
-    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
-        node->kind=CASE_HASH_GROUP;advance_token(compiler);skip_newlines(compiler);
-        while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&!compiler->failed) {
-            if(node->child_count==16) {
-                fail(compiler,compiler->current.span,"too many case Hash entries");
-                return index;
-            }
-            DiamondLexer rest_lookahead=compiler->lexer;
-            const DiamondToken second_star=diamond_lexer_next(&rest_lookahead);
-            if(compiler->current.kind==DIAMOND_TOKEN_STAR&&
-               second_star.kind==DIAMOND_TOKEN_STAR) {
-                advance_token(compiler);advance_token(compiler);
-                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-                    fail(compiler,compiler->current.span,
-                        "expected lowercase binding or '_' after '**' in case Hash pattern");
-                    return index;
-                }
-                const uint8_t child=(uint8_t)(*node_count);
-                if(*node_count==64) {
-                    fail(compiler,compiler->current.span,
-                        "case Hash pattern is too complex");return index;
-                }
-                CaseArrayNode *rest=&nodes[(*node_count)++];
-                *rest=(CaseArrayNode){.name=compiler->current.span};
-                if(span_is_underscore(compiler,rest->name))
-                    rest->kind=CASE_HASH_REST_WILDCARD;
-                else {
-                    const char first=compiler->source[rest->name.start];
-                    if(first<'a'||first>'z') {
-                        fail(compiler,rest->name,
-                            "rest binding in case Hash pattern must be lowercase");
-                        return index;
-                    }
-                    rest->kind=CASE_HASH_REST_BIND;
-                }
-                node->children[node->child_count++]=child;
-                advance_token(compiler);skip_newlines(compiler);
-                if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
-                    fail(compiler,compiler->current.span,
-                        "rest binding must be last in case Hash pattern");
-                    return index;
-                }
-                break;
-            }
-            const uint16_t key=parse_expression(compiler);
-            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
-                fail(compiler,compiler->current.span,
-                    "expected ':' after case Hash pattern key");return index;
-            }
-            advance_token(compiler);
-            const uint8_t child=parse_case_array_node(
-                compiler,nodes,node_count,depth+1);
-            if(nodes[child].kind==CASE_ARRAY_REST_BIND||
-               nodes[child].kind==CASE_ARRAY_REST_WILDCARD||
-               nodes[child].kind==CASE_HASH_REST_BIND||
-               nodes[child].kind==CASE_HASH_REST_WILDCARD) {
-                fail(compiler,nodes[child].name,
-                    "rest bindings are not supported in case Hash patterns");
-                return index;
-            }
-            nodes[child].key_register=key;
-            node->children[node->child_count++]=child;
-            skip_newlines(compiler);
-            if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
-            if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-                fail(compiler,compiler->current.span,
-                    "expected ',' in case Hash pattern");return index;
-            }
-            advance_token(compiler);skip_newlines(compiler);
-        }
-        if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
-            fail(compiler,compiler->current.span,"expected '}' after case Hash pattern");
-            return index;
-        }
-        advance_token(compiler);return index;
-    }
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACKET)
+        return parse_case_array_group(compiler,nodes,node_count,depth,node,index);
+    if(compiler->current.kind==DIAMOND_TOKEN_LEFT_BRACE)
+        return parse_case_hash_group(compiler,nodes,node_count,depth,node,index);
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
         char object_name[DIAMOND_MAX_FUNCTION_NAME]={};
         Compiler object_probe=*compiler;
@@ -205,115 +337,14 @@ static uint8_t parse_case_array_node(Compiler *compiler,CaseArrayNode *nodes,
             compiler,object_name);
         if(object_class>=0&&
            object_probe.current.kind==DIAMOND_TOKEN_LEFT_BRACE) {
-            node->kind=CASE_OBJECT_GROUP;
-            node->class_index=(uint16_t)object_class;
-            node->value_register=allocate_register(compiler);
-            emit_opcode(compiler,DIAMOND_OP_LOAD_CLASS);
-            emit_register(compiler,node->value_register);
-            emit_register(compiler,(uint16_t)object_class);
-            (void)consume_qualified_name(compiler,object_name,
-                                         sizeof object_name);
-            advance_token(compiler);skip_newlines(compiler);
-            while(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE&&
-                  !compiler->failed) {
-                if(node->child_count==16) {
-                    fail(compiler,compiler->current.span,
-                        "too many case object fields");return index;
-                }
-                if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
-                   compiler->source[compiler->current.span.start]<'a'||
-                   compiler->source[compiler->current.span.start]>'z') {
-                    fail(compiler,compiler->current.span,
-                        "expected lowercase reader in case object pattern");
-                    return index;
-                }
-                const DiamondSpan reader_name=compiler->current.span;
-                const DiamondMethod *reader=case_pattern_reader(
-                    compiler,(uint16_t)object_class,reader_name);
-                if(reader==nullptr||reader->is_private||reader->required_arity>0) {
-                    fail(compiler,reader_name,
-                        "case object pattern requires a public zero-argument reader");
-                    return index;
-                }
-                advance_token(compiler);
-                if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
-                    fail(compiler,compiler->current.span,
-                        "expected ':' after case object reader");return index;
-                }
-                advance_token(compiler);
-                const uint8_t child=parse_case_array_node(
-                    compiler,nodes,node_count,depth+1);
-                if(nodes[child].kind==CASE_ARRAY_REST_BIND||
-                   nodes[child].kind==CASE_ARRAY_REST_WILDCARD) {
-                    fail(compiler,nodes[child].name,
-                        "rest bindings are not supported in case object patterns");
-                    return index;
-                }
-                nodes[child].member_name=reader_name;
-                node->children[node->child_count++]=child;
-                skip_newlines(compiler);
-                if(compiler->current.kind==DIAMOND_TOKEN_RIGHT_BRACE)break;
-                if(compiler->current.kind!=DIAMOND_TOKEN_COMMA) {
-                    fail(compiler,compiler->current.span,
-                        "expected ',' in case object pattern");return index;
-                }
-                advance_token(compiler);skip_newlines(compiler);
-            }
-            if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_BRACE) {
-                fail(compiler,compiler->current.span,
-                    "expected '}' after case object pattern");return index;
-            }
-            advance_token(compiler);return index;
+            return parse_case_object_group(compiler,nodes,node_count,depth,node,index,
+                object_class);
         }
     }
-    if(compiler->current.kind==DIAMOND_TOKEN_STAR) {
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,
-                "expected lowercase binding or '_' after '*' in case Array pattern");
-            return index;
-        }
-        node->name=compiler->current.span;
-        if(span_is_underscore(compiler,node->name))
-            node->kind=CASE_ARRAY_REST_WILDCARD;
-        else {
-            const char first=compiler->source[node->name.start];
-            if(first<'a'||first>'z') {
-                fail(compiler,node->name,
-                    "rest binding in case Array pattern must be lowercase");
-                return index;
-            }
-            node->kind=CASE_ARRAY_REST_BIND;
-        }
-        advance_token(compiler);return index;
-    }
-    if(compiler->current.kind==DIAMOND_TOKEN_CARET) {
-        advance_token(compiler);
-        if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER) {
-            fail(compiler,compiler->current.span,
-                "expected lowercase local after '^' in case Array pattern");
-            return index;
-        }
-        node->name=compiler->current.span;
-        const char first=compiler->source[node->name.start];
-        if(first<'a'||first>'z'||span_is_underscore(compiler,node->name)) {
-            fail(compiler,node->name,
-                "pin in case Array pattern must name a lowercase local");
-            return index;
-        }
-        bool found=find_local(compiler,node->name)>=0;
-        for(size_t local=compiler->enclosing_local_count;local>0&&!found;local--)
-            found=spans_equal(compiler,
-                compiler->enclosing_locals[local-1].name,node->name);
-        if(!found) {
-            fail(compiler,node->name,
-                "pin references undefined local variable");return index;
-        }
-        node->kind=CASE_ARRAY_PIN;
-        advance_token(compiler);
-        node->value_register=parse_identifier(compiler);
-        return index;
-    }
+    if(compiler->current.kind==DIAMOND_TOKEN_STAR)
+        return parse_case_rest(compiler,node,index);
+    if(compiler->current.kind==DIAMOND_TOKEN_CARET)
+        return parse_case_pin(compiler,node,index);
     if(compiler->current.kind==DIAMOND_TOKEN_IDENTIFIER) {
         const char first=compiler->source[compiler->current.span.start];
         if(span_is_underscore(compiler,compiler->current.span)) {
