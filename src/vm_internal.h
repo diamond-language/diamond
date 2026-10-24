@@ -1630,4 +1630,9 @@ DIAMOND_INTERNAL ptrdiff_t hash_find_string_bytes(const DiamondHash *hash,const 
 DIAMOND_INTERNAL bool hash_delete(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
                         DiamondValue *removed,bool *found);
 
+/* vm.c, used by vm_collections.c */
+DIAMOND_INTERNAL const DiamondFunction *find_collection_extension(
+        const DiamondChunk *chunk,DiamondObjectKind kind,
+        const char *name,size_t length);
+
 #endif
