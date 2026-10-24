@@ -415,6 +415,118 @@ int diamond_string_compare(const DiamondString *a,const DiamondString *b) {
     return 0;
 }
 
+/* MODULO for everything but two plain Ints, which run_chunk handles inline.
+ * Floored modulo (the result takes the divisor's sign), matching Ruby rather
+ * than C's truncating `%`: bignums through diamond_bignum_modulo_floored,
+ * Int/Float mixes as Floats, an Instance left operand through its own `%`
+ * method, and a TypeError for anything else. */
+DiamondVmStatus modulo_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
+        DiamondValue *out_result) {
+    if(is_int_value(left_value)&&is_int_value(right_value)) {
+        /* Reaching here with two Ints means at least one is a bignum (the
+         * plain-int64 case stays in run_chunk). */
+        DiamondIntView left_view, right_view, zero_view;
+        diamond_int_view(left_value,&left_view);
+        diamond_int_view(right_value,&right_view);
+        diamond_int_view_int64(0,&zero_view);
+        if(diamond_bignum_compare(right_view,zero_view)==0)
+            return DIAMOND_VM_DIVISION_BY_ZERO;
+        const DiamondValue modulus=
+            diamond_bignum_modulo_floored(vm,left_view,right_view);
+        if(modulus.kind==DIAMOND_VALUE_NIL)return DIAMOND_VM_OUT_OF_MEMORY;
+        *out_result=modulus;
+        return DIAMOND_VM_OK;
+    }
+    if((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT)&&
+       (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT)&&
+       (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+        const double left_real=left_value.kind==DIAMOND_VALUE_FLOAT?
+            left_value.as.real:(double)left_value.as.integer;
+        const double right_real=right_value.kind==DIAMOND_VALUE_FLOAT?
+            right_value.as.real:(double)right_value.as.integer;
+        double remainder=fmod(left_real,right_real);
+        if(remainder!=0&&((remainder<0)!=(right_real<0)))
+            remainder+=right_real;
+        *out_result=DIAMOND_FLOAT(remainder);
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+       left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+            site,(const DiamondInstance *)left_value.as.object,
+            "%",1,&right_value,1,&op_result,&found);
+        if(found) {
+            if(status!=DIAMOND_VM_OK)return status;
+            *out_result=op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    format_operator_type_error(vm,left_value,right_value,"%");
+    return DIAMOND_VM_TYPE_ERROR;
+}
+
+/* `<=>` for everything but two plain Ints, which run_chunk handles inline.
+ * Unlike LESS/GREATER/EQUAL, the result is an Int (-1/0/1) or Nil, never a
+ * Bool, and an unorderable pair (no `<=>` method, an incomparable native type,
+ * or a NaN Float operand) is Nil rather than a TypeError -- Ruby's own `<=>`
+ * contract. Comparable's derived `<` (`(self <=> other) < 0`) still raises for
+ * an incomparable pair, on that next comparison. Strings compare byte-
+ * lexicographically (diamond_string_compare). */
+DiamondVmStatus compare_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
+        DiamondValue *out_result) {
+    if(is_int_value(left_value)&&is_int_value(right_value)) {
+        DiamondIntView left_view,right_view;
+        diamond_int_view(left_value,&left_view);
+        diamond_int_view(right_value,&right_view);
+        const int comparison=diamond_bignum_compare(left_view,right_view);
+        *out_result=DIAMOND_INT(comparison<0?-1:comparison>0?1:0);
+        return DIAMOND_VM_OK;
+    }
+    if((left_value.kind==DIAMOND_VALUE_FLOAT||left_value.kind==DIAMOND_VALUE_INT)&&
+       (right_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_INT)&&
+       (left_value.kind==DIAMOND_VALUE_FLOAT||right_value.kind==DIAMOND_VALUE_FLOAT)) {
+        const double left_real=left_value.kind==DIAMOND_VALUE_FLOAT?
+            left_value.as.real:(double)left_value.as.integer;
+        const double right_real=right_value.kind==DIAMOND_VALUE_FLOAT?
+            right_value.as.real:(double)right_value.as.integer;
+        if(isnan(left_real)||isnan(right_real)) {
+            *out_result=DIAMOND_NIL;
+            return DIAMOND_VM_OK;
+        }
+        *out_result=DIAMOND_INT(left_real<right_real?-1:(left_real>right_real?1:0));
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+       left_value.as.object->kind==DIAMOND_OBJECT_STRING&&
+       right_value.kind==DIAMOND_VALUE_OBJECT&&
+       right_value.as.object->kind==DIAMOND_OBJECT_STRING) {
+        const int comparison=diamond_string_compare(
+            (const DiamondString *)left_value.as.object,
+            (const DiamondString *)right_value.as.object);
+        *out_result=DIAMOND_INT(comparison<0?-1:(comparison>0?1:0));
+        return DIAMOND_VM_OK;
+    }
+    if(left_value.kind==DIAMOND_VALUE_OBJECT&&
+       left_value.as.object->kind==DIAMOND_OBJECT_INSTANCE) {
+        bool found=false;DiamondValue op_result=DIAMOND_NIL;
+        const uint8_t *site=chunk->code+instruction_offset;
+        const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
+            site,(const DiamondInstance *)left_value.as.object,
+            "<=>",3,&right_value,1,&op_result,&found);
+        if(found) {
+            if(status!=DIAMOND_VM_OK)return status;
+            *out_result=op_result;
+            return DIAMOND_VM_OK;
+        }
+    }
+    *out_result=DIAMOND_NIL;
+    return DIAMOND_VM_OK;
+}
+
 /* Phase 3 (docs/internal/jit-design.md). Shared slow path for ADD_INT/
  * SUBTRACT_INT/MULTIPLY_INT/DIVIDE_INT and their generic (non-_INT)
  * counterparts -- covers everything the fast, purely-native path in both

@@ -1095,6 +1095,14 @@ DIAMOND_INTERNAL DiamondVmStatus add_fallback(DiamondVm *vm,const DiamondChunk *
         size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
         DiamondValue *out_result);
 
+DIAMOND_INTERNAL DiamondVmStatus modulo_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
+        DiamondValue *out_result);
+
+DIAMOND_INTERNAL DiamondVmStatus compare_fallback(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        size_t instruction_offset,DiamondValue left_value,DiamondValue right_value,
+        DiamondValue *out_result);
+
 DIAMOND_INTERNAL int diamond_string_compare(const DiamondString *a,const DiamondString *b);
 
 DIAMOND_INTERNAL DiamondVmStatus int_arith_slow(DiamondVm *vm, const DiamondChunk *chunk,

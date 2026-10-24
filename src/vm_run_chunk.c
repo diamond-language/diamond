@@ -81,6 +81,27 @@ static inline bool collection_invoke_fast(DiamondVm *vm,DiamondValue *registers,
 }
 
 
+/* Binds a generic function's type variables from one call's arguments: at
+ * entry, and again for each iteration of a tail call. parameter_type_sets holds
+ * one entry per declared parameter, at most DIAMOND_MAX_DECLARED_PARAMETERS. The
+ * argument count is not bounded by that (a spread call can supply any number,
+ * and the arity check comes after this), so the index is bounded by the array,
+ * not the call. */
+static void infer_argument_bindings(const DiamondChunk *chunk,const DiamondValue *arguments,
+        size_t argument_count,DiamondTypeBinding *bindings) {
+    memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
+    for(size_t parameter=0;
+        parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&
+        parameter+chunk->parameter_offset<argument_count;parameter++) {
+        if(arguments[parameter+chunk->parameter_offset].kind==
+           DIAMOND_VALUE_UNDEFINED)continue;
+        const uint16_t set=chunk->parameter_type_sets[parameter];
+        if(set!=DIAMOND_NO_TYPE_SET&&set<chunk->type_set_count)
+            infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
+                             chunk->type_sets,set,bindings);
+    }
+}
+
 DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                                  DiamondVm *vm,
                                  const DiamondValue *arguments,
@@ -102,26 +123,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                chunk->type_variable_count*sizeof(DiamondTypeBinding));
     if(chunk->type_variable_count>0&&chunk->parameter_type_sets!=nullptr&&
        chunk->type_variable_bindings==nullptr) {
-        memset(bindings,0,chunk->type_variable_count*sizeof(DiamondTypeBinding));
         /* Only copy `*chunk` when this generic-function-with-unbound-
          * type-variable path is actually taken -- the common case
          * (type_variable_count==0, essentially every non-generic call)
          * never reads `execution`, so skip the 168-byte struct copy. */
         execution=*chunk;
-        /* parameter_type_sets holds one entry per declared parameter, at most
-         * DIAMOND_MAX_DECLARED_PARAMETERS. The argument count is not bounded by
-         * that (a spread call can supply any number, and the arity check comes
-         * after this loop), so bound the index by the array, not the call. */
-        for(size_t parameter=0;
-            parameter<DIAMOND_MAX_DECLARED_PARAMETERS&&
-            parameter+chunk->parameter_offset<argument_count;parameter++) {
-            if(arguments[parameter+chunk->parameter_offset].kind==
-               DIAMOND_VALUE_UNDEFINED)continue;
-            const uint16_t set=chunk->parameter_type_sets[parameter];
-            if(set!=DIAMOND_NO_TYPE_SET&&set<chunk->type_set_count)
-                infer_from_value(chunk,arguments[parameter+chunk->parameter_offset],
-                                 chunk->type_sets,set,bindings);
-        }
+        infer_argument_bindings(chunk,arguments,argument_count,bindings);
         execution.type_variable_bindings=bindings;
         chunk=&execution;
     }
@@ -893,14 +900,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_MODULO: {
-                /* Floored modulo (result takes the divisor's sign),
-                 * matching Ruby -- not C's truncating `%` (which takes
-                 * the dividend's sign). User-overloadable like the other
-                 * arithmetic operators (unlike `<<`): an Instance left
-                 * operand tries a `%` method the same way ADD/SUBTRACT/
-                 * etc. do. Arbitrary-precision Ints are supported through
-                 * diamond_bignum_modulo_floored (the remainder falls out
-                 * of the same limb division `/` uses). */
+                /* Floored modulo (the result takes the divisor's sign), matching
+                 * Ruby. Everything but two plain Ints is modulo_fallback
+                 * (src/vm_operators.c). */
                 uint16_t destination=0,left=0,right=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); left=OPERAND_SHORT(2); right=OPERAND_SHORT(4);
@@ -926,50 +928,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[destination]=DIAMOND_INT(remainder);
                     break;
                 }
-                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
-                    /* Reaching here with two Ints means at least one is a
-                     * bignum (the plain-int64 case broke out above). */
-                    DiamondIntView left_view, right_view, zero_view;
-                    diamond_int_view(registers[left],&left_view);
-                    diamond_int_view(registers[right],&right_view);
-                    diamond_int_view_int64(0,&zero_view);
-                    if(diamond_bignum_compare(right_view,zero_view)==0)
-                        VM_RETURN(DIAMOND_VM_DIVISION_BY_ZERO);
-                    const DiamondValue modulus=
-                        diamond_bignum_modulo_floored(vm,left_view,right_view);
-                    if(modulus.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[destination]=modulus;break;
-                }
-                if((registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[left].kind==DIAMOND_VALUE_INT)&&
-                   (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_INT)&&
-                   (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    double remainder=fmod(left_real,right_real);
-                    if(remainder!=0&&((remainder<0)!=(right_real<0)))
-                        remainder+=right_real;
-                    registers[destination]=DIAMOND_FLOAT(remainder);
-                    break;
-                }
-                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "%",1,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;break;
-                    }
-                }
-                format_operator_type_error(vm,registers[left],registers[right],"%");
-                VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                DiamondValue modulo_result=DIAMOND_NIL;
+                const DiamondVmStatus modulo_status=modulo_fallback(vm,chunk,depth,
+                    instruction_offset,registers[left],registers[right],&modulo_result);
+                VM_PROPAGATE(modulo_status);
+                registers[destination]=modulo_result;
+                break;
             }
             case DIAMOND_OP_NEGATE: {
                 uint16_t destination = 0;
@@ -1148,82 +1112,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=slow_result;
                 break;
             }
-            /* `<=>` -- unlike LESS/GREATER/EQUAL above, the result is an
-             * Int (-1/0/1) or Nil, never a Bool, and an unorderable pair
-             * (no `<=>` method found, an incomparable native type, or
-             * either Float operand is NaN) is Nil rather than a raised
-             * TypeError -- matching Ruby's own `<=>` contract, which is
-             * why Comparable's own derived `<` (`(self <=> other) < 0`)
-             * still ends up raising for a genuinely incomparable pair, on
-             * the next comparison rather than a bespoke error path here.
-             * Deliberately no _INT quickening variant (see this feature's
-             * own design doc). String now supports both `<=>` and
-             * LESS/LESS_EQUAL/GREATER/GREATER_EQUAL (diamond_string_compare,
-             * byte-lexicographic) -- this comment used to note that gap as
-             * a deliberate scope cut; it wasn't sustainable (see e.g.
-             * packages/active_record, packages/graphql, and examples/
-             * transformer's own workarounds sorting by an extracted Int
-             * key instead). Time keeps its own separate working
-             * comparisons untouched. */
+            /* `<=>`: an Int (-1/0/1) or Nil, never a Bool. Everything but two
+             * plain Ints is compare_fallback (src/vm_operators.c). */
             case DIAMOND_OP_COMPARE: {
                 uint16_t destination=0,left=0,right=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); left=OPERAND_SHORT(2); right=OPERAND_SHORT(4);
-                if(is_int_value(registers[left])&&is_int_value(registers[right])) {
-                    if(value_is_bignum(registers[left])||value_is_bignum(registers[right])) {
-                        DiamondIntView left_view,right_view;
-                        diamond_int_view(registers[left],&left_view);
-                        diamond_int_view(registers[right],&right_view);
-                        const int comparison=diamond_bignum_compare(left_view,right_view);
-                        registers[destination]=
-                            DIAMOND_INT(comparison<0?-1:comparison>0?1:0);
-                        break;
-                    }
+                if(registers[left].kind==DIAMOND_VALUE_INT&&
+                   registers[right].kind==DIAMOND_VALUE_INT&&
+                   !value_is_bignum(registers[left])&&
+                   !value_is_bignum(registers[right])) {
                     const int64_t a=registers[left].as.integer;
                     const int64_t b=registers[right].as.integer;
                     registers[destination]=DIAMOND_INT(a<b?-1:(a>b?1:0));
                     break;
                 }
-                if((registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[left].kind==DIAMOND_VALUE_INT)&&
-                   (registers[right].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_INT)&&
-                   (registers[left].kind==DIAMOND_VALUE_FLOAT||
-                    registers[right].kind==DIAMOND_VALUE_FLOAT)) {
-                    const double left_real=registers[left].kind==DIAMOND_VALUE_FLOAT?
-                        registers[left].as.real:(double)registers[left].as.integer;
-                    const double right_real=registers[right].kind==DIAMOND_VALUE_FLOAT?
-                        registers[right].as.real:(double)registers[right].as.integer;
-                    if(isnan(left_real)||isnan(right_real)) {
-                        registers[destination]=DIAMOND_NIL;break;
-                    }
-                    registers[destination]=DIAMOND_INT(
-                        left_real<right_real?-1:(left_real>right_real?1:0));
-                    break;
-                }
-                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[left].as.object->kind==DIAMOND_OBJECT_STRING&&
-                   registers[right].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[right].as.object->kind==DIAMOND_OBJECT_STRING) {
-                    const int comparison=diamond_string_compare(
-                        (const DiamondString *)registers[left].as.object,
-                        (const DiamondString *)registers[right].as.object);
-                    registers[destination]=DIAMOND_INT(comparison<0?-1:(comparison>0?1:0));
-                    break;
-                }
-                if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
-                   registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
-                    bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
-                    const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
-                        site,(const DiamondInstance *)registers[left].as.object,
-                        "<=>",3,&registers[right],1,&op_result,&found);
-                    if(found) {
-                        VM_PROPAGATE(status);
-                        registers[destination]=op_result;break;
-                    }
-                }
-                registers[destination]=DIAMOND_NIL;break;
+                DiamondValue compare_result=DIAMOND_NIL;
+                const DiamondVmStatus compare_status=compare_fallback(vm,chunk,depth,
+                    instruction_offset,registers[left],registers[right],&compare_result);
+                VM_PROPAGATE(compare_status);
+                registers[destination]=compare_result;
+                break;
             }
             case DIAMOND_OP_CASE_MATCH: {
                 uint16_t destination=0,pattern=0,subject=0;
@@ -1416,19 +1325,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     /* Bindings are derived from the arguments of every call, as at
                      * entry, so the next iteration may bind different types. */
                     if (chunk != &execution) execution = *chunk;
-                    memset(bindings, 0, chunk->type_variable_count * sizeof(DiamondTypeBinding));
-                    for (size_t parameter = 0;
-                         parameter < DIAMOND_MAX_DECLARED_PARAMETERS &&
-                         parameter + chunk->parameter_offset < argument_count;
-                         parameter++) {
-                        if (arguments[parameter + chunk->parameter_offset].kind ==
-                            DIAMOND_VALUE_UNDEFINED) continue;
-                        const uint16_t set = chunk->parameter_type_sets[parameter];
-                        if (set != DIAMOND_NO_TYPE_SET && set < chunk->type_set_count)
-                            infer_from_value(chunk,
-                                arguments[parameter + chunk->parameter_offset],
-                                chunk->type_sets, set, bindings);
-                    }
+                    infer_argument_bindings(chunk, arguments, argument_count, bindings);
                     execution.type_variable_bindings = bindings;
                     chunk = &execution;
                     frame.chunk = chunk;
