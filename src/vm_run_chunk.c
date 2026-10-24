@@ -2611,6 +2611,291 @@ static DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *
     registers[dest]=call_result;HELPER_DONE;
 }
 
+/* tap() on a native receiver, moved out of run_chunk's INVOKE case (the name check stays inline).
+ * The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_invoke_tap(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,size_t depth) {
+    if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
+    /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
+    if(called->foreign_chunk!=nullptr) {
+        snprintf(vm->error,sizeof vm->error,
+            "a compile_method callable can only be passed to define_method");
+        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+    }
+    if(called->function_index>=chunk->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *fn=chunk->functions[called->function_index];
+    DiamondValue tap_argument[1]={registers[recv]};
+    DiamondValue tap_result=DIAMOND_NIL;
+    const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
+        called,tap_argument,0,1,depth,&tap_result);
+    VM_PROPAGATE(tap_status);
+    registers[dest]=registers[recv];return DIAMOND_VM_OK;
+}
+
+/* Array#shuffle and #sample, moved out of run_chunk's INVOKE case (the name check stays inline).
+ * The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_array_shuffle_sample(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t dest,
+        const DiamondStringConstant *method_name) {
+    const DiamondArray *source=(const DiamondArray *)registers[recv].as.object;
+    const bool sample=method_name->length==6;
+    if(sample&&source->count==0) {registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;}
+    DiamondArray *shuffled=sample?nullptr:
+        allocate_array(vm,source->values,source->count);
+    if(!sample&&shuffled==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    const size_t rounds=sample?1:(shuffled->count>0?shuffled->count-1:0);
+    for(size_t round=0;round<rounds;round++) {
+        const uint64_t bound=sample?(uint64_t)source->count:
+            (uint64_t)(shuffled->count-round);
+        const uint64_t limit=UINT64_MAX-UINT64_MAX%bound;
+        uint64_t draw=0;
+        do {
+            if(RAND_bytes((unsigned char *)&draw,sizeof draw)!=1) {
+                snprintf(vm->error,sizeof vm->error,
+                    "Array#%s: RAND_bytes failed",sample?"sample":"shuffle");
+                VM_RETURN(DIAMOND_VM_IO_ERROR);
+            }
+        } while(draw>=limit);
+        const size_t pick=(size_t)(draw%bound);
+        if(sample) {registers[dest]=source->values[pick];break;}
+        const size_t last=shuffled->count-1-round;
+        const DiamondValue held=shuffled->values[last];
+        shuffled->values[last]=shuffled->values[pick];
+        shuffled->values[pick]=held;
+    }
+    if(!sample)registers[dest]=DIAMOND_OBJECT(shuffled);
+    return DIAMOND_VM_OK;
+}
+
+/* Callable#arity, moved out of run_chunk's INVOKE case (the name check stays inline). The caller
+ * applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_callable_arity(const DiamondChunk *chunk,DiamondValue *registers,
+        uint16_t recv,uint16_t dest) {
+    const DiamondClosure *callable=
+        (const DiamondClosure *)registers[recv].as.object;
+    const DiamondChunk *owner=callable->foreign_chunk!=nullptr?
+        callable->foreign_chunk:chunk;
+    if(callable->function_index>=owner->function_count)
+        VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+    const DiamondFunction *fn=owner->functions[callable->function_index];
+    const uint8_t declared=fn->has_variadic?fn->required_arity:fn->arity;
+    registers[dest]=DIAMOND_INT((int64_t)declared-
+        (int64_t)diamond_function_self_offset(fn));
+    return DIAMOND_VM_OK;
+}
+
+/* Int#to_s(base) on a bignum, moved out of run_chunk's INVOKE case (the name check stays inline).
+ * The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_bignum_to_s_base(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t base,
+        uint16_t dest) {
+    if(registers[base].kind!=DIAMOND_VALUE_INT||
+       registers[base].as.integer<2||registers[base].as.integer>36) {
+        snprintf(vm->error,sizeof vm->error,
+            "Int#to_s base must be an Int from 2 to 36");
+        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    }
+    DiamondIntView view;
+    diamond_int_view(registers[recv],&view);
+    size_t digit_count=0;
+    char *digits=diamond_bignum_to_radix_string(view,
+        (int)registers[base].as.integer,&digit_count);
+    if(digits==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    DiamondString *formatted=allocate_string(vm,digits,digit_count);
+    free(digits);
+    if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    registers[dest]=DIAMOND_OBJECT(formatted);
+    return DIAMOND_VM_OK;
+}
+
+/* to_s/to_i/to_f/abs on a bignum, moved out of run_chunk's INVOKE case (the name check stays
+ * inline). The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_bignum_convert(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t dest,
+        const DiamondStringConstant *method_name) {
+    DiamondIntView view;
+    diamond_int_view(registers[recv],&view);
+    if(method_name->chars[0]=='a') {
+        if(view.negative) {
+            const DiamondValue positive=diamond_bignum_negate(vm,view);
+            if(positive.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+            registers[dest]=positive;
+        } else registers[dest]=registers[recv];
+    } else if(method_name->chars[3]=='i') {
+        registers[dest]=registers[recv];
+    } else if(method_name->chars[3]=='f') {
+        registers[dest]=DIAMOND_FLOAT(diamond_bignum_to_double(
+            (const DiamondBignum *)registers[recv].as.object));
+    } else {
+        StringBuilder text={};
+        if(!builder_format_value(&text,registers[recv])) {
+            free(text.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        }
+        DiamondString *formatted=allocate_string(vm,text.chars,text.length);
+        free(text.chars);
+        if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        registers[dest]=DIAMOND_OBJECT(formatted);
+    }
+    return DIAMOND_VM_OK;
+}
+
+/* run_chunk's INVOKE dispatch for the native handle kinds from Channel through ProgramBuilder, moved
+ * out of the case. Sets *handled to false, returning DIAMOND_VM_OK, when receiver_kind is none of
+ * them; the caller skips the call for an Instance. The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_native_object_invoke(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,
+        const DiamondStringConstant *method_name,uint8_t type_argument_count,DiamondObjectKind receiver_kind,
+        bool *handled) {
+    *handled=true;
+    if(receiver_kind==DIAMOND_OBJECT_CHANNEL) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=channel_invoke_helper(
+            vm,chunk,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_SUPERVISOR) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=supervisor_invoke_helper(
+            vm,chunk,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_FILE) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=file_invoke_helper(
+            vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_LISTENER) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=listener_invoke_helper(
+            vm,chunk,depth,registers,recv,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_SOCKET) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=socket_invoke_helper(
+            vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_UDP_SOCKET) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=udp_socket_invoke_helper(
+            vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_TLS_SOCKET) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=tls_socket_invoke_helper(
+            vm,chunk,depth,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=regexp_invoke_helper(
+            vm,registers,recv,base,argc,dest,method_name);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_SQLITE3) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=sqlite3_dispatch_helper(vm,
+            (DiamondSqlite3Handle *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_TENSOR) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=tensor_dispatch_helper(vm,
+            (DiamondTensor *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=sqlite3_statement_dispatch_helper(vm,
+            (DiamondSqlite3StatementHandle *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_POSTGRES) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=postgres_dispatch_helper(vm,
+            (DiamondPostgresHandle *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_MYSQL) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=mysql_dispatch_helper(vm,
+            (DiamondMysqlHandle *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_TIME) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=time_dispatch_helper(vm,
+            (DiamondTime *)registers[recv].as.object,
+            method_name,registers,base,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_PROCESS_RESULT) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=process_result_dispatch_helper(vm,
+            (DiamondProcessResult *)registers[recv].as.object,
+            method_name,registers,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=process_handle_dispatch_helper(vm,
+            (DiamondProcessHandle *)registers[recv].as.object,
+            method_name,registers,argc,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_PROCESS_STREAM) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        const DiamondVmStatus dispatch_status=process_stream_dispatch_helper(vm,
+            (DiamondProcessStream *)registers[recv].as.object,
+            method_name,registers,argc,base,dest);
+        VM_PROPAGATE(dispatch_status);
+        return DIAMOND_VM_OK;
+    }
+    if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
+        if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
+        DiamondValue invoke_result=DIAMOND_NIL;
+        const DiamondVmStatus invoke_status=program_builder_invoke_helper(vm,
+            (DiamondProgramBuilder *)registers[recv].as.object,method_name,
+            registers,base,argc,depth,&invoke_result);
+        VM_PROPAGATE(invoke_status);
+        registers[dest]=invoke_result;return DIAMOND_VM_OK;
+    }
+    *handled=false;
+    return DIAMOND_VM_OK;
+}
+
 /* DIAMOND_OP_BREAKPOINT_CHECK, moved out of run_chunk's switch (see HELPER_DONE below): the case
  * body is unchanged apart from its macros, so it keeps the operand decoding, sandbox check and
  * error returns it had. The caller applies VM_PROPAGATE to the status. */
@@ -4478,26 +4763,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     if(method_name->length==3&&
                        memcmp(method_name->chars,"tap",3)==0) {
                         if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                        if(argc!=1)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                        if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
-                           registers[base].as.object->kind!=DIAMOND_OBJECT_CLOSURE)
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        DiamondClosure *called=(DiamondClosure *)registers[base].as.object;
-                        /* See DIAMOND_OP_CALL_CLOSURE's own comment. */
-                        if(called->foreign_chunk!=nullptr) {
-                            snprintf(vm->error,sizeof vm->error,
-                                "a compile_method callable can only be passed to define_method");
-                            VM_RETURN(DIAMOND_VM_TYPE_ERROR);
-                        }
-                        if(called->function_index>=chunk->function_count)
-                            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                        const DiamondFunction *fn=chunk->functions[called->function_index];
-                        DiamondValue tap_argument[1]={registers[recv]};
-                        DiamondValue tap_result=DIAMOND_NIL;
-                        const DiamondVmStatus tap_status=call_closure_helper(vm,chunk,fn,
-                            called,tap_argument,0,1,depth,&tap_result);
+                        const DiamondVmStatus tap_status=outlined_invoke_tap(vm,chunk,registers,recv,base,argc,dest,depth);
                         VM_PROPAGATE(tap_status);
-                        registers[dest]=registers[recv];break;
+                        break;
                     }
                     /* Array#shuffle and #sample: uniform choices from
                      * OpenSSL's RAND_bytes (as SecureRandom uses), with
@@ -4507,33 +4775,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                        argc==0&&type_argument_count==0&&
                        ((method_name->length==7&&memcmp(method_name->chars,"shuffle",7)==0)||
                         (method_name->length==6&&memcmp(method_name->chars,"sample",6)==0))) {
-                        const DiamondArray *source=(const DiamondArray *)registers[recv].as.object;
-                        const bool sample=method_name->length==6;
-                        if(sample&&source->count==0) {registers[dest]=DIAMOND_NIL;break;}
-                        DiamondArray *shuffled=sample?nullptr:
-                            allocate_array(vm,source->values,source->count);
-                        if(!sample&&shuffled==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        const size_t rounds=sample?1:(shuffled->count>0?shuffled->count-1:0);
-                        for(size_t round=0;round<rounds;round++) {
-                            const uint64_t bound=sample?(uint64_t)source->count:
-                                (uint64_t)(shuffled->count-round);
-                            const uint64_t limit=UINT64_MAX-UINT64_MAX%bound;
-                            uint64_t draw=0;
-                            do {
-                                if(RAND_bytes((unsigned char *)&draw,sizeof draw)!=1) {
-                                    snprintf(vm->error,sizeof vm->error,
-                                        "Array#%s: RAND_bytes failed",sample?"sample":"shuffle");
-                                    VM_RETURN(DIAMOND_VM_IO_ERROR);
-                                }
-                            } while(draw>=limit);
-                            const size_t pick=(size_t)(draw%bound);
-                            if(sample) {registers[dest]=source->values[pick];break;}
-                            const size_t last=shuffled->count-1-round;
-                            const DiamondValue held=shuffled->values[last];
-                            shuffled->values[last]=shuffled->values[pick];
-                            shuffled->values[pick]=held;
-                        }
-                        if(!sample)registers[dest]=DIAMOND_OBJECT(shuffled);
+                        const DiamondVmStatus shuffle_status=outlined_array_shuffle_sample(vm,registers,recv,dest,method_name);
+                        VM_PROPAGATE(shuffle_status);
                         break;
                     }
                     /* nil?() on any built-in value, as in Ruby. */
@@ -4551,16 +4794,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                        argc==0&&type_argument_count==0&&
                        registers[recv].kind==DIAMOND_VALUE_OBJECT&&
                        registers[recv].as.object->kind==DIAMOND_OBJECT_CLOSURE) {
-                        const DiamondClosure *callable=
-                            (const DiamondClosure *)registers[recv].as.object;
-                        const DiamondChunk *owner=callable->foreign_chunk!=nullptr?
-                            callable->foreign_chunk:chunk;
-                        if(callable->function_index>=owner->function_count)
-                            VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
-                        const DiamondFunction *fn=owner->functions[callable->function_index];
-                        const uint8_t declared=fn->has_variadic?fn->required_arity:fn->arity;
-                        registers[dest]=DIAMOND_INT((int64_t)declared-
-                            (int64_t)diamond_function_self_offset(fn));
+                        const DiamondVmStatus arity_status=outlined_callable_arity(chunk,registers,recv,dest);
+                        VM_PROPAGATE(arity_status);
                         break;
                     }
                     /* to_s() on any built-in value: the same text string
@@ -4652,22 +4887,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 /* Int#to_s(base) on a promoted Int: digits in base 2..36. */
                 if(value_is_bignum(registers[recv])&&argc==1&&
                    method_name->length==4&&memcmp(method_name->chars,"to_s",4)==0) {
-                    if(registers[base].kind!=DIAMOND_VALUE_INT||
-                       registers[base].as.integer<2||registers[base].as.integer>36) {
-                        snprintf(vm->error,sizeof vm->error,
-                            "Int#to_s base must be an Int from 2 to 36");
-                        VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-                    }
-                    DiamondIntView view;
-                    diamond_int_view(registers[recv],&view);
-                    size_t digit_count=0;
-                    char *digits=diamond_bignum_to_radix_string(view,
-                        (int)registers[base].as.integer,&digit_count);
-                    if(digits==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    DiamondString *formatted=allocate_string(vm,digits,digit_count);
-                    free(digits);
-                    if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                    registers[dest]=DIAMOND_OBJECT(formatted);
+                    const DiamondVmStatus radix_status=outlined_bignum_to_s_base(vm,registers,recv,base,dest);
+                    VM_PROPAGATE(radix_status);
                     break;
                 }
                 /* An Int past 64 bits is a bignum object; give it the same
@@ -4677,29 +4898,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                      memcmp(method_name->chars,"to_i",4)==0||
                      memcmp(method_name->chars,"to_f",4)==0))||
                     (method_name->length==3&&memcmp(method_name->chars,"abs",3)==0))) {
-                    DiamondIntView view;
-                    diamond_int_view(registers[recv],&view);
-                    if(method_name->chars[0]=='a') {
-                        if(view.negative) {
-                            const DiamondValue positive=diamond_bignum_negate(vm,view);
-                            if(positive.kind==DIAMOND_VALUE_NIL)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                            registers[dest]=positive;
-                        } else registers[dest]=registers[recv];
-                    } else if(method_name->chars[3]=='i') {
-                        registers[dest]=registers[recv];
-                    } else if(method_name->chars[3]=='f') {
-                        registers[dest]=DIAMOND_FLOAT(diamond_bignum_to_double(
-                            (const DiamondBignum *)registers[recv].as.object));
-                    } else {
-                        StringBuilder text={};
-                        if(!builder_format_value(&text,registers[recv])) {
-                            free(text.chars);VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        }
-                        DiamondString *formatted=allocate_string(vm,text.chars,text.length);
-                        free(text.chars);
-                        if(formatted==nullptr)VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-                        registers[dest]=DIAMOND_OBJECT(formatted);
-                    }
+                    const DiamondVmStatus convert_status=outlined_bignum_convert(vm,registers,recv,dest,method_name);
+                    VM_PROPAGATE(convert_status);
                     break;
                 }
                 if(registers[recv].kind==DIAMOND_VALUE_INT||
@@ -4761,142 +4961,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     VM_PROPAGATE(dispatch_status);
                     break;
                 }
-                if(receiver_kind==DIAMOND_OBJECT_CHANNEL) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=channel_invoke_helper(
-                        vm,chunk,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_SUPERVISOR) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=supervisor_invoke_helper(
-                        vm,chunk,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_FILE) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=file_invoke_helper(
-                        vm,chunk,depth,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_LISTENER) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=listener_invoke_helper(
-                        vm,chunk,depth,registers,recv,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_SOCKET) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=socket_invoke_helper(
-                        vm,chunk,depth,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_UDP_SOCKET) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=udp_socket_invoke_helper(
-                        vm,chunk,depth,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_TLS_SOCKET) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=tls_socket_invoke_helper(
-                        vm,chunk,depth,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_REGEXP) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=regexp_invoke_helper(
-                        vm,registers,recv,base,argc,dest,method_name);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_SQLITE3) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=sqlite3_dispatch_helper(vm,
-                        (DiamondSqlite3Handle *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_TENSOR) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=tensor_dispatch_helper(vm,
-                        (DiamondTensor *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_SQLITE3_STATEMENT) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=sqlite3_statement_dispatch_helper(vm,
-                        (DiamondSqlite3StatementHandle *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_POSTGRES) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=postgres_dispatch_helper(vm,
-                        (DiamondPostgresHandle *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_MYSQL) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=mysql_dispatch_helper(vm,
-                        (DiamondMysqlHandle *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_TIME) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=time_dispatch_helper(vm,
-                        (DiamondTime *)registers[recv].as.object,
-                        method_name,registers,base,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_PROCESS_RESULT) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=process_result_dispatch_helper(vm,
-                        (DiamondProcessResult *)registers[recv].as.object,
-                        method_name,registers,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_PROCESS_HANDLE) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=process_handle_dispatch_helper(vm,
-                        (DiamondProcessHandle *)registers[recv].as.object,
-                        method_name,registers,argc,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_PROCESS_STREAM) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    const DiamondVmStatus dispatch_status=process_stream_dispatch_helper(vm,
-                        (DiamondProcessStream *)registers[recv].as.object,
-                        method_name,registers,argc,base,dest);
-                    VM_PROPAGATE(dispatch_status);
-                    break;
-                }
-                if(receiver_kind==DIAMOND_OBJECT_PROGRAM_BUILDER) {
-                    if(type_argument_count!=0)VM_REJECT_TYPE_ARGUMENTS(method_name);
-                    DiamondValue invoke_result=DIAMOND_NIL;
-                    const DiamondVmStatus invoke_status=program_builder_invoke_helper(vm,
-                        (DiamondProgramBuilder *)registers[recv].as.object,method_name,
-                        registers,base,argc,depth,&invoke_result);
-                    VM_PROPAGATE(invoke_status);
-                    registers[dest]=invoke_result;break;
+                if(receiver_kind!=DIAMOND_OBJECT_INSTANCE) {
+                    bool native_handled=false;
+                    const DiamondVmStatus native_status=outlined_native_object_invoke(vm,chunk,depth,registers,recv,base,
+                        argc,dest,method_name,type_argument_count,receiver_kind,&native_handled);
+                    VM_PROPAGATE(native_status);
+                    if(native_handled)break;
                 }
                 /* A thin wrapper around diamond_jit_invoke_instance -- the
                  * same function src/jit.c's own compile_invoke_self calls
