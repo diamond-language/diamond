@@ -110,6 +110,7 @@ exception, below). 123 `*_helper` functions
 | `vm_collections.c` | the Array/Hash/String and Int/Float method dispatch (`collection_invoke_helper`, `numeric_invoke_helper`), the prelude-bridged collection methods, and `respond_to?` for built-in receivers |
 | `vm_gc.c` | the garbage collector: marking (roots, frames, fibers, the remembered set), `sweep_list`, the card-marking write barriers, and `diamond_vm_collect`/`_minor` (allocation accounting and `maybe_collect` stay in `vm.c` with the resource budgets) |
 | `vm_operators.c` | user-defined operator dispatch (`invoke_operator_method`), `case`/`when` matching, `method_missing`, the `+` fallbacks and the Int arithmetic and comparison slow paths (`int_arith_slow`, `compare_int_slow`) |
+| `vm_exceptions.c` | catching exceptions and runtime errors in a frame's rescue handlers (`catch_exception`, `catch_runtime_error`), arity-error messages, and non-local `break`/`return` arrival (`nonlocal_exit_arrives`) |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
