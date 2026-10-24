@@ -1665,5 +1665,64 @@ DIAMOND_INTERNAL DiamondArray *allocate_array_uninitialized(DiamondVm *vm,size_t
 /* vm_limits.c */
 DIAMOND_INTERNAL void budget_register(DiamondVm *vm);
 DIAMOND_INTERNAL void budget_unregister(DiamondVm *vm);
+/* vm_outlined.c: run_chunk's outlined case bodies (see docs/internal/vm-source-layout.md) */
+DIAMOND_INTERNAL DiamondVmStatus outlined_tls_connect(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_mysql_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_file_path(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_tcp_listen_nonblock(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_channel_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_dir_entries(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_postgres_open(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_compile_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_thread_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_supervisor_new(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_define_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_redefine_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_channel_select(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_channel_select_send(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_io_poll(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_call_singleton_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_call_singleton_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_new_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_keywords(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,uint8_t instruction,size_t *ip_ref);
+DIAMOND_INTERNAL DiamondVmStatus outlined_invoke_tap(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,size_t depth);
+DIAMOND_INTERNAL DiamondVmStatus outlined_array_shuffle_sample(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t dest,
+        const DiamondStringConstant *method_name);
+DIAMOND_INTERNAL DiamondVmStatus outlined_callable_arity(const DiamondChunk *chunk,DiamondValue *registers,
+        uint16_t recv,uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus outlined_bignum_to_s_base(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t base,
+        uint16_t dest);
+DIAMOND_INTERNAL DiamondVmStatus outlined_bignum_convert(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t dest,
+        const DiamondStringConstant *method_name);
+DIAMOND_INTERNAL DiamondVmStatus outlined_native_object_invoke(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,
+        const DiamondStringConstant *method_name,uint8_t type_argument_count,DiamondObjectKind receiver_kind,
+        bool *handled);
+DIAMOND_INTERNAL DiamondVmStatus outlined_breakpoint_check(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t instruction_offset,size_t *ip_ref);
 
 #endif
