@@ -838,3 +838,185 @@ DiamondVmStatus time_dispatch_helper(DiamondVm *vm,DiamondTime *target,
         (int)method_name->length,method_name->chars,"Time");
     return DIAMOND_VM_TYPE_ERROR;
 }
+
+/* strftime's %z conversion for a FIXED_OFFSET Time depends on the
+ * platform's libc trusting the tm_gmtoff time_struct_tm just hand-
+ * patched into a gmtime_r-produced struct, above. glibc does; Darwin's
+ * libc doesn't -- confirmed directly on test-macos-ci's own CI run: a
+ * +05:30 and a -08:00 fixed offset both came back "+0000", the same
+ * value gmtime_r's own untouched tm_gmtoff would give, meaning Darwin's
+ * %z isn't reading the field back at all. Substituting the directive
+ * ourselves before the format string ever reaches the real strftime
+ * sidesteps the platform discrepancy instead of depending on it -- every
+ * other directive (including %Z, not exercised by any current caller)
+ * still goes through libc unchanged. UTC and Local modes need no
+ * equivalent: UTC's real offset is genuinely zero, so gmtime_r's own
+ * untouched tm_gmtoff already happens to be correct everywhere, and
+ * Local's tm_gmtoff comes from the OS's own localtime_r rather than a
+ * hand-patched struct, so whatever the platform's strftime does with it
+ * is by definition correct for that platform. */
+char *substitute_fixed_offset_z(const char *format,int64_t offset) {
+    char zone[8];
+    const int64_t absolute=offset<0?-offset:offset;
+    const int written=snprintf(zone,sizeof zone,"%c%02" PRId64 "%02" PRId64,
+        offset<0?'-':'+',absolute/3600,(absolute%3600)/60);
+    if(written<0||(size_t)written>=sizeof zone)return nullptr;
+    const size_t zone_length=(size_t)written;
+    size_t out_length=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%'){out_length+=2;index+=2;continue;}
+        if(format[index]=='%'&&format[index+1]=='z'){out_length+=zone_length;index+=2;continue;}
+        out_length++;index++;
+    }
+    char *result=malloc(out_length+1);
+    if(result==nullptr)return nullptr;
+    size_t out=0;
+    for(size_t index=0;format[index]!='\0';) {
+        if(format[index]=='%'&&format[index+1]=='%') {
+            result[out++]='%';result[out++]='%';index+=2;continue;
+        }
+        if(format[index]=='%'&&format[index+1]=='z') {
+            memcpy(result+out,zone,zone_length);out+=zone_length;index+=2;continue;
+        }
+        result[out++]=format[index++];
+    }
+    result[out]='\0';
+    return result;
+}
+
+/* Parses the deliberately narrow fixed-offset spelling accepted by
+ * Time#localtime: "Z" or a signed ISO-8601-style "HH:MM[:SS]". Named zones and
+ * process-global TZ mutation remain out of scope. */
+bool parse_time_utc_offset_chars(const char *chars,size_t length,
+        int32_t *out_offset) {
+    if(length==1&&chars[0]=='Z') {
+        *out_offset=0;return true;
+    }
+    if((length!=6&&length!=9)||(chars[0]!='+'&&chars[0]!='-')||chars[3]!=':'||
+       chars[1]<'0'||chars[1]>'9'||chars[2]<'0'||chars[2]>'9'||
+       chars[4]<'0'||chars[4]>'9'||chars[5]<'0'||chars[5]>'9'||
+       (length==9&&(chars[6]!=':'||chars[7]<'0'||chars[7]>'9'||
+                    chars[8]<'0'||chars[8]>'9')))return false;
+    const int hours=(chars[1]-'0')*10+(chars[2]-'0');
+    const int minutes=(chars[4]-'0')*10+(chars[5]-'0');
+    const int extra_seconds=length==9?(chars[7]-'0')*10+(chars[8]-'0'):0;
+    if(hours>23||minutes>59||extra_seconds>59)return false;
+    const int seconds=hours*3600+minutes*60+extra_seconds;
+    *out_offset=(int32_t)(chars[0]=='-'?-seconds:seconds);
+    return true;
+}
+
+bool parse_time_utc_offset(const DiamondString *string,int32_t *out_offset) {
+    return parse_time_utc_offset_chars(string->chars,string->length,out_offset);
+}
+
+int parse_decimal_digits(const char *chars,size_t start,size_t count) {
+    int value=0;
+    for(size_t index=0;index<count;index++) {
+        const char digit=chars[start+index];
+        if(digit<'0'||digit>'9')return -1;
+        value=value*10+(digit-'0');
+    }
+    return value;
+}
+
+int days_in_calendar_month(int year,int month);
+
+int days_in_calendar_month(int year,int month) {
+    static const int days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    if(month!=2)return days[month-1];
+    return days[1]+((year%4==0&&year%100!=0)||year%400==0?1:0);
+}
+
+/* Number of calendar days needed to move `count` Monday-Friday days. The
+ * closed form keeps large counts O(1); callers separately bound the result to
+ * time_calendar_shift_helper's supported calendar range. */
+int64_t weekday_calendar_distance(int wday,int64_t count,bool future) {
+    if(count==0)return 0;
+    int64_t days=0;
+    if(future) {
+        if(wday==6) { days=2;count--;wday=1; }
+        else if(wday==0) { days=1;count--;wday=1; }
+        if(count==0)return days;
+        if(count<=5-wday)return days+count;
+        days+=8-wday;count-=6-wday;
+    } else {
+        if(wday==6) { days=1;count--;wday=5; }
+        else if(wday==0) { days=2;count--;wday=5; }
+        if(count==0)return days;
+        if(count<=wday-1)return days+count;
+        days+=wday+2;count-=wday;
+    }
+    return days+(count/5)*7+count%5;
+}
+
+/* Writes `target`'s default string representation ("2026-08-30
+ * 12:30:00 UTC" / "... +0000" / a fixed-offset zone) into `buffer`,
+ * returning the length written, or 0 on failure (an invalid struct tm,
+ * or `capacity` too small for strftime's own output). Exported (vm.h)
+ * so src/value.c's diamond_value_fprint -- the CLI's own top-level-
+ * result auto-print -- can share this instead of falling back to the
+ * generic "#<Time>" placeholder diamond_format_value_type gives every
+ * other unhandled kind: a real, if less severe, instance of the exact
+ * "#<Closure>" duplication bug just fixed (see CHANGELOG's Unreleased
+ * entry) -- value.c's own Time case was simply missing before this,
+ * not just misnamed. */
+size_t diamond_format_time_default(const DiamondTime *target,char *buffer,size_t capacity) {
+    struct tm parts;
+    if(!time_struct_tm(target,&parts))return 0;
+    const char *format=target->zone_mode==DIAMOND_TIME_UTC?
+        "%Y-%m-%d %H:%M:%S UTC":"%Y-%m-%d %H:%M:%S %z";
+    char *substituted=nullptr;
+    if(target->zone_mode==DIAMOND_TIME_FIXED_OFFSET) {
+        substituted=substitute_fixed_offset_z(format,target->utc_offset);
+        if(substituted==nullptr)return 0;
+        format=substituted;
+    }
+    const size_t length=strftime(buffer,capacity,format,&parts);
+    free(substituted);
+    return length;
+}
+
+/* Shared by #to_s and puts/string-interpolation's own stringify path
+ * (see builder_format_value/stringify_value) -- one formatting
+ * implementation, not two. */
+bool format_time_default(const DiamondTime *target,StringBuilder *builder) {
+    char buffer[64];
+    const size_t length=diamond_format_time_default(target,buffer,sizeof buffer);
+    if(length==0)return false;
+    return builder_append(builder,buffer,length);
+}
+
+bool format_time_iso8601(const DiamondTime *target,int precision,
+        StringBuilder *builder) {
+    struct tm parts;
+    if(!time_struct_tm(target,&parts))return false;
+    char calendar[32];
+    const size_t calendar_length=strftime(calendar,sizeof calendar,
+        "%Y-%m-%dT%H:%M:%S",&parts);
+    if(calendar_length==0||!builder_append(builder,calendar,calendar_length))return false;
+    if(precision>0) {
+        uint64_t scale=1;
+        for(int index=0;index<precision;index++)scale*=10;
+        const double whole=floor(target->epoch);
+        const uint64_t fraction=(uint64_t)((target->epoch-whole)*(double)scale);
+        char fraction_buffer[16];
+        const int length=snprintf(fraction_buffer,sizeof fraction_buffer,".%0*" PRIu64,
+            precision,fraction);
+        if(length<0||!builder_append(builder,fraction_buffer,(size_t)length))return false;
+    }
+    if(target->zone_mode==DIAMOND_TIME_UTC)return builder_append(builder,"Z",1);
+    const int64_t offset=target->zone_mode==DIAMOND_TIME_FIXED_OFFSET?
+        target->utc_offset:(int64_t)parts.tm_gmtoff;
+    const uint64_t absolute=(uint64_t)(offset<0?-offset:offset);
+    const uint64_t hours=absolute/3600;
+    const uint64_t minutes=(absolute%3600)/60;
+    const uint64_t seconds=absolute%60;
+    char zone[24];
+    const int length=seconds==0?
+        snprintf(zone,sizeof zone,"%c%02" PRIu64 ":%02" PRIu64,
+            offset<0?'-':'+',hours,minutes):
+        snprintf(zone,sizeof zone,"%c%02" PRIu64 ":%02" PRIu64 ":%02" PRIu64,
+            offset<0?'-':'+',hours,minutes,seconds);
+    return length>=0&&builder_append(builder,zone,(size_t)length);
+}
