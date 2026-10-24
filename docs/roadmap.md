@@ -8,10 +8,51 @@ done yet; when something lands, delete it (see "Completion policy").
 Diamond is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
-Current focus is closing concrete concurrency gaps. Tooling is in adequate shape,
-and broader reliability work waits for usage beyond the current two users; existing
-verification remains required. Package development prioritizes Mjolnir, with
-ActiveRecord in the background. Further JIT work is optional and measurement-driven.
+Current focus is 0.19.x: finishing the refactor of oversized source files and
+functions, shipped as one or more point releases. 0.20 then focuses on tooling and
+documentation: a clear path from installation to a first working app. Broader
+reliability work waits for usage beyond the current two users; existing verification
+remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
+background. Further JIT work is optional and measurement-driven.
+
+## 0.19.x: finish the source refactor
+
+Target: no function over about 200 lines other than `run_chunk`'s dispatch switch,
+and no file far past 3,000 lines. Each step is a behavior-preserving move or split,
+verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
+is done"), with release benchmarks treated as a no-regression check.
+
+- **`run_chunk`'s `INVOKE_TYPED` case** (473 lines) -- the special-method chain for
+  native receivers (`public_send`, `tap`, `shuffle`/`sample`, `arity`, `to_s`/`inspect`,
+  the `dup` family, bignum formatting) runs on every native-receiver call, so keep the
+  name checks inline and outline only the bodies they select.
+- **The rest of `run_chunk`** (3,775 lines) -- the remaining larger cases (`TAIL_CALL`,
+  132 lines; integer division, modulo and comparison) only where outlining measures
+  neutral. The `outlined_*` case helpers could move to their own file.
+- **`vm.c`** (10,338 lines) -- continue splitting by subsystem.
+- **`tools/facet.c`** (3,635 lines) -- split by subcommand.
+- **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
+  `compiler_builtins.c` (2,600-2,700 lines each).
+- **Functions over 200 lines** -- `compile_body` (jit.c), `compile_definition`,
+  `parse_definition_parameters`, `compile_block`, `diamond_repl_run`,
+  `diamond_compile_impl`, `outlined_tls_connect`, `outlined_invoke_spread`,
+  `channel_invoke_helper`, `process_run_with_options`, and the two largest
+  disassembler functions.
+- **Call-depth limit** -- `run_chunk`'s frame is now about 40% smaller at `-O3` and
+  60% smaller under ASan, so `DIAMOND_MAX_CALL_DEPTH` (92) could be raised. It is
+  user-visible and must be recalibrated on every build variant (see its comment in
+  `src/vm_internal.h`).
+
+## 0.20: from installation to a first app
+
+- **Getting-started guide** -- one path from installing Diamond through the REPL, a
+  first script, a project with a `diamond.cut` and dependencies, tests, and
+  `diamond build`/deployment. That material is now spread across the README and
+  the topic guides, and `docs/` has no reading order.
+- **Project generators** -- a command that creates a runnable, tested skeleton per kind
+  of app: command-line tool, Rack web app, TCP/UDP server, and library cut. Each
+  generated project should pass its own tests out of the box, checked in CI. Open
+  question: `diamond new` or `facet new` (`facet init` today only writes a manifest).
 
 ## Candidate work
 
