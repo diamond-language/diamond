@@ -25,7 +25,6 @@ is done"), with release benchmarks treated as a no-regression check.
 - **The rest of `run_chunk`** (3,559 lines) -- the remaining larger cases (`TAIL_CALL`,
   132 lines; integer division, modulo and comparison) only where outlining measures
   neutral.
-- **`vm.c`** (2,433 lines) -- continue splitting by subsystem.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 
