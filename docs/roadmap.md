@@ -28,12 +28,15 @@ is done"), with release benchmarks treated as a no-regression check.
   switch's range check. Folding the two per-VM flags into one may save two. GCC also
   leaves a callee-saved register idle in the hot loop while spilling `bytecode` and
   `registers`; check with callgrind per-call counts and with cycles on clang too.
-- **The rest of `run_chunk`** (3,632 lines), after the dispatch item -- draft PR #330
-  moves `MODULO`'s and `<=>`'s slow paths into `vm_operators.c` and shares the
-  type-binding loop between entry and `TAIL_CALL`. Instruction counts are flat and
-  clang cycles improve, but GCC cycles move with layout (closures +15%, SkindicateV3's
-  front page about 6% slower) although neither runs those opcodes. Re-measure now
-  that `ip` lives in a register; merge only if GCC is then neutral.
+- **The rest of `run_chunk`** (3,632 lines) -- draft PR #330 moves `MODULO`'s and
+  `<=>`'s slow paths into `vm_operators.c` and shares the type-binding loop between
+  entry and `TAIL_CALL`. Rebased on the register `ip`, instruction counts are flat but
+  the default GCC build is still slower on benchmarks that never run those opcodes
+  (closures about 8%, fibonacci about 5%; noise under 1%). With `-falign-functions=64
+  -falign-jumps=32 -falign-loops=32` on both builds the gap mostly closes, so this is
+  code placement, not a stall, but those flags alone are mixed on main (7 benchmarks
+  faster, 2 about 3% slower). Further outlining needs a decision on whether
+  placement-only GCC regressions block it.
   The arithmetic and comparison cases already keep only their fast paths inline.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
