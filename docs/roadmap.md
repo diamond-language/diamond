@@ -57,7 +57,7 @@ is done"), with release benchmarks treated as a no-regression check.
   attached to each release. Releases are tags only today, with no binaries. `make install`
   already honours `DESTDIR` and `PREFIX` and installs `diamond`, `facet`, `diamond-lsp`,
   `diamond-dap` and the AOT kit, but not `lib/`. The binaries link SQLite, libpq,
-  MariaDB Connector/C, OpenSSL and zlib dynamically, so each package needs the
+  MariaDB Connector/C, OpenSSL, libxcrypt and zlib dynamically, so each package needs the
   matching runtime dependencies. Needs a CI job per distribution that builds the
   package, installs it in a clean container, and runs a smoke test.
 
