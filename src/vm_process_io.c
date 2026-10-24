@@ -1397,3 +1397,335 @@ DiamondVmStatus file_sha256_helper(DiamondVm *vm,const DiamondString *path,
     *out_result=DIAMOND_OBJECT(result);
     return DIAMOND_VM_OK;
 }
+
+/* A blocking stdio read on a socket cannot be woken by an interrupt flag, and
+ * polling the descriptor first is wrong while the stream's own buffer holds
+ * input (stdio's internals are not portable: musl exposes none). Instead an
+ * interruptible VM reads a socket stream with O_NONBLOCK set for the duration
+ * of the call: a read that would block fails with EAGAIN, and the caller waits
+ * for readiness in slices (wait_fd_interruptible) and retries. Only sockets
+ * and pipes or character devices opened above descriptor 2, and only when the
+ * VM has an interrupt flag; the flag is restored on every path. The standard
+ * streams are excluded: they may be shared with the parent, which a temporary
+ * O_NONBLOCK would affect. */
+typedef struct StreamNonblocking {
+    int descriptor;
+    int saved_flags;
+} StreamNonblocking;
+
+static StreamNonblocking stream_nonblocking_begin(const DiamondVm *vm,FILE *stream) {
+    StreamNonblocking state={.descriptor=-1};
+    if(vm->interrupt_flag==nullptr)return state;
+    const int descriptor=fileno(stream);
+    struct stat info;
+    if(descriptor<0||fstat(descriptor,&info)!=0)return state;
+    /* A socket, or a pipe or character device this process opened itself
+     * (descriptors 0-2 are inherited and may be shared with the parent). */
+    const bool owned_stream=descriptor>STDERR_FILENO&&
+        (S_ISFIFO(info.st_mode)||S_ISCHR(info.st_mode));
+    if(!S_ISSOCK(info.st_mode)&&!owned_stream)return state;
+    const int flags=fcntl(descriptor,F_GETFL,0);
+    if(flags<0)return state;
+    if((flags&O_NONBLOCK)==0&&fcntl(descriptor,F_SETFL,flags|O_NONBLOCK)!=0)
+        return state;
+    /* Already non-blocking: nothing to restore, but the retry loop still
+     * applies to a read that reports EAGAIN, which is the caller's
+     * documented WouldBlock behaviour -- leave those alone. */
+    if((flags&O_NONBLOCK)!=0)return state;
+    state.descriptor=descriptor;
+    state.saved_flags=flags;
+    return state;
+}
+
+static void stream_nonblocking_end(StreamNonblocking state) {
+    if(state.descriptor>=0)(void)fcntl(state.descriptor,F_SETFL,state.saved_flags);
+}
+
+/* After a stdio read call returned short or NULL on a stream that is
+ * temporarily non-blocking: true when it only ran out of data (EAGAIN), the
+ * error indicator is cleared and the caller should wait and retry. */
+static bool stream_would_block(FILE *stream,StreamNonblocking state) {
+    if(state.descriptor<0||!ferror(stream)||
+       (errno!=EAGAIN&&errno!=EWOULDBLOCK))return false;
+    clearerr(stream);
+    return true;
+}
+
+/* Reads one line from stream into builder, growing across as many
+ * underlying fgets calls as the line needs, then strips a trailing \n
+ * and, if present, \r -- stripping happens on the accumulated line so
+ * it's correct regardless of where an fgets chunk boundary falls
+ * relative to the line ending. *saw_any is false only when zero bytes
+ * were read before EOF. */
+static DiamondVmStatus read_line_direct(DiamondVm *vm,FILE *stream,StringBuilder *builder,
+                                 bool *saw_any) {
+    char chunk_buffer[256];
+    *saw_any=false;
+    const StreamNonblocking nonblocking=stream_nonblocking_begin(vm,stream);
+    errno=0;
+    for(;;) {
+        if(fgets(chunk_buffer,sizeof chunk_buffer,stream)==nullptr) {
+            if(stream_would_block(stream,nonblocking)) {
+                const DiamondVmStatus wait_status=
+                    wait_fd_interruptible(vm,nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
+        }
+        *saw_any=true;
+        const size_t piece_length=strlen(chunk_buffer);
+        if(!builder_append(builder,chunk_buffer,piece_length)) {
+            stream_nonblocking_end(nonblocking);
+            return DIAMOND_VM_OUT_OF_MEMORY;
+        }
+        if(piece_length>0&&chunk_buffer[piece_length-1]=='\n')break;
+    }
+    const int read_errno=errno;
+    stream_nonblocking_end(nonblocking);
+    errno=read_errno;
+    if(ferror(stream)) {
+        snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+        /* The error indicator is sticky: without this a read that timed out would make
+         * every later read on the same stream fail too, even once data arrives. */
+        clearerr(stream);
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(builder->length>0&&builder->chars[builder->length-1]=='\n') {
+        builder->length--;
+        if(builder->length>0&&builder->chars[builder->length-1]=='\r')builder->length--;
+        builder->chars[builder->length]='\0';
+    }
+    return DIAMOND_VM_OK;
+}
+
+#ifndef __wasi__
+/* stdin may share its open-file description with the shell, so never change
+ * its flags. Read one byte after readiness, under a process-wide lock: no
+ * other gets can drain the ready byte, and no stdio read-ahead can hide input
+ * from poll. The REPL also reads without stdio buffering. Keep a partial line
+ * across interruption so the next gets can finish it. No helper outlives the
+ * call or holds stdin's stdio lock while the process is exiting. */
+static struct {
+    pthread_mutex_t lock;
+    StringBuilder line;
+} stdin_reader={.lock=PTHREAD_MUTEX_INITIALIZER};
+#endif
+
+DiamondVmStatus read_line(DiamondVm *vm,FILE *stream,StringBuilder *builder,
+        bool *saw_any) {
+#ifdef __wasi__
+    return read_line_direct(vm,stream,builder,saw_any);
+#else
+    if(stream!=stdin)return read_line_direct(vm,stream,builder,saw_any);
+    *saw_any=false;
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    int lock_error;
+    while((lock_error=pthread_mutex_trylock(&stdin_reader.lock))==EBUSY) {
+        (void)poll_interruptible(vm,nullptr,0,DIAMOND_INTERRUPT_SLICE_MS,&status);
+        if(status!=DIAMOND_VM_OK)return status;
+    }
+    if(lock_error!=0) {
+        snprintf(vm->error,sizeof vm->error,"stdin reader: %s",strerror(lock_error));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    for(;;) {
+        if(vm_interrupt_requested(vm)) {status=DIAMOND_VM_INTERRUPTED;break;}
+        struct pollfd interest={.fd=STDIN_FILENO,.events=POLLIN};
+        const int ready=poll_interruptible(vm,&interest,1,-1,&status);
+        if(status!=DIAMOND_VM_OK)break;
+        if(ready<0) {
+            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            status=DIAMOND_VM_IO_ERROR;break;
+        }
+        if(ready==0)continue;
+        if(vm_interrupt_requested(vm)) {status=DIAMOND_VM_INTERRUPTED;break;}
+        char byte;
+        const ssize_t got=read(STDIN_FILENO,&byte,1);
+        if(got<0) {
+            if(errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK)continue;
+            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            status=DIAMOND_VM_IO_ERROR;break;
+        }
+        if(got==0||byte=='\n') {
+            *saw_any=got>0||stdin_reader.line.length>0;
+            if(got>0&&stdin_reader.line.length>0&&
+               stdin_reader.line.chars[stdin_reader.line.length-1]=='\r')
+                stdin_reader.line.chars[--stdin_reader.line.length]='\0';
+            *builder=stdin_reader.line;
+            stdin_reader.line=(StringBuilder){};
+            break;
+        }
+        if(!builder_append(&stdin_reader.line,&byte,1)) {
+            status=DIAMOND_VM_OUT_OF_MEMORY;break;
+        }
+    }
+    pthread_mutex_unlock(&stdin_reader.lock);
+    return status;
+#endif
+}
+
+DiamondVmStatus file_invoke_helper(DiamondVm *vm,
+                                          const DiamondChunk *chunk, size_t depth,
+                                          DiamondValue *registers, uint16_t recv, uint16_t base,
+                                          uint8_t argc, uint16_t dest,
+                                          const DiamondStringConstant *method_name) {
+    DiamondFileHandle *target_file=
+        (DiamondFileHandle *)registers[recv].as.object;
+    const bool read_method=method_name->length==4&&
+        memcmp(method_name->chars,"read",4)==0;
+    const bool gets_method=method_name->length==4&&
+        memcmp(method_name->chars,"gets",4)==0;
+    const bool write_method=method_name->length==5&&
+        memcmp(method_name->chars,"write",5)==0;
+    const bool close_method=method_name->length==5&&
+        memcmp(method_name->chars,"close",5)==0;
+    const bool flush_method=method_name->length==5&&
+        memcmp(method_name->chars,"flush",5)==0;
+    const bool shutdown_write_method=method_name->length==14&&
+        memcmp(method_name->chars,"shutdown_write",14)==0;
+    const bool peer_address_method=method_name->length==12&&
+        memcmp(method_name->chars,"peer_address",12)==0;
+    if(!read_method&&!gets_method&&!write_method&&!close_method&&
+       !flush_method&&!shutdown_write_method&&!peer_address_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"File");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(close_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(target_file->stream!=nullptr) {
+            fclose(target_file->stream);
+            target_file->stream=nullptr;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    if(target_file->stream==nullptr) {
+        snprintf(vm->error,sizeof vm->error,"file is closed");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    if(peer_address_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return peer_address_helper(vm,fileno(target_file->stream),&registers[dest]);
+    }
+    /* Half-close of a connected socket (TCPSocket.connect, an accepted
+     * connection): everything written so far is flushed, then the peer sees
+     * EOF while this side can still read the reply. */
+    if(shutdown_write_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(fflush(target_file->stream)!=0) {
+            snprintf(vm->error,sizeof vm->error,"flush failed: %s",strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        if(shutdown(fileno(target_file->stream),SHUT_WR)!=0) {
+            snprintf(vm->error,sizeof vm->error,"shutdown_write failed: %s",
+                errno==ENOTSOCK?"not a socket":strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    /* Hands buffered writes to the OS now rather than at
+     * close -- what an append-only log needs after each
+     * record. (It doesn't fsync; see File.sync for that.) */
+    if(flush_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        if(fflush(target_file->stream)!=0) {
+            snprintf(vm->error,sizeof vm->error,"flush failed: %s",
+                strerror(errno));
+            return DIAMOND_VM_IO_ERROR;
+        }
+        registers[dest]=registers[recv];return DIAMOND_VM_OK;
+    }
+    if(read_method) {
+        if(argc>1)return DIAMOND_VM_ARITY_ERROR;
+        bool bounded=false;size_t limit=0;
+        if(argc==1) {
+            if(registers[base].kind!=DIAMOND_VALUE_INT||
+               registers[base].as.integer<0) {
+                snprintf(vm->error,sizeof vm->error,
+                    "File#read argument must be a non-negative Int");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            bounded=true;limit=(size_t)registers[base].as.integer;
+        }
+        StringBuilder builder={};
+        char chunk_buffer[4096];
+        size_t read_count=0;
+        const StreamNonblocking nonblocking=
+            stream_nonblocking_begin(vm,target_file->stream);
+        errno=0;
+        while(!bounded||builder.length<limit) {
+            const size_t remaining=bounded?limit-builder.length:sizeof chunk_buffer;
+            const size_t want=remaining<sizeof chunk_buffer?
+                remaining:sizeof chunk_buffer;
+            read_count=fread(chunk_buffer,1,want,target_file->stream);
+            if(read_count>0&&!builder_append(&builder,chunk_buffer,read_count)) {
+                stream_nonblocking_end(nonblocking);
+                free(builder.chars);return DIAMOND_VM_OUT_OF_MEMORY;
+            }
+            if(read_count==want)continue;
+            /* Short: end of file, an error, or (temporarily non-blocking
+             * socket) no more data yet -- wait for it and keep going. */
+            if(stream_would_block(target_file->stream,nonblocking)) {
+                const DiamondVmStatus wait_status=wait_fd_interruptible(vm,
+                    nonblocking.descriptor,POLLIN);
+                if(wait_status!=DIAMOND_VM_OK) {
+                    stream_nonblocking_end(nonblocking);
+                    free(builder.chars);
+                    return wait_status;
+                }
+                errno=0;
+                continue;
+            }
+            break;
+        }
+        const int read_errno=errno;
+        stream_nonblocking_end(nonblocking);
+        errno=read_errno;
+        if(ferror(target_file->stream)) {
+            free(builder.chars);
+            snprintf(vm->error,sizeof vm->error,"read error: %s",strerror(errno));
+            clearerr(target_file->stream);
+            return DIAMOND_VM_IO_ERROR;
+        }
+        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+        free(builder.chars);
+        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+    }
+    if(gets_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        StringBuilder builder={};
+        bool saw_any=false;
+        DiamondVmStatus read_status=
+            read_line(vm,target_file->stream,&builder,&saw_any);
+        if(read_status!=DIAMOND_VM_OK) {
+            free(builder.chars);return read_status;
+        }
+        if(!saw_any) {
+            free(builder.chars);
+            registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+        }
+        DiamondString *string=allocate_string(vm,builder.chars,builder.length);
+        free(builder.chars);
+        if(string==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        registers[dest]=DIAMOND_OBJECT(string);return DIAMOND_VM_OK;
+    }
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    DiamondValue converted=DIAMOND_NIL;
+    DiamondVmStatus status=stringify_value(vm,chunk,depth,
+        registers[base],&converted);
+    if(status!=DIAMOND_VM_OK)return status;
+    const DiamondString *text=(const DiamondString *)converted.as.object;
+    errno=0;
+    const size_t written=fwrite(text->chars,1,text->length,target_file->stream);
+    if(written!=text->length||ferror(target_file->stream)) {
+        snprintf(vm->error,sizeof vm->error,"write error: %s",strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
+}

@@ -95,9 +95,9 @@ exception, below). 123 `*_helper` functions
 | `vm_tensor.c` | the Tensor natives |
 | `vm_regexp.c` | the Regexp natives |
 | `vm_json.c` | the native JSON parser and writer |
-| `vm_time.c` | the Time natives |
+| `vm_time.c` | the Time natives and Time formatting (`format_time_iso8601`, the `%z` substitution) |
 | `vm_database.c` | the SQLite, PostgreSQL and MySQL drivers |
-| `vm_process_io.c` | process spawning and file natives |
+| `vm_process_io.c` | process spawning, file natives (`file_invoke_helper`) and interruptible line reading (`read_line`) |
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution, and the Socket, Listener, UDPSocket and TLSSocket methods |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
 | `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
@@ -105,6 +105,7 @@ exception, below). 123 `*_helper` functions
 | `vm_string.c` | the String methods (`string_invoke_helper`, `String#format`, `String#tr`) |
 | `vm_calls.c` | calling closures, functions and methods from the interpreter and JIT (`call_closure_helper`, `jit_call_core`, `diamond_jit_invoke_instance`, `diamond_jit_native_call`), `public_send`, keyword-argument merging, and backtrace capture |
 | `vm_types.c` | runtime type checks (`value_matches_type`, structural interface matching against the native member tables, `diamond_jit_check_type`/`is_type`) and generic type binding and inference (`bind_context_set`, `infer_from_value`) |
+| `vm_format.c` | value formatting: type names for error messages, `builder_format_value`, `inspect`/`to_s` (`stringify_value`, `inspect_value`), uncaught-exception messages and `Array#join` |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether

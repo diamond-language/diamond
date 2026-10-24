@@ -1568,4 +1568,16 @@ DIAMOND_INTERNAL const DiamondMethod *lookup_method_cached(
     const DiamondMethodCache **cache_out);
 DIAMOND_INTERNAL bool record_rewritten_site(DiamondVm *vm, const uint8_t *site);
 
+/* Values a compiled-method source binds into its definition (vm.c, vm_format.c). */
+enum { DIAMOND_MAX_BOUND_VALUES = 8 };
+
+/* vm_format.c */
+DIAMOND_INTERNAL bool builder_inspect_instance(StringBuilder *builder,DiamondValue value);
+DIAMOND_INTERNAL DiamondVmStatus run_instance_string_method(DiamondVm *vm,size_t depth,
+        const DiamondChunk *owner,DiamondValue value,const DiamondMethod *method,
+        const char *label,DiamondValue *out);
+DIAMOND_INTERNAL DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        size_t depth,const DiamondArray *array,const char *separator_chars,
+        size_t separator_length,DiamondValue *out);
+
 #endif
