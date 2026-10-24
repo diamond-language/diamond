@@ -22,14 +22,15 @@ and no file far past 3,000 lines. Each step is a behavior-preserving move or spl
 verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
 is done"), with release benchmarks treated as a no-regression check.
 
-- **The rest of `run_chunk`** (3,559 lines) -- the remaining larger cases (`TAIL_CALL`,
+- **The rest of `run_chunk`** (3,611 lines) -- the remaining larger cases (`TAIL_CALL`,
   132 lines; integer division, modulo and comparison) only where outlining measures
   neutral.
-- **Operand decoding in other hot opcodes** -- `INVOKE` now reads its fixed operands
-  through one bounds check and a local pointer, because GCC had started reloading
-  `chunk->code` from the stack for every `READ_SHORT` (43 fewer instructions per
-  method call). `CALL`, `GET_IVAR`/`SET_IVAR` and the arithmetic opcodes may have the
-  same reloads; check each with callgrind per-call instruction counts before changing it.
+- **Dispatch overhead in `run_chunk`** -- every instruction costs about 27 instructions
+  before its case runs in a release build. `ip` lives in a stack slot because its
+  address is passed to helpers (`catch_exception`, the `outlined_*` bodies), so each
+  dispatch loads and stores it; the per-opcode counter and the resource-limit check
+  add more. Keeping a register copy of `ip` and writing it back only around the calls
+  that take its address may remove most of it; check with callgrind per-call counts.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 
