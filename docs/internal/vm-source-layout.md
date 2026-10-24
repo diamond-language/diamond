@@ -24,7 +24,7 @@ sanitize` use), on one core:
 | `vm_run_chunk.c` (`run_chunk`, `collection_invoke_fast` and the preamble) | 5,639 | 205 s |
 
 So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file,
-before the `INVOKE_TYPED` blocks were outlined; 5,521 lines now). Splitting `vm.c` cannot shorten a
+before the `INVOKE_TYPED` blocks were outlined; 3,775 lines now). Splitting `vm.c` cannot shorten a
 full instrumented build, which still compiles `run_chunk` once, but it decides how much a change
 *outside* `run_chunk` costs. With `run_chunk` in `vm_run_chunk.c`, an edit to the rest of the runtime
 recompiles a 6-second file, and an edit to `run_chunk` recompiles only the 205-second one.
@@ -35,9 +35,9 @@ sanitizer-build problem.
 
 ## What is inside `run_chunk`
 
-148 opcode cases have braced bodies. One of them, `DIAMOND_OP_INVOKE_TYPED` (method calls), is
-**1,808 lines** (3,104 before the cold per-handle blocks were outlined); the next largest is 238. It is
-a chain of blocks keyed on the receiver's kind:
+152 opcode cases have braced bodies. The largest, `DIAMOND_OP_INVOKE_TYPED` (method calls), is
+**473 lines** (3,104 before the cold per-handle blocks were outlined); the next largest is
+`DIAMOND_OP_TAIL_CALL` at 132. It was a chain of blocks keyed on the receiver's kind:
 
 | block | lines |
 |---|---|
@@ -59,6 +59,19 @@ every callee-saved register and spills nine arguments, which costs more than tho
 site with the helper's own checks in the helper's order (`#push` still defers to a user-defined
 `array_push` extension, and a frozen array, a type constraint, an arity mismatch or a cold extension
 cache fall through to the helper). With it `array_ops` is 2% below its pre-outlining cycles.
+
+Whole opcode cases that are cold or carry large locals are outlined into `outlined_*` functions at
+the top of `vm_run_chunk.c`: the database and TLS opens, `Thread.new`, `Channel.select`, `IO.poll`,
+the spread and keyword call families, `NEW_SPREAD` and `BREAKPOINT_CHECK`, among others. The case
+body moves unchanged. The macros it uses are redefined above `run_chunk` to return the status, and the
+call site applies `VM_PROPAGATE` to it, so a failure reaches the same handlers it did inline. That
+holds only because none of these bodies passes `DIAMOND_VM_EXCEPTION` to `VM_RETURN`: inline, that
+skips this frame's rescue clauses (`catch_runtime_error` has no class for it), while the call site's
+`VM_PROPAGATE` would offer it to them. Outlining matters for the call-depth limit as well as for size:
+the frame of `run_chunk` is the per-call stack cost that `DIAMOND_MAX_CALL_DEPTH` is calibrated
+against, and every case's locals share it. Outlining `IO.poll` (two 256-entry result arrays and a
+`pollfd` array), the call families and `BREAKPOINT_CHECK` took it from 25.9 KB to 15.4 KB at `-O3`
+and from 65.3 KB to 24.7 KB under ASan; measure it with `gcc -fstack-usage`.
 
 ## What has been split out
 
