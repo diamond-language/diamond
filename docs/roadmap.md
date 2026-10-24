@@ -53,6 +53,13 @@ is done"), with release benchmarks treated as a no-regression check.
   of app: command-line tool, Rack web app, TCP/UDP server, and library cut. Each
   generated project should pass its own tests out of the box, checked in CI. Open
   question: `diamond new` or `facet new` (`facet init` today only writes a manifest).
+- **`.deb` and `.rpm` packages** -- for Fedora 44 and later and Ubuntu 26.04 and later,
+  attached to each release. Releases are tags only today, with no binaries. `make install`
+  already honours `DESTDIR` and `PREFIX` and installs `diamond`, `facet`, `diamond-lsp`,
+  `diamond-dap` and the AOT kit, but not `lib/`. The binaries link SQLite, libpq,
+  MariaDB Connector/C, OpenSSL and zlib dynamically, so each package needs the
+  matching runtime dependencies. Needs a CI job per distribution that builds the
+  package, installs it in a clean container, and runs a smoke test.
 
 ## Candidate work
 
