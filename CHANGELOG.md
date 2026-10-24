@@ -6,6 +6,28 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+## 0.19.1 — 2026-10-24
+
+### Changed
+
+- The interpreter is faster: release-build benchmarks take 11-33% fewer cycles
+  than 0.19.0 (method dispatch about 30%, integer arithmetic 31%, array
+  operations 33%, closures 26%). Hot opcodes decode their operands with one
+  bounds check, the instruction pointer stays in a register, the opcode
+  counter runs only when a trace reads it, and the per-instruction limit
+  checks are kept out of the hot path.
+- The call-depth limit rises from 92 to 150 frames: recursion in a Fiber or
+  Thread goes 150 levels deep (about 9,600 on the main program, up from
+  about 5,900), and `JSON.parse`/`JSON.stringify` accept 149 levels of
+  nesting instead of 91.
+
+### Internal
+
+- The runtime's oversized sources are split up: `vm.c` (13,698 lines) is now
+  about 2,100 lines plus per-area files, no function outside `run_chunk`'s dispatch
+  switch is over about 200 lines, and `tools/facet.c` is split into
+  resolution and packaging. See docs/internal/vm-source-layout.md.
+
 ## 0.19.0 — 2026-10-23
 
 ### Added

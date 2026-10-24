@@ -8,22 +8,11 @@ done yet; when something lands, delete it (see "Completion policy").
 Diamond is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
-Current focus is 0.19.x: finishing the refactor of oversized source files and
-functions, shipped as one or more point releases. 0.20 then focuses on tooling and
-documentation: a clear path from installation to a first working app. Broader
+Current focus is 0.20: tooling and documentation, a clear path from installation
+to a first working app. Broader
 reliability work waits for usage beyond the current two users; existing verification
 remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
 background. Further JIT work is optional and measurement-driven.
-
-## 0.19.x: finish the source refactor
-
-Target: no function over about 200 lines other than `run_chunk`'s dispatch switch,
-and no file far past 3,000 lines. Each step is a behavior-preserving move or split,
-verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
-is done"), with release benchmarks treated as a no-regression check.
-
-- **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
-  `compiler_builtins.c` (2,600-2,700 lines each).
 
 ## 0.20: from installation to a first app
 
