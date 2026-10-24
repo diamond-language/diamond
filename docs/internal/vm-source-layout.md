@@ -91,7 +91,7 @@ exception, below). 123 `*_helper` functions
 
 | file | contents |
 |---|---|
-| `vm_program_builder.c` | the ProgramBuilder native bridge (`allocate_program_builder`, `program_builder_run_helper`, `program_builder_invoke_helper` and their small helpers) |
+| `vm_program_builder.c` | the ProgramBuilder native bridge (`allocate_program_builder`, `program_builder_run_helper`, `program_builder_invoke_helper` and their small helpers) and `ClassName.compile_method` (`compile_method_helper`, which builds and compiles a method's source) |
 | `vm_tensor.c` | the Tensor natives |
 | `vm_regexp.c` | the Regexp natives and their method dispatch (`regexp_invoke_helper`) |
 | `vm_json.c` | the native JSON parser and writer |
