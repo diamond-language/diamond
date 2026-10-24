@@ -442,6 +442,90 @@ static void finish_block_return(Compiler *compiler,DiamondFunction *function,
     }
 }
 
+/* Resets the per-function compiler state for a block's body, seeds its captures from the
+ * enclosing scope and materializes a captured self into register 0. Returns the block's declared
+ * result type set. Part of compile_block. */
+static uint16_t enter_block_body(Compiler *compiler,DiamondFunction *function,const EnclosingScope *scope,
+        int32_t contextual_return_set,uint16_t self_copy_register) {
+    compiler->function = function;
+    compiler->begin_depth=0;
+    uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
+    if(contextual_return_set>=0&&
+       (size_t)contextual_return_set<scope->function->type_set_count)
+        declared_return_set=clone_type_set_into_current(compiler,
+            scope->function->type_sets,scope->function->type_set_count,
+            (uint16_t)contextual_return_set);
+    /* A `return`/`next` in this block returns from the block, so it's
+     * checked against the block's own expected result -- never the
+     * enclosing function's `-> Type`, whose set index belongs to that
+     * function's type-set table, not this one. */
+    compiler->current_return_type=declared_return_set==DIAMOND_NO_TYPE_SET?
+        -1:(int)declared_return_set;
+    compiler->has_current_block=false;
+    compiler->current_block_register=0;
+    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
+    compiler->current_loop=nullptr;
+    compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
+    compiler->local_count = 0;
+    compiler->next_register = 0;
+    compiler->last_instruction_offset=SIZE_MAX;
+    compiler->enclosing_local_count=scope->local_count;
+    for(size_t i=0;i<compiler->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=scope->locals[i];
+    compiler->capture_count=0;
+    if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
+        fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+    } else {
+        compiler->capture_count=compiler->enclosing_local_count;
+        for(size_t i=0;i<compiler->capture_count;i++)
+            compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+    }
+    /* Materialize the captured self (see self_copy_register above) into
+     * this block's own register 0 -- guaranteed to land there since
+     * next_register was just reset to 0 above and nothing else has
+     * allocated from it yet, exactly mirroring compile_definition's own
+     * captures_self materialization (see its own comment). Every self/
+     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
+     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
+     * register 0 unconditionally, so this is what makes all of those work
+     * unmodified inside a block body too. */
+    if(function->owner_class==DIAMOND_OWNER_CAPTURED_SELF) {
+        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
+            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
+        } else {
+            const size_t self_capture_index=compiler->capture_count;
+            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
+            const uint16_t self_register=allocate_register(compiler);
+            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
+                             (uint8_t)self_capture_index,0,2);
+        }
+    }
+    return declared_return_set;
+}
+
+/* Emits a finished block's BOX_LOCAL + CLOSURE into the enclosing function and returns the
+ * closure's register. Part of compile_block. */
+static uint16_t emit_block_closure(Compiler *compiler,size_t function_index,const uint16_t *captures,
+        size_t capture_count) {
+    /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
+     * now that compiler->function/locals have been restored -- same
+     * shape compile_definition ends with. */
+    for(size_t i=0;i<capture_count;i++) {
+        for(size_t local=0;local<compiler->local_count;local++) {
+            if(compiler->locals[local].reg!=captures[i])continue;
+            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
+            compiler->locals[local].captured=true;
+            break;
+        }
+    }
+    const uint16_t result=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
+    emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
+    for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
+    return result;
+}
+
 /* `do |param, param, ...| BODY end` attached right after a call's closing
  * `).
  * Deliberately a separate, much smaller function rather than a refactor
@@ -538,60 +622,8 @@ uint16_t compile_block(Compiler *compiler) {
         emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
     }
 
-    compiler->function = function;
-    compiler->begin_depth=0;
-    uint16_t declared_return_set=DIAMOND_NO_TYPE_SET;
-    if(contextual_return_set>=0&&
-       (size_t)contextual_return_set<scope.function->type_set_count)
-        declared_return_set=clone_type_set_into_current(compiler,
-            scope.function->type_sets,scope.function->type_set_count,
-            (uint16_t)contextual_return_set);
-    /* A `return`/`next` in this block returns from the block, so it's
-     * checked against the block's own expected result -- never the
-     * enclosing function's `-> Type`, whose set index belongs to that
-     * function's type-set table, not this one. */
-    compiler->current_return_type=declared_return_set==DIAMOND_NO_TYPE_SET?
-        -1:(int)declared_return_set;
-    compiler->has_current_block=false;
-    compiler->current_block_register=0;
-    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
-    compiler->current_loop=nullptr;
-    compiler->current_exception=-1;
-    compiler->current_retry_target=SIZE_MAX;
-    compiler->local_count = 0;
-    compiler->next_register = 0;
-    compiler->last_instruction_offset=SIZE_MAX;
-    compiler->enclosing_local_count=scope.local_count;
-    for(size_t i=0;i<compiler->enclosing_local_count;i++)
-        compiler->enclosing_locals[i]=scope.locals[i];
-    compiler->capture_count=0;
-    if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
-        fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
-    } else {
-        compiler->capture_count=compiler->enclosing_local_count;
-        for(size_t i=0;i<compiler->capture_count;i++)
-            compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
-    }
-    /* Materialize the captured self (see self_copy_register above) into
-     * this block's own register 0 -- guaranteed to land there since
-     * next_register was just reset to 0 above and nothing else has
-     * allocated from it yet, exactly mirroring compile_definition's own
-     * captures_self materialization (see its own comment). Every self/
-     * @ivar/self.foo() code path (parse_prefix's DIAMOND_TOKEN_SELF/
-     * INSTANCE_VARIABLE, DIAMOND_OP_INVOKE_SELF_METHOD) hardcodes literal
-     * register 0 unconditionally, so this is what makes all of those work
-     * unmodified inside a block body too. */
-    if(function->owner_class==DIAMOND_OWNER_CAPTURED_SELF) {
-        if(compiler->capture_count==DIAMOND_MAX_CAPTURES) {
-            fail(compiler,compiler->previous.span,"block sees too many lexical bindings");
-        } else {
-            const size_t self_capture_index=compiler->capture_count;
-            compiler->capture_registers[compiler->capture_count++]=self_copy_register;
-            const uint16_t self_register=allocate_register(compiler);
-            emit_instruction(compiler,DIAMOND_OP_GET_CAPTURE,self_register,
-                             (uint8_t)self_capture_index,0,2);
-        }
-    }
+    const uint16_t declared_return_set=enter_block_body(compiler,function,&scope,contextual_return_set,
+        self_copy_register);
 
     parse_block_parameters(compiler,function,scope.function,has_contextual_types,contextual_arity,
         contextual_types,contextual_type_sets,contextual_tooling_only);
@@ -649,21 +681,7 @@ uint16_t compile_block(Compiler *compiler) {
     }
     compiler->block_has_break=outer_block_has_break;
 
-    /* BOX_LOCAL + CLOSURE, emitted into the *outer* (caller's) bytecode
-     * now that compiler->function/locals have been restored -- same
-     * shape compile_definition ends with. */
-    for(size_t i=0;i<capture_count;i++) {
-        for(size_t local=0;local<compiler->local_count;local++) {
-            if(compiler->locals[local].reg!=captures[i])continue;
-            emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,captures[i],0,0,1);
-            compiler->locals[local].captured=true;
-            break;
-        }
-    }
-    const uint16_t result=allocate_register(compiler);
-    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,result);
-    emit_function_index(compiler,function_index);emit_byte(compiler,(uint8_t)capture_count);
-    for(size_t i=0;i<capture_count;i++)emit_register(compiler,captures[i]);
+    const uint16_t result=emit_block_closure(compiler,function_index,captures,capture_count);
     compiler->known_types[result]=TYPE_UNKNOWN;
     if(block_tooling_return>=0&&!compiler->failed&&
        (size_t)block_tooling_return<function->type_set_count)
@@ -867,11 +885,9 @@ static void register_definition_method(Compiler *compiler,DiamondFunction *funct
     }
 }
 
-/* Parses a def's parameter list, from just after the `(` up to the `)`: declares each parameter's
- * register and local, its type check and default, a trailing `*rest` and `&block`, and fills in the
- * function's arity, parameter names and type sets. */
-static void parse_definition_parameters(Compiler *compiler,DiamondFunction *function,
-        DiamondSpan name,bool captures_self) {
+/* Counts the parameters between the current token and the matching ')' without consuming
+ * them. Part of parse_definition_parameters. */
+static size_t count_definition_parameters(const Compiler *compiler) {
     size_t parameter_count=0;
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         parameter_count=1;DiamondLexer lookahead=compiler->lexer;
@@ -890,6 +906,42 @@ static void parse_definition_parameters(Compiler *compiler,DiamondFunction *func
             token=diamond_lexer_next(&lookahead);
         }
     }
+    return parameter_count;
+}
+
+/* Records the current token as declared parameter `index`'s name, truncated to fit. Part of
+ * parse_definition_parameters. */
+static void record_parameter_name(const Compiler *compiler,DiamondFunction *function,size_t index) {
+    const DiamondSpan parameter_name_span=compiler->current.span;
+    size_t parameter_name_length=parameter_name_span.length;
+    if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
+        parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
+    for(size_t offset=0;offset<parameter_name_length;offset++)
+        function->parameter_names[index][offset]=
+            compiler->source[parameter_name_span.start+offset];
+    function->parameter_names[index][parameter_name_length]='\0';
+}
+
+/* A typed block parameter is checked only when a block was passed. Part of
+ * parse_definition_parameters. */
+static void emit_block_parameter_type_check(Compiler *compiler,int type,DiamondSpan type_span) {
+    const uint16_t absent=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
+    const uint16_t missing=allocate_register(compiler);
+    emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
+        compiler->current_block_register,absent,3);
+    const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,missing);
+    emit_type_check(compiler,compiler->current_block_register,
+        (uint16_t)type,type_span);
+    patch_jump(compiler,skip,compiler->function->code_count);
+}
+
+/* Parses a def's parameter list, from just after the `(` up to the `)`: declares each parameter's
+ * register and local, its type check and default, a trailing `*rest` and `&block`, and fills in the
+ * function's arity, parameter names and type sets. */
+static void parse_definition_parameters(Compiler *compiler,DiamondFunction *function,
+        DiamondSpan name,bool captures_self) {
+    size_t parameter_count=count_definition_parameters(compiler);
     if(parameter_count>DIAMOND_MAX_DECLARED_PARAMETERS) {
         fail(compiler,name,"functions cannot declare more than 32 parameters");
         parameter_count=DIAMOND_MAX_DECLARED_PARAMETERS;
@@ -945,16 +997,8 @@ static void parse_definition_parameters(Compiler *compiler,DiamondFunction *func
             }
             compiler->locals[compiler->local_count++]=(Local){
                 .name=compiler->current.span,.reg=parameter};
-            if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS) {
-                const DiamondSpan parameter_name_span=compiler->current.span;
-                size_t parameter_name_length=parameter_name_span.length;
-                if(parameter_name_length>=DIAMOND_MAX_FUNCTION_NAME)
-                    parameter_name_length=DIAMOND_MAX_FUNCTION_NAME-1;
-                for(size_t index=0;index<parameter_name_length;index++)
-                    function->parameter_names[declared_parameter_count][index]=
-                        compiler->source[parameter_name_span.start+index];
-                function->parameter_names[declared_parameter_count][parameter_name_length]='\0';
-            }
+            if(declared_parameter_count<DIAMOND_MAX_DECLARED_PARAMETERS)
+                record_parameter_name(compiler,function,declared_parameter_count);
             function->arity++;
             advance_token(compiler);
             if(is_variadic) {
@@ -1064,17 +1108,8 @@ static void parse_definition_parameters(Compiler *compiler,DiamondFunction *func
         emit_instruction(compiler,DIAMOND_OP_COLLECT_VARIADIC,
             variadic_parameter,variadic_fixed_count,has_block_parameter?1:0,3);
     function->has_block_parameter=has_block_parameter;
-    if(block_parameter_type>=0&&!compiler->failed) {
-        const uint16_t absent=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_NIL,absent,0,0,1);
-        const uint16_t missing=allocate_register(compiler);
-        emit_instruction(compiler,DIAMOND_OP_EQUAL,missing,
-            compiler->current_block_register,absent,3);
-        const size_t skip=emit_jump(compiler,DIAMOND_OP_JUMP_IF_TRUE,missing);
-        emit_type_check(compiler,compiler->current_block_register,
-            (uint16_t)block_parameter_type,block_parameter_type_span);
-        patch_jump(compiler,skip,compiler->function->code_count);
-    }
+    if(block_parameter_type>=0&&!compiler->failed)
+        emit_block_parameter_type_check(compiler,block_parameter_type,block_parameter_type_span);
     if (!compiler->failed && compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler, compiler->current.span, "expected ')' after parameters");
     }
@@ -1568,6 +1603,140 @@ static void emit_definition_closure(Compiler *compiler, size_t function_index,
     }
 }
 
+/* owner_class serves two genuinely different purposes bundled into
+ * one field: (1) "this function is a real class/module method,
+ * eligible for redefine_method/define_method" -- checked as an
+ * *exact* value match against a real class index
+ * (DIAMOND_OP_REDEFINE_METHOD's own `new_function->owner_class!=
+ * class_operand`, src/vm.c) -- and (2) "register 0 is already
+ * spoken for, every calling convention that places arguments must
+ * skip it" (parameter_offset, computed everywhere in src/vm.c as a
+ * plain `fn->owner_class==DIAMOND_OWNER_NONE?0:1` binary check -- confirmed
+ * nowhere in this codebase tests for one *specific* non-DIAMOND_OWNER_NONE
+ * value except the assignment sites themselves, so any other
+ * sentinel gets (2) for free with no other call site changes).
+ *
+ * A `closure` (captures_self) needs (2) without (1): it reserves
+ * register 0 itself, internally, for the materialized captured self
+ * (see the captures_self handling below), so calls to it must still
+ * skip register 0 the same way a real method's implicit receiver
+ * already does -- confirmed the hard way as a real bug: leaving
+ * owner_class at DIAMOND_OWNER_NONE here computed parameter_offset=0,
+ * silently colliding a closure's own first *declared* parameter
+ * with its self-capture register. But it must never satisfy (1) --
+ * it's never a patch factory, never installable via redefine_method/
+ * define_method. A third sentinel, DIAMOND_OWNER_CAPTURED_SELF, distinct
+ * from DIAMOND_OWNER_NONE (no owner_class at all) and
+ * DIAMOND_OWNER_MODULE (the module-method sentinel), all three above
+ * DIAMOND_MAX_CLASSES's real range, gives it (2)
+ * while permanently failing (1)'s exact-match check.
+ *
+ * One more site needed a matching fix, not just this one:
+ * call_closure_helper's own needs_self_slot padding (src/vm.c) --
+ * used by CALL_CLOSURE and tap's block-invocation sites, the only
+ * ways a Callable *value* (as opposed to ordinary method dispatch)
+ * ever actually runs -- inflates its own arity-bounds check by one
+ * for *any* owner_class!=DIAMOND_OWNER_NONE function, correct for a genuine
+ * method's real implicit-receiver argument but wrong here too: this
+ * sentinel's whole point is that nothing external ever supplies
+ * register 0's value, so the bounds check must stay un-inflated,
+ * matching this closure's own true, undistorted declared arity. */
+static uint16_t definition_owner_class(const Compiler *compiler,bool captures_self,
+        bool direct_class_member,bool direct_class_singleton_member,bool direct_module_member,
+        bool nested_in_singleton_method) {
+    return
+        (direct_class_member||direct_class_singleton_member||
+         (nested_in_singleton_method&&!captures_self&&compiler->current_class>=0))?
+            (uint16_t)compiler->current_class:
+        (direct_module_member||(nested_in_singleton_method&&!captures_self&&compiler->current_module>=0))?
+            DIAMOND_OWNER_MODULE:
+        captures_self?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
+}
+
+/* Resets the per-function compiler state for a definition's body and seeds its captures from the
+ * enclosing scope. Part of compile_definition. */
+static void enter_definition_body(Compiler *compiler,DiamondFunction *function,DiamondSpan name,
+        const EnclosingScope *scope,bool at_top_level,bool module_singleton,bool captures_self,
+        bool nested_in_singleton_method) {
+    compiler->function = function;
+    compiler->begin_depth=0;
+    compiler->has_current_block=false;
+    compiler->current_block_register=0;
+    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
+    /* A captures_self closure nested *directly* inside a `def self.x`
+     * method also needs in_singleton_method true, for exactly the same
+     * reason nested_in_singleton_method's own existing arm below does:
+     * self.foo(...) inside its body must resolve through
+     * parse_self_class_method_call/DIAMOND_OP_INVOKE_SELF_METHOD, not an
+     * ordinary instance-shaped call -- and that opcode reads its class
+     * receiver from register 0 unconditionally (confirmed directly in
+     * src/vm.c, not just a compiler convention the way GET_IVAR's own
+     * receiver operand is), which is exactly the register this closure's
+     * own self-capture materializes into below. Nested any deeper than
+     * directly inside the singleton method gets neither, the same
+     * pre-existing depth-1-only limit nested_in_singleton_method already
+     * has for the patch-factory case (see the class_operand comment
+     * above `direct_class_member`). */
+    compiler->in_singleton_method =
+        (at_top_level && module_singleton) ||
+        (captures_self && nested_in_singleton_method);
+    compiler->current_loop=nullptr;
+    compiler->current_exception=-1;
+    compiler->current_retry_target=SIZE_MAX;
+    compiler->local_count = 0;
+    compiler->next_register = 0;
+    compiler->last_instruction_offset=SIZE_MAX;
+    compiler->enclosing_local_count=at_top_level ? 0 : scope->local_count;
+    for(size_t i=0;i<compiler->enclosing_local_count;i++)
+        compiler->enclosing_locals[i]=scope->locals[i];
+    compiler->capture_count=0;
+    if(!at_top_level) {
+        if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
+            fail(compiler,name,"nested function sees too many lexical bindings");
+        } else {
+            compiler->capture_count=compiler->enclosing_local_count;
+            for(size_t i=0;i<compiler->capture_count;i++)
+                compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
+        }
+    }
+}
+
+/* Consumes the `)` closing a def's parameters and parses an optional `-> Type`, returning its
+ * type set (or -1) and recording it on the function. Part of compile_definition. */
+static int parse_definition_return_type(Compiler *compiler,DiamondFunction *function,
+        DiamondSpan *return_type_span_out) {
+    int return_type = -1;
+    DiamondSpan return_type_span = {};
+    if (!compiler->failed) advance_token(compiler);
+    if (!compiler->failed && compiler->current.kind == DIAMOND_TOKEN_ARROW) {
+        advance_token(compiler);
+        return_type_span=compiler->current.span;
+        return_type = parse_type_annotation(compiler);
+        function->return_type_set=(uint16_t)return_type;
+    }
+    *return_type_span_out=return_type_span;
+    return return_type;
+}
+
+/* Checks or infers a compiled body's result type, emits its RETURN and consumes the closing
+ * `end`. Part of compile_definition. */
+static void finish_definition_body(Compiler *compiler,DiamondFunction *function,int return_type,
+        DiamondSpan return_type_span,uint16_t body_result,bool body_diverges,bool endless) {
+    if (return_type >= 0 && !body_diverges) {
+        emit_type_check(compiler,body_result,(uint16_t)return_type,
+                        return_type_span);
+    } else if(return_type<0) {
+        infer_definition_return(compiler,function,body_result,body_diverges);
+    }
+    maybe_rewrite_self_tail_call(compiler,body_result);
+    emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
+    if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
+        fail(compiler, compiler->current.span, "expected 'end' after function body");
+    } else if(!endless) {
+        advance_token(compiler);
+    }
+}
+
 uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     const bool at_top_level = compiler->function == &compiler->program->entry;
     if(captures_self && !compiler->in_method) {
@@ -1632,51 +1801,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
      * receiver class (see DIAMOND_OP_LOAD_CLASS's own comment). */
     const bool direct_class_singleton_member=
         at_top_level&&compiler->current_class>=0&&module_singleton;
-    /* owner_class serves two genuinely different purposes bundled into
-     * one field: (1) "this function is a real class/module method,
-     * eligible for redefine_method/define_method" -- checked as an
-     * *exact* value match against a real class index
-     * (DIAMOND_OP_REDEFINE_METHOD's own `new_function->owner_class!=
-     * class_operand`, src/vm.c) -- and (2) "register 0 is already
-     * spoken for, every calling convention that places arguments must
-     * skip it" (parameter_offset, computed everywhere in src/vm.c as a
-     * plain `fn->owner_class==DIAMOND_OWNER_NONE?0:1` binary check -- confirmed
-     * nowhere in this codebase tests for one *specific* non-DIAMOND_OWNER_NONE
-     * value except the assignment sites themselves, so any other
-     * sentinel gets (2) for free with no other call site changes).
-     *
-     * A `closure` (captures_self) needs (2) without (1): it reserves
-     * register 0 itself, internally, for the materialized captured self
-     * (see the captures_self handling below), so calls to it must still
-     * skip register 0 the same way a real method's implicit receiver
-     * already does -- confirmed the hard way as a real bug: leaving
-     * owner_class at DIAMOND_OWNER_NONE here computed parameter_offset=0,
-     * silently colliding a closure's own first *declared* parameter
-     * with its self-capture register. But it must never satisfy (1) --
-     * it's never a patch factory, never installable via redefine_method/
-     * define_method. A third sentinel, DIAMOND_OWNER_CAPTURED_SELF, distinct
-     * from DIAMOND_OWNER_NONE (no owner_class at all) and
-     * DIAMOND_OWNER_MODULE (the module-method sentinel), all three above
-     * DIAMOND_MAX_CLASSES's real range, gives it (2)
-     * while permanently failing (1)'s exact-match check.
-     *
-     * One more site needed a matching fix, not just this one:
-     * call_closure_helper's own needs_self_slot padding (src/vm.c) --
-     * used by CALL_CLOSURE and tap's block-invocation sites, the only
-     * ways a Callable *value* (as opposed to ordinary method dispatch)
-     * ever actually runs -- inflates its own arity-bounds check by one
-     * for *any* owner_class!=DIAMOND_OWNER_NONE function, correct for a genuine
-     * method's real implicit-receiver argument but wrong here too: this
-     * sentinel's whole point is that nothing external ever supplies
-     * register 0's value, so the bounds check must stay un-inflated,
-     * matching this closure's own true, undistorted declared arity. */
-    function->owner_class=
-        (direct_class_member||direct_class_singleton_member||
-         (nested_in_singleton_method&&!captures_self&&compiler->current_class>=0))?
-            (uint16_t)compiler->current_class:
-        (direct_module_member||(nested_in_singleton_method&&!captures_self&&compiler->current_module>=0))?
-            DIAMOND_OWNER_MODULE:
-        captures_self?DIAMOND_OWNER_CAPTURED_SELF:DIAMOND_OWNER_NONE;
+    function->owner_class=definition_owner_class(compiler,captures_self,direct_class_member,
+        direct_class_singleton_member,direct_module_member,nested_in_singleton_method);
     function->nested=!at_top_level;
     if(!copy_definition_name(compiler,function,name,is_index_operator))return 0;
     parse_generic_type_parameters(compiler,function);
@@ -1727,47 +1853,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         emit_instruction(compiler,DIAMOND_OP_MOVE,self_copy_register,0,0,2);
         emit_instruction(compiler,DIAMOND_OP_BOX_LOCAL,self_copy_register,0,0,1);
     }
-    compiler->function = function;
-    compiler->begin_depth=0;
-    compiler->has_current_block=false;
-    compiler->current_block_register=0;
-    compiler->current_block_type_set=DIAMOND_NO_TYPE_SET;
-    /* A captures_self closure nested *directly* inside a `def self.x`
-     * method also needs in_singleton_method true, for exactly the same
-     * reason nested_in_singleton_method's own existing arm below does:
-     * self.foo(...) inside its body must resolve through
-     * parse_self_class_method_call/DIAMOND_OP_INVOKE_SELF_METHOD, not an
-     * ordinary instance-shaped call -- and that opcode reads its class
-     * receiver from register 0 unconditionally (confirmed directly in
-     * src/vm.c, not just a compiler convention the way GET_IVAR's own
-     * receiver operand is), which is exactly the register this closure's
-     * own self-capture materializes into below. Nested any deeper than
-     * directly inside the singleton method gets neither, the same
-     * pre-existing depth-1-only limit nested_in_singleton_method already
-     * has for the patch-factory case (see the class_operand comment
-     * above `direct_class_member`). */
-    compiler->in_singleton_method =
-        (at_top_level && module_singleton) ||
-        (captures_self && nested_in_singleton_method);
-    compiler->current_loop=nullptr;
-    compiler->current_exception=-1;
-    compiler->current_retry_target=SIZE_MAX;
-    compiler->local_count = 0;
-    compiler->next_register = 0;
-    compiler->last_instruction_offset=SIZE_MAX;
-    compiler->enclosing_local_count=at_top_level ? 0 : scope.local_count;
-    for(size_t i=0;i<compiler->enclosing_local_count;i++)
-        compiler->enclosing_locals[i]=scope.locals[i];
-    compiler->capture_count=0;
-    if(!at_top_level) {
-        if(compiler->enclosing_local_count>DIAMOND_MAX_CAPTURES) {
-            fail(compiler,name,"nested function sees too many lexical bindings");
-        } else {
-            compiler->capture_count=compiler->enclosing_local_count;
-            for(size_t i=0;i<compiler->capture_count;i++)
-                compiler->capture_registers[i]=compiler->enclosing_locals[i].reg;
-        }
-    }
+    enter_definition_body(compiler,function,name,&scope,at_top_level,module_singleton,captures_self,
+        nested_in_singleton_method);
     setup_definition_receiver(compiler,function,name,captures_self,
         direct_class_member,direct_module_member,direct_class_singleton_member,
         nested_in_singleton_method,self_copy_register);
@@ -1779,15 +1866,8 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
         compiler,function,function_index,name,module_singleton,at_top_level);
     if(!compiler->failed && !at_top_level)
         bind_captured_cells(compiler,&scope,captured_fact_registers);
-    int return_type = -1;
     DiamondSpan return_type_span = {};
-    if (!compiler->failed) advance_token(compiler);
-    if (!compiler->failed && compiler->current.kind == DIAMOND_TOKEN_ARROW) {
-        advance_token(compiler);
-        return_type_span=compiler->current.span;
-        return_type = parse_type_annotation(compiler);
-        function->return_type_set=(uint16_t)return_type;
-    }
+    const int return_type=parse_definition_return_type(compiler,function,&return_type_span);
     compiler->in_function=true;
     compiler->in_block=false;
     compiler->current_return_type=return_type;
@@ -1803,21 +1883,9 @@ uint16_t compile_definition(Compiler *compiler, bool captures_self) {
     uint16_t body_result;
     bool body_diverges;
     const bool endless=compile_definition_body(compiler,return_type,&body_result,&body_diverges);
-    if (!compiler->failed) {
-        if (return_type >= 0 && !body_diverges) {
-            emit_type_check(compiler,body_result,(uint16_t)return_type,
-                            return_type_span);
-        } else if(return_type<0) {
-            infer_definition_return(compiler,function,body_result,body_diverges);
-        }
-        maybe_rewrite_self_tail_call(compiler,body_result);
-        emit_instruction(compiler, DIAMOND_OP_RETURN, body_result, 0, 0, 1);
-        if (!endless&&compiler->current.kind != DIAMOND_TOKEN_END) {
-            fail(compiler, compiler->current.span, "expected 'end' after function body");
-        } else if(!endless) {
-            advance_token(compiler);
-        }
-    }
+    if (!compiler->failed)
+        finish_definition_body(compiler,function,return_type,return_type_span,body_result,
+            body_diverges,endless);
 
     function->capture_count=(uint8_t)compiler->capture_count;
     function->register_count=compiler->next_register;
