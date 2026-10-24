@@ -121,6 +121,8 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
     vm.stress_gc = getenv("DIAMOND_STRESS_GC") != nullptr;
     vm.stress_minor_gc = getenv("DIAMOND_STRESS_MINOR_GC") != nullptr;
     vm.quickening = getenv("DIAMOND_QUICKEN") != nullptr;
+    vm.count_opcodes = getenv("DIAMOND_TRACE_OPCODES") != nullptr ||
+                       getenv("DIAMOND_TRACE_TAIL_CALLS") != nullptr;
     const char *quickening_threshold = getenv("DIAMOND_QUICKEN_THRESHOLD");
     if (quickening_threshold != nullptr && quickening_threshold[0] != '\0') {
         char *end = nullptr;

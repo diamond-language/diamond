@@ -1763,6 +1763,10 @@ struct DiamondVm {
     size_t field_cache_misses;
     size_t shape_transitions;
     size_t opcode_counts[DIAMOND_OP_COUNT];
+    /* opcode_counts is only kept when a trace that reads it is on: the
+     * increment is a read-modify-write of memory on every dispatch, and on
+     * GCC builds it measurably slowed the dispatch loop. */
+    bool count_opcodes;
     bool quickening;
     size_t quickening_threshold;
     size_t quickening_observations;

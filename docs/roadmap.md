@@ -28,9 +28,12 @@ is done"), with release benchmarks treated as a no-regression check.
 - **Dispatch overhead in `run_chunk`** -- every instruction costs about 27 instructions
   before its case runs in a release build. `ip` lives in a stack slot because its
   address is passed to helpers (`catch_exception`, the `outlined_*` bodies), so each
-  dispatch loads and stores it; the per-opcode counter and the resource-limit check
-  add more. Keeping a register copy of `ip` and writing it back only around the calls
-  that take its address may remove most of it; check with callgrind per-call counts.
+  dispatch loads and stores it; the resource-limit check adds more. Keeping a register
+  copy of `ip` and writing it back only around the calls that take its address may
+  remove most of it. Check with callgrind per-call counts, and check cycles on a clang
+  build too: on GCC builds a single extra store in the dispatch header (the opcode
+  counter, before it was gated on `DIAMOND_TRACE_OPCODES`) cost up to 17% of cycles
+  without changing instruction counts much.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 
