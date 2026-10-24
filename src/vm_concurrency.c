@@ -696,6 +696,148 @@ DiamondVmStatus thread_invoke_helper(DiamondVm *vm,
     registers[dest]=target_thread->result;return DIAMOND_VM_OK;
 }
 
+/* Channel#send and #try_send: copies the value into the channel's private program and queues
+ * it, waiting for room (and, for a rendezvous channel, for a receiver to take it) unless trying.
+ * Part of channel_invoke_helper. */
+static DiamondVmStatus channel_send_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondChannel *target_channel,DiamondValue value_to_send,bool try_send_method) {
+    pthread_mutex_lock(&target_channel->lock);
+    while((target_channel->count==target_channel->capacity||
+           (try_send_method&&target_channel->rendezvous&&
+            target_channel->receivers_waiting==0))&&
+          !target_channel->closed) {
+        if(try_send_method) {
+            pthread_mutex_unlock(&target_channel->lock);
+            snprintf(vm->error,sizeof vm->error,
+                "channel send would block");
+            return DIAMOND_VM_WOULD_BLOCK;
+        }
+        const DiamondVmStatus wait_status=channel_wait_bounded(vm,
+            &target_channel->not_full,&target_channel->lock);
+        if(wait_status!=DIAMOND_VM_OK) {
+            pthread_mutex_unlock(&target_channel->lock);
+            return wait_status;
+        }
+    }
+    if(target_channel->closed) {
+        pthread_mutex_unlock(&target_channel->lock);
+        snprintf(vm->error,sizeof vm->error,"channel is closed");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    /* Rebase from this sender's own ambient classes into
+     * the channel's own private (permanent, never-run)
+     * program -- identical call shape to DIAMOND_OP_
+     * THREAD_NEW's own argument copy above, just into a
+     * standing home instead of a freshly spawned child.
+     * extra_root_count kept current across the mutation
+     * below so a collection triggered by this very copy
+     * (on private_vm, still holding `lock`) can find
+     * every already-queued value. */
+    DiamondValue copied=DIAMOND_NIL;
+    target_channel->private_vm->extra_root_count=
+        target_channel->count;
+    const bool copy_ok=copy_value_into_vm(
+        target_channel->private_vm,value_to_send,nullptr,
+        chunk->classes,target_channel->private_program->classes,
+        nullptr,&copied);
+    if(!copy_ok) {
+        pthread_mutex_unlock(&target_channel->lock);
+        snprintf(vm->error,sizeof vm->error,
+            "%s %s","Channel#send argument",copy_failure_reason());
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    target_channel->queue[target_channel->count++]=copied;
+    const uint64_t sequence=++target_channel->sent;
+    target_channel->private_vm->extra_root_count=
+        target_channel->count;
+    notify_channel_waiters(target_channel);
+    pthread_cond_signal(&target_channel->not_empty);
+    /* A handoff is complete only when a receiver has taken the value. The
+     * single slot means the value is still the queue's only entry until
+     * then, so giving up (closed, cancelled, out of budget) withdraws it. */
+    DiamondVmStatus handoff_status=DIAMOND_VM_OK;
+    while(target_channel->rendezvous&&!try_send_method&&
+          target_channel->taken<sequence&&!target_channel->closed&&
+          handoff_status==DIAMOND_VM_OK)
+        handoff_status=channel_wait_bounded(vm,
+            &target_channel->not_full,&target_channel->lock);
+    if(target_channel->rendezvous&&!try_send_method&&target_channel->taken<sequence) {
+        target_channel->count=0;
+        target_channel->sent--;
+        target_channel->private_vm->extra_root_count=0;
+        pthread_cond_broadcast(&target_channel->not_full);
+        notify_channel_waiters(target_channel);
+        pthread_mutex_unlock(&target_channel->lock);
+        if(handoff_status!=DIAMOND_VM_OK)return handoff_status;
+        snprintf(vm->error,sizeof vm->error,"channel is closed");
+        return DIAMOND_VM_IO_ERROR;
+    }
+    pthread_mutex_unlock(&target_channel->lock);
+    return DIAMOND_VM_OK;
+}
+
+/* Channel#receive and #try_receive: takes the oldest queued value, copied into `vm`, waiting for
+ * one unless trying; nil once the channel is closed and drained. Part of channel_invoke_helper. */
+static DiamondVmStatus channel_receive_helper(DiamondVm *vm,const DiamondChunk *chunk,
+        DiamondChannel *target_channel,bool try_receive_method,DiamondValue *result_out) {
+    pthread_mutex_lock(&target_channel->lock);
+    while(target_channel->count==0&&!target_channel->closed) {
+        if(try_receive_method) {
+            pthread_mutex_unlock(&target_channel->lock);
+            snprintf(vm->error,sizeof vm->error,
+                "channel receive would block");
+            return DIAMOND_VM_WOULD_BLOCK;
+        }
+        target_channel->receivers_waiting++;
+        if(target_channel->rendezvous)notify_channel_waiters(target_channel);
+        const DiamondVmStatus wait_status=channel_wait_bounded(vm,
+            &target_channel->not_empty,&target_channel->lock);
+        target_channel->receivers_waiting--;
+        if(wait_status!=DIAMOND_VM_OK) {
+            pthread_mutex_unlock(&target_channel->lock);
+            return wait_status;
+        }
+    }
+    if(target_channel->count==0) {
+        /* Closed and drained: nil means "nothing ever
+         * again," distinct from WouldBlockError's "nothing
+         * right now" above -- the identical EOF-as-nil-vs-
+         * WouldBlockError distinction File#read/Socket#read
+         * already draw (see their own comments). */
+        pthread_mutex_unlock(&target_channel->lock);
+        *result_out=DIAMOND_NIL;return DIAMOND_VM_OK;
+    }
+    /* Rebase the other direction: out of the channel's own
+     * private program, into this receiver's own ambient
+     * classes -- identical call shape to Thread#join's own
+     * result copy above. Allocates on `vm` (this receiver's
+     * own real VM), never on private_vm, so private_vm's
+     * own extra_root_count needs no update for this call --
+     * only for the queue-mutation just below. */
+    DiamondValue copied=DIAMOND_NIL;
+    const bool copy_ok=copy_value_into_vm(vm,
+        target_channel->queue[0],nullptr,
+        target_channel->private_program->classes,chunk->classes,
+        nullptr,&copied);
+    if(!copy_ok) {
+        pthread_mutex_unlock(&target_channel->lock);
+        snprintf(vm->error,sizeof vm->error,
+            "%s %s","Channel#receive result",copy_failure_reason());
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    memmove(target_channel->queue,target_channel->queue+1,
+        (target_channel->count-1)*sizeof *target_channel->queue);
+    target_channel->count--;
+    target_channel->taken++;
+    target_channel->private_vm->extra_root_count=
+        target_channel->count;
+    notify_channel_waiters(target_channel);
+    if(target_channel->rendezvous)pthread_cond_broadcast(&target_channel->not_full);
+    else pthread_cond_signal(&target_channel->not_full);
+    pthread_mutex_unlock(&target_channel->lock);
+    *result_out=copied;return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
                                              const DiamondChunk *chunk, DiamondValue *registers,
                                              uint16_t recv, uint16_t base, uint8_t argc,
@@ -766,79 +908,9 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
     }
     if(send_method||try_send_method) {
         if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
-        const DiamondValue value_to_send=registers[base];
-        pthread_mutex_lock(&target_channel->lock);
-        while((target_channel->count==target_channel->capacity||
-               (try_send_method&&target_channel->rendezvous&&
-                target_channel->receivers_waiting==0))&&
-              !target_channel->closed) {
-            if(try_send_method) {
-                pthread_mutex_unlock(&target_channel->lock);
-                snprintf(vm->error,sizeof vm->error,
-                    "channel send would block");
-                return DIAMOND_VM_WOULD_BLOCK;
-            }
-            const DiamondVmStatus wait_status=channel_wait_bounded(vm,
-                &target_channel->not_full,&target_channel->lock);
-            if(wait_status!=DIAMOND_VM_OK) {
-                pthread_mutex_unlock(&target_channel->lock);
-                return wait_status;
-            }
-        }
-        if(target_channel->closed) {
-            pthread_mutex_unlock(&target_channel->lock);
-            snprintf(vm->error,sizeof vm->error,"channel is closed");
-            return DIAMOND_VM_IO_ERROR;
-        }
-        /* Rebase from this sender's own ambient classes into
-         * the channel's own private (permanent, never-run)
-         * program -- identical call shape to DIAMOND_OP_
-         * THREAD_NEW's own argument copy above, just into a
-         * standing home instead of a freshly spawned child.
-         * extra_root_count kept current across the mutation
-         * below so a collection triggered by this very copy
-         * (on private_vm, still holding `lock`) can find
-         * every already-queued value. */
-        DiamondValue copied=DIAMOND_NIL;
-        target_channel->private_vm->extra_root_count=
-            target_channel->count;
-        const bool copy_ok=copy_value_into_vm(
-            target_channel->private_vm,value_to_send,nullptr,
-            chunk->classes,target_channel->private_program->classes,
-            nullptr,&copied);
-        if(!copy_ok) {
-            pthread_mutex_unlock(&target_channel->lock);
-            snprintf(vm->error,sizeof vm->error,
-                "%s %s","Channel#send argument",copy_failure_reason());
-            return DIAMOND_VM_TYPE_ERROR;
-        }
-        target_channel->queue[target_channel->count++]=copied;
-        const uint64_t sequence=++target_channel->sent;
-        target_channel->private_vm->extra_root_count=
-            target_channel->count;
-        notify_channel_waiters(target_channel);
-        pthread_cond_signal(&target_channel->not_empty);
-        /* A handoff is complete only when a receiver has taken the value. The
-         * single slot means the value is still the queue's only entry until
-         * then, so giving up (closed, cancelled, out of budget) withdraws it. */
-        DiamondVmStatus handoff_status=DIAMOND_VM_OK;
-        while(target_channel->rendezvous&&!try_send_method&&
-              target_channel->taken<sequence&&!target_channel->closed&&
-              handoff_status==DIAMOND_VM_OK)
-            handoff_status=channel_wait_bounded(vm,
-                &target_channel->not_full,&target_channel->lock);
-        if(target_channel->rendezvous&&!try_send_method&&target_channel->taken<sequence) {
-            target_channel->count=0;
-            target_channel->sent--;
-            target_channel->private_vm->extra_root_count=0;
-            pthread_cond_broadcast(&target_channel->not_full);
-            notify_channel_waiters(target_channel);
-            pthread_mutex_unlock(&target_channel->lock);
-            if(handoff_status!=DIAMOND_VM_OK)return handoff_status;
-            snprintf(vm->error,sizeof vm->error,"channel is closed");
-            return DIAMOND_VM_IO_ERROR;
-        }
-        pthread_mutex_unlock(&target_channel->lock);
+        const DiamondVmStatus send_status=channel_send_helper(vm,chunk,target_channel,registers[base],
+            try_send_method);
+        if(send_status!=DIAMOND_VM_OK)return send_status;
         registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     /* Only receive_method/try_receive_method left, per the
@@ -846,62 +918,7 @@ DiamondVmStatus channel_invoke_helper(DiamondVm *vm,
      * through to whichever's left" shape Socket#read/#write
      * already uses just below. */
     if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
-    pthread_mutex_lock(&target_channel->lock);
-    while(target_channel->count==0&&!target_channel->closed) {
-        if(try_receive_method) {
-            pthread_mutex_unlock(&target_channel->lock);
-            snprintf(vm->error,sizeof vm->error,
-                "channel receive would block");
-            return DIAMOND_VM_WOULD_BLOCK;
-        }
-        target_channel->receivers_waiting++;
-        if(target_channel->rendezvous)notify_channel_waiters(target_channel);
-        const DiamondVmStatus wait_status=channel_wait_bounded(vm,
-            &target_channel->not_empty,&target_channel->lock);
-        target_channel->receivers_waiting--;
-        if(wait_status!=DIAMOND_VM_OK) {
-            pthread_mutex_unlock(&target_channel->lock);
-            return wait_status;
-        }
-    }
-    if(target_channel->count==0) {
-        /* Closed and drained: nil means "nothing ever
-         * again," distinct from WouldBlockError's "nothing
-         * right now" above -- the identical EOF-as-nil-vs-
-         * WouldBlockError distinction File#read/Socket#read
-         * already draw (see their own comments). */
-        pthread_mutex_unlock(&target_channel->lock);
-        registers[dest]=DIAMOND_NIL;return DIAMOND_VM_OK;
-    }
-    /* Rebase the other direction: out of the channel's own
-     * private program, into this receiver's own ambient
-     * classes -- identical call shape to Thread#join's own
-     * result copy above. Allocates on `vm` (this receiver's
-     * own real VM), never on private_vm, so private_vm's
-     * own extra_root_count needs no update for this call --
-     * only for the queue-mutation just below. */
-    DiamondValue copied=DIAMOND_NIL;
-    const bool copy_ok=copy_value_into_vm(vm,
-        target_channel->queue[0],nullptr,
-        target_channel->private_program->classes,chunk->classes,
-        nullptr,&copied);
-    if(!copy_ok) {
-        pthread_mutex_unlock(&target_channel->lock);
-        snprintf(vm->error,sizeof vm->error,
-            "%s %s","Channel#receive result",copy_failure_reason());
-        return DIAMOND_VM_TYPE_ERROR;
-    }
-    memmove(target_channel->queue,target_channel->queue+1,
-        (target_channel->count-1)*sizeof *target_channel->queue);
-    target_channel->count--;
-    target_channel->taken++;
-    target_channel->private_vm->extra_root_count=
-        target_channel->count;
-    notify_channel_waiters(target_channel);
-    if(target_channel->rendezvous)pthread_cond_broadcast(&target_channel->not_full);
-    else pthread_cond_signal(&target_channel->not_full);
-    pthread_mutex_unlock(&target_channel->lock);
-    registers[dest]=copied;return DIAMOND_VM_OK;
+    return channel_receive_helper(vm,chunk,target_channel,try_receive_method,&registers[dest]);
 }
 
 /* Supervisor#restart_policy(options): intensity and backoff, settable only

@@ -702,6 +702,61 @@ static DiamondVmStatus process_build_env(DiamondVm *vm,const char *owner,
     return DIAMOND_VM_OK;
 }
 
+/* Fills in Process.run's spawn file actions: stdin from the feed pipe or /dev/null, an optional
+ * working directory, and stdout/stderr onto their capture pipes. Part of process_run_with_options. */
+static void process_spawn_actions(posix_spawn_file_actions_t *actions,
+        const DiamondProcessOptions *options,bool feed_stdin,const int stdout_pipe[2],
+        const int stderr_pipe[2],const int stdin_pipe[2]) {
+    posix_spawn_file_actions_init(actions);
+    if(feed_stdin) {
+        posix_spawn_file_actions_adddup2(actions,stdin_pipe[0],STDIN_FILENO);
+        posix_spawn_file_actions_addclose(actions,stdin_pipe[0]);
+        posix_spawn_file_actions_addclose(actions,stdin_pipe[1]);
+    } else
+        posix_spawn_file_actions_addopen(actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
+    if(options!=nullptr&&options->cwd!=nullptr)
+        posix_spawn_file_actions_addchdir_np(actions,options->cwd);
+    posix_spawn_file_actions_adddup2(actions,stdout_pipe[1],STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(actions,stderr_pipe[1],STDERR_FILENO);
+    posix_spawn_file_actions_addclose(actions,stdout_pipe[0]);
+    posix_spawn_file_actions_addclose(actions,stdout_pipe[1]);
+    posix_spawn_file_actions_addclose(actions,stderr_pipe[0]);
+    posix_spawn_file_actions_addclose(actions,stderr_pipe[1]);
+}
+
+/* Reaps the Process.run child after its pipes have closed. A supervisor interrupt, during the
+ * output loop (*interrupted already set) or while the child is still running here, kills it
+ * instead and sets *interrupted. Returns waitpid's result. Part of process_run_with_options. */
+static pid_t process_reap_child(DiamondVm *vm,pid_t pid,bool *interrupted,int *wait_status) {
+    pid_t wait_result=0;
+    if(!*interrupted&&vm->interrupt_flag!=nullptr) {
+        /* The pipes closed but the child may still be running. */
+        do {
+            wait_result=waitpid(pid,wait_status,WNOHANG);
+            if(wait_result==0) {
+                if(vm_interrupt_requested(vm)) {
+                    *interrupted=true;
+                    break;
+                }
+                const struct timespec nap={.tv_sec=0,
+                    .tv_nsec=(DIAMOND_INTERRUPT_SLICE_MS/4)*1000000L};
+                nanosleep(&nap,nullptr);
+            }
+        } while(wait_result==0||(wait_result<0&&errno==EINTR));
+    }
+    if(*interrupted) {
+        (void)kill(pid,SIGKILL);
+        do { wait_result=waitpid(pid,wait_status,0); }
+        while(wait_result<0&&errno==EINTR);
+        return wait_result;
+    }
+    if(wait_result!=pid) {
+        do { wait_result=waitpid(pid,wait_status,0); }
+        while(wait_result<0&&errno==EINTR);
+    }
+    return wait_result;
+}
+
 /* Process.run(argv): argv-array-only (never a shell string -- there is no
  * injection surface to guard against, by construction, matching the
  * design settled with the user before building this), blocking, full
@@ -749,21 +804,7 @@ static DiamondVmStatus process_run_with_options(DiamondVm *vm,
     }
 
     posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    if(feed_stdin) {
-        posix_spawn_file_actions_adddup2(&actions,stdin_pipe[0],STDIN_FILENO);
-        posix_spawn_file_actions_addclose(&actions,stdin_pipe[0]);
-        posix_spawn_file_actions_addclose(&actions,stdin_pipe[1]);
-    } else
-        posix_spawn_file_actions_addopen(&actions,STDIN_FILENO,"/dev/null",O_RDONLY,0);
-    if(options!=nullptr&&options->cwd!=nullptr)
-        posix_spawn_file_actions_addchdir_np(&actions,options->cwd);
-    posix_spawn_file_actions_adddup2(&actions,stdout_pipe[1],STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions,stderr_pipe[1],STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions,stdout_pipe[0]);
-    posix_spawn_file_actions_addclose(&actions,stdout_pipe[1]);
-    posix_spawn_file_actions_addclose(&actions,stderr_pipe[0]);
-    posix_spawn_file_actions_addclose(&actions,stderr_pipe[1]);
+    process_spawn_actions(&actions,options,feed_stdin,stdout_pipe,stderr_pipe,stdin_pipe);
 
     pid_t pid=0;
     const int spawn_status=posix_spawnp(&pid,command_name,&actions,
@@ -865,32 +906,10 @@ static DiamondVmStatus process_run_with_options(DiamondVm *vm,
     if(stdin_fd>=0)close(stdin_fd);
 
     int wait_status=0;
-    pid_t wait_result=0;
-    if(!interrupted&&vm->interrupt_flag!=nullptr) {
-        /* The pipes closed but the child may still be running. */
-        do {
-            wait_result=waitpid(pid,&wait_status,WNOHANG);
-            if(wait_result==0) {
-                if(vm_interrupt_requested(vm)) {
-                    interrupted=true;
-                    break;
-                }
-                const struct timespec nap={.tv_sec=0,
-                    .tv_nsec=(DIAMOND_INTERRUPT_SLICE_MS/4)*1000000L};
-                nanosleep(&nap,nullptr);
-            }
-        } while(wait_result==0||(wait_result<0&&errno==EINTR));
-    }
+    const pid_t wait_result=process_reap_child(vm,pid,&interrupted,&wait_status);
     if(interrupted) {
-        (void)kill(pid,SIGKILL);
-        do { wait_result=waitpid(pid,&wait_status,0); }
-        while(wait_result<0&&errno==EINTR);
         free(stdout_builder.chars);free(stderr_builder.chars);
         return DIAMOND_VM_INTERRUPTED;
-    }
-    if(wait_result!=pid) {
-        do { wait_result=waitpid(pid,&wait_status,0); }
-        while(wait_result<0&&errno==EINTR);
     }
 
     if(out_of_memory) {

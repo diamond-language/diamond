@@ -156,6 +156,103 @@ static void *mysql_connect_thread(void *argument) {
 #define HELPER_DONE do { *ip_ref=ip; return DIAMOND_VM_OK; } while (false)
 
 
+/* Creates and configures TLSSocket.connect's client SSL_CTX from its options: peer verification
+ * against the system or a custom trust store, an optional client certificate, ALPN and client-side
+ * session caching. On failure frees the context and returns the status. Part of
+ * outlined_tls_connect. */
+static DiamondVmStatus tls_client_context_helper(DiamondVm *vm,const DiamondSocketConnectOptions *options,
+        SSL_CTX **context_out) {
+    SSL_CTX *context=SSL_CTX_new(TLS_client_method());
+    if(context==nullptr) {
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,"cannot create TLS context: %s",detail);
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    /* Secure by default, no opt-out exposed: every
+     * TLSSocket.connect verifies the peer's certificate
+     * (SSL_VERIFY_PEER) and that the certificate is actually
+     * for `host` (SSL_set1_host below) -- there is still no
+     * `verify: false`-style escape hatch. The trust anchor
+     * itself, though, is now a real option: `ca_file`/
+     * `ca_path` load a caller-supplied CA bundle/directory
+     * (SSL_CTX_load_verify_locations) instead of the system
+     * trust store, for talking to an internal CA or a
+     * hermetic test server. Neither given still means the
+     * original, unchanged default (SSL_CTX_set_default_
+     * verify_paths, honoring $SSL_CERT_FILE/$SSL_CERT_DIR). */
+    SSL_CTX_set_verify(context,SSL_VERIFY_PEER,nullptr);
+    if(options->ca_file!=nullptr||options->ca_path!=nullptr) {
+        if(SSL_CTX_load_verify_locations(context,
+                options->ca_file!=nullptr?options->ca_file->chars:nullptr,
+                options->ca_path!=nullptr?options->ca_path->chars:nullptr)!=1) {
+            char detail[256];tls_format_error(detail,sizeof detail);
+            snprintf(vm->error,sizeof vm->error,
+                "cannot load custom TLS trust store: %s",detail);
+            SSL_CTX_free(context);
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+    } else if(SSL_CTX_set_default_verify_paths(context)!=1) {
+        char detail[256];tls_format_error(detail,sizeof detail);
+        snprintf(vm->error,sizeof vm->error,
+            "cannot load system TLS trust store: %s",detail);
+        SSL_CTX_free(context);
+        VM_RETURN(DIAMOND_VM_IO_ERROR);
+    }
+    /* Mutual TLS: a client certificate/key pair presented to
+     * a server that requests one (RECOMMENDED: only offered
+     * when the server asks, per normal TLS negotiation --
+     * this does not force client-cert auth on a server that
+     * doesn't want it). Pairing already validated above. */
+    if(options->cert!=nullptr) {
+        if(SSL_CTX_use_certificate_chain_file(context,options->cert->chars)!=1||
+           SSL_CTX_use_PrivateKey_file(context,options->key->chars,
+               SSL_FILETYPE_PEM)!=1||
+           SSL_CTX_check_private_key(context)!=1) {
+            char detail[256];tls_format_error(detail,sizeof detail);
+            snprintf(vm->error,sizeof vm->error,
+                "cannot load TLS client certificate/key: %s",detail);
+            SSL_CTX_free(context);
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+    }
+    /* ALPN protocol offer, encoded and handed to the context
+     * before SSL_new -- see tls_encode_alpn_protocols. */
+    if(options->alpn!=nullptr) {
+        unsigned char *alpn_encoded=nullptr;unsigned int alpn_encoded_length=0;
+        const DiamondVmStatus alpn_status=tls_encode_alpn_protocols(vm,
+            "TLSSocket.connect",options->alpn,&alpn_encoded,&alpn_encoded_length);
+        if(alpn_status!=DIAMOND_VM_OK) {
+            SSL_CTX_free(context);
+            VM_RETURN(alpn_status);
+        }
+        /* SSL_CTX_set_alpn_protos copies the buffer internally
+         * -- freed right after the call regardless of outcome,
+         * matching every OpenSSL client example's own usage. */
+        const int alpn_set_status=
+            SSL_CTX_set_alpn_protos(context,alpn_encoded,alpn_encoded_length);
+        free(alpn_encoded);
+        if(alpn_set_status!=0) {
+            char detail[256];tls_format_error(detail,sizeof detail);
+            snprintf(vm->error,sizeof vm->error,
+                "cannot set ALPN protocols: %s",detail);
+            SSL_CTX_free(context);
+            VM_RETURN(DIAMOND_VM_IO_ERROR);
+        }
+    }
+    /* Client-side session caching, needed for
+     * tls_new_session_callback to ever fire at all -- the
+     * default mode is server-side caching only, even on a
+     * context created with TLS_client_method(). Registered
+     * unconditionally (not just when `session` was passed in)
+     * since #session should work for capturing a *new*
+     * session to reuse on a future connection too, not only
+     * for resuming one given here. */
+    SSL_CTX_set_session_cache_mode(context,SSL_SESS_CACHE_CLIENT);
+    SSL_CTX_sess_set_new_cb(context,tls_new_session_callback);
+    *context_out=context;
+    return DIAMOND_VM_OK;
+}
+
 /* DIAMOND_OP_TLS_CONNECT, moved out of run_chunk's switch (see HELPER_DONE below): the case body is
  * unchanged apart from its macros, so it keeps the operand decoding, sandbox check and error
  * returns it had. The caller applies VM_PROPAGATE to the status. */
@@ -231,94 +328,9 @@ static DiamondVmStatus outlined_tls_connect(DiamondVm *vm,const DiamondChunk *ch
     const DiamondVmStatus timeout_status=apply_socket_timeouts_helper(vm,
         connected_fd,options.read_timeout_ms,options.write_timeout_ms);
     if(timeout_status!=DIAMOND_VM_OK) {close(connected_fd);VM_RETURN(timeout_status);}
-    SSL_CTX *context=SSL_CTX_new(TLS_client_method());
-    if(context==nullptr) {
-        close(connected_fd);
-        char detail[256];tls_format_error(detail,sizeof detail);
-        snprintf(vm->error,sizeof vm->error,"cannot create TLS context: %s",detail);
-        VM_RETURN(DIAMOND_VM_IO_ERROR);
-    }
-    /* Secure by default, no opt-out exposed: every
-     * TLSSocket.connect verifies the peer's certificate
-     * (SSL_VERIFY_PEER) and that the certificate is actually
-     * for `host` (SSL_set1_host below) -- there is still no
-     * `verify: false`-style escape hatch. The trust anchor
-     * itself, though, is now a real option: `ca_file`/
-     * `ca_path` load a caller-supplied CA bundle/directory
-     * (SSL_CTX_load_verify_locations) instead of the system
-     * trust store, for talking to an internal CA or a
-     * hermetic test server. Neither given still means the
-     * original, unchanged default (SSL_CTX_set_default_
-     * verify_paths, honoring $SSL_CERT_FILE/$SSL_CERT_DIR). */
-    SSL_CTX_set_verify(context,SSL_VERIFY_PEER,nullptr);
-    if(options.ca_file!=nullptr||options.ca_path!=nullptr) {
-        if(SSL_CTX_load_verify_locations(context,
-                options.ca_file!=nullptr?options.ca_file->chars:nullptr,
-                options.ca_path!=nullptr?options.ca_path->chars:nullptr)!=1) {
-            char detail[256];tls_format_error(detail,sizeof detail);
-            snprintf(vm->error,sizeof vm->error,
-                "cannot load custom TLS trust store: %s",detail);
-            SSL_CTX_free(context);close(connected_fd);
-            VM_RETURN(DIAMOND_VM_IO_ERROR);
-        }
-    } else if(SSL_CTX_set_default_verify_paths(context)!=1) {
-        char detail[256];tls_format_error(detail,sizeof detail);
-        snprintf(vm->error,sizeof vm->error,
-            "cannot load system TLS trust store: %s",detail);
-        SSL_CTX_free(context);close(connected_fd);
-        VM_RETURN(DIAMOND_VM_IO_ERROR);
-    }
-    /* Mutual TLS: a client certificate/key pair presented to
-     * a server that requests one (RECOMMENDED: only offered
-     * when the server asks, per normal TLS negotiation --
-     * this does not force client-cert auth on a server that
-     * doesn't want it). Pairing already validated above. */
-    if(options.cert!=nullptr) {
-        if(SSL_CTX_use_certificate_chain_file(context,options.cert->chars)!=1||
-           SSL_CTX_use_PrivateKey_file(context,options.key->chars,
-               SSL_FILETYPE_PEM)!=1||
-           SSL_CTX_check_private_key(context)!=1) {
-            char detail[256];tls_format_error(detail,sizeof detail);
-            snprintf(vm->error,sizeof vm->error,
-                "cannot load TLS client certificate/key: %s",detail);
-            SSL_CTX_free(context);close(connected_fd);
-            VM_RETURN(DIAMOND_VM_IO_ERROR);
-        }
-    }
-    /* ALPN protocol offer, encoded and handed to the context
-     * before SSL_new -- see tls_encode_alpn_protocols. */
-    if(options.alpn!=nullptr) {
-        unsigned char *alpn_encoded=nullptr;unsigned int alpn_encoded_length=0;
-        const DiamondVmStatus alpn_status=tls_encode_alpn_protocols(vm,
-            "TLSSocket.connect",options.alpn,&alpn_encoded,&alpn_encoded_length);
-        if(alpn_status!=DIAMOND_VM_OK) {
-            SSL_CTX_free(context);close(connected_fd);
-            VM_RETURN(alpn_status);
-        }
-        /* SSL_CTX_set_alpn_protos copies the buffer internally
-         * -- freed right after the call regardless of outcome,
-         * matching every OpenSSL client example's own usage. */
-        const int alpn_set_status=
-            SSL_CTX_set_alpn_protos(context,alpn_encoded,alpn_encoded_length);
-        free(alpn_encoded);
-        if(alpn_set_status!=0) {
-            char detail[256];tls_format_error(detail,sizeof detail);
-            snprintf(vm->error,sizeof vm->error,
-                "cannot set ALPN protocols: %s",detail);
-            SSL_CTX_free(context);close(connected_fd);
-            VM_RETURN(DIAMOND_VM_IO_ERROR);
-        }
-    }
-    /* Client-side session caching, needed for
-     * tls_new_session_callback to ever fire at all -- the
-     * default mode is server-side caching only, even on a
-     * context created with TLS_client_method(). Registered
-     * unconditionally (not just when `session` was passed in)
-     * since #session should work for capturing a *new*
-     * session to reuse on a future connection too, not only
-     * for resuming one given here. */
-    SSL_CTX_set_session_cache_mode(context,SSL_SESS_CACHE_CLIENT);
-    SSL_CTX_sess_set_new_cb(context,tls_new_session_callback);
+    SSL_CTX *context=nullptr;
+    const DiamondVmStatus context_status=tls_client_context_helper(vm,&options,&context);
+    if(context_status!=DIAMOND_VM_OK) {close(connected_fd);VM_RETURN(context_status);}
     SSL *ssl=SSL_new(context);
     SSL_CTX_free(context); /* ssl already holds its own reference */
     if(ssl==nullptr) {
@@ -2394,6 +2406,69 @@ static DiamondVmStatus outlined_invoke_keywords(DiamondVm *vm,const DiamondChunk
     registers[dest]=call_result;HELPER_DONE;
 }
 
+/* A spread call on a native receiver: re-enters the INVOKE dispatch through a synthetic one-call
+ * frame, so the native receiver kinds keep a single method matrix. Part of outlined_invoke_spread. */
+static DiamondVmStatus native_spread_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,size_t depth,
+        DiamondValue receiver,const DiamondArray *spread,uint16_t name,uint8_t type_argument_count,
+        const uint16_t *type_arguments,DiamondValue *result_out) {
+    if(spread->count>16)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
+    DiamondValue *native_arguments=malloc((spread->count+1)*
+        sizeof *native_arguments);
+    if(native_arguments==nullptr)
+        VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+    native_arguments[0]=receiver;
+    for(size_t index=0;index<spread->count;index++)
+        native_arguments[index+1]=spread->values[index];
+    uint8_t synthetic_code[32]={0};size_t code_index=0;
+    const uint16_t destination=(uint16_t)(spread->count+1);
+#define SYNTHETIC_SHORT(value) do { \
+    synthetic_code[code_index++]=(uint8_t)((value)>>8); \
+    synthetic_code[code_index++]=(uint8_t)(value); \
+} while(false)
+    synthetic_code[code_index++]=(uint8_t)(
+        type_argument_count==0?DIAMOND_OP_INVOKE:
+        DIAMOND_OP_INVOKE_TYPED);
+    SYNTHETIC_SHORT(destination);
+    SYNTHETIC_SHORT(0);
+    SYNTHETIC_SHORT(name);
+    SYNTHETIC_SHORT(1);
+    synthetic_code[code_index++]=(uint8_t)spread->count;
+    if(type_argument_count>0) {
+        synthetic_code[code_index++]=type_argument_count;
+        for(size_t index=0;index<type_argument_count;index++)
+            SYNTHETIC_SHORT(type_arguments[index]);
+    }
+    synthetic_code[code_index++]=DIAMOND_OP_RETURN;
+    SYNTHETIC_SHORT(destination);
+#undef SYNTHETIC_SHORT
+    uint32_t synthetic_lines[32]={0};
+    uint32_t synthetic_columns[32]={0};
+    DiamondChunk synthetic={.name="<native spread>",
+        .code=synthetic_code,.lines=synthetic_lines,
+        .columns=synthetic_columns,.code_count=code_index,
+        .constants=chunk->constants,
+        .constant_count=chunk->constant_count,
+        .strings=chunk->strings,.string_count=chunk->string_count,
+        .type_sets=chunk->type_sets,
+        .type_set_count=chunk->type_set_count,
+        .functions=chunk->functions,
+        .function_count=chunk->function_count,
+        .classes=chunk->classes,.class_count=chunk->class_count,
+        .interfaces=chunk->interfaces,
+        .interface_count=chunk->interface_count,
+        .modules=chunk->modules,.module_count=chunk->module_count,
+        .type_variable_bindings=chunk->type_variable_bindings,
+        .register_count=(uint16_t)(spread->count+2),
+        .range_class_index=chunk->range_class_index};
+    DiamondValue native_result=DIAMOND_NIL;
+    const DiamondVmStatus native_status=run_chunk(&synthetic,vm,
+        native_arguments,spread->count+1,depth+1,nullptr,
+        &native_result);
+    free(native_arguments);VM_PROPAGATE(native_status);
+    *result_out=native_result;
+    return DIAMOND_VM_OK;
+}
+
 /* DIAMOND_OP_INVOKE_SPREAD, DIAMOND_OP_INVOKE_TYPED_SPREAD, moved out of run_chunk's switch (see
  * HELPER_DONE below): the case body is unchanged apart from its macros, so it keeps the operand
  * decoding, sandbox check and error returns it had. The caller applies VM_PROPAGATE to the status. */
@@ -2451,60 +2526,10 @@ static DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *
          * verifier-safe synthetic frame instead of cloning its
          * many receiver branches here. The ordinary INVOKE format
          * has an 8-bit count and currently caps calls at 16 args. */
-        if(spread->count>16)VM_RETURN(DIAMOND_VM_ARITY_ERROR);
-        DiamondValue *native_arguments=malloc((spread->count+1)*
-            sizeof *native_arguments);
-        if(native_arguments==nullptr)
-            VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
-        native_arguments[0]=registers[recv];
-        for(size_t index=0;index<spread->count;index++)
-            native_arguments[index+1]=spread->values[index];
-        uint8_t synthetic_code[32]={0};size_t code_index=0;
-        const uint16_t destination=(uint16_t)(spread->count+1);
-#define SYNTHETIC_SHORT(value) do { \
-    synthetic_code[code_index++]=(uint8_t)((value)>>8); \
-    synthetic_code[code_index++]=(uint8_t)(value); \
-} while(false)
-        synthetic_code[code_index++]=(uint8_t)(
-            type_argument_count==0?DIAMOND_OP_INVOKE:
-            DIAMOND_OP_INVOKE_TYPED);
-        SYNTHETIC_SHORT(destination);
-        SYNTHETIC_SHORT(0);
-        SYNTHETIC_SHORT(name);
-        SYNTHETIC_SHORT(1);
-        synthetic_code[code_index++]=(uint8_t)spread->count;
-        if(type_argument_count>0) {
-            synthetic_code[code_index++]=type_argument_count;
-            for(size_t index=0;index<type_argument_count;index++)
-                SYNTHETIC_SHORT(type_arguments[index]);
-        }
-        synthetic_code[code_index++]=DIAMOND_OP_RETURN;
-        SYNTHETIC_SHORT(destination);
-#undef SYNTHETIC_SHORT
-        uint32_t synthetic_lines[32]={0};
-        uint32_t synthetic_columns[32]={0};
-        DiamondChunk synthetic={.name="<native spread>",
-            .code=synthetic_code,.lines=synthetic_lines,
-            .columns=synthetic_columns,.code_count=code_index,
-            .constants=chunk->constants,
-            .constant_count=chunk->constant_count,
-            .strings=chunk->strings,.string_count=chunk->string_count,
-            .type_sets=chunk->type_sets,
-            .type_set_count=chunk->type_set_count,
-            .functions=chunk->functions,
-            .function_count=chunk->function_count,
-            .classes=chunk->classes,.class_count=chunk->class_count,
-            .interfaces=chunk->interfaces,
-            .interface_count=chunk->interface_count,
-            .modules=chunk->modules,.module_count=chunk->module_count,
-            .type_variable_bindings=chunk->type_variable_bindings,
-            .register_count=(uint16_t)(spread->count+2),
-            .range_class_index=chunk->range_class_index};
         DiamondValue native_result=DIAMOND_NIL;
-        const DiamondVmStatus native_status=run_chunk(&synthetic,vm,
-            native_arguments,spread->count+1,depth+1,nullptr,
-            &native_result);
-        free(native_arguments);VM_PROPAGATE(native_status);
+        const DiamondVmStatus native_status=native_spread_invoke_helper(vm,chunk,depth,registers[recv],
+            spread,name,type_argument_count,type_arguments,&native_result);
+        VM_PROPAGATE(native_status);
         registers[dest]=native_result;HELPER_DONE;
     }
     DiamondInstance *instance=(DiamondInstance *)registers[recv].as.object;

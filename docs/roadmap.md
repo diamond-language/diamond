@@ -28,8 +28,6 @@ is done"), with release benchmarks treated as a no-regression check.
 - **`vm.c`** (10,338 lines) -- continue splitting by subsystem.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
-- **Functions over 200 lines** -- `outlined_tls_connect`, `outlined_invoke_spread`,
-  `channel_invoke_helper` and `process_run_with_options`.
 - **Call-depth limit** -- `run_chunk`'s frame is now about 40% smaller at `-O3` and
   60% smaller under ASan, so `DIAMOND_MAX_CALL_DEPTH` (92) could be raised. It is
   user-visible and must be recalibrated on every build variant (see its comment in
