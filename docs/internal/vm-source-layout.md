@@ -103,6 +103,7 @@ exception, below). 123 `*_helper` functions
 | `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
 | `vm_crypto.c` | BCrypt, SecureRandom, SHA-256/SHA-1 digests and HMAC, AES-GCM and Base64 (Gzip stays in `vm.c`) |
 | `vm_string.c` | the String methods (`string_invoke_helper`, `String#format`, `String#tr`) |
+| `vm_calls.c` | calling closures, functions and methods from the interpreter and JIT (`call_closure_helper`, `jit_call_core`, `diamond_jit_invoke_instance`, `diamond_jit_native_call`), `public_send`, keyword-argument merging, and backtrace capture |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
