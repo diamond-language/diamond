@@ -1662,4 +1662,8 @@ DIAMOND_INTERNAL void mark_adopted_programs(void *list, bool minor);
 /* vm.c, used by vm_operators.c */
 DIAMOND_INTERNAL DiamondArray *allocate_array_uninitialized(DiamondVm *vm,size_t count);
 
+/* vm_limits.c */
+DIAMOND_INTERNAL void budget_register(DiamondVm *vm);
+DIAMOND_INTERNAL void budget_unregister(DiamondVm *vm);
+
 #endif
