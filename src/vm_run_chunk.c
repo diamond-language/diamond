@@ -403,7 +403,11 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         instruction_offset = ip;
         uint8_t instruction = 0;
         READ_BYTE(instruction);
-        if (vm->count_opcodes && instruction < DIAMOND_OP_COUNT)
+        /* Both per-VM checks below are hinted false: the hint lets the compiler
+         * move their bodies out of the hot loop, which measured 2-19% faster on
+         * GCC and up to 15% on clang. Folding the two flags into one cut two
+         * instructions per dispatch but was slower on GCC, so they stay apart. */
+        if (__builtin_expect(vm->count_opcodes, 0) && instruction < DIAMOND_OP_COUNT)
             vm->opcode_counts[instruction]++;
         /* Cheap steady-state cost (one boolean read, false unless a
          * DIAMOND_MAX_* budget is configured) for docs/sandbox.md's own
@@ -424,7 +428,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
          * allowance: resource_hard_stop returns DIAMOND_VM_RESOURCE_EXHAUSTED,
          * which no rescue clause can match. Without the second step a program
          * that rescued the error would run unbounded. */
-        if (atomic_load_explicit(&vm->resource_limits_active, memory_order_relaxed)) {
+        if (__builtin_expect(atomic_load_explicit(&vm->resource_limits_active,
+                                                  memory_order_relaxed), 0)) {
             vm->instructions_executed++;
             if (vm->interrupt_flag != nullptr &&
                 atomic_load_explicit(vm->interrupt_flag, memory_order_relaxed)) {

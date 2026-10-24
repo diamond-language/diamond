@@ -22,22 +22,6 @@ and no file far past 3,000 lines. Each step is a behavior-preserving move or spl
 verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
 is done"), with release benchmarks treated as a no-regression check.
 
-- **Dispatch header in `run_chunk`** -- with `ip` in a register, each instruction
-  still costs 18 instructions before its case runs in a GCC release build: three
-  separate flag checks (pending signals, the opcode counter, resource limits) and the
-  switch's range check. Folding the two per-VM flags into one may save two. GCC also
-  leaves a callee-saved register idle in the hot loop while spilling `bytecode` and
-  `registers`; check with callgrind per-call counts and with cycles on clang too.
-- **The rest of `run_chunk`** (3,632 lines) -- draft PR #330 moves `MODULO`'s and
-  `<=>`'s slow paths into `vm_operators.c` and shares the type-binding loop between
-  entry and `TAIL_CALL`. Rebased on the register `ip`, instruction counts are flat but
-  the default GCC build is still slower on benchmarks that never run those opcodes
-  (closures about 8%, fibonacci about 5%; noise under 1%). With `-falign-functions=64
-  -falign-jumps=32 -falign-loops=32` on both builds the gap mostly closes, so this is
-  code placement, not a stall, but those flags alone are mixed on main (7 benchmarks
-  faster, 2 about 3% slower). Further outlining needs a decision on whether
-  placement-only GCC regressions block it.
-  The arithmetic and comparison cases already keep only their fast paths inline.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 
