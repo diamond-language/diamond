@@ -1580,4 +1580,54 @@ DIAMOND_INTERNAL DiamondVmStatus array_join_helper(DiamondVm *vm,const DiamondCh
         size_t depth,const DiamondArray *array,const char *separator_chars,
         size_t separator_length,DiamondValue *out);
 
+/* Private backing type for DiamondVm.adopted_programs (see its own
+ * comment, src/vm.h) -- a program a ProgramBuilder-returned Instance
+ * still needs, kept alive for the rest of this vm's lifetime instead of
+ * being freed with the temporary run_vm that built it. `chunk` is
+ * computed once at adoption time and never moves again (the node itself
+ * is heap-allocated and never relocated), so it's safe for any number of
+ * DiamondInstance.owner fields to keep pointing at &node->chunk
+ * indefinitely. */
+
+typedef struct DiamondAdoptedProgram {
+    DiamondProgram *program;
+    DiamondChunk chunk;
+    /* ClassName.compile_method's own bound_values: Hash argument, copied
+     * here so they outlive the call that created them -- see
+     * DiamondClosure.bound_values's own comment (src/object.h). Empty
+     * (bound_value_count==0) for a ProgramBuilder adoption, the other
+     * caller of adopt_program below. diamond_vm_collect walks
+     * vm->adopted_programs and marks these directly (see its own
+     * comment) -- the one part of this whole feature that makes a
+     * persistent, program-metadata-adjacent structure hold live GC
+     * values, unlike everything else adopt_program already managed. */
+    DiamondValue bound_values[DIAMOND_MAX_BOUND_VALUES];
+    uint8_t bound_value_count;
+    struct DiamondAdoptedProgram *next;
+} DiamondAdoptedProgram;
+
+/* A collection's backing store grew (Array#push, Hash entries or buckets): no
+ * fresh object was allocated, so maybe_collect's budget check never ran. A loop
+ * that only pushes onto one live array would otherwise outgrow
+ * DIAMOND_MAX_MEMORY_BYTES unnoticed. The growth site is mid-operation, so it
+ * only raises a flag; run_chunk's dispatch loop acts on it at the next
+ * instruction, where every value is rooted and a collection is safe. The
+ * budget is a process-wide total, so even a VM whose own bytes are well under
+ * it can be the one that pushes the total over. */
+static inline void note_storage_growth(DiamondVm *vm) {
+    if(vm->max_memory_bytes!=0)vm->memory_recheck=true;
+}
+
+/* vm.c, used by vm_values.c */
+DIAMOND_INTERNAL DiamondAdoptedProgram *adopt_program(DiamondVm *vm,DiamondProgram *program,
+        const DiamondValue *bound_values,uint8_t bound_value_count);
+DIAMOND_INTERNAL bool gc_write_barrier_index(DiamondVm *vm, DiamondObject *owner, size_t index);
+DIAMOND_INTERNAL bool gc_write_barrier_range(DiamondVm *vm, DiamondObject *owner,
+        size_t start, size_t count);
+
+/* vm_values.c */
+DIAMOND_INTERNAL ptrdiff_t hash_find_string_bytes(const DiamondHash *hash,const char *chars,size_t length);
+DIAMOND_INTERNAL bool hash_delete(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
+                        DiamondValue *removed,bool *found);
+
 #endif
