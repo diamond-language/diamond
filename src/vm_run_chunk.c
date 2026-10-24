@@ -2611,6 +2611,107 @@ static DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *
     registers[dest]=call_result;HELPER_DONE;
 }
 
+/* DIAMOND_OP_BREAKPOINT_CHECK, moved out of run_chunk's switch (see HELPER_DONE below): the case
+ * body is unchanged apart from its macros, so it keeps the operand decoding, sandbox check and
+ * error returns it had. The caller applies VM_PROPAGATE to the status. */
+__attribute__((noinline))
+static DiamondVmStatus outlined_breakpoint_check(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,
+        size_t depth,size_t instruction_offset,size_t *ip_ref) {
+    size_t ip=*ip_ref;
+    uint16_t destination=0;uint8_t local_count=0;
+    READ_SHORT(destination);READ_BYTE(local_count);
+    uint64_t source_line_offset=0;
+    for(size_t index=0;index<8;index++) {
+        uint8_t next=0;READ_BYTE(next);
+        source_line_offset=(source_line_offset<<8)|next;
+    }
+    uint16_t name_indices[DIAMOND_MAX_LOCALS];
+    uint16_t local_registers[DIAMOND_MAX_LOCALS];
+    for(size_t index=0;index<local_count;index++) {
+        READ_SHORT(name_indices[index]);
+        READ_SHORT(local_registers[index]);
+    }
+    /* Non-blocking: a live `setBreakpoints` sent while this
+     * program is running (not currently paused at any
+     * breakpoint) has nobody else reading vm->debug_fd to
+     * receive it -- see DiamondVm.debug_active_lines's own
+     * comment (src/vm.h) and docs/debugging.md's "live
+     * breakpoints" section for why this has to happen right
+     * here, at every statement, rather than via a background
+     * thread. Applies every currently-buffered command
+     * (there could be more than one queued up) before
+     * deciding whether *this* statement's own line is armed.
+     * Throttled to every DIAMOND_DEBUG_POLL_STATEMENT_MASK+1'th
+     * statement: an unthrottled poll() per statement tripled
+     * run time under a debug session. A new `setBreakpoints`
+     * lands at most that many statements late. */
+    if(vm->debug_fd>=0&&
+       (vm->debug_poll_counter++&DIAMOND_DEBUG_POLL_STATEMENT_MASK)==0) {
+        struct pollfd poll_fd={.fd=vm->debug_fd,.events=POLLIN};
+        while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
+            DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
+            size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
+            bool are_offsets=false;
+            char step_target[64];
+            if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
+                    DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets,step_target))
+                break;
+            if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
+                memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
+                vm->debug_active_line_count=line_count;
+                vm->debug_breakpoints_are_offsets=are_offsets;
+            }
+            poll_fd.revents=0;
+        }
+    }
+    const bool in_bounds=instruction_offset<chunk->code_count;
+    const uint32_t statement_line=in_bounds&&chunk->lines!=nullptr?
+        chunk->lines[instruction_offset]:0;
+    bool armed=false;
+    for(size_t index=0;index<vm->debug_active_line_count;index++)
+        if(vm->debug_active_lines[index]==(vm->debug_breakpoints_are_offsets?
+                (size_t)source_line_offset:(size_t)statement_line)) { armed=true; break; }
+    /* Real stepping (docs/debugging.md's own "Stepping"
+     * section): an armed breakpoint line always wins/pauses
+     * regardless (checked above, unconditionally) -- this is
+     * only a fallback for when that check didn't already
+     * decide to pause. See DiamondVm.debug_step_mode's own
+     * comment (src/vm.h) for the full semantics; `depth` is
+     * this exact run_chunk invocation's own already-tracked
+     * recursion depth, needing no new state to read. */
+    bool stepped=false;
+    if(!armed&&vm->debug_step_mode!=DIAMOND_STEP_NONE) {
+        switch(vm->debug_step_mode) {
+            case DIAMOND_STEP_IN:
+                /* A named target (stepInTargets) pauses only on
+                 * entering that callee one level down; if it
+                 * turns out to be native, or never runs, the
+                 * next statement at this depth or shallower
+                 * stops instead, as `next` would. */
+                if(vm->debug_step_in_target[0]=='\0')stepped=true;
+                else stepped=depth<=vm->debug_step_target_depth||
+                    (depth==vm->debug_step_target_depth+1&&chunk->name!=nullptr&&
+                     strcmp(chunk->name,vm->debug_step_in_target)==0);
+                break;
+            case DIAMOND_STEP_OVER:
+                stepped=depth<=vm->debug_step_target_depth; break;
+            case DIAMOND_STEP_OUT:
+                stepped=depth<vm->debug_step_target_depth; break;
+            default: break;
+        }
+    }
+    if(armed||stepped) {
+        vm->debug_step_mode=DIAMOND_STEP_NONE;
+        vm->debug_step_in_target[0]='\0';
+        const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
+            instruction_offset,(size_t)source_line_offset,registers,name_indices,local_registers,local_count,
+            armed?"breakpoint":"step");
+        VM_PROPAGATE(debugger_status);
+    }
+    registers[destination]=DIAMOND_NIL;
+    HELPER_DONE;
+}
+
 #undef HELPER_DONE
 #undef READ_SHORT
 #undef READ_BYTE
@@ -5451,97 +5552,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_BREAKPOINT_CHECK: {
-                uint16_t destination=0;uint8_t local_count=0;
-                READ_SHORT(destination);READ_BYTE(local_count);
-                uint64_t source_line_offset=0;
-                for(size_t index=0;index<8;index++) {
-                    uint8_t next=0;READ_BYTE(next);
-                    source_line_offset=(source_line_offset<<8)|next;
-                }
-                uint16_t name_indices[DIAMOND_MAX_LOCALS];
-                uint16_t local_registers[DIAMOND_MAX_LOCALS];
-                for(size_t index=0;index<local_count;index++) {
-                    READ_SHORT(name_indices[index]);
-                    READ_SHORT(local_registers[index]);
-                }
-                /* Non-blocking: a live `setBreakpoints` sent while this
-                 * program is running (not currently paused at any
-                 * breakpoint) has nobody else reading vm->debug_fd to
-                 * receive it -- see DiamondVm.debug_active_lines's own
-                 * comment (src/vm.h) and docs/debugging.md's "live
-                 * breakpoints" section for why this has to happen right
-                 * here, at every statement, rather than via a background
-                 * thread. Applies every currently-buffered command
-                 * (there could be more than one queued up) before
-                 * deciding whether *this* statement's own line is armed.
-                 * Throttled to every DIAMOND_DEBUG_POLL_STATEMENT_MASK+1'th
-                 * statement: an unthrottled poll() per statement tripled
-                 * run time under a debug session. A new `setBreakpoints`
-                 * lands at most that many statements late. */
-                if(vm->debug_fd>=0&&
-                   (vm->debug_poll_counter++&DIAMOND_DEBUG_POLL_STATEMENT_MASK)==0) {
-                    struct pollfd poll_fd={.fd=vm->debug_fd,.events=POLLIN};
-                    while(poll(&poll_fd,1,0)>0&&(poll_fd.revents&POLLIN)!=0) {
-                        DiamondDebugCommandKind kind=DIAMOND_DEBUG_COMMAND_NONE;
-                        size_t lines[DIAMOND_MAX_ACTIVE_BREAKPOINTS];size_t line_count=0;
-                        bool are_offsets=false;
-                        char step_target[64];
-                        if(!debug_pipe_read_command(vm->debug_fd,&kind,lines,&line_count,
-                                DIAMOND_MAX_ACTIVE_BREAKPOINTS,&are_offsets,step_target))
-                            break;
-                        if(kind==DIAMOND_DEBUG_COMMAND_SET_BREAKPOINTS) {
-                            memcpy(vm->debug_active_lines,lines,line_count*sizeof lines[0]);
-                            vm->debug_active_line_count=line_count;
-                            vm->debug_breakpoints_are_offsets=are_offsets;
-                        }
-                        poll_fd.revents=0;
-                    }
-                }
-                const bool in_bounds=instruction_offset<chunk->code_count;
-                const uint32_t statement_line=in_bounds&&chunk->lines!=nullptr?
-                    chunk->lines[instruction_offset]:0;
-                bool armed=false;
-                for(size_t index=0;index<vm->debug_active_line_count;index++)
-                    if(vm->debug_active_lines[index]==(vm->debug_breakpoints_are_offsets?
-                            (size_t)source_line_offset:(size_t)statement_line)) { armed=true; break; }
-                /* Real stepping (docs/debugging.md's own "Stepping"
-                 * section): an armed breakpoint line always wins/pauses
-                 * regardless (checked above, unconditionally) -- this is
-                 * only a fallback for when that check didn't already
-                 * decide to pause. See DiamondVm.debug_step_mode's own
-                 * comment (src/vm.h) for the full semantics; `depth` is
-                 * this exact run_chunk invocation's own already-tracked
-                 * recursion depth, needing no new state to read. */
-                bool stepped=false;
-                if(!armed&&vm->debug_step_mode!=DIAMOND_STEP_NONE) {
-                    switch(vm->debug_step_mode) {
-                        case DIAMOND_STEP_IN:
-                            /* A named target (stepInTargets) pauses only on
-                             * entering that callee one level down; if it
-                             * turns out to be native, or never runs, the
-                             * next statement at this depth or shallower
-                             * stops instead, as `next` would. */
-                            if(vm->debug_step_in_target[0]=='\0')stepped=true;
-                            else stepped=depth<=vm->debug_step_target_depth||
-                                (depth==vm->debug_step_target_depth+1&&chunk->name!=nullptr&&
-                                 strcmp(chunk->name,vm->debug_step_in_target)==0);
-                            break;
-                        case DIAMOND_STEP_OVER:
-                            stepped=depth<=vm->debug_step_target_depth; break;
-                        case DIAMOND_STEP_OUT:
-                            stepped=depth<vm->debug_step_target_depth; break;
-                        default: break;
-                    }
-                }
-                if(armed||stepped) {
-                    vm->debug_step_mode=DIAMOND_STEP_NONE;
-                    vm->debug_step_in_target[0]='\0';
-                    const DiamondVmStatus debugger_status=debugger_helper(vm,chunk,depth,
-                        instruction_offset,(size_t)source_line_offset,registers,name_indices,local_registers,local_count,
-                        armed?"breakpoint":"step");
-                    VM_PROPAGATE(debugger_status);
-                }
-                registers[destination]=DIAMOND_NIL;
+                const DiamondVmStatus helper_status=outlined_breakpoint_check(vm,chunk,registers,depth,instruction_offset,&ip);
+                VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_ARGV: {
