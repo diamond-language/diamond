@@ -1,0 +1,18 @@
+plain thread: true
+plain fiber: true
+method thread: true
+method fiber: true
+other thread: true
+other fiber: true
+super thread: true
+super fiber: true
+spread thread: true
+spread fiber: true
+public_send thread: true
+public_send fiber: true
+block thread: true
+block fiber: true
+to_s thread: true
+to_s fiber: true
+done
+nil

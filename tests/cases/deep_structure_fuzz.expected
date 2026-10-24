@@ -4,8 +4,8 @@ acyclic deep_freeze: ok x64
 acyclic dup: ok x64
 acyclic equal: ok x64
 acyclic flatten: NoMethodError x7
-acyclic flatten: TypeError x37
-acyclic flatten: ok x20
+acyclic flatten: TypeError x36
+acyclic flatten: ok x21
 acyclic freeze: ok x64
 acyclic hash_key: ok x64
 acyclic json: JSONError x26

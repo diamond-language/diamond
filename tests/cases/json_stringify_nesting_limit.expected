@@ -1,6 +1,6 @@
 102
-184
-92 levels: SystemStackError
+300
+150 levels: SystemStackError
 200 levels: SystemStackError
 array containing itself: SystemStackError
 hash containing itself: SystemStackError

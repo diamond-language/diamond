@@ -28,10 +28,6 @@ is done"), with release benchmarks treated as a no-regression check.
 - **`vm.c`** (3,616 lines) -- continue splitting by subsystem.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
-- **Call-depth limit** -- `run_chunk`'s frame is now about 40% smaller at `-O3` and
-  60% smaller under ASan, so `DIAMOND_MAX_CALL_DEPTH` (92) could be raised. It is
-  user-visible and must be recalibrated on every build variant (see its comment in
-  `src/vm_internal.h`).
 
 ## 0.20: from installation to a first app
 

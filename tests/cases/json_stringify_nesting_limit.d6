@@ -1,4 +1,4 @@
-# Nesting is bounded like JSON.parse's: 91 levels encode, deeper (and any
+# Nesting is bounded like JSON.parse's: 149 levels encode, deeper (and any
 # self-containing collection) raises SystemStackError instead of
 # recursing until the C stack overflows.
 def nest(levels)
@@ -10,7 +10,7 @@ def nest(levels)
 end
 
 puts(JSON.stringify(nest(50)).length())
-puts(JSON.stringify(nest(91)).length())
+puts(JSON.stringify(nest(149)).length())
 
 def attempt(label, &block)
   begin
@@ -21,8 +21,8 @@ def attempt(label, &block)
   end
 end
 
-attempt("92 levels") do
-  JSON.stringify(nest(92))
+attempt("150 levels") do
+  JSON.stringify(nest(150))
 end
 attempt("200 levels") do
   JSON.stringify(nest(200))

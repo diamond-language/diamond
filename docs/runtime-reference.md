@@ -221,7 +221,7 @@ JSON.stringify({"b": [1, 2], "a": {}}, {"indent": 2, "sort_keys": true})
 # }
 ```
 
-Nesting is limited to 91 levels, the same
+Nesting is limited to 149 levels, the same
 bound `JSON.parse` uses; a deeper document, or an Array/Hash that contains
 itself, raises `SystemStackError` rather than recursing without end.
 

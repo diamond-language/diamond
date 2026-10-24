@@ -1,0 +1,83 @@
+# DIAMOND_MAX_CALL_DEPTH is calibrated against an 8 MiB stack (a Fiber's,
+# or a Thread's). Each shape below recurses without end there and must stop
+# with a clean stack-overflow error, never a native crash. Method calls use
+# the most native stack per level; see the limit's comment in
+# src/vm_internal.h.
+class R
+  def d(n)
+    return 1 + self.d(n + 1)
+  end
+  def other(peer: R, n: Int) -> Int
+    return 1 + peer.other(self, n + 1)
+  end
+  def spread(*args)
+    return 1 + self.spread(*[args[0] + 1])
+  end
+  def sent(n)
+    return 1 + self.public_send(:sent, n + 1)
+  end
+end
+
+class Child < R
+  def d(n)
+    return super(n)
+  end
+end
+
+class Node
+  def initialize(n)
+    @n = n
+  end
+  def to_s()
+    return "#{Node.new(@n + 1)}"
+  end
+end
+
+def plain(n) = 1 + plain(n + 1)
+
+def block(n)
+  total = 0
+  [n].each() do |v|
+    total = 1 + block(v + 1)
+  end
+  total
+end
+
+def run_plain() = plain(0)
+def run_method() = R.new().d(0)
+def run_other() = R.new().other(R.new(), 0)
+def run_super() = Child.new().d(0)
+def run_spread() = R.new().spread(0)
+def run_send() = R.new().sent(0)
+def run_block() = block(0)
+def run_to_s() = Node.new(0).to_s()
+
+def overflowed?(message) = message.include?("stack overflow")
+
+def in_thread(label, body)
+  t = Thread.new(body)
+  begin
+    t.join()
+    puts("#{label} thread: returned")
+  rescue error: ThreadError
+    puts("#{label} thread: #{overflowed?(error.message())}")
+  end
+end
+
+def in_fiber(label, body)
+  fiber = Fiber.new(body)
+  begin
+    fiber.resume()
+    puts("#{label} fiber: returned")
+  rescue error: SystemStackError
+    puts("#{label} fiber: #{overflowed?(error.message())}")
+  end
+end
+
+[["plain", run_plain], ["method", run_method], ["other", run_other],
+ ["super", run_super], ["spread", run_spread], ["public_send", run_send],
+ ["block", run_block], ["to_s", run_to_s]].each() do |pair|
+  in_thread(pair[0], pair[1])
+  in_fiber(pair[0], pair[1])
+end
+puts("done")
