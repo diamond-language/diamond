@@ -1643,4 +1643,7 @@ DIAMOND_INTERNAL void mark_frame_chain(void *frames, bool minor);
 /* vm.c, used by vm_gc.c */
 DIAMOND_INTERNAL void mark_adopted_programs(void *list, bool minor);
 
+/* vm.c, used by vm_operators.c */
+DIAMOND_INTERNAL DiamondArray *allocate_array_uninitialized(DiamondVm *vm,size_t count);
+
 #endif
