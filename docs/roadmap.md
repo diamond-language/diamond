@@ -26,7 +26,6 @@ is done"), with release benchmarks treated as a no-regression check.
   132 lines; integer division, modulo and comparison) only where outlining measures
   neutral. The `outlined_*` case helpers could move to their own file.
 - **`vm.c`** (10,338 lines) -- continue splitting by subsystem.
-- **`tools/facet.c`** (3,635 lines) -- split by subcommand.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 - **Functions over 200 lines** -- `compile_body` (jit.c), `compile_definition`,

@@ -44,7 +44,7 @@ This document covers Diamond's package resolution — packages are called
 form separate from and never competing with ordinary `require` — plus the
 optional manifest a cut can declare its identity with, and `facet`, the
 standalone tool that fetches and installs cuts. `facet` is a separate
-program (its own binary, `build/facet`, built from `tools/facet.c`), not
+program (its own binary, `build/facet`, built from `tools/facet*.c`), not
 part of the `diamond` runtime or its release — the same relationship
 RubyGems' `gem` has to `ruby`.
 
@@ -174,7 +174,7 @@ naming both requesters and their own ranges; mixing an exact ref and a
 whichever side resolved first happens to already satisfy the other's
 own constraint too — that one is never resolved by backtracking (see
 below). See `tools/semver.h` for the exact range grammar and
-[`tools/facet.c`](../tools/facet.c) for the resolver implementation.
+[`tools/facet_resolve.c`](../tools/facet_resolve.c) for the resolver implementation.
 
 Declaring a dependency here does **not** implicitly `require_cut` it —
 `require_cut` and `dependencies` are separate mechanisms. A project that
