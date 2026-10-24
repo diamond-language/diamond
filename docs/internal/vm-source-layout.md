@@ -82,6 +82,14 @@ against, and every case's locals share it. Outlining `IO.poll` (two 256-entry re
 `pollfd` array), the call families and `BREAKPOINT_CHECK` took it from 25.9 KB to 15.4 KB at `-O3`
 and from 65.3 KB to 24.7 KB under ASan; measure it with `gcc -fstack-usage`.
 
+Outlining stops here. `ip` is never address-taken (helpers that move it take `&ip_slot`, synced
+by `IP_CALL`), and the decode macros read local `bytecode`/`bytecode_count` copies, so the loop
+keeps `ip` in a register without spilling `chunk`. Further moves out of `run_chunk` changed only
+code placement, yet made the default GCC build 5-8% slower on benchmarks that never ran the moved
+code (PR #330); a placement-only GCC regression blocks a change here. Judge changes to the loop by
+median cycles over alternating runs on both GCC and clang, not instruction counts: folding the two
+per-VM dispatch flags into one cut two instructions per dispatch and was slower on GCC.
+
 ## What has been split out
 
 Code moves into its own file only when the interpreter reaches it through out-of-line helpers, so
