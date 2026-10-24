@@ -69,11 +69,11 @@ site with the helper's own checks in the helper's order (`#push` still defers to
 `array_push` extension, and a frozen array, a type constraint, an arity mismatch or a cold extension
 cache fall through to the helper). With it `array_ops` is 2% below its pre-outlining cycles.
 
-Whole opcode cases that are cold or carry large locals are outlined into `outlined_*` functions at
-the top of `vm_run_chunk.c`: the database and TLS opens, `Thread.new`, `Channel.select`, `IO.poll`,
+Whole opcode cases that are cold or carry large locals are outlined into `outlined_*` functions in
+`vm_outlined.c`: the database and TLS opens, `Thread.new`, `Channel.select`, `IO.poll`,
 the spread and keyword call families, `NEW_SPREAD` and `BREAKPOINT_CHECK`, among others. The case
-body moves unchanged. The macros it uses are redefined above `run_chunk` to return the status, and the
-call site applies `VM_PROPAGATE` to it, so a failure reaches the same handlers it did inline. That
+body moves unchanged. The macros it uses are defined in that file to return the status, and the
+call site in `run_chunk` applies `VM_PROPAGATE` to it, so a failure reaches the same handlers it did inline. That
 holds only because none of these bodies passes `DIAMOND_VM_EXCEPTION` to `VM_RETURN`: inline, that
 skips this frame's rescue clauses (`catch_runtime_error` has no class for it), while the call site's
 `VM_PROPAGATE` would offer it to them. Outlining matters for the call-depth limit as well as for size:
@@ -100,6 +100,7 @@ exception, below). 123 `*_helper` functions
 | `vm_process_io.c` | process spawning, file natives (`file_invoke_helper`) and interruptible line reading (`read_line`) |
 | `vm_network.c` | TLS, TCP, UDP and DNS resolution, and the Socket, Listener, UDPSocket and TLSSocket methods |
 | `vm_run_chunk.c` | the interpreter loop, `run_chunk` |
+| `vm_outlined.c` | `run_chunk`'s outlined case bodies (`outlined_*`), with the macros they were written with |
 | `vm_debugger.c` | terminal debugger pauses, structured DAP pauses and debug-control pipe framing |
 | `vm_crypto.c` | BCrypt, SecureRandom, SHA-256/SHA-1 digests and HMAC, AES-GCM and Base64 (Gzip stays in `vm.c`) |
 | `vm_string.c` | the String methods (`string_invoke_helper`, `String#format`, `String#tr`) |
