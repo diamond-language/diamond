@@ -106,6 +106,7 @@ exception, below). 123 `*_helper` functions
 | `vm_calls.c` | calling closures, functions and methods from the interpreter and JIT (`call_closure_helper`, `jit_call_core`, `diamond_jit_invoke_instance`, `diamond_jit_native_call`), `public_send`, keyword-argument merging, and backtrace capture |
 | `vm_types.c` | runtime type checks (`value_matches_type`, structural interface matching against the native member tables, `diamond_jit_check_type`/`is_type`) and generic type binding and inference (`bind_context_set`, `infer_from_value`) |
 | `vm_format.c` | value formatting: type names for error messages, `builder_format_value`, `inspect`/`to_s` (`stringify_value`, `inspect_value`), uncaught-exception messages and `Array#join` |
+| `vm_values.c` | copying values between VMs (`copy_value_into_vm` and its per-kind steps), equality (`values_equal`), hashing and the Hash table operations (`hash_find`, `hash_set`, `hash_delete`) |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
