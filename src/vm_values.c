@@ -926,3 +926,239 @@ bool hash_delete(DiamondVm *vm,DiamondHash *hash,DiamondValue key,
     return gc_write_barrier_range(vm,(DiamondObject *)hash,index,
                                   hash->count-index);
 }
+
+/* Phase 4 (docs/internal/jit-design.md). Shared implementation for
+ * DIAMOND_OP_INVOKE's `dup`/`freeze`/`frozen?` pseudo-methods --
+ * receiver-kind-agnostic native operations checked before any per-type
+ * or Instance method dispatch (see that opcode's own comment on
+ * interception order), extracted so the interpreter and the JIT
+ * (src/jit.c's compile_body, own DIAMOND_OP_INVOKE case) share one
+ * implementation rather than two independently maintained copies. None
+ * of the three can ever invoke arbitrary user code (no operator-override
+ * equivalent for any of them, unlike EQUAL/INDEX_GET), so compiling one
+ * of these never needs jc->has_called = true. `dup_defined` (Array/Hash/
+ * String/Symbol, or any non-Object primitive) is folded directly into
+ * each function rather than left to a caller to check first: a receiver
+ * that doesn't qualify (an Instance, or any other Object kind --
+ * Time/Regexp/File/...) returns a plain nonzero DiamondVmStatus, safe to
+ * treat as "not handled here, fall back" by any caller that only ever
+ * reaches these before jc->has_called could be true (see compile_body's
+ * own comment for why that's guaranteed). */
+/* Copies `source`'s entries and bucket table into the freshly allocated, still-empty
+ * `copy` without hashing or probing anything: each entry already carries its hash, and a
+ * copy with identical entry indices and bucket_capacity can reuse the bucket table
+ * byte for byte. `copy` is young (allocate_hash just made it and nothing has collected
+ * since), so no write barrier or dirty card is needed. entries is sized to exactly
+ * `count`; hash_set grows it from there on the first insert. The typed-container
+ * constraints are deliberately not copied, as before (docs/internal/jit-design.md's
+ * Phase 4). */
+static bool hash_clone_contents(DiamondVm *vm,DiamondHash *copy,const DiamondHash *source) {
+    if(source->count==0)return true;
+    DiamondHashEntry *entries=malloc(source->count*sizeof(DiamondHashEntry));
+    if(entries==nullptr)return false;
+    size_t *buckets=malloc(source->bucket_capacity*sizeof(size_t));
+    if(buckets==nullptr){free(entries);return false;}
+    memcpy(entries,source->entries,source->count*sizeof(DiamondHashEntry));
+    memcpy(buckets,source->buckets,source->bucket_capacity*sizeof(size_t));
+    copy->entries=entries;copy->capacity=source->count;copy->count=source->count;
+    copy->buckets=buckets;copy->bucket_capacity=source->bucket_capacity;
+    vm->bytes_allocated+=source->count*sizeof(DiamondHashEntry)+
+        source->bucket_capacity*sizeof(size_t);
+    note_storage_growth(vm);
+    return true;
+}
+
+DiamondVmStatus diamond_jit_dup(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=*receiver;return DIAMOND_VM_OK;}
+    const DiamondObjectKind dup_kind=receiver->as.object->kind;
+    if(dup_kind==DIAMOND_OBJECT_STRING||dup_kind==DIAMOND_OBJECT_SYMBOL) {
+        /* Both are immutable in this VM (every String/Symbol-producing
+         * operation returns a new object rather than mutating in place),
+         * so a distinct copy would be observably identical -- returning
+         * the same object is correct, not just an optimization. */
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    if(dup_kind==DIAMOND_OBJECT_ARRAY) {
+        const DiamondArray *source=(const DiamondArray *)receiver->as.object;
+        DiamondArray *copy=allocate_array(vm,source->values,source->count);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        /* constraints[]/constraint_count deliberately NOT copied -- see
+         * this same rationale preserved from the interpreter's own former
+         * inline copy of this logic (docs/internal/jit-design.md's
+         * Phase 4). */
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
+    if(dup_kind==DIAMOND_OBJECT_HASH) {
+        const DiamondHash *source=(const DiamondHash *)receiver->as.object;
+        DiamondHash *copy=allocate_hash(vm);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        if(!hash_clone_contents(vm,copy,source))return DIAMOND_VM_OUT_OF_MEMORY;
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
+    if(dup_kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: an Instance's own `dup`/`freeze`/`frozen?` (src/vm.c's
+         * real INVOKE case) is only ever intercepted here when its class
+         * does NOT define its own same-named method -- lookup_method is a
+         * pure, deterministic table lookup, never arbitrary code, so
+         * folding that same check into this trampoline doesn't need
+         * jc->has_called (already true unconditionally for other reasons)
+         * to mean anything new. A class that *does* override dup/freeze/
+         * frozen? still correctly falls back to full interpretation (the
+         * "not dup_defined" return below), which then reaches real
+         * Instance method dispatch -- this trampoline never attempts
+         * that itself. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"dup",3)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
+        DiamondInstance *copy=allocate_instance(vm,instance->class,instance->owner);
+        if(copy==nullptr)return DIAMOND_VM_OUT_OF_MEMORY;
+        for(size_t index=0;index<instance->field_count;index++)
+            copy->fields[index]=instance->fields[index];
+        copy->shape=instance->shape;
+        *out=DIAMOND_OBJECT(copy);return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
+
+DiamondVmStatus diamond_jit_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    (void)vm; /* unused -- kept for a calling convention uniform with diamond_jit_dup */
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=*receiver;return DIAMOND_VM_OK;}
+    const DiamondObjectKind freeze_kind=receiver->as.object->kind;
+    if(freeze_kind==DIAMOND_OBJECT_STRING||freeze_kind==DIAMOND_OBJECT_SYMBOL) {
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    if(freeze_kind==DIAMOND_OBJECT_ARRAY||freeze_kind==DIAMOND_OBJECT_HASH) {
+        receiver->as.object->frozen=true;
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    if(freeze_kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: see diamond_jit_dup's own comment on why folding the
+         * lookup_method check in here is safe. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"freeze",6)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
+        receiver->as.object->frozen=true;
+        *out=*receiver;return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
+
+/* `deep_freeze`: freezes the receiver and, transitively, every Array
+ * element, Hash key/value, and Instance field reachable from it. Native
+ * and shallow-by-design siblings (`freeze`) stay as they are; this is a
+ * separate universal method so a class's own `freeze` is never bypassed
+ * for the receiver itself, but nested instances are frozen directly,
+ * without calling any user-defined `freeze` on them -- a deep freeze is a
+ * guarantee about the graph, not a request to run arbitrary user code
+ * mid-walk. Cycles are handled with an explicit visited set (pointer-keyed,
+ * open addressing) and an explicit work stack, so neither a cyclic graph
+ * nor a very deep one can recurse the C stack. Only Array/Hash/Instance
+ * carry a frozen flag; every other object kind is skipped (immutable
+ * String/Symbol, or native resources with no guarded mutation). Never
+ * allocates on the VM heap, so no GC can run mid-walk. */
+typedef struct DeepFreezeWalk {
+    const DiamondObject **visited;
+    size_t visited_capacity;
+    size_t visited_count;
+    DiamondObject **stack;
+    size_t stack_count;
+    size_t stack_capacity;
+} DeepFreezeWalk;
+
+static size_t deep_freeze_slot(const DiamondObject *object,size_t capacity) {
+    return (size_t)(((uintptr_t)object>>4)*(uintptr_t)11400714819323198485ull)&(capacity-1);
+}
+
+/* Returns 1 if newly queued, 0 if already seen or not freezable, -1 on OOM. */
+static int deep_freeze_visit(DeepFreezeWalk *walk,DiamondValue value) {
+    if(value.kind!=DIAMOND_VALUE_OBJECT||value.as.object==nullptr)return 0;
+    DiamondObject *object=value.as.object;
+    if(object->kind!=DIAMOND_OBJECT_ARRAY&&object->kind!=DIAMOND_OBJECT_HASH&&
+       object->kind!=DIAMOND_OBJECT_INSTANCE)return 0;
+    if(walk->visited_count*2>=walk->visited_capacity) {
+        const size_t new_capacity=walk->visited_capacity==0?64:walk->visited_capacity*2;
+        const DiamondObject **grown=calloc(new_capacity,sizeof *grown);
+        if(grown==nullptr)return -1;
+        for(size_t index=0;index<walk->visited_capacity;index++) {
+            const DiamondObject *entry=walk->visited[index];
+            if(entry==nullptr)continue;
+            size_t slot=deep_freeze_slot(entry,new_capacity);
+            while(grown[slot]!=nullptr)slot=(slot+1)&(new_capacity-1);
+            grown[slot]=entry;
+        }
+        free(walk->visited);
+        walk->visited=grown;walk->visited_capacity=new_capacity;
+    }
+    size_t slot=deep_freeze_slot(object,walk->visited_capacity);
+    while(walk->visited[slot]!=nullptr) {
+        if(walk->visited[slot]==object)return 0;
+        slot=(slot+1)&(walk->visited_capacity-1);
+    }
+    walk->visited[slot]=object;walk->visited_count++;
+    if(walk->stack_count==walk->stack_capacity) {
+        const size_t new_capacity=walk->stack_capacity==0?64:walk->stack_capacity*2;
+        DiamondObject **grown=realloc(walk->stack,new_capacity*sizeof *grown);
+        if(grown==nullptr)return -1;
+        walk->stack=grown;walk->stack_capacity=new_capacity;
+    }
+    walk->stack[walk->stack_count++]=object;
+    return 1;
+}
+
+DiamondVmStatus diamond_deep_freeze(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    (void)vm;
+    DeepFreezeWalk walk={};
+    DiamondVmStatus status=DIAMOND_VM_OK;
+    if(deep_freeze_visit(&walk,*receiver)<0)status=DIAMOND_VM_OUT_OF_MEMORY;
+    while(status==DIAMOND_VM_OK&&walk.stack_count>0) {
+        DiamondObject *object=walk.stack[--walk.stack_count];
+        object->frozen=true;
+        if(object->kind==DIAMOND_OBJECT_ARRAY) {
+            const DiamondArray *array=(const DiamondArray *)object;
+            for(size_t index=0;index<array->count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,array->values[index])<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        } else if(object->kind==DIAMOND_OBJECT_HASH) {
+            const DiamondHash *hash=(const DiamondHash *)object;
+            for(size_t index=0;index<hash->count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,hash->entries[index].key)<0||
+                   deep_freeze_visit(&walk,hash->entries[index].value)<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        } else {
+            const DiamondInstance *instance=(const DiamondInstance *)object;
+            for(size_t index=0;index<instance->field_count&&status==DIAMOND_VM_OK;index++)
+                if(deep_freeze_visit(&walk,instance->fields[index])<0)
+                    status=DIAMOND_VM_OUT_OF_MEMORY;
+        }
+    }
+    free(walk.visited);free(walk.stack);
+    if(status==DIAMOND_VM_OK)*out=*receiver;
+    return status;
+}
+
+DiamondVmStatus diamond_jit_frozen(DiamondVm *vm, const DiamondValue *receiver,
+        DiamondValue *out) {
+    if(receiver->kind!=DIAMOND_VALUE_OBJECT) {*out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;}
+    const DiamondObjectKind kind=receiver->as.object->kind;
+    if(kind==DIAMOND_OBJECT_STRING||kind==DIAMOND_OBJECT_SYMBOL) {
+        *out=DIAMOND_BOOL(true);return DIAMOND_VM_OK;
+    }
+    if(kind==DIAMOND_OBJECT_ARRAY||kind==DIAMOND_OBJECT_HASH) {
+        *out=DIAMOND_BOOL(receiver->as.object->frozen);return DIAMOND_VM_OK;
+    }
+    if(kind==DIAMOND_OBJECT_INSTANCE) {
+        /* Phase 6: see diamond_jit_dup's own comment on why folding the
+         * lookup_method check in here is safe. */
+        const DiamondInstance *instance=(const DiamondInstance *)receiver->as.object;
+        const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:vm->root_chunk;
+        if(lookup_method(owner,instance->class,"frozen?",7)!=nullptr)
+            return DIAMOND_VM_TYPE_ERROR; /* real override -- caller must fall back */
+        *out=DIAMOND_BOOL(receiver->as.object->frozen);return DIAMOND_VM_OK;
+    }
+    return DIAMOND_VM_TYPE_ERROR; /* not dup_defined -- caller must fall back */
+}
