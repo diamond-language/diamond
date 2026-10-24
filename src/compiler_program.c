@@ -704,61 +704,9 @@ static bool seed_program_from_template(DiamondProgram *destination,
     return true;
 }
 
-/* Shared by diamond_compile (template=nullptr, today's exact behavior)
- * and diamond_compile_incremental (template!=nullptr): see each
- * public wrapper's own comment for what `template` buys and costs. */
-bool diamond_compile_impl(const char *source, DiamondProgram *program,
-                                 const DiamondProgram *template,
-                                 bool debug_mode,
-                                 DiamondDiagnostic *diagnostic,
-                                 const DiamondProgram *tooling_returns,
-                                 ToolingDependencies *tooling_forward_calls) {
-    /* DIAMOND_TRACE_COMPILE: an opt-in stderr report of where compile time
-     * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
-     * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
-     * wall-time measurement in this codebase. */
-    const bool trace_compile=getenv("DIAMOND_TRACE_COMPILE")!=nullptr;
-    struct timespec trace_start={0},trace_discovery_done={0},trace_end={0};
-    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_start);
-    const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
-    diamond_program_free(program);
-
-    const size_t function_claim_start=
-        template!=nullptr?template->function_count:0;
-
-    DiamondProgram *discovery = calloc(1, sizeof *discovery);
-    /* diamond_program_init_fresh, not diamond_program_init: `discovery`
-     * is freshly calloc'd right above (already all-zero) and never reused
-     * across calls, so diamond_program_init's own memset would just
-     * re-zero memory calloc already zeroed -- see that function's own
-     * comment. */
-    diamond_program_init_fresh(discovery);
-    discovery->allow_top_level_redefinition = allow_top_level_redefinition;
-    if(template!=nullptr&&!seed_program_from_template(discovery,template)) {
-        diamond_program_free(discovery);free(discovery);
-        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
-        return false;
-    }
-    DiamondDiagnostic discovery_diagnostic = {0};
-    const bool discovered = run_compile_pass(
-        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
-        function_claim_start, false,nullptr,nullptr);
-    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
-
-    diamond_program_init(program);
-    program->allow_top_level_redefinition = allow_top_level_redefinition;
-    if (!discovered) {
-        *diagnostic = discovery_diagnostic;
-        diamond_program_free(discovery);
-        free(discovery);
-        return false;
-    }
-    if(template!=nullptr&&!seed_program_from_template(program,template)) {
-        diamond_program_free(discovery);free(discovery);
-        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
-        return false;
-    }
-
+/* Moves the discovery pass's class, interface, module and namespace-constant tables into
+ * `program`. Part of diamond_compile_impl. */
+static void adopt_discovered_tables(DiamondProgram *program,DiamondProgram *discovery) {
     /* Carry discovery's fully-populated class/module/interface tables
      * (names, fields, methods -- everything but real bytecode) into the
      * second, real pass's own program, *before* that pass starts, so
@@ -802,34 +750,11 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
     memcpy(program->namespace_constants,discovery->namespace_constants,
         discovery->namespace_constant_count*sizeof program->namespace_constants[0]);
     program->namespace_constant_count=discovery->namespace_constant_count;
+}
 
-    /* Reserve every compiler-created function at its discovery-pass index.
-     * The real pass claims the slots in the same source order, preserving
-     * both early top-level calls and copied class/module method indices.
-     * Starts at function_claim_start (0 with no template), not 0
-     * unconditionally: `discovery`'s own [0, function_claim_start) range
-     * is template's own functions, already present in `program` via
-     * seed_program_from_template above -- re-copying them here would
-     * append duplicates rather than harmlessly overwrite, unlike the
-     * fixed-size class/interface/module arrays just above. */
-    if(!allow_top_level_redefinition) {
-        for(size_t index=function_claim_start;index<discovery->function_count;index++) {
-            const DiamondFunction *discovered_function=discovery->functions[index];
-            DiamondFunction *reserved=diamond_program_add_function(program);
-            if(reserved==nullptr) {
-                diamond_program_free(discovery);free(discovery);
-                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
-                return false;
-            }
-            if(!diamond_function_copy(reserved,discovered_function)) {
-                diamond_program_free(discovery);free(discovery);
-                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
-                return false;
-            }
-            reserved->declared_by_discovery=true;
-        }
-    }
-
+/* After the discovery pass's tables reach `program`, marks the entries the real pass will declare
+ * again so it resets them instead of merging. Part of diamond_compile_impl. */
+static void mark_discovered_declarations(DiamondProgram *program,const DiamondProgram *template) {
     /* Mark every *user* class/module entry just copied as "populated by
      * a pass other than the one about to run" -- compile_class/
      * compile_module only reset declared_by_discovery to false the
@@ -887,6 +812,93 @@ bool diamond_compile_impl(const char *source, DiamondProgram *program,
             module->template_field_count=original->field_count;
         }
     }
+}
+
+/* Shared by diamond_compile (template=nullptr, today's exact behavior)
+ * and diamond_compile_incremental (template!=nullptr): see each
+ * public wrapper's own comment for what `template` buys and costs. */
+bool diamond_compile_impl(const char *source, DiamondProgram *program,
+                                 const DiamondProgram *template,
+                                 bool debug_mode,
+                                 DiamondDiagnostic *diagnostic,
+                                 const DiamondProgram *tooling_returns,
+                                 ToolingDependencies *tooling_forward_calls) {
+    /* DIAMOND_TRACE_COMPILE: an opt-in stderr report of where compile time
+     * goes, the same env-var-gated convention as DIAMOND_TRACE_GC and
+     * friends (src/run_source.c). CLOCK_MONOTONIC, matching every other
+     * wall-time measurement in this codebase. */
+    const bool trace_compile=getenv("DIAMOND_TRACE_COMPILE")!=nullptr;
+    struct timespec trace_start={0},trace_discovery_done={0},trace_end={0};
+    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_start);
+    const bool allow_top_level_redefinition = program->allow_top_level_redefinition;
+    diamond_program_free(program);
+
+    const size_t function_claim_start=
+        template!=nullptr?template->function_count:0;
+
+    DiamondProgram *discovery = calloc(1, sizeof *discovery);
+    /* diamond_program_init_fresh, not diamond_program_init: `discovery`
+     * is freshly calloc'd right above (already all-zero) and never reused
+     * across calls, so diamond_program_init's own memset would just
+     * re-zero memory calloc already zeroed -- see that function's own
+     * comment. */
+    diamond_program_init_fresh(discovery);
+    discovery->allow_top_level_redefinition = allow_top_level_redefinition;
+    if(template!=nullptr&&!seed_program_from_template(discovery,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+        return false;
+    }
+    DiamondDiagnostic discovery_diagnostic = {0};
+    const bool discovered = run_compile_pass(
+        source, discovery, &discovery_diagnostic, /*discovery_pass=*/true,
+        function_claim_start, false,nullptr,nullptr);
+    if(trace_compile)clock_gettime(CLOCK_MONOTONIC,&trace_discovery_done);
+
+    diamond_program_init(program);
+    program->allow_top_level_redefinition = allow_top_level_redefinition;
+    if (!discovered) {
+        *diagnostic = discovery_diagnostic;
+        diamond_program_free(discovery);
+        free(discovery);
+        return false;
+    }
+    if(template!=nullptr&&!seed_program_from_template(program,template)) {
+        diamond_program_free(discovery);free(discovery);
+        *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+        return false;
+    }
+
+    adopt_discovered_tables(program,discovery);
+
+    /* Reserve every compiler-created function at its discovery-pass index.
+     * The real pass claims the slots in the same source order, preserving
+     * both early top-level calls and copied class/module method indices.
+     * Starts at function_claim_start (0 with no template), not 0
+     * unconditionally: `discovery`'s own [0, function_claim_start) range
+     * is template's own functions, already present in `program` via
+     * seed_program_from_template above -- re-copying them here would
+     * append duplicates rather than harmlessly overwrite, unlike the
+     * fixed-size class/interface/module arrays just above. */
+    if(!allow_top_level_redefinition) {
+        for(size_t index=function_claim_start;index<discovery->function_count;index++) {
+            const DiamondFunction *discovered_function=discovery->functions[index];
+            DiamondFunction *reserved=diamond_program_add_function(program);
+            if(reserved==nullptr) {
+                diamond_program_free(discovery);free(discovery);
+                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+                return false;
+            }
+            if(!diamond_function_copy(reserved,discovered_function)) {
+                diamond_program_free(discovery);free(discovery);
+                *diagnostic=(DiamondDiagnostic){.message="out of memory"};
+                return false;
+            }
+            reserved->declared_by_discovery=true;
+        }
+    }
+
+    mark_discovered_declarations(program,template);
 
     diamond_program_free(discovery);
     free(discovery);
