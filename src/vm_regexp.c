@@ -411,3 +411,33 @@ DiamondVmStatus regexp_split_helper(DiamondVm *vm,const DiamondRegexp *regexp,
         return DIAMOND_VM_OUT_OF_MEMORY;
     return DIAMOND_VM_OK;
 }
+
+DiamondVmStatus regexp_invoke_helper(DiamondVm *vm,
+                                            DiamondValue *registers, uint16_t recv,
+                                            uint16_t base, uint8_t argc, uint16_t dest,
+                                            const DiamondStringConstant *method_name) {
+    const bool match_method=method_name->length==5&&
+        memcmp(method_name->chars,"match",5)==0;
+    const bool match_p_method=method_name->length==6&&
+        memcmp(method_name->chars,"match?",6)==0;
+    if(!match_method&&!match_p_method) {
+        snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
+            (int)method_name->length,method_name->chars,"Regexp");
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
+    if(registers[base].kind!=DIAMOND_VALUE_OBJECT||
+       registers[base].as.object->kind!=DIAMOND_OBJECT_STRING) {
+        snprintf(vm->error,sizeof vm->error,
+            "Regexp#%.*s argument must be a String",
+            (int)method_name->length,method_name->chars);
+        return DIAMOND_VM_TYPE_ERROR;
+    }
+    const DiamondVmStatus match_status=regexp_match_helper(vm,
+        (const DiamondRegexp *)registers[recv].as.object,
+        (const DiamondString *)registers[base].as.object,
+        match_p_method,registers,dest);
+    if(match_status!=DIAMOND_VM_OK)return match_status;
+    return DIAMOND_VM_OK;
+    return DIAMOND_VM_OK;
+}

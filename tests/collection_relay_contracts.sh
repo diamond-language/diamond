@@ -3,7 +3,7 @@ set -euo pipefail
 
 compiler_source="src/compiler_names.c"
 compiler_header="src/compiler_internal.h"
-vm_source="src/vm.c"
+vm_source="src/vm_collections.c"
 
 mapfile -t relay_entries < <(
   sed -n '/static const CollectionRelayContract contracts\[\]/{:a;n;/^    };/q;p;ba}' "$compiler_source" |
