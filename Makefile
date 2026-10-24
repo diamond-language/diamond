@@ -536,9 +536,11 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-$(BUILD_DIR)/facet: tools/facet.c tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+FACET_SOURCES := tools/facet.c tools/facet_resolve.c tools/facet_package.c
+
+$(BUILD_DIR)/facet: $(FACET_SOURCES) tools/facet_internal.h tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) tools/semver.c $< $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) tools/semver.c $(FACET_SOURCES) $(LDLIBS) -o $@
 
 facet: $(BUILD_DIR)/facet
 
