@@ -193,7 +193,17 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
     PendingUnwind pending={};
     UnwindHandler handlers[16];
     size_t handler_count=0;
+    /* ip is never address-taken, so the compiler can keep it in a register
+     * across the dispatch loop. Helpers that move it (catch_exception, the
+     * outlined_* bodies, ...) take &ip_slot instead; IP_CALL syncs the two
+     * around each such call. */
     size_t ip = 0;
+    /* The decode macros read these instead of chunk->code/code_count, so the
+     * dispatch loop needs no register for `chunk`. A cross-function
+     * TAIL_CALL reloads them when it switches chunks. */
+    const uint8_t *bytecode = chunk->code;
+    size_t bytecode_count = chunk->code_count;
+    size_t ip_slot = 0;
     size_t instruction_offset = 0;
     const uint64_t frame_serial=++vm->frame_serial;
     DiamondFrame frame = {
@@ -225,13 +235,21 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
         }                                                                   \
     } while (false)
 
+/* A bool-returning helper call that takes &ip_slot: copy ip in, copy it back
+ * whatever the result. */
+#define IP_CALL(call_) \
+    ((ip_slot=ip,(call_))?(ip=ip_slot,true):(ip=ip_slot,false))
+
 #define VM_RETURN(status_)                                           \
     do {                                                             \
         DiamondVmStatus return_status_=(status_);                     \
         if(return_status_==DIAMOND_VM_NONLOCAL_EXIT) {                \
-            switch(nonlocal_exit_arrives(vm,chunk,&frame,registers,   \
-                    handlers,&handler_count,&pending,&ip,             \
-                    instruction_offset,result)) {                     \
+            ip_slot=ip;                                              \
+            const NonlocalOutcome outcome_=nonlocal_exit_arrives(vm,  \
+                    chunk,&frame,registers,handlers,&handler_count,   \
+                    &pending,&ip_slot,instruction_offset,result);     \
+            ip=ip_slot;                                              \
+            switch(outcome_) {                                       \
                 case NONLOCAL_CONTINUE: goto dispatch_continue;       \
                 case NONLOCAL_RETURNED: return_status_=DIAMOND_VM_OK;  \
                     break;                                           \
@@ -246,8 +264,9 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 return return_status_;                               \
             }                                                        \
         }                                                            \
-        if(handler_count>0 && catch_runtime_error(vm,chunk,           \
-           return_status_,handlers,&handler_count,&pending,registers,&ip))\
+        if(handler_count>0 && IP_CALL(catch_runtime_error(vm,chunk,   \
+           return_status_,handlers,&handler_count,&pending,registers, \
+           &ip_slot)))                                               \
             goto dispatch_continue;                                  \
         RECORD_ERROR(return_status_);                                \
         vm->frames = frame.previous;                                 \
@@ -308,7 +327,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define VM_PROPAGATE(status_)                                      \
     if ((status_) != DIAMOND_VM_OK) {                              \
         if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
-            catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip)) {\
+            IP_CALL(catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip_slot))) {\
             break;                                                  \
         }                                                           \
         VM_RETURN(status_);                                         \
@@ -329,7 +348,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 #define VM_PROPAGATE_SIGNAL(status_)                                \
     if ((status_) != DIAMOND_VM_OK) {                              \
         if ((status_) == DIAMOND_VM_EXCEPTION &&                  \
-            catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip)) {\
+            IP_CALL(catch_exception(vm,chunk,handlers,&handler_count,&pending,registers,&ip_slot))) {\
             goto dispatch_continue;                                \
         }                                                           \
         VM_RETURN(status_);                                         \
@@ -337,10 +356,10 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
 
 #define READ_BYTE(target_)                   \
     do {                                     \
-        if (ip >= chunk->code_count) {       \
+        if (ip >= bytecode_count) {          \
             VM_RETURN(DIAMOND_VM_INVALID_BYTECODE); \
         }                                    \
-        (target_) = chunk->code[ip++];       \
+        (target_) = bytecode[ip++];          \
     } while (false)
 
     /* Big-endian, matching the existing JUMP-target 16-bit operand
@@ -348,28 +367,28 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
      * dynamically growing function table beyond one-byte range. */
 #define READ_SHORT(target_)                  \
     do {                                     \
-        if (ip + 1 >= chunk->code_count) {   \
+        if (ip + 1 >= bytecode_count) {      \
             VM_RETURN(DIAMOND_VM_INVALID_BYTECODE); \
         }                                    \
-        (target_) = (uint16_t)(((unsigned)chunk->code[ip] << 8) | chunk->code[ip + 1]); \
+        (target_) = (uint16_t)(((unsigned)bytecode[ip] << 8) | bytecode[ip + 1]); \
         ip += 2;                             \
     } while (false)
 
     /* One bounds check for all of an instruction's fixed operand bytes, then
-     * plain reads through a local pointer. ip's address escapes to helpers, so
-     * it lives in memory and every READ_SHORT re-checks the bound and stores
-     * ip back; the hot opcodes decode this way instead. */
+     * plain reads through a local pointer. Every READ_BYTE/READ_SHORT checks
+     * the bound and advances ip on its own; the hot opcodes decode this way
+     * instead. */
 #define READ_OPERANDS(width_)                              \
-    if (ip + (width_) > chunk->code_count) {               \
+    if (ip + (width_) > bytecode_count) {                  \
         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);            \
     }                                                      \
-    const uint8_t *const operands = chunk->code + ip;      \
+    const uint8_t *const operands = bytecode + ip;         \
     ip += (width_)
 #define OPERAND_BYTE(offset_) (operands[(offset_)])
 #define OPERAND_SHORT(offset_) \
     ((uint16_t)(((unsigned)operands[(offset_)] << 8) | operands[(offset_) + 1]))
 
-    while (ip < chunk->code_count) {
+    while (ip < bytecode_count) {
         /* Cheap steady-state cost (one relaxed atomic read, almost always
          * false) for prompt signal handling in CPU-bound Diamond code
          * that never calls a blocking native function at all -- the
@@ -646,7 +665,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     registers[right].kind == DIAMOND_VALUE_INT) {
                     if (vm->quickening &&
                         ++vm->quickening_observations >= vm->quickening_threshold) {
-                        uint8_t *code=(uint8_t *)(void *)chunk->code;
+                        uint8_t *code=(uint8_t *)(void *)bytecode;
                         code[instruction_offset]=(uint8_t)DIAMOND_OP_ADD_INT;
                         vm->quickened_sites++;
                     }
@@ -697,7 +716,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                         ? DIAMOND_OP_SUBTRACT_INT
                         : opcode == DIAMOND_OP_MULTIPLY
                             ? DIAMOND_OP_MULTIPLY_INT : DIAMOND_OP_DIVIDE_INT;
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    uint8_t *code=(uint8_t *)(void *)bytecode;
                     code[instruction_offset]=(uint8_t)specialized;
                     opcode=specialized;
                     vm->quickened_sites++;
@@ -959,7 +978,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                     bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
+                    const uint8_t *site=bytecode+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[left].as.object,
                         "%",1,&registers[right],1,&op_result,&found);
@@ -994,7 +1013,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if (registers[operand].kind==DIAMOND_VALUE_OBJECT &&
                     registers[operand].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                     bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
+                    const uint8_t *site=bytecode+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[operand].as.object,
                         "negate",6,nullptr,0,&op_result,&found);
@@ -1043,14 +1062,14 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     ++vm->quickening_observations >= vm->quickening_threshold) {
                     const DiamondOpCode specialized = opcode == DIAMOND_OP_EQUAL
                         ? DIAMOND_OP_EQUAL_INT : DIAMOND_OP_NOT_EQUAL_INT;
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    uint8_t *code=(uint8_t *)(void *)bytecode;
                     code[instruction_offset]=(uint8_t)specialized;
                     opcode=specialized;
                     vm->quickened_sites++;
                 }
                 if ((opcode == DIAMOND_OP_EQUAL_INT ||
                      opcode == DIAMOND_OP_NOT_EQUAL_INT) && !integer_operands) {
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    uint8_t *code=(uint8_t *)(void *)bytecode;
                     code[instruction_offset]=(uint8_t)(opcode == DIAMOND_OP_EQUAL_INT
                         ? DIAMOND_OP_EQUAL : DIAMOND_OP_NOT_EQUAL);
                     vm->deoptimized_sites++;
@@ -1072,7 +1091,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * instances of a class with no "==" compare by identity
                  * exactly as before this feature existed. */
                 {
-                    const uint8_t *site=chunk->code+instruction_offset;
+                    const uint8_t *site=bytecode+instruction_offset;
                     DiamondValue general_result=DIAMOND_NIL;
                     const DiamondVmStatus status=diamond_jit_equal_general(vm,chunk,depth,
                         site,&registers[left],&registers[right],
@@ -1111,7 +1130,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                             : opcode == DIAMOND_OP_GREATER
                                 ? DIAMOND_OP_GREATER_INT
                                 : DIAMOND_OP_GREATER_EQUAL_INT;
-                    uint8_t *code=(uint8_t *)(void *)chunk->code;
+                    uint8_t *code=(uint8_t *)(void *)bytecode;
                     code[instruction_offset]=(uint8_t)specialized;
                     opcode=specialized;
                     vm->quickened_sites++;
@@ -1214,7 +1233,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 if(registers[left].kind==DIAMOND_VALUE_OBJECT&&
                    registers[left].as.object->kind==DIAMOND_OBJECT_INSTANCE) {
                     bool found=false;DiamondValue op_result=DIAMOND_NIL;
-                    const uint8_t *site=chunk->code+instruction_offset;
+                    const uint8_t *site=bytecode+instruction_offset;
                     const DiamondVmStatus status=invoke_operator_method(vm,chunk,depth,
                         site,(const DiamondInstance *)registers[left].as.object,
                         "<=>",3,&registers[right],1,&op_result,&found);
@@ -1230,7 +1249,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(destination);READ_SHORT(pattern);READ_SHORT(subject);
                 bool matched=false;
                 const DiamondVmStatus status=case_match_value(vm,chunk,depth,
-                    chunk->code+instruction_offset,registers[pattern],
+                    bytecode+instruction_offset,registers[pattern],
                     registers[subject],&matched);
                 VM_PROPAGATE(status);
                 registers[destination]=DIAMOND_BOOL(matched);break;
@@ -1241,7 +1260,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_OPERANDS(2);
                 high=OPERAND_BYTE(0); low=OPERAND_BYTE(1);
                 const size_t target = ((size_t)high << 8) | low;
-                if (target > chunk->code_count) {
+                if (target > bytecode_count) {
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 ip = target;
@@ -1254,7 +1273,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_OPERANDS(4);
                 condition=OPERAND_SHORT(0); high=OPERAND_BYTE(2); low=OPERAND_BYTE(3);
                 const size_t target = ((size_t)high << 8) | low;
-                if (target > chunk->code_count) {
+                if (target > bytecode_count) {
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 }
                 if (!is_truthy(registers[condition])) {
@@ -1267,7 +1286,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_OPERANDS(4);
                 condition=OPERAND_SHORT(0); high=OPERAND_BYTE(2); low=OPERAND_BYTE(3);
                 const size_t target=((size_t)high<<8)|low;
-                if(target>chunk->code_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                if(target>bytecode_count) VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 if(is_truthy(registers[condition])) ip=target;
                 break;
             }
@@ -1331,7 +1350,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     (size_t)function_index < chunk->function_count
                         ? chunk->functions[function_index] : nullptr;
                 const bool cross_function =
-                    tail_target != nullptr && tail_target->code != chunk->code;
+                    tail_target != nullptr && tail_target->code != bytecode;
                 size_t next_register_count = live_register_count;
                 DiamondChunk next_chunk;
                 if (cross_function) {
@@ -1402,6 +1421,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     execution = next_chunk;
                     chunk = &execution;
                     frame.chunk = chunk;
+                    bytecode = chunk->code;
+                    bytecode_count = chunk->code_count;
                 }
                 arguments = tail_buffer;
                 argument_count = call_argument_count;
@@ -1498,7 +1519,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_CALL_TYPED_SPREAD:
             case DIAMOND_OP_CALL_KEYWORD_SPREAD:
             case DIAMOND_OP_CALL_TYPED_KEYWORD_SPREAD: {
-                const DiamondVmStatus helper_status=outlined_call_spread(vm,chunk,registers,depth,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -1547,13 +1568,13 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_CALL_SINGLETON_KEYWORDS:
             case DIAMOND_OP_CALL_TYPED_SINGLETON_KEYWORDS: {
-                const DiamondVmStatus helper_status=outlined_call_singleton_keywords(vm,chunk,registers,depth,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_singleton_keywords(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CALL_SINGLETON_SPREAD:
             case DIAMOND_OP_CALL_TYPED_SINGLETON_SPREAD: {
-                const DiamondVmStatus helper_status=outlined_call_singleton_spread(vm,chunk,registers,depth,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_call_singleton_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -1819,19 +1840,19 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 registers[destination]=constructor_result;break;
             }
             case DIAMOND_OP_NEW_SPREAD: {
-                const DiamondVmStatus helper_status=outlined_new_spread(vm,chunk,registers,depth,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_new_spread(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_INVOKE_KEYWORDS:
             case DIAMOND_OP_INVOKE_TYPED_KEYWORDS: {
-                const DiamondVmStatus helper_status=outlined_invoke_keywords(vm,chunk,registers,depth,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_invoke_keywords(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_INVOKE_SPREAD:
             case DIAMOND_OP_INVOKE_TYPED_SPREAD: {
-                const DiamondVmStatus helper_status=outlined_invoke_spread(vm,chunk,registers,depth,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_invoke_spread(vm,chunk,registers,depth,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -2063,8 +2084,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                     const DiamondVmStatus dispatch_status=thread_invoke_helper(
                         vm,chunk,registers,recv,argc,dest,method_name);
                     if(dispatch_status==DIAMOND_VM_EXCEPTION) {
-                        if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
-                               registers,&ip))
+                        if(IP_CALL(catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                               registers,&ip_slot)))
                             break;
                         set_uncaught_exception_error(vm);
                         VM_RETURN(dispatch_status);
@@ -2090,7 +2111,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * regardless of whether a primitive receiver fell through
                  * every earlier native-type block above without matching
                  * any of them. */
-                const uint8_t *site=chunk->code+instruction_offset;
+                const uint8_t *site=bytecode+instruction_offset;
                 DiamondValue call_result=DIAMOND_NIL;
                 const DiamondVmStatus status=diamond_jit_invoke_instance(vm,chunk,
                     site,(DiamondOpCode)instruction,registers,recv,name,base,argc,
@@ -2120,7 +2141,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * must be rejected as invalid rather than silently
                  * truncated into some other, smaller, valid-looking field
                  * index. */
-                const uint8_t *site=&chunk->code[instruction_offset];
+                const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t dest=0,recv=0,field_operand=0;
                 READ_OPERANDS(6);
                 dest=OPERAND_SHORT(0); recv=OPERAND_SHORT(2); field_operand=OPERAND_SHORT(4);
@@ -2153,7 +2174,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                  * rejected as invalid before truncating it, not silently
                  * wrap into some other, smaller, valid-looking field
                  * index. */
-                const uint8_t *site=&chunk->code[instruction_offset];
+                const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t recv=0,field_operand=0,source=0;
                 READ_OPERANDS(6);
                 recv=OPERAND_SHORT(0); field_operand=OPERAND_SHORT(2); source=OPERAND_SHORT(4);
@@ -2170,7 +2191,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_GET_IVAR_NAME:
             case DIAMOND_OP_SET_IVAR_NAME: {
-                const uint8_t *site=&chunk->code[instruction_offset];
+                const uint8_t *site=&bytecode[instruction_offset];
                 uint16_t first=0,receiver=0,name=0;
                 READ_SHORT(first);READ_SHORT(receiver);READ_SHORT(name);
                 const bool write=(DiamondOpCode)instruction==DIAMOND_OP_SET_IVAR_NAME;
@@ -2736,7 +2757,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_BREAKPOINT_CHECK: {
-                const DiamondVmStatus helper_status=outlined_breakpoint_check(vm,chunk,registers,depth,instruction_offset,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_breakpoint_check(vm,chunk,registers,depth,instruction_offset,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -2779,7 +2800,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,receiver=0,index_register=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); index_register=OPERAND_SHORT(4);
-                const uint8_t *site=chunk->code+instruction_offset;
+                const uint8_t *site=bytecode+instruction_offset;
                 DiamondValue indexed=DIAMOND_NIL;
                 const DiamondVmStatus status=diamond_jit_index_get(vm,chunk,depth,site,
                     &registers[receiver],&registers[index_register],&indexed);
@@ -2791,7 +2812,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t destination=0,receiver=0,string_index=0;
                 READ_OPERANDS(6);
                 destination=OPERAND_SHORT(0); receiver=OPERAND_SHORT(2); string_index=OPERAND_SHORT(4);
-                const uint8_t *site=chunk->code+instruction_offset;
+                const uint8_t *site=bytecode+instruction_offset;
                 DiamondValue indexed=DIAMOND_NIL;
                 const DiamondVmStatus status=diamond_jit_index_get_string(vm,chunk,depth,site,
                     &registers[receiver],string_index,&indexed);
@@ -2803,7 +2824,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t receiver=0,index_register=0,source=0;
                 READ_OPERANDS(6);
                 receiver=OPERAND_SHORT(0); index_register=OPERAND_SHORT(2); source=OPERAND_SHORT(4);
-                const uint8_t *site=chunk->code+instruction_offset;
+                const uint8_t *site=bytecode+instruction_offset;
                 const DiamondVmStatus status=diamond_jit_index_set(vm,chunk,depth,site,
                     &registers[receiver],&registers[index_register],&registers[source]);
                 VM_PROPAGATE(status);
@@ -2845,8 +2866,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 uint16_t source=0;READ_SHORT(source);
                 vm->exception=registers[source];vm->has_exception=true;
                 const bool first_raise=raise_capture_backtrace_helper(vm,chunk);
-                if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
-                                   registers,&ip))break;
+                if(IP_CALL(catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                                   registers,&ip_slot)))break;
                 /* Only fill in a message when vm->error is still empty --
                  * see catch_runtime_error's own identical guard: a raise
                  * of a value that a *previous*, now-unwound attempt at
@@ -2871,7 +2892,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 const size_t target=((size_t)high<<8)|low;
                 const bool enabled=(type_count&0x80)==0;
                 type_count&=0x7f;
-                if(handler_count==16||type_count>8||target>chunk->code_count)
+                if(handler_count==16||type_count>8||target>bytecode_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 UnwindHandler *handler=&handlers[handler_count++];
                 *handler=(UnwindHandler){.kind=HANDLER_RESCUE,.target=target,
@@ -2886,7 +2907,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_PUSH_ENSURE: {
                 uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
-                if(handler_count==16||target>chunk->code_count)
+                if(handler_count==16||target>bytecode_count)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 handlers[handler_count++]=(UnwindHandler){
                     .kind=HANDLER_ENSURE,.target=target,.enabled=true};
@@ -2895,15 +2916,15 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_UNWIND_JUMP: {
                 uint8_t levels=0,high=0,low=0;READ_BYTE(levels);READ_BYTE(high);READ_BYTE(low);
                 const size_t target=((size_t)high<<8)|low;
-                if(target>chunk->code_count||
-                   !unwind_for_jump(handlers,&handler_count,&pending,levels,target,&ip))
+                if(target>bytecode_count||
+                   !IP_CALL(unwind_for_jump(handlers,&handler_count,&pending,levels,target,&ip_slot)))
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 break;
             }
             case DIAMOND_OP_RUN_ENSURE: {
                 uint8_t high=0,low=0;READ_BYTE(high);READ_BYTE(low);
                 const size_t continuation=((size_t)high<<8)|low;
-                if(handler_count==0||continuation>chunk->code_count||
+                if(handler_count==0||continuation>bytecode_count||
                    handlers[handler_count-1].kind!=HANDLER_ENSURE)
                     VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                 ip=enter_ensure(&handlers[handler_count-1],&pending,
@@ -2913,7 +2934,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_BLOCK_RETURN:
             case DIAMOND_OP_BLOCK_BREAK: {
                 uint16_t source=0;READ_SHORT(source);
-                const bool is_break=chunk->code[instruction_offset]==DIAMOND_OP_BLOCK_BREAK;
+                const bool is_break=bytecode[instruction_offset]==DIAMOND_OP_BLOCK_BREAK;
                 const uint64_t target=closure==nullptr?0:
                     (is_break?closure->break_target:closure->return_target);
                 if(target==0) {
@@ -2960,8 +2981,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 (void)pop_unwind_handler(handlers,&handler_count,&pending);
                 if(resume.kind==PENDING_NORMAL) {ip=resume.continuation;break;}
                 if(resume.kind==PENDING_JUMP) {
-                    if(!unwind_for_jump(handlers,&handler_count,&pending,
-                            (size_t)resume.nonlocal_target,resume.continuation,&ip))
+                    if(!IP_CALL(unwind_for_jump(handlers,&handler_count,&pending,
+                            (size_t)resume.nonlocal_target,resume.continuation,&ip_slot)))
                         VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
                     break;
                 }
@@ -2982,8 +3003,8 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 }
                 if(resume.kind==PENDING_EXCEPTION) {
                     vm->exception=resume.value;vm->has_exception=true;
-                    if(catch_exception(vm,chunk,handlers,&handler_count,&pending,
-                                       registers,&ip))break;
+                    if(IP_CALL(catch_exception(vm,chunk,handlers,&handler_count,&pending,
+                                       registers,&ip_slot)))break;
                     /* Only fill in a message when vm->error is still
                      * empty -- see catch_runtime_error's own identical
                      * guard. A status-code-originated exception (e.g.
@@ -3036,7 +3057,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_REDEFINE_METHOD: {
-                const DiamondVmStatus helper_status=outlined_redefine_method(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_redefine_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3056,12 +3077,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
              * repointing it, keeping the two operations' contracts
              * separate and predictable. */
             case DIAMOND_OP_DEFINE_METHOD: {
-                const DiamondVmStatus helper_status=outlined_define_method(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_define_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_COMPILE_METHOD: {
-                const DiamondVmStatus helper_status=outlined_compile_method(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_compile_method(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3234,7 +3255,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_DIR_ENTRIES: {
-                const DiamondVmStatus helper_status=outlined_dir_entries(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_dir_entries(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3249,7 +3270,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_FILE_PATH: {
-                const DiamondVmStatus helper_status=outlined_file_path(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_file_path(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3303,12 +3324,12 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_POSTGRES_OPEN: {
-                const DiamondVmStatus helper_status=outlined_postgres_open(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_postgres_open(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_MYSQL_OPEN: {
-                const DiamondVmStatus helper_status=outlined_mysql_open(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_mysql_open(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3322,27 +3343,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_THREAD_NEW: {
-                const DiamondVmStatus helper_status=outlined_thread_new(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_thread_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CHANNEL_NEW: {
-                const DiamondVmStatus helper_status=outlined_channel_new(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CHANNEL_SELECT: {
-                const DiamondVmStatus helper_status=outlined_channel_select(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_select(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_CHANNEL_SELECT_SEND: {
-                const DiamondVmStatus helper_status=outlined_channel_select_send(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_channel_select_send(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
             case DIAMOND_OP_SUPERVISOR_NEW: {
-                const DiamondVmStatus helper_status=outlined_supervisor_new(vm,chunk,registers,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_supervisor_new(vm,chunk,registers,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3420,7 +3441,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_TCP_LISTEN:
             case DIAMOND_OP_TCP_LISTEN_NONBLOCK: {
-                const DiamondVmStatus helper_status=outlined_tcp_listen_nonblock(vm,chunk,registers,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_tcp_listen_nonblock(vm,chunk,registers,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3508,7 +3529,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             }
             case DIAMOND_OP_TLS_START_HANDSHAKE:
             case DIAMOND_OP_TLS_CONNECT: {
-                const DiamondVmStatus helper_status=outlined_tls_connect(vm,chunk,registers,instruction,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_tls_connect(vm,chunk,registers,instruction,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3546,7 +3567,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_IO_POLL: {
-                const DiamondVmStatus helper_status=outlined_io_poll(vm,chunk,registers,depth,&ip);
+                ip_slot=ip;const DiamondVmStatus helper_status=outlined_io_poll(vm,chunk,registers,depth,&ip_slot);ip=ip_slot;
                 VM_PROPAGATE(helper_status);
                 break;
             }
@@ -3680,7 +3701,7 @@ dispatch_continue:
 #undef VM_PROPAGATE_SIGNAL
 #undef RECORD_ERROR
 
-    if(depth==0&&vm->running_fiber!=nullptr&&ip>=chunk->code_count) {
+    if(depth==0&&vm->running_fiber!=nullptr&&ip>=bytecode_count) {
         *result=DIAMOND_NIL;
         vm->frames=frame.previous;
         free(heap_registers);
