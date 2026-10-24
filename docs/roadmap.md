@@ -22,21 +22,18 @@ and no file far past 3,000 lines. Each step is a behavior-preserving move or spl
 verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
 is done"), with release benchmarks treated as a no-regression check.
 
-- **Dispatch overhead in `run_chunk`** (do this first) -- every instruction costs
-  about 27 instructions before its case runs in a release build. `ip` lives in a stack slot because its
-  address is passed to helpers (`catch_exception`, the `outlined_*` bodies), so each
-  dispatch loads and stores it; the resource-limit check adds more. Keeping a register
-  copy of `ip` and writing it back only around the calls that take its address may
-  remove most of it. Check with callgrind per-call counts, and check cycles on a clang
-  build too: on GCC builds a single extra store in the dispatch header (the opcode
-  counter, before it was gated on `DIAMOND_TRACE_OPCODES`) cost up to 17% of cycles
-  without changing instruction counts much.
-- **The rest of `run_chunk`** (3,611 lines), after the dispatch item -- draft PR #330
+- **Dispatch header in `run_chunk`** -- with `ip` in a register, each instruction
+  still costs 18 instructions before its case runs in a GCC release build: three
+  separate flag checks (pending signals, the opcode counter, resource limits) and the
+  switch's range check. Folding the two per-VM flags into one may save two. GCC also
+  leaves a callee-saved register idle in the hot loop while spilling `bytecode` and
+  `registers`; check with callgrind per-call counts and with cycles on clang too.
+- **The rest of `run_chunk`** (3,632 lines), after the dispatch item -- draft PR #330
   moves `MODULO`'s and `<=>`'s slow paths into `vm_operators.c` and shares the
   type-binding loop between entry and `TAIL_CALL`. Instruction counts are flat and
   clang cycles improve, but GCC cycles move with layout (closures +15%, SkindicateV3's
-  front page about 6% slower) although neither runs those opcodes. Re-measure once
-  `ip` no longer round-trips through the stack; merge only if GCC is then neutral.
+  front page about 6% slower) although neither runs those opcodes. Re-measure now
+  that `ip` lives in a register; merge only if GCC is then neutral.
   The arithmetic and comparison cases already keep only their fast paths inline.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
