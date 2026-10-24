@@ -22,8 +22,8 @@ directly as `f(x)`; there is no `.call` method.
 
 Each Diamond function call is an ordinary recursive call in the native
 implementation, so ordinary recursion is bounded by a call-depth limit: about
-5,900 levels in the main program (which runs on a 512 MiB stack;
-`DIAMOND_MAIN_STACK_MB` changes it), and 92 inside a fiber or a thread, which
+9,600 levels in the main program (which runs on a 512 MiB stack;
+`DIAMOND_MAIN_STACK_MB` changes it), and 150 inside a fiber or a thread, which
 have 8 MiB stacks. Going past it is a clean `call stack overflow` error:
 
 ```ruby

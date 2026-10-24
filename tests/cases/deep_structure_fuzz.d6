@@ -1,6 +1,6 @@
 # A deterministic fuzzer for very deep and self-containing data. It builds
 # chains of nested Arrays, Hashes and Box instances at depths chosen around
-# every bound the runtime has (91 for JSON, 256, 4096 for cross-thread copies,
+# every bound the runtime has (149 for JSON, 256, 4096 for cross-thread copies,
 # then far beyond), some of them closed into a cycle, and pushes each through
 # the operations that walk a structure: to_s, ==, hashing, dup, freeze,
 # deep_freeze, JSON.stringify, flatten, sort, uniq, and a Thread/Channel round
@@ -115,7 +115,7 @@ end
 def identity(value) = value
 
 # A shape's name for the outcome table: depth bucket and kind.
-DEPTHS = [0, 1, 2, 50, 90, 91, 92, 255, 256, 257, 1000, 4095, 4096, 4097, 20000, 50000]
+DEPTHS = [0, 1, 2, 50, 148, 149, 150, 255, 256, 257, 1000, 4095, 4096, 4097, 20000, 50000]
 
 outcomes = {}
 failures = []

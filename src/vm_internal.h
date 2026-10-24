@@ -195,6 +195,22 @@ typedef struct GrowBuffer {
  * sitting at -- rebuild at a range of candidate values, check
  * `depth(5000)` at each, rather than guessing.
  *
+ * Recalibrated 92 -> 150 (2026-10-24) after outlining cold run_chunk cases
+ * shrank its frame (25.9 -> 15.4 KB at -O3, 65 -> 24.7 KB under ASan). The
+ * sweep made the limit a run-time value and, for 13 recursion shapes (plain,
+ * self/other/super method calls, spread and keyword calls, closures, blocks,
+ * public_send, method_missing, to_s through interpolation) each run in a
+ * Thread and a Fiber, bisected the highest limit that still ends in a clean
+ * overflow, on debug, release, sanitize and TSan builds with gcc and clang on
+ * Fedora (gcc 16, clang 21) and Ubuntu 26.04 (gcc 15.2, clang 21). Method
+ * calls are the deepest per level everywhere. Lowest result per variant
+ * (Fedora / Ubuntu): gcc debug (-O0) 190 / 220, gcc TSan 190 / 220, gcc
+ * sanitize 218 / 219, gcc release 337 / 332; clang sanitize 256, TSan 283,
+ * debug and release 286 on both.
+ * 150 leaves about 20% below the lowest for platforms the sweep could not
+ * run (macOS, arm64), which tests/cases/call_depth_guard_shapes.d6 covers
+ * in CI instead.
+ *
  * run_chunk's own `registers` array (below) stays a fixed
  * DIAMOND_INLINE_REGISTER_COUNT-wide C-stack array, at the same 256 this
  * comment's own measurement was taken against, rather than a VLA sized to
@@ -215,7 +231,7 @@ typedef struct GrowBuffer {
  * like an oversized array would have. Rewriting READ_SHORT to read
  * straight out of chunk->code[] into `target_` without any named
  * intermediate restored the original margin. */
-enum { DIAMOND_MAX_CALL_DEPTH = 92 };
+enum { DIAMOND_MAX_CALL_DEPTH = 150 };
 
 /* The depth limit for code running on this OS thread's own stack: the
  * calibrated DIAMOND_MAX_CALL_DEPTH scaled by how much larger than the 8 MiB
