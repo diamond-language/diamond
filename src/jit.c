@@ -2185,6 +2185,310 @@ static void compile_self_tail_call(JitCompiler *jc, uint16_t base, uint8_t argc)
     record_global_patch(jc, field, 0);
 }
 
+/* Opcode group: loads, moves, arithmetic, comparisons, ivars, type checks and collections. Returns false, emitting nothing, for an opcode outside the group; otherwise
+ * advances *pc_ref past the operands, or sets jc->bailed. Part of compile_body. */
+static bool compile_value_instruction(JitCompiler *jc, DiamondOpCode opcode, size_t instruction_start,
+        size_t *pc_ref) {
+    const DiamondFunction *fn = jc->function;
+    size_t pc = *pc_ref;
+    switch (opcode) {
+        case DIAMOND_OP_NIL: {
+            uint16_t dest = 0;
+            if (!decode_u16(fn, &pc, &dest)) { jc->bailed = true; return true; }
+            /* DIAMOND_NIL is kind=0 with an all-zero union -- registers
+             * arrive pre-zeroed, so this is a real store, not a no-op,
+             * only because a register can be reassigned to something
+             * else and then back to nil within one function body (a
+             * while loop's own always-nil result register). */
+            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_NIL);
+            emit_mov_imm64(&jc->buf, REG_RAX, 0);
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_BOOL: {
+            uint16_t dest = 0, boolean = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &boolean)) { jc->bailed = true; return true; }
+            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+            emit_mov_imm64(&jc->buf, REG_RAX, boolean != 0 ? 1 : 0);
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_MOVE: {
+            uint16_t dest = 0, src = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &src)) { jc->bailed = true; return true; }
+            emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 0));
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RAX);
+            emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 8));
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 8), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_CONSTANT: {
+            uint16_t dest = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return true; }
+            if (index >= fn->constant_count) { jc->bailed = true; return true; }
+            DiamondValue constant = fn->constants[index];
+            if (constant.kind != DIAMOND_VALUE_INT) { jc->bailed = true; return true; }
+            emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
+            emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)constant.as.integer);
+            emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_ADD_INT:
+        case DIAMOND_OP_SUBTRACT_INT:
+        case DIAMOND_OP_MULTIPLY_INT:
+        case DIAMOND_OP_DIVIDE_INT:
+        case DIAMOND_OP_LESS_INT:
+        /* Phase 5: the generic (non-_INT) forms, and the three _INT
+         * comparison forms that were never added even for the typed
+         * case -- see compile_binary_int_op's own updated comment.
+         * Every one of these opcodes shares the identical dest/left/
+         * right decode shape (confirmed against src/vm.c's own
+         * interpreter case for this opcode family). */
+        case DIAMOND_OP_ADD:
+        case DIAMOND_OP_SUBTRACT:
+        case DIAMOND_OP_MULTIPLY:
+        case DIAMOND_OP_DIVIDE:
+        case DIAMOND_OP_LESS:
+        case DIAMOND_OP_LESS_EQUAL:
+        case DIAMOND_OP_LESS_EQUAL_INT:
+        case DIAMOND_OP_GREATER:
+        case DIAMOND_OP_GREATER_INT:
+        case DIAMOND_OP_GREATER_EQUAL:
+        case DIAMOND_OP_GREATER_EQUAL_INT: {
+            /* Phase 3: no longer rejected once jc->has_called is
+             * already true -- see compile_binary_int_op's own comment
+             * for why their edge cases (overflow, division by zero,
+             * INT64_MIN/-1, non-INT operand) no longer depend on
+             * "discard and retry the whole function" at all. */
+            uint16_t dest = 0, left = 0, right = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                !decode_u16(fn, &pc, &right)) { jc->bailed = true; return true; }
+            compile_binary_int_op(jc, instruction_start, dest, left, right, opcode);
+            break;
+        }
+        case DIAMOND_OP_EQUAL:
+        case DIAMOND_OP_EQUAL_INT:
+        case DIAMOND_OP_NOT_EQUAL:
+        case DIAMOND_OP_NOT_EQUAL_INT: {
+            uint16_t dest = 0, left = 0, right = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                !decode_u16(fn, &pc, &right)) { jc->bailed = true; return true; }
+            compile_equal_op(jc, instruction_start, dest, left, right,
+                opcode == DIAMOND_OP_NOT_EQUAL || opcode == DIAMOND_OP_NOT_EQUAL_INT);
+            break;
+        }
+        case DIAMOND_OP_SET_IVAR: {
+            uint16_t recv = 0, field = 0, source = 0;
+            if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &field) ||
+                !decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
+            if (field > UINT8_MAX) { jc->bailed = true; return true; }
+            compile_set_ivar(jc, instruction_start, recv, field, source);
+            break;
+        }
+        case DIAMOND_OP_GET_IVAR: {
+            uint16_t dest = 0, recv = 0, field = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                !decode_u16(fn, &pc, &field)) { jc->bailed = true; return true; }
+            if (field > UINT8_MAX) { jc->bailed = true; return true; }
+            compile_get_ivar(jc, instruction_start, dest, recv, field);
+            break;
+        }
+        case DIAMOND_OP_ARGUMENT_PROVIDED: {
+            uint16_t dest = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return true; }
+            /* Known simplification: doesn't check for a
+             * DIAMOND_VALUE_UNDEFINED sparse-keyword-call gap -- see
+             * DiamondJitFn's own comment in jit.h for why that's fine
+             * at every call site this JIT is wired into today. */
+            JitBuffer *buf = &jc->buf;
+            emit_cmp_imm32_64(buf, JIT_ARGUMENT_COUNT, index);
+            emit_seta_al(buf);
+            emit_movzx_r64_al(buf, REG_RAX);
+            emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
+            emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
+            break;
+        }
+        case DIAMOND_OP_CHECK_TYPE: {
+            uint16_t source = 0, set_index = 0;
+            if (!decode_u16(fn, &pc, &source) || !decode_u16(fn, &pc, &set_index)) { jc->bailed = true; return true; }
+            compile_check_type(jc, source, set_index);
+            break;
+        }
+        case DIAMOND_OP_IS_TYPE: {
+            uint16_t dest = 0, source = 0, type = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &source) ||
+                !decode_u16(fn, &pc, &type)) { jc->bailed = true; return true; }
+            if (diamond_type_operand_is_native(type)) { jc->bailed = true; return true; }
+            compile_is_type(jc, dest, source, type);
+            break;
+        }
+        case DIAMOND_OP_SAME_CLASS: {
+            uint16_t dest = 0, left = 0, right = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
+                !decode_u16(fn, &pc, &right)) { jc->bailed = true; return true; }
+            JitBuffer *buf = &jc->buf;
+            emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(left, 0));
+            emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(right, 0));
+            emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
+            emit_body_call(jc, (void *)(uintptr_t)diamond_jit_same_class);
+            emit_bail_if_al_nonzero(jc);
+            break;
+        }
+        case DIAMOND_OP_STRING: {
+            uint16_t dest = 0, string_index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return true; }
+            compile_new_string(jc, dest, string_index);
+            break;
+        }
+        case DIAMOND_OP_INDEX_GET: {
+            uint16_t dest = 0, recv = 0, index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                !decode_u16(fn, &pc, &index)) { jc->bailed = true; return true; }
+            compile_index_get(jc, instruction_start, dest, recv, index);
+            break;
+        }
+        case DIAMOND_OP_INDEX_GET_STRING: {
+            uint16_t dest = 0, recv = 0, string_index = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return true; }
+            compile_index_get_string(jc, instruction_start, dest, recv, string_index);
+            break;
+        }
+        case DIAMOND_OP_INDEX_SET: {
+            uint16_t recv = 0, index = 0, source = 0;
+            if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &index) ||
+                !decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
+            compile_index_set(jc, instruction_start, recv, index, source);
+            break;
+        }
+        case DIAMOND_OP_ARRAY: {
+            uint16_t dest = 0, base = 0, count = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
+                !decode_u16(fn, &pc, &count)) { jc->bailed = true; return true; }
+            compile_new_array(jc, dest, base, count);
+            break;
+        }
+        case DIAMOND_OP_HASH: {
+            uint16_t dest = 0, base = 0, count = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
+                !decode_u16(fn, &pc, &count)) { jc->bailed = true; return true; }
+            compile_new_hash(jc, dest, base, count);
+            break;
+        }
+        default:
+            return false;
+    }
+    *pc_ref = pc;
+    return true;
+}
+
+/* Opcode group: calls, jumps and returns. Returns false, emitting nothing, for an opcode outside the group; otherwise
+ * advances *pc_ref past the operands, or sets jc->bailed. Part of compile_body. */
+static bool compile_control_instruction(JitCompiler *jc, DiamondOpCode opcode, size_t instruction_start,
+        size_t *pc_ref) {
+    const DiamondFunction *fn = jc->function;
+    size_t pc = *pc_ref;
+    switch (opcode) {
+        case DIAMOND_OP_SUPER: {
+            uint16_t dest = 0, name = 0, base = 0;
+            uint16_t owner_index = 0; uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &owner_index) ||
+                !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
+                !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return true; }
+            compile_super_call(jc, dest, owner_index, name, base, argc);
+            break;
+        }
+        case DIAMOND_OP_TAIL_CALL: {
+            uint16_t dest = 0, function_index = 0, base = 0;
+            uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
+                !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                jc->bailed = true; return true;
+            }
+            if ((size_t)function_index != jc->self_function_index) {
+                compile_tail_call_other(jc, dest, function_index, base, argc);
+                break;
+            }
+            compile_self_tail_call(jc, base, argc);
+            break;
+        }
+        case DIAMOND_OP_CALL: {
+            uint16_t dest = 0, function_index = 0, base = 0;
+            uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
+                !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                jc->bailed = true; return true;
+            }
+            compile_call_function(jc, dest, function_index, base, argc);
+            break;
+        }
+        case DIAMOND_OP_NEW: {
+            uint16_t dest = 0, base = 0, class_index = 0;
+            uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &class_index) ||
+                !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
+                jc->bailed = true; return true;
+            }
+            compile_new(jc, dest, class_index, base, argc);
+            break;
+        }
+        case DIAMOND_OP_JUMP: {
+            uint8_t high = 0, low = 0;
+            if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) { jc->bailed = true; return true; }
+            size_t target = ((size_t)high << 8) | low;
+            if (target <= instruction_start) emit_interrupt_poll(jc);
+            size_t field = emit_jmp_placeholder(&jc->buf);
+            record_global_patch(jc, field, target);
+            break;
+        }
+        case DIAMOND_OP_JUMP_IF_TRUE: {
+            uint16_t condition = 0;
+            uint8_t high = 0, low = 0;
+            if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
+                !decode_u8(fn, &pc, &low)) { jc->bailed = true; return true; }
+            size_t target = ((size_t)high << 8) | low;
+            compile_jump_if_true(jc, instruction_start, condition, target);
+            break;
+        }
+        case DIAMOND_OP_JUMP_IF_FALSE: {
+            uint16_t condition = 0;
+            uint8_t high = 0, low = 0;
+            if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
+                !decode_u8(fn, &pc, &low)) { jc->bailed = true; return true; }
+            size_t target = ((size_t)high << 8) | low;
+            compile_jump_if_false(jc, instruction_start, condition, target);
+            break;
+        }
+        case DIAMOND_OP_RETURN: {
+            uint16_t source = 0;
+            if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return true; }
+            JitBuffer *buf = &jc->buf;
+            emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
+            emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(source, 8));
+            emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
+            emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
+            emit_epilogue(jc);
+            emit_mov_al_imm8(buf, DIAMOND_VM_OK);
+            emit_ret(buf);
+            break;
+        }
+        case DIAMOND_OP_INVOKE:
+        case DIAMOND_OP_INVOKE_MONO: {
+            uint16_t dest = 0, recv = 0, name = 0, base = 0;
+            uint8_t argc = 0;
+            if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
+                !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
+                !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return true; }
+            compile_invoke(jc, instruction_start, opcode, dest, recv, name, base, argc);
+            break;
+        }
+        default:
+            return false;
+    }
+    *pc_ref = pc;
+    return true;
+}
+
 /* Returns false (jc->bailed set) the moment anything outside the supported
  * whitelist is found -- the caller must then discard the whole attempt. */
 static void compile_body(JitCompiler *jc) {
@@ -2204,286 +2508,10 @@ static void compile_body(JitCompiler *jc) {
         DiamondOpCode opcode = (DiamondOpCode)raw_opcode;
         jc->bytecode_to_native[instruction_start] = jc->buf.length;
 
-        switch (opcode) {
-            case DIAMOND_OP_NIL: {
-                uint16_t dest = 0;
-                if (!decode_u16(fn, &pc, &dest)) { jc->bailed = true; return; }
-                /* DIAMOND_NIL is kind=0 with an all-zero union -- registers
-                 * arrive pre-zeroed, so this is a real store, not a no-op,
-                 * only because a register can be reassigned to something
-                 * else and then back to nil within one function body (a
-                 * while loop's own always-nil result register). */
-                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_NIL);
-                emit_mov_imm64(&jc->buf, REG_RAX, 0);
-                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-                break;
-            }
-            case DIAMOND_OP_BOOL: {
-                uint16_t dest = 0, boolean = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &boolean)) { jc->bailed = true; return; }
-                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
-                emit_mov_imm64(&jc->buf, REG_RAX, boolean != 0 ? 1 : 0);
-                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-                break;
-            }
-            case DIAMOND_OP_MOVE: {
-                uint16_t dest = 0, src = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &src)) { jc->bailed = true; return; }
-                emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 0));
-                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 0), REG_RAX);
-                emit_load_r64(&jc->buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(src, 8));
-                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, 8), REG_RAX);
-                break;
-            }
-            case DIAMOND_OP_CONSTANT: {
-                uint16_t dest = 0, index = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
-                if (index >= fn->constant_count) { jc->bailed = true; return; }
-                DiamondValue constant = fn->constants[index];
-                if (constant.kind != DIAMOND_VALUE_INT) { jc->bailed = true; return; }
-                emit_store_kind_imm(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_INT);
-                emit_mov_imm64(&jc->buf, REG_RAX, (uint64_t)constant.as.integer);
-                emit_store_r64(&jc->buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-                break;
-            }
-            case DIAMOND_OP_ADD_INT:
-            case DIAMOND_OP_SUBTRACT_INT:
-            case DIAMOND_OP_MULTIPLY_INT:
-            case DIAMOND_OP_DIVIDE_INT:
-            case DIAMOND_OP_LESS_INT:
-            /* Phase 5: the generic (non-_INT) forms, and the three _INT
-             * comparison forms that were never added even for the typed
-             * case -- see compile_binary_int_op's own updated comment.
-             * Every one of these opcodes shares the identical dest/left/
-             * right decode shape (confirmed against src/vm.c's own
-             * interpreter case for this opcode family). */
-            case DIAMOND_OP_ADD:
-            case DIAMOND_OP_SUBTRACT:
-            case DIAMOND_OP_MULTIPLY:
-            case DIAMOND_OP_DIVIDE:
-            case DIAMOND_OP_LESS:
-            case DIAMOND_OP_LESS_EQUAL:
-            case DIAMOND_OP_LESS_EQUAL_INT:
-            case DIAMOND_OP_GREATER:
-            case DIAMOND_OP_GREATER_INT:
-            case DIAMOND_OP_GREATER_EQUAL:
-            case DIAMOND_OP_GREATER_EQUAL_INT: {
-                /* Phase 3: no longer rejected once jc->has_called is
-                 * already true -- see compile_binary_int_op's own comment
-                 * for why their edge cases (overflow, division by zero,
-                 * INT64_MIN/-1, non-INT operand) no longer depend on
-                 * "discard and retry the whole function" at all. */
-                uint16_t dest = 0, left = 0, right = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
-                    !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                compile_binary_int_op(jc, instruction_start, dest, left, right, opcode);
-                break;
-            }
-            case DIAMOND_OP_EQUAL:
-            case DIAMOND_OP_EQUAL_INT:
-            case DIAMOND_OP_NOT_EQUAL:
-            case DIAMOND_OP_NOT_EQUAL_INT: {
-                uint16_t dest = 0, left = 0, right = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
-                    !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                compile_equal_op(jc, instruction_start, dest, left, right,
-                    opcode == DIAMOND_OP_NOT_EQUAL || opcode == DIAMOND_OP_NOT_EQUAL_INT);
-                break;
-            }
-            case DIAMOND_OP_SET_IVAR: {
-                uint16_t recv = 0, field = 0, source = 0;
-                if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &field) ||
-                    !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
-                if (field > UINT8_MAX) { jc->bailed = true; return; }
-                compile_set_ivar(jc, instruction_start, recv, field, source);
-                break;
-            }
-            case DIAMOND_OP_GET_IVAR: {
-                uint16_t dest = 0, recv = 0, field = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
-                    !decode_u16(fn, &pc, &field)) { jc->bailed = true; return; }
-                if (field > UINT8_MAX) { jc->bailed = true; return; }
-                compile_get_ivar(jc, instruction_start, dest, recv, field);
-                break;
-            }
-            case DIAMOND_OP_ARGUMENT_PROVIDED: {
-                uint16_t dest = 0, index = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
-                /* Known simplification: doesn't check for a
-                 * DIAMOND_VALUE_UNDEFINED sparse-keyword-call gap -- see
-                 * DiamondJitFn's own comment in jit.h for why that's fine
-                 * at every call site this JIT is wired into today. */
-                JitBuffer *buf = &jc->buf;
-                emit_cmp_imm32_64(buf, JIT_ARGUMENT_COUNT, index);
-                emit_seta_al(buf);
-                emit_movzx_r64_al(buf, REG_RAX);
-                emit_store_kind_imm(buf, JIT_REGISTERS_BASE, reg_disp(dest, KIND_OFF), DIAMOND_VALUE_BOOL);
-                emit_store_byte_reg(buf, JIT_REGISTERS_BASE, reg_disp(dest, AS_OFF), REG_RAX);
-                break;
-            }
-            case DIAMOND_OP_CHECK_TYPE: {
-                uint16_t source = 0, set_index = 0;
-                if (!decode_u16(fn, &pc, &source) || !decode_u16(fn, &pc, &set_index)) { jc->bailed = true; return; }
-                compile_check_type(jc, source, set_index);
-                break;
-            }
-            case DIAMOND_OP_IS_TYPE: {
-                uint16_t dest = 0, source = 0, type = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &source) ||
-                    !decode_u16(fn, &pc, &type)) { jc->bailed = true; return; }
-                if (diamond_type_operand_is_native(type)) { jc->bailed = true; return; }
-                compile_is_type(jc, dest, source, type);
-                break;
-            }
-            case DIAMOND_OP_SAME_CLASS: {
-                uint16_t dest = 0, left = 0, right = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &left) ||
-                    !decode_u16(fn, &pc, &right)) { jc->bailed = true; return; }
-                JitBuffer *buf = &jc->buf;
-                emit_lea(buf, REG_RDI, JIT_REGISTERS_BASE, reg_disp(left, 0));
-                emit_lea(buf, REG_RSI, JIT_REGISTERS_BASE, reg_disp(right, 0));
-                emit_lea(buf, REG_RDX, JIT_REGISTERS_BASE, reg_disp(dest, 0));
-                emit_body_call(jc, (void *)(uintptr_t)diamond_jit_same_class);
-                emit_bail_if_al_nonzero(jc);
-                break;
-            }
-            case DIAMOND_OP_STRING: {
-                uint16_t dest = 0, string_index = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return; }
-                compile_new_string(jc, dest, string_index);
-                break;
-            }
-            case DIAMOND_OP_INDEX_GET: {
-                uint16_t dest = 0, recv = 0, index = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
-                    !decode_u16(fn, &pc, &index)) { jc->bailed = true; return; }
-                compile_index_get(jc, instruction_start, dest, recv, index);
-                break;
-            }
-            case DIAMOND_OP_INDEX_GET_STRING: {
-                uint16_t dest = 0, recv = 0, string_index = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
-                    !decode_u16(fn, &pc, &string_index)) { jc->bailed = true; return; }
-                compile_index_get_string(jc, instruction_start, dest, recv, string_index);
-                break;
-            }
-            case DIAMOND_OP_INDEX_SET: {
-                uint16_t recv = 0, index = 0, source = 0;
-                if (!decode_u16(fn, &pc, &recv) || !decode_u16(fn, &pc, &index) ||
-                    !decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
-                compile_index_set(jc, instruction_start, recv, index, source);
-                break;
-            }
-            case DIAMOND_OP_ARRAY: {
-                uint16_t dest = 0, base = 0, count = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
-                    !decode_u16(fn, &pc, &count)) { jc->bailed = true; return; }
-                compile_new_array(jc, dest, base, count);
-                break;
-            }
-            case DIAMOND_OP_HASH: {
-                uint16_t dest = 0, base = 0, count = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &base) ||
-                    !decode_u16(fn, &pc, &count)) { jc->bailed = true; return; }
-                compile_new_hash(jc, dest, base, count);
-                break;
-            }
-            case DIAMOND_OP_SUPER: {
-                uint16_t dest = 0, name = 0, base = 0;
-                uint16_t owner_index = 0; uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &owner_index) ||
-                    !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
-                    !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                compile_super_call(jc, dest, owner_index, name, base, argc);
-                break;
-            }
-            case DIAMOND_OP_TAIL_CALL: {
-                uint16_t dest = 0, function_index = 0, base = 0;
-                uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
-                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
-                    jc->bailed = true; return;
-                }
-                if ((size_t)function_index != jc->self_function_index) {
-                    compile_tail_call_other(jc, dest, function_index, base, argc);
-                    break;
-                }
-                compile_self_tail_call(jc, base, argc);
-                break;
-            }
-            case DIAMOND_OP_CALL: {
-                uint16_t dest = 0, function_index = 0, base = 0;
-                uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &function_index) ||
-                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
-                    jc->bailed = true; return;
-                }
-                compile_call_function(jc, dest, function_index, base, argc);
-                break;
-            }
-            case DIAMOND_OP_NEW: {
-                uint16_t dest = 0, base = 0, class_index = 0;
-                uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &class_index) ||
-                    !decode_u16(fn, &pc, &base) || !decode_u8(fn, &pc, &argc)) {
-                    jc->bailed = true; return;
-                }
-                compile_new(jc, dest, class_index, base, argc);
-                break;
-            }
-            case DIAMOND_OP_JUMP: {
-                uint8_t high = 0, low = 0;
-                if (!decode_u8(fn, &pc, &high) || !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
-                size_t target = ((size_t)high << 8) | low;
-                if (target <= instruction_start) emit_interrupt_poll(jc);
-                size_t field = emit_jmp_placeholder(&jc->buf);
-                record_global_patch(jc, field, target);
-                break;
-            }
-            case DIAMOND_OP_JUMP_IF_TRUE: {
-                uint16_t condition = 0;
-                uint8_t high = 0, low = 0;
-                if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
-                    !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
-                size_t target = ((size_t)high << 8) | low;
-                compile_jump_if_true(jc, instruction_start, condition, target);
-                break;
-            }
-            case DIAMOND_OP_JUMP_IF_FALSE: {
-                uint16_t condition = 0;
-                uint8_t high = 0, low = 0;
-                if (!decode_u16(fn, &pc, &condition) || !decode_u8(fn, &pc, &high) ||
-                    !decode_u8(fn, &pc, &low)) { jc->bailed = true; return; }
-                size_t target = ((size_t)high << 8) | low;
-                compile_jump_if_false(jc, instruction_start, condition, target);
-                break;
-            }
-            case DIAMOND_OP_RETURN: {
-                uint16_t source = 0;
-                if (!decode_u16(fn, &pc, &source)) { jc->bailed = true; return; }
-                JitBuffer *buf = &jc->buf;
-                emit_load_r64(buf, REG_RAX, JIT_REGISTERS_BASE, reg_disp(source, 0));
-                emit_load_r64(buf, REG_RCX, JIT_REGISTERS_BASE, reg_disp(source, 8));
-                emit_store_r64(buf, JIT_RESULT_PTR, 0, REG_RAX);
-                emit_store_r64(buf, JIT_RESULT_PTR, 8, REG_RCX);
-                emit_epilogue(jc);
-                emit_mov_al_imm8(buf, DIAMOND_VM_OK);
-                emit_ret(buf);
-                break;
-            }
-            case DIAMOND_OP_INVOKE:
-            case DIAMOND_OP_INVOKE_MONO: {
-                uint16_t dest = 0, recv = 0, name = 0, base = 0;
-                uint8_t argc = 0;
-                if (!decode_u16(fn, &pc, &dest) || !decode_u16(fn, &pc, &recv) ||
-                    !decode_u16(fn, &pc, &name) || !decode_u16(fn, &pc, &base) ||
-                    !decode_u8(fn, &pc, &argc)) { jc->bailed = true; return; }
-                compile_invoke(jc, instruction_start, opcode, dest, recv, name, base, argc);
-                break;
-            }
-            default:
-                jc->bailed = true;
-                return;
+        if (!compile_value_instruction(jc, opcode, instruction_start, &pc) &&
+            !compile_control_instruction(jc, opcode, instruction_start, &pc)) {
+            jc->bailed = true;
+            return;
         }
     }
 }

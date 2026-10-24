@@ -693,7 +693,107 @@ static void commit_pending(ReplBuffer *session, const ReplBuffer *pending) {
     *session = committed;
 }
 
-int diamond_repl_run(void) {
+typedef enum ReplRetry {
+    REPL_RETRY_REPORT,
+    REPL_RETRY_INCOMPLETE,
+    REPL_RETRY_OUT_OF_MEMORY,
+} ReplRetry;
+
+/* After pending input that is not a declaration fails to compile as an entry, tries it as plain
+ * source: still-incomplete input asks for another line, and otherwise *program is left holding
+ * the entry compile whose error the caller reports. Part of diamond_repl_run. */
+static ReplRetry recompile_as_statement(const ReplBuffer *session, const ReplBuffer *pending,
+        DiamondProgram **program, char *error_message, size_t error_message_size) {
+    bool incomplete = false;
+    diamond_program_free(*program);
+    free(*program);
+    *program = calloc(1, sizeof **program);
+    bool raw_incomplete = false;
+    if (*program != nullptr) {
+        ReplBuffer raw_source;
+        buffer_init(&raw_source);
+        const bool raw_appended =
+            buffer_append(&raw_source, session->data, session->length) &&
+            buffer_append(&raw_source, pending->data, pending->length);
+        const bool raw_ok = raw_appended && try_compile(
+            raw_source.data, *program, &raw_incomplete, error_message,
+            error_message_size);
+        buffer_free(&raw_source);
+        if (!raw_ok && raw_incomplete) {
+            diamond_program_free(*program);
+            free(*program);
+            *program = nullptr;
+            return REPL_RETRY_INCOMPLETE;
+        }
+        if (raw_ok) {
+            diamond_program_free(*program);
+        }
+    }
+    if (*program == nullptr) {
+        fprintf(stderr, "diamond: out of memory allocating program\n");
+        return REPL_RETRY_OUT_OF_MEMORY;
+    }
+    diamond_program_free(*program);
+    free(*program);
+    *program = calloc(1, sizeof **program);
+    if (*program == nullptr) {
+        fprintf(stderr, "diamond: out of memory allocating program\n");
+        return REPL_RETRY_OUT_OF_MEMORY;
+    }
+    ReplBuffer wrapped_source;
+    buffer_init(&wrapped_source);
+    buffer_append(&wrapped_source, session->data, session->length);
+    append_repl_pending(&wrapped_source, pending);
+    try_compile(wrapped_source.data, *program, &incomplete,
+                error_message, error_message_size);
+    buffer_free(&wrapped_source);
+    return REPL_RETRY_REPORT;
+}
+
+/* Runs a compiled REPL entry, prints its new output and result (or its error), and on success
+ * commits the pending input to the session. The caller frees `program`. Part of
+ * diamond_repl_run. */
+static void run_repl_candidate(FILE *capture, int real_stdout_fd, FILE *real_stdout,
+        DiamondProgram *program, ReplBuffer *session, ReplBuffer *pending,
+        ReplBuffer *previous_output, char *error_message, size_t error_message_size) {
+    DiamondValue result = DIAMOND_NIL;
+    DiamondVm result_vm;
+    const char *run_error = nullptr;
+    const bool ran_ok = run_capturing_stdout(capture, real_stdout_fd, program,
+        &result, &result_vm, &run_error, error_message, error_message_size);
+    char *captured = read_capture(capture);
+    const char *new_output = captured != nullptr ? captured : "";
+    const size_t new_output_length = strlen(new_output);
+    print_new_output(real_stdout, new_output, previous_output);
+
+    if (ran_ok) {
+        diamond_value_fprint(real_stdout, result);
+        fputc('\n', real_stdout);
+        buffer_reset(previous_output);
+        buffer_append(previous_output, new_output, new_output_length);
+        commit_pending(session, pending);
+    } else {
+        fprintf(real_stdout, "%s\n", run_error != nullptr ? run_error : "unknown error");
+    }
+    if (ran_ok) diamond_vm_free(&result_vm);
+    free(captured);
+}
+
+/* Puts the terminal in raw mode for line editing, saving its settings in *original_termios. Part
+ * of diamond_repl_run. */
+static void enter_raw_mode(struct termios *original_termios) {
+    if (tcgetattr(STDIN_FILENO, original_termios) == 0) {
+        struct termios raw = *original_termios;
+        raw.c_lflag &= (unsigned)~(ECHO | ICANON | ISIG);
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    }
+}
+
+/* Opens the temporary file REPL output is captured in and a duplicate of the real stdout.
+ * Returns 0, or 74 after reporting the failure. Part of diamond_repl_run. */
+static int open_repl_output(FILE **capture_out, int *real_stdout_fd_out, FILE **real_stdout_out) {
     FILE *capture = tmpfile();
     if (capture == nullptr) {
         fprintf(stderr, "diamond: cannot create temporary file for REPL output capture\n");
@@ -712,6 +812,18 @@ int diamond_repl_run(void) {
         fclose(capture);
         return 74;
     }
+    *capture_out = capture;
+    *real_stdout_fd_out = real_stdout_fd;
+    *real_stdout_out = real_stdout;
+    return 0;
+}
+
+int diamond_repl_run(void) {
+    FILE *capture = nullptr;
+    int real_stdout_fd = -1;
+    FILE *real_stdout = nullptr;
+    const int open_status = open_repl_output(&capture, &real_stdout_fd, &real_stdout);
+    if (open_status != 0) return open_status;
     /* real_stdout, not a plain printf on stdout: every other line this
      * function ever writes to the real terminal (prompts, echoed
      * results) goes through real_stdout with an explicit flush right
@@ -759,13 +871,7 @@ int diamond_repl_run(void) {
     ReplHistory history = {};
     if (interactive) {
         history_init(&history);
-        if (tcgetattr(STDIN_FILENO, &original_termios) == 0) {
-            struct termios raw = original_termios;
-            raw.c_lflag &= (unsigned)~(ECHO | ICANON | ISIG);
-            raw.c_cc[VMIN] = 1;
-            raw.c_cc[VTIME] = 0;
-            tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-        }
+        enter_raw_mode(&original_termios);
     }
 
     bool eof = false;
@@ -875,51 +981,16 @@ int diamond_repl_run(void) {
                 continue;
             }
             if (!repl_pending_is_declaration(pending.data)) {
-                diamond_program_free(program);
-                free(program);
-                program = calloc(1, sizeof *program);
-                bool raw_incomplete = false;
-                if (program != nullptr) {
-                    ReplBuffer raw_source;
-                    buffer_init(&raw_source);
-                    const bool raw_appended =
-                        buffer_append(&raw_source, session.data, session.length) &&
-                        buffer_append(&raw_source, pending.data, pending.length);
-                    const bool raw_ok = raw_appended && try_compile(
-                        raw_source.data, program, &raw_incomplete, error_message,
-                        sizeof error_message);
-                    buffer_free(&raw_source);
-                    if (!raw_ok && raw_incomplete) {
-                        diamond_program_free(program);
-                        free(program);
-                        program = nullptr;
-                        prompt = "... ";
-                        continue;
-                    }
-                    if (raw_ok) {
-                        diamond_program_free(program);
-                    }
+                const ReplRetry retry = recompile_as_statement(&session, &pending, &program,
+                    error_message, sizeof error_message);
+                if (retry == REPL_RETRY_INCOMPLETE) {
+                    prompt = "... ";
+                    continue;
                 }
-                if (program == nullptr) {
-                    fprintf(stderr, "diamond: out of memory allocating program\n");
+                if (retry == REPL_RETRY_OUT_OF_MEMORY) {
                     eof = true;
                     break;
                 }
-                diamond_program_free(program);
-                free(program);
-                program = calloc(1, sizeof *program);
-                if (program == nullptr) {
-                    fprintf(stderr, "diamond: out of memory allocating program\n");
-                    eof = true;
-                    break;
-                }
-                ReplBuffer wrapped_source;
-                buffer_init(&wrapped_source);
-                buffer_append(&wrapped_source, session.data, session.length);
-                append_repl_pending(&wrapped_source, &pending);
-                try_compile(wrapped_source.data, program, &incomplete,
-                            error_message, sizeof error_message);
-                buffer_free(&wrapped_source);
             }
             fprintf(real_stdout, "%s\n", error_message);
             diamond_program_free(program);
@@ -930,27 +1001,8 @@ int diamond_repl_run(void) {
 
         if (!have_candidate) continue;
 
-        DiamondValue result = DIAMOND_NIL;
-        DiamondVm result_vm;
-        const char *run_error = nullptr;
-        const bool ran_ok = run_capturing_stdout(capture, real_stdout_fd, program,
-            &result, &result_vm, &run_error, error_message, sizeof error_message);
-        char *captured = read_capture(capture);
-        const char *new_output = captured != nullptr ? captured : "";
-        const size_t new_output_length = strlen(new_output);
-        print_new_output(real_stdout, new_output, &previous_output);
-
-        if (ran_ok) {
-            diamond_value_fprint(real_stdout, result);
-            fputc('\n', real_stdout);
-            buffer_reset(&previous_output);
-            buffer_append(&previous_output, new_output, new_output_length);
-        commit_pending(&session, &pending);
-        } else {
-            fprintf(real_stdout, "%s\n", run_error != nullptr ? run_error : "unknown error");
-        }
-        if (ran_ok) diamond_vm_free(&result_vm);
-        free(captured);
+        run_repl_candidate(capture, real_stdout_fd, real_stdout, program, &session, &pending,
+            &previous_output, error_message, sizeof error_message);
         diamond_program_free(program);
         free(program);
     }

@@ -264,9 +264,9 @@ typedef struct {
     size_t pending_count;
 } DisassemblyWalk;
 
-/* Opcode group: constants, moves, arithmetic and comparisons. Returns false, leaving the walk untouched,
- * when the opcode at the current offset belongs to another group. */
-static bool disassemble_loads_and_arithmetic(DisassemblyWalk *walk) {
+/* Opcode group: constants, strings, symbols, nil/bool and argument loads. Returns false, leaving the walk
+ * untouched, when the opcode at the current offset belongs to another group. */
+static bool disassemble_loads(DisassemblyWalk *walk) {
     FILE *stream = walk->stream;
     const DiamondChunk *chunk = walk->chunk;
     size_t offset = walk->offset;
@@ -401,6 +401,23 @@ static bool disassemble_loads_and_arithmetic(DisassemblyWalk *walk) {
                 read_operand(chunk,offset+3),read_operand(chunk,offset+5));
             offset+=7;
             break;
+        default:
+            return false;
+    }
+    walk->offset = offset;
+    walk->valid = valid;
+    return true;
+}
+
+/* Opcode group: moves, arithmetic and comparisons. Returns false, leaving the walk
+ * untouched, when the opcode at the current offset belongs to another group. */
+static bool disassemble_arithmetic(DisassemblyWalk *walk) {
+    FILE *stream = walk->stream;
+    const DiamondChunk *chunk = walk->chunk;
+    size_t offset = walk->offset;
+    bool valid = walk->valid;
+    const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
+    switch (opcode) {
         case DIAMOND_OP_TO_STRING:
             offset=two_registers(stream,chunk,"TO_STRING",offset, &valid);break;
         case DIAMOND_OP_MOVE:
@@ -782,7 +799,7 @@ static bool disassemble_spread_calls(DisassemblyWalk *walk) {
     return true;
 }
 
-/* Opcode group: spread and keyword method, constructor and singleton calls. Returns false, leaving the walk
+/* Opcode group: spread and keyword method calls. Returns false, leaving the walk
  * untouched, when the opcode at the current offset belongs to another group. */
 static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
     FILE *stream = walk->stream;
@@ -871,6 +888,23 @@ static bool disassemble_spread_invokes(DisassemblyWalk *walk) {
                     valid=false;
             offset+=(size_t)10+type_count*2;break;
         }
+        default:
+            return false;
+    }
+    walk->offset = offset;
+    walk->valid = valid;
+    return true;
+}
+
+/* Opcode group: spread and keyword constructor and singleton calls. Returns false, leaving the walk
+ * untouched, when the opcode at the current offset belongs to another group. */
+static bool disassemble_spread_constructors(DisassemblyWalk *walk) {
+    FILE *stream = walk->stream;
+    const DiamondChunk *chunk = walk->chunk;
+    size_t offset = walk->offset;
+    bool valid = walk->valid;
+    const DiamondOpCode opcode = (DiamondOpCode)chunk->code[offset];
+    switch (opcode) {
         case DIAMOND_OP_NEW_SPREAD: {
             if(!require_bytes(stream,chunk,offset,7)) {
                 valid=false;offset=chunk->code_count;break;
@@ -1790,8 +1824,10 @@ static bool disassemble_chunk_with_scratch(FILE *stream, const char *name,
             fprintf(stream, "%04zu          ", offset);
         }
         walk.stream = stream;
-        if (!(disassemble_loads_and_arithmetic(&walk) || disassemble_calls(&walk) ||
+        if (!(disassemble_loads(&walk) ||
+              disassemble_arithmetic(&walk) || disassemble_calls(&walk) ||
               disassemble_spread_calls(&walk) || disassemble_spread_invokes(&walk) ||
+              disassemble_spread_constructors(&walk) ||
               disassemble_invokes_and_variables(&walk) || disassemble_jumps(&walk) ||
               disassemble_closures_and_classes(&walk) || disassemble_io_and_conversions(&walk) ||
               disassemble_natives_and_debugging(&walk) || disassemble_patterns_and_types(&walk) ||
