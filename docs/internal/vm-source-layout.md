@@ -107,7 +107,7 @@ exception, below). 123 `*_helper` functions
 | `vm_types.c` | runtime type checks (`value_matches_type`, structural interface matching against the native member tables, `diamond_jit_check_type`/`is_type`) and generic type binding and inference (`bind_context_set`, `infer_from_value`) |
 | `vm_format.c` | value formatting: type names for error messages, `builder_format_value`, `inspect`/`to_s` (`stringify_value`, `inspect_value`), uncaught-exception messages and `Array#join` |
 | `vm_values.c` | copying values between VMs (`copy_value_into_vm` and its per-kind steps), equality (`values_equal`), hashing and the Hash table operations (`hash_find`, `hash_set`, `hash_delete`) |
-| `vm_collections.c` | the Array/Hash/String and Int/Float method dispatch (`collection_invoke_helper`, `numeric_invoke_helper`), the prelude-bridged collection methods, and `respond_to?` for built-in receivers |
+| `vm_collections.c` | the Array/Hash/String and Int/Float method dispatch (`collection_invoke_helper`, `numeric_invoke_helper`), the prelude-bridged collection methods, `respond_to?` for built-in receivers, element-type constraint checks, `array_push`, and the index get/set entry points the interpreter and JIT share (`diamond_jit_index_get`/`_set`) |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
