@@ -22,11 +22,7 @@ and no file far past 3,000 lines. Each step is a behavior-preserving move or spl
 verified as in [the VM source layout note](internal/vm-source-layout.md) ("How a move
 is done"), with release benchmarks treated as a no-regression check.
 
-- **`run_chunk`'s `INVOKE_TYPED` case** (473 lines) -- the special-method chain for
-  native receivers (`public_send`, `tap`, `shuffle`/`sample`, `arity`, `to_s`/`inspect`,
-  the `dup` family, bignum formatting) runs on every native-receiver call, so keep the
-  name checks inline and outline only the bodies they select.
-- **The rest of `run_chunk`** (3,775 lines) -- the remaining larger cases (`TAIL_CALL`,
+- **The rest of `run_chunk`** (3,559 lines) -- the remaining larger cases (`TAIL_CALL`,
   132 lines; integer division, modulo and comparison) only where outlining measures
   neutral. The `outlined_*` case helpers could move to their own file.
 - **`vm.c`** (10,338 lines) -- continue splitting by subsystem.

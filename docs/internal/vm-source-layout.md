@@ -24,7 +24,7 @@ sanitize` use), on one core:
 | `vm_run_chunk.c` (`run_chunk`, `collection_invoke_fast` and the preamble) | 5,639 | 205 s |
 
 So essentially all of the cost is `run_chunk`, the interpreter loop (8,171 lines, 31% of the file,
-before the `INVOKE_TYPED` blocks were outlined; 3,775 lines now). Splitting `vm.c` cannot shorten a
+before the `INVOKE_TYPED` blocks were outlined; 3,559 lines now). Splitting `vm.c` cannot shorten a
 full instrumented build, which still compiles `run_chunk` once, but it decides how much a change
 *outside* `run_chunk` costs. With `run_chunk` in `vm_run_chunk.c`, an edit to the rest of the runtime
 recompiles a 6-second file, and an edit to `run_chunk` recompiles only the 205-second one.
@@ -36,7 +36,7 @@ sanitizer-build problem.
 ## What is inside `run_chunk`
 
 152 opcode cases have braced bodies. The largest, `DIAMOND_OP_INVOKE_TYPED` (method calls), is
-**473 lines** (3,104 before the cold per-handle blocks were outlined); the next largest is
+**258 lines** (3,104 before the cold per-handle blocks were outlined); the next largest is
 `DIAMOND_OP_TAIL_CALL` at 132. It was a chain of blocks keyed on the receiver's kind:
 
 | block | lines |
@@ -48,7 +48,16 @@ sanitizer-build problem.
 The per-kind blocks (Array/Hash/String, Int/Float, Supervisor, UDP socket, TLS socket, Channel,
 Listener, Thread, File, Socket, Fiber, Regexp) are outlined into `*_invoke_helper` functions (in `vm.c` or the files below), the same shape as
 `time_dispatch_helper`, `tensor_dispatch_helper` and the database `*_dispatch_helper` functions. A
-helper returns its status instead of using `VM_RETURN`; the call site propagates it.
+helper returns its status instead of using `VM_RETURN`; the call site propagates it. The handle
+kinds from Channel through ProgramBuilder are dispatched from one more outlined function,
+`outlined_native_object_invoke`, which the case skips for an Instance receiver. Thread stays
+inline, since it hands a `DIAMOND_VM_EXCEPTION` to this frame's handlers itself.
+
+The special methods every native receiver answers (`public_send`, `tap`, `shuffle`/`sample`,
+`arity`, `to_s`/`inspect`, the `dup` family, bignum formatting) are name-checked inline, in their
+original order, because the checks run on every native-receiver call. Only the longer bodies they
+select (`tap`, `shuffle`/`sample`, `arity` and the two bignum conversions) are `outlined_*`
+functions.
 
 The two hot blocks (`collection_invoke_helper`, `numeric_invoke_helper`) were measured with
 `perf stat` user instructions and cycles over `bench/`: instructions rose about 1% (the extra call),
