@@ -1556,4 +1556,16 @@ DIAMOND_INTERNAL void diamond_resume_target_bounds(const DiamondFiber *fiber,
         const void **bottom, size_t *size);
 #endif
 
+/* vm_calls.c */
+DIAMOND_INTERNAL DiamondArray *install_backtrace(DiamondVm *vm,DiamondInstance *raised);
+DIAMOND_INTERNAL void backtrace_append_live_frames(DiamondVm *vm,DiamondArray *backtrace);
+
+/* vm.c, used by vm_calls.c */
+DIAMOND_INTERNAL bool instance_is_exception(const DiamondVm *vm,const DiamondInstance *instance);
+DIAMOND_INTERNAL const DiamondMethod *lookup_method_cached(
+    DiamondVm *vm, const DiamondChunk *chunk, const uint8_t *site,
+    const DiamondClass *class, const char *name, size_t length,
+    const DiamondMethodCache **cache_out);
+DIAMOND_INTERNAL bool record_rewritten_site(DiamondVm *vm, const uint8_t *site);
+
 #endif
