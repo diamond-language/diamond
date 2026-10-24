@@ -108,9 +108,10 @@ exception, below). 123 `*_helper` functions
 | `vm_format.c` | value formatting: type names for error messages, `builder_format_value`, `inspect`/`to_s` (`stringify_value`, `inspect_value`), uncaught-exception messages and `Array#join` |
 | `vm_values.c` | copying values between VMs (`copy_value_into_vm` and its per-kind steps), equality (`values_equal`), hashing and the Hash table operations (`hash_find`, `hash_set`, `hash_delete`) |
 | `vm_collections.c` | the Array/Hash/String and Int/Float method dispatch (`collection_invoke_helper`, `numeric_invoke_helper`), the prelude-bridged collection methods, and `respond_to?` for built-in receivers |
-| `vm_gc.c` | the garbage collector: marking (roots, frames, fibers, the remembered set), `sweep_list`, the card-marking write barriers, and `diamond_vm_collect`/`_minor` (allocation accounting and `maybe_collect` stay in `vm.c` with the resource budgets) |
+| `vm_gc.c` | the garbage collector: marking (roots, frames, fibers, the remembered set), `sweep_list`, the card-marking write barriers, and `diamond_vm_collect`/`_minor` (allocation accounting and `maybe_collect` live in `vm_limits.c` with the resource budgets) |
 | `vm_operators.c` | user-defined operator dispatch (`invoke_operator_method`), `case`/`when` matching, `method_missing`, the `+` fallbacks and the Int arithmetic and comparison slow paths (`int_arith_slow`, `compare_int_slow`) |
 | `vm_exceptions.c` | catching exceptions and runtime errors in a frame's rescue handlers (`catch_exception`, `catch_runtime_error`), arity-error messages, and non-local `break`/`return` arrival (`nonlocal_exit_arrives`) |
+| `vm_limits.c` | the process-wide DIAMOND_MAX_* resource budgets, `maybe_collect` (the allocation-time collection and memory-budget check), and interruptible blocking (`poll_interruptible`, `channel_wait_bounded`, the blocking-call interrupt hooks) |
 | `vm_concurrency.c` | Thread, Channel and Supervisor: thread accounting and creation, program cloning, the thread and supervised-child entry points, and the Fiber, Thread, Channel and Supervisor methods (the fiber switching core, and handle allocation and freeing, stay in `vm.c`) |
 
 Within `vm_program_builder.c`, `program_builder_invoke_helper` only checks whether
