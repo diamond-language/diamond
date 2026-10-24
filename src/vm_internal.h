@@ -1635,4 +1635,12 @@ DIAMOND_INTERNAL const DiamondFunction *find_collection_extension(
         const DiamondChunk *chunk,DiamondObjectKind kind,
         const char *name,size_t length);
 
+/* vm_gc.c */
+DIAMOND_INTERNAL void mark_value(DiamondValue value, bool minor);
+DIAMOND_INTERNAL void mark_object(DiamondObject *object, bool minor);
+DIAMOND_INTERNAL void mark_frame_chain(void *frames, bool minor);
+
+/* vm.c, used by vm_gc.c */
+DIAMOND_INTERNAL void mark_adopted_programs(void *list, bool minor);
+
 #endif
