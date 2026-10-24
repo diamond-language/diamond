@@ -1806,8 +1806,16 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
             case DIAMOND_OP_INVOKE:
             case DIAMOND_OP_INVOKE_MONO:
             case DIAMOND_OP_INVOKE_TYPED: {
-                uint16_t dest=0,recv=0,base=0,name=0;uint8_t argc=0;
-                READ_SHORT(dest);READ_SHORT(recv);READ_SHORT(name);READ_SHORT(base);READ_BYTE(argc);
+                /* The nine fixed operand bytes in one bounds check, read through a local pointer: the
+                 * per-operand READ_SHORT reloads of chunk->code were the cost of the method-call path. */
+                if(ip+8>=chunk->code_count)VM_RETURN(DIAMOND_VM_INVALID_BYTECODE);
+                const uint8_t *const operands=chunk->code+ip;
+                ip+=9;
+                const uint16_t dest=(uint16_t)(((unsigned)operands[0]<<8)|operands[1]);
+                const uint16_t recv=(uint16_t)(((unsigned)operands[2]<<8)|operands[3]);
+                const uint16_t name=(uint16_t)(((unsigned)operands[4]<<8)|operands[5]);
+                const uint16_t base=(uint16_t)(((unsigned)operands[6]<<8)|operands[7]);
+                const uint8_t argc=operands[8];
                 uint8_t type_argument_count=0;uint16_t type_arguments[8];
                 if((DiamondOpCode)instruction==DIAMOND_OP_INVOKE_TYPED) {
                     READ_BYTE(type_argument_count);

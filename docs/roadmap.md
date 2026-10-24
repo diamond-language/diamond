@@ -25,6 +25,11 @@ is done"), with release benchmarks treated as a no-regression check.
 - **The rest of `run_chunk`** (3,559 lines) -- the remaining larger cases (`TAIL_CALL`,
   132 lines; integer division, modulo and comparison) only where outlining measures
   neutral.
+- **Operand decoding in other hot opcodes** -- `INVOKE` now reads its fixed operands
+  through one bounds check and a local pointer, because GCC had started reloading
+  `chunk->code` from the stack for every `READ_SHORT` (43 fewer instructions per
+  method call). `CALL`, `GET_IVAR`/`SET_IVAR` and the arithmetic opcodes may have the
+  same reloads; check each with callgrind per-call instruction counts before changing it.
 - **Compiler and JIT files** -- `compiler_classes.c`, `compiler.c`, `jit.c`,
   `compiler_builtins.c` (2,600-2,700 lines each).
 
