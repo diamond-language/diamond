@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <stdint.h>
 
+/* The public registry, used by `facet add` when no source is given. */
+#define FACET_DEFAULT_REGISTRY "https://cuts.dilang.tech"
+
 enum {
     FACET_MAX_NAME = 64,
     FACET_MAX_URL = 512,
@@ -141,6 +144,8 @@ int cmd_new(int argc, char **argv);
 bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,
         const char *scratch_root, char *error, size_t error_size);
 int run_install_or_update(bool force_resolve);
+bool registry_latest_version(const char *registry, const char *name, char *out,
+        size_t out_size, char *error, size_t error_size);
 
 /* facet_package.c */
 bool publishable_name(const char *name);

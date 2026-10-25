@@ -5,8 +5,8 @@ TODO: say what {{name}} does.
 ## Installation
 
 ```sh
-facet add {{name}} --registry https://cuts.dilang.tech --version "^0.1.0"
-facet update
+facet add {{name}}
+facet install
 ```
 
 ## Usage

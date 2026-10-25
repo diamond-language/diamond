@@ -234,7 +234,13 @@ a flat map of every resolved cut (the whole transitive set, already
 flattened) to its exact commit. Once `facet.lock` exists, `facet
 install` installs exactly what it says without re-resolving anything —
 the fast, reproducible path, unaffected by a tag or branch moving in
-the meantime. `facet update` always re-resolves from `diamond.cut`
+the meantime — as long as the lock still covers `diamond.cut` and
+`diamond.dev.cut`. When a direct dependency is missing from the lock, comes
+from a different source, is locked outside its version constraint, or names a
+different commit, `facet install` says so and resolves again, keeping each
+locked registry version that still fits. A changed tag or branch is not
+visible in the lock, which records only the commit; `facet update` picks it up.
+`facet update` always re-resolves from `diamond.cut`
 (picking up anything a tracked branch has moved to) and rewrites the
 lock.
 
@@ -346,9 +352,14 @@ reserved list still matches the compiler and library sources.
 ```sh
 facet init [name]     # writes a fresh diamond.cut; defaults name to the
                        # current directory's own basename if omitted
+facet add <name> [--dev] [--registry <https-url>] [--version <constraint>]
 facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
-facet add <name> [--dev] --registry <https-url> --version <constraint>
 ```
+
+Without `--git`, the dependency comes from a registry: `--registry`, or the
+public registry at `https://cuts.dilang.tech`. Without `--version`, `facet add`
+asks the registry for the newest release that is not yanked and writes `^` plus
+that version, so `facet update` takes compatible releases only.
 
 `--dev` adds the dependency to `diamond.dev.cut` instead, creating it if needed
 (see "Development dependencies" above); the name must not already be in either
@@ -360,7 +371,7 @@ first, or hand-write one), parses it, appends the new dependency (a hard
 error if that name is already present — edit the existing entry by hand,
 or remove it first, rather than guessing you meant to replace it), and
 rewrites the file. Both validate what they write the same way `facet
-install` would reject it later: exactly one of `--tag`/`--branch`/
+install` would reject it later: for a git dependency exactly one of `--tag`/`--branch`/
 `--commit`/`--version`, and a `--version` value that actually parses as a
 constraint (`tools/semver.h`'s own grammar) — so a mistake is caught
 immediately, not at the next `facet install`.

@@ -4,6 +4,18 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
+## Unreleased
+
+### Changed
+
+- `facet add <name>` needs no flags for a registry cut: it uses the public registry
+  unless `--registry` names another, and without `--version` writes `^` plus the
+  newest release that is not yanked.
+- `facet install` resolves again when `diamond.cut` or `diamond.dev.cut` asks for
+  something `facet.lock` does not hold (a new dependency, a different source, a version
+  outside its constraint), keeping each locked registry version that still fits. Before,
+  it installed the stale lock and ignored the new dependency.
+
 ## 0.20.0 — 2026-10-25
 
 From installation to a first app: `.deb` and `.rpm` packages on each GitHub

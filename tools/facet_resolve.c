@@ -539,6 +539,26 @@ static bool registry_best_version(const FacetPendingSemver *entry,
     return ok;
 }
 
+/* The newest non-yanked release of `name`, for `facet add` without --version. */
+bool registry_latest_version(const char *registry, const char *name, char *out,
+        size_t out_size, char *error, size_t error_size) {
+    const char *tmp = getenv("TMPDIR");
+    char scratch[FACET_MAX_PATH];
+    if (snprintf(scratch, sizeof scratch, "%s/facet-add-XXXXXX",
+                 tmp != NULL && tmp[0] != '\0' ? tmp : "/tmp") >= (int)sizeof scratch ||
+        mkdtemp(scratch) == NULL) {
+        (void)snprintf(error, error_size, "cannot create a temporary directory");
+        return false;
+    }
+    FacetPendingSemver entry = {0};
+    entry.source = FACET_SOURCE_REGISTRY;
+    (void)snprintf(entry.name, sizeof entry.name, "%s", name);
+    (void)snprintf(entry.registry, sizeof entry.registry, "%s", registry);
+    bool ok = registry_best_version(&entry, scratch, out, out_size, error, error_size);
+    (void)rmdir(scratch);
+    return ok;
+}
+
 static bool registry_release(const FacetPendingSemver *entry, const char *version,
         const char *scratch_root, FacetResolved *resolved, FacetManifest *nested,
         char *error, size_t error_size) {
@@ -1125,6 +1145,37 @@ static bool install_resolution(const FacetResolution *resolution,
     return true;
 }
 
+/* Whether facet.lock still answers every direct dependency in the project manifest:
+ * present, from the same source, and within its version constraint or at its
+ * pinned commit. A changed tag or branch is not visible in the lock, which records
+ * only the commit it resolved to; `facet update` picks those up. */
+static bool lock_covers_manifest(const FacetResolution *lock, const FacetManifest *manifest) {
+    for (size_t index = 0; index < manifest->dependency_count; index++) {
+        const FacetDependency *dependency = &manifest->dependencies[index];
+        const FacetResolved *locked = NULL;
+        for (size_t other = 0; other < lock->count; other++)
+            if (strcmp(lock->packages[other].name, dependency->name) == 0)
+                locked = &lock->packages[other];
+        if (locked == NULL || locked->source != dependency->source) return false;
+        if (dependency->source == FACET_SOURCE_REGISTRY
+                ? strcmp(locked->registry, dependency->registry) != 0
+                : strcmp(locked->git, dependency->git) != 0)
+            return false;
+        if (dependency->uses_version) {
+            SemverConstraint constraint;
+            Semver version;
+            if (!semver_constraint_parse(dependency->version_text, &constraint) ||
+                !semver_parse(locked->version, &version) ||
+                !semver_satisfies(&version, &constraint))
+                return false;
+        } else if (dependency->ref_kind == FACET_REF_COMMIT &&
+                   strncmp(locked->commit, dependency->ref, strlen(dependency->ref)) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 int run_install_or_update(bool force_resolve) {
     char error[512] = {0};
     if (!file_exists("diamond.cut")) {
@@ -1139,18 +1190,22 @@ int run_install_or_update(bool force_resolve) {
     }
     FacetResolution resolution = {0};
     FacetResolution previous = {0};
-    bool ok;
-    if (!force_resolve && file_exists("facet.lock")) {
-        ok = parse_lockfile("facet.lock", &resolution, error, sizeof error);
-    } else {
-        FacetManifest manifest;
-        if (force_resolve && file_exists("facet.lock"))
-            ok = parse_lockfile("facet.lock", &previous, error, sizeof error);
-        else
-            ok = true;
-        registry_update_preference = ok && force_resolve ? &previous : NULL;
-        ok = ok && parse_project_manifest(&manifest, error, sizeof error) &&
-             resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
+    FacetManifest manifest;
+    const bool has_lock = file_exists("facet.lock");
+    bool ok = (!has_lock || parse_lockfile("facet.lock", &previous, error, sizeof error)) &&
+        parse_project_manifest(&manifest, error, sizeof error);
+    bool resolve = force_resolve || !has_lock;
+    if (ok && !resolve && !lock_covers_manifest(&previous, &manifest)) {
+        printf("facet: diamond.cut changed since facet.lock was written; resolving\n");
+        resolve = true;
+    }
+    if (ok && !resolve) {
+        resolution = previous;
+    } else if (ok) {
+        /* Keep locked registry versions that still fit, so adding one dependency does
+         * not upgrade the others. */
+        registry_update_preference = has_lock ? &previous : NULL;
+        ok = resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);
         registry_update_preference = NULL;
     }

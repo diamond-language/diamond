@@ -97,6 +97,10 @@ export FACET_TEST_ARCHIVE="$work/registry_greeter.tar"
 export FACET_TEST_CURL_URL="$work/registry_url"
 saved_path="$PATH"
 export PATH="$work/fake_bin:$PATH"
+# A lock that does not match diamond.cut is resolved again, so the registry lock
+# below needs a registry dependency.
+cp project1/diamond.cut project1/diamond.cut.git
+printf '%s\n' '{"name": "myapp", "dependencies": {"greeter": {"registry": "https://cuts.example/api", "version": "^1.2.0"}}}' > project1/diamond.cut
 cat > project1/facet.lock <<EOF
 {"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "$digest", "size": $archive_size}}
 EOF
@@ -191,6 +195,7 @@ check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": 
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": \"12345\"}}" "string size"
 check_bad_registry_lock "{\"greeter\": {\"source\": \"registry\", \"registry\": \"https://cuts.example\", \"version\": \"1.2.3\", \"sha256\": \"$digest\", \"size\": 18446744073709551616}}" "overflowing size"
 mv project1/facet.lock.git project1/facet.lock
+mv project1/diamond.cut.git project1/diamond.cut
 export PATH="$saved_path"
 unset FACET_TEST_ARCHIVE FACET_TEST_CURL_URL
 (cd project1 && "$facet" install >/dev/null)
@@ -615,7 +620,15 @@ EOF
 cat > registry_metadata/greeter-release <<EOF
 {"protocol": 1, "name": "greeter", "version": "1.2.3", "dependencies": {"logger": "^1.0.0"}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$digest", "sha256": "$digest", "size": $archive_size}}
 EOF
-sed 's/"version": "1.2.3"/"version": "1.3.0"/' registry_metadata/greeter-release > registry_metadata/greeter-release-new
+# A real 1.3.0 archive, so a resolve that moves to it can install it.
+mkdir -p registry_source13 && cp -r registry_source/greeter registry_source13/greeter
+sed -i -E 's/"version": "[0-9.]+"/"version": "1.3.0"/' registry_source13/greeter/diamond.cut
+"$facet" pack registry_source13/greeter registry_greeter13.tar >/dev/null
+greeter13_digest="$(sha256sum registry_greeter13.tar | cut -d' ' -f1)"
+greeter13_size="$(stat -c %s registry_greeter13.tar)"
+cat > registry_metadata/greeter-release-new <<EOF
+{"protocol": 1, "name": "greeter", "version": "1.3.0", "dependencies": {"logger": "^1.0.0"}, "yanked": false, "archive": {"path": "/v1/blobs/sha256/$greeter13_digest", "sha256": "$greeter13_digest", "size": $greeter13_size}}
+EOF
 cat > registry_metadata/logger-index <<'EOF'
 {"protocol": 1, "versions": [{"version": "1.0.0", "yanked": false}]}
 EOF
@@ -645,6 +658,7 @@ case "$url" in
     */v1/cuts/logger/versions/1.0.0) cp "$FACET_TEST_METADATA/logger-release" "$output" ;;
     */v1/blobs/sha256/"$FACET_TEST_GREETER_DIGEST") cp "$FACET_TEST_GREETER_ARCHIVE" "$output" ;;
     */v1/blobs/sha256/"$FACET_TEST_LOGGER_DIGEST") cp "$FACET_TEST_LOGGER_ARCHIVE" "$output" ;;
+    */v1/blobs/sha256/"$FACET_TEST_GREETER13_DIGEST") cp "$FACET_TEST_GREETER13_ARCHIVE" "$output" ;;
     *) echo "unexpected registry URL: $url" >&2; exit 22 ;;
 esac
 EOF
@@ -655,14 +669,51 @@ export FACET_TEST_METADATA="$work/registry_metadata"
 export FACET_TEST_GREETER_DIGEST="$digest" FACET_TEST_LOGGER_DIGEST="$logger_digest"
 export FACET_TEST_GREETER_ARCHIVE="$work/registry_greeter.tar"
 export FACET_TEST_LOGGER_ARCHIVE="$work/registry_logger.tar"
+export FACET_TEST_GREETER13_DIGEST="$greeter13_digest"
+export FACET_TEST_GREETER13_ARCHIVE="$work/registry_greeter13.tar"
 (cd project21_registry && "$facet" update >/dev/null)
 grep -q '"greeter": {"source": "registry"' project21_registry/facet.lock
 grep -q '"logger": {"source": "registry"' project21_registry/facet.lock
 [[ -f project21_registry/cuts/greeter/lib/greeter.d6 ]]
 [[ -f project21_registry/cuts/logger/lib/logger.d6 ]]
+
+# facet add without --version depends on the newest non-yanked release; without
+# --registry it uses the public registry.
+mkdir project21_latest
+(cd project21_latest && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --registry https://cuts.example/api >/dev/null &&
+    "$facet" add logger >/dev/null)
+[[ "$(cd project21_latest && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
+    "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.3.0}, logger: {registry: https://cuts.dilang.tech, version: ^1.0.0}}}" ]]
+
+# facet install re-resolves when diamond.cut asks for something facet.lock does not
+# hold, keeping locked versions that still fit: logger is added, greeter stays at
+# 1.2.3 though 1.3.0 exists. A constraint the lock no longer meets moves it.
+mkdir project21_stale
+(cd project21_stale && "$facet" init myapp >/dev/null &&
+    "$facet" add greeter --registry https://cuts.example/api --version "^1.0.0" >/dev/null &&
+    "$facet" add logger --registry https://cuts.example/api >/dev/null)
+printf '{"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3", "sha256": "%s", "size": %s}}\n' \
+    "$digest" "$archive_size" > project21_stale/facet.lock
+stale_output="$(cd project21_stale && "$facet" install)"
+grep -q "diamond.cut changed since facet.lock was written; resolving" <<<"$stale_output"
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.2.3"' project21_stale/facet.lock
+grep -q '"logger": {"source": "registry"' project21_stale/facet.lock
+[[ -f project21_stale/cuts/logger/lib/logger.d6 ]]
+current_output="$(cd project21_stale && "$facet" install)"
+if grep -q "resolving" <<<"$current_output"; then
+    echo "facet install re-resolved a lock that already covers diamond.cut" >&2
+    exit 1
+fi
+sed -i '/"greeter"/s/"version": "^1.0.0"}/"version": "^1.3.0"}/' project21_stale/diamond.cut
+grep -q '"greeter": {"registry": "https://cuts.example/api", "version": "^1.3.0"}' project21_stale/diamond.cut
+(cd project21_stale && "$facet" install >/dev/null)
+grep -q '"greeter": {"source": "registry", "registry": "https://cuts.example/api", "version": "1.3.0"' project21_stale/facet.lock
+grep -q '1.3.0' project21_stale/cuts/greeter/diamond.cut
 export PATH="$saved_path"
 unset FACET_TEST_METADATA FACET_TEST_GREETER_DIGEST FACET_TEST_LOGGER_DIGEST
 unset FACET_TEST_GREETER_ARCHIVE FACET_TEST_LOGGER_ARCHIVE
+unset FACET_TEST_GREETER13_DIGEST FACET_TEST_GREETER13_ARCHIVE
 
 # --- facet add: rejects a duplicate name, an ambiguous or missing ref,
 # an invalid version constraint, and running before facet init ---
@@ -704,7 +755,7 @@ if (cd project22 && "$facet" add other --git "$work/greeter_repo" \
     echo "facet add unexpectedly accepted mixed sources" >&2
     exit 1
 fi
-grep -q "exactly one of --git or --registry" "$error_file"
+grep -q "at most one of --git or --registry" "$error_file"
 rm -f "$error_file"
 
 error_file="$(mktemp)"
