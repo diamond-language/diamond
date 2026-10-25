@@ -65,7 +65,9 @@ package ecosystem are its own.
 ## Build and run
 
 New to Diamond? The [getting-started guide](docs/getting-started.md) goes from
-installing it to a tested project built into a standalone executable.
+installing it to a tested project built into a standalone executable. Each
+[release](https://github.com/diamond-language/diamond/releases) has `.deb`
+(Ubuntu 26.04) and `.rpm` (Fedora 44) packages for x86-64.
 
 `.d6` is the default and preferred extension for Diamond source files; compiled bytecode
 caches use `.d6c`. Backward compatibility with `.di` source files is retained

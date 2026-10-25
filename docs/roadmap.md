@@ -8,21 +8,19 @@ done yet; when something lands, delete it (see "Completion policy").
 Diamond is a research language. Priorities can change when measurements expose
 a more valuable runtime, language, or tooling question.
 
-Current focus is 0.20: tooling and documentation, a clear path from installation
-to a first working app. Broader
-reliability work waits for usage beyond the current two users; existing verification
+Broader reliability work waits for usage beyond the current two users; existing verification
 remains required. Package development prioritizes Mjolnir, with ActiveRecord in the
 background. Further JIT work is optional and measurement-driven.
-
-## 0.20: from installation to a first app
-
-- **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
-  own runner in the `release` and `test-packages` jobs.
 
 ## Candidate work
 
 These are possible next steps, not commitments. Start with a measured need or
 a concrete application gap.
+
+### Packages
+
+- **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
+  own runner in the `release` and `test-packages` jobs.
 
 ### `struct` declarations
 
