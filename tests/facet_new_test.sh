@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `facet new`: every kind generates a project whose own tests pass and whose
 # entry point runs; bad kinds, names and paths are refused; the reserved-name
-# list and the web template's dependency versions match the sources they copy.
+# list and the templates' dependency versions match the sources they copy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
@@ -48,12 +48,16 @@ for kind in cli web tcp udp lib; do
     "$facet" new "$kind" "demo_$kind" >/dev/null || fail "facet new $kind"
     [[ -f "demo_$kind/lib/demo_$kind.d6" && -f "demo_$kind/test/demo_${kind}_test.d6" ]] ||
         fail "$kind: missing lib or test file"
-    cmp -s "demo_$kind/test/minitest.d6" "$root/lib/minitest.d6" || fail "$kind: minitest copy differs"
+    cmp -s "demo_$kind/diamond.dev.cut" "$root/tools/new_templates/common/diamond.dev.cut" ||
+        fail "$kind: diamond.dev.cut differs from the template"
+    [[ ! -e "demo_$kind/test/minitest.d6" ]] || fail "$kind: minitest is copied, not a dev dependency"
     [[ -x "demo_$kind/test.sh" ]] || fail "$kind: test.sh is not executable"
     grep -q '{{' -r "demo_$kind" && fail "$kind: unsubstituted placeholder"
-    if [[ "$kind" == web ]]; then
-        bash "$root/tools/install_local_cuts.sh" demo_web >/dev/null
-    fi
+    # Before `facet install` the runner points at it instead of failing in require_cut.
+    if output="$(bash "demo_$kind/test.sh" 2>&1)"; then fail "$kind: test.sh passed without cuts/"; fi
+    [[ "$output" == *"run 'facet install' first"* ]] || fail "$kind: missing-cuts message: $output"
+    # The registry is not reachable from tests; install the same cuts from packages/.
+    bash "$root/tools/install_local_cuts.sh" "demo_$kind" >/dev/null
     output="$(bash "demo_$kind/test.sh" 2>&1)" || fail "$kind: generated tests failed: $output"
     [[ "$output" == *" 0 failed, 0 errors"* ]] || fail "$kind: unexpected test output: $output"
     ok
@@ -178,18 +182,18 @@ for dep in $web_deps; do
 done
 ok
 
-# --- the web template's constraints accept the versions in packages/ ---
+# --- the templates' constraints accept the versions in packages/ ---
 # Caret on 0.x pins the minor version; on 1.0 and later, the major.
 while read -r name wanted; do
     have="$(client version "$root/packages/$name/diamond.cut")"
     if [[ "${wanted%%.*}" == 0 ]]; then line="${wanted%.*}"; else line="${wanted%%.*}"; fi
-    [[ "$have" == "$line".* ]] || fail "web template wants $name ^$wanted, packages/ has $have"
+    [[ "$have" == "$line".* ]] || fail "a template wants $name ^$wanted, packages/ has $have"
     [[ "$(printf '%s\n%s\n' "$wanted" "$have" | sort -V | head -1)" == "$wanted" ]] ||
-        fail "web template wants $name ^$wanted, packages/ has older $have"
+        fail "a template wants $name ^$wanted, packages/ has older $have"
 done < <(sed -nE 's/^ *"([a-z_0-9]+)": \{"registry": "[^"]*", "version": "\^([0-9.]+)"\}.*/\1 \2/p' \
-    "$root/tools/new_templates/web/diamond.cut")
-[[ "$(grep -c '"version": "^' "$root/tools/new_templates/web/diamond.cut")" == 2 ]] ||
-    fail "web template dependency lines did not parse"
+    "$root/tools/new_templates/web/diamond.cut" "$root/tools/new_templates/common/diamond.dev.cut")
+[[ "$(cat "$root/tools/new_templates/web/diamond.cut" "$root/tools/new_templates/common/diamond.dev.cut" |
+    grep -c '"version": "^')" == 3 ]] || fail "template dependency lines did not parse"
 ok
 
 echo "facet new tests passed ($pass checks)"

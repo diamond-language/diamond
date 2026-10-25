@@ -538,7 +538,7 @@ test-stack-overflow: test-fiber-run
 
 FACET_SOURCES := tools/facet.c tools/facet_resolve.c tools/facet_package.c tools/facet_new.c
 # facet_new.c #embeds these.
-FACET_TEMPLATES := $(wildcard tools/new_templates/*/*) lib/minitest.d6
+FACET_TEMPLATES := $(wildcard tools/new_templates/*/*)
 
 $(BUILD_DIR)/facet: $(FACET_SOURCES) $(FACET_TEMPLATES) tools/facet_internal.h tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)

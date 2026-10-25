@@ -4,6 +4,7 @@ A UDP server written in [Diamond](https://getdiamond.codes). Each datagram a cli
 gets one datagram back.
 
 ```sh
+facet install                   # fetch minitest, the test library, into cuts/
 diamond main.d6                 # listens on UDP 127.0.0.1:7001
 printf 'PING' | nc -u -w1 127.0.0.1 7001    # PONG
 bash test.sh                    # run the tests
@@ -15,5 +16,5 @@ this machine; use `HOST=0.0.0.0` to accept outside datagrams.
 
 - `main.d6` binds the socket and calls `{{Name}}.serve`.
 - `lib/{{name}}.d6` holds the protocol (`{{Name}}.respond`) and the receive loop.
-- `test/{{name}}_test.d6` tests the protocol with `test/minitest.d6`, a copy of Diamond's
-  minitest library.
+- `test/{{name}}_test.d6` tests the protocol with minitest.
+  `diamond.dev.cut` lists it because only the tests need it.

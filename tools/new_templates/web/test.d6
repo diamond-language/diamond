@@ -1,6 +1,6 @@
 # Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
 # The tests call the handler with request hashes, so no server starts.
-require "minitest"
+require_cut "minitest"
 require "../lib/{{name}}"
 
 def run_tests()
