@@ -18,7 +18,7 @@ diamond="$prefix/bin/diamond"
 
 mkdir "$test_dir/app"
 cd "$test_dir/app"
-printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'double(21)' > app.d6
+printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'puts(double(21))' > app.d6
 
 # No kit for the target: a clear error, exit 74, and no output file.
 set +e

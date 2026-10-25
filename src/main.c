@@ -806,7 +806,7 @@ static void print_usage(FILE *stream) {
           "arguments are given and standard input is a terminal.\n"
           "\n"
           "Options:\n"
-          "  -e CODE             evaluate CODE\n"
+          "  -e CODE             evaluate CODE and print its value\n"
           "  --dump-bytecode     print all bytecode before running (same as =all)\n"
           "  --dump-bytecode=user  print application/import bytecode without the preamble\n"
           "  --sandbox           deny filesystem/network/subprocess access --\n"
@@ -862,6 +862,7 @@ static int diamond_main(int argc, char **argv) {
      * still running may exit instead of waiting on them (see vm.h). */
     diamond_vm_set_exit_on_threaded_failure(true);
     if (argc >= 3 && strcmp(argv[1], "-e") == 0) {
+        diamond_run_source_set_print_result(true);
         return diamond_run_source("-e", argv[2], false, argc - 3, argv + 3);
     }
     DiamondBytecodeDump dump_mode=DIAMOND_DUMP_NONE;
@@ -876,6 +877,7 @@ static int diamond_main(int argc, char **argv) {
         }
     }
     if (argc >= 4 && dump_mode && strcmp(argv[2], "-e") == 0) {
+        diamond_run_source_set_print_result(true);
         return diamond_run_source("-e", argv[3], dump_mode, argc - 4, argv + 4);
     }
     const bool dump_file = dump_mode != DIAMOND_DUMP_NONE;

@@ -9,10 +9,9 @@
  * see main.c's own "build" handler for how that file is generated per
  * invocation) via diamond_program_read_compiled, then runs it the same
  * way run_source.c's own run_compiled_chunk does for the ordinary CLI:
- * diamond_vm_set_argv for ARGV, diamond_vm_run, diamond_value_print the
- * top-level result on success (confirmed directly against the real CLI:
- * `echo '"hello"' > f.d6; diamond f.d6` prints "hello" with no explicit
- * puts -- diamond_value_print is what does that). DIAMOND_JIT and
+ * diamond_vm_set_argv for ARGV, and diamond_vm_run.
+ * Like a script run, it prints the final top-level value only when
+ * DIAMOND_PRINT_RESULT is set. DIAMOND_JIT and
  * DIAMOND_TRACE_JIT share the interpreter's opt-in behavior. */
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
@@ -60,8 +59,10 @@ int main(int argc, char **argv) {
         free(program);
         return 70;
     }
-    diamond_value_print(result);
-    putchar('\n');
+    if (getenv("DIAMOND_PRINT_RESULT") != nullptr) {
+        diamond_value_print(result);
+        putchar('\n');
+    }
     if (getenv("DIAMOND_TRACE_JIT") != nullptr) {
         fprintf(stderr, "jit: %zu compiled function(s), %zu bailout(s), %zu hard propagation(s)\n",
             vm.jit_compiled_functions, vm.jit_bailouts, vm.jit_hard_propagations);

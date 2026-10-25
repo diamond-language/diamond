@@ -544,7 +544,7 @@ rm -f "$error_file"
 
 mkdir project16
 (cd project16 && "$facet" init explicit-name >/dev/null)
-[[ "$(cd project16 && "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
 
 error_file="$(mktemp)"
 if (cd project16 && "$facet" init another-name) >/dev/null 2>"$error_file"; then
@@ -553,11 +553,11 @@ if (cd project16 && "$facet" init another-name) >/dev/null 2>"$error_file"; then
 fi
 grep -q "already exists" "$error_file"
 rm -f "$error_file"
-[[ "$(cd project16 && "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
+[[ "$(cd project16 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: explicit-name}" ]]
 
 mkdir -p project17/my-default-name-dir
 (cd project17/my-default-name-dir && "$facet" init >/dev/null)
-[[ "$(cd project17/my-default-name-dir && "$diamond" diamond.cut)" == "{name: my-default-name-dir}" ]]
+[[ "$(cd project17/my-default-name-dir && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == "{name: my-default-name-dir}" ]]
 
 # --- facet add: appends a dependency and the result actually installs
 # -- one real end-to-end check per ref kind (tag/branch/commit/version),
@@ -595,7 +595,7 @@ mkdir project21_registry
 (cd project21_registry && "$facet" init myapp >/dev/null &&
     "$facet" add greeter --registry https://cuts.example/api \
         --version "^1.0.0" >/dev/null)
-[[ "$(cd project21_registry && "$diamond" diamond.cut)" == \
+[[ "$(cd project21_registry && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
     "{name: myapp, dependencies: {greeter: {registry: https://cuts.example/api, version: ^1.0.0}}}" ]]
 
 # Registry update resolves metadata (including transitive dependencies) before
@@ -740,7 +740,7 @@ rm -f "$error_file"
 # that it does so losslessly for every ref kind, not just the new one) ---
 
 (cd project18 && "$facet" add other --git "$work/greeter_repo" --branch main >/dev/null)
-[[ "$(cd project18 && "$diamond" diamond.cut)" == \
+[[ "$(cd project18 && DIAMOND_PRINT_RESULT=1 "$diamond" diamond.cut)" == \
     "{name: myapp, dependencies: {greeter: {git: $work/greeter_repo, tag: v1.0.0}, other: {git: $work/greeter_repo, branch: main}}}" ]]
 
 # --- real backtracking: a name resolved via one requester's own looser

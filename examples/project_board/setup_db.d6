@@ -31,4 +31,4 @@ db.execute("INSERT INTO tasks (project_id, title, done) VALUES (?, ?, ?)", [proj
 # Report what was done as structured log lines, like the app itself.
 puts(JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board", "message": "database.seeded", "database": AppEnvironment.database_path(), "environment": AppEnvironment.name()}))
 db.close()
-JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board", "message": "seed.credentials_created", "email": "admin@example.com", "environment": AppEnvironment.name()})
+puts(JSON.stringify({"timestamp": Time.now().strftime("%Y-%m-%dT%H:%M:%S%z"), "level": "info", "tag": "project_board", "message": "seed.credentials_created", "email": "admin@example.com", "environment": AppEnvironment.name()}))

@@ -11,19 +11,19 @@ cd "$work"
 # and extensionless legacy-only imports remain usable during migration.
 printf 'def chosen() = 42\n' > choice.d6
 printf 'def chosen() = 99\n' > choice.di
-printf 'require "choice"\nchosen()\n' > app.d6
+printf 'require "choice"\nputs(chosen())\n' > app.d6
 [[ "$("$diamond" app.d6)" == 42 ]]
 [[ -f app.d6c && ! -f app.dic ]]
 [[ "$(DIAMOND_TRACE_CACHE=1 "$diamond" app.d6 2>&1)" == *"cache: hit"* ]]
-printf 'require "choice.di"\nchosen()\n' > explicit.d6
+printf 'require "choice.di"\nputs(chosen())\n' > explicit.d6
 [[ "$("$diamond" explicit.d6)" == 99 ]]
-printf 'require "choice.d6"\nchosen()\n' > explicit.d6
+printf 'require "choice.d6"\nputs(chosen())\n' > explicit.d6
 [[ "$("$diamond" explicit.d6)" == 42 ]]
 printf 'def old_value() = 7\n' > old.di
-printf 'require "old"\nold_value()\n' > legacy.di
+printf 'require "old"\nputs(old_value())\n' > legacy.di
 [[ "$("$diamond" legacy.di)" == 7 ]]
 [[ -f legacy.dic ]]
-printf '21 * 2\n' > no_extension
+printf 'puts(21 * 2)\n' > no_extension
 [[ "$("$diamond" no_extension)" == 42 ]]
 [[ -f no_extension.d6c ]]
 
@@ -51,7 +51,7 @@ tar -tf modern.tar > files
 ! grep -Eq '\.(d6c|dic)$' files
 mkdir -p cuts/example
 tar -xf modern.tar -C cuts/example
-printf 'require_cut "example"\ncut_value()\n' > cut_app.d6
+printf 'require_cut "example"\nputs(cut_value())\n' > cut_app.d6
 [[ "$("$diamond" cut_app.d6)" == 18 ]]
 mv example/lib/example.d6 example/lib/example.di
 "$facet" pack example legacy.tar >/dev/null

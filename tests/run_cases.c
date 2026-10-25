@@ -416,6 +416,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Every case asserts through its final value as well as what it puts,
+     * so the harness keeps the print a script run would skip. */
+    diamond_run_source_set_print_result(true);
+
     const char *cases_dir = argc > 1 ? argv[1] : "tests/cases";
     const char *output_dir = argc > 2 ? argv[2] : "build/case_output";
 

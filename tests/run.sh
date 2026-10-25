@@ -27,6 +27,11 @@ bash tests/collection_relay_contracts.sh
 # fresh.
 export DIAMOND_NO_CACHE=1
 
+# Many checks below run a tests/cases file and, like the corpus, assert through
+# the final top-level value a script run normally does not print. The check
+# for the default (no print) unsets this.
+export DIAMOND_PRINT_RESULT=1
+
 diamond=./build/diamond
 diamond_abs="$(realpath "$diamond")"
 run_cases_abs="$(realpath ./build/run_cases)"
@@ -96,6 +101,14 @@ printf 'ARGV\n' >"$script_flags"
 actual="$($diamond "$script_flags" -h --version)"
 rm -f "$script_flags"
 [[ "$actual" == "[-h, --version]" ]]
+
+# A script prints only what it puts; -e and DIAMOND_PRINT_RESULT also print
+# the final top-level value.
+final_value="$(mktemp)"
+printf 'puts("out")\n[1, 2]\n' >"$final_value"
+[[ "$(env -u DIAMOND_PRINT_RESULT "$diamond" "$final_value")" == out ]]
+[[ "$(DIAMOND_PRINT_RESULT=1 "$diamond" "$final_value")" == $'out\n[1, 2]' ]]
+rm -f "$final_value"
 
 [[ "$("$diamond" -e $'20-2')" == 18 ]]
 [[ "$("$diamond" -e $'20*2')" == 40 ]]

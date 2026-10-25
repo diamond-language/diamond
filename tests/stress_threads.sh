@@ -27,6 +27,9 @@ if ! command -v taskset >/dev/null 2>&1; then
 fi
 
 diamond="$(realpath ./build/diamond)"
+# Cases assert through their final top-level value, which a script run
+# prints only with DIAMOND_PRINT_RESULT set.
+export DIAMOND_PRINT_RESULT=1
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 

@@ -18,6 +18,9 @@ set -uo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_dir"
 diamond="$repo_dir/build/diamond"
+# Cases assert through their final top-level value, which a script run
+# prints only with DIAMOND_PRINT_RESULT set.
+export DIAMOND_PRINT_RESULT=1
 jobs="${1:-${JOBS:-6}}"
 limit="${2:-${LIMIT:-120}}"
 sweep_env="${SWEEP_ENV:-DIAMOND_STRESS_GC=1 DIAMOND_JIT=1 DIAMOND_JIT_THRESHOLD=1}"

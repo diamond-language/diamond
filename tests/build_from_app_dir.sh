@@ -16,7 +16,7 @@ i = 0
 while i < 100
   i = increment(i)
 end
-i
+puts(i)
 EOF
 
 cd "$test_dir"
