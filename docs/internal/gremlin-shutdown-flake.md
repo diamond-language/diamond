@@ -51,9 +51,14 @@ expected 16-byte marker. The harness now uses:
 if { exec 4<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null; then break; fi
 ```
 
-This explains the missing error channel, not the exit 70. Normal failures inside
-the driver's rescue also print to stdout, so its absence remains relevant; an
-earlier failure or one outside that handler remains possible.
+This explains the missing error channel, not the exit 70.
+
+The missing stdout dump has a second explanation (found 2026-10-25, #332). The
+driver rescued with `rescue error: StandardError`, but `Harness::Child` raises
+plain Strings ("the program under test exited while a line was expected"), and
+a raised String is not a StandardError. So any Child failure skipped the rescue
+and its dump. The drivers now rescue every raised value (#347). The absent dump
+is therefore no evidence about where the failure happened.
 
 ## Reproduction coverage
 
