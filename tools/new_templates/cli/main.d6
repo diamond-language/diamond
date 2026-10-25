@@ -1,0 +1,6 @@
+# The command-line entry point: hands ARGV to {{Name}}.main and exits with
+# the status it returns. The logic lives in lib/{{name}}.d6 so the tests
+# can call it directly.
+require "lib/{{name}}"
+
+exit({{Name}}.main(ARGV))

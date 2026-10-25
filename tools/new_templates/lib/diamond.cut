@@ -1,0 +1,7 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "summary": "TODO: one line saying what {{name}} does",
+  "license": "MIT",
+  "maintainers": [{"name": "{{maintainer}}", "contact": "{{contact}}"}]
+}

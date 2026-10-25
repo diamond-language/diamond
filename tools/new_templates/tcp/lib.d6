@@ -1,0 +1,90 @@
+# {{name}}: a line-based TCP server. Each line a client sends gets one
+# line back, computed by respond.
+class {{Name}}
+  # The protocol. Change this to change what the server says.
+  def self.respond(line: String) -> String
+    command = line.strip()
+    if command == "PING"
+      "PONG"
+    else
+      "echo: #{command}"
+    end
+  end
+
+  # Splits buffer into complete lines. Returns [lines, rest], where rest
+  # is the unfinished line still waiting for its newline.
+  def self.take_lines(buffer: String) -> Array
+    lines = []
+    newline = buffer.index("\n")
+    while newline != nil
+      lines.push(buffer[0, newline])
+      buffer = buffer.slice(newline + 1, buffer.length() - newline - 1)
+      newline = buffer.index("\n")
+    end
+    [lines, buffer]
+  end
+
+  # Writes all of text to a non-blocking socket, which may take several
+  # writes when the send buffer is full.
+  def self.write_all(connection, text: String)
+    while text.length() > 0
+      written = connection.write(text)
+      text = text.slice(written, text.length() - written)
+      if text.length() > 0
+        IO.poll([], [connection], -1)
+      end
+    end
+  end
+
+  # Serves every client from one thread. IO.poll waits until the listener
+  # has a client to accept or a connection has bytes to read, so one slow
+  # client never holds up the others.
+  def self.serve(listener)
+    connections = []
+    buffers = []
+    while true
+      readable = IO.poll([listener] + connections, [], -1)["readable"]
+
+      # Walk backwards so removing a closed connection keeps the indexes
+      # of the ones not yet visited.
+      index = connections.length() - 1
+      while index >= 0
+        if readable[index + 1]
+          connection = connections[index]
+          data = nil
+          open = true
+          begin
+            data = connection.read(4096)
+            open = data != nil
+          rescue error: WouldBlockError
+            data = ""
+          rescue error: IOError
+            open = false
+          end
+
+          if open
+            [lines, rest] = {{Name}}.take_lines(buffers[index] + data)
+            buffers[index] = rest
+            lines.each() do |line|
+              reply = {{Name}}.respond(line)
+              {{Name}}.write_all(connection, "#{reply}\n")
+            end
+          else
+            connection.close()
+            connections.delete_at(index)
+            buffers.delete_at(index)
+          end
+        end
+        index -= 1
+      end
+
+      if readable[0]
+        connection = listener.accept()
+        unless connection == nil
+          connections.push(connection)
+          buffers.push("")
+        end
+      end
+    end
+  end
+end

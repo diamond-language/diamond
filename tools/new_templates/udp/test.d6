@@ -1,0 +1,15 @@
+# Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
+require "minitest"
+require "../lib/{{name}}"
+
+def run_tests()
+  def test_ping() = Minitest.assert_equal("PONG", {{Name}}.respond("PING\n"))
+
+  def test_echo() = Minitest.assert_equal("echo: hello", {{Name}}.respond("hello"))
+
+  suite = Minitest.new()
+  suite.test("PING answers PONG", test_ping)
+  suite.test("other messages are echoed", test_echo)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

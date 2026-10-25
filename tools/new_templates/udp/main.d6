@@ -1,0 +1,9 @@
+# Starts the UDP server. PORT and HOST come from the environment; the
+# default host 127.0.0.1 accepts datagrams from this machine only.
+require "lib/{{name}}"
+
+port = ENV["PORT"] == nil ? 7001 : ENV["PORT"].to_i()
+host = ENV["HOST"] == nil ? "127.0.0.1" : ENV["HOST"]
+socket = UDPSocket.bind(port, host: host)
+puts("{{name}} listening on UDP #{host}:#{socket.port()}")
+{{Name}}.serve(socket)

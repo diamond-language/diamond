@@ -20,10 +20,6 @@ background. Further JIT work is optional and measurement-driven.
   first script, a project with a `diamond.cut` and dependencies, tests, and
   `diamond build`/deployment. That material is now spread across the README and
   the topic guides, and `docs/` has no reading order.
-- **Project generators** -- a command that creates a runnable, tested skeleton per kind
-  of app: command-line tool, Rack web app, TCP/UDP server, and library cut. Each
-  generated project should pass its own tests out of the box, checked in CI. Open
-  question: `diamond new` or `facet new` (`facet init` today only writes a manifest).
 - **`.deb` and `.rpm` packages** -- for Fedora 44 and later and Ubuntu 26.04 and later,
   attached to each release. Releases are tags only today, with no binaries. `make install`
   already honours `DESTDIR` and `PREFIX` and installs `diamond`, `facet`, `diamond-lsp`,

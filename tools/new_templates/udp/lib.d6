@@ -1,0 +1,26 @@
+# {{name}}: a UDP server. Each datagram a client sends gets one datagram
+# back, computed by respond.
+class {{Name}}
+  MAX_DATAGRAM = 65507
+
+  # The protocol. Change this to change what the server says.
+  def self.respond(message: String) -> String
+    command = message.strip()
+    if command == "PING"
+      "PONG"
+    else
+      "echo: #{command}"
+    end
+  end
+
+  # Answers datagrams forever. UDP has no connections, so one socket
+  # serves every client: each reply goes back to the address the request
+  # came from.
+  def self.serve(socket)
+    while true
+      request = socket.receive({{Name}}::MAX_DATAGRAM)
+      reply = {{Name}}.respond(request["data"])
+      socket.send(reply, request["host"], request["port"])
+    end
+  end
+end
