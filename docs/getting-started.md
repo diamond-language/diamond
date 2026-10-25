@@ -11,15 +11,17 @@ depth. To try the language before installing anything, use the REPL at
 
 Each [release](https://github.com/diamond-language/diamond/releases) has a
 `.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
-AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later):
+AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later). Download the one
+for your system from the
+[latest release](https://github.com/diamond-language/diamond/releases/latest)
+and install it:
 
 ```sh
 # Ubuntu 26.04
-curl -LO https://github.com/diamond-language/diamond/releases/download/v0.20.0/diamond-lang_0.20.0-1_amd64.deb
-sudo apt install ./diamond-lang_0.20.0-1_amd64.deb
+sudo apt install ~/Downloads/diamond-lang_0.20.0-1_amd64.deb
 
 # Fedora 44
-sudo dnf install https://github.com/diamond-language/diamond/releases/download/v0.20.0/diamond-lang-0.20.0-1.fc44.x86_64.rpm
+sudo dnf install ~/Downloads/diamond-lang-0.20.0-1.fc44.x86_64.rpm
 ```
 
 The package puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
