@@ -236,7 +236,110 @@ bash test.sh
 diamond main.d6           # hello_web listening on http://127.0.0.1:8080
 ```
 
-## 7. Editor support
+## 7. A web app with a database
+
+`facet new web` creates an HTTP application; [Mjolnir](../packages/mjolnir/README.md)
+maps its rows to structs. This one stores notes in SQLite:
+
+```sh
+facet new web notes
+cd notes
+facet add mjolnir
+facet install
+```
+
+Replace `lib/notes.d6`:
+
+```ruby
+require_cut "rack"
+require_cut "mjolnir"
+
+struct Note(id: Int, title: String)
+end
+
+def build_note(row) = Note.new(row["id"], row["title"])
+
+class Notes
+  def self.notes() = Mjolnir::Schema.new("notes", {"id": :int, "title": :string}, build_note)
+
+  def self.create_table(db)
+    db.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
+  end
+
+  # Each gremlin worker has its own context, so each opens its own connection.
+  def self.repo(context)
+    if context["repo"] == nil
+      db = SQLite3.open(ENV["DATABASE"] == nil ? "notes.db" : ENV["DATABASE"])
+      Notes.create_table(db)
+      context["repo"] = Mjolnir::Repo.new(db)
+    end
+    context["repo"]
+  end
+
+  def self.json(status, value) = [status, {"Content-Type": "application/json"}, JSON.stringify(value)]
+
+  def self.route(request, context)
+    repo = Notes.repo(context)
+    notes = Notes.notes()
+    if request["method"] == "GET" && request["path"] == "/notes"
+      titles = repo.all(notes.query().order_by("id")).map() do |note| note.title() end
+      Notes.json(200, titles)
+    elsif request["method"] == "POST" && request["path"] == "/notes"
+      changeset = Mjolnir::Changeset.cast(notes, nil, {"title": request["body"]}, ["title"])
+        .validate_required(["title"])
+      result = repo.insert(changeset)
+      case result
+      when Mjolnir::Ok then Notes.json(201, {"id": result.value().id()})
+      when Mjolnir::Err then Notes.json(422, result.error().errors())
+      end
+    else
+      Notes.json(404, {"error": "not found"})
+    end
+  end
+
+  def self.build_chain() = rack_compose([SecurityHeaders.call], Notes.route)
+  def self.call(request, context) = rack_run_chain(RackChain.get(Notes.build_chain), 0, request, context)
+end
+```
+
+```sh
+diamond main.d6 &
+curl -d 'milk' localhost:8080/notes      # {"id":1}
+curl -d '' localhost:8080/notes          # {"title":["can't be blank"]}
+curl localhost:8080/notes                # ["milk"]
+```
+
+Gremlin gives each worker a context of its own, so a worker opens its
+connection on its first request and keeps it there. Tests skip the server and
+the file: they hand the handler a context holding an in-memory database.
+Replace `test/notes_test.d6`:
+
+```ruby
+require_cut "minitest"
+require "../lib/notes"
+
+def run_tests()
+  def test_add_and_list()
+    db = SQLite3.open(":memory:")
+    Notes.create_table(db)
+    context = {"repo": Mjolnir::Repo.new(db)}
+    Notes.call({"method": "POST", "path": "/notes", "headers": {}, "body": "milk"}, context)
+    [status, headers, body] = Notes.call({"method": "GET", "path": "/notes", "headers": {}}, context)
+    Minitest.assert_equal("[\"milk\"]", body)
+  end
+
+  suite = Minitest.new()
+  suite.test("a posted note is listed", test_add_and_list)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()
+```
+
+Validations, updates, queries and associations are in the
+[Mjolnir README](../packages/mjolnir/README.md); PostgreSQL and MySQL
+connections are in [databases](databases.md).
+
+## 8. Editor support
 
 `diamond-lsp` gives diagnostics as you type, hover, go-to-definition,
 completion and formatting in any editor with a language-server client; point
@@ -250,7 +353,7 @@ ln -s "$PWD/editors/vscode" ~/.vscode/extensions/diamond-language
 [Language server](lsp.md), [the VS Code extension](../editors/vscode/README.md),
 and [debugging](debugging.md) with breakpoints through `diamond-dap`.
 
-## 8. Build and deploy
+## 9. Build and deploy
 
 `diamond build` compiles a program into a standalone executable that needs
 neither `diamond` nor the source at run time:
