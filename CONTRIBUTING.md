@@ -149,6 +149,23 @@ containers, including GitHub's own CI runners, set
 `ASAN_OPTIONS=detect_leaks=0` before invoking `make test-sanitize` (an
 already-set `ASAN_OPTIONS` always wins over the Makefile's own default).
 
+### Packages
+
+`packaging/build.sh deb` (on Ubuntu, with `dpkg-dev`) or `packaging/build.sh rpm`
+(on Fedora, with `rpm-build`) builds a `diamond-lang` package into
+`build/packages`. It holds `diamond`, `facet`, `diamond-lsp`, `diamond-dap` and the AOT
+kit under `/usr`. The script runs `make clean` first and builds for `x86-64-v3` instead of
+the Makefile's `-march=native`, because the package runs on other machines. The runtime
+libraries are dependencies: `dpkg-shlibdeps` works them out for the `.deb`, and rpm
+generates them for the `.rpm`. `gcc` and the libraries' development packages are
+recommended rather than required, because only `diamond build` needs them.
+
+`packaging/ci.sh deb|rpm` builds in an `ubuntu:26.04` or `fedora:44` container,
+installs the package into a fresh container of the same image, and runs
+`packaging/smoke_test.sh` there: `-e`, a script, a `facet new cli` project's tests, and
+`diamond build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
+`test-packages` job.
+
 Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):
 `test-all` only confirms the self-hosted frontend still parses and runs
 itself, not full parity. `make test-self-host` (~1400 cases) is periodic,

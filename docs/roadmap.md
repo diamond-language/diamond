@@ -22,13 +22,10 @@ background. Further JIT work is optional and measurement-driven.
   install; a dependency's would be ignored. Every released facet rejects an unknown
   key in a cut archive's `diamond.cut`, so they cannot be a new key there; the shape
   (for example a separate, never-published project file) is still to be chosen.
-- **`.deb` and `.rpm` packages** -- for Fedora 44 and later and Ubuntu 26.04 and later,
-  attached to each release. Releases are tags only today, with no binaries. `make install`
-  already honours `DESTDIR` and `PREFIX` and installs `diamond`, `facet`, `diamond-lsp`,
-  `diamond-dap` and the AOT kit, but not `lib/`. The binaries link SQLite, libpq,
-  MariaDB Connector/C, OpenSSL, libxcrypt and zlib dynamically, so each package needs the
-  matching runtime dependencies. Needs a CI job per distribution that builds the
-  package, installs it in a clean container, and runs a smoke test.
+- **Publishing the `.deb` and `.rpm` packages** -- `packaging/build.sh` builds them and CI
+  installs each into a clean container, but releases are tags only, so nothing hands the
+  packages to users. Attaching them to a GitHub release per tag, or an apt/dnf repository,
+  is still to be decided. Only x86-64 packages are built; arm64 would need its own job.
 
 ## Candidate work
 
