@@ -39,6 +39,14 @@ char *diamond_cache_path_for(const char *name);
 int diamond_run_source(const char *name, const char *source, DiamondBytecodeDump dump_bytecode,
     int script_argc, char *const *script_argv);
 
+/* Whether a successful run prints the program's final top-level value, the
+ * way the REPL prints each line. Off by default: a script prints only what it
+ * puts. `diamond -e` and tests/run_cases.c turn it on, and DIAMOND_PRINT_RESULT
+ * set to anything turns it on for a script run (the test scripts that run
+ * tests/cases through the binary set it). Process-wide; set before running. */
+void diamond_run_source_set_print_result(bool print);
+bool diamond_run_source_prints_result(void);
+
 /* Same as diamond_run_source, except the caller supplies (and owns) the
  * DiamondProgram `program` gets compiled into, instead of a fresh one
  * being malloc'd and freed internally. diamond_compile always calls

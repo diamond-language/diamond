@@ -88,14 +88,11 @@ diamond hello.d6
 ```text
 Hello, Ada!
 Hello, Grace!
-[Ada, Grace]
 ```
 
-The third line is not a mistake in the script. When a program finishes,
-`diamond` prints the value of its last top-level expression, here the Array
-`each` returns, the same way the REPL prints each line's value. A program that
-ends with `exit(status)` stops there and prints nothing more; a program whose
-last expression is `nil` prints `nil`.
+A script prints only what it writes. The REPL and `diamond -e` are different:
+they also print the value of the last expression, which is why
+`diamond -e '20 + 22'` prints `42` without a `puts`.
 
 Three things trip up newcomers from other scripting languages:
 

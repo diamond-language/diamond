@@ -6,6 +6,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 diamond="${DIAMOND_BIN:-build/diamond}"
+# Cases assert through their final top-level value, which a script run
+# prints only with DIAMOND_PRINT_RESULT set.
+export DIAMOND_PRINT_RESULT=1
 
 # 1. Each dropped feature raises an error that names it, instead of crashing or linking.
 fail=0

@@ -102,6 +102,16 @@ static void print_diagnostic(const char *name, const char *source,
  * the trace line's byte breakdown. A nonzero prelude size also locates
  * the user-source boundary for targeted dumps; template compiles pass
  * zero there and identify inherited functions by prelude_function_count. */
+static bool print_result_requested;
+
+void diamond_run_source_set_print_result(bool print) {
+    print_result_requested = print;
+}
+
+bool diamond_run_source_prints_result(void) {
+    return print_result_requested || getenv("DIAMOND_PRINT_RESULT") != nullptr;
+}
+
 static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytecodeDump dump_bytecode,
         int script_argc, char *const *script_argv,
         bool trace_startup, double start_time, double loaded_time, double compiled_time,
@@ -173,8 +183,10 @@ static int run_compiled_chunk(const char *name, DiamondChunk chunk, DiamondBytec
         return 70;
     }
 
-    diamond_value_print(result);
-    putchar('\n');
+    if (diamond_run_source_prints_result()) {
+        diamond_value_print(result);
+        putchar('\n');
+    }
     if (getenv("DIAMOND_TRACE_IC") != nullptr) {
         fprintf(stderr,"inline caches: %zu hits, %zu misses\n",
                 vm.inline_cache_hits,vm.inline_cache_misses);

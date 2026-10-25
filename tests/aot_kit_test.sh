@@ -21,7 +21,7 @@ chmod +x "$test_dir/shim/make"
 
 mkdir "$test_dir/app"
 cd "$test_dir/app"
-printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'double(21)' > app.d6
+printf '%s\n' 'def double(value: Int) -> Int = value * 2' 'puts(double(21))' > app.d6
 PATH="$test_dir/shim:$PATH" "$prefix/bin/diamond" build app.d6 > build.log
 grep -q "diamond: built 'app'" build.log
 test "$(./app)" = "42"

@@ -11,6 +11,14 @@ dispatch. This document is a tour of the surface syntax; see
 HTTP is the `packages/http` package, installed with `facet`
 ([Cuts](packages.md)): a server and client built on the I/O primitives below.
 
+## Running a program
+
+`diamond program.d6` runs the file and prints only what it writes with `puts`
+and the other output calls. The REPL and `diamond -e CODE` also print the value of
+the last top-level expression, so `diamond -e '20 + 22'` prints `42`. Set
+`DIAMOND_PRINT_RESULT` to any value to make a file run, or an executable from
+`diamond build`, print that value too; the test suite runs its cases that way.
+
 ## Source files and imports
 
 `.d6` is Diamond's default and preferred source extension. `.di` files remain

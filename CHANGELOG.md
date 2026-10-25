@@ -20,6 +20,12 @@ authoritative fine-grained record.
 
 ### Changed
 
+- A script no longer prints the value of its last top-level expression:
+  `diamond program.d6` and executables from `diamond build` print only what the
+  program writes. A program that ended with a bare expression to show its result
+  needs `puts(...)`. The REPL and `diamond -e` still print the value, and
+  `DIAMOND_PRINT_RESULT=1` restores the old behavior for a file run. See
+  [core syntax](docs/core-syntax.md#running-a-program).
 - A keyword argument can skip earlier defaulted parameters in every kind of
   call: `f(1, c: 5)` against `def f(a, b = 2, c = 3)` runs with `b` at its
   default. Methods, constructors and Callable values already allowed it;

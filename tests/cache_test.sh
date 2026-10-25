@@ -12,6 +12,9 @@ set -euo pipefail
 # ordinary corpus case either.
 
 diamond="$(realpath ./build/diamond)"
+# The fixtures below assert through their final top-level value, which a
+# script run prints only with DIAMOND_PRINT_RESULT set.
+export DIAMOND_PRINT_RESULT=1
 repo_root="$(pwd)"
 count=0
 

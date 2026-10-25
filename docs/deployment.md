@@ -118,11 +118,9 @@ signal may not emit that summary. The JIT remains off when `DIAMOND_JIT` is
 unset, including for standalone binaries.
 
 At the language level, the produced binary behaves exactly like
-`diamond program.d6`: it sets `ARGV` from its own command-line arguments and
-prints its top-level result the same way (`diamond_value_print`, the same
-function `diamond program.d6` itself uses -- e.g. a program whose last
-expression is a bare string prints that string, with no explicit `puts`
-needed).
+`diamond program.d6`: it sets `ARGV` from its own command-line arguments, prints only what
+the program writes, and honours `DIAMOND_PRINT_RESULT` the same way
+([running a program](core-syntax.md#running-a-program)).
 
 ## What this is not
 
