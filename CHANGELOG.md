@@ -6,6 +6,12 @@ authoritative fine-grained record.
 
 ## Unreleased
 
+### Added
+
+- `UDPSocket.bind(port, host: "127.0.0.1")` binds one address, like
+  `TCPServer.listen`'s `host:`, and `UDPSocket#port()` returns the bound port,
+  so a socket bound to port 0 can report the port the kernel chose.
+
 ## 0.19.1 — 2026-10-24
 
 ### Changed

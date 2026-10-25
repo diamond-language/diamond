@@ -1,0 +1,41 @@
+# UDPSocket.bind takes a host: keyword like TCPServer.listen, and port()
+# reports the bound port, so a socket bound to port 0 can be found.
+server = UDPSocket.bind(0, host: "127.0.0.1")
+port = server.port()
+puts(port > 0)
+client = UDPSocket.open()
+client.send("ping", "127.0.0.1", port)
+got = server.receive(64)
+puts(got["data"])
+puts(got["host"])
+
+# An unbound client also has a port once it has sent.
+puts(client.port() > 0)
+
+# The keyword may sit on its own line.
+second = UDPSocket.bind(
+  0,
+  host: "127.0.0.1"
+)
+puts(second.port() != port)
+second.close()
+
+begin
+  UDPSocket.bind(0, host: 42)
+rescue error: TypeError
+  puts(error.message())
+end
+
+begin
+  UDPSocket.bind(0, host: "203.0.113.250")
+rescue error: IOError
+  puts("cannot bind an address this machine does not have")
+end
+
+server.close()
+begin
+  server.port()
+rescue error: IOError
+  puts(error.message())
+end
+client.close()
