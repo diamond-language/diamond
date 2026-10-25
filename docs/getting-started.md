@@ -7,7 +7,28 @@ depth. To try the language before installing anything, use the REPL at
 
 ## 1. Install
 
-Diamond builds from source. You need GCC 15+ or Clang 19+ (Diamond is C23),
+### From a package
+
+Each [release](https://github.com/diamond-language/diamond/releases) has a
+`.deb` for Ubuntu 26.04 and an `.rpm` for Fedora 44, for x86-64 CPUs with
+AVX2 (x86-64-v3: Intel Haswell, AMD Excavator and later):
+
+```sh
+# Ubuntu 26.04
+curl -LO https://github.com/diamond-language/diamond/releases/download/v0.20.0/diamond-lang_0.20.0-1_amd64.deb
+sudo apt install ./diamond-lang_0.20.0-1_amd64.deb
+
+# Fedora 44
+sudo dnf install https://github.com/diamond-language/diamond/releases/download/v0.20.0/diamond-lang-0.20.0-1.fc44.x86_64.rpm
+```
+
+The package puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
+`/usr/bin`. It recommends `gcc` and the libraries' development packages, which
+only `diamond build` needs; apt and dnf install recommendations by default.
+
+### From source
+
+On other systems, or for an unreleased version, build from source. You need GCC 15+ or Clang 19+ (Diamond is C23),
 `make`, `git`, and the development headers for OpenSSL, SQLite, PostgreSQL
 (libpq), MariaDB Connector/C, zlib and libcrypt. On Fedora and Ubuntu:
 
@@ -36,10 +57,12 @@ make install PREFIX=$HOME/.local
 
 This puts `diamond`, `facet`, `diamond-lsp` and `diamond-dap` in
 `~/.local/bin` (add it to your `PATH` if it is not there already), plus the kit
-`diamond build` links executables with in `~/.local/lib/diamond`. Check it:
+`diamond build` links executables with in `~/.local/lib/diamond`.
+
+Either way, check it:
 
 ```sh
-diamond --version     # diamond 0.19.1
+diamond --version     # diamond 0.20.0
 ```
 
 The [asdf-diamond](https://github.com/diamond-language/asdf-diamond) plugin
@@ -113,7 +136,7 @@ The language itself: [core syntax](core-syntax.md), [callables](callables.md),
 
 ## 4. A project
 
-`facet new` creates a project whose tests pass as generated:
+`facet new` creates a project; after `facet install` its tests pass:
 
 ```sh
 facet new cli greeter

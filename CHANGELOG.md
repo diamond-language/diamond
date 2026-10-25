@@ -4,7 +4,11 @@ Diamond is currently pre-release. This file records user-visible capability
 milestones rather than every implementation step; the Git history remains the
 authoritative fine-grained record.
 
-## Unreleased
+## 0.20.0 — 2026-10-25
+
+From installation to a first app: `.deb` and `.rpm` packages on each GitHub
+release, `facet new` project generators, development dependencies, and a
+[getting-started guide](docs/getting-started.md).
 
 ### Added
 
@@ -16,7 +20,7 @@ authoritative fine-grained record.
 - `minitest` 0.1.0 on the registry: the minitest library as a cut, for use as a
   development dependency. It is a copy of `lib/minitest.d6`, which its tests keep
   in step.
-- `facet new <kind> <path>` creates a project whose tests pass as generated:
+- `facet new <kind> <path>` creates a project whose tests pass after `facet install`:
   `cli` (a command-line program), `web` (gremlin with rack middleware), `tcp`
   (a line server that uses `IO.poll` to serve many clients from one thread),
   `udp`, and `lib` (a cut ready for `facet check`). Each project has an entry
@@ -26,9 +30,11 @@ authoritative fine-grained record.
 - `UDPSocket.bind(port, host: "127.0.0.1")` binds one address, like
   `TCPServer.listen`'s `host:`, and `UDPSocket#port()` returns the bound port,
   so a socket bound to port 0 can report the port the kernel chose.
-- `packaging/build.sh deb|rpm` builds a `diamond-lang` package for Ubuntu 26.04 or
-  Fedora 44 (x86-64-v3), and CI installs each into a clean container and runs a smoke
-  test. See [CONTRIBUTING](CONTRIBUTING.md#packages).
+- `diamond-lang` packages for Ubuntu 26.04 (`.deb`) and Fedora 44 (`.rpm`), x86-64-v3,
+  holding `diamond`, `facet`, `diamond-lsp`, `diamond-dap` and the `diamond build` kit.
+  `packaging/build.sh deb|rpm` builds them, and CI installs each into a clean container
+  and runs a smoke test. See [getting started](docs/getting-started.md#1-install) and
+  [CONTRIBUTING](CONTRIBUTING.md#packages).
 - Pushing a release tag creates a GitHub release with the `.deb` and `.rpm`
   attached and the changelog section as notes (see [CI](docs/ci.md#releases)).
 
