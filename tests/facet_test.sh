@@ -768,7 +768,7 @@ cat > project24/diamond.cut <<EOF
 EOF
 output_file="$(mktemp)"
 (cd project24 && "$facet" install) >/dev/null 2>"$output_file"
-! grep -q "is not supported yet" "$output_file"
+if grep -q "is not supported yet" "$output_file"; then echo "unexpected match: grep -q .is not supported yet. ..output_file." >&2; exit 1; fi
 rm -f "$output_file"
 actual="$(cd project24 && "$diamond" -e 'require_cut "semver"
 semver_value()')"
@@ -801,7 +801,7 @@ if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     exit 1
 fi
 grep -q "must be data only" "$error_file"
-! grep -q "executed manifest" "$error_file"
+if grep -q "executed manifest" "$error_file"; then echo "unexpected match: grep -q .executed manifest. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
 printf '{"name": "myapp"}\n' > project26/diamond.cut
@@ -812,7 +812,7 @@ if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     exit 1
 fi
 grep -q "must be data only" "$error_file"
-! grep -q "executed lock" "$error_file"
+if grep -q "executed lock" "$error_file"; then echo "unexpected match: grep -q .executed lock. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
 printf '{"name": "#{raise(\"executed interpolation\")}"}\n' > project26/diamond.cut
@@ -823,7 +823,7 @@ if (cd project26 && "$facet" install) >/dev/null 2>"$error_file"; then
     exit 1
 fi
 grep -q "String interpolation is not allowed" "$error_file"
-! grep -q "executed interpolation" "$error_file"
+if grep -q "executed interpolation" "$error_file"; then echo "unexpected match: grep -q .executed interpolation. ..error_file." >&2; exit 1; fi
 rm -f "$error_file"
 
 printf '{"name": "myapp"' > project26/diamond.cut
@@ -966,7 +966,7 @@ printf 'def helper() = 2\n' > checkcut/lib/checkcut/helper.d6
 printf 'ignored test\n' > checkcut/tests/test.d6
 files_output="$("$facet" check checkcut --files)"
 grep -q '^lib/checkcut/helper.d6$' <<<"$files_output"
-! grep -q 'tests/test.d6' <<<"$files_output"
+if grep -q 'tests/test.d6' <<<"$files_output"; then echo "unexpected match: grep -q 'tests/test.d6' <<<..files_output." >&2; exit 1; fi
 [[ "$(printf '%s\n' "$files_output" | sed '/^facet:/d' | LC_ALL=C sort)" == \
    "$(printf '%s\n' "$files_output" | sed '/^facet:/d')" ]]
 
@@ -1003,7 +1003,7 @@ rm -rf checkcut/lib/Widgets checkcut/lib/widgets
 "$facet" pack checkcut one.tar > pack_output
 tar -tf one.tar > packed_files
 grep -q '^lib/checkcut/helper.d6$' packed_files
-! grep -q '^tests/' packed_files
+if grep -q '^tests/' packed_files; then echo "unexpected match: grep -q '^tests/' packed_files" >&2; exit 1; fi
 grep -q '^sha256: ' pack_output
 [[ "$(sed -n 's/^sha256: //p' pack_output)" == "$(sha256sum one.tar | cut -d' ' -f1)" ]]
 touch -t 202001010000 checkcut/lib/checkcut/helper.d6
@@ -1121,5 +1121,65 @@ tar -xf gremlin.tar -C packaged_project/cuts/gremlin
 for name in active_record active_auth active_discussion active_social active_tagging graphsql; do
     (cd packaged_project && "$diamond" -e "require_cut \"$name\"" >/dev/null)
 done
+
+# --- development dependencies (diamond.dev.cut) ---
+
+# The root project's diamond.dev.cut joins the same resolution as diamond.cut
+# and lands in the same facet.lock; a dependency's own diamond.dev.cut is never
+# read (this one names a repository that does not exist).
+cd "$work"
+mkdir checker_repo
+printf 'def check_value() = "checked"\n' > checker_repo/checker.d6
+echo '{"name": "checker", "version": "0.1.0"}' > checker_repo/diamond.cut
+echo '{"dependencies": {"ghost": {"git": "/nonexistent/ghost", "tag": "v1"}}}' > checker_repo/diamond.dev.cut
+commit_repo checker_repo
+(cd checker_repo && git tag v0.1.0)
+mkdir dev_project
+cat > dev_project/diamond.cut <<EOF
+{"name": "devapp", "dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
+EOF
+(cd dev_project && "$facet" add checker --dev --git "$work/checker_repo" --version "^0.1.0" >/dev/null)
+grep -q '"checker"' dev_project/diamond.dev.cut
+if grep -q checker dev_project/diamond.cut; then echo "facet add --dev wrote diamond.cut" >&2; exit 1; fi
+(cd dev_project && "$facet" update >/dev/null)
+[[ -f dev_project/cuts/greeter/greeter.d6 && -f dev_project/cuts/checker/checker.d6 ]]
+[[ ! -e dev_project/cuts/ghost ]]
+grep -q '"checker"' dev_project/facet.lock
+[[ "$(cd dev_project && "$diamond" -e 'require_cut "checker"
+check_value()')" == checked ]]
+
+# A name may be in only one of the two files, for add and for resolution.
+if (cd dev_project && "$facet" add greeter --dev --git "$work/greeter_repo" --tag v1.0.0) >/dev/null 2>&1; then
+    echo "facet add --dev accepted a name already in diamond.cut" >&2
+    exit 1
+fi
+if (cd dev_project && "$facet" add checker --git "$work/checker_repo" --tag v0.1.0) >/dev/null 2>&1; then
+    echo "facet add accepted a name already in diamond.dev.cut" >&2
+    exit 1
+fi
+cp dev_project/diamond.dev.cut dev_project/diamond.dev.cut.good
+cat > dev_project/diamond.dev.cut <<EOF
+{"dependencies": {"greeter": {"git": "$work/greeter_repo", "tag": "v1.0.0"}}}
+EOF
+if (cd dev_project && "$facet" update) >/dev/null 2>&1; then
+    echo "facet resolved a name present in both manifests" >&2
+    exit 1
+fi
+echo '{"dependencies": {}, "name": "x"}' > dev_project/diamond.dev.cut
+if (cd dev_project && "$facet" update) >/dev/null 2>&1; then
+    echo "facet accepted an unknown diamond.dev.cut key" >&2
+    exit 1
+fi
+mv dev_project/diamond.dev.cut.good dev_project/diamond.dev.cut
+
+# diamond.dev.cut is never part of a cut archive.
+mkdir -p dev_cut/lib
+printf '%s\n' '{"name": "dev_cut", "version": "0.1.0", "summary": "Dev cut", "license": "MIT", "maintainers": [{"name": "Test", "contact": "test@example.com"}]}' > dev_cut/diamond.cut
+printf '# Dev cut\n' > dev_cut/README.md
+printf 'MIT\n' > dev_cut/LICENSE
+printf 'def dev_cut_value() = 1\n' > dev_cut/lib/dev_cut.d6
+cp dev_project/diamond.dev.cut dev_cut/diamond.dev.cut
+"$facet" pack dev_cut dev_cut.tar >/dev/null
+if tar -tf dev_cut.tar | grep -q diamond.dev.cut; then echo "facet pack included diamond.dev.cut" >&2; exit 1; fi
 
 echo "all facet tests passed"

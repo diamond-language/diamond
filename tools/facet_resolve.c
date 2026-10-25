@@ -1149,7 +1149,7 @@ int run_install_or_update(bool force_resolve) {
         else
             ok = true;
         registry_update_preference = ok && force_resolve ? &previous : NULL;
-        ok = ok && parse_manifest("diamond.cut", &manifest, error, sizeof error) &&
+        ok = ok && parse_project_manifest(&manifest, error, sizeof error) &&
              resolve_full_graph(&manifest, &resolution, scratch_root, error, sizeof error) &&
              write_lockfile("facet.lock", &resolution, error, sizeof error);
         registry_update_preference = NULL;

@@ -8,6 +8,11 @@ authoritative fine-grained record.
 
 ### Added
 
+- `diamond.dev.cut` lists development dependencies: cuts a project needs only for
+  tests or development. `facet install`/`update` read it only in the root project
+  and resolve it together with `diamond.cut`; it is never published.
+  `facet add --dev` writes to it. See
+  [packages](docs/packages.md#development-dependencies).
 - `facet new <kind> <path>` creates a project whose tests pass as generated:
   `cli` (a command-line program), `web` (gremlin with rack middleware), `tcp`
   (a line server that uses `IO.poll` to serve many clients from one thread),
