@@ -3154,12 +3154,12 @@ for expected in "string_members upcase" "string_members strip" "array_members pu
     count=$((count + 1))
 done
 # A member of one built-in type is not offered for another.
-! grep -qxF push <<<"$string_members"
-! grep -qxF upcase <<<"$array_members"
-! grep -qxF keys <<<"$int_members"
+if grep -qxF push <<<"$string_members"; then echo "unexpected match: grep -qxF push <<<..string_members." >&2; exit 1; fi
+if grep -qxF upcase <<<"$array_members"; then echo "unexpected match: grep -qxF upcase <<<..array_members." >&2; exit 1; fi
+if grep -qxF keys <<<"$int_members"; then echo "unexpected match: grep -qxF keys <<<..int_members." >&2; exit 1; fi
 # A chain's members follow the call's result type, not the receiver's.
-! grep -qxF push <<<"$chain_string_members"
-! grep -qxF upcase <<<"$chain_split_members"
+if grep -qxF push <<<"$chain_string_members"; then echo "unexpected match: grep -qxF push <<<..chain_string_members." >&2; exit 1; fi
+if grep -qxF upcase <<<"$chain_split_members"; then echo "unexpected match: grep -qxF upcase <<<..chain_split_members." >&2; exit 1; fi
 count=$((count + 5))
 
 # Every offered member must be a real method: call each one with no arguments

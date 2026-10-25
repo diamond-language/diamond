@@ -48,7 +48,7 @@ done
 "$facet" pack example modern.tar >/dev/null
 "$facet" verify modern.tar >/dev/null
 tar -tf modern.tar > files
-! grep -Eq '\.(d6c|dic)$' files
+if grep -Eq '\.(d6c|dic)$' files; then echo "unexpected match: grep -Eq '..(d6c|dic).' files" >&2; exit 1; fi
 mkdir -p cuts/example
 tar -xf modern.tar -C cuts/example
 printf 'require_cut "example"\nputs(cut_value())\n' > cut_app.d6

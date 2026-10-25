@@ -16,12 +16,9 @@ background. Further JIT work is optional and measurement-driven.
 
 ## 0.20: from installation to a first app
 
-- **Development dependencies (environments)** -- cuts a project needs only for tests
-  or development, such as a minitest cut, which would let `facet new` stop copying
-  `lib/minitest.d6` into every project. Only the root project's environments would
-  install; a dependency's would be ignored. Every released facet rejects an unknown
-  key in a cut archive's `diamond.cut`, so they cannot be a new key there; the shape
-  (for example a separate, never-published project file) is still to be chosen.
+- **A minitest cut** -- `facet new` copies `lib/minitest.d6` into every project's
+  `test/`. Published as a cut, it would be a development dependency in the generated
+  `diamond.dev.cut` instead.
 - **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
   own runner in the `release` and `test-packages` jobs.
 

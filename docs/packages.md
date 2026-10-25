@@ -183,6 +183,28 @@ uses a dependency's functions still needs its own explicit
 `dependencies` only tells `facet` what to fetch and where to put it so
 that `require_cut` can find it.
 
+### Development dependencies
+
+Cuts a project needs only for tests or development go in `diamond.dev.cut`,
+next to `diamond.cut`. Its only key is `dependencies`, in the format above:
+
+```ruby
+# diamond.dev.cut
+{"dependencies": {"checker": {"registry": "https://cuts.dilang.tech", "version": "^0.1.0"}}}
+```
+
+`facet install` and `facet update` read it only in the project they run in. A
+dependency's own `diamond.dev.cut` is never read, so the cuts it tests itself
+with are not installed into projects that use it. Development dependencies
+resolve in the same graph as `diamond.cut`'s (a cut both name, directly or
+transitively, gets one version) and are recorded in the same `facet.lock`. A name
+may be in only one of the two files.
+
+`diamond.dev.cut` is never part of a published cut: `facet pack` takes only
+`diamond.cut`, `README.md`, `LICENSE`, `lib/`, `bin/` and `assets/`. It is a
+separate file, not a key in `diamond.cut`, because every released facet rejects
+an unknown key in a cut archive's `diamond.cut`.
+
 ## `facet`
 
 `facet install` reads `diamond.cut` in the current directory, resolves
@@ -323,9 +345,13 @@ reserved list still matches the compiler and library sources.
 ```sh
 facet init [name]     # writes a fresh diamond.cut; defaults name to the
                        # current directory's own basename if omitted
-facet add <name> --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
-facet add <name> --registry <https-url> --version <constraint>
+facet add <name> [--dev] --git <url> (--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)
+facet add <name> [--dev] --registry <https-url> --version <constraint>
 ```
+
+`--dev` adds the dependency to `diamond.dev.cut` instead, creating it if needed
+(see "Development dependencies" above); the name must not already be in either
+file.
 
 `facet init` refuses to run if `diamond.cut` already exists — it never
 overwrites one. `facet add` requires one to already exist (`facet init`

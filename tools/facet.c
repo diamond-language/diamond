@@ -487,6 +487,71 @@ bool parse_manifest(const char *path, FacetManifest *manifest,
     return ok;
 }
 
+/* Reads diamond.dev.cut, the root project's development dependencies: a Hash
+ * whose only key is `dependencies`, in diamond.cut's dependency format. Never
+ * part of a cut archive (pack takes an allowlist), so released facets, which
+ * reject unknown diamond.cut keys in an archive, never see it. */
+bool parse_dev_manifest(const char *path, FacetManifest *manifest,
+                        char *error, size_t error_size) {
+    memset(manifest, 0, sizeof *manifest);
+    DiamondManifestValue *hash = facet_read_hash(path, error, error_size);
+    if (hash == NULL) return false;
+    bool ok = true;
+    for (const DiamondManifestValue *field = hash->children;
+         ok && field != NULL; field = field->next) {
+        if (strcmp(field->key, "dependencies") != 0) {
+            (void)snprintf(error, error_size, "'%s' has unknown key '%s' (only 'dependencies')",
+                           path, field->key);
+            ok = false;
+        }
+    }
+    const DiamondManifestValue *dependencies = diamond_manifest_get(hash, "dependencies");
+    if (ok && dependencies != NULL) {
+        if (dependencies->kind != DIAMOND_MANIFEST_HASH) {
+            (void)snprintf(error, error_size,
+                           "'%s' key 'dependencies' must be a Hash", path);
+            ok = false;
+        } else {
+            ok = parse_dependencies(dependencies, manifest, error, error_size);
+        }
+    }
+    diamond_manifest_free(hash);
+    return ok;
+}
+
+/* The manifest `facet install`/`update` resolve: diamond.cut's dependencies
+ * followed by diamond.dev.cut's, when that file exists. One graph, so a cut
+ * that both need resolves to a single version. A name in both is an error. */
+bool parse_project_manifest(FacetManifest *manifest, char *error, size_t error_size) {
+    if (!parse_manifest("diamond.cut", manifest, error, error_size)) return false;
+    if (!file_exists("diamond.dev.cut")) return true;
+    FacetManifest *dev = malloc(sizeof *dev);
+    if (dev == nullptr) {
+        (void)snprintf(error, error_size, "out of memory reading diamond.dev.cut");
+        return false;
+    }
+    bool ok = parse_dev_manifest("diamond.dev.cut", dev, error, error_size);
+    for (size_t index = 0; ok && index < dev->dependency_count; index++) {
+        const FacetDependency *dependency = &dev->dependencies[index];
+        for (size_t other = 0; ok && other < manifest->dependency_count; other++) {
+            if (strcmp(manifest->dependencies[other].name, dependency->name) == 0) {
+                (void)snprintf(error, error_size,
+                               "dependency '%s' is in both diamond.cut and diamond.dev.cut",
+                               dependency->name);
+                ok = false;
+            }
+        }
+        if (ok && manifest->dependency_count == FACET_MAX_DEPENDENCIES) {
+            (void)snprintf(error, error_size, "too many dependencies (max %d)",
+                           FACET_MAX_DEPENDENCIES);
+            ok = false;
+        }
+        if (ok) manifest->dependencies[manifest->dependency_count++] = *dependency;
+    }
+    free(dev);
+    return ok;
+}
+
 /* Published cuts use dependency ranges, unlike application source specs.
  * Full artifact validation happens in check/verify; this reads identity only. */
 bool parse_cut_identity(const char *path, FacetManifest *manifest,
@@ -675,7 +740,38 @@ bool write_lockfile(const char *path, const FacetResolution *resolution,
  * diamond.cut does not survive a `facet add`. Each individual dependency
  * spec (the `{"git": ..., "tag": ...}` part) stays on one line -- short
  * enough that breaking it up further would hurt readability rather than
- * help it. */
+ * help it. write_dev_manifest writes diamond.dev.cut the same way. */
+static void write_dependencies(FILE *file, const FacetManifest *manifest) {
+    fputs("  \"dependencies\": {\n", file);
+    for (size_t index = 0; index < manifest->dependency_count; index++) {
+        const FacetDependency *dependency = &manifest->dependencies[index];
+        fprintf(file, "    \"%s\": {\"%s\": \"%s\", ", dependency->name,
+                dependency->source == FACET_SOURCE_REGISTRY ? "registry" : "git",
+                dependency->source == FACET_SOURCE_REGISTRY ? dependency->registry :
+                                                              dependency->git);
+        if (dependency->uses_version) {
+            fprintf(file, "\"version\": \"%s\"}", dependency->version_text);
+        } else {
+            const char *ref_key = dependency->ref_kind == FACET_REF_BRANCH
+                ? "branch"
+                : dependency->ref_kind == FACET_REF_COMMIT ? "commit" : "tag";
+            fprintf(file, "\"%s\": \"%s\"}", ref_key, dependency->ref);
+        }
+        fputs(index + 1 < manifest->dependency_count ? ",\n" : "\n", file);
+    }
+    fputs("  }\n", file);
+}
+
+static bool finish_manifest(FILE *file, const char *path, char *error, size_t error_size) {
+    fputs("}\n", file);
+    const bool ok = fclose(file) == 0;
+    if (!ok) {
+        (void)snprintf(error, error_size, "cannot write '%s': %s", path,
+                       strerror(errno));
+    }
+    return ok;
+}
+
 static bool write_manifest(const char *path, const FacetManifest *manifest,
                            char *error, size_t error_size) {
     FILE *file = fopen(path, "wb");
@@ -689,34 +785,25 @@ static bool write_manifest(const char *path, const FacetManifest *manifest,
         fprintf(file, ",\n  \"version\": \"%s\"", manifest->version);
     }
     if (manifest->dependency_count > 0) {
-        fputs(",\n  \"dependencies\": {\n", file);
-        for (size_t index = 0; index < manifest->dependency_count; index++) {
-            const FacetDependency *dependency = &manifest->dependencies[index];
-            fprintf(file, "    \"%s\": {\"%s\": \"%s\", ", dependency->name,
-                    dependency->source == FACET_SOURCE_REGISTRY ? "registry" : "git",
-                    dependency->source == FACET_SOURCE_REGISTRY ? dependency->registry :
-                                                                  dependency->git);
-            if (dependency->uses_version) {
-                fprintf(file, "\"version\": \"%s\"}", dependency->version_text);
-            } else {
-                const char *ref_key = dependency->ref_kind == FACET_REF_BRANCH
-                    ? "branch"
-                    : dependency->ref_kind == FACET_REF_COMMIT ? "commit" : "tag";
-                fprintf(file, "\"%s\": \"%s\"}", ref_key, dependency->ref);
-            }
-            fputs(index + 1 < manifest->dependency_count ? ",\n" : "\n", file);
-        }
-        fputs("  }\n", file);
+        fputs(",\n", file);
+        write_dependencies(file, manifest);
     } else {
         fputs("\n", file);
     }
-    fputs("}\n", file);
-    const bool ok = fclose(file) == 0;
-    if (!ok) {
+    return finish_manifest(file, path, error, error_size);
+}
+
+static bool write_dev_manifest(const char *path, const FacetManifest *manifest,
+                               char *error, size_t error_size) {
+    FILE *file = fopen(path, "wb");
+    if (file == nullptr) {
         (void)snprintf(error, error_size, "cannot write '%s': %s", path,
                        strerror(errno));
+        return false;
     }
-    return ok;
+    fputs("{\n", file);
+    write_dependencies(file, manifest);
+    return finish_manifest(file, path, error, error_size);
 }
 
 
@@ -772,7 +859,7 @@ static int cmd_init(int argc, char **argv) {
 
 static int cmd_add(int argc, char **argv) {
     if (argc < 4) {
-        fputs("usage: facet add <name> (--git <url> "
+        fputs("usage: facet add <name> [--dev] (--git <url> "
               "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
               "| --registry <url> --version <constraint>)\n",
               stderr);
@@ -781,9 +868,14 @@ static int cmd_add(int argc, char **argv) {
     const char *name = argv[2];
     const char *git = nullptr;
     const char *registry = nullptr;
+    bool dev = false;
     const char *tag = nullptr, *branch = nullptr, *commit = nullptr, *version = nullptr;
     for (int index = 3; index < argc; index++) {
         const char *flag = argv[index];
+        if (strcmp(flag, "--dev") == 0) {
+            dev = true;
+            continue;
+        }
         const char **slot = strcmp(flag, "--git") == 0 ? &git
             : strcmp(flag, "--registry") == 0 ? &registry
             : strcmp(flag, "--tag") == 0 ? &tag
@@ -828,16 +920,32 @@ static int cmd_add(int argc, char **argv) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
+    /* --dev adds to diamond.dev.cut (created on first use); a name may be in
+     * only one of the two files. */
+    FacetManifest dev_manifest = {0};
+    if (file_exists("diamond.dev.cut") &&
+        !parse_dev_manifest("diamond.dev.cut", &dev_manifest, error, sizeof error)) {
+        fprintf(stderr, "facet: %s\n", error);
+        return 70;
+    }
+    FacetManifest *target = dev ? &dev_manifest : &manifest;
+    const char *target_path = dev ? "diamond.dev.cut" : "diamond.cut";
     if (name[0] == '\0' || strlen(name) >= FACET_MAX_NAME || !is_safe_field(name)) {
         fprintf(stderr, "facet: '%s' is not a valid dependency name\n", name);
         return 64;
     }
-    for (size_t index = 0; index < manifest.dependency_count; index++) {
-        if (strcmp(manifest.dependencies[index].name, name) == 0) {
-            fprintf(stderr,
-                    "facet: dependency '%s' already exists in diamond.cut -- "
-                    "edit it directly, or remove it first\n", name);
-            return 65;
+    const FacetManifest *const existing_files[] = {&manifest, &dev_manifest};
+    const char *const existing_paths[] = {"diamond.cut", "diamond.dev.cut"};
+    for (size_t file_index = 0; file_index < 2; file_index++) {
+        const FacetManifest *existing = existing_files[file_index];
+        for (size_t index = 0; index < existing->dependency_count; index++) {
+            if (strcmp(existing->dependencies[index].name, name) == 0) {
+                fprintf(stderr,
+                        "facet: dependency '%s' already exists in %s -- "
+                        "edit it directly, or remove it first\n", name,
+                        existing_paths[file_index]);
+                return 65;
+            }
         }
     }
     if (git != nullptr && (git[0] == '\0' || !is_safe_field(git))) {
@@ -848,12 +956,12 @@ static int cmd_add(int argc, char **argv) {
         fprintf(stderr, "facet: '%s' is not a valid registry URL\n", registry);
         return 64;
     }
-    if (manifest.dependency_count == FACET_MAX_DEPENDENCIES) {
+    if (manifest.dependency_count + dev_manifest.dependency_count >= FACET_MAX_DEPENDENCIES) {
         fprintf(stderr, "facet: too many dependencies (max %d)\n",
                 FACET_MAX_DEPENDENCIES);
         return 65;
     }
-    FacetDependency *dependency = &manifest.dependencies[manifest.dependency_count];
+    FacetDependency *dependency = &target->dependencies[target->dependency_count];
     memset(dependency, 0, sizeof *dependency);
     (void)snprintf(dependency->name, sizeof dependency->name, "%s", name);
     dependency->source = registry != nullptr ? FACET_SOURCE_REGISTRY : FACET_SOURCE_GIT;
@@ -885,12 +993,13 @@ static int cmd_add(int argc, char **argv) {
             : branch != nullptr ? FACET_REF_BRANCH : FACET_REF_COMMIT;
         (void)snprintf(dependency->ref, sizeof dependency->ref, "%s", ref);
     }
-    manifest.dependency_count++;
-    if (!write_manifest("diamond.cut", &manifest, error, sizeof error)) {
+    target->dependency_count++;
+    if (!(dev ? write_dev_manifest(target_path, target, error, sizeof error)
+              : write_manifest(target_path, target, error, sizeof error))) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
-    printf("facet: added '%s' to diamond.cut -- run 'facet update' to fetch it\n", name);
+    printf("facet: added '%s' to %s -- run 'facet update' to fetch it\n", name, target_path);
     return 0;
 }
 
@@ -904,7 +1013,7 @@ static void print_usage(void) {
           "       facet pack <cut-directory> <output.tar>\n"
           "       facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n"
           "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
-          "       facet add <name> (--git <url> "
+          "       facet add <name> [--dev] (--git <url> "
           "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
           "| --registry <url> --version <constraint>)\n",
           stderr);

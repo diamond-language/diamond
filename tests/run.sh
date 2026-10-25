@@ -863,10 +863,10 @@ actual="$($diamond --dump-bytecode tests/multifile/broken_main.d6 2>&1 || true)"
 grep -q 'tests/multifile/broken.d6:3:16' <<<"$actual"
 actual="$($diamond tests/multifile/eof_broken_main.d6 2>&1 || true)"
 grep -q 'tests/multifile/eof_broken.d6:' <<<"$actual"
-! grep -q '^#line' <<<"$actual"
+if grep -q '^#line' <<<"$actual"; then echo "unexpected match: grep -q '^#line' <<<..actual." >&2; exit 1; fi
 actual="$($diamond tests/multifile/eof_multiline_main.d6 2>&1 || true)"
 grep -q 'tests/multifile/eof_multiline_broken.d6:2:1' <<<"$actual"
-! grep -q '^#line' <<<"$actual"
+if grep -q '^#line' <<<"$actual"; then echo "unexpected match: grep -q '^#line' <<<..actual." >&2; exit 1; fi
 crlf_dir="$(mktemp -d)"
 printf 'if true\r\n  1\r\n' >"$crlf_dir/broken.d6"
 printf 'require "broken"\r\n' >"$crlf_dir/main.d6"

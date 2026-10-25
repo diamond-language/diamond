@@ -121,6 +121,9 @@ bool parse_dependencies(const DiamondManifestValue *dependencies,
                                size_t error_size);
 bool parse_manifest(const char *path, FacetManifest *manifest,
                            char *error, size_t error_size);
+bool parse_dev_manifest(const char *path, FacetManifest *manifest,
+                        char *error, size_t error_size);
+bool parse_project_manifest(FacetManifest *manifest, char *error, size_t error_size);
 bool parse_cut_identity(const char *path, FacetManifest *manifest,
                                char *error, size_t error_size);
 bool parse_lockfile(const char *path, FacetResolution *resolution,
