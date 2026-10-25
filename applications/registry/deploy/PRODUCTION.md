@@ -5,9 +5,10 @@ The corrected A record is **142.93.192.149**. External health and catalog
 requests succeeded. Since 2026-09-25 nginx terminates TLS with certbot
 certificates (see "Proxy and certificates" below); Caddy was retired.
 
-Runtime revision: `3b5658611c1299a0f0197e1e8e0b300bb48a65ca` (v0.19.1, deployed
-2026-10-24 with `tools/deploy_registry.sh` after a verified snapshot; 18 public cuts
-re-verified). v0.19.0 (`961519af`) was deployed 2026-10-23 after verified snapshots
+Runtime revision: `1fd92adc655a50c30ed81bdb2cfdb19b350e77cf` (v0.20.0, deployed
+2026-10-25 with `tools/deploy_registry.sh` after a verified snapshot; 19 public cuts
+re-verified, minitest 0.1.0 included). v0.19.1 (`3b565861`) was deployed 2026-10-24 the
+same way with 18 cuts. v0.19.0 (`961519af`) was deployed 2026-10-23 after verified snapshots
 and Ubuntu HTTP/nginx/systemd staging checks.
 The installed unit now starts `app.d6`; the upgrade preserves and restores the
 previous unit as well as the release symlink on failure. All 19 new public cut
