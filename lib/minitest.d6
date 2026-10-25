@@ -3,7 +3,8 @@
 # so ordinary programs (and every tests/cases/*.d6 file) don't pay for
 # it on every compile:
 #
-#   require "../lib/minitest"
+#   require_cut "minitest"       # installed as the minitest cut
+#   require "../lib/minitest"    # inside the Diamond repository
 #
 #   def run_tests()
 #     def test_addition()

@@ -1,0 +1,1 @@
+{"name": "minitest", "version": "0.1.0", "summary": "A small minitest-style test library: assertions, skips, setup/teardown and a runner", "license": "MIT", "maintainers": [{"name": "Chad 'Matrix9180' Ingram", "contact": "https://github.com/diamond-language/diamond"}]}

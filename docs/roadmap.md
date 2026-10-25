@@ -16,9 +16,9 @@ background. Further JIT work is optional and measurement-driven.
 
 ## 0.20: from installation to a first app
 
-- **A minitest cut** -- `facet new` copies `lib/minitest.d6` into every project's
-  `test/`. Published as a cut, it would be a development dependency in the generated
-  `diamond.dev.cut` instead.
+- **`facet new` on the minitest cut** -- `facet new` copies `lib/minitest.d6` into every
+  project's `test/`. Once `packages/minitest` is published to the registry, the generated
+  projects can declare it in `diamond.dev.cut` instead.
 - **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
   own runner in the `release` and `test-packages` jobs.
 

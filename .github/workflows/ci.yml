@@ -137,6 +137,7 @@ jobs:
           make CC=gcc test-graphsql-package
           make CC=gcc test-mjolnir-package
           make CC=gcc test-logger-package
+          make CC=gcc test-minitest-package
           make CC=gcc test-log-viewer-package
           make CC=gcc test-active-karma-package
           make CC=gcc test-active-auth-package
