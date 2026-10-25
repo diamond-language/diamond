@@ -10,6 +10,10 @@ Summary:        The Diamond programming language
 License:        MIT
 URL:            https://getdiamond.codes
 
+# facet downloads cuts with curl; git is only needed for git-source cuts.
+Requires:       curl
+Requires:       ca-certificates
+Recommends:     git
 # diamond build compiles and links a standalone executable with a C compiler
 # against these libraries' development files.
 Recommends:     gcc
