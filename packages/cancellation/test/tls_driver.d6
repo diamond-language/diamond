@@ -133,7 +133,7 @@ begin
       child.line(expected, 10000) unless mode == "leaks"
       child.line("cleaned", 10000)
       raise "#{mode}: unclean exit" unless child.wait() == 0
-    rescue error: StandardError
+    rescue error
       puts("TLS scenario #{mode}: #{child.errors()}")
       raise error
     ensure

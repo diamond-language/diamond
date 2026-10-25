@@ -65,7 +65,7 @@ def run_mode(command, mode)
         raise "silent socket leaked" unless peer.read(1) == ""
       end
       puts("passed #{mode}")
-    rescue error: StandardError
+    rescue error
       text = child.stdout_text() + child.stderr_text()
       if text.include?("Address already in use")
         raise Harness::PortTaken.new("Gremlin shutdown scenario #{mode}:\n#{text}")

@@ -80,7 +80,7 @@ modes.each() do |mode|
     end
     child.line("cleaned", 10000)
     raise "#{mode}: unclean exit" unless child.wait() == 0
-  rescue error: StandardError
+  rescue error
     puts("connect scenario #{mode}: #{child.errors()}")
     raise error
   ensure
