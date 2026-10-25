@@ -1,0 +1,47 @@
+name: release
+
+# Pushing a vX.Y.Z tag builds the .deb and .rpm from the tagged tree, installs
+# each into a clean container and smoke-tests it (packaging/ci.sh), then
+# creates the GitHub release with both packages attached and the changelog
+# section as its notes. A release is only tagged after the PR run for the same
+# tree passed, so this workflow does not repeat the test matrix.
+# workflow_dispatch reruns it for an existing tag; the tag must contain
+# packaging/ (0.20 and later).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish, e.g. v0.20.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Creating the release and uploading its files is the only write.
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 1
+      - name: Build, install and smoke-test the .deb
+        run: bash packaging/ci.sh deb
+      - name: Build, install and smoke-test the .rpm
+        run: bash packaging/ci.sh rpm
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash packaging/publish_release.sh "$TAG" build/packages/deb/*.deb build/packages/rpm/*.rpm
