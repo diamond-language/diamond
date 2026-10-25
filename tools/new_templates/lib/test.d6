@@ -1,0 +1,12 @@
+# Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
+require "minitest"
+require "../lib/{{name}}"
+
+def run_tests()
+  def test_greeting() = Minitest.assert_equal("Hello, Ada!", {{Name}}.greeting("Ada"))
+
+  suite = Minitest.new()
+  suite.test("greeting names the person", test_greeting)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

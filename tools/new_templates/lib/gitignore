@@ -1,0 +1,6 @@
+# Installed cuts; `facet install` recreates them from facet.lock.
+cuts/
+# Bytecode caches diamond writes next to each script.
+*.d6c
+# A library leaves version selection to the application that uses it.
+facet.lock

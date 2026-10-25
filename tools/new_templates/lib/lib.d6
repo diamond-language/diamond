@@ -1,0 +1,6 @@
+# {{name}}: the cut's public entry point. Applications load it with
+# `require_cut "{{name}}"`. Larger cuts keep more files under
+# lib/{{name}}/ and require them from here with relative paths.
+module {{Name}}
+  def self.greeting(name: String) -> String = "Hello, #{name}!"
+end

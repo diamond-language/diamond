@@ -1,6 +1,6 @@
 /* Declarations shared by facet's source files: facet.c (manifests, the lockfile, git, `init`,
- * `add` and main), facet_resolve.c (dependency resolution and install) and facet_package.c
- * (`check`, `pack`, `verify` and `publish`). */
+ * `add` and main), facet_resolve.c (dependency resolution and install), facet_package.c
+ * (`check`, `pack`, `verify` and `publish`) and facet_new.c (`new`). */
 #ifndef DIAMOND_FACET_INTERNAL_H
 #define DIAMOND_FACET_INTERNAL_H
 
@@ -127,6 +127,12 @@ bool parse_lockfile(const char *path, FacetResolution *resolution,
                            char *error, size_t error_size);
 bool write_lockfile(const char *path, const FacetResolution *resolution,
                            char *error, size_t error_size);
+
+bool run_git_capture(char *const argv[], const char *context, char *out,
+                     size_t out_size, char *error, size_t error_size);
+
+/* facet_new.c */
+int cmd_new(int argc, char **argv);
 
 /* facet_resolve.c */
 bool resolve_full_graph(const FacetManifest *manifest, FacetResolution *resolution,

@@ -163,8 +163,8 @@ static bool run_git(char *const argv[], const char *context, char *error,
     return true;
 }
 
-static bool run_git_capture(char *const argv[], const char *context, char *out,
-                            size_t out_size, char *error, size_t error_size) {
+bool run_git_capture(char *const argv[], const char *context, char *out,
+                     size_t out_size, char *error, size_t error_size) {
     int pipe_fds[2];
     if (pipe(pipe_fds) != 0) {
         (void)snprintf(error, error_size, "pipe failed while %s: %s", context,
@@ -898,6 +898,7 @@ static int cmd_add(int argc, char **argv) {
 static void print_usage(void) {
     fputs("usage: facet install\n"
           "       facet update\n"
+          "       facet new <kind> <path>     (kinds: cli, web, tcp, udp, lib)\n"
           "       facet init [name]\n"
           "       facet check <cut-directory> [--files]\n"
           "       facet pack <cut-directory> <output.tar>\n"
@@ -915,6 +916,9 @@ int main(int argc, char **argv) {
     }
     if (argc == 2 && strcmp(argv[1], "update") == 0) {
         return run_install_or_update(true);
+    }
+    if (argc >= 2 && strcmp(argv[1], "new") == 0) {
+        return cmd_new(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "init") == 0) {
         return cmd_init(argc, argv);

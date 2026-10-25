@@ -1,0 +1,26 @@
+# {{name}}: the web application. Each request goes through the middleware
+# chain from build_chain and ends at route, which returns
+# [status, headers, body].
+require_cut "rack"
+
+class {{Name}}
+  def self.route(request, context)
+    method = request["method"]
+    path = request["path"]
+    if method == "GET" && path == "/"
+      [200, {"Content-Type": "text/plain; charset=utf-8"}, "Hello from {{name}}!\n"]
+    elsif method == "GET" && path == "/health"
+      [200, {"Content-Type": "application/json"}, "{\"status\": \"ok\"}\n"]
+    else
+      [404, {"Content-Type": "text/plain; charset=utf-8"}, "Not found\n"]
+    end
+  end
+
+  # Middleware runs in the order listed, outermost first. SecurityHeaders
+  # adds nosniff, frame and referrer headers the route did not set.
+  def self.build_chain() = rack_compose([SecurityHeaders.call], {{Name}}.route)
+
+  # The handler gremlin calls. Each gremlin worker runs in its own VM, so
+  # RackChain builds the chain once per worker.
+  def self.call(request, context) = rack_run_chain(RackChain.get({{Name}}.build_chain), 0, request, context)
+end

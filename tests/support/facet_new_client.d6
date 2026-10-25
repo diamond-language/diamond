@@ -1,0 +1,48 @@
+# Helpers for tests/facet_new_test.sh, so it needs no python:
+#   free-port               print a free loopback TCP port
+#   tcp PORT                two clients against the generated TCP server
+#   udp PORT                PING the generated UDP server, retrying while it starts
+#   deps CUT_FILE           print a manifest's dependency names
+#   version CUT_FILE        print a manifest's version
+
+def run(args: Array)
+  command = args[0]
+  if command == "free-port"
+    listener = TCPServer.listen(0, host: "127.0.0.1")
+    puts(listener.port())
+    listener.close()
+  elsif command == "tcp"
+    port = args[1].to_i()
+    first = TCPSocket.connect("127.0.0.1", port)
+    second = TCPSocket.connect("127.0.0.1", port)
+    # Half a line stays buffered on the first connection while the second
+    # is served.
+    first.write("PI")
+    second.write("hello\n")
+    puts(second.gets().strip())
+    first.write("NG\n")
+    puts(first.gets().strip())
+    first.close()
+    second.close()
+  elsif command == "udp"
+    socket = UDPSocket.open()
+    attempts = 0
+    while attempts < 50
+      socket.send("PING", "127.0.0.1", args[1].to_i())
+      if IO.poll([socket], [], 200)["readable"][0]
+        puts(socket.receive(100)["data"])
+        return nil
+      end
+      attempts += 1
+    end
+    puts("no reply")
+  elsif command == "deps"
+    dependencies = JSON.parse(File.read(args[1]))["dependencies"]
+    puts(dependencies == nil ? "" : dependencies.keys().join(" "))
+  elsif command == "version"
+    puts(JSON.parse(File.read(args[1]))["version"])
+  end
+end
+
+run(ARGV)
+exit(0)

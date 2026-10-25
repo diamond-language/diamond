@@ -1,0 +1,9 @@
+# Starts the TCP server. PORT and HOST come from the environment; the
+# default host 127.0.0.1 accepts connections from this machine only.
+require "lib/{{name}}"
+
+port = ENV["PORT"] == nil ? 7000 : ENV["PORT"].to_i()
+host = ENV["HOST"] == nil ? "127.0.0.1" : ENV["HOST"]
+listener = TCPServer.listen_nonblocking(port, host: host)
+puts("{{name}} listening on #{host}:#{listener.port()}")
+{{Name}}.serve(listener)

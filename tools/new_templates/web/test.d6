@@ -1,0 +1,38 @@
+# Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
+# The tests call the handler with request hashes, so no server starts.
+require "minitest"
+require "../lib/{{name}}"
+
+def run_tests()
+  def get(path: String) = {{Name}}.call({"method": "GET", "path": path, "headers": {}}, {})
+
+  def test_home_page()
+    [status, headers, body] = get("/")
+    Minitest.assert_equal(200, status)
+    Minitest.assert_equal("Hello from {{name}}!\n", body)
+  end
+
+  def test_health_check()
+    [status, headers, body] = get("/health")
+    Minitest.assert_equal(200, status)
+    Minitest.assert_equal("application/json", headers["Content-Type"])
+  end
+
+  def test_unknown_path()
+    [status, headers, body] = get("/missing")
+    Minitest.assert_equal(404, status)
+  end
+
+  def test_security_headers()
+    [status, headers, body] = get("/")
+    Minitest.assert_equal("nosniff", headers["X-Content-Type-Options"])
+  end
+
+  suite = Minitest.new()
+  suite.test("GET / answers 200", test_home_page)
+  suite.test("GET /health answers JSON", test_health_check)
+  suite.test("an unknown path answers 404", test_unknown_path)
+  suite.test("responses carry security headers", test_security_headers)
+  exit(suite.run() ? 0 : 1)
+end
+run_tests()

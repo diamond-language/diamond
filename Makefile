@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet test-facet-new facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -536,9 +536,11 @@ test-nested-yield-guard: test-fiber-run
 
 test-stack-overflow: test-fiber-run
 
-FACET_SOURCES := tools/facet.c tools/facet_resolve.c tools/facet_package.c
+FACET_SOURCES := tools/facet.c tools/facet_resolve.c tools/facet_package.c tools/facet_new.c
+# facet_new.c #embeds these.
+FACET_TEMPLATES := $(wildcard tools/new_templates/*/*) lib/minitest.d6
 
-$(BUILD_DIR)/facet: $(FACET_SOURCES) tools/facet_internal.h tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
+$(BUILD_DIR)/facet: $(FACET_SOURCES) $(FACET_TEMPLATES) tools/facet_internal.h tools/semver.c tools/semver.h $(API_DBG_OBJECTS) $(REGINOLD_LIB) | $(PRELUDE_BIN)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS_COMMON) $(CFLAGS_DEBUG) $(API_DBG_OBJECTS) tools/semver.c $(FACET_SOURCES) $(LDLIBS) -o $@
 
@@ -546,6 +548,9 @@ facet: $(BUILD_DIR)/facet
 
 test-facet: $(BUILD_DIR)/facet
 	bash tests/facet_test.sh
+
+test-facet-new: $(TARGET) $(BUILD_DIR)/facet
+	bash tests/facet_new_test.sh
 
 .PHONY: test-source-extensions
 test-source-extensions: debug facet
@@ -1076,6 +1081,7 @@ test-integration:
 	$(MAKE) test-nested-yield-guard
 	$(MAKE) test-stack-overflow
 	$(MAKE) test-facet
+	$(MAKE) test-facet-new
 	$(MAKE) test-source-extensions
 	$(MAKE) test-database-config-package
 	$(MAKE) test-http-package
