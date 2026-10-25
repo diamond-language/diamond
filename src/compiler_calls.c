@@ -1318,6 +1318,54 @@ static bool parse_call_slot_arguments(Compiler *compiler, const DiamondFunction 
     return true;
 }
 
+/* A direct call whose keyword arguments leave a defaulted parameter unfilled
+ * (`f(1, c: 5)` against `def f(a, b = 2, c = 3)`). CALL's arguments are
+ * contiguous, so this goes through CALL_CLOSURE_KEYWORDS instead: the slots
+ * before the first gap are positional and every later filled slot is passed
+ * by name. The runtime merge leaves each gap UNDEFINED, which
+ * ARGUMENT_PROVIDED reads as "not supplied", so the default runs. block is
+ * the trailing `do` block's register when has_block. */
+static uint16_t emit_sparse_keyword_call(Compiler *compiler,const DiamondFunction *function,
+        int function_index,const uint16_t *slot_registers,const bool *slot_filled,
+        size_t argument_count,bool has_block,uint16_t block,
+        const uint16_t *resolved_arguments,size_t resolved_count,DiamondSpan name) {
+    size_t first_gap=0;
+    while(first_gap<argument_count&&slot_filled[first_gap])first_gap++;
+    const uint16_t callable=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,callable);
+    emit_function_index(compiler,(size_t)function_index);emit_byte(compiler,0);
+    const uint16_t positional=emit_argument_array(compiler,slot_registers,first_gap);
+    uint16_t names[DIAMOND_MAX_ARGUMENTS];
+    size_t keyword_count=0;
+    for(size_t slot=first_gap;slot<argument_count;slot++)
+        if(slot_filled[slot])
+            names[keyword_count++]=add_name_text(compiler,function->parameter_names[slot],
+                strlen(function->parameter_names[slot]),name);
+    const uint16_t destination=allocate_register(compiler);
+    emit_opcode(compiler,DIAMOND_OP_CALL_CLOSURE_KEYWORDS);
+    emit_register(compiler,destination);emit_register(compiler,callable);
+    emit_register(compiler,positional);
+    emit_byte(compiler,(uint8_t)(keyword_count|(has_block?0x80u:0u)));
+    size_t keyword=0;
+    for(size_t slot=first_gap;slot<argument_count;slot++)
+        if(slot_filled[slot]) {
+            emit_register(compiler,names[keyword++]);
+            emit_register(compiler,slot_registers[slot]);
+        }
+    if(has_block)emit_register(compiler,block);
+    publish_call_return_type(compiler,destination,function,resolved_arguments,resolved_count);
+    return destination;
+}
+
+/* True when every unfilled slot below argument_count is a defaulted
+ * parameter, so a sparse keyword call can leave it to its default. */
+static bool gaps_are_defaulted(const DiamondFunction *function,const bool *slot_filled,
+        size_t argument_count) {
+    for(size_t index=0;index<argument_count;index++)
+        if(!slot_filled[index]&&index<function->required_arity)return false;
+    return true;
+}
+
 uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
     const int callable_local=find_local(compiler,name);
     if(callable_local>=0&&compiler->current.kind==DIAMOND_TOKEN_LEFT_PAREN)
@@ -1418,6 +1466,14 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         bool contiguous=true;
         for(size_t index=0;index<argument_count;index++)
             if(!slot_filled[index])contiguous=false;
+        if(type_argument_count==0&&!contiguous&&argument_count<=block_slot&&
+           gaps_are_defaulted(function,slot_filled,argument_count)) {
+            for(size_t slot=0;slot<argument_count;slot++)
+                if(slot_filled[slot])
+                    check_call_argument_types(compiler,function,&slot_registers[slot],1,slot,name);
+            return emit_sparse_keyword_call(compiler,function,function_index,slot_registers,
+                slot_filled,argument_count,true,block,resolved_arguments,resolved_count,name);
+        }
         if(type_argument_count==0&&contiguous&&argument_count<block_slot) {
             const uint16_t callable=allocate_register(compiler);
             emit_opcode(compiler,DIAMOND_OP_CLOSURE);emit_register(compiler,callable);
@@ -1437,18 +1493,29 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         slot_filled[argument_count]=true;
         argument_count++;
     }
-    /* Every slot below the highest filled one must be filled too -- a
-     * keyword argument can fill any slot, but a gap below the highest one
-     * (an earlier default relied on while a later slot is explicitly
-     * supplied) isn't supported: Diamond's default values are compiled
-     * inline into the callee's own bytecode, conditioned on a contiguous
-     * argument_count, not stored as independently re-evaluable
-     * expressions a call site could reach around a gap. */
+    /* A slot below the highest filled one may stay empty only when its
+     * parameter has a default; emit_sparse_keyword_call then passes the
+     * later slots by name. A required parameter left empty is an error, and
+     * so is a gap with explicit type arguments, which CALL_CLOSURE_KEYWORDS
+     * cannot carry. */
+    bool has_gap=false;
     for(size_t index=0;index<argument_count;index++)
-        if(!slot_filled[index]) {
+        if(!slot_filled[index])has_gap=true;
+    if(has_gap) {
+        if(type_argument_count>0||!gaps_are_defaulted(function,slot_filled,argument_count)) {
             fail(compiler,name,"missing argument");
             return 0;
         }
+        if(argument_count>function->arity&&!function->has_variadic) {
+            fail(compiler,name,"wrong number of arguments");
+            return 0;
+        }
+        for(size_t slot=0;slot<argument_count;slot++)
+            if(slot_filled[slot])
+                check_call_argument_types(compiler,function,&slot_registers[slot],1,slot,name);
+        return emit_sparse_keyword_call(compiler,function,function_index,slot_registers,
+            slot_filled,argument_count,false,0,resolved_arguments,resolved_count,name);
+    }
     if (argument_count < function->required_arity||
         (argument_count > function->arity && !function->has_variadic)) {
         fail(compiler, name, "wrong number of arguments");

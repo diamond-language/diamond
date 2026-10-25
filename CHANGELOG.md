@@ -12,6 +12,14 @@ authoritative fine-grained record.
   `TCPServer.listen`'s `host:`, and `UDPSocket#port()` returns the bound port,
   so a socket bound to port 0 can report the port the kernel chose.
 
+### Changed
+
+- A keyword argument can skip earlier defaulted parameters in every kind of
+  call: `f(1, c: 5)` against `def f(a, b = 2, c = 3)` runs with `b` at its
+  default. Methods, constructors and Callable values already allowed it;
+  direct calls to a top-level `def` and spread-plus-keyword calls failed with
+  `missing argument`. Skipping a required parameter is still an error.
+
 ## 0.19.1 — 2026-10-24
 
 ### Changed

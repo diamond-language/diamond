@@ -1,0 +1,60 @@
+# A keyword argument can skip earlier defaulted parameters: each skipped
+# parameter takes its default, whatever kind of call it is.
+def describe(name, greeting = "Hello", punctuation = "!", repeat = 1)
+  "#{greeting}, #{name}#{punctuation}" * repeat
+end
+
+puts(describe("Ada", punctuation: "?"))
+puts(describe("Ada", repeat: 2))
+puts(describe(name: "Ada", punctuation: "."))
+puts(describe("Ada", repeat: 1, greeting: "Hi"))
+
+# A skipped default still sees the parameters before it.
+def span(start, finish = start + 10, step = 1) = "#{start}..#{finish} by #{step}"
+puts(span(5, step: 2))
+
+# Typed parameters keep their checks for the slots that are filled.
+def typed(count: Int, label: String = "items", unit: String = "") = "#{count} #{label}#{unit}"
+puts(typed(3, unit: "!"))
+
+# A trailing do block fills the last parameter while a keyword skips the
+# defaulted one before it.
+def visit(items, prefix = "-", suffix = "", callback = nil)
+  items.each() do |item| callback("#{prefix}#{item}#{suffix}") end
+  nil
+end
+visit([1, 2], suffix: ";") do |line| puts(line) end
+
+# A spread followed by a keyword.
+arguments = ["Bob"]
+puts(describe(*arguments, punctuation: "~"))
+
+# Class and instance methods, constructors and callable values already
+# allowed it; they still do.
+class Formatter
+  attr_reader text: String
+  def initialize(text, open = "[", close = "]")
+    @text = "#{open}#{text}#{close}"
+  end
+  def self.wrap(text, open = "<", close = ">") = "#{open}#{text}#{close}"
+  def pad(left = " ", right = " ") = "#{left}#{@text}#{right}"
+end
+puts(Formatter.wrap("x", close: "/>"))
+puts(Formatter.new("y", close: ")").text())
+puts(Formatter.new("z").pad(right: "|"))
+
+def call_value()
+  def join(a, b = "+", c = "c") = "#{a}#{b}#{c}"
+  joiner = join
+  joiner("a", c: "C")
+end
+puts(call_value())
+
+# Hot enough for the JIT to compile the callee.
+total = 0
+index = 0
+while index < 20000
+  total += span(index, step: 3).length()
+  index += 1
+end
+puts(total > 0)

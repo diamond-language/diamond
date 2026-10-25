@@ -1886,8 +1886,10 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
             filled[slot]=true;
             if(slot+1>call_argument_count)call_argument_count=slot+1;
         }
+        /* A gap may only fall on a defaulted parameter; it stays
+         * UNDEFINED, which ARGUMENT_PROVIDED reads as "not supplied". */
         for(size_t index=0;index<call_argument_count;index++)
-            if(!filled[index]) {
+            if(!filled[index]&&index<function->required_arity) {
                 snprintf(vm->error,sizeof vm->error,"missing argument");
                 VM_RETURN(DIAMOND_VM_ARITY_ERROR);
             }
@@ -1895,6 +1897,8 @@ DiamondVmStatus outlined_call_spread(DiamondVm *vm,const DiamondChunk *chunk,Dia
             sizeof *merged_arguments);
         if(merged_arguments==nullptr)
             VM_RETURN(DIAMOND_VM_OUT_OF_MEMORY);
+        for(size_t index=0;index<call_argument_count;index++)
+            merged_arguments[index]=DIAMOND_UNDEFINED;
         for(size_t index=0;index<spread->count;index++)
             merged_arguments[index]=spread->values[index];
         for(size_t index=0;index<keyword_count;index++)
