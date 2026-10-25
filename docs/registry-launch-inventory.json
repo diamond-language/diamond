@@ -105,6 +105,14 @@
       "version": "0.2.0"
     },
     {
+      "archive": "minitest.tar",
+      "dependencies": {},
+      "name": "minitest",
+      "sha256": "6e7976ef0ce8e13403861b7219ad871211dee0bec7f65ac40d84b5b1063a89f5",
+      "size": 19456,
+      "version": "0.1.0"
+    },
+    {
       "archive": "multipart.tar",
       "dependencies": {},
       "name": "multipart",

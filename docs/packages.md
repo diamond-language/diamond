@@ -432,6 +432,7 @@ with `facet` like any other cut.
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
+| `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`) |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |
 | `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |

@@ -13,6 +13,8 @@ authoritative fine-grained record.
   and resolve it together with `diamond.cut`; it is never published.
   `facet add --dev` writes to it. See
   [packages](docs/packages.md#development-dependencies).
+- `packages/minitest`: the minitest library as a cut, for use as a development
+  dependency. It is a copy of `lib/minitest.d6`, which its tests keep in step.
 - `facet new <kind> <path>` creates a project whose tests pass as generated:
   `cli` (a command-line program), `web` (gremlin with rack middleware), `tcp`
   (a line server that uses `IO.poll` to serve many clients from one thread),
