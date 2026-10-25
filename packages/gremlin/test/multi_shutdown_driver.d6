@@ -109,7 +109,7 @@ def run_mode(command, mode)
           end
         end
         puts("passed #{mode}")
-      rescue error: StandardError
+      rescue error
         text = child.stdout_text() + child.stderr_text()
         if mode != "bind" && text.include?("Address already in use")
           raise Harness::PortTaken.new("Multi-worker shutdown #{mode}:\n#{text}")

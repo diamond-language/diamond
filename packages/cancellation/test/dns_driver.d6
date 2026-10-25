@@ -95,7 +95,7 @@ begin
       if (mode == "cancel" || mode == "signal") && !File.exist?(marker)
         raise "cancelled before the lookup actually started"
       end
-    rescue error: StandardError
+    rescue error
       puts("DNS scenario #{mode}: #{child.errors()}")
       raise error
     ensure
