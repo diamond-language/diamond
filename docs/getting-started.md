@@ -207,8 +207,8 @@ Libraries are called cuts and come from the registry at
 with `require_cut`:
 
 ```sh
-facet add logger --registry https://cuts.dilang.tech --version "^0.5.0"
-facet update
+facet add logger
+facet install
 ```
 
 ```ruby
@@ -218,12 +218,13 @@ log = Logger.new("greeter")
 log.info("starting")     # [2026-10-24 21:16:43] INFO greeter: starting
 ```
 
-`facet update` resolves the newest versions the constraints in `diamond.cut`
-allow, installs them into `cuts/`, and records the exact versions and digests in
-`facet.lock`. Commit `facet.lock` and leave `cuts/` out of version control (the
-generated `.gitignore` does); `facet install` recreates `cuts/` from the lock.
-`^0.5.0` accepts any 0.5.x but not 0.6.0. Constraints, git dependencies and
-publishing your own cut: [packages](packages.md).
+`facet add` writes the newest release as a constraint, such as `"^0.5.0"`, which
+accepts any 0.5.x but not 0.6.0. `facet install` fetches what `diamond.cut` asks
+for into `cuts/` and records the exact versions and digests in `facet.lock`.
+Commit `facet.lock` and leave `cuts/` out of version control (the generated
+`.gitignore` does); `facet install` recreates `cuts/` from the lock, and
+`facet update` moves to the newest versions the constraints allow. Constraints,
+git dependencies and publishing your own cut: [packages](packages.md).
 
 A web project starts with two dependencies, so install them before running it:
 

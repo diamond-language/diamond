@@ -858,10 +858,10 @@ static int cmd_init(int argc, char **argv) {
 }
 
 static int cmd_add(int argc, char **argv) {
-    if (argc < 4) {
-        fputs("usage: facet add <name> [--dev] (--git <url> "
-              "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
-              "| --registry <url> --version <constraint>)\n",
+    if (argc < 3) {
+        fputs("usage: facet add <name> [--dev] [--registry <url>] [--version <constraint>]\n"
+              "       facet add <name> [--dev] --git <url> "
+              "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
               stderr);
         return 64;
     }
@@ -893,19 +893,20 @@ static int cmd_add(int argc, char **argv) {
         }
         *slot = argv[++index];
     }
-    if ((git == nullptr) == (registry == nullptr)) {
-        fprintf(stderr, "facet: specify exactly one of --git or --registry\n");
+    if (git != nullptr && registry != nullptr) {
+        fprintf(stderr, "facet: specify at most one of --git or --registry\n");
         return 64;
     }
+    if (git == nullptr && (tag != nullptr || branch != nullptr || commit != nullptr)) {
+        fprintf(stderr, "facet: --tag, --branch and --commit need --git\n");
+        return 64;
+    }
+    if (git == nullptr && registry == nullptr) registry = FACET_DEFAULT_REGISTRY;
     const int ref_count = (tag != nullptr) + (branch != nullptr) +
         (commit != nullptr) + (version != nullptr);
-    if (ref_count != 1) {
+    if (git != nullptr && ref_count != 1) {
         fprintf(stderr,
                 "facet: specify exactly one of --tag, --branch, --commit, --version\n");
-        return 64;
-    }
-    if (registry != nullptr && version == nullptr) {
-        fprintf(stderr, "facet: --registry requires --version\n");
         return 64;
     }
     if (!file_exists("diamond.cut")) {
@@ -956,6 +957,18 @@ static int cmd_add(int argc, char **argv) {
         fprintf(stderr, "facet: '%s' is not a valid registry URL\n", registry);
         return 64;
     }
+    /* No --version: depend on the newest release, compatible updates only. */
+    char latest_constraint[FACET_MAX_REF + 1];
+    if (registry != nullptr && version == nullptr) {
+        char latest[FACET_MAX_REF];
+        if (!registry_latest_version(registry, name, latest, sizeof latest, error,
+                                     sizeof error)) {
+            fprintf(stderr, "facet: %s\n", error);
+            return 69;
+        }
+        (void)snprintf(latest_constraint, sizeof latest_constraint, "^%s", latest);
+        version = latest_constraint;
+    }
     if (manifest.dependency_count + dev_manifest.dependency_count >= FACET_MAX_DEPENDENCIES) {
         fprintf(stderr, "facet: too many dependencies (max %d)\n",
                 FACET_MAX_DEPENDENCIES);
@@ -999,7 +1012,7 @@ static int cmd_add(int argc, char **argv) {
         fprintf(stderr, "facet: %s\n", error);
         return 70;
     }
-    printf("facet: added '%s' to %s -- run 'facet update' to fetch it\n", name, target_path);
+    printf("facet: added '%s' to %s -- run 'facet install' to fetch it\n", name, target_path);
     return 0;
 }
 
@@ -1013,9 +1026,9 @@ static void print_usage(void) {
           "       facet pack <cut-directory> <output.tar>\n"
           "       facet verify <archive.tar> [--sha256 <digest>] [--json | --readme]\n"
           "       facet publish <cut-directory> --registry <https-url> --token <token>\n"
-          "       facet add <name> [--dev] (--git <url> "
-          "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>) "
-          "| --registry <url> --version <constraint>)\n",
+          "       facet add <name> [--dev] [--registry <url>] [--version <constraint>]\n"
+          "       facet add <name> [--dev] --git <url> "
+          "(--tag <ref> | --branch <ref> | --commit <ref> | --version <constraint>)\n",
           stderr);
 }
 
