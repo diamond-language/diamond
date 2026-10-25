@@ -2321,6 +2321,8 @@ DiamondVmStatus outlined_invoke_keywords(DiamondVm *vm,const DiamondChunk *chunk
             "undefined method '%.*s' for an instance of %s",
             (int)method_name->length,method_name->chars,
             instance->class->name);
+        diamond_append_method_suggestion(vm,owner,DIAMOND_TYPE_NONE,nullptr,0,
+            instance->class,method_name->chars,method_name->length);
         VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
     }
     const DiamondChunk *function_chunk=method->source_chunk!=nullptr?
@@ -2509,6 +2511,8 @@ DiamondVmStatus outlined_invoke_spread(DiamondVm *vm,const DiamondChunk *chunk,D
             "undefined method '%.*s' for an instance of %s",
             (int)method_name->length,method_name->chars,
             instance->class->name);
+        diamond_append_method_suggestion(vm,owner,DIAMOND_TYPE_NONE,nullptr,0,
+            instance->class,method_name->chars,method_name->length);
         VM_RETURN(DIAMOND_VM_NO_METHOD_ERROR);
     }
     if(method->is_private&&!(chunk->parameter_offset==1&&recv==0)) {

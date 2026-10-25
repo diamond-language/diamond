@@ -1763,6 +1763,93 @@ const DiamondFunction *find_value_extension(const DiamondChunk *chunk,
     return found;
 }
 
+/* Edit distance between two method names, counting a swap of adjacent
+ * letters as one edit, or a value above `limit` once it is certain to exceed
+ * it. Names are under DIAMOND_MAX_FUNCTION_NAME bytes. */
+static size_t method_name_distance(const char *a,size_t a_length,
+        const char *b,size_t b_length,size_t limit) {
+    if(a_length>=DIAMOND_MAX_FUNCTION_NAME||b_length>=DIAMOND_MAX_FUNCTION_NAME)
+        return limit+1;
+    if((a_length>b_length?a_length-b_length:b_length-a_length)>limit)return limit+1;
+    size_t rows[3][DIAMOND_MAX_FUNCTION_NAME+1];
+    size_t *before=rows[0],*previous=rows[1],*current=rows[2];
+    for(size_t j=0;j<=b_length;j++)previous[j]=j;
+    for(size_t i=1;i<=a_length;i++) {
+        current[0]=i;
+        size_t row_min=current[0];
+        for(size_t j=1;j<=b_length;j++) {
+            const size_t substitute=previous[j-1]+(a[i-1]==b[j-1]?0:1);
+            const size_t remove=previous[j]+1,insert=current[j-1]+1;
+            size_t best=substitute<remove?substitute:remove;
+            if(insert<best)best=insert;
+            if(i>1&&j>1&&a[i-1]==b[j-2]&&a[i-2]==b[j-1]&&before[j-2]+1<best)
+                best=before[j-2]+1;
+            current[j]=best;
+            if(best<row_min)row_min=best;
+        }
+        if(row_min>limit)return limit+1;
+        size_t *recycled=before;
+        before=previous;previous=current;current=recycled;
+    }
+    return previous[b_length];
+}
+
+typedef struct MethodSuggestion {
+    const char *name;
+    size_t length;
+    size_t distance;
+} MethodSuggestion;
+
+static void consider_method_name(MethodSuggestion *best,const char *name,size_t length,
+        const char *wanted,size_t wanted_length) {
+    if(length==wanted_length&&memcmp(name,wanted,length)==0)return;
+    const size_t distance=method_name_distance(wanted,wanted_length,name,length,
+        best->distance-1);
+    if(distance<best->distance) {
+        best->name=name;best->length=length;best->distance=distance;
+    }
+}
+
+/* Appends " -- did you mean 'x'?" to vm->error when a method the receiver does
+ * have is one or two edits from `name`: the built-in names for `receiver_type`
+ * (DIAMOND_TYPE_NONE for none), the program's and the prelude's extension
+ * functions under `prefixes` (string_, array_, ...), and the methods of `class`
+ * and its superclasses when it is not nullptr. */
+void diamond_append_method_suggestion(DiamondVm *vm,const DiamondChunk *chunk,
+        uint16_t receiver_type,const char *const *prefixes,size_t prefix_count,
+        const DiamondClass *class,const char *name,size_t length) {
+    if(length<3)return;
+    MethodSuggestion best={.distance=(length<=5?1:2)+1};
+    const char *const *natives=nullptr;
+    const size_t native_count=receiver_type==DIAMOND_TYPE_NONE?0:
+        diamond_native_member_names(receiver_type,&natives);
+    for(size_t index=0;index<native_count;index++)
+        consider_method_name(&best,natives[index],strlen(natives[index]),name,length);
+    for(size_t index=0;prefix_count>0&&index<chunk->function_count;index++) {
+        const DiamondFunction *function=chunk->functions[index];
+        if(function->owner_class!=DIAMOND_OWNER_NONE||function->nested)continue;
+        const char *candidate=function->name;
+        if(strncmp(candidate,"diamond_",8)==0)candidate+=8;
+        for(size_t prefix=0;prefix<prefix_count;prefix++) {
+            const size_t prefix_length=strlen(prefixes[prefix]);
+            if(strncmp(candidate,prefixes[prefix],prefix_length)!=0)continue;
+            consider_method_name(&best,candidate+prefix_length,
+                strlen(candidate+prefix_length),name,length);
+        }
+    }
+    for(const DiamondClass *current=class;current!=nullptr;
+        current=current->superclass==DIAMOND_NO_CLASS?nullptr:
+            chunk->classes[current->superclass])
+        for(size_t index=0;index<current->method_count;index++)
+            consider_method_name(&best,current->methods[index].name,
+                strlen(current->methods[index].name),name,length);
+    if(best.name==nullptr)return;
+    const size_t used=strlen(vm->error);
+    if(used<sizeof vm->error)
+        snprintf(vm->error+used,sizeof vm->error-used," -- did you mean '%.*s'?",
+            (int)best.length,best.name);
+}
+
 void store_extension_lookup(DiamondVm *vm,const uint8_t *site,
         uint8_t kind,const DiamondFunction *function) {
     const size_t slot=diamond_cache_slot(site,vm->extension_caches,

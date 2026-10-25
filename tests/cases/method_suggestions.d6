@@ -1,0 +1,31 @@
+# An undefined method one or two edits from a real one names it.
+class Dog
+  def bark() = "woof"
+end
+
+class Pup < Dog
+end
+
+def message_of(&block)
+  begin
+    yield
+    "no error"
+  rescue error
+    error.message()
+  end
+end
+
+puts(message_of() do "abc".starts_with?("a") end)
+puts(message_of() do [1].frist() end)
+puts(message_of() do {"a": 1}.fetchh("a") end)
+puts(message_of() do 5.tims() end)
+puts(message_of() do 1.5.flor() end)
+puts(message_of() do Pup.new().barkk() end)
+puts(message_of() do Dog.new().brak() end)
+# Extensions count too: the prelude's and the program's own.
+def string_shout(text: String) = text.upcase() + "!"
+
+puts(message_of() do [1].filtr_map() do |x| x end end)
+puts(message_of() do "abc".shuot() end)
+# Nothing close: no suggestion.
+puts(message_of() do "abc".zzzzzz() end)

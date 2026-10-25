@@ -15,6 +15,9 @@ authoritative fine-grained record.
   something `facet.lock` does not hold (a new dependency, a different source, a version
   outside its constraint), keeping each locked registry version that still fits. Before,
   it installed the stale lock and ignored the new dependency.
+- An undefined-method error names a close match when there is one:
+  `undefined method 'starts_with?' for String -- did you mean 'start_with?'?`. It covers
+  instances of your classes and built-in String, Array, Hash, Int and Float receivers.
 
 ## 0.20.0 — 2026-10-25
 

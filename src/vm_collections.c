@@ -140,7 +140,7 @@ static const char *collection_bridge_target(DiamondObjectKind receiver_kind,
 /* Hash#key_at / Hash#value_at, and the undefined-method error for any other
  * Hash method that reached the end of collection_invoke_helper. */
 __attribute__((noinline))
-static DiamondVmStatus hash_entry_at_method(DiamondVm *vm,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
+static DiamondVmStatus hash_entry_at_method(DiamondVm *vm,const DiamondChunk *chunk,DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,uint16_t dest,const DiamondStringConstant *method_name) {
     const bool key_method=method_name->length==6&&
         memcmp(method_name->chars,"key_at",6)==0;
     const bool value_method=method_name->length==8&&
@@ -149,6 +149,9 @@ static DiamondVmStatus hash_entry_at_method(DiamondVm *vm,DiamondValue *register
         snprintf(vm->error,sizeof vm->error,
             "undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Hash");
+        static const char *const suggestion_prefixes[]={"hash_","enumerable_"};
+        diamond_append_method_suggestion(vm,chunk,DIAMOND_TYPE_HASH,suggestion_prefixes,2,
+            nullptr,method_name->chars,method_name->length);
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(argc!=1)return DIAMOND_VM_ARITY_ERROR;
@@ -344,7 +347,7 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         registers[dest]=found?removed:DIAMOND_NIL;return DIAMOND_VM_OK;
     }
     if(receiver_kind==DIAMOND_OBJECT_HASH)
-        return hash_entry_at_method(vm,registers,recv,base,argc,dest,method_name);
+        return hash_entry_at_method(vm,chunk,registers,recv,base,argc,dest,method_name);
     if(receiver_kind==DIAMOND_OBJECT_STRING)
         return string_invoke_helper(vm,chunk,depth,registers,recv,base,argc,dest,method_name);
     if(receiver_kind!=DIAMOND_OBJECT_ARRAY)
@@ -376,6 +379,9 @@ DiamondVmStatus collection_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk
         return array_slice_method(vm,array,registers,base,argc,dest);
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Array");
+    static const char *const suggestion_prefixes[]={"array_","enumerable_"};
+    diamond_append_method_suggestion(vm,chunk,DIAMOND_TYPE_ARRAY,suggestion_prefixes,2,
+        nullptr,method_name->chars,method_name->length);
     return DIAMOND_VM_TYPE_ERROR;
 }
 
@@ -473,6 +479,9 @@ static DiamondVmStatus float_extension_method(DiamondVm *vm,const DiamondChunk *
     snprintf(vm->error,sizeof vm->error,
         "undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"Float");
+    static const char *const suggestion_prefixes[]={"float_","numeric_"};
+    diamond_append_method_suggestion(vm,chunk,DIAMOND_TYPE_FLOAT,suggestion_prefixes,2,
+        nullptr,method_name->chars,method_name->length);
     return DIAMOND_VM_TYPE_ERROR;
 }
 
@@ -539,6 +548,9 @@ static DiamondVmStatus int_extension_method(DiamondVm *vm,const DiamondChunk *ch
         snprintf(vm->error,sizeof vm->error,
             "undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"Int");
+        static const char *const suggestion_prefixes[]={"integer_","numeric_"};
+        diamond_append_method_suggestion(vm,chunk,DIAMOND_TYPE_INT,suggestion_prefixes,2,
+            nullptr,method_name->chars,method_name->length);
         return DIAMOND_VM_TYPE_ERROR;
     }
     if(target==nullptr) {

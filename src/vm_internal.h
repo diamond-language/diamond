@@ -1235,6 +1235,9 @@ DIAMOND_INTERNAL const DiamondFunction *find_value_extension(const DiamondChunk 
         const char *const *prefixes,size_t prefix_count,const char *name,size_t length);
 DIAMOND_INTERNAL void store_extension_lookup(DiamondVm *vm,const uint8_t *site,
         uint8_t kind,const DiamondFunction *function);
+DIAMOND_INTERNAL void diamond_append_method_suggestion(DiamondVm *vm,
+        const DiamondChunk *chunk,uint16_t receiver_type,const char *const *prefixes,
+        size_t prefix_count,const DiamondClass *class,const char *name,size_t length);
 DIAMOND_INTERNAL DiamondVmStatus forward_to_top_level_helper(DiamondVm *vm,
         const DiamondChunk *chunk,const DiamondFunction *target,
         const DiamondValue *registers,uint16_t recv,uint16_t base,uint8_t argc,
