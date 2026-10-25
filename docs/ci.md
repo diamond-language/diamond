@@ -13,7 +13,7 @@ the earlier one. Keep `cancel-in-progress: true` and avoid `always()` on test
 jobs, which can keep cancelled work alive.
 
 `tools/merge_when_green.sh PR BRANCH` accepts only explicit `SUCCESS` check
-states, with at least 29 checks by default (`MIN_CHECKS` overrides this when
+states, with at least 31 checks by default (`MIN_CHECKS` overrides this when
 the workflow changes). Queued or running checks wait; cancelled, skipped,
 neutral, failed or unknown states stop the merge. API errors and incomplete
 reports also stop it. The script rechecks the states and count immediately
@@ -39,6 +39,20 @@ gh run view RUN_ID
 A successful request does not mean cancellation has finished; verify the
 status becomes completed and the conclusion cancelled. Deleting the run is
 not required to stop it.
+
+## Releases
+
+A release is a `vX.Y.Z` tag on `main`, pushed once the PR run for that exact tree
+passed; the version in `src/main.c` and a `## X.Y.Z` section in `CHANGELOG.md`
+must already match it. The push starts the `release` workflow. It builds the
+`.deb` and `.rpm` from the tagged tree, installs each into a clean Ubuntu 26.04 or
+Fedora 44 container and runs the package smoke test (`packaging/ci.sh`), then
+`packaging/publish_release.sh` creates the GitHub release with both packages
+attached and that changelog section as its notes. Its job is the only one with
+`contents: write`. It does not rerun the test matrix. To retry a failed run, use
+the workflow's manual dispatch with the tag; the release is updated in place,
+replacing files of the same name. Tags before 0.20 have no `packaging/` and
+cannot be published this way.
 
 ## Timeout budgets
 

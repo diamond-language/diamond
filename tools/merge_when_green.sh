@@ -3,10 +3,10 @@
 # Waits for every CI check on the PR, merges it only if all pass and main has not moved, then updates main and deletes the branch.
 # Needs `gh`. Exit 1 (and no merge) unless every registered check succeeds and main has not moved.
 # Start it a minute after pushing: just after a push only a few checks have registered, and "all of those passed" is not "green".
-# MIN_CHECKS (default 29) is the number of checks CI registers for a pull request; lower it only if CI shrinks.
+# MIN_CHECKS (default 31) is the number of checks CI registers for a pull request; lower it only if CI shrinks.
 set -euo pipefail
 pr="$1"; branch="$2"
-min_checks="${MIN_CHECKS:-29}"
+min_checks="${MIN_CHECKS:-31}"
 cd "$(dirname "$0")/.."
 
 [[ "$min_checks" =~ ^[1-9][0-9]*$ ]] || { echo "MIN_CHECKS must be a positive integer" >&2; exit 1; }

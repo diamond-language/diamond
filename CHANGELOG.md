@@ -20,6 +20,8 @@ authoritative fine-grained record.
 - `packaging/build.sh deb|rpm` builds a `diamond-lang` package for Ubuntu 26.04 or
   Fedora 44 (x86-64-v3), and CI installs each into a clean container and runs a smoke
   test. See [CONTRIBUTING](CONTRIBUTING.md#packages).
+- Pushing a release tag creates a GitHub release with the `.deb` and `.rpm`
+  attached and the changelog section as notes (see [CI](docs/ci.md#releases)).
 
 ### Changed
 

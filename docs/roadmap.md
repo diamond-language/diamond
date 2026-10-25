@@ -22,10 +22,8 @@ background. Further JIT work is optional and measurement-driven.
   install; a dependency's would be ignored. Every released facet rejects an unknown
   key in a cut archive's `diamond.cut`, so they cannot be a new key there; the shape
   (for example a separate, never-published project file) is still to be chosen.
-- **Publishing the `.deb` and `.rpm` packages** -- `packaging/build.sh` builds them and CI
-  installs each into a clean container, but releases are tags only, so nothing hands the
-  packages to users. Attaching them to a GitHub release per tag, or an apt/dnf repository,
-  is still to be decided. Only x86-64 packages are built; arm64 would need its own job.
+- **arm64 packages** -- the `.deb` and `.rpm` are x86-64 only; an arm64 build needs its
+  own runner in the `release` and `test-packages` jobs.
 
 ## Candidate work
 

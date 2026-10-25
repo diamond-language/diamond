@@ -11,7 +11,9 @@
 #   bash packaging/ci.sh deb|rpm [IMAGE]
 #
 # Defaults: ubuntu:26.04 for deb, fedora:44 for rpm. CONTAINER selects the
-# runtime (default docker; podman works). Packages land in build/packages.
+# runtime (default docker; podman works). Packages land in build/packages/FORMAT
+# (one directory each: on a CI runner the container writes them as root, so a
+# later run in the same job could not clear the other format's files).
 set -euo pipefail
 
 format="${1:-}"
@@ -32,13 +34,14 @@ else
     install_package='dnf upgrade -y && dnf install -y --setopt=install_weak_deps=True /packages/diamond-lang-*.rpm'
 fi
 
-rm -rf "$repo/build/packages"
-mkdir -p "$repo/build/packages"
+out="$repo/build/packages/$format"
+rm -rf "$out"
+mkdir -p "$out"
 # Build from a copy so the clean build cannot touch the checkout's own build
 # outputs (build/, reginold's objects).
-"$runtime" run --rm --security-opt label=disable -v "$repo:/src:ro" -v "$repo/build/packages:/out" "$image" \
+"$runtime" run --rm --security-opt label=disable -v "$repo:/src:ro" -v "$out:/out" "$image" \
     bash -c "set -e; $build_deps >/dev/null; mkdir /work
         tar -C /src --exclude=./build --exclude='./reginold/*.o' --exclude='./reginold/*.a' -cf - . | tar -C /work -xf -
         bash /work/packaging/build.sh $format /out"
-"$runtime" run --rm --security-opt label=disable -v "$repo/build/packages:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
+"$runtime" run --rm --security-opt label=disable -v "$out:/packages:ro" -v "$repo/packaging:/packaging:ro" "$image" \
     bash -c "set -e; $install_package >/dev/null; bash /packaging/smoke_test.sh $version"
