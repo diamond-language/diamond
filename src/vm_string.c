@@ -1043,5 +1043,8 @@ DiamondVmStatus string_invoke_helper(DiamondVm *vm,const DiamondChunk *chunk,siz
     }
     snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
         (int)method_name->length,method_name->chars,"String");
+    static const char *const suggestion_prefixes[]={"string_"};
+    diamond_append_method_suggestion(vm,chunk,DIAMOND_TYPE_STRING,suggestion_prefixes,1,
+        nullptr,method_name->chars,method_name->length);
     return DIAMOND_VM_TYPE_ERROR;
 }

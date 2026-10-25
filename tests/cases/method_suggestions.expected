@@ -1,0 +1,11 @@
+undefined method 'starts_with?' for String -- did you mean 'start_with?'?
+undefined method 'frist' for Array -- did you mean 'first'?
+undefined method 'fetchh' for Hash -- did you mean 'fetch'?
+undefined method 'tims' for Int -- did you mean 'times'?
+undefined method 'flor' for Float -- did you mean 'floor'?
+undefined method 'barkk' for an instance of Pup -- did you mean 'bark'?
+undefined method 'brak' for an instance of Dog -- did you mean 'bark'?
+undefined method 'filtr_map' for Array -- did you mean 'filter_map'?
+undefined method 'shuot' for String -- did you mean 'shout'?
+undefined method 'zzzzzz' for String
+nil

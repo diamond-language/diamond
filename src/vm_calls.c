@@ -531,6 +531,8 @@ static DiamondVmStatus jit_instance_method_missing(DiamondVm *vm,const DiamondCh
     snprintf(vm->error,sizeof vm->error,
         "undefined method '%.*s' for an instance of %s",
         (int)method_name->length,method_name->chars,instance->class->name);
+    diamond_append_method_suggestion(vm,owner,DIAMOND_TYPE_NONE,nullptr,0,
+        instance->class,method_name->chars,method_name->length);
     return DIAMOND_VM_NO_METHOD_ERROR;
 }
 

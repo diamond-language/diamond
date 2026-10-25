@@ -589,6 +589,13 @@ defined on a superclass covers every subclass too. Scoped to this one
 dispatch site only -- not operator overloading, `to_s`, `super`, or
 `self.`-singleton calls, each of which already has its own fallback.
 
+When the receiver has a method one or two edits from the missing name (a swapped
+pair of letters counts as one edit), the error names it:
+`undefined method 'brak' for an instance of Dog -- did you mean 'bark'?`. Strings,
+Arrays, Hashes, Ints and Floats get the same hint from their built-in methods and
+their extension functions (`string_*`, `array_*`, ...). Names under three
+characters get no hint.
+
 ## Sealed classes
 
 ```ruby
