@@ -1215,8 +1215,14 @@ uint16_t add_string(Compiler *compiler,DiamondSpan span) {
 }
 
 uint16_t add_name_string(Compiler *compiler, DiamondSpan span) {
+    return add_name_text(compiler,compiler->source+span.start,span.length,span);
+}
+
+/* add_name_string for a name that is not in the source text, such as a
+ * parameter name read from a compiled function; span is for diagnostics. */
+uint16_t add_name_text(Compiler *compiler,const char *text,size_t length,DiamondSpan span) {
     if (compiler->function->string_count == DIAMOND_MAX_STRING_CONSTANTS ||
-        span.length > DIAMOND_MAX_STRING_LENGTH) {
+        length > DIAMOND_MAX_STRING_LENGTH) {
         fail(compiler, span, "too many or oversized names in function");
         return 0;
     }
@@ -1228,10 +1234,10 @@ uint16_t add_name_string(Compiler *compiler, DiamondSpan span) {
     }
     DiamondStringConstant *string =
         &compiler->function->strings[compiler->function->string_count];
-    for (size_t i = 0; i < span.length; i++)
-        string->chars[i] = compiler->source[span.start + i];
-    string->length = span.length;
-    string->chars[span.length] = '\0';
+    for (size_t i = 0; i < length; i++)
+        string->chars[i] = text[i];
+    string->length = length;
+    string->chars[length] = '\0';
     return (uint16_t)compiler->function->string_count++;
 }
 

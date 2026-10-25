@@ -1211,7 +1211,7 @@ static bool disassemble_io_and_conversions(DisassemblyWalk *walk) {
                 checked_register(chunk,stream,read_operand(chunk,offset+7),&valid));
             offset+=9;break;
         case DIAMOND_OP_UDP_BIND:
-            offset=two_registers(stream,chunk,"UDP_BIND",offset, &valid);break;
+            offset=three_registers(stream,chunk,"UDP_BIND",offset, &valid);break;
         case DIAMOND_OP_UDP_OPEN:
             offset=one_register(stream,chunk,"UDP_OPEN",offset, &valid);break;
         case DIAMOND_OP_SIGNAL_TRAP:

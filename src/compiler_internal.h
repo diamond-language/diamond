@@ -644,6 +644,8 @@ DIAMOND_INTERNAL uint16_t add_string_range(Compiler *compiler,size_t start,size_
                                 DiamondSpan span);
 DIAMOND_INTERNAL uint16_t add_string(Compiler *compiler,DiamondSpan span);
 DIAMOND_INTERNAL uint16_t add_name_string(Compiler *compiler, DiamondSpan span);
+DIAMOND_INTERNAL uint16_t add_name_text(Compiler *compiler,const char *text,size_t length,
+        DiamondSpan span);
 DIAMOND_INTERNAL size_t emit_jump(Compiler *compiler, DiamondOpCode opcode,
                         uint16_t condition);
 DIAMOND_INTERNAL void patch_jump(Compiler *compiler, size_t operand, size_t target);

@@ -417,7 +417,7 @@ DIAMOND_INTERNAL DiamondVmStatus tls_read_line(DiamondVm *vm,SSL *ssl,StringBuil
 DIAMOND_INTERNAL DiamondVmStatus tls_validate_alpn_protocols(DiamondVm *vm,const char *owner, const DiamondArray *protocols);
 DIAMOND_INTERNAL DiamondVmStatus tls_write_all(DiamondVm *vm,SSL *ssl,const char *data,size_t length);
 DIAMOND_INTERNAL DiamondVmStatus tls_handshake_interruptible(DiamondVm *vm,SSL *ssl,bool accept,int *result);
-DIAMOND_INTERNAL DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket, int64_t port,DiamondUdpSocketHandle **out_handle);
+DIAMOND_INTERNAL DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket, int64_t port,const DiamondString *host,DiamondUdpSocketHandle **out_handle);
 
 /* Shared primitives that stay in vm.c (needed by vm_network.c) */
 DIAMOND_INTERNAL DiamondListenerHandle *allocate_listener_handle(DiamondVm *vm,int fd, bool nonblocking);

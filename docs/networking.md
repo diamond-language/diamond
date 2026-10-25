@@ -367,6 +367,13 @@ from the stream-oriented `TCPSocket`/`TCPServer` above:
   `listen(2)` call — UDP has no equivalent, there's nothing to listen
   *for*, just a socket ready to send and receive immediately). The
   "server" side: binds to a port callers already know to reach it at.
+  Every interface by default; `UDPSocket.bind(port, host: "127.0.0.1")`
+  binds one address or hostname instead, like `TCPServer.listen`'s
+  `host:`. A `host:` that is not a String raises `TypeError`.
+- **`.port()`** — the local port the socket is bound to, so a server bound
+  to port `0` (the kernel picks a free one) can say where it is listening.
+  On a `UDPSocket.open()` socket it is the ephemeral port once the first
+  `.send` has assigned one, and `0` before that.
 - **`UDPSocket.open()`** — opens a socket with no local address, letting
   the OS assign an ephemeral port on first use. The "client" side: don't
   care what port this sends from, just need to reach someone else's. A
@@ -410,8 +417,8 @@ collection between allocating the key and calling `hash_set` on the very
 next line.
 
 `UDPSocket.bind`/`UDPSocket.open` are recognized in the compiler the same
-way, one parser handling both forms (`bind` takes the 1-argument port,
-`open` takes none) and erroring on anything else.
+way, one parser handling both forms (`bind` takes the port and an optional
+`host:` keyword, `open` takes none) and erroring on anything else.
 
 ## Signals: `Signal.trap`
 

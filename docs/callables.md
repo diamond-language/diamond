@@ -347,13 +347,15 @@ When a spread precedes keywords (`move(*coordinates, speed: 2)`), dedicated
 spread bytecode merges the Array's positional values with those declared
 slots at runtime, when the Array's length is known.
 
-Keyword arguments can't skip over an earlier defaulted parameter to reach
-a later one: `def f(a, b = 2, c = 3) ... end` called as `f(1, c: 5)` is a
-compile error (`missing argument`) — you'd need to also pass `b`. Default
-values are compiled inline into the function's own body, conditioned on
-how many arguments were actually supplied counting from the start, not on
-which specific ones were; keyword arguments let you name and reorder the
-arguments you *do* supply, not skip an arbitrary one in the middle.
+A keyword argument can skip earlier defaulted parameters: `def f(a, b = 2,
+c = 3) ... end` called as `f(1, c: 5)` runs with `b` at its default, 2. Each
+skipped slot reaches the function marked as not supplied, so its default
+expression runs, and it can still read the parameters before it. Leaving a
+*required* parameter unfilled is a compile error (`missing argument`), or a
+runtime one when a spread hides the count until runtime. A direct call that
+skips a default goes through the same keyword dispatch as a call on a
+Callable value, so it is not JIT-compiled the way a positional call is;
+that matters only for a hot call.
 
 Keyword arguments work for top-level functions, user-defined instance
 methods, Callable values, constructors with a Diamond-defined `initialize`,

@@ -1436,21 +1436,52 @@ uint16_t parse_udp_socket_call(Compiler *compiler) {
     advance_token(compiler);
     skip_newlines(compiler);
     uint16_t port_register=0;
+    uint16_t host_register=0;
+    bool host_given=false;
     if(is_bind) {
         port_register=parse_expression(compiler);
         skip_newlines(compiler);
+        /* Optional `host:` keyword, as TCPServer.listen takes: bind one
+         * address instead of every interface. */
+        if(compiler->current.kind==DIAMOND_TOKEN_COMMA) {
+            advance_token(compiler);
+            skip_newlines(compiler);
+            if(compiler->current.kind!=DIAMOND_TOKEN_IDENTIFIER||
+               !name_equals(compiler,"host",compiler->current.span,false)) {
+                fail(compiler,compiler->current.span,
+                     "expected 'host' after ',' in UDPSocket.bind arguments");
+                return 0;
+            }
+            advance_token(compiler); /* consume 'host' */
+            if(compiler->current.kind!=DIAMOND_TOKEN_COLON) {
+                fail(compiler,compiler->current.span,"expected ':' after 'host' in UDPSocket.bind");
+                return 0;
+            }
+            advance_token(compiler); /* consume ':' */
+            skip_newlines(compiler);
+            host_register=parse_expression(compiler);
+            host_given=true;
+            skip_newlines(compiler);
+        }
     }
     if(compiler->current.kind!=DIAMOND_TOKEN_RIGHT_PAREN) {
         fail(compiler,compiler->current.span,
-             is_bind?"expected ')' after UDPSocket.bind argument":
+             is_bind?"expected ')' after UDPSocket.bind arguments":
                      "expected ')' after UDPSocket.open arguments");
         return 0;
     }
     advance_token(compiler);
+    if(is_bind&&!host_given) {
+        host_register=allocate_register(compiler);
+        emit_instruction(compiler,DIAMOND_OP_NIL,host_register,0,0,1);
+    }
     const uint16_t dest=allocate_register(compiler);
     emit_opcode(compiler,is_bind?DIAMOND_OP_UDP_BIND:DIAMOND_OP_UDP_OPEN);
     emit_register(compiler,dest);
-    if(is_bind)emit_register(compiler,port_register);
+    if(is_bind) {
+        emit_register(compiler,port_register);
+        emit_register(compiler,host_register);
+    }
     return dest;
 }
 

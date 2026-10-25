@@ -3451,17 +3451,27 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 break;
             }
             case DIAMOND_OP_UDP_BIND: {
-                uint16_t dest=0,port_reg=0;
-                READ_SHORT(dest);READ_SHORT(port_reg);
+                uint16_t dest=0,port_reg=0,host_reg=0;
+                READ_SHORT(dest);READ_SHORT(port_reg);READ_SHORT(host_reg);
                 VM_SANDBOX_GUARD("UDPSocket.bind", "network");
                 if(registers[port_reg].kind!=DIAMOND_VALUE_INT) {
                     snprintf(vm->error,sizeof vm->error,
                              "UDPSocket.bind argument must be an Int port");
                     VM_RETURN(DIAMOND_VM_TYPE_ERROR);
                 }
+                const DiamondString *udp_host=nullptr;
+                if(registers[host_reg].kind!=DIAMOND_VALUE_NIL) {
+                    if(registers[host_reg].kind!=DIAMOND_VALUE_OBJECT||
+                       registers[host_reg].as.object->kind!=DIAMOND_OBJECT_STRING) {
+                        snprintf(vm->error,sizeof vm->error,
+                                 "UDPSocket.bind host: must be a String");
+                        VM_RETURN(DIAMOND_VM_TYPE_ERROR);
+                    }
+                    udp_host=(const DiamondString *)registers[host_reg].as.object;
+                }
                 DiamondUdpSocketHandle *udp_handle=nullptr;
                 const DiamondVmStatus udp_status=udp_socket_helper(vm,true,
-                    registers[port_reg].as.integer,&udp_handle);
+                    registers[port_reg].as.integer,udp_host,&udp_handle);
                 VM_PROPAGATE(udp_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)udp_handle};
@@ -3472,7 +3482,7 @@ DiamondVmStatus run_chunk(const DiamondChunk *chunk,
                 READ_SHORT(dest);
                 VM_SANDBOX_GUARD("UDPSocket.open", "network");
                 DiamondUdpSocketHandle *udp_handle=nullptr;
-                const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,&udp_handle);
+                const DiamondVmStatus udp_status=udp_socket_helper(vm,false,0,nullptr,&udp_handle);
                 VM_PROPAGATE(udp_status);
                 registers[dest]=(DiamondValue){.kind=DIAMOND_VALUE_OBJECT,
                     .as.object=(DiamondObject *)udp_handle};

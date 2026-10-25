@@ -157,16 +157,29 @@ static int tls_alpn_select_callback(SSL *ssl,const unsigned char **out,
  * unbound socket created this way can only reach IPv4 destinations from
  * a later .send(data, host, port) -- a real, documented scope cut, not
  * an oversight (see docs/io.md). */
+/* host is nullptr for every interface (AI_PASSIVE), or one address or
+ * hostname to bind, as TCPServer.listen's host: option. */
 DiamondVmStatus udp_socket_helper(DiamondVm *vm,bool bind_socket,
-        int64_t port,DiamondUdpSocketHandle **out_handle) {
+        int64_t port,const DiamondString *host,DiamondUdpSocketHandle **out_handle) {
     int fd=-1;
     if(bind_socket) {
         char port_text[32];
         (void)snprintf(port_text,sizeof port_text,"%" PRId64,port);
+        char host_text[256];
+        if(host!=nullptr) {
+            if(host->length==0||host->length>=sizeof host_text||
+               memchr(host->chars,'\0',host->length)!=nullptr) {
+                snprintf(vm->error,sizeof vm->error,"UDPSocket.bind host: is not a valid address");
+                return DIAMOND_VM_TYPE_ERROR;
+            }
+            memcpy(host_text,host->chars,host->length);
+            host_text[host->length]='\0';
+        }
         struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_DGRAM,
             .ai_flags=AI_PASSIVE};
         struct addrinfo *results=nullptr;
-        const int resolve_status=getaddrinfo(nullptr,port_text,&hints,&results);
+        const int resolve_status=getaddrinfo(host!=nullptr?host_text:nullptr,port_text,
+                                             &hints,&results);
         if(resolve_status!=0) {
             snprintf(vm->error,sizeof vm->error,"cannot bind UDP port %s: %s",
                      port_text,gai_strerror(resolve_status));
@@ -1414,6 +1427,23 @@ DiamondVmStatus socket_invoke_helper(DiamondVm *vm,
     registers[dest]=DIAMOND_INT((int64_t)written);return DIAMOND_VM_OK;
 }
 
+/* The local port fd is bound to, which is how a socket opened on port 0
+ * (the kernel picks a free one) is found out. */
+static DiamondVmStatus bound_port(DiamondVm *vm,int fd,const char *what,DiamondValue *out) {
+    struct sockaddr_storage address;
+    socklen_t address_length=sizeof address;
+    if(getsockname(fd,(struct sockaddr *)&address,&address_length)!=0) {
+        snprintf(vm->error,sizeof vm->error,"cannot read the %s's port: %s",what,
+            strerror(errno));
+        return DIAMOND_VM_IO_ERROR;
+    }
+    const int port=address.ss_family==AF_INET6
+        ?ntohs(((struct sockaddr_in6 *)&address)->sin6_port)
+        :ntohs(((struct sockaddr_in *)&address)->sin_port);
+    *out=DIAMOND_INT(port);
+    return DIAMOND_VM_OK;
+}
+
 DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
                                               const DiamondChunk *chunk, size_t depth,
                                               DiamondValue *registers, uint16_t recv,
@@ -1434,23 +1464,11 @@ DiamondVmStatus listener_invoke_helper(DiamondVm *vm,
     }
     if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
     if(port_method) {
-        /* The bound port, which is how a listener opened on port 0 (the kernel
-         * picks a free one) is found out. */
         if(listener->fd<0) {
             snprintf(vm->error,sizeof vm->error,"listener is closed");
             return DIAMOND_VM_IO_ERROR;
         }
-        struct sockaddr_storage address;
-        socklen_t address_length=sizeof address;
-        if(getsockname(listener->fd,(struct sockaddr *)&address,&address_length)!=0) {
-            snprintf(vm->error,sizeof vm->error,"cannot read the listener's port: %s",
-                strerror(errno));
-            return DIAMOND_VM_IO_ERROR;
-        }
-        const int port=address.ss_family==AF_INET6
-            ?ntohs(((struct sockaddr_in6 *)&address)->sin6_port)
-            :ntohs(((struct sockaddr_in *)&address)->sin_port);
-        registers[dest]=DIAMOND_INT(port);return DIAMOND_VM_OK;
+        return bound_port(vm,listener->fd,"listener",&registers[dest]);
     }
     if(close_method) {
         if(listener->fd>=0) {
@@ -1941,7 +1959,9 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
         memcmp(method_name->chars,"receive",7)==0;
     const bool close_method=method_name->length==5&&
         memcmp(method_name->chars,"close",5)==0;
-    if(!send_method&&!receive_method&&!close_method) {
+    const bool port_method=method_name->length==4&&
+        memcmp(method_name->chars,"port",4)==0;
+    if(!send_method&&!receive_method&&!close_method&&!port_method) {
         snprintf(vm->error,sizeof vm->error,"undefined method '%.*s' for %s",
             (int)method_name->length,method_name->chars,"UDPSocket");
         return DIAMOND_VM_TYPE_ERROR;
@@ -1957,6 +1977,10 @@ DiamondVmStatus udp_socket_invoke_helper(DiamondVm *vm,
     if(udp_handle->fd<0) {
         snprintf(vm->error,sizeof vm->error,"UDP socket is closed");
         return DIAMOND_VM_IO_ERROR;
+    }
+    if(port_method) {
+        if(argc!=0)return DIAMOND_VM_ARITY_ERROR;
+        return bound_port(vm,udp_handle->fd,"UDP socket",&registers[dest]);
     }
     if(send_method)
         return udp_send_method(vm,chunk,depth,udp_handle,registers,base,argc,dest);

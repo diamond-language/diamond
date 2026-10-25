@@ -1,0 +1,3 @@
+# A keyword cannot skip a required parameter.
+def f(a, b, c = 3) = a + b + c
+f(1, c: 5)
