@@ -16,10 +16,12 @@ background. Further JIT work is optional and measurement-driven.
 
 ## 0.20: from installation to a first app
 
-- **Getting-started guide** -- one path from installing Diamond through the REPL, a
-  first script, a project with a `diamond.cut` and dependencies, tests, and
-  `diamond build`/deployment. That material is now spread across the README and
-  the topic guides, and `docs/` has no reading order.
+- **Development dependencies (environments)** -- cuts a project needs only for tests
+  or development, such as a minitest cut, which would let `facet new` stop copying
+  `lib/minitest.d6` into every project. Only the root project's environments would
+  install; a dependency's would be ignored. Every released facet rejects an unknown
+  key in a cut archive's `diamond.cut`, so they cannot be a new key there; the shape
+  (for example a separate, never-published project file) is still to be chosen.
 - **`.deb` and `.rpm` packages** -- for Fedora 44 and later and Ubuntu 26.04 and later,
   attached to each release. Releases are tags only today, with no binaries. `make install`
   already honours `DESTDIR` and `PREFIX` and installs `diamond`, `facet`, `diamond-lsp`,

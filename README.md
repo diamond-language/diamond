@@ -64,6 +64,9 @@ package ecosystem are its own.
 
 ## Build and run
 
+New to Diamond? The [getting-started guide](docs/getting-started.md) goes from
+installing it to a tested project built into a standalone executable.
+
 `.d6` is the default and preferred extension for Diamond source files; compiled bytecode
 caches use `.d6c`. Backward compatibility with `.di` source files is retained
 for existing projects and published cuts. Use `.d6` for new files to avoid
@@ -122,6 +125,9 @@ sandbox.
 
 ## Learn more
 
+- [Getting started](docs/getting-started.md) -- install, the REPL, a first
+  project with `facet new`, tests, dependencies and `diamond build`, then a
+  reading order for the rest of `docs/`
 - [CHANGELOG.md](CHANGELOG.md) -- completed capability milestones
 - [docs/roadmap.md](docs/roadmap.md) -- candidate work, explicitly
   deferred work, and known limitations
