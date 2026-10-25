@@ -1,9 +1,8 @@
 /* `facet new <kind> <path>`: creates a runnable, tested project skeleton.
  * The templates live in tools/new_templates/ and are #embed'ed here, so
- * an installed facet needs no source checkout. test/minitest.d6 in every
- * project is a copy of lib/minitest.d6: `make install` does not install
- * lib/, and a cut dependency would leak into a library's runtime
- * dependencies (manifests have no development dependencies). */
+ * an installed facet needs no source checkout. Every project's tests use
+ * the minitest cut, declared in diamond.dev.cut so that it never becomes
+ * a runtime dependency of a published library. */
 #define _XOPEN_SOURCE 700
 #ifdef __APPLE__
 #define _DARWIN_C_SOURCE
@@ -12,8 +11,8 @@
 
 #include <time.h>
 
-static constexpr unsigned char MINITEST[] = {
-#embed "../lib/minitest.d6" suffix(,)
+static constexpr unsigned char DEV_CUT[] = {
+#embed "new_templates/common/diamond.dev.cut" suffix(,)
     0
 };
 static constexpr unsigned char TEST_SH[] = {
@@ -140,7 +139,7 @@ typedef struct NewFile {
 
 #define COMMON_FILES                                                  \
     {"test.sh", TEST_SH, true, true},                                 \
-    {"test/minitest.d6", MINITEST, true, false}
+    {"diamond.dev.cut", DEV_CUT, true, false}
 
 static const NewFile CLI_FILES[] = {
     {"diamond.cut", CLI_CUT, false, false}, {"README.md", CLI_README, false, false},
@@ -199,8 +198,8 @@ static const struct {
 
 /* The project's module is the CamelCase form of its name, so a name whose
  * CamelCase form is a built-in namespace, type, prelude or error class
- * would shadow it (`module File` hides File.open), and minitest's own
- * classes would be defined twice. tests/facet_new_test.sh re-derives this
+ * would shadow it (`module File` hides File.open), and the minitest
+ * cut's classes would be defined twice. tests/facet_new_test.sh re-derives this
  * list from the compiler and lib/ sources. */
 static const char *const RESERVED[] = {
     /* builtin_namespace_calls (src/compiler_names.c) */
@@ -217,7 +216,7 @@ static const char *const RESERVED[] = {
     "FrozenError",
     /* lib/core.d6 and lib/core/ */
     "Comparable", "Enumerable", "LazyEnumerator", "Math", "Range", "StringBuilder",
-    /* lib/minitest.d6 */
+    /* the minitest cut (lib/minitest.d6) */
     "Minitest", "AssertionError", "Skip", nullptr,
 };
 
@@ -427,7 +426,7 @@ int cmd_new(int argc, char **argv) {
         printf("facet: set the maintainer in diamond.cut and LICENSE "
                "(git config user.name/user.email were not usable)\n");
     printf("\n  cd %s\n", root);
-    if (strcmp(argv[2], "web") == 0) printf("  facet install\n");
+    printf("  facet install\n");
     printf("  bash test.sh\n");
     if (strcmp(argv[2], "lib") != 0) printf("  diamond main.d6\n");
     return 0;

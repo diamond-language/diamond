@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Checks an installed diamond-lang package: the tools are on PATH under /usr,
-# a script and -e run, a facet new project's tests pass, and diamond build
+# a script and -e run, a facet new project installs its test cut from the
+# registry and its tests pass, and diamond build
 # links that project into an executable with the packaged kit. Runs in a clean
 # container after the package is installed (see packaging/ci.sh).
 set -euo pipefail
@@ -20,6 +21,7 @@ printf 'puts("Hello, #{ARGV[0]}!")\n' > hello.d6
 
 facet new cli greeter >/dev/null
 cd greeter
+facet install >/dev/null
 bash test.sh >/dev/null
 [[ "$(diamond main.d6 Ada)" == "Hello, Ada!" ]]
 diamond build main.d6 -o greeter >/dev/null

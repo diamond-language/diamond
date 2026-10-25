@@ -118,6 +118,7 @@ The language itself: [core syntax](core-syntax.md), [callables](callables.md),
 ```sh
 facet new cli greeter
 cd greeter
+facet install             # fetch minitest, the test library, into cuts/
 diamond main.d6 Ada       # Hello, Ada!
 bash test.sh
 ```
@@ -125,10 +126,10 @@ bash test.sh
 ```text
 greeter/
   diamond.cut              the manifest: name and dependencies
+  diamond.dev.cut          dependencies only the tests need: minitest
   main.d6                  the entry point: passes ARGV to Greeter.main and exits with its status
   lib/greeter.d6           the code
   test/greeter_test.d6     tests for it
-  test/minitest.d6         the test library
   test.sh                  runs every test/*_test.d6
   README.md, .gitignore
 ```
@@ -147,7 +148,7 @@ The generated test file registers each test with minitest and exits with a
 status CI can check:
 
 ```ruby
-require "minitest"
+require_cut "minitest"
 require "../lib/greeter"
 
 def run_tests()
@@ -172,7 +173,7 @@ FAIL: greeting names the person
 
 and exits 1. The other assertions (`assert`, `assert_nil`, `assert_includes`,
 `assert_raises[SomeError]`, ...) and the `setup`/`teardown` hooks are described
-at the top of `test/minitest.d6`.
+at the top of `cuts/minitest/lib/minitest.d6`.
 
 ## 6. Dependencies
 

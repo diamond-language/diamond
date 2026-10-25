@@ -301,7 +301,8 @@ facet new <kind> <path>
 ```
 
 `facet new` creates a project directory at `<path>` with code, tests and a
-README that work as generated. The project name is the path's last component.
+README that work as generated, once `facet install` has fetched the cuts it
+names. The project name is the path's last component.
 It follows the cut-name rules (lowercase ASCII letters, digits and underscores,
 starting with a letter). The parent directory must already exist, and `<path>`
 must not.
@@ -309,7 +310,7 @@ must not.
 | Kind | What it creates |
 | --- | --- |
 | `cli` | A command-line program: `main.d6` passes `ARGV` to the project's `main` and exits with the status it returns. |
-| `web` | A web application served by `gremlin`, with `rack` middleware. It depends on both cuts from the registry, so run `facet install` before the tests. |
+| `web` | A web application served by `gremlin`, with `rack` middleware, both runtime dependencies from the registry. |
 | `tcp` | A line-based TCP server that uses `IO.poll` to serve every client from one thread. |
 | `udp` | A UDP server that answers each datagram. |
 | `lib` | A library cut ready for `facet check`: a full manifest (version `0.1.0`, MIT `LICENSE`), with the maintainer taken from `git config user.name`/`user.email`, or placeholders when those are unset or unusable. |
@@ -319,19 +320,19 @@ Every kind shares one layout:
 ```text
 <name>/
   diamond.cut
+  diamond.dev.cut          minitest, a development dependency
   README.md
   .gitignore
   main.d6                  (not for lib) the entry point
   lib/<name>.d6            the code, in a module or class named after the project
   test/<name>_test.d6      tests for it
-  test/minitest.d6         a copy of Diamond's lib/minitest.d6
   test.sh                  runs every test/*_test.d6
 ```
 
-The tests use a copy of minitest because `make install` does not install
-Diamond's `lib/`, and a manifest has no development dependencies: a test cut
-declared in a library's `diamond.cut` would be installed by everyone who
-depends on that library.
+The tests load the `minitest` cut with `require_cut "minitest"`. It is listed in
+[`diamond.dev.cut`](#development-dependencies), so `facet install` fetches it
+for the project's own tests, but a `lib` project's users never install it.
+`test.sh` stops with a reminder when `cuts/minitest` is missing.
 
 The project's module is the name in CamelCase (`my_app` becomes `MyApp`), so
 `facet new` refuses a name whose module would hide a built-in such as `File`,
@@ -432,7 +433,7 @@ with `facet` like any other cut.
 | `jobs` | Durable database-backed background jobs |
 | `log_viewer` | Format structured JSON log streams |
 | `logger` | Leveled text and structured JSON logging |
-| `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`) |
+| `minitest` | Assertions, skips, setup/teardown hooks and a test runner (a copy of `lib/minitest.d6`); `facet new` projects list it in `diamond.dev.cut` |
 | `mjolnir` | Stateless data mapper on Arel: schemas, immutable queries, changesets, and a Repo |
 | `multipart` | Parse multipart form data and file uploads |
 | `network_safety` | Guard outbound HTTP URLs against local names and private IPv4 literals |

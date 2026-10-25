@@ -13,13 +13,15 @@ authoritative fine-grained record.
   and resolve it together with `diamond.cut`; it is never published.
   `facet add --dev` writes to it. See
   [packages](docs/packages.md#development-dependencies).
-- `packages/minitest`: the minitest library as a cut, for use as a development
-  dependency. It is a copy of `lib/minitest.d6`, which its tests keep in step.
+- `minitest` 0.1.0 on the registry: the minitest library as a cut, for use as a
+  development dependency. It is a copy of `lib/minitest.d6`, which its tests keep
+  in step.
 - `facet new <kind> <path>` creates a project whose tests pass as generated:
   `cli` (a command-line program), `web` (gremlin with rack middleware), `tcp`
   (a line server that uses `IO.poll` to serve many clients from one thread),
   `udp`, and `lib` (a cut ready for `facet check`). Each project has an entry
-  point, its code in `lib/<name>.d6`, minitest tests and a `test.sh` runner.
+  point, its code in `lib/<name>.d6`, tests on the minitest cut (listed in
+  `diamond.dev.cut`, fetched by `facet install`) and a `test.sh` runner.
   See [packages](docs/packages.md#facet-new).
 - `UDPSocket.bind(port, host: "127.0.0.1")` binds one address, like
   `TCPServer.listen`'s `host:`, and `UDPSocket#port()` returns the bound port,

@@ -157,13 +157,15 @@ already-set `ASAN_OPTIONS` always wins over the Makefile's own default).
 kit under `/usr`. The script runs `make clean` first and builds for `x86-64-v3` instead of
 the Makefile's `-march=native`, because the package runs on other machines. The runtime
 libraries are dependencies: `dpkg-shlibdeps` works them out for the `.deb`, and rpm
-generates them for the `.rpm`. `gcc` and the libraries' development packages are
-recommended rather than required, because only `diamond build` needs them.
+generates them for the `.rpm`. `curl` and `ca-certificates` are required too, because
+`facet` downloads cuts with `curl`. `git` (for git-source cuts), `gcc` and the libraries'
+development packages are recommended rather than required, because only some commands
+need them: `gcc` and the development packages only `diamond build`.
 
 `packaging/ci.sh deb|rpm` builds in an `ubuntu:26.04` or `fedora:44` container,
 installs the package into a fresh container of the same image, and runs
-`packaging/smoke_test.sh` there: `-e`, a script, a `facet new cli` project's tests, and
-`diamond build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
+`packaging/smoke_test.sh` there: `-e`, a script, a `facet new cli` project (its
+`facet install` from cuts.dilang.tech, then its tests), and `diamond build`. `CONTAINER=podman` uses podman instead of docker. CI runs both in the
 `test-packages` job.
 
 Self-hosting is in minimal-compat maintenance mode (see docs/roadmap.md):

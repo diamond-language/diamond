@@ -68,8 +68,9 @@ if [[ "$format" == deb ]]; then
         printf 'Architecture: %s\n' "$arch"
         printf 'Maintainer: Diamond maintainers <https://github.com/diamond-language/diamond/issues>\n'
         printf 'Installed-Size: %s\n' "$(du -sk "$stage/usr" | cut -f1)"
-        printf 'Depends: %s\n' "$depends"
-        printf 'Recommends: gcc, libsqlite3-dev, libpq-dev, libmariadb-dev, libssl-dev, libcrypt-dev, zlib1g-dev\n'
+        # facet downloads cuts with curl and clones git sources with git.
+        printf 'Depends: %s, curl, ca-certificates\n' "$depends"
+        printf 'Recommends: git, gcc, libsqlite3-dev, libpq-dev, libmariadb-dev, libssl-dev, libcrypt-dev, zlib1g-dev\n'
         printf 'Section: devel\n'
         printf 'Priority: optional\n'
         printf 'Homepage: https://getdiamond.codes\n'

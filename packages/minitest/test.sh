@@ -6,8 +6,8 @@ set -euo pipefail
 diamond="${DIAMOND_BIN:-diamond}"
 cd "$(dirname "$0")"
 
-# The cut ships the repository's lib/minitest.d6, which the test suite and
-# facet new use; the two must not drift apart.
+# The cut ships the repository's lib/minitest.d6, which the repository's own
+# tests use; the two must not drift apart.
 cmp -s lib/minitest.d6 ../../lib/minitest.d6 || {
     echo "packages/minitest/lib/minitest.d6 differs from lib/minitest.d6" >&2
     exit 1

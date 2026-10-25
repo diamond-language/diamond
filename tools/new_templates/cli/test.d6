@@ -1,5 +1,5 @@
 # Run with `diamond test/{{name}}_test.d6`, or `bash test.sh` for every test file.
-require "minitest"
+require_cut "minitest"
 require "../lib/{{name}}"
 
 def run_tests()

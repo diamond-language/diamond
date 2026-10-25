@@ -5,7 +5,7 @@ A web application written in [Diamond](https://getdiamond.codes), served by
 [rack](https://github.com/diamond-language/diamond/tree/main/packages/rack) middleware.
 
 ```sh
-facet install              # fetch gremlin and rack into cuts/
+facet install              # fetch gremlin, rack and minitest into cuts/
 diamond main.d6            # http://127.0.0.1:8080
 bash test.sh               # run the tests
 ```
@@ -18,7 +18,7 @@ reverse proxy.
 - `lib/{{name}}.d6` holds the routes (`{{Name}}.route`) and the middleware chain
   (`{{Name}}.build_chain`).
 - `test/{{name}}_test.d6` calls the handler with request hashes, so the tests start no
-  server. It uses `test/minitest.d6`, a copy of Diamond's minitest library.
+  server. It uses minitest, which `diamond.dev.cut` lists because only the tests need it.
 
 `facet install` writes `facet.lock`; commit it so every checkout gets the same versions.
 `facet update` moves to the newest versions the constraints in `diamond.cut` allow.

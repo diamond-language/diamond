@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "minitest": {"registry": "https://cuts.dilang.tech", "version": "^0.1.0"}
+  }
+}
