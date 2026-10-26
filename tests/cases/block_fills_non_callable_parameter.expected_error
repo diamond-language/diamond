@@ -1,0 +1,1 @@
+a do block fills the last parameter of 'gen2', 'message', which does not take a Callable

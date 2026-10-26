@@ -108,9 +108,9 @@
       "archive": "minitest.tar",
       "dependencies": {},
       "name": "minitest",
-      "sha256": "cca5800d1179d5e4392cd46fadc1252121c9c7ae5acafb835e87ef7e6bb75f5a",
-      "size": 19456,
-      "version": "0.1.1"
+      "sha256": "ca6e7be802d11f436100cbd2ab7d9d80a7f1de61d62b5417ad32ad5aa317412a",
+      "size": 19968,
+      "version": "0.1.2"
     },
     {
       "archive": "multipart.tar",

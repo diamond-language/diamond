@@ -99,7 +99,11 @@ end
 `recv.method(args) do |params| ... end` attaches an anonymous closure as
 the call's own last argument — the same mechanism a named nested `def`
 uses (same capture behavior, same underlying `CLOSURE` value), just
-without a name. It works the same way on a direct call to a top-level
+without a name. The block fills the method's *last* parameter, so a
+method whose trailing parameter is something else, such as
+`def check(action: Callable[0], message: String = "")`, can't take one:
+the compiler says so and suggests a `&block` parameter, which takes the
+block whatever comes before it. It works the same way on a direct call to a top-level
 function: `apply(5) do |n| n * 2 end`.
 
 Delimiters are `do ... end` only — there is no `{ ... }` block form, and

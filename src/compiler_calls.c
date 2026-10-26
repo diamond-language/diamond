@@ -657,9 +657,40 @@ static void prepare_contextual_block(Compiler *compiler,
     }
 }
 
+/* A trailing do block fills the callee's last parameter. When that
+ * parameter's declared type can't hold a Callable -- `message: String`
+ * after `action: Callable[0]` -- the call would fail at runtime with a
+ * confusing "missing argument", so say what happened here instead. */
+static bool block_slot_rejects_callable(const DiamondFunction *target,size_t parameter_index) {
+    if(target==nullptr||parameter_index>=DIAMOND_MAX_DECLARED_PARAMETERS)return false;
+    const uint16_t set_index=target->parameter_type_sets[parameter_index];
+    if(set_index==DIAMOND_NO_TYPE_SET||set_index>=target->type_set_count)return false;
+    const DiamondTypeSet *set=&target->type_sets[set_index];
+    if(set->count==0)return false;
+    for(size_t index=0;index<set->count;index++) {
+        const uint16_t id=set->members[index].id;
+        const bool plain=id==DIAMOND_TYPE_INT||id==DIAMOND_TYPE_FLOAT||
+            id==DIAMOND_TYPE_STRING||id==DIAMOND_TYPE_BOOL||id==DIAMOND_TYPE_NIL||
+            id==DIAMOND_TYPE_ARRAY||id==DIAMOND_TYPE_HASH||id==DIAMOND_TYPE_SYMBOL||
+            (id>=DIAMOND_TYPE_CLASS_BASE&&id<DIAMOND_TYPE_CLASS_LIMIT)||
+            id==DIAMOND_TYPE_NATIVE;
+        if(!plain)return false;
+    }
+    return true;
+}
+
 uint16_t compile_contextual_typed_block(Compiler *compiler,
         const DiamondFunction *target,size_t parameter_index,
         const uint16_t *type_arguments,size_t type_argument_count) {
+    if(!compiler->discovery_pass&&block_slot_rejects_callable(target,parameter_index)) {
+        char message[DIAMOND_MAX_FUNCTION_NAME*3+160];
+        snprintf(message,sizeof message,
+            "a do block fills the last parameter of '%s', '%s', which does not take a "
+            "Callable; pass the callable as an argument or give '%s' a &block parameter",
+            target->name,target->parameter_names[parameter_index],target->name);
+        fail(compiler,compiler->current.span,message);
+        return 0;
+    }
     compiler->has_contextual_block_types=false;
     compiler->contextual_block_arity=0;
     compiler->contextual_block_return_set=-1;
