@@ -35,7 +35,10 @@ def run_positive_cases()
   while index < case_files.length()
     case_file = case_files[index]
     self_hosted_output = segments[index + 1]
-    native_output = Process.run(["./build/diamond", case_file]).stdout()
+    # Scripts no longer print their final value; the batch side prints it
+    # explicitly, so ask the native side for it too.
+    native_output = Process.run(["./build/diamond", case_file],
+      {"env": {"DIAMOND_PRINT_RESULT": "1"}}).stdout()
     suite.test(case_file, make_positive_test(case_file, native_output, self_hosted_output))
     index = index + 1
   end
