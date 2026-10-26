@@ -33,6 +33,10 @@ authoritative fine-grained record.
   pattern`.
 - A block with the wrong number of parameters reports the block's arity:
   `expected Callable[1], got Callable[0]`.
+- Using a class name as a value says what to do instead: `'Point' is a class, and a class
+  is not a value: call Point.new(...) or a class method, or pass it as a type argument`.
+  A module name gets a matching message, and any other unknown capitalized name reports
+  `undefined constant 'X'`.
 
 ### Docs
 
