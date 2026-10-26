@@ -186,6 +186,7 @@ return value), raises a rescuable `IOError`.
 
 ## File paths: `File.join`/`.dirname`/`.basename`/`.extname`/`.absolute?`/`.expand_path`
 
+<!-- doc-check: skip -->
 ```ruby
 File.join("a", "b", "c")             # => "a/b/c"
 File.join("a/", "/b/", "c")          # => "a/b/c" -- redundant separators collapsed
@@ -237,6 +238,7 @@ second).
 
 ## Filesystem: `File.exist?`/`.directory?`/`.delete`, `Dir.entries`
 
+<!-- doc-check: skip -->
 ```ruby
 File.exist?("README.md")             # => true -- a file, directory, or anything else
 File.exist?("/no/such/path")         # => false -- not an error
@@ -271,6 +273,7 @@ all three under its `filesystem` capability.
 
 ### Files and directories: `File.copy`, `File.size`, `File.sha256`, `File.file?`, `File.symlink?`, `Dir.mkdir`, `Dir.delete`, `Dir.sync`
 
+<!-- doc-check: skip -->
 ```ruby
 Dir.mkdir("backup", 0o700)         # => "backup"; IOError if it exists or the parent is missing
 File.copy("db.sqlite", "backup/db.sqlite")   # => the destination path

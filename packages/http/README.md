@@ -35,6 +35,7 @@ run()
 `http_options` return a Hash with `status`, `headers` (lower-case names), and `body`. Against
 the server above:
 
+<!-- doc-check: skip -->
 ```ruby
 require_cut "http"
 

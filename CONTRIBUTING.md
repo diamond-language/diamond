@@ -101,6 +101,7 @@ make test-lsp        # tests/lsp_test.sh, if lsp/ changed
 make test-repl        # tests/repl_test.sh, if src/repl.c changed
 make test-<package>   # e.g. make test-rack-package -- if one package changed
 make test-examples    # the standalone examples' smoke tests, if a language feature changed
+make test-docs        # the docs' and cut READMEs' ```ruby examples, if a doc or its feature changed
 make test-all          # debug, release, sanitizers, packages, LSP, REPL, fuzz smoke,
                         # self-host bootstrap -- slow; CI splits this into the groups below
 make test-builds       # debug, release, ASan/UBSan, and TSan checks

@@ -34,6 +34,8 @@ over HTTPS.
 Tamper-proof and private values, keyed by a secret you keep in the environment:
 
 ```ruby
+require_cut "cookies"
+
 signed = SignedCookies.sign("user=7", ENV["COOKIE_SECRET"])
 SignedCookies.verify(signed, ENV["COOKIE_SECRET"])   # => "user=7", or nil if altered
 

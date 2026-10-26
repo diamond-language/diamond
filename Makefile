@@ -248,7 +248,7 @@ REPL_COMPLETION_SOURCES := lsp/completion.c lsp/compile_buffer.c lsp/analysis_ca
 REPL_COMPLETION_OBJECTS := $(REPL_COMPLETION_SOURCES:lsp/%.c=$(BUILD_DIR)/lsp-%.o)
 DEPS := $(OBJECTS:.o=.d) $(REPL_COMPLETION_OBJECTS:.o=.d)
 
-.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet test-facet-new facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-minitest-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
+.PHONY: all debug sanitize tsan release test test-examples test-release test-sanitize test-tsan test-api test-semver test-inline-cache-slots test-incremental-compile test-compiled-prelude test-aot-cache test-fibers test-fiber-run test-fiber-context test-vm-context test-yield test-continuation test-multi-yield test-scheduler test-scheduler-run-all test-fiber-gc-roots test-fiber-guards test-nested-yield-guard test-stack-overflow test-all test-builds test-integration test-facet test-facet-new facet test-database-config-package test-http-package test-gremlin-package test-websocket-package test-redis-package test-rack-package test-cookies-package test-multipart-package test-network-safety-package test-div-package test-dials-package test-graphql-package test-graphsql-package test-mjolnir-package test-logger-package test-minitest-package test-log-viewer-package test-active-karma-package test-active-auth-package test-active-social-package test-active-tagging-package test-active-discussion-package test-jobs-package test-registry-package test-registry-http test-deploy-registry test-monitor test-example-apps test-docs test-sanitize-script test-registry-inventory test-registry-nginx test-registry-seed test-database-dialects test-pheint-application test-lexer-diff test-parser-diff test-self-host test-self-host-smoke lsp test-lsp test-receiver dap test-dap aot-build aot-kit aot-kit-cross install test-aot-kit test-cross-build test-minimal test-wasm test-repl test-repl-completion fuzz test-fuzz test-stress-threads test-stress-threads-tsan test-cache clean
 
 all: debug
 
@@ -948,6 +948,14 @@ test-monitor: $(TARGET)
 test-example-apps: $(TARGET)
 	DIAMOND_BIN=$(CURDIR)/$(BUILD_DIR)/diamond bash tests/example_apps_test.sh
 
+# The ```ruby examples in the docs and the published cuts' READMEs: `# =>` claims
+# must hold and every block must parse -- see tools/check_doc_examples.d6.
+# The taken-down cuts are not published, so their READMEs are left out.
+DOC_CHECK_UNPUBLISHED := active_auth active_discussion active_karma active_social active_tagging dials
+DOC_CHECK_FILES := $(wildcard docs/*.md) README.md $(filter-out $(patsubst %,packages/%/README.md,$(DOC_CHECK_UNPUBLISHED)),$(wildcard packages/*/README.md))
+test-docs: $(TARGET)
+	COOKIE_SECRET=doc-check-secret-0123456789abcdef $(BUILD_DIR)/diamond tools/check_doc_examples.d6 $(DOC_CHECK_FILES)
+
 test-exit: debug
 	bash tests/exit_test.sh
 
@@ -1116,6 +1124,7 @@ test-integration:
 	$(MAKE) test-deploy-registry
 	$(MAKE) test-monitor
 	$(MAKE) test-example-apps
+	$(MAKE) test-docs
 	$(MAKE) test-sanitize-script
 	$(MAKE) test-registry-inventory
 	$(MAKE) test-examples

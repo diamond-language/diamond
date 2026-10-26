@@ -50,6 +50,7 @@ a running fiber raises `FiberError`.
 
 ## Status and lifecycle
 
+<!-- doc-check: skip -->
 ```ruby
 fiber.status()  # => "runnable", "suspended", "completed", or "failed"
 fiber.alive?()  # => true until completion or failure
