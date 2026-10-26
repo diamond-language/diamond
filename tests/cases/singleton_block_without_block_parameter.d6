@@ -1,0 +1,6 @@
+module M
+  def self.twice()
+    1
+  end
+end
+M.twice() do puts("x") end

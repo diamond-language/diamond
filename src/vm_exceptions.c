@@ -144,6 +144,29 @@ bool catch_runtime_error(DiamondVm *vm,const DiamondChunk *chunk,
     return catch_exception(vm,chunk,handlers,handler_count,pending,registers,ip);
 }
 
+/* Did this INVOKE pass a `do ... end` block to an instance method with
+ * no &block parameter? Ruby passes blocks implicitly; Diamond doesn't. */
+static bool invoke_passes_unaccepted_block(const DiamondChunk *chunk,
+        DiamondValue receiver,const DiamondStringConstant *method_name,
+        const DiamondValue *arguments,uint8_t argc) {
+    if(argc==0)return false;
+    const DiamondValue last=arguments[argc-1];
+    if(last.kind!=DIAMOND_VALUE_OBJECT||
+       last.as.object->kind!=DIAMOND_OBJECT_CLOSURE||
+       !((const DiamondClosure *)last.as.object)->is_block)return false;
+    if(receiver.kind!=DIAMOND_VALUE_OBJECT||
+       receiver.as.object->kind!=DIAMOND_OBJECT_INSTANCE)return false;
+    const DiamondInstance *instance=(const DiamondInstance *)receiver.as.object;
+    const DiamondChunk *owner=instance->owner!=nullptr?instance->owner:chunk;
+    const DiamondMethod *method=lookup_method(owner,instance->class,
+        method_name->chars,method_name->length);
+    if(method==nullptr||method->has_variadic||argc!=method->arity+1)return false;
+    const DiamondChunk *function_chunk=
+        method->source_chunk!=nullptr?method->source_chunk:owner;
+    if(method->function_index>=function_chunk->function_count)return false;
+    return !function_chunk->functions[method->function_index]->has_block_parameter;
+}
+
 /* A bare "wrong number of arguments" doesn't say which call. When the
  * failing instruction is a method call, name the method, the receiver's
  * type, and how many arguments it got. Returns the message length, or 0
@@ -156,12 +179,18 @@ size_t describe_invoke_arity_error(DiamondVm *vm,const DiamondChunk *chunk,
        opcode!=DIAMOND_OP_INVOKE_TYPED)return 0;
     const uint16_t recv=(uint16_t)((chunk->code[offset+3]<<8)|chunk->code[offset+4]);
     const uint16_t name=(uint16_t)((chunk->code[offset+5]<<8)|chunk->code[offset+6]);
+    const uint16_t base=(uint16_t)((chunk->code[offset+7]<<8)|chunk->code[offset+8]);
     const uint8_t argc=chunk->code[offset+9];
     if(name>=chunk->string_count)return 0;
     const DiamondStringConstant *method_name=&chunk->strings[name];
     char receiver[80];
     diamond_format_value_type(receiver,sizeof receiver,registers[recv]);
-    const int written=snprintf(vm->error,sizeof vm->error,
+    const int written=invoke_passes_unaccepted_block(chunk,registers[recv],
+            method_name,&registers[base],argc)?
+        snprintf(vm->error,sizeof vm->error,
+            "'%.*s' on %s does not take a block; add a &block parameter to accept one",
+            (int)method_name->length,method_name->chars,receiver):
+        snprintf(vm->error,sizeof vm->error,
         "wrong number of arguments for '%.*s' on %s (given %u)",
         (int)method_name->length,method_name->chars,receiver,argc);
     return written<0?0:strlen(vm->error);

@@ -41,8 +41,8 @@ value when the fiber completes. Its argument is optional and defaults to
 ## Yielding
 
 Use `Fiber.yield()` or `Fiber.yield(value)` in any lexical context. Legacy
-`yield` and `yield(value)` have the same fiber behavior in a body that does not
-accept a named block with `&block`.
+`yield`, `yield()` and `yield(value)` have the same fiber behavior in a body
+that does not accept a named block with `&block`.
 
 Yielding preserves the complete execution context, including nested method
 calls and active `rescue` and `ensure` clauses. Calling `Fiber.yield` outside

@@ -18,6 +18,14 @@ authoritative fine-grained record.
 - An undefined-method error names a close match when there is one:
   `undefined method 'starts_with?' for String -- did you mean 'start_with?'?`. It covers
   instances of your classes and built-in String, Array, Hash, Int and Float receivers.
+- Passing a `do ... end` block to a function or method that has no `&block` parameter
+  says so: `'each' on Box does not take a block; add a &block parameter to accept one`.
+  Before, it was a bare "wrong number of arguments".
+
+### Fixed
+
+- `yield()` with empty parentheses in a body without `&block` yields `nil` to the
+  running fiber, like `yield` and `Fiber.yield()`. It was a parse error.
 
 ## 0.20.0 — 2026-10-25
 

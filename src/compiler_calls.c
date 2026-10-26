@@ -1357,6 +1357,21 @@ static uint16_t emit_sparse_keyword_call(Compiler *compiler,const DiamondFunctio
     return destination;
 }
 
+/* A trailing `do ... end` block with no parameter left to land in. Ruby
+ * passes blocks implicitly; Diamond only binds one through `&block`, so
+ * say that instead of a bare "wrong number of arguments". */
+static bool fail_unaccepted_block(Compiler *compiler,const DiamondFunction *function,
+        size_t arity,bool variadic,size_t argument_count,DiamondSpan name) {
+    if(variadic||argument_count<arity||(function&&function->has_block_parameter))
+        return false;
+    char message[sizeof compiler->diagnostic->message];
+    snprintf(message,sizeof message,
+        "'%.*s' does not take a block; add a &block parameter to accept one",
+        (int)name.length,compiler->source+name.start);
+    fail(compiler,name,message);
+    return true;
+}
+
 /* True when every unfilled slot below argument_count is a defaulted
  * parameter, so a sparse keyword call can leave it to its default. */
 static bool gaps_are_defaulted(const DiamondFunction *function,const bool *slot_filled,
@@ -1448,6 +1463,8 @@ uint16_t parse_call(Compiler *compiler, DiamondSpan name) {
         if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many arguments");return 0;
         }
+        if(fail_unaccepted_block(compiler,function,function->arity,
+            function->has_variadic,argument_count,name))return 0;
         /* Same register-aliasing hazard parse_invoke's own DIAMOND_TOKEN_DO
          * branch guards against (see its comment): every slot filled above
          * may still be a bare alias of a local the block below is about to
@@ -2053,6 +2070,8 @@ uint16_t parse_singleton_call(Compiler *compiler,
         if(argument_count==DIAMOND_MAX_ARGUMENTS) {
             fail(compiler,compiler->current.span,"too many call arguments");return 0;
         }
+        if(fail_unaccepted_block(compiler,function,method->arity,
+            method->has_variadic,argument_count,name))return 0;
         for(size_t index=0;index<argument_count;index++) {
             const uint16_t snapshot=allocate_register(compiler);
             emit_instruction(compiler,DIAMOND_OP_MOVE,snapshot,arguments[index],0,2);

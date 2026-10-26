@@ -178,7 +178,15 @@ uint16_t compile_yield(Compiler *compiler) {
     uint16_t source;
     if (compiler->current.kind == DIAMOND_TOKEN_LEFT_PAREN) {
         advance_token(compiler);
-        source = parse_expression(compiler);
+        skip_newlines(compiler);
+        if (compiler->current.kind == DIAMOND_TOKEN_RIGHT_PAREN) {
+            /* `yield()` yields nil, like `Fiber.yield()` and bare `yield`. */
+            source = allocate_register(compiler);
+            emit_instruction(compiler, DIAMOND_OP_NIL, source, 0, 0, 1);
+        } else {
+            source = parse_expression(compiler);
+            skip_newlines(compiler);
+        }
         if (compiler->current.kind != DIAMOND_TOKEN_RIGHT_PAREN) {
             fail(compiler, compiler->current.span, "expected ')' after yield value");
             return 0;

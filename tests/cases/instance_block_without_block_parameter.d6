@@ -1,0 +1,6 @@
+class Box
+  def each()
+    yield(1)
+  end
+end
+Box.new().each() do |x| puts(x) end
